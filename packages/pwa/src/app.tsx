@@ -1,5 +1,11 @@
 import { renderNode } from '@veduta/catalog'
-import { ChatMessageSchema, type AtomNode, type ChatMessage, type Surface } from '@veduta/protocol'
+import {
+  ChatMessageSchema,
+  type AtomNode,
+  type ChatMessage,
+  type JsonValue,
+  type Surface,
+} from '@veduta/protocol'
 import { useEffect, useRef, useState } from 'react'
 import { fetchSpaces, freshnessLabel, invokeFastAction, type SpaceWithSurfaces } from './api.ts'
 
@@ -68,9 +74,15 @@ function SurfaceCard({
   onPatched: (s: Surface) => void
   onError: (message: string) => void
 }) {
-  const dispatch = (node: AtomNode, actionName: string, value?: unknown) => {
+  const dispatch = (node: AtomNode, actionName: string, value?: JsonValue) => {
     const action = node.actions?.find((a) => a.name === actionName)
     if (action?.path === 'fast') {
+      if (value === undefined) {
+        onError(
+          `"${surface.title}" update failed: fast action "${actionName}" did not provide a value`,
+        )
+        return
+      }
       // Fast path: deterministic mutation on the daemon, no LLM (ADR-0003).
       invokeFastAction(surface.id, node.id, actionName, value)
         .then(onPatched)

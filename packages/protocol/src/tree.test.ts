@@ -26,7 +26,7 @@ describe('findAtom', () => {
 describe('findDeclaredFastAction', () => {
   it('resolves a declared fast action with its stateKey', () => {
     const action = findDeclaredFastAction(tree, 'milk', 'toggle')
-    expect(action).toEqual({ name: 'toggle', path: 'fast', stateKey: 'milk' })
+    expect(action).toEqual({ name: 'toggle', path: 'fast', payload: {}, stateKey: 'milk' })
   })
 
   it('does not resolve agent-path actions as fast', () => {

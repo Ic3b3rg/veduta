@@ -6,6 +6,19 @@ Rationale: (1) persistent Surfaces must be updatable via diffs — free-form HTM
 
 Status: accepted
 
+## Issue 002 protocol mapping
+
+For v1 we use an A2UI-inspired mapping rather than direct adoption of OpenClaw-style Canvas markup (`a2ui-component`, `a2ui-action`, declarative HTML). Direct adoption would reintroduce generated markup into the persistent Home, conflicting with the closed Atom catalog and typed state contract.
+
+Mapping:
+
+- A2UI component → `AtomNode` (`type`, JSON `props`, `children`)
+- A2UI action → `Action` (`name`, `path: "fast" | "agent"`, JSON `payload`)
+- Component state → `Surface.state`, addressed by Atom `binding`
+- Incremental updates → `Patch` operations scoped to `state` or `tree`
+
+The compatibility target is conceptual: agents can produce structured UI actions and components, while Veduta keeps persistence, validation, and rendering under the local protocol.
+
 ## Considered Options
 
 - Free-form generated HTML/JSX in a sandbox: rejected for v1 — not diffable, inconsistent, hallucination-prone. It returns post-v1 only as a sandboxed escape hatch for the long tail.

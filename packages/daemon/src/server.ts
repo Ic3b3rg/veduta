@@ -1,6 +1,11 @@
 import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
-import { ActionInvocationSchema, findDeclaredFastAction, type ChatMessage } from '@veduta/protocol'
+import {
+  ActionInvocationSchema,
+  JsonValueSchema,
+  findDeclaredFastAction,
+  type ChatMessage,
+} from '@veduta/protocol'
 import Fastify from 'fastify'
 import { z } from 'zod'
 import { handleChatFrame } from './chat.ts'
@@ -9,7 +14,7 @@ import { Store } from './store.ts'
 // The client sends only (nodeId, action name, value): the state key comes
 // from the Atom's declared action, never from the client (ADR-0003).
 const FastActionBodySchema = ActionInvocationSchema.extend({
-  payload: z.object({ value: z.unknown() }),
+  payload: z.object({ value: JsonValueSchema }),
 })
 
 /**

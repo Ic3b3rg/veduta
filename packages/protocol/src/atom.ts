@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { ActionSchema, type Action } from './action.ts'
+import { JsonObjectSchema, type JsonObject } from './json.ts'
 
 /**
  * The closed Atom catalog (ADR-0003): ChatKit-style set plus
@@ -55,7 +56,7 @@ export interface AtomNode {
   id: string
   type: AtomType
   /** Static props (label, variant...). */
-  props?: Record<string, unknown>
+  props?: JsonObject
   /** Key into the Surface's typed state this node reads from. */
   binding?: string
   actions?: Action[]
@@ -66,8 +67,8 @@ export const AtomNodeSchema: z.ZodType<AtomNode> = z.lazy(() =>
   z.object({
     id: z.string().min(1),
     type: AtomTypeSchema,
-    props: z.record(z.unknown()).optional(),
-    binding: z.string().optional(),
+    props: JsonObjectSchema.optional(),
+    binding: z.string().min(1).optional(),
     actions: z.array(ActionSchema).optional(),
     children: z.array(AtomNodeSchema).optional(),
   }),

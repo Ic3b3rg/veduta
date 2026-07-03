@@ -1,4 +1,4 @@
-import { SpaceSchema, SurfaceSchema, type Surface } from '@veduta/protocol'
+import { SpaceSchema, SurfaceSchema, type JsonValue, type Surface } from '@veduta/protocol'
 import { z } from 'zod'
 
 // The PWA never trusts the wire blindly (AGENTS.md): every response is
@@ -21,7 +21,7 @@ export async function invokeFastAction(
   surfaceId: string,
   nodeId: string,
   name: string,
-  value: unknown,
+  value: JsonValue,
 ): Promise<Surface> {
   const res = await fetch(`/api/surfaces/${surfaceId}/actions`, {
     method: 'POST',

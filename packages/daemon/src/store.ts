@@ -1,4 +1,4 @@
-import type { Space, Surface } from '@veduta/protocol'
+import type { JsonValue, Space, Surface } from '@veduta/protocol'
 import { seedSpaces } from './seed.ts'
 
 export interface SpaceEvent {
@@ -45,7 +45,7 @@ export class Store {
   }
 
   /** Fast path: mutate one state key, stamp freshness, log the event. No LLM. */
-  applyFastAction(surfaceId: string, stateKey: string, value: unknown): Surface {
+  applyFastAction(surfaceId: string, stateKey: string, value: JsonValue): Surface {
     const surface = this.surfaces.get(surfaceId)
     if (!surface) throw new Error(`unknown surface: ${surfaceId}`)
     const updated: Surface = {
