@@ -1,4 +1,5 @@
 export { ActionSchema, type Action, type ActionInput } from './action.ts'
+export { applySurfacePatch, applySurfacePatchEvent } from './apply-patch.ts'
 export { atomTypes, AtomTypeSchema, AtomNodeSchema, type AtomType, type AtomNode } from './atom.ts'
 export {
   SurfaceSchema,
@@ -31,4 +32,24 @@ export {
   type ChatMessage,
   type ChatClientMessage,
 } from './chat.ts'
+export {
+  GatewayCursorSchema,
+  SpaceWithSurfacesSchema,
+  SurfaceSnapshotSchema,
+  SurfacePatchEventSchema,
+  PresenceStatusSchema,
+  PresenceEntrySchema,
+  ApprovalCardSchema,
+  GatewayClientMessageSchema,
+  GatewayServerMessageSchema,
+  type GatewayCursor,
+  type SpaceWithSurfaces,
+  type SurfaceSnapshot,
+  type SurfacePatchEvent,
+  type PresenceStatus,
+  type PresenceEntry,
+  type ApprovalCard,
+  type GatewayClientMessage,
+  type GatewayServerMessage,
+} from './gateway.ts'
 export { findAtom, findDeclaredFastAction } from './tree.ts'

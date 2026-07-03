@@ -1,10 +1,24 @@
-import type { JsonValue, Space, Surface } from '@veduta/protocol'
+import {
+  PatchSchema,
+  SurfaceSnapshotSchema,
+  SurfaceSchema,
+  type JsonValue,
+  type Space,
+  type Surface,
+  type SurfacePatchEvent,
+  type SurfaceSnapshot,
+} from '@veduta/protocol'
 import { seedSpaces } from './seed.ts'
 
 export interface SpaceEvent {
   at: string
   spaceId: string
   text: string
+}
+
+export interface SurfaceMutation {
+  surface: Surface
+  event: SurfacePatchEvent
 }
 
 /**
@@ -20,6 +34,8 @@ export class Store {
   private spaces = new Map<string, Space>()
   private surfaces = new Map<string, Surface>()
   private events: SpaceEvent[] = []
+  private surfaceEvents: SurfacePatchEvent[] = []
+  private surfaceCursor = 0
 
   constructor() {
     const { spaces, surfaces } = seedSpaces()
@@ -44,25 +60,66 @@ export class Store {
     return this.surfaces.get(id)
   }
 
+  snapshot(): SurfaceSnapshot {
+    return SurfaceSnapshotSchema.parse({
+      surfaceCursor: this.latestSurfaceCursor(),
+      spaces: this.listSpaces().map((space) => ({
+        ...space,
+        surfaces: this.listSurfaces(space.id),
+      })),
+    })
+  }
+
+  latestSurfaceCursor(): number {
+    return this.surfaceCursor
+  }
+
+  surfaceEventsAfter(cursor: number): SurfacePatchEvent[] {
+    return this.surfaceEvents.filter((event) => event.cursor > cursor)
+  }
+
   /** Fast path: mutate one state key, stamp freshness, log the event. No LLM. */
-  applyFastAction(surfaceId: string, stateKey: string, value: JsonValue): Surface {
+  applyFastAction(surfaceId: string, stateKey: string, value: JsonValue): SurfaceMutation {
     const surface = this.surfaces.get(surfaceId)
     if (!surface) throw new Error(`unknown surface: ${surfaceId}`)
-    const updated: Surface = {
+    const updated = SurfaceSchema.parse({
       ...surface,
       state: { ...surface.state, [stateKey]: value },
       freshness: { updatedAt: new Date().toISOString(), updatedBy: 'user' },
+    })
+    const event: SurfacePatchEvent = {
+      cursor: this.surfaceCursor + 1,
+      at: updated.freshness.updatedAt,
+      spaceId: surface.spaceId,
+      patch: PatchSchema.parse({
+        surfaceId,
+        operations: [
+          {
+            target: 'state',
+            op: Object.prototype.hasOwnProperty.call(surface.state, stateKey) ? 'replace' : 'add',
+            path: statePath(stateKey),
+            value,
+          },
+        ],
+      }),
+      freshness: updated.freshness,
     }
+    this.surfaceCursor = event.cursor
     this.surfaces.set(surfaceId, updated)
+    this.surfaceEvents.push(event)
     this.events.push({
       at: updated.freshness.updatedAt,
       spaceId: surface.spaceId,
       text: `${surface.title}: ${stateKey} → ${JSON.stringify(value)}`,
     })
-    return updated
+    return { surface: updated, event }
   }
 
   eventLog(spaceId: string): SpaceEvent[] {
     return this.events.filter((e) => e.spaceId === spaceId)
   }
+}
+
+function statePath(key: string): string {
+  return `/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`
 }

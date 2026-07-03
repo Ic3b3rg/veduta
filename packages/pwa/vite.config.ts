@@ -1,7 +1,7 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
-// Dev profile (issue #1): the PWA dev server proxies API and chat WS
+// Dev profile (issue #1): the PWA dev server proxies API and Gateway WS
 // to the daemon on loopback. No TLS, no domain — that's issue #5.
 export default defineConfig({
   plugins: [react()],

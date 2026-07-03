@@ -1,14 +1,11 @@
 import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
-import {
-  ActionInvocationSchema,
-  JsonValueSchema,
-  findDeclaredFastAction,
-  type ChatMessage,
-} from '@veduta/protocol'
+import { fileURLToPath } from 'node:url'
+import { ActionInvocationSchema, JsonValueSchema, findDeclaredFastAction } from '@veduta/protocol'
 import Fastify from 'fastify'
 import { z } from 'zod'
-import { handleChatFrame } from './chat.ts'
+import { GatewayHub } from './gateway.ts'
+import { sendPwaAsset } from './static-assets.ts'
 import { Store } from './store.ts'
 
 // The client sends only (nodeId, action name, value): the state key comes
@@ -17,14 +14,22 @@ const FastActionBodySchema = ActionInvocationSchema.extend({
   payload: z.object({ value: JsonValueSchema }),
 })
 
+export interface ServerOptions {
+  pwaDistDir?: string
+}
+
+const defaultPwaDistDir = fileURLToPath(new URL('../../pwa/dist/', import.meta.url))
+
 /**
  * The Gateway in scaffold form (issue #1): HTTP API + chat WebSocket
  * on loopback, dev profile only. TLS/passkeys are issue #5, the real
  * ChannelAdapter surface sync is issue #4.
  */
-export function buildServer() {
+export function buildServer(options: ServerOptions = {}) {
   const app = Fastify({ logger: false })
   const store = new Store()
+  const gateway = new GatewayHub(store)
+  const pwaDistDir = options.pwaDistDir ?? defaultPwaDistDir
 
   // Dev profile: only the Vite dev server may call the daemon from a browser.
   void app.register(cors, {
@@ -34,14 +39,15 @@ export function buildServer() {
 
   app.get('/api/health', () => ({ ok: true }))
 
+  app.get('/', (_request, reply) => sendPwaAsset(reply, pwaDistDir, 'index.html'))
+
+  app.get('/assets/*', (request, reply) => {
+    const asset = (request.params as { '*': string })['*']
+    return sendPwaAsset(reply, pwaDistDir, `assets/${asset}`)
+  })
+
   app.get('/api/spaces', () => {
-    const spaces = store.listSpaces()
-    return {
-      spaces: spaces.map((space) => ({
-        ...space,
-        surfaces: store.listSurfaces(space.id),
-      })),
-    }
+    return store.snapshot()
   })
 
   app.get('/api/spaces/:spaceId/events', (request, reply) => {
@@ -68,19 +74,16 @@ export function buildServer() {
         error: `action "${parsed.data.name}" is not declared as fast by node "${parsed.data.nodeId}"`,
       })
     }
-    const surface = store.applyFastAction(surfaceId, declared.stateKey, parsed.data.payload.value)
-    return { surface }
+    const mutation = store.applyFastAction(surfaceId, declared.stateKey, parsed.data.payload.value)
+    gateway.broadcastSurfacePatch(mutation.event)
+    return { surface: mutation.surface }
   })
 
   void app.register(async (instance) => {
-    instance.get('/ws/chat', { websocket: true }, (socket) => {
-      const history: ChatMessage[] = []
-      socket.on('message', (raw: Buffer) => {
-        const reply = handleChatFrame(raw.toString(), history)
-        if (reply) socket.send(JSON.stringify(reply))
-      })
+    instance.get('/ws/gateway', { websocket: true }, (socket) => {
+      gateway.connect(socket)
     })
   })
 
-  return { app, store }
+  return { app, store, gateway }
 }

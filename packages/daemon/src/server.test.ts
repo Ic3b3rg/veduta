@@ -1,14 +1,43 @@
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { SurfaceSchema } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import { buildServer } from './server.ts'
+
+describe('PWA static assets', () => {
+  it('serves the built PWA index and assets without allowing path traversal', async () => {
+    const pwaDistDir = await mkdtemp(join(tmpdir(), 'veduta-pwa-'))
+    await mkdir(join(pwaDistDir, 'assets'))
+    await writeFile(join(pwaDistDir, 'index.html'), '<div id="root"></div>')
+    await writeFile(join(pwaDistDir, 'assets', 'app.js'), 'console.log("veduta")')
+    const { app } = buildServer({ pwaDistDir })
+
+    const index = await app.inject({ method: 'GET', url: '/' })
+    expect(index.statusCode).toBe(200)
+    expect(index.headers['content-type']).toContain('text/html')
+    expect(index.body).toContain('root')
+
+    const asset = await app.inject({ method: 'GET', url: '/assets/app.js' })
+    expect(asset.statusCode).toBe(200)
+    expect(asset.headers['content-type']).toContain('text/javascript')
+
+    const traversal = await app.inject({ method: 'GET', url: '/assets/../index.html' })
+    expect(traversal.statusCode).toBe(404)
+  })
+})
 
 describe('GET /api/spaces', () => {
   it('returns the seed space with protocol-valid surfaces', async () => {
     const { app } = buildServer()
     const res = await app.inject({ method: 'GET', url: '/api/spaces' })
     expect(res.statusCode).toBe(200)
-    const body = res.json() as { spaces: { slug: string; surfaces: unknown[] }[] }
+    const body = res.json() as {
+      surfaceCursor: number
+      spaces: { slug: string; surfaces: unknown[] }[]
+    }
+    expect(body.surfaceCursor).toBe(0)
     expect(body.spaces.map((s) => s.slug)).toEqual(['health'])
     for (const surface of body.spaces[0]!.surfaces) {
       expect(SurfaceSchema.safeParse(surface).success).toBe(true)
@@ -37,6 +66,15 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
     expect(surface.state['milk']).toBe(true)
     const events = store.eventLog('spc-health')
     expect(events.at(-1)?.text).toContain('milk')
+    expect(store.surfaceEventsAfter(0)).toMatchObject([
+      {
+        cursor: 1,
+        patch: {
+          surfaceId: 'srf-groceries',
+          operations: [{ target: 'state', op: 'replace', path: '/milk', value: true }],
+        },
+      },
+    ])
   })
 
   it('rejects an action the node does not declare as fast (403)', async () => {

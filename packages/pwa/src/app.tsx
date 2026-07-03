@@ -1,27 +1,118 @@
 import { renderNode } from '@veduta/catalog'
 import {
-  ChatMessageSchema,
   type AtomNode,
   type ChatMessage,
   type JsonValue,
   type Surface,
+  type SurfacePatchEvent,
 } from '@veduta/protocol'
-import { useEffect, useRef, useState } from 'react'
-import { fetchSpaces, freshnessLabel, invokeFastAction, type SpaceWithSurfaces } from './api.ts'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  connectGateway,
+  fetchSpaces,
+  freshnessLabel,
+  invokeFastAction,
+  patchSurface,
+  type GatewayConnection,
+  type SpaceWithSurfaces,
+} from './api.ts'
+
+const SURFACE_CURSOR_KEY = 'veduta.surfaceCursor'
 
 export function App() {
   const [spaces, setSpaces] = useState<SpaceWithSurfaces[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [chatEntries, setChatEntries] = useState<ChatMessage[]>([])
+  const gatewayRef = useRef<GatewayConnection | null>(null)
+  const spacesRef = useRef<SpaceWithSurfaces[]>([])
+  const surfaceCursorRef = useRef(readStoredCursor())
 
-  useEffect(() => {
-    fetchSpaces()
-      .then(setSpaces)
-      .catch((e: Error) => setError(e.message))
+  const updateCursor = useCallback((cursor: number) => {
+    surfaceCursorRef.current = cursor
+    localStorage.setItem(SURFACE_CURSOR_KEY, String(cursor))
   }, [])
 
-  const patchSurface = (updated: Surface) => {
-    setSpaces((prev) =>
-      prev.map((space) => ({
+  const replaceSpaces = useCallback((next: SpaceWithSurfaces[]) => {
+    spacesRef.current = next
+    setSpaces(next)
+  }, [])
+
+  const applySurfaceEvent = useCallback(
+    (event: SurfacePatchEvent) => {
+      let applied = false
+      try {
+        const next = spacesRef.current.map((space) => ({
+          ...space,
+          surfaces: space.surfaces.map((surface) => {
+            if (surface.id !== event.patch.surfaceId) return surface
+            applied = true
+            return patchSurface(surface, event)
+          }),
+        }))
+
+        if (!applied) {
+          setError(`patch for unknown Surface: ${event.patch.surfaceId}`)
+          return
+        }
+
+        replaceSpaces(next)
+        updateCursor(event.cursor)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'failed to apply Surface patch')
+      }
+    },
+    [replaceSpaces, updateCursor],
+  )
+
+  useEffect(() => {
+    let closedByApp = false
+    let reconnectTimer: number | undefined
+
+    const scheduleReconnect = () => {
+      if (closedByApp) return
+      reconnectTimer = window.setTimeout(() => startGateway(), 1000)
+    }
+
+    const startGateway = () => {
+      gatewayRef.current = connectGateway({
+        surfaceCursor: surfaceCursorRef.current,
+        onHello() {
+          // The replay cursor advances only after each patch is applied.
+        },
+        onSurfacePatch(event) {
+          applySurfaceEvent(event)
+        },
+        onChatMessage(message) {
+          setChatEntries((prev) => [...prev, message.message])
+        },
+        onPresence() {
+          // Presence is part of the Gateway protocol; the Home UI for it arrives with device pairing.
+        },
+        onError(message) {
+          setError(message)
+        },
+        onClose: scheduleReconnect,
+      })
+    }
+
+    fetchSpaces()
+      .then((snapshot) => {
+        replaceSpaces(snapshot.spaces)
+        updateCursor(snapshot.surfaceCursor)
+        startGateway()
+      })
+      .catch((e: Error) => setError(e.message))
+
+    return () => {
+      closedByApp = true
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
+      gatewayRef.current?.close()
+    }
+  }, [applySurfaceEvent, replaceSpaces, updateCursor])
+
+  const replaceSurface = (updated: Surface) => {
+    replaceSpaces(
+      spacesRef.current.map((space) => ({
         ...space,
         surfaces: space.surfaces.map((s) => (s.id === updated.id ? updated : s)),
       })),
@@ -53,14 +144,21 @@ export function App() {
               <SurfaceCard
                 key={surface.id}
                 surface={surface}
-                onPatched={patchSurface}
+                onPatched={replaceSurface}
                 onError={setError}
               />
             ))}
           </div>
         </section>
       ))}
-      <ChatBar />
+      <ChatBar
+        entries={chatEntries}
+        onSend={(message) => {
+          if (!gatewayRef.current?.sendChat(message)) return false
+          setChatEntries((prev) => [...prev, { role: 'user', text: message }])
+          return true
+        }}
+      />
     </div>
   )
 }
@@ -101,32 +199,18 @@ function SurfaceCard({
   )
 }
 
-function ChatBar() {
-  const [entries, setEntries] = useState<ChatMessage[]>([])
+function ChatBar({
+  entries,
+  onSend,
+}: {
+  entries: ChatMessage[]
+  onSend: (text: string) => boolean
+}) {
   const [text, setText] = useState('')
-  const wsRef = useRef<WebSocket | null>(null)
-
-  useEffect(() => {
-    const ws = new WebSocket(`ws://${location.host}/ws/chat`)
-    ws.onmessage = (event) => {
-      let json: unknown
-      try {
-        json = JSON.parse(String(event.data))
-      } catch {
-        return
-      }
-      const parsed = ChatMessageSchema.safeParse(json)
-      if (parsed.success) setEntries((prev) => [...prev, parsed.data])
-    }
-    wsRef.current = ws
-    return () => ws.close()
-  }, [])
 
   const send = () => {
     const trimmed = text.trim()
-    if (!trimmed || wsRef.current?.readyState !== WebSocket.OPEN) return
-    wsRef.current.send(JSON.stringify({ text: trimmed }))
-    setEntries((prev) => [...prev, { role: 'user', text: trimmed }])
+    if (!trimmed || !onSend(trimmed)) return
     setText('')
   }
 
@@ -163,4 +247,9 @@ function ChatBar() {
       </div>
     </footer>
   )
+}
+
+function readStoredCursor(): number {
+  const stored = Number(localStorage.getItem(SURFACE_CURSOR_KEY))
+  return Number.isInteger(stored) && stored >= 0 ? stored : 0
 }
