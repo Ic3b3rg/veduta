@@ -8,6 +8,7 @@ import {
   optimisticFastSurface,
 } from './api.ts'
 import type { QueuedFastAction } from './pwa-storage.ts'
+import { useCatalogTheme } from './theme.ts'
 
 export function SurfaceCard({
   surface,
@@ -34,6 +35,7 @@ export function SurfaceCard({
   onQueueFastAction: (action: QueuedFastAction) => void
   onError: (message: string) => void
 }) {
+  const theme = useCatalogTheme()
   const dispatch = (node: AtomNode, actionName: string, value?: JsonValue) => {
     const action = node.actions?.find((a) => a.name === actionName)
     if (!action) {
@@ -110,7 +112,7 @@ export function SurfaceCard({
           </button>
         </div>
       </div>
-      {renderNode(surface.tree, { state: surface.state, dispatch })}
+      {renderNode(surface.tree, { state: surface.state, dispatch, theme })}
       <div className="freshness">
         updated {freshnessLabel(surface.freshness.updatedAt)} by {surface.freshness.updatedBy}
       </div>

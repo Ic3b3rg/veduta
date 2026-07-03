@@ -132,6 +132,9 @@ importers:
         specifier: ^3.25.0
         version: 3.25.76
     devDependencies:
+      '@total-typescript/shoehorn':
+        specifier: ^0.1.2
+        version: 0.1.2
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.17
