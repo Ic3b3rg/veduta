@@ -38,3 +38,4 @@ Parallelizable: (006,007,008) after 002; (010,011) after 003; (019,020) after 00
 | 020 | [OpenClaw/Hermes importer](020-importer.md)             | Adoption     |
 | 021 | [Advanced memory](021-advanced-memory.md)               | Polish       |
 | 022 | [Emergent templates](022-emergent-templates.md)         | Polish       |
+| 023 | [Local VPS profile](023-local-vps-profile.md)           | Core         |

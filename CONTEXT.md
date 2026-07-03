@@ -28,6 +28,10 @@ _Avoid_: blueprint, predefined widget
 
 ### Execution
 
+**Local VPS profile**:
+A local execution profile that exercises the same product flows as the VPS profile where possible: authentication, BYOK, persistent configuration, Gateway, PWA, Spaces, Surfaces, and real or mock model providers. User-visible flow parity is the invariant; local orchestration may differ, including Docker Compose. It replaces external VPS-only dependencies with explicit local substitutes.
+_Avoid_: dev mode, staging (unless it is a remote shared environment), production mode
+
 **Agent**:
 The system's single main LLM loop. One identity (SOUL); it switches context between Spaces, not personality.
 _Avoid_: orchestrator, firstmate, main assistant
