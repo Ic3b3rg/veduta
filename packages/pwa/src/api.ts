@@ -6,9 +6,11 @@ import {
   SurfaceSchema,
   WebAuthnOptionsEnvelopeSchema,
   applySurfacePatchEvent,
+  type AtomNode,
   type AuthSession,
   type AuthStatus,
   type GatewayServerMessage,
+  type JsonObject,
   type JsonValue,
   type Surface,
   type SurfacePatchEvent,
@@ -30,7 +32,12 @@ const SpacesResponseSchema = SurfaceSnapshotSchema
 export type SpaceWithSurfaces = z.infer<typeof SpacesResponseSchema>['spaces'][number]
 export type SpacesSnapshot = z.infer<typeof SpacesResponseSchema>
 
-const ActionResponseSchema = z.object({ surface: SurfaceSchema })
+const SurfaceActionResponseSchema = z.union([
+  z.object({ surface: SurfaceSchema }),
+  z.object({ turn: z.object({ id: z.string().min(1) }).passthrough() }),
+])
+
+export type SurfaceActionResponse = z.infer<typeof SurfaceActionResponseSchema>
 
 export interface GatewayConnection {
   close(): void
@@ -68,18 +75,55 @@ export async function invokeFastAction(
   token?: string,
   idempotencyKey?: string,
 ): Promise<Surface> {
+  const result = await invokeSurfaceAction(
+    surfaceId,
+    nodeId,
+    name,
+    { value },
+    token,
+    idempotencyKey,
+  )
+  if ('surface' in result) return result.surface
+  throw new Error(`fast action "${name}" did not return a Surface`)
+}
+
+export async function invokeSurfaceAction(
+  surfaceId: string,
+  nodeId: string,
+  name: string,
+  payload?: JsonObject,
+  token?: string,
+  idempotencyKey?: string,
+): Promise<SurfaceActionResponse> {
   const res = await fetch(`/api/surfaces/${surfaceId}/actions`, {
     method: 'POST',
     headers: { ...authHeaders(token), 'content-type': 'application/json' },
     body: JSON.stringify({
       nodeId,
       name,
-      payload: { value },
+      ...(payload === undefined ? {} : { payload }),
       ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
     }),
   })
-  if (!res.ok) throw new Error(`fast action failed: ${res.status}`)
-  return ActionResponseSchema.parse(await res.json()).surface
+  if (!res.ok) throw new Error(`Surface action failed: ${res.status}`)
+  return SurfaceActionResponseSchema.parse(await res.json())
+}
+
+export function optimisticFastSurface(
+  surface: Surface,
+  node: AtomNode,
+  actionName: string,
+  value: JsonValue,
+  updatedAt = new Date().toISOString(),
+): Surface {
+  const action = node.actions?.find((candidate) => candidate.name === actionName)
+  if (action?.path !== 'fast' || action.stateKey === undefined) return surface
+
+  return SurfaceSchema.parse({
+    ...surface,
+    state: { ...surface.state, [action.stateKey]: value },
+    freshness: { updatedAt, updatedBy: 'user' },
+  })
 }
 
 export function fastActionIdempotencyKey(input: {

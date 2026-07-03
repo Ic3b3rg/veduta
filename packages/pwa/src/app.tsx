@@ -14,7 +14,9 @@ import {
   fetchSpaces,
   freshnessLabel,
   invokeFastAction,
+  invokeSurfaceAction,
   loginWithPasskey,
+  optimisticFastSurface,
   patchSurface,
   registerPasskey,
   type GatewayConnection,
@@ -217,6 +219,11 @@ function SurfaceCard({
 }) {
   const dispatch = (node: AtomNode, actionName: string, value?: JsonValue) => {
     const action = node.actions?.find((a) => a.name === actionName)
+    if (!action) {
+      onError(`"${surface.title}" update failed: undeclared action "${actionName}"`)
+      return
+    }
+
     if (action?.path === 'fast') {
       if (value === undefined) {
         onError(
@@ -232,17 +239,26 @@ function SurfaceCard({
         actionName,
         value,
       })
+      onPatched(optimisticFastSurface(surface, node, actionName, value))
       invokeFastAction(surface.id, node.id, actionName, value, token, idempotencyKey)
         .then(onPatched)
-        .catch((e: Error) => onError(`"${surface.title}" update failed: ${e.message}`))
+        .catch((e: Error) => {
+          onPatched(surface)
+          onError(`"${surface.title}" update failed: ${e.message}`)
+        })
+      return
     }
-    // Agent path dispatch is wired after the runner through the Gateway and Surface engine slices.
+
+    const payload = value === undefined ? action.payload : { ...action.payload, value }
+    invokeSurfaceAction(surface.id, node.id, actionName, payload, token).catch((e: Error) =>
+      onError(`"${surface.title}" action failed: ${e.message}`),
+    )
   }
 
   return (
-    <article style={{ border: '1px solid #e2e2e2', borderRadius: 12, padding: 16 }}>
+    <article style={{ display: 'grid', gap: 8 }}>
       {renderNode(surface.tree, { state: surface.state, dispatch })}
-      <div style={{ marginTop: 8, fontSize: 11, color: '#aaa' }}>
+      <div style={{ fontSize: 11, color: '#777' }}>
         updated {freshnessLabel(surface.freshness.updatedAt)} by {surface.freshness.updatedBy}
       </div>
     </article>
