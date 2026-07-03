@@ -1,53 +1,114 @@
-import { renderNode } from '@veduta/catalog'
-import {
-  type AtomNode,
-  type ChatMessage,
-  type JsonValue,
-  type Surface,
-  type SurfacePatchEvent,
-} from '@veduta/protocol'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ApprovalCard, ChatMessage, Surface, SurfacePatchEvent } from '@veduta/protocol'
+import { applySurfacePatchEvent } from '@veduta/protocol'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ApprovalCards } from './approval-cards.tsx'
 import {
   connectGateway,
-  fastActionIdempotencyKey,
   fetchAuthStatus,
   fetchSpaces,
-  freshnessLabel,
   invokeFastAction,
-  invokeSurfaceAction,
-  loginWithPasskey,
-  optimisticFastSurface,
-  patchSurface,
-  registerPasskey,
   type GatewayConnection,
   type SpaceWithSurfaces,
 } from './api.ts'
-
-const SURFACE_CURSOR_KEY = 'veduta.surfaceCursor'
-const AUTH_TOKEN_KEY = 'veduta.authToken'
+import { AuthGate } from './auth-gate.tsx'
+import { ChatBar } from './chat-bar.tsx'
+import {
+  cachedSnapshot,
+  mergeSurfaceOrder,
+  moveSurfaceId,
+  parseSurfaceDeepLink,
+  saveSnapshot,
+  surfaceDeepLink,
+} from './home-state.ts'
+import { InstallButton } from './install-button.tsx'
+import {
+  AUTH_TOKEN_KEY,
+  CHAT_HISTORY_LIMIT,
+  HOME_CACHE_KEY,
+  INSTALL_DISMISSED_KEY,
+  isStandalone,
+  persistChatHistory,
+  persistQueuedChat,
+  persistQueuedFastActions,
+  persistSurfaceOrders,
+  queuedChatEntry,
+  readChatHistory,
+  readQueuedChat,
+  readQueuedFastActions,
+  readSurfaceOrders,
+  type BrowserInstallPromptEvent,
+  type QueuedFastAction,
+} from './pwa-storage.ts'
+import { SpaceSection } from './space-section.tsx'
+import './app.css'
 
 export function App() {
-  const [spaces, setSpaces] = useState<SpaceWithSurfaces[]>([])
+  const [cachedHome] = useState(() => cachedSnapshot(localStorage, HOME_CACHE_KEY))
+  const [spaces, setSpaces] = useState<SpaceWithSurfaces[]>(() => cachedHome?.spaces ?? [])
   const [error, setError] = useState<string | null>(null)
-  const [chatEntries, setChatEntries] = useState<ChatMessage[]>([])
+  const [chatEntries, setChatEntries] = useState<ChatMessage[]>(readChatHistory)
+  const [approvalCards, setApprovalCards] = useState<ApprovalCard[]>([])
+  const [queuedChat, setQueuedChat] = useState(readQueuedChat)
+  const [queuedFastActions, setQueuedFastActions] = useState(readQueuedFastActions)
+  const [surfaceOrders, setSurfaceOrders] = useState<Record<string, string[]>>(readSurfaceOrders)
   const [authToken, setAuthToken] = useState<string | undefined>(
     () => localStorage.getItem(AUTH_TOKEN_KEY) ?? undefined,
   )
   const [authMode, setAuthMode] = useState<'dev' | 'production' | undefined>(undefined)
   const [bootstrapRequired, setBootstrapRequired] = useState(false)
   const [passkeyRegistered, setPasskeyRegistered] = useState(false)
+  const [gatewayOnline, setGatewayOnline] = useState(false)
+  const [installPrompt, setInstallPrompt] = useState<BrowserInstallPromptEvent | null>(null)
+  const [showInstallGuide, setShowInstallGuide] = useState(
+    () => !isStandalone() && localStorage.getItem(INSTALL_DISMISSED_KEY) !== '1',
+  )
+  const [focusedSpaceId, setFocusedSpaceId] = useState<string | undefined>(undefined)
+  const [focusedSurfaceId, setFocusedSurfaceId] = useState<string | undefined>(
+    () => parseSurfaceDeepLink(location.pathname)?.surfaceId,
+  )
+  const [focusChatToken, setFocusChatToken] = useState(0)
   const gatewayRef = useRef<GatewayConnection | null>(null)
-  const spacesRef = useRef<SpaceWithSurfaces[]>([])
-  const surfaceCursorRef = useRef(readStoredCursor())
+  const spacesRef = useRef<SpaceWithSurfaces[]>(cachedHome?.spaces ?? [])
+  const surfaceCursorRef = useRef(cachedHome?.surfaceCursor ?? 0)
 
-  const updateCursor = useCallback((cursor: number) => {
-    surfaceCursorRef.current = cursor
-    localStorage.setItem(SURFACE_CURSOR_KEY, String(cursor))
+  const replaceSpaces = useCallback(
+    (next: SpaceWithSurfaces[], cursor = surfaceCursorRef.current) => {
+      spacesRef.current = next
+      surfaceCursorRef.current = cursor
+      setSpaces(next)
+      saveSnapshot(localStorage, HOME_CACHE_KEY, { spaces: next, surfaceCursor: cursor })
+    },
+    [],
+  )
+
+  const appendChatEntry = useCallback((entry: ChatMessage) => {
+    setChatEntries((prev) => [...prev, entry].slice(-CHAT_HISTORY_LIMIT))
   }, [])
 
-  const replaceSpaces = useCallback((next: SpaceWithSurfaces[]) => {
-    spacesRef.current = next
-    setSpaces(next)
+  // localStorage writes live in effects so setState updaters stay pure.
+  useEffect(() => persistChatHistory(chatEntries), [chatEntries])
+  useEffect(() => persistQueuedChat(queuedChat), [queuedChat])
+  useEffect(() => persistQueuedFastActions(queuedFastActions), [queuedFastActions])
+  useEffect(() => persistSurfaceOrders(surfaceOrders), [surfaceOrders])
+
+  const replaceSurface = useCallback(
+    (updated: Surface) => {
+      replaceSpaces(
+        spacesRef.current.map((space) => ({
+          ...space,
+          surfaces: space.surfaces.map((surface) =>
+            surface.id === updated.id ? updated : surface,
+          ),
+        })),
+      )
+    },
+    [replaceSpaces],
+  )
+
+  const queueFastAction = useCallback((action: QueuedFastAction) => {
+    setQueuedFastActions((prev) =>
+      prev.some((queued) => queued.id === action.id) ? prev : [...prev, action],
+    )
   }, [])
 
   const applySurfaceEvent = useCallback(
@@ -59,7 +120,7 @@ export function App() {
           surfaces: space.surfaces.map((surface) => {
             if (surface.id !== event.patch.surfaceId) return surface
             applied = true
-            return patchSurface(surface, event)
+            return applySurfacePatchEvent(surface, event)
           }),
         }))
 
@@ -68,22 +129,35 @@ export function App() {
           return
         }
 
-        replaceSpaces(next)
-        updateCursor(event.cursor)
+        replaceSpaces(next, event.cursor)
       } catch (e) {
         setError(e instanceof Error ? e.message : 'failed to apply Surface patch')
       }
     },
-    [replaceSpaces, updateCursor],
+    [replaceSpaces],
   )
+
+  useEffect(() => {
+    const onBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault()
+      setInstallPrompt(event as BrowserInstallPromptEvent)
+      setShowInstallGuide(true)
+    }
+
+    window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt)
+    return () => window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt)
+  }, [])
 
   useEffect(() => {
     let closedByApp = false
     let reconnectTimer: number | undefined
+    let reconnectDelay = 1000
 
     const scheduleReconnect = () => {
+      setGatewayOnline(false)
       if (closedByApp) return
-      reconnectTimer = window.setTimeout(() => startGateway(), 1000)
+      reconnectTimer = window.setTimeout(() => startGateway(), reconnectDelay)
+      reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
     }
 
     const startGateway = () => {
@@ -91,20 +165,23 @@ export function App() {
         token: authToken,
         surfaceCursor: surfaceCursorRef.current,
         onHello() {
-          // The replay cursor advances only after each patch is applied.
+          reconnectDelay = 1000
+          setGatewayOnline(true)
+          setError(null)
         },
-        onSurfacePatch(event) {
-          applySurfaceEvent(event)
-        },
+        onSurfacePatch: applySurfaceEvent,
         onChatMessage(message) {
-          setChatEntries((prev) => [...prev, message.message])
+          appendChatEntry(message.message)
+        },
+        onApprovalCard(message) {
+          setApprovalCards((prev) =>
+            prev.some((card) => card.id === message.card.id) ? prev : [...prev, message.card],
+          )
         },
         onPresence() {
-          // Presence is part of the Gateway protocol; the Home UI for it arrives with device pairing.
+          // Presence is part of the Gateway protocol; device detail lives in the linked devices Surface.
         },
-        onError(message) {
-          setError(message)
-        },
+        onError: setError,
         onClose: scheduleReconnect,
       })
     }
@@ -119,14 +196,18 @@ export function App() {
       })
       .then((snapshot) => {
         if (!snapshot) return
-        replaceSpaces(snapshot.spaces)
-        updateCursor(snapshot.surfaceCursor)
+        replaceSpaces(snapshot.spaces, snapshot.surfaceCursor)
         startGateway()
       })
       .catch((e: Error) => {
-        localStorage.removeItem(AUTH_TOKEN_KEY)
-        setAuthToken(undefined)
-        setError(e.message)
+        setGatewayOnline(false)
+        if (spacesRef.current.length === 0) {
+          localStorage.removeItem(AUTH_TOKEN_KEY)
+          setAuthToken(undefined)
+        }
+        setError(
+          spacesRef.current.length > 0 ? `Offline: showing cached Home. ${e.message}` : e.message,
+        )
       })
 
     return () => {
@@ -134,15 +215,101 @@ export function App() {
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
       gatewayRef.current?.close()
     }
-  }, [applySurfaceEvent, authToken, replaceSpaces, updateCursor])
+  }, [applySurfaceEvent, appendChatEntry, authToken, replaceSpaces])
 
-  const replaceSurface = (updated: Surface) => {
-    replaceSpaces(
-      spacesRef.current.map((space) => ({
-        ...space,
-        surfaces: space.surfaces.map((s) => (s.id === updated.id ? updated : s)),
-      })),
+  useEffect(() => {
+    if (!gatewayOnline || queuedChat.length === 0) return
+    const remaining = queuedChat.filter(
+      (entry) => !gatewayRef.current?.sendChat(entry.text, entry.spaceId),
     )
+    if (remaining.length !== queuedChat.length) setQueuedChat(remaining)
+  }, [gatewayOnline, queuedChat])
+
+  useEffect(() => {
+    if (!gatewayOnline || queuedFastActions.length === 0) return
+    let cancelled = false
+
+    const flush = async () => {
+      const remaining: QueuedFastAction[] = []
+      for (const action of queuedFastActions) {
+        try {
+          const updated = await invokeFastAction(
+            action.surfaceId,
+            action.nodeId,
+            action.actionName,
+            action.value,
+            authToken,
+            action.idempotencyKey,
+          )
+          if (!cancelled) replaceSurface(updated)
+        } catch {
+          remaining.push(action)
+        }
+      }
+      if (cancelled) return
+      const attempted = new Set(queuedFastActions.map((action) => action.id))
+      const failed = new Set(remaining.map((action) => action.id))
+      // Filter against current state: actions queued while this flush was
+      // awaiting the network must survive it. Returning prev unchanged when
+      // every attempt failed keeps this effect from re-running immediately.
+      setQueuedFastActions((prev) => {
+        const next = prev.filter((action) => !attempted.has(action.id) || failed.has(action.id))
+        return next.length === prev.length ? prev : next
+      })
+    }
+
+    void flush()
+    return () => {
+      cancelled = true
+    }
+  }, [authToken, gatewayOnline, queuedFastActions, replaceSurface])
+
+  const spacesLoaded = spaces.length > 0
+  useEffect(() => {
+    const applyLocation = () => {
+      const link = parseSurfaceDeepLink(location.pathname)
+      const space = link
+        ? spacesRef.current.find((candidate) => candidate.slug === link.spaceSlug)
+        : undefined
+      if (!link || !space) {
+        // Back to a non-Surface URL (e.g. "/") returns chat to global scope.
+        setFocusedSpaceId(undefined)
+        setFocusedSurfaceId(undefined)
+        return
+      }
+      setFocusedSpaceId(space.id)
+      setFocusedSurfaceId(link.surfaceId)
+      setFocusChatToken((value) => value + 1)
+    }
+
+    window.addEventListener('popstate', applyLocation)
+    if (spacesLoaded) applyLocation()
+    return () => window.removeEventListener('popstate', applyLocation)
+  }, [spacesLoaded])
+
+  // Undefined until the user (or a deep link) picks a Space: chat stays
+  // global instead of silently pre-routing to the first Space.
+  const focusedSpace = useMemo(
+    () => spaces.find((space) => space.id === focusedSpaceId),
+    [focusedSpaceId, spaces],
+  )
+
+  const focusSpace = (space: SpaceWithSurfaces, surface?: Surface) => {
+    setFocusedSpaceId(space.id)
+    if (surface) {
+      setFocusedSurfaceId(surface.id)
+      history.pushState(null, '', surfaceDeepLink(space.slug, surface.id))
+    }
+    setFocusChatToken((value) => value + 1)
+  }
+
+  const moveSurface = (space: SpaceWithSurfaces, surfaceId: string, offset: -1 | 1) => {
+    const ids = mergeSurfaceOrder(
+      space.surfaces.map((surface) => surface.id),
+      surfaceOrders[space.id] ?? [],
+    )
+    const nextOrder = moveSurfaceId(ids, surfaceId, offset)
+    setSurfaceOrders({ ...surfaceOrders, [space.id]: nextOrder })
   }
 
   if (authMode === 'production' && !authToken) {
@@ -162,256 +329,93 @@ export function App() {
   }
 
   return (
-    <div
-      style={{
-        fontFamily: 'system-ui, sans-serif',
-        maxWidth: 720,
-        margin: '0 auto',
-        padding: 16,
-        paddingBottom: 96,
-      }}
-    >
-      <header style={{ marginBottom: 16 }}>
-        <h1 style={{ fontSize: 20, margin: 0 }}>Veduta</h1>
-        <small style={{ color: '#777' }}>dev profile — mock provider, seed data</small>
+    <div className="app-shell">
+      <header className="topbar">
+        <div>
+          <h1>Veduta</h1>
+          <p>{authMode === 'production' ? 'Passkey session' : 'Local VPS profile'}</p>
+        </div>
+        <div className="topbar-actions" aria-live="polite">
+          <span className={gatewayOnline ? 'status-pill online' : 'status-pill'}>
+            {gatewayOnline ? 'Live' : 'Offline-ready'}
+          </span>
+          {queuedChat.length + queuedFastActions.length > 0 && (
+            <span className="status-pill pending">
+              {queuedChat.length + queuedFastActions.length} queued
+            </span>
+          )}
+          {showInstallGuide && (
+            <InstallButton
+              prompt={installPrompt}
+              onDone={() => {
+                localStorage.setItem(INSTALL_DISMISSED_KEY, '1')
+                setShowInstallGuide(false)
+              }}
+            />
+          )}
+        </div>
       </header>
-      {error && <p style={{ color: '#c00' }}>{error}</p>}
-      {spaces.map((space) => (
-        <section key={space.id} style={{ marginBottom: 24 }}>
-          <h2 style={{ fontSize: 14, textTransform: 'uppercase', color: '#999', letterSpacing: 1 }}>
-            {space.name}
-          </h2>
-          <div style={{ display: 'grid', gap: 12 }}>
-            {space.surfaces.map((surface) => (
-              <SurfaceCard
-                key={surface.id}
-                surface={surface}
-                token={authToken}
-                onPatched={replaceSurface}
-                onError={setError}
-              />
-            ))}
-          </div>
-        </section>
-      ))}
+
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+
+      <div className="home-layout">
+        <aside className="space-rail" aria-label="Spaces">
+          {spaces.map((space) => (
+            <button
+              key={space.id}
+              type="button"
+              className={space.id === focusedSpace?.id ? 'space-button selected' : 'space-button'}
+              onClick={() => focusSpace(space)}
+            >
+              <span>{space.name}</span>
+              <span className="space-badge">{space.surfaces.length}</span>
+            </button>
+          ))}
+        </aside>
+
+        <main className="home" aria-label="Home">
+          {approvalCards.length > 0 && (
+            <ApprovalCards cards={approvalCards} onDismiss={setApprovalCards} />
+          )}
+
+          {spaces.map((space) => (
+            <SpaceSection
+              key={space.id}
+              space={space}
+              authToken={authToken}
+              focused={space.id === focusedSpace?.id}
+              focusedSurfaceId={focusedSurfaceId}
+              surfaceOrder={surfaceOrders[space.id] ?? []}
+              onFocus={focusSpace}
+              onMoveSurface={moveSurface}
+              onPatched={replaceSurface}
+              onQueueFastAction={queueFastAction}
+              onError={setError}
+            />
+          ))}
+        </main>
+      </div>
+
       <ChatBar
         entries={chatEntries}
+        approvalCards={approvalCards}
+        focusedSpace={focusedSpace}
+        focusToken={focusChatToken}
+        onDismissApprovalCards={setApprovalCards}
         onSend={(message) => {
-          if (!gatewayRef.current?.sendChat(message)) return false
-          setChatEntries((prev) => [...prev, { role: 'user', text: message }])
+          const spaceId = focusedSpace?.id
+          const sent = gatewayRef.current?.sendChat(message, spaceId) ?? false
+          appendChatEntry({ role: 'user', text: message })
+          if (!sent) {
+            setQueuedChat((prev) => [...prev, queuedChatEntry(message, spaceId)])
+          }
           return true
         }}
       />
     </div>
   )
-}
-
-function SurfaceCard({
-  surface,
-  token,
-  onPatched,
-  onError,
-}: {
-  surface: Surface
-  token?: string | undefined
-  onPatched: (s: Surface) => void
-  onError: (message: string) => void
-}) {
-  const dispatch = (node: AtomNode, actionName: string, value?: JsonValue) => {
-    const action = node.actions?.find((a) => a.name === actionName)
-    if (!action) {
-      onError(`"${surface.title}" update failed: undeclared action "${actionName}"`)
-      return
-    }
-
-    if (action?.path === 'fast') {
-      if (value === undefined) {
-        onError(
-          `"${surface.title}" update failed: fast action "${actionName}" did not provide a value`,
-        )
-        return
-      }
-      // Fast path: deterministic mutation on the daemon, no LLM (ADR-0003).
-      const idempotencyKey = fastActionIdempotencyKey({
-        surfaceId: surface.id,
-        surfaceUpdatedAt: surface.freshness.updatedAt,
-        nodeId: node.id,
-        actionName,
-        value,
-      })
-      onPatched(optimisticFastSurface(surface, node, actionName, value))
-      invokeFastAction(surface.id, node.id, actionName, value, token, idempotencyKey)
-        .then(onPatched)
-        .catch((e: Error) => {
-          onPatched(surface)
-          onError(`"${surface.title}" update failed: ${e.message}`)
-        })
-      return
-    }
-
-    const payload = value === undefined ? action.payload : { ...action.payload, value }
-    invokeSurfaceAction(surface.id, node.id, actionName, payload, token).catch((e: Error) =>
-      onError(`"${surface.title}" action failed: ${e.message}`),
-    )
-  }
-
-  return (
-    <article style={{ display: 'grid', gap: 8 }}>
-      {renderNode(surface.tree, { state: surface.state, dispatch })}
-      <div style={{ fontSize: 11, color: '#777' }}>
-        updated {freshnessLabel(surface.freshness.updatedAt)} by {surface.freshness.updatedBy}
-      </div>
-    </article>
-  )
-}
-
-function AuthGate({
-  bootstrapRequired,
-  passkeyRegistered,
-  error,
-  onAuthenticated,
-  onError,
-}: {
-  bootstrapRequired: boolean
-  passkeyRegistered: boolean
-  error: string | null
-  onAuthenticated: (token: string) => void
-  onError: (message: string) => void
-}) {
-  const [oneTimeCode, setOneTimeCode] = useState(readSetupCode())
-  const [deviceName, setDeviceName] = useState(defaultDeviceName())
-  const [busy, setBusy] = useState(false)
-
-  const run = async (fn: () => Promise<{ token: string }>) => {
-    setBusy(true)
-    try {
-      const session = await fn()
-      onAuthenticated(session.token)
-    } catch (e) {
-      onError(e instanceof Error ? e.message : 'passkey authentication failed')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <main
-      style={{
-        fontFamily: 'system-ui, sans-serif',
-        maxWidth: 420,
-        margin: '10vh auto 0',
-        padding: 16,
-      }}
-    >
-      <h1 style={{ fontSize: 20, margin: 0 }}>Veduta</h1>
-      {error && <p style={{ color: '#c00' }}>{error}</p>}
-      <div style={{ display: 'grid', gap: 10, marginTop: 16 }}>
-        <label htmlFor="device-name" style={{ fontSize: 13, color: '#555' }}>
-          Device name
-        </label>
-        <input
-          id="device-name"
-          style={{ padding: 8, borderRadius: 8, border: '1px solid #ccc' }}
-          value={deviceName}
-          onChange={(e) => setDeviceName(e.target.value)}
-        />
-        {bootstrapRequired && (
-          <>
-            <label htmlFor="one-time-code" style={{ fontSize: 13, color: '#555' }}>
-              One-time code
-            </label>
-            <input
-              id="one-time-code"
-              style={{ padding: 8, borderRadius: 8, border: '1px solid #ccc' }}
-              value={oneTimeCode}
-              onChange={(e) => setOneTimeCode(e.target.value)}
-            />
-          </>
-        )}
-        {bootstrapRequired && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              run(() => registerPasskey({ oneTimeCode, deviceName: deviceName.trim() }))
-            }
-          >
-            Register passkey
-          </button>
-        )}
-        {passkeyRegistered && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => run(() => loginWithPasskey(deviceName.trim()))}
-          >
-            Sign in with passkey
-          </button>
-        )}
-      </div>
-    </main>
-  )
-}
-
-function ChatBar({
-  entries,
-  onSend,
-}: {
-  entries: ChatMessage[]
-  onSend: (text: string) => boolean
-}) {
-  const [text, setText] = useState('')
-
-  const send = () => {
-    const trimmed = text.trim()
-    if (!trimmed || !onSend(trimmed)) return
-    setText('')
-  }
-
-  return (
-    <footer
-      style={{
-        position: 'fixed',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        background: '#fff',
-        borderTop: '1px solid #e2e2e2',
-        padding: 12,
-      }}
-    >
-      <div style={{ maxWidth: 720, margin: '0 auto' }}>
-        {entries.slice(-3).map((entry, i) => (
-          <div key={i} style={{ fontSize: 13, color: entry.role === 'user' ? '#333' : '#4a7' }}>
-            <strong>{entry.role === 'user' ? 'you' : 'veduta'}:</strong> {entry.text}
-          </div>
-        ))}
-        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-          <input
-            style={{ flex: 1, padding: 8, borderRadius: 8, border: '1px solid #ccc' }}
-            placeholder="Talk to Veduta…"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && send()}
-          />
-          <button type="button" onClick={send}>
-            Send
-          </button>
-        </div>
-      </div>
-    </footer>
-  )
-}
-
-function readStoredCursor(): number {
-  const stored = Number(localStorage.getItem(SURFACE_CURSOR_KEY))
-  return Number.isInteger(stored) && stored >= 0 ? stored : 0
-}
-
-function readSetupCode(): string {
-  return new URLSearchParams(location.search).get('code') ?? ''
-}
-
-function defaultDeviceName(): string {
-  return navigator.userAgent.includes('Mobile') ? 'Phone' : 'Computer'
 }

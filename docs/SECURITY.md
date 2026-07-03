@@ -56,6 +56,7 @@ API keys and OAuth tokens live in an **encrypted secrets vault** (key derived at
 - Automatic TLS (ACME); HSTS; no port other than 443 exposed.
 - **Passkey/WebAuthn only** (no passwords), device pairing via QR with an expiring one-time code; scoped, per-device revocable session tokens; a "linked devices" surface with revocation.
 - Per-message authenticated WebSocket, origin check for the PWA.
+- PWA client storage: the session token and the cached Home snapshot live in `localStorage`, readable by any script that achieves XSS. Accepted for a self-hosted single-user app because Surfaces are declarative (no generated HTML, no third-party scripts); revisit if the PWA ever embeds external content.
 - Atomic, encrypted, restorable backups (Hermes pattern: SQLite safe-copy, pruning).
 - Signed updates; the installer verifies checksums.
 

@@ -5,7 +5,6 @@ import {
   SurfaceSnapshotSchema,
   SurfaceSchema,
   WebAuthnOptionsEnvelopeSchema,
-  applySurfacePatchEvent,
   type AtomNode,
   type AuthSession,
   type AuthStatus,
@@ -41,7 +40,7 @@ export type SurfaceActionResponse = z.infer<typeof SurfaceActionResponseSchema>
 
 export interface GatewayConnection {
   close(): void
-  sendChat(text: string): boolean
+  sendChat(text: string, spaceId?: string): boolean
 }
 
 export interface GatewayHandlers {
@@ -50,6 +49,7 @@ export interface GatewayHandlers {
   onHello(cursor: number): void
   onSurfacePatch(event: SurfacePatchEvent): void
   onChatMessage(message: Extract<GatewayServerMessage, { type: 'chat.message' }>): void
+  onApprovalCard(message: Extract<GatewayServerMessage, { type: 'approval.card' }>): void
   onPresence(message: Extract<GatewayServerMessage, { type: 'presence.update' }>): void
   onError(message: string): void
   onClose(): void
@@ -175,6 +175,11 @@ export function connectGateway(handlers: GatewayHandlers): GatewayConnection {
       return
     }
 
+    if (message.type === 'approval.card') {
+      handlers.onApprovalCard(message)
+      return
+    }
+
     if (message.type === 'presence.update') {
       handlers.onPresence(message)
       return
@@ -189,16 +194,12 @@ export function connectGateway(handlers: GatewayHandlers): GatewayConnection {
     close() {
       ws.close()
     },
-    sendChat(text) {
+    sendChat(text, spaceId) {
       if (ws.readyState !== WebSocket.OPEN) return false
-      ws.send(JSON.stringify({ type: 'chat.send', text }))
+      ws.send(JSON.stringify({ type: 'chat.send', text, ...(spaceId ? { spaceId } : {}) }))
       return true
     },
   }
-}
-
-export function patchSurface(surface: Surface, event: SurfacePatchEvent): Surface {
-  return applySurfacePatchEvent(surface, event)
 }
 
 export async function registerPasskey(input: {

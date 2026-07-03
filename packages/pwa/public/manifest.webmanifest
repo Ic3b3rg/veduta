@@ -1,0 +1,32 @@
+{
+  "id": "/",
+  "name": "Veduta",
+  "short_name": "Veduta",
+  "description": "Home-first personal agent with persistent Spaces and Surfaces.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f6f8",
+  "theme_color": "#246b58",
+  "icons": [
+    {
+      "src": "/icons/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Open Home",
+      "short_name": "Home",
+      "url": "/"
+    }
+  ]
+}
