@@ -66,14 +66,36 @@ export async function invokeFastAction(
   name: string,
   value: JsonValue,
   token?: string,
+  idempotencyKey?: string,
 ): Promise<Surface> {
   const res = await fetch(`/api/surfaces/${surfaceId}/actions`, {
     method: 'POST',
     headers: { ...authHeaders(token), 'content-type': 'application/json' },
-    body: JSON.stringify({ nodeId, name, payload: { value } }),
+    body: JSON.stringify({
+      nodeId,
+      name,
+      payload: { value },
+      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+    }),
   })
   if (!res.ok) throw new Error(`fast action failed: ${res.status}`)
   return ActionResponseSchema.parse(await res.json()).surface
+}
+
+export function fastActionIdempotencyKey(input: {
+  surfaceId: string
+  surfaceUpdatedAt: string
+  nodeId: string
+  actionName: string
+  value: JsonValue
+}): string {
+  const raw = JSON.stringify(input)
+  let hash = 0x811c9dc5
+  for (let index = 0; index < raw.length; index += 1) {
+    hash ^= raw.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return `fast-${(hash >>> 0).toString(36)}-${raw.length.toString(36)}`
 }
 
 export function connectGateway(handlers: GatewayHandlers): GatewayConnection {

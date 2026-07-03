@@ -1,7 +1,9 @@
 import {
   GatewayServerMessageSchema,
+  SurfaceSchema,
   type GatewayClientMessage,
   type GatewayServerMessage,
+  type Surface,
 } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import { GatewayHub, type GatewayAuth, type GatewaySocket } from './gateway.ts'
@@ -82,6 +84,35 @@ describe('GatewayHub Surface sync', () => {
     expect(accepted.closed).toBe(true)
     expect(accepted.sent.at(-1)).toMatchObject({ type: 'error', error: 'Gateway session revoked' })
   })
+
+  it('queues an Agent turn for declared agent-path actions without broadcasting a patch', () => {
+    const store = new Store()
+    store.createSurface(agentActionSurface(), 'agent')
+    const gateway = new GatewayHub(store)
+    const socket = new FakeGatewaySocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    socket.receive({
+      type: 'surface.action',
+      surfaceId: 'srf-agent-action',
+      invocation: {
+        nodeId: 'regenerate',
+        name: 'regenerate_plan',
+        payload: { reason: 'stale' },
+      },
+    })
+
+    expect(store.agentTurns().at(-1)).toMatchObject({
+      surfaceId: 'srf-agent-action',
+      atomId: 'regenerate',
+      actionName: 'regenerate_plan',
+      payload: { reason: 'stale' },
+    })
+    expect(
+      socket.surfacePatches().filter((frame) => frame.event.patch.surfaceId === 'srf-agent-action'),
+    ).toHaveLength(0)
+  })
 })
 
 class FakeGatewaySocket implements GatewaySocket {
@@ -151,4 +182,26 @@ class FakeGatewayAuth implements GatewayAuth {
   revokeDevice(deviceId: string): void {
     for (const listener of this.listeners) listener({ deviceId })
   }
+}
+
+function agentActionSurface(): Surface {
+  return SurfaceSchema.parse({
+    id: 'srf-agent-action',
+    spaceId: 'spc-health',
+    title: 'Agent action',
+    tree: {
+      id: 'root',
+      type: 'Box',
+      children: [
+        {
+          id: 'regenerate',
+          type: 'Button',
+          props: { label: 'Regenerate' },
+          actions: [{ name: 'regenerate_plan', path: 'agent' }],
+        },
+      ],
+    },
+    state: {},
+    freshness: { updatedAt: '2026-07-03T12:00:00.000Z', updatedBy: 'seed' },
+  })
 }

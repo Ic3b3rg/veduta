@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { freshnessLabel, patchSurface } from './api.ts'
+import { fastActionIdempotencyKey, freshnessLabel, patchSurface } from './api.ts'
 
 describe('freshnessLabel', () => {
   const now = Date.parse('2026-07-03T12:00:00.000Z')
@@ -55,5 +55,26 @@ describe('patchSurface', () => {
 
     expect(patched.state['milk']).toBe(true)
     expect(patched.freshness.updatedBy).toBe('user')
+  })
+})
+
+describe('fastActionIdempotencyKey', () => {
+  it('is stable for the same Surface version and changes after freshness advances', () => {
+    const input = {
+      surfaceId: 'srf-groceries',
+      surfaceUpdatedAt: '2026-07-03T10:00:00.000Z',
+      nodeId: 'milk',
+      actionName: 'toggle',
+      value: true,
+    }
+
+    expect(fastActionIdempotencyKey(input)).toBe(fastActionIdempotencyKey(input))
+    expect(
+      fastActionIdempotencyKey({
+        ...input,
+        surfaceUpdatedAt: '2026-07-03T10:01:00.000Z',
+      }),
+    ).not.toBe(fastActionIdempotencyKey(input))
+    expect(fastActionIdempotencyKey(input).length).toBeLessThan(128)
   })
 })

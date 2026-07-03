@@ -9,6 +9,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   connectGateway,
+  fastActionIdempotencyKey,
   fetchAuthStatus,
   fetchSpaces,
   freshnessLabel,
@@ -224,7 +225,14 @@ function SurfaceCard({
         return
       }
       // Fast path: deterministic mutation on the daemon, no LLM (ADR-0003).
-      invokeFastAction(surface.id, node.id, actionName, value, token)
+      const idempotencyKey = fastActionIdempotencyKey({
+        surfaceId: surface.id,
+        surfaceUpdatedAt: surface.freshness.updatedAt,
+        nodeId: node.id,
+        actionName,
+        value,
+      })
+      invokeFastAction(surface.id, node.id, actionName, value, token, idempotencyKey)
         .then(onPatched)
         .catch((e: Error) => onError(`"${surface.title}" update failed: ${e.message}`))
     }

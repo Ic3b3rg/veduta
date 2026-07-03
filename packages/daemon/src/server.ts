@@ -3,13 +3,13 @@ import websocket from '@fastify/websocket'
 import {
   AuthSessionSchema,
   AuthStatusSchema,
+  ActionInvocationSchema,
   OneTimeCodeSchema,
   PairingCodeSchema,
   WebAuthnOptionsEnvelopeSchema,
 } from '@veduta/protocol'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { fileURLToPath } from 'node:url'
-import { ActionInvocationSchema, JsonValueSchema, findDeclaredFastAction } from '@veduta/protocol'
 import Fastify from 'fastify'
 import { z } from 'zod'
 import { ProgressiveAuthLockout } from './auth-rate-limit.ts'
@@ -17,13 +17,11 @@ import { AuthStoreError, type AuthStore } from './auth-store.ts'
 import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
 import { GatewayHub } from './gateway.ts'
 import { sendPwaAsset } from './static-assets.ts'
-import { Store } from './store.ts'
+import { Store, SurfaceActionError } from './store.ts'
 
-// The client sends only (nodeId, action name, value): the state key comes
-// from the Atom's declared action, never from the client (ADR-0003).
-const FastActionBodySchema = ActionInvocationSchema.extend({
-  payload: z.object({ value: JsonValueSchema }),
-})
+// The client sends only node/action/payload: state keys come from declared
+// Atom actions, never from the client (ADR-0003).
+const SurfaceActionBodySchema = ActionInvocationSchema
 
 const DeviceNameSchema = z.string().trim().min(1).max(80)
 
@@ -203,23 +201,21 @@ export function buildServer(options: ServerOptions = {}) {
 
   app.post('/api/surfaces/:surfaceId/actions', (request, reply) => {
     const { surfaceId } = request.params as { surfaceId: string }
-    const parsed = FastActionBodySchema.safeParse(request.body)
+    const parsed = SurfaceActionBodySchema.safeParse(request.body)
     if (!parsed.success) {
       return reply.status(400).send({ error: parsed.error.issues })
     }
-    const target = store.getSurface(surfaceId)
-    if (!target) {
-      return reply.status(404).send({ error: `unknown surface: ${surfaceId}` })
+    try {
+      const result = store.invokeSurfaceAction(surfaceId, parsed.data)
+      if (result.path === 'agent') return reply.status(202).send({ turn: result.turn })
+      if (!result.mutation.duplicate) gateway.broadcastSurfacePatch(result.mutation.event)
+      return { surface: result.mutation.surface }
+    } catch (error) {
+      if (error instanceof SurfaceActionError) {
+        return reply.status(statusForSurfaceActionError(error)).send({ error: error.message })
+      }
+      throw error
     }
-    const declared = findDeclaredFastAction(target.tree, parsed.data.nodeId, parsed.data.name)
-    if (!declared) {
-      return reply.status(403).send({
-        error: `action "${parsed.data.name}" is not declared as fast by node "${parsed.data.nodeId}"`,
-      })
-    }
-    const mutation = store.applyFastAction(surfaceId, declared.stateKey, parsed.data.payload.value)
-    gateway.broadcastSurfacePatch(mutation.event)
-    return { surface: mutation.surface }
   })
 
   void app.register(async (instance) => {
@@ -264,6 +260,12 @@ function extractBearer(value: string | undefined): string | undefined {
   if (!value) return undefined
   const [scheme, token] = value.split(' ')
   return scheme?.toLowerCase() === 'bearer' && token ? token : undefined
+}
+
+function statusForSurfaceActionError(error: SurfaceActionError): number {
+  if (error.code === 'unknown_surface') return 404
+  if (error.code === 'missing_value') return 400
+  return 403
 }
 
 async function authAttempt<T>(

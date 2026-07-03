@@ -1,25 +1,42 @@
 import {
-  PatchSchema,
   SurfaceSnapshotSchema,
-  SurfaceSchema,
+  findDeclaredAction,
   type JsonValue,
+  type PatchOperation,
   type Space,
   type Surface,
-  type SurfacePatchEvent,
   type SurfaceSnapshot,
+  type ActionInvocation,
 } from '@veduta/protocol'
+import type { ToolDef } from './agent-runner.ts'
 import type { FactRecord, FactsDocument } from './facts.ts'
 import { seedSpaces } from './seed.ts'
 import { SpacesEngine, type SpaceEvent } from './spaces-engine.ts'
-
-export interface SurfaceMutation {
-  surface: Surface
-  event: SurfacePatchEvent
-}
+import {
+  SurfaceEngine,
+  type QueuedAgentTurn,
+  type SurfaceMutation,
+  type SurfaceVersion,
+} from './surface-engine.ts'
 
 export interface StoreOptions {
   rootDir?: string
   now?: () => Date
+}
+
+export type SurfaceActionResult =
+  { path: 'fast'; mutation: SurfaceMutation } | { path: 'agent'; turn: QueuedAgentTurn }
+
+export type SurfaceActionErrorCode = 'unknown_surface' | 'undeclared_action' | 'missing_value'
+
+export class SurfaceActionError extends Error {
+  constructor(
+    readonly code: SurfaceActionErrorCode,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'SurfaceActionError'
+  }
 }
 
 /**
@@ -32,21 +49,26 @@ export interface StoreOptions {
  */
 export class Store {
   readonly spacesEngine: SpacesEngine
-  private surfaces = new Map<string, Surface>()
-  private surfaceEvents: SurfacePatchEvent[] = []
-  private surfaceCursor = 0
+  private readonly surfaceEngine: SurfaceEngine
   private readonly now: () => Date
+  private readonly llmCalls = 0
 
   constructor(options: StoreOptions = {}) {
     this.now = options.now ?? (() => new Date())
+    const seed = seedSpaces()
     this.spacesEngine = new SpacesEngine({
       now: this.now,
-      seed: seedSpaces(),
+      seed: { spaces: seed.spaces, surfaces: [] },
       ...(options.rootDir === undefined ? {} : { rootDir: options.rootDir }),
     })
-    for (const surface of this.spacesEngine.listPersistedSurfaces()) {
-      this.surfaces.set(surface.id, surface)
-    }
+    const persistedSurfaces = this.spacesEngine.listPersistedSurfaces()
+    this.surfaceEngine = new SurfaceEngine({
+      rootDir: this.spacesEngine.rootDir,
+      now: this.now,
+      seed: persistedSurfaces.length > 0 ? persistedSurfaces : seed.surfaces,
+      hasSpace: (spaceId) => Boolean(this.spacesEngine.getSpace(spaceId)),
+      appendSpaceEvent: (spaceId, input) => this.spacesEngine.appendEvent(spaceId, input),
+    })
   }
 
   listSpaces(): Space[] {
@@ -58,19 +80,18 @@ export class Store {
   }
 
   listSurfaces(spaceId?: string): Surface[] {
-    const all = [...this.surfaces.values()]
     if (spaceId) {
-      return [
-        ...all.filter((surface) => surface.spaceId === spaceId),
-        this.spacesEngine.factsSurface(spaceId),
-      ]
+      return [...this.surfaceEngine.listSurfaces(spaceId), this.spacesEngine.factsSurface(spaceId)]
     }
-    return [...all, ...this.listSpaces().map((space) => this.spacesEngine.factsSurface(space.id))]
+    return [
+      ...this.surfaceEngine.listSurfaces(),
+      ...this.listSpaces().map((space) => this.spacesEngine.factsSurface(space.id)),
+    ]
   }
 
   getSurface(id: string): Surface | undefined {
     return (
-      this.surfaces.get(id) ??
+      this.surfaceEngine.getSurface(id) ??
       this.listSpaces()
         .map((space) => this.spacesEngine.factsSurface(space.id))
         .find((surface) => surface.id === id)
@@ -88,52 +109,97 @@ export class Store {
   }
 
   latestSurfaceCursor(): number {
-    return this.surfaceCursor
+    return this.surfaceEngine.latestSurfaceCursor()
   }
 
-  surfaceEventsAfter(cursor: number): SurfacePatchEvent[] {
-    return this.surfaceEvents.filter((event) => event.cursor > cursor)
+  surfaceEventsAfter(cursor: number) {
+    return this.surfaceEngine.surfaceEventsAfter(cursor)
   }
 
   /** Fast path: mutate one state key, stamp freshness, log the event. No LLM. */
-  applyFastAction(surfaceId: string, stateKey: string, value: JsonValue): SurfaceMutation {
-    const surface = this.surfaces.get(surfaceId)
-    if (!surface) throw new Error(`unknown surface: ${surfaceId}`)
-    const updatedAt = this.now().toISOString()
-    const updated = SurfaceSchema.parse({
-      ...surface,
-      state: { ...surface.state, [stateKey]: value },
-      freshness: { updatedAt, updatedBy: 'user' },
-    })
-    const event: SurfacePatchEvent = {
-      cursor: this.surfaceCursor + 1,
-      at: updatedAt,
-      spaceId: surface.spaceId,
-      patch: PatchSchema.parse({
-        surfaceId,
-        operations: [
-          {
-            target: 'state',
-            op: Object.prototype.hasOwnProperty.call(surface.state, stateKey) ? 'replace' : 'add',
-            path: statePath(stateKey),
-            value,
-          },
-        ],
-      }),
-      freshness: updated.freshness,
+  applyFastAction(
+    surfaceId: string,
+    stateKey: string,
+    value: JsonValue,
+    idempotencyKey?: string,
+  ): SurfaceMutation {
+    return this.surfaceEngine.applyFastAction(surfaceId, stateKey, value, idempotencyKey)
+  }
+
+  invokeSurfaceAction(surfaceId: string, invocation: ActionInvocation): SurfaceActionResult {
+    const surface = this.getSurface(surfaceId)
+    if (!surface) throw new SurfaceActionError('unknown_surface', `unknown Surface: ${surfaceId}`)
+    const action = findDeclaredAction(surface.tree, invocation.nodeId, invocation.name)
+    if (!action) {
+      throw new SurfaceActionError(
+        'undeclared_action',
+        `action "${invocation.name}" is not declared by node "${invocation.nodeId}"`,
+      )
     }
-    this.surfaceCursor = event.cursor
-    this.surfaces.set(surfaceId, updated)
-    this.spacesEngine.saveSurface(updated)
-    this.surfaceEvents.push(event)
-    this.spacesEngine.appendEvent(surface.spaceId, {
-      at: updatedAt,
-      type: 'fast_path',
-      text: `${surface.title}: ${stateKey} -> ${JSON.stringify(value)}`,
-      origin: 'trusted:user',
-      payload: { surfaceId, stateKey, value },
-    })
-    return { surface: updated, event }
+
+    if (action.path === 'agent') {
+      return { path: 'agent', turn: this.surfaceEngine.enqueueAgentAction(surface, invocation) }
+    }
+
+    if (action.stateKey === undefined) {
+      throw new SurfaceActionError(
+        'undeclared_action',
+        `fast action "${invocation.name}" does not declare a state key`,
+      )
+    }
+
+    const value = invocation.payload?.['value']
+    if (value === undefined) {
+      throw new SurfaceActionError(
+        'missing_value',
+        `fast action "${invocation.name}" did not provide a value`,
+      )
+    }
+
+    return {
+      path: 'fast',
+      mutation: this.applyFastAction(surfaceId, action.stateKey, value, invocation.idempotencyKey),
+    }
+  }
+
+  createSurface(surface: Surface, updatedBy: 'agent' | 'user' | 'job'): Surface {
+    return this.surfaceEngine.createSurface(surface, updatedBy)
+  }
+
+  patchState(
+    surfaceId: string,
+    operations: PatchOperation[],
+    options: { updatedBy: 'agent' | 'user' | 'job' },
+  ): SurfaceMutation {
+    return this.surfaceEngine.patchState(surfaceId, operations, options)
+  }
+
+  patchTree(
+    surfaceId: string,
+    operations: PatchOperation[],
+    options: { expectedTreeVersion: number; updatedBy: 'agent' | 'user' | 'job' },
+  ): SurfaceMutation {
+    return this.surfaceEngine.patchTree(surfaceId, operations, options)
+  }
+
+  archiveSurface(surfaceId: string, updatedBy: 'agent' | 'user' | 'job'): Surface {
+    return this.surfaceEngine.archiveSurface(surfaceId, updatedBy)
+  }
+
+  getSurfaceVersion(surfaceId: string): SurfaceVersion | undefined {
+    return this.surfaceEngine.getSurfaceVersion(surfaceId)
+  }
+
+  surfaceTools(): ToolDef[] {
+    return this.surfaceEngine.surfaceTools()
+  }
+
+  agentTurns(): QueuedAgentTurn[] {
+    return this.surfaceEngine.agentTurns()
+  }
+
+  llmCallCount(): number {
+    return this.llmCalls
   }
 
   eventLog(spaceId: string): SpaceEvent[] {
@@ -163,8 +229,4 @@ export class Store {
   assembleSpaceContext(spaceId: string): string {
     return this.spacesEngine.assembleContext(spaceId)
   }
-}
-
-function statePath(key: string): string {
-  return `/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`
 }

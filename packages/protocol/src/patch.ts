@@ -75,6 +75,7 @@ export const ActionInvocationSchema = z.object({
   nodeId: z.string().min(1),
   name: z.string().min(1),
   payload: JsonObjectSchema.optional(),
+  idempotencyKey: z.string().min(1).max(128).optional(),
 })
 
 export type ActionInvocation = z.infer<typeof ActionInvocationSchema>

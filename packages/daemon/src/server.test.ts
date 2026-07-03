@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
-import { SurfaceSchema } from '@veduta/protocol'
+import { SurfaceSchema, type Surface } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import { AuthStore, type PasskeyRelyingParty, type StoredPasskey } from './auth-store.ts'
 import { buildServer } from './server.ts'
@@ -179,6 +179,7 @@ describe('GET /api/spaces/:id/events', () => {
 describe('POST /api/surfaces/:id/actions (fast path)', () => {
   it('mutates the declared stateKey, stamps freshness and logs the event — no LLM involved', async () => {
     const { app, store } = buildServer()
+    expect(store.llmCallCount()).toBe(0)
     const res = await app.inject({
       method: 'POST',
       url: '/api/surfaces/srf-groceries/actions',
@@ -198,6 +199,7 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
         },
       },
     ])
+    expect(store.llmCallCount()).toBe(0)
   })
 
   it('rejects an action the node does not declare as fast (403)', async () => {
@@ -240,6 +242,35 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
       payload: { nodeId: 'x', name: 'toggle', payload: { value: 1 } },
     })
     expect(res.statusCode).toBe(404)
+  })
+
+  it('queues an Agent turn for declared agent-path actions', async () => {
+    const { app, store } = buildServer()
+    store.createSurface(agentActionSurface(), 'agent')
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-agent-action/actions',
+      payload: { nodeId: 'regenerate', name: 'regenerate_plan', payload: { reason: 'stale' } },
+    })
+
+    expect(res.statusCode).toBe(202)
+    expect(res.json()).toMatchObject({
+      turn: {
+        surfaceId: 'srf-agent-action',
+        atomId: 'regenerate',
+        actionName: 'regenerate_plan',
+        payload: { reason: 'stale' },
+      },
+    })
+    expect(store.agentTurns().at(-1)).toMatchObject({
+      surfaceId: 'srf-agent-action',
+      atomId: 'regenerate',
+      actionName: 'regenerate_plan',
+    })
+    expect(
+      store.surfaceEventsAfter(0).filter((event) => event.patch.surfaceId === 'srf-agent-action'),
+    ).toHaveLength(0)
   })
 })
 
@@ -312,4 +343,26 @@ function fixedNow(): Date {
 
 function deterministicBytes(length: number): Buffer {
   return Buffer.alloc(length, 7)
+}
+
+function agentActionSurface(): Surface {
+  return SurfaceSchema.parse({
+    id: 'srf-agent-action',
+    spaceId: 'spc-health',
+    title: 'Agent action',
+    tree: {
+      id: 'root',
+      type: 'Box',
+      children: [
+        {
+          id: 'regenerate',
+          type: 'Button',
+          props: { label: 'Regenerate' },
+          actions: [{ name: 'regenerate_plan', path: 'agent' }],
+        },
+      ],
+    },
+    state: {},
+    freshness: { updatedAt: fixedNow().toISOString(), updatedBy: 'seed' },
+  })
 }

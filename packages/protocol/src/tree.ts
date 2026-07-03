@@ -11,6 +11,16 @@ export function findAtom(root: AtomNode, id: string): AtomNode | undefined {
   return undefined
 }
 
+/** Resolve an action declared by a node, regardless of path. */
+export function findDeclaredAction(
+  root: AtomNode,
+  nodeId: string,
+  actionName: string,
+): Action | undefined {
+  const node = findAtom(root, nodeId)
+  return node?.actions?.find((action) => action.name === actionName)
+}
+
 /**
  * Resolve a fast action declared by a node, or undefined if the node
  * does not exist or does not declare it. This is the check behind the
@@ -22,8 +32,19 @@ export function findDeclaredFastAction(
   nodeId: string,
   actionName: string,
 ): (Action & { path: 'fast'; stateKey: string }) | undefined {
-  const node = findAtom(root, nodeId)
-  const action = node?.actions?.find((a) => a.name === actionName && a.path === 'fast')
+  const action = findDeclaredAction(root, nodeId, actionName)
   if (!action || action.stateKey === undefined) return undefined
+  if (action.path !== 'fast') return undefined
   return { ...action, path: 'fast', stateKey: action.stateKey }
+}
+
+/** Resolve an Agent-path action declared by a node. */
+export function findDeclaredAgentAction(
+  root: AtomNode,
+  nodeId: string,
+  actionName: string,
+): (Action & { path: 'agent' }) | undefined {
+  const action = findDeclaredAction(root, nodeId, actionName)
+  if (!action || action.path !== 'agent') return undefined
+  return { ...action, path: 'agent' }
 }

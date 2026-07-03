@@ -1,7 +1,6 @@
 import {
   GatewayClientMessageSchema,
   GatewayServerMessageSchema,
-  findDeclaredFastAction,
   type ChatMessage,
   type GatewayClientMessage,
   type GatewayServerMessage,
@@ -10,7 +9,7 @@ import {
 } from '@veduta/protocol'
 import { handleChatText } from './chat.ts'
 import { PwaChannelAdapter, type NormalizedChannelEvent } from './channel-adapter.ts'
-import type { Store } from './store.ts'
+import { SurfaceActionError, type Store } from './store.ts'
 
 export interface GatewaySocket {
   send(data: string): void
@@ -129,36 +128,17 @@ export class GatewayHub {
       return
     }
 
-    const target = this.store.getSurface(frame.surfaceId)
-    if (!target) {
-      send({ type: 'error', error: `unknown Surface: ${frame.surfaceId}` })
-      return
+    try {
+      const result = this.store.invokeSurfaceAction(frame.surfaceId, frame.invocation)
+      if (result.path === 'agent') return
+      if (!result.mutation.duplicate) this.broadcastSurfacePatch(result.mutation.event)
+    } catch (error) {
+      if (error instanceof SurfaceActionError) {
+        send({ type: 'error', error: error.message })
+        return
+      }
+      throw error
     }
-
-    const declared = findDeclaredFastAction(
-      target.tree,
-      frame.invocation.nodeId,
-      frame.invocation.name,
-    )
-    if (!declared) {
-      send({
-        type: 'error',
-        error: `action "${frame.invocation.name}" is not declared as fast by node "${frame.invocation.nodeId}"`,
-      })
-      return
-    }
-
-    const value = frame.invocation.payload?.['value']
-    if (value === undefined) {
-      send({
-        type: 'error',
-        error: `fast action "${frame.invocation.name}" did not provide a value`,
-      })
-      return
-    }
-
-    const mutation = this.store.applyFastAction(frame.surfaceId, declared.stateKey, value)
-    this.broadcastSurfacePatch(mutation.event)
   }
 
   dispose(): void {

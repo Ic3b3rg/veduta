@@ -68,4 +68,9 @@ export {
   type GatewayClientMessage,
   type GatewayServerMessage,
 } from './gateway.ts'
-export { findAtom, findDeclaredFastAction } from './tree.ts'
+export {
+  findAtom,
+  findDeclaredAction,
+  findDeclaredFastAction,
+  findDeclaredAgentAction,
+} from './tree.ts'
