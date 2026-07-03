@@ -7,6 +7,7 @@ Accepted risk: 0.x version, bus factor ~85% on one person. Binding mitigation: *
 Status: accepted
 
 ## Considered Options
+
 - Fork of OpenClaw: rejected — 21k files with a chat-first center of gravity opposite to our thesis.
 - Fully from scratch: rejected — months spent on already-proven wheels instead of on the differentiator.
 - Claude Agent SDK: rejected — proprietary license, Claude models only, incompatible with BYOK.

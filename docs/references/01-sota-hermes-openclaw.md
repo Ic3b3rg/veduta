@@ -8,7 +8,7 @@
 
 - **Core loop:** single `AIAgent` class (`run_agent.py`): provider selection → prompt construction → API call → tool execution → retry/fallback → compression → persistence. The same loop is reused in 5 contexts: CLI, gateway, ACP, batch, API.
 - **Sessions/context:** SQLite with FTS5, parent/child lineage tracking across compressions, atomic writes. Structured session keys `agent:main:{platform}:{chat_type}:{chat_id}`. Compression summarizes the middle turns while preserving prompt-caching boundaries.
-- **3-tier prompt** (for caching): *stable* (identity from `SOUL.md`, tool guidance, skill index) → *context* (project files `.hermes.md` > `AGENTS.md` > `CLAUDE.md` > `.cursorrules`, truncated to 20k chars, security-scanned) → *volatile* (`MEMORY.md`, `USER.md`, external memories, timestamp).
+- **3-tier prompt** (for caching): _stable_ (identity from `SOUL.md`, tool guidance, skill index) → _context_ (project files `.hermes.md` > `AGENTS.md` > `CLAUDE.md` > `.cursorrules`, truncated to 20k chars, security-scanned) → _volatile_ (`MEMORY.md`, `USER.md`, external memories, timestamp).
 - **Memory:** file-based (`MEMORY.md`, `USER.md`) in the volatile tier; pluggable external providers in `plugins/memory/` (one active at a time).
 - **Tools/skills:** registry with 70+ tools across 28 toolsets, auto-registration. Terminal with 6 backends (local, Docker, SSH, Daytona, Modal, Singularity). Skills as slash commands.
 - **Single vs multi-agent:** fundamentally **single-agent**; delegates to subagents via `delegate_tool.py`, no multi-persona orchestration.
@@ -33,4 +33,4 @@
 
 Convergences (→ "safe" choices to inherit): a single multi-channel gateway daemon, memory in Markdown files, skills discovered at runtime, cron/heartbeat. Divergences: session storage (SQLite+FTS5 vs JSONL), multi-agency (delegation vs multi-persona with bindings), model routing (custom abstraction vs pi-agent-core).
 
-**Implication for us:** both are chat-first; OpenClaw's Canvas/A2UI is a rich per-session *response*, not a *state* that lives on. Our space is the persistent Home.
+**Implication for us:** both are chat-first; OpenClaw's Canvas/A2UI is a rich per-session _response_, not a _state_ that lives on. Our space is the persistent Home.

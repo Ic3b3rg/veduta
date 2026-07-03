@@ -7,5 +7,6 @@ Rationale: the event-driven architecture brings attacker-controlled content (ema
 Status: accepted
 
 ## Consequences
+
 - Allowlists apply only to actions born from direct user requests: automated flows over external content always carry one extra thread of friction. A deliberate choice.
 - Every new integration is a new perimeter: the threat model must be revisited, and the injection test suite in CI extended.

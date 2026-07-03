@@ -21,7 +21,7 @@ Where the bare design would lose: (1) temporal reasoning/knowledge-update (the w
 - **Mem0** ([arXiv:2504.19413](https://arxiv.org/abs/2504.19413)): the solid result is p95 of 1.44s vs 17.12s and −90% tokens; the **AUDN** operator (Add/Update/Delete/None) is a good pattern → a Curator on write.
 - **Sleep-time compute** ([arXiv:2504.13171](https://arxiv.org/html/2504.13171v1), Letta/Berkeley): offline reflection → up to ~5x less compute at runtime. Validates OpenClaw's "dreaming" → nightly Reflection as a visible job. Also RMM ([arXiv:2503.08026](https://arxiv.org/abs/2503.08026)).
 - **LongMemEval** ([arXiv:2410.10813](https://arxiv.org/abs/2410.10813), ICLR 2025): fact-augmented key expansion + time-aware query expansion = the highest measured gains → a time-aware hybrid index on top of the files (disposable index, files as the truth).
-- **TOKI** ([arXiv:2606.06240](https://arxiv.org/pdf/2606.06240)): bitemporal resolution of contradictions; decay of *priority*, not deletion.
+- **TOKI** ([arXiv:2606.06240](https://arxiv.org/pdf/2606.06240)): bitemporal resolution of contradictions; decay of _priority_, not deletion.
 - **Abstention**: an explicit rule in SOUL ("if it's not in memory, say so") — the most-failed category, for free.
 
 ## What NOT to build

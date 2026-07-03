@@ -5,12 +5,14 @@
 ## A. Installer & onboarding
 
 ### Hermes
+
 - `curl -fsSL .../install.sh | bash` (a 3,133-line script); PowerShell for Windows (portable MinGit, zero admin). Installs managed uv, Python 3.11, Node, ripgrep, ffmpeg; venv; symlinks; then the wizard.
 - **Gem: a JSON stage protocol** (`{"protocol_version":1,"stages":[...]}` with a `needs_user_input` flag) — a GUI can render the installer's progress bar without reimplementing it. → To copy: our wizard lives in the PWA.
 - `hermes setup` wizard (`hermes_cli/setup.py`, `run_setup_wizard()` line 2715): detects TTY; timestamped backup of `config.yaml` before touching it; a fresh install detects `~/.openclaw` and offers migration BEFORE configuring; 3 modes (Quick Setup with Nous OAuth, sectioned Full, Blank Slate); on an existing install every current value is the default; individual sections (`hermes setup model|gateway|...`).
 - Files written: `config.yaml` (settings), `.env` (secrets only), `SOUL.md` from template, `memories/MEMORY.md` + `USER.md`, `skills/`.
 
 ### OpenClaw
+
 - `openclaw onboard` (`src/commands/onboard*.ts`, `src/wizard/setup*.ts`): QuickStart vs Advanced; steps Model/Auth → Workspace (seeds `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `BOOTSTRAP.md`) → Gateway (auto token even on loopback) → Channels → Daemon (LaunchAgent/systemd) → Health check → Skills.
 - Symmetry: `openclaw onboard --flow import --import-from hermes` — but only on a virgin setup (more restrictive than Hermes).
 - RPC `wizard.start/next/cancel/status`: multiple clients can render the onboarding. i18n en/zh.
@@ -24,6 +26,7 @@ Mapping: `SOUL.md` → `SOUL.md` (with case-preserving rebranding), `MEMORY.md`+
 ## C. Quality: to copy / to avoid
 
 **To copy (Hermes discipline):**
+
 1. **Mandatory preview-first + refusal on conflicts** — always dry-run; with conflicts and no `--overwrite`, it refuses instead of silently skipping. Non-TTY = preview only.
 2. **Atomic, restorable backup before every mutation** (SQLite safe-copy, zip with auto-pruning at 5).
 3. **Secrets never migrated implicitly** (not even with `--preset full`): explicit allowlist, redaction in reports, final notice with the exact command to import them.

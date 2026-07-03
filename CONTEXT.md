@@ -11,7 +11,7 @@ Namespace for a life area (Health, Work, Home...): holds dedicated memory, Surfa
 _Avoid_: division, project, area agent, workspace
 
 **Surface**:
-Persistent UI unit inside a Space: a declarative tree of Atoms bound to typed state. It is *living state*, not a response.
+Persistent UI unit inside a Space: a declarative tree of Atoms bound to typed state. It is _living state_, not a response.
 _Avoid_: canvas, artifact, widget (ambiguous), dashboard (reserved for Home)
 
 **Home**:

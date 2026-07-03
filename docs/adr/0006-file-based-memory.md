@@ -7,6 +7,7 @@ Adopted grafts from the literature: bi-temporal facts with `## Superseded` (Zep/
 Status: accepted
 
 ## Considered Options
+
 - Knowledge graph (Zep/Graphiti-style): rejected — contested gains, high cost, useless below ~150 conversations per Space.
-- Extraction-as-truth (Mem0-style): rejected — loses provenance, no advantage under equal conditions; extraction at most *indexes*.
+- Extraction-as-truth (Mem0-style): rejected — loses provenance, no advantage under equal conditions; extraction at most _indexes_.
 - DB with a per-domain schema: rejected — rigid; structured state already lives in the Surfaces.

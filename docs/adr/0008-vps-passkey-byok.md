@@ -5,6 +5,7 @@ v1 deployment profile: self-hosted daemon on a **VPS with a public IP** (the mai
 Status: accepted
 
 ## Considered Options
+
 - Hosted multi-tenant: rejected for v1 — costs that scale, liability for the most intimate data, multi-tenancy to architect from day one. The door stays open to a managed hosted offering as a future business model (the Nous/Chronos path).
 - Blind relay for home servers behind NAT: deferred to post-v1 (useless on a VPS; web push doesn't need it anyway).
 - PWA-only without Bridges, forever: rejected — the value of messengers is not the UI but the zero friction of input/notification; giving that up forever sacrifices the growth funnel.

@@ -3,24 +3,25 @@
 ## 1. Problem
 
 The SOTA personal agents (OpenClaw, Hermes) live inside third-party chats (Telegram/WhatsApp). The pain, verified first-hand by the maintainer as a user of both:
+
 - Confined to a chat, with the UI limited to the messenger's formatting
 - No "clear view at first glance": you open it and see the last conversation, not the state of your life
 - No interface personalization
 - Wall-of-text answers for inherently structured content (plans, trackers, lists)
 
-Antirez: *"the agents you talk to via Telegram or WhatsApp […] are not well made; there's room"* — and human-AI interfaces need rethinking: today "you see nothing".
+Antirez: _"the agents you talk to via Telegram or WhatsApp […] are not well made; there's room"_ — and human-AI interfaces need rethinking: today "you see nothing".
 
 ## 2. Thesis and differentiators
 
 **Thesis**: a personal agent with a real home beats a personal agent inside a chat.
 
-| Differentiator | Against whom |
-|---|---|
-| Home-first: persistent Surfaces per life area, proactively updated | OpenClaw/Hermes (chat-first even with the Canvas), Gemini Dynamic View (ephemeral per-prompt UIs) |
-| Cross-platform via PWA (iOS+Android+desktop), not locked into WidgetKit | Skye (iPhone-only, read-only Apple widgets) |
-| Open source, self-hosted, BYOK, data in your own home | Skye, Alexa+ (proprietary cloud, dedicated hardware) |
-| Deterministic fast path: instant interactions like a real app | All chat-first products (every interaction = an LLM wait) |
-| Transparency: visible/editable memory, visible/switch-off-able Automations | Everyone ("the plus of having a UI") |
+| Differentiator                                                             | Against whom                                                                                      |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Home-first: persistent Surfaces per life area, proactively updated         | OpenClaw/Hermes (chat-first even with the Canvas), Gemini Dynamic View (ephemeral per-prompt UIs) |
+| Cross-platform via PWA (iOS+Android+desktop), not locked into WidgetKit    | Skye (iPhone-only, read-only Apple widgets)                                                       |
+| Open source, self-hosted, BYOK, data in your own home                      | Skye, Alexa+ (proprietary cloud, dedicated hardware)                                              |
+| Deterministic fast path: instant interactions like a real app              | All chat-first products (every interaction = an LLM wait)                                         |
+| Transparency: visible/editable memory, visible/switch-off-able Automations | Everyone ("the plus of having a UI")                                                              |
 
 ## 3. Target user (v1)
 
@@ -29,6 +30,7 @@ A developer/power user who already self-hosts (or can spin up a VPS), today a di
 ## 4. v1 scope
 
 ### In
+
 - Complete daemon skeleton: agent loop (single, triage/reasoning routing, BYOK), Spaces (3-layer memory + validated writes), surface engine (tree+state+bindings, fast/agent path), scheduler (one-shot timers, jobs, safety-net Heartbeat), event ingestion (webhooks, Gmail/Calendar, pre-filters, quarantined reader)
 - **A generic system from day one**: no privileged domain. The Home shows all Spaces; each user uses them as they wish (diet, work, gym, all together)
 - Atom catalog: ChatKit set (~24) + `Progress`, `Stat`, `ListItem`, `Automation`; emergent Templates
@@ -37,6 +39,7 @@ A developer/power user who already self-hosts (or can spin up a VPS), today a di
 - Complete trust layer (L0/L1/L2, untrusted content, egress allowlist, vault, audit)
 
 ### Out (painfully, but out)
+
 - Telegram/WhatsApp Bridges (immediately after: the Gateway is born adapter-ready)
 - Home-server profile (blind relay / documented Tailscale)
 - Sandboxed HTML escape hatch for custom Surfaces
@@ -53,14 +56,14 @@ A developer/power user who already self-hosts (or can spin up a VPS), today a di
 
 ## 6. Main risks
 
-| Risk | Mitigation |
-|---|---|
+| Risk                                       | Mitigation                                                                                |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------- |
 | Skye launches first with a similar concept | Speed on what they cannot do: open source, cross-platform, owned Surfaces (not WidgetKit) |
-| pi-agent-core 0.x unstable / bus factor | Total wrapping (`AgentRunner` etc.), pinning, plan B AI SDK v6 (~1 week of migration) |
-| Stale Surfaces → distrust | Visible freshness metadata + one-shot timers + success criterion no. 2 |
-| Prompt injection via external events | Quarantined reader + taint gating + egress allowlist ([SECURITY.md](docs/SECURITY.md)) |
-| Premature horizontality (solo-dev project) | Rigid v1 scope; issues with acceptance criteria; explicit anti-requirements |
-| iOS: PWA installation funnel | Guided installation onboarding; messenger Bridges as a post-v1 funnel |
+| pi-agent-core 0.x unstable / bus factor    | Total wrapping (`AgentRunner` etc.), pinning, plan B AI SDK v6 (~1 week of migration)     |
+| Stale Surfaces → distrust                  | Visible freshness metadata + one-shot timers + success criterion no. 2                    |
+| Prompt injection via external events       | Quarantined reader + taint gating + egress allowlist ([SECURITY.md](docs/SECURITY.md))    |
+| Premature horizontality (solo-dev project) | Rigid v1 scope; issues with acceptance criteria; explicit anti-requirements               |
+| iOS: PWA installation funnel               | Guided installation onboarding; messenger Bridges as a post-v1 funnel                     |
 
 ## 7. Post-v1 roadmap (directional)
 

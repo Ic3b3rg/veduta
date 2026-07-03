@@ -1,6 +1,6 @@
 # Veduta
 
-> *Veduta*: an old Italian word for a detailed, wide painting of a city — the whole city at a glance, like Canaletto's vedute. Open it, and see.
+> _Veduta_: an old Italian word for a detailed, wide painting of a city — the whole city at a glance, like Canaletto's vedute. Open it, and see.
 
 An open source, self-hosted, **home-first** personal agent: the primary interface is not a chat but a home of persistent Surfaces per life area, proactively maintained by a single agent. Chat is an ever-present input that modifies the Surfaces.
 
@@ -8,15 +8,15 @@ An open source, self-hosted, **home-first** personal agent: the primary interfac
 
 ## Documentation map
 
-| File | Contents |
-|---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | The full architecture picture, with diagrams and key flows |
-| [PRD.md](PRD.md) | Product Requirements: problem, target, v1 scope, success criteria |
-| [CONTEXT.md](CONTEXT.md) | Domain glossary (the project's ubiquitous language) |
-| [docs/SECURITY.md](docs/SECURITY.md) | Security and trust model (hardened against external content) |
-| [docs/adr/](docs/adr/) | The architectural decisions, one per file, with the rationale |
+| File                                 | Contents                                                                         |
+| ------------------------------------ | -------------------------------------------------------------------------------- |
+| [ARCHITECTURE.md](ARCHITECTURE.md)   | The full architecture picture, with diagrams and key flows                       |
+| [PRD.md](PRD.md)                     | Product Requirements: problem, target, v1 scope, success criteria                |
+| [CONTEXT.md](CONTEXT.md)             | Domain glossary (the project's ubiquitous language)                              |
+| [docs/SECURITY.md](docs/SECURITY.md) | Security and trust model (hardened against external content)                     |
+| [docs/adr/](docs/adr/)               | The architectural decisions, one per file, with the rationale                    |
 | [docs/references/](docs/references/) | The 7 research studies conducted (SOTA, competitors, academic evidence, runtime) |
-| [issues/](issues/) | The v1 work broken into implementable issues, with acceptance criteria |
+| [issues/](issues/)                   | The v1 work broken into implementable issues, with acceptance criteria           |
 
 ## Foundational decisions (details in the ADRs)
 

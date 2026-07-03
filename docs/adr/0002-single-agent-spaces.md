@@ -7,6 +7,7 @@ Rationale: the 2024-2026 evidence is clear-cut — every handoff loses informati
 Status: accepted
 
 ## Consequences
+
 - Isolation per life area is achieved through memory (Spaces), not through dedicated agents.
 - The synchronous path must stay as short as possible; everything else goes async (Workers, jobs).
 - If deep multi-source research were to become dominant, Anthropic's orchestrator-worker pattern is compatible: those are fan-out Workers, not persistent roles.

@@ -7,5 +7,6 @@ Rationale: (1) persistent Surfaces must be updatable via diffs — free-form HTM
 Status: accepted
 
 ## Considered Options
+
 - Free-form generated HTML/JSX in a sandbox: rejected for v1 — not diffable, inconsistent, hallucination-prone. It returns post-v1 only as a sandboxed escape hatch for the long tail.
 - Hardcoded domain components (meal-card, weight tracker): rejected — they betray GenUI genericity; domains emerge from composition, not from code.

@@ -20,7 +20,7 @@ The 2024-2026 evidence clearly supports: a single main loop + namespaced memory 
 ## Against (where multi-agent genuinely wins)
 
 1. **Anthropic, multi-agent research system** (2025) — https://www.anthropic.com/engineering/multi-agent-research-system. Orchestrator (Opus) + subagents (Sonnet) beats single Opus by **90.2%** on breadth-first research. Cost ~15x; 80% of the variance is explained by tokens spent. Their own delimitation: "domains with shared context or many dependencies between agents are not suitable" → the personal assistant falls right there. The winning case = our fan-out workers.
-2. **"More Agents Is All You Need"** (arXiv:2402.05120) — sampling-and-voting ensemble on the *same* task, not a hierarchy of roles. If anything, it justifies voting inside a worker on hard decisions.
+2. **"More Agents Is All You Need"** (arXiv:2402.05120) — sampling-and-voting ensemble on the _same_ task, not a hierarchy of roles. If anything, it justifies voting inside a worker on hard decisions.
 
 ## Design cautions (constraints adopted)
 

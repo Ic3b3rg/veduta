@@ -5,17 +5,17 @@
 
 ## Comparison table
 
-| Criterion | pi-agent-core (Earendil) | Vercel AI SDK v6/v7 | Claude Agent SDK | Mastra | LangGraph.js | OpenAI Agents SDK JS |
-|---|---|---|---|---|---|---|
-| Fit for single-loop + workers | Excellent (`Agent`+`AgentHarness`; worker = ephemeral instance) | Good (`ToolLoopAgent`) | Excellent but spawns CLI subprocesses | Medium (app framework) | Poor (graph = overhead) | Good |
-| BYOK multi-provider | Excellent (~35 providers, native OpenRouter, retries) | Excellent | **No: Claude only** | Good (via AI SDK) | Good | Partial |
-| Per-call routing | Native (model = mutable state) | Native (`prepareStep`) | No | Yes | Verbose | Per-run |
-| Context compaction | **Built-in** (`compaction/`, `transformContext`) | DIY | Built-in but closed | Evolved memory | Primitives | DIY |
-| Session persistence | Built-in (jsonl-repo, session tree) | DIY | On the CLI filesystem | Built-in | Excellent (checkpointer) | Partial |
-| Weight | Lightweight | Core is lightweight; v7 pulls toward the Vercel platform | Heavy (CLI binary) | Heavy | Medium-high | Lightweight |
-| Maintenance | Daily commits; bus factor ~85% one person; **0.x, one rename already happened** | The best; but aggressive major-version churn | Anthropic | YC company, v1.0 | LangChain, TS lags the Python | OpenAI, 0.x |
-| License | MIT | Apache-2.0 | **Proprietary** | Apache-2.0 (+enterprise) | MIT | MIT |
-| Imposes an architecture? | No (pure library) | No (core) | Yes (it is Claude Code) | Yes | Yes (everything is a graph) | Slightly |
+| Criterion                     | pi-agent-core (Earendil)                                                        | Vercel AI SDK v6/v7                                      | Claude Agent SDK                      | Mastra                   | LangGraph.js                  | OpenAI Agents SDK JS |
+| ----------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------- | ------------------------ | ----------------------------- | -------------------- |
+| Fit for single-loop + workers | Excellent (`Agent`+`AgentHarness`; worker = ephemeral instance)                 | Good (`ToolLoopAgent`)                                   | Excellent but spawns CLI subprocesses | Medium (app framework)   | Poor (graph = overhead)       | Good                 |
+| BYOK multi-provider           | Excellent (~35 providers, native OpenRouter, retries)                           | Excellent                                                | **No: Claude only**                   | Good (via AI SDK)        | Good                          | Partial              |
+| Per-call routing              | Native (model = mutable state)                                                  | Native (`prepareStep`)                                   | No                                    | Yes                      | Verbose                       | Per-run              |
+| Context compaction            | **Built-in** (`compaction/`, `transformContext`)                                | DIY                                                      | Built-in but closed                   | Evolved memory           | Primitives                    | DIY                  |
+| Session persistence           | Built-in (jsonl-repo, session tree)                                             | DIY                                                      | On the CLI filesystem                 | Built-in                 | Excellent (checkpointer)      | Partial              |
+| Weight                        | Lightweight                                                                     | Core is lightweight; v7 pulls toward the Vercel platform | Heavy (CLI binary)                    | Heavy                    | Medium-high                   | Lightweight          |
+| Maintenance                   | Daily commits; bus factor ~85% one person; **0.x, one rename already happened** | The best; but aggressive major-version churn             | Anthropic                             | YC company, v1.0         | LangChain, TS lags the Python | OpenAI, 0.x          |
+| License                       | MIT                                                                             | Apache-2.0                                               | **Proprietary**                       | Apache-2.0 (+enterprise) | MIT                           | MIT                  |
+| Imposes an architecture?      | No (pure library)                                                               | No (core)                                                | Yes (it is Claude Code)               | Yes                      | Yes (everything is a graph)   | Slightly             |
 
 ## Recommendation
 

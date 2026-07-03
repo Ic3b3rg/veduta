@@ -5,6 +5,7 @@ The competitor baseline (heartbeat polling every 30 minutes with LLM triage) is 
 Status: accepted
 
 ## Consequences
+
 - Whenever the Agent learns a deadline it must arm a timer (`arm_timer` tool), not entrust it to the next sweep.
 - Timers/jobs are **visible Automations** in the Space, switchable off by the user ("the plus of having a UI").
 - Notification discipline: silent → badge → push, per-Space budget, freshness metadata on every Surface.
