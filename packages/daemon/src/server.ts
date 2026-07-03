@@ -45,6 +45,7 @@ const LoginVerifyBodySchema = RegistrationVerifyBodySchema.extend({
 
 export interface ServerOptions {
   pwaDistDir?: string
+  dataDir?: string
   auth?: ServerAuthOptions
   https?: { key: string; cert: string }
 }
@@ -70,7 +71,7 @@ export function buildServer(options: ServerOptions = {}) {
     logger: false,
     ...(options.https ? { https: options.https } : {}),
   })
-  const store = new Store()
+  const store = new Store(options.dataDir === undefined ? {} : { rootDir: options.dataDir })
   const auth = options.auth ?? { mode: 'dev' as const }
   const gateway = new GatewayHub(
     store,
