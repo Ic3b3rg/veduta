@@ -1,6 +1,6 @@
 # Issues v1
 
-Every issue has a clear input and a success criterion (the project's operating rule). Dependency order:
+Every issue has a clear input and a success criterion (the project's operating rule). Each file is mirrored as a [GitHub issue](https://github.com/Ic3b3rg/veduta/issues) with the same number (file `001` = issue `#1`): discussion and status live on GitHub, the files here are the canonical spec. Dependency order:
 
 ```
 Foundations:   001 scaffold → 002 surface-protocol → 003 agent-runner → 004 gateway → 005 auth
