@@ -16,21 +16,37 @@ export interface GatewaySocket {
   send(data: string): void
   on(event: 'message', handler: (raw: Buffer | string) => void): void
   on(event: 'close', handler: () => void): void
+  close?(): void
+}
+
+export interface GatewayAuth {
+  verifySession(token: string | undefined): { device: { id: string; name: string } } | undefined
+  onSessionRevoked(listener: (event: { deviceId: string }) => void): () => void
 }
 
 interface GatewayClientSession {
   clientId: string
+  deviceId?: string
   history: ChatMessage[]
   presence: PresenceEntry
+  send: (frame: GatewayServerMessage) => void
+  socket: GatewaySocket
 }
 
 export class GatewayHub {
   private pwa = new PwaChannelAdapter()
   private clients = new Map<string, GatewayClientSession>()
   private nextClientId = 1
+  private disposeAuthListener: (() => void) | undefined
 
-  constructor(private readonly store: Store) {
+  constructor(
+    private readonly store: Store,
+    private readonly options: { auth?: GatewayAuth } = {},
+  ) {
     this.pwa.onMessage((event) => this.handleChannelMessage(event))
+    this.disposeAuthListener = options.auth?.onSessionRevoked((event) => {
+      this.closeRevokedDevice(event.deviceId)
+    })
   }
 
   connect(socket: GatewaySocket): void {
@@ -48,9 +64,15 @@ export class GatewayHub {
       }
 
       if (frame.type === 'hello') {
+        const authSession = this.options.auth?.verifySession(frame.token)
+        if (this.options.auth && !authSession) {
+          send({ type: 'error', error: 'authenticated Gateway session required' })
+          socket.close?.()
+          return
+        }
         if (clientId) this.disconnectClient(clientId)
         clientId = frame.clientId ?? this.allocateClientId()
-        this.connectClient(clientId, send)
+        this.connectClient(clientId, send, socket, authSession?.device.id)
         const replay = this.store.surfaceEventsAfter(frame.surfaceCursor)
         send({
           type: 'hello',
@@ -139,7 +161,16 @@ export class GatewayHub {
     this.broadcastSurfacePatch(mutation.event)
   }
 
-  private connectClient(clientId: string, send: (frame: GatewayServerMessage) => void): void {
+  dispose(): void {
+    this.disposeAuthListener?.()
+  }
+
+  private connectClient(
+    clientId: string,
+    send: (frame: GatewayServerMessage) => void,
+    socket: GatewaySocket,
+    deviceId?: string,
+  ): void {
     const now = new Date().toISOString()
     const existing = this.clients.get(clientId)
     const presence: PresenceEntry = existing?.presence ?? {
@@ -151,11 +182,15 @@ export class GatewayHub {
 
     presence.status = 'online'
     presence.lastSeenAt = now
-    this.clients.set(clientId, {
+    const session: GatewayClientSession = {
       clientId,
       history: existing?.history ?? [],
       presence,
-    })
+      send,
+      socket,
+    }
+    if (deviceId !== undefined) session.deviceId = deviceId
+    this.clients.set(clientId, session)
     this.pwa.connect({ clientId, send })
   }
 
@@ -174,6 +209,16 @@ export class GatewayHub {
 
   private broadcastPresence(): void {
     this.pwa.broadcast({ type: 'presence.update', presence: this.presence() })
+  }
+
+  private closeRevokedDevice(deviceId: string): void {
+    for (const session of [...this.clients.values()]) {
+      if (session.deviceId !== deviceId) continue
+      session.send({ type: 'error', error: 'Gateway session revoked' })
+      session.socket.close?.()
+      this.disconnectClient(session.clientId)
+    }
+    this.broadcastPresence()
   }
 
   private presence(): PresenceEntry[] {

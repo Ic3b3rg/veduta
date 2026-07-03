@@ -9,7 +9,7 @@ import { JsonObjectSchema, type JsonObject } from './json.ts'
  */
 export const FreshnessSchema = z.object({
   updatedAt: z.string().datetime(),
-  updatedBy: z.enum(['agent', 'user', 'job', 'seed']),
+  updatedBy: z.enum(['agent', 'user', 'job', 'seed', 'system']),
 })
 
 export const SurfaceSchema = z

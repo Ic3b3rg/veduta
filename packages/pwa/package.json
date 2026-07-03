@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@simplewebauthn/browser": "^13.3.0",
     "@veduta/catalog": "workspace:*",
     "@veduta/protocol": "workspace:*",
     "react": "^19.1.0",

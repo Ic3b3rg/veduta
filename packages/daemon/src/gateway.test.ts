@@ -4,7 +4,7 @@ import {
   type GatewayServerMessage,
 } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
-import { GatewayHub, type GatewaySocket } from './gateway.ts'
+import { GatewayHub, type GatewayAuth, type GatewaySocket } from './gateway.ts'
 import { Store } from './store.ts'
 
 describe('GatewayHub Surface sync', () => {
@@ -52,10 +52,41 @@ describe('GatewayHub Surface sync', () => {
     expect(hello).toMatchObject({ type: 'hello', replayed: 1, surfaceCursor: 1 })
     expect(reconnected.surfacePatches().map((frame) => frame.event.cursor)).toEqual([1])
   })
+
+  it('requires an authenticated token and closes active sockets for a revoked device', () => {
+    const store = new Store()
+    const auth = new FakeGatewayAuth()
+    const gateway = new GatewayHub(store, { auth })
+    const rejected = new FakeGatewaySocket()
+    gateway.connect(rejected)
+
+    rejected.receive({ type: 'hello', surfaceCursor: 0 })
+
+    expect(rejected.closed).toBe(true)
+    expect(rejected.sent.at(-1)).toMatchObject({
+      type: 'error',
+      error: 'authenticated Gateway session required',
+    })
+
+    const accepted = new FakeGatewaySocket()
+    gateway.connect(accepted)
+    accepted.receive({
+      type: 'hello',
+      surfaceCursor: store.latestSurfaceCursor(),
+      token: 'vdt_tok-1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    })
+    expect(accepted.sent.some((frame) => frame.type === 'hello')).toBe(true)
+
+    auth.revokeDevice('dev-1')
+
+    expect(accepted.closed).toBe(true)
+    expect(accepted.sent.at(-1)).toMatchObject({ type: 'error', error: 'Gateway session revoked' })
+  })
 })
 
 class FakeGatewaySocket implements GatewaySocket {
   sent: GatewayServerMessage[] = []
+  closed = false
   private sentAt: number[] = []
   private messageHandlers: ((raw: Buffer | string) => void)[] = []
   private closeHandlers: (() => void)[] = []
@@ -81,6 +112,7 @@ class FakeGatewaySocket implements GatewaySocket {
   }
 
   close(): void {
+    this.closed = true
     for (const handler of this.closeHandlers) handler()
   }
 
@@ -101,5 +133,22 @@ class FakeGatewaySocket implements GatewaySocket {
       }
     }
     return this.sentAt[index] ?? 0
+  }
+}
+
+class FakeGatewayAuth implements GatewayAuth {
+  private listeners = new Set<(event: { deviceId: string }) => void>()
+
+  verifySession(token: string | undefined): { device: { id: string; name: string } } | undefined {
+    return token ? { device: { id: 'dev-1', name: 'Silvio iPhone' } } : undefined
+  }
+
+  onSessionRevoked(listener: (event: { deviceId: string }) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  revokeDevice(deviceId: string): void {
+    for (const listener of this.listeners) listener({ deviceId })
   }
 }

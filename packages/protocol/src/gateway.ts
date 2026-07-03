@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { AuthSessionTokenSchema } from './auth.ts'
 import { ChatClientMessageSchema, ChatMessageSchema } from './chat.ts'
 import { ActionInvocationSchema, PatchSchema } from './patch.ts'
 import { SpaceSchema } from './space.ts'
@@ -46,6 +47,7 @@ export const GatewayClientMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('hello'),
     clientId: z.string().min(1).optional(),
     surfaceCursor: GatewayCursorSchema.default(0),
+    token: AuthSessionTokenSchema.optional(),
   }),
   z
     .object({

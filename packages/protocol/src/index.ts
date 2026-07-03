@@ -1,5 +1,21 @@
 export { ActionSchema, type Action, type ActionInput } from './action.ts'
 export { applySurfacePatch, applySurfacePatchEvent } from './apply-patch.ts'
+export {
+  AuthDeviceSchema,
+  AuthModeSchema,
+  AuthSessionSchema,
+  AuthSessionTokenSchema,
+  AuthStatusSchema,
+  OneTimeCodeSchema,
+  PairingCodeSchema,
+  WebAuthnOptionsEnvelopeSchema,
+  type AuthDevice,
+  type AuthMode,
+  type AuthSession,
+  type AuthStatus,
+  type PairingCode,
+  type WebAuthnOptionsEnvelope,
+} from './auth.ts'
 export { atomTypes, AtomTypeSchema, AtomNodeSchema, type AtomType, type AtomNode } from './atom.ts'
 export {
   SurfaceSchema,

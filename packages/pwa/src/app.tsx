@@ -9,20 +9,30 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   connectGateway,
+  fetchAuthStatus,
   fetchSpaces,
   freshnessLabel,
   invokeFastAction,
+  loginWithPasskey,
   patchSurface,
+  registerPasskey,
   type GatewayConnection,
   type SpaceWithSurfaces,
 } from './api.ts'
 
 const SURFACE_CURSOR_KEY = 'veduta.surfaceCursor'
+const AUTH_TOKEN_KEY = 'veduta.authToken'
 
 export function App() {
   const [spaces, setSpaces] = useState<SpaceWithSurfaces[]>([])
   const [error, setError] = useState<string | null>(null)
   const [chatEntries, setChatEntries] = useState<ChatMessage[]>([])
+  const [authToken, setAuthToken] = useState<string | undefined>(
+    () => localStorage.getItem(AUTH_TOKEN_KEY) ?? undefined,
+  )
+  const [authMode, setAuthMode] = useState<'dev' | 'production' | undefined>(undefined)
+  const [bootstrapRequired, setBootstrapRequired] = useState(false)
+  const [passkeyRegistered, setPasskeyRegistered] = useState(false)
   const gatewayRef = useRef<GatewayConnection | null>(null)
   const spacesRef = useRef<SpaceWithSurfaces[]>([])
   const surfaceCursorRef = useRef(readStoredCursor())
@@ -75,6 +85,7 @@ export function App() {
 
     const startGateway = () => {
       gatewayRef.current = connectGateway({
+        token: authToken,
         surfaceCursor: surfaceCursorRef.current,
         onHello() {
           // The replay cursor advances only after each patch is applied.
@@ -95,20 +106,32 @@ export function App() {
       })
     }
 
-    fetchSpaces()
+    fetchAuthStatus()
+      .then((status) => {
+        setAuthMode(status.mode)
+        setBootstrapRequired(status.bootstrapRequired)
+        setPasskeyRegistered(status.passkeyRegistered)
+        if (status.mode === 'production' && !authToken) return undefined
+        return fetchSpaces(authToken)
+      })
       .then((snapshot) => {
+        if (!snapshot) return
         replaceSpaces(snapshot.spaces)
         updateCursor(snapshot.surfaceCursor)
         startGateway()
       })
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => {
+        localStorage.removeItem(AUTH_TOKEN_KEY)
+        setAuthToken(undefined)
+        setError(e.message)
+      })
 
     return () => {
       closedByApp = true
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
       gatewayRef.current?.close()
     }
-  }, [applySurfaceEvent, replaceSpaces, updateCursor])
+  }, [applySurfaceEvent, authToken, replaceSpaces, updateCursor])
 
   const replaceSurface = (updated: Surface) => {
     replaceSpaces(
@@ -116,6 +139,22 @@ export function App() {
         ...space,
         surfaces: space.surfaces.map((s) => (s.id === updated.id ? updated : s)),
       })),
+    )
+  }
+
+  if (authMode === 'production' && !authToken) {
+    return (
+      <AuthGate
+        bootstrapRequired={bootstrapRequired}
+        passkeyRegistered={passkeyRegistered}
+        error={error}
+        onAuthenticated={(token) => {
+          localStorage.setItem(AUTH_TOKEN_KEY, token)
+          setAuthToken(token)
+          setError(null)
+        }}
+        onError={setError}
+      />
     )
   }
 
@@ -144,6 +183,7 @@ export function App() {
               <SurfaceCard
                 key={surface.id}
                 surface={surface}
+                token={authToken}
                 onPatched={replaceSurface}
                 onError={setError}
               />
@@ -165,10 +205,12 @@ export function App() {
 
 function SurfaceCard({
   surface,
+  token,
   onPatched,
   onError,
 }: {
   surface: Surface
+  token?: string | undefined
   onPatched: (s: Surface) => void
   onError: (message: string) => void
 }) {
@@ -182,7 +224,7 @@ function SurfaceCard({
         return
       }
       // Fast path: deterministic mutation on the daemon, no LLM (ADR-0003).
-      invokeFastAction(surface.id, node.id, actionName, value)
+      invokeFastAction(surface.id, node.id, actionName, value, token)
         .then(onPatched)
         .catch((e: Error) => onError(`"${surface.title}" update failed: ${e.message}`))
     }
@@ -196,6 +238,94 @@ function SurfaceCard({
         updated {freshnessLabel(surface.freshness.updatedAt)} by {surface.freshness.updatedBy}
       </div>
     </article>
+  )
+}
+
+function AuthGate({
+  bootstrapRequired,
+  passkeyRegistered,
+  error,
+  onAuthenticated,
+  onError,
+}: {
+  bootstrapRequired: boolean
+  passkeyRegistered: boolean
+  error: string | null
+  onAuthenticated: (token: string) => void
+  onError: (message: string) => void
+}) {
+  const [oneTimeCode, setOneTimeCode] = useState(readSetupCode())
+  const [deviceName, setDeviceName] = useState(defaultDeviceName())
+  const [busy, setBusy] = useState(false)
+
+  const run = async (fn: () => Promise<{ token: string }>) => {
+    setBusy(true)
+    try {
+      const session = await fn()
+      onAuthenticated(session.token)
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'passkey authentication failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <main
+      style={{
+        fontFamily: 'system-ui, sans-serif',
+        maxWidth: 420,
+        margin: '10vh auto 0',
+        padding: 16,
+      }}
+    >
+      <h1 style={{ fontSize: 20, margin: 0 }}>Veduta</h1>
+      {error && <p style={{ color: '#c00' }}>{error}</p>}
+      <div style={{ display: 'grid', gap: 10, marginTop: 16 }}>
+        <label htmlFor="device-name" style={{ fontSize: 13, color: '#555' }}>
+          Device name
+        </label>
+        <input
+          id="device-name"
+          style={{ padding: 8, borderRadius: 8, border: '1px solid #ccc' }}
+          value={deviceName}
+          onChange={(e) => setDeviceName(e.target.value)}
+        />
+        {bootstrapRequired && (
+          <>
+            <label htmlFor="one-time-code" style={{ fontSize: 13, color: '#555' }}>
+              One-time code
+            </label>
+            <input
+              id="one-time-code"
+              style={{ padding: 8, borderRadius: 8, border: '1px solid #ccc' }}
+              value={oneTimeCode}
+              onChange={(e) => setOneTimeCode(e.target.value)}
+            />
+          </>
+        )}
+        {bootstrapRequired && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              run(() => registerPasskey({ oneTimeCode, deviceName: deviceName.trim() }))
+            }
+          >
+            Register passkey
+          </button>
+        )}
+        {passkeyRegistered && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => run(() => loginWithPasskey(deviceName.trim()))}
+          >
+            Sign in with passkey
+          </button>
+        )}
+      </div>
+    </main>
   )
 }
 
@@ -252,4 +382,12 @@ function ChatBar({
 function readStoredCursor(): number {
   const stored = Number(localStorage.getItem(SURFACE_CURSOR_KEY))
   return Number.isInteger(stored) && stored >= 0 ? stored : 0
+}
+
+function readSetupCode(): string {
+  return new URLSearchParams(location.search).get('code') ?? ''
+}
+
+function defaultDeviceName(): string {
+  return navigator.userAgent.includes('Mobile') ? 'Phone' : 'Computer'
 }

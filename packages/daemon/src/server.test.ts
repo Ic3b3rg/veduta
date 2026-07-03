@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { SurfaceSchema } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
+import { AuthStore, type PasskeyRelyingParty, type StoredPasskey } from './auth-store.ts'
 import { buildServer } from './server.ts'
 
 describe('PWA static assets', () => {
@@ -42,6 +43,128 @@ describe('GET /api/spaces', () => {
     for (const surface of body.spaces[0]!.surfaces) {
       expect(SurfaceSchema.safeParse(surface).success).toBe(true)
     }
+  })
+})
+
+describe('production auth boundary', () => {
+  it('keeps PWA assets public but requires passkey sessions for application API routes', async () => {
+    const pwaDistDir = await mkdtemp(join(tmpdir(), 'veduta-pwa-'))
+    await mkdir(join(pwaDistDir, 'assets'))
+    await writeFile(join(pwaDistDir, 'index.html'), '<div id="root"></div>')
+    await writeFile(join(pwaDistDir, 'assets', 'app.js'), 'console.log("veduta")')
+    const { auth, token } = await readyAuthStore()
+    const { app } = buildServer({
+      pwaDistDir,
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+    })
+
+    expect((await app.inject({ method: 'GET', url: '/' })).statusCode).toBe(200)
+    expect((await app.inject({ method: 'GET', url: '/assets/app.js' })).statusCode).toBe(200)
+
+    const denied = await app.inject({ method: 'GET', url: '/api/spaces' })
+    expect(denied.statusCode).toBe(401)
+    expect(denied.headers['strict-transport-security']).toContain('max-age=')
+
+    const allowed = await app.inject({
+      method: 'GET',
+      url: '/api/spaces',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(allowed.statusCode).toBe(200)
+    expect((allowed.json() as { spaces: { slug: string }[] }).spaces.map((s) => s.slug)).toEqual([
+      'health',
+      'system',
+    ])
+  })
+
+  it('runs the passkey registration ceremony through public auth endpoints', async () => {
+    const auth = new AuthStore({
+      mode: 'production',
+      bootstrapCode: '12345678',
+      passkeys: new ServerFakePasskeys(),
+      now: fixedNow,
+      randomBytes: deterministicBytes,
+      publicOrigin: 'https://veduta.test',
+    })
+    const { app } = buildServer({
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+    })
+
+    const options = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register/options',
+      payload: { oneTimeCode: '12345678', deviceName: 'Silvio iPhone' },
+    })
+    expect(options.statusCode).toBe(200)
+    const ceremony = options.json() as { ceremonyId: string; options: { challenge: string } }
+    expect(ceremony.options.challenge).toBe('registration-challenge-1')
+
+    const verified = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register/verify',
+      payload: { ceremonyId: ceremony.ceremonyId, response: { id: 'credential-phone' } },
+    })
+    expect(verified.statusCode).toBe(200)
+    expect(verified.json()).toMatchObject({
+      device: { name: 'Silvio iPhone', credentialId: 'credential-phone' },
+    })
+  })
+
+  it('rate limits repeated invalid auth attempts with progressive lockout', async () => {
+    const auth = new AuthStore({
+      mode: 'production',
+      bootstrapCode: '12345678',
+      passkeys: new ServerFakePasskeys(),
+      now: fixedNow,
+      randomBytes: deterministicBytes,
+    })
+    const { app } = buildServer({
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+    })
+
+    for (let i = 0; i < 3; i += 1) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/register/options',
+        payload: { oneTimeCode: 'wrong-code', deviceName: 'Attacker' },
+      })
+      expect(res.statusCode).toBe(401)
+    }
+
+    const locked = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register/options',
+      payload: { oneTimeCode: 'wrong-code', deviceName: 'Attacker' },
+    })
+    expect(locked.statusCode).toBe(429)
+    expect(locked.headers['retry-after']).toBeDefined()
+  })
+
+  it('creates pairing codes and lists linked devices only for authenticated sessions', async () => {
+    const { auth, token } = await readyAuthStore()
+    const { app } = buildServer({
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+    })
+
+    expect((await app.inject({ method: 'GET', url: '/api/auth/devices' })).statusCode).toBe(401)
+
+    const pairing = await app.inject({
+      method: 'POST',
+      url: '/api/auth/pairing-codes',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(pairing.statusCode).toBe(200)
+    expect(pairing.json()).toMatchObject({
+      pairingUri: 'https://veduta.test/setup?code=BwcHBwcHBwcH',
+    })
+
+    const devices = await app.inject({
+      method: 'GET',
+      url: '/api/auth/devices',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(devices.statusCode).toBe(200)
+    expect(devices.json()).toMatchObject({ devices: [{ name: 'Silvio iPhone' }] })
   })
 })
 
@@ -119,3 +242,74 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
     expect(res.statusCode).toBe(404)
   })
 })
+
+class ServerFakePasskeys implements PasskeyRelyingParty {
+  private registrationCount = 0
+  private authenticationCount = 0
+
+  async generateRegistrationOptions(): Promise<{ challenge: string }> {
+    this.registrationCount += 1
+    return { challenge: `registration-challenge-${this.registrationCount}` }
+  }
+
+  async verifyRegistrationResponse(input: {
+    response: unknown
+  }): Promise<{ verified: true; passkey: StoredPasskey }> {
+    const credentialId = (input.response as { id?: string }).id ?? 'credential-phone'
+    return {
+      verified: true,
+      passkey: {
+        id: credentialId,
+        publicKey: `public-key-${credentialId}`,
+        counter: 1,
+        transports: ['internal'],
+        deviceType: 'multiDevice',
+        backedUp: true,
+        webAuthnUserID: `user-${credentialId}`,
+      },
+    }
+  }
+
+  async generateAuthenticationOptions(): Promise<{ challenge: string }> {
+    this.authenticationCount += 1
+    return { challenge: `authentication-challenge-${this.authenticationCount}` }
+  }
+
+  async verifyAuthenticationResponse(input: {
+    response: unknown
+  }): Promise<{ verified: true; credentialId: string; newCounter: number }> {
+    return {
+      verified: true,
+      credentialId: (input.response as { id?: string }).id ?? 'credential-phone',
+      newCounter: 2,
+    }
+  }
+}
+
+async function readyAuthStore(): Promise<{ auth: AuthStore; token: string }> {
+  const auth = new AuthStore({
+    mode: 'production',
+    bootstrapCode: '12345678',
+    passkeys: new ServerFakePasskeys(),
+    now: fixedNow,
+    randomBytes: deterministicBytes,
+    publicOrigin: 'https://veduta.test',
+  })
+  const registration = await auth.startPasskeyRegistration({
+    oneTimeCode: '12345678',
+    deviceName: 'Silvio iPhone',
+  })
+  const session = await auth.finishPasskeyRegistration({
+    ceremonyId: registration.ceremonyId,
+    response: { id: 'credential-phone' },
+  })
+  return { auth, token: session.token }
+}
+
+function fixedNow(): Date {
+  return new Date('2026-07-03T12:00:00.000Z')
+}
+
+function deterministicBytes(length: number): Buffer {
+  return Buffer.alloc(length, 7)
+}
