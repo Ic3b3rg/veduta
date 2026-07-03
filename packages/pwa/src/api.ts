@@ -1,31 +1,35 @@
-import type { Space, Surface } from '@veduta/protocol'
+import { SpaceSchema, SurfaceSchema, type Surface } from '@veduta/protocol'
+import { z } from 'zod'
 
-export interface SpaceWithSurfaces extends Space {
-  surfaces: Surface[]
-}
+// The PWA never trusts the wire blindly (AGENTS.md): every response is
+// validated with the protocol schemas before it reaches a component.
+const SpacesResponseSchema = z.object({
+  spaces: z.array(SpaceSchema.extend({ surfaces: z.array(SurfaceSchema) })),
+})
+
+export type SpaceWithSurfaces = z.infer<typeof SpacesResponseSchema>['spaces'][number]
+
+const ActionResponseSchema = z.object({ surface: SurfaceSchema })
 
 export async function fetchSpaces(): Promise<SpaceWithSurfaces[]> {
   const res = await fetch('/api/spaces')
   if (!res.ok) throw new Error(`GET /api/spaces failed: ${res.status}`)
-  const body = (await res.json()) as { spaces: SpaceWithSurfaces[] }
-  return body.spaces
+  return SpacesResponseSchema.parse(await res.json()).spaces
 }
 
 export async function invokeFastAction(
   surfaceId: string,
   nodeId: string,
   name: string,
-  stateKey: string,
   value: unknown,
 ): Promise<Surface> {
   const res = await fetch(`/api/surfaces/${surfaceId}/actions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ nodeId, name, payload: { stateKey, value } }),
+    body: JSON.stringify({ nodeId, name, payload: { value } }),
   })
   if (!res.ok) throw new Error(`fast action failed: ${res.status}`)
-  const body = (await res.json()) as { surface: Surface }
-  return body.surface
+  return ActionResponseSchema.parse(await res.json()).surface
 }
 
 /** Human-readable freshness, shown on every Surface (ADR-0005). */

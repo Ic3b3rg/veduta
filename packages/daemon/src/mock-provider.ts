@@ -1,7 +1,4 @@
-export interface ChatMessage {
-  role: 'user' | 'assistant'
-  text: string
-}
+import type { ChatMessage } from '@veduta/protocol'
 
 /**
  * Deterministic mock LLM provider (issue #1): development and tests

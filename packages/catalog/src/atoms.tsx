@@ -1,33 +1,26 @@
 import type { ReactNode } from 'react'
 import type { AtomProps } from './types.ts'
-import { renderChildren } from './render.tsx'
 
 /**
  * Minimal renderers for the scaffold (issue #1). The real design system
  * lands with issue #8 — these exist so the Home renders seed Surfaces.
  * Every interactive Atom dispatches through its declared actions only.
+ * Children arrive pre-rendered from the tree walker (render.tsx), so
+ * atoms never depend on the renderer.
  */
 
 const text = (v: unknown): string => (typeof v === 'string' ? v : String(v ?? ''))
 
-export function BoxAtom({ node, ctx }: AtomProps): ReactNode {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {renderChildren(node, ctx)}
-    </div>
-  )
+export function BoxAtom({ children }: AtomProps): ReactNode {
+  return <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{children}</div>
 }
 
-export function RowAtom({ node, ctx }: AtomProps): ReactNode {
-  return <div style={{ display: 'flex', gap: 16 }}>{renderChildren(node, ctx)}</div>
+export function RowAtom({ children }: AtomProps): ReactNode {
+  return <div style={{ display: 'flex', gap: 16 }}>{children}</div>
 }
 
-export function ColAtom({ node, ctx }: AtomProps): ReactNode {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
-      {renderChildren(node, ctx)}
-    </div>
-  )
+export function ColAtom({ children }: AtomProps): ReactNode {
+  return <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>{children}</div>
 }
 
 export function DividerAtom(): ReactNode {

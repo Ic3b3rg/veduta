@@ -1,4 +1,5 @@
 import type { AtomNode } from '@veduta/protocol'
+import type { ReactNode } from 'react'
 
 /** What the renderer hands to every Atom. */
 export interface RenderContext {
@@ -11,4 +12,6 @@ export interface RenderContext {
 export interface AtomProps {
   node: AtomNode
   ctx: RenderContext
+  /** The node's children, already rendered by the tree walker. */
+  children?: ReactNode
 }

@@ -1,12 +1,7 @@
 import { renderNode } from '@veduta/catalog'
-import type { AtomNode, Surface } from '@veduta/protocol'
+import { ChatMessageSchema, type AtomNode, type ChatMessage, type Surface } from '@veduta/protocol'
 import { useEffect, useRef, useState } from 'react'
 import { fetchSpaces, freshnessLabel, invokeFastAction, type SpaceWithSurfaces } from './api.ts'
-
-interface ChatEntry {
-  role: 'user' | 'assistant'
-  text: string
-}
 
 export function App() {
   const [spaces, setSpaces] = useState<SpaceWithSurfaces[]>([])
@@ -49,7 +44,12 @@ export function App() {
           </h2>
           <div style={{ display: 'grid', gap: 12 }}>
             {space.surfaces.map((surface) => (
-              <SurfaceCard key={surface.id} surface={surface} onPatched={patchSurface} />
+              <SurfaceCard
+                key={surface.id}
+                surface={surface}
+                onPatched={patchSurface}
+                onError={setError}
+              />
             ))}
           </div>
         </section>
@@ -62,15 +62,19 @@ export function App() {
 function SurfaceCard({
   surface,
   onPatched,
+  onError,
 }: {
   surface: Surface
   onPatched: (s: Surface) => void
+  onError: (message: string) => void
 }) {
   const dispatch = (node: AtomNode, actionName: string, value?: unknown) => {
     const action = node.actions?.find((a) => a.name === actionName)
-    if (action?.path === 'fast' && action.stateKey) {
+    if (action?.path === 'fast') {
       // Fast path: deterministic mutation on the daemon, no LLM (ADR-0003).
-      void invokeFastAction(surface.id, node.id, actionName, action.stateKey, value).then(onPatched)
+      invokeFastAction(surface.id, node.id, actionName, value)
+        .then(onPatched)
+        .catch((e: Error) => onError(`"${surface.title}" update failed: ${e.message}`))
     }
     // Agent-path actions arrive with issue #3 (AgentRunner).
   }
@@ -86,15 +90,21 @@ function SurfaceCard({
 }
 
 function ChatBar() {
-  const [entries, setEntries] = useState<ChatEntry[]>([])
+  const [entries, setEntries] = useState<ChatMessage[]>([])
   const [text, setText] = useState('')
   const wsRef = useRef<WebSocket | null>(null)
 
   useEffect(() => {
     const ws = new WebSocket(`ws://${location.host}/ws/chat`)
     ws.onmessage = (event) => {
-      const entry = JSON.parse(String(event.data)) as ChatEntry
-      setEntries((prev) => [...prev, entry])
+      let json: unknown
+      try {
+        json = JSON.parse(String(event.data))
+      } catch {
+        return
+      }
+      const parsed = ChatMessageSchema.safeParse(json)
+      if (parsed.success) setEntries((prev) => [...prev, parsed.data])
     }
     wsRef.current = ws
     return () => ws.close()

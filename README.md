@@ -31,4 +31,4 @@ An open source, self-hosted, **home-first** personal agent: the primary interfac
 
 ## Status
 
-2026-07-03 — Design phase complete (grilling session). Next step: issue `001-monorepo-scaffold`.
+2026-07-03 — Monorepo scaffold in place ([#1](https://github.com/Ic3b3rg/veduta/issues/1)): `pnpm install && pnpm dev` gives you the Home with seed data and a mock provider, no API keys needed. Next: issue [#2 — Surface protocol](https://github.com/Ic3b3rg/veduta/issues/2).

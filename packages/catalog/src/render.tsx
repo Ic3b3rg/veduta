@@ -41,9 +41,10 @@ const renderers: Partial<Record<AtomNode['type'], AtomRenderer>> = {
 
 export function renderNode(node: AtomNode, ctx: RenderContext): ReactNode {
   const Renderer = renderers[node.type] ?? UnknownAtom
-  return <Renderer key={node.id} node={node} ctx={ctx} />
-}
-
-export function renderChildren(node: AtomNode, ctx: RenderContext): ReactNode[] {
-  return (node.children ?? []).map((child) => renderNode(child, ctx))
+  const children = (node.children ?? []).map((child) => renderNode(child, ctx))
+  return (
+    <Renderer key={node.id} node={node} ctx={ctx}>
+      {children}
+    </Renderer>
+  )
 }

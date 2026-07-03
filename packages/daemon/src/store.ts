@@ -31,6 +31,10 @@ export class Store {
     return [...this.spaces.values()].filter((s) => !s.archived)
   }
 
+  getSpace(id: string): Space | undefined {
+    return this.spaces.get(id)
+  }
+
   listSurfaces(spaceId?: string): Surface[] {
     const all = [...this.surfaces.values()]
     return spaceId ? all.filter((s) => s.spaceId === spaceId) : all

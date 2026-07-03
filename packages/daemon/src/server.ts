@@ -1,13 +1,15 @@
 import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
-import { ActionInvocationSchema } from '@veduta/protocol'
+import { ActionInvocationSchema, findDeclaredFastAction, type ChatMessage } from '@veduta/protocol'
 import Fastify from 'fastify'
 import { z } from 'zod'
-import { mockReply, type ChatMessage } from './mock-provider.ts'
+import { handleChatFrame } from './chat.ts'
 import { Store } from './store.ts'
 
+// The client sends only (nodeId, action name, value): the state key comes
+// from the Atom's declared action, never from the client (ADR-0003).
 const FastActionBodySchema = ActionInvocationSchema.extend({
-  payload: z.object({ stateKey: z.string().min(1), value: z.unknown() }),
+  payload: z.object({ value: z.unknown() }),
 })
 
 /**
@@ -19,7 +21,10 @@ export function buildServer() {
   const app = Fastify({ logger: false })
   const store = new Store()
 
-  void app.register(cors, { origin: true })
+  // Dev profile: only the Vite dev server may call the daemon from a browser.
+  void app.register(cors, {
+    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  })
   void app.register(websocket)
 
   app.get('/api/health', () => ({ ok: true }))
@@ -34,8 +39,11 @@ export function buildServer() {
     }
   })
 
-  app.get('/api/spaces/:spaceId/events', (request) => {
+  app.get('/api/spaces/:spaceId/events', (request, reply) => {
     const { spaceId } = request.params as { spaceId: string }
+    if (!store.getSpace(spaceId)) {
+      return reply.status(404).send({ error: `unknown space: ${spaceId}` })
+    }
     return { events: store.eventLog(spaceId) }
   })
 
@@ -45,11 +53,17 @@ export function buildServer() {
     if (!parsed.success) {
       return reply.status(400).send({ error: parsed.error.issues })
     }
-    if (!store.getSurface(surfaceId)) {
+    const target = store.getSurface(surfaceId)
+    if (!target) {
       return reply.status(404).send({ error: `unknown surface: ${surfaceId}` })
     }
-    const { stateKey, value } = parsed.data.payload
-    const surface = store.applyFastAction(surfaceId, stateKey, value)
+    const declared = findDeclaredFastAction(target.tree, parsed.data.nodeId, parsed.data.name)
+    if (!declared) {
+      return reply.status(403).send({
+        error: `action "${parsed.data.name}" is not declared as fast by node "${parsed.data.nodeId}"`,
+      })
+    }
+    const surface = store.applyFastAction(surfaceId, declared.stateKey, parsed.data.payload.value)
     return { surface }
   })
 
@@ -57,12 +71,8 @@ export function buildServer() {
     instance.get('/ws/chat', { websocket: true }, (socket) => {
       const history: ChatMessage[] = []
       socket.on('message', (raw: Buffer) => {
-        const parsed = z.object({ text: z.string() }).safeParse(JSON.parse(raw.toString()))
-        if (!parsed.success) return
-        history.push({ role: 'user', text: parsed.data.text })
-        const reply: ChatMessage = { role: 'assistant', text: mockReply(history) }
-        history.push(reply)
-        socket.send(JSON.stringify(reply))
+        const reply = handleChatFrame(raw.toString(), history)
+        if (reply) socket.send(JSON.stringify(reply))
       })
     })
   })

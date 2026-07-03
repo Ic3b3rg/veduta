@@ -2,6 +2,7 @@
   "name": "@veduta/protocol",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -11,8 +12,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run",
-    "dev": "true"
+    "test": "vitest run"
   },
   "dependencies": {
     "zod": "^3.25.0"

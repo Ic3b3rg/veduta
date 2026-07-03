@@ -1,6 +1,7 @@
 {
   "name": "veduta-monorepo",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -18,6 +19,7 @@
   "devDependencies": {
     "@eslint/js": "^9.30.0",
     "eslint": "^9.30.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "prettier": "^3.5.0",
     "typescript": "^5.8.0",
     "typescript-eslint": "^8.35.0"

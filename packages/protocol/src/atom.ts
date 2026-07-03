@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { ActionSchema } from './action.ts'
+import { ActionSchema, type Action } from './action.ts'
 
 /**
  * The closed Atom catalog (ADR-0003): ChatKit-style set plus
@@ -46,6 +46,11 @@ export const atomTypes = [
 export const AtomTypeSchema = z.enum(atomTypes)
 export type AtomType = z.infer<typeof AtomTypeSchema>
 
+/**
+ * The parsed shape of a node: `actions[].path` is always materialized
+ * (the schema defaults it to "agent" at parse time). Inputs may omit
+ * `path` — validation is the only door into this type.
+ */
 export interface AtomNode {
   id: string
   type: AtomType
@@ -53,7 +58,7 @@ export interface AtomNode {
   props?: Record<string, unknown>
   /** Key into the Surface's typed state this node reads from. */
   binding?: string
-  actions?: z.input<typeof ActionSchema>[]
+  actions?: Action[]
   children?: AtomNode[]
 }
 

@@ -46,4 +46,9 @@ describe('ActionSchema', () => {
   it('defaults the path to "agent" (fail-safe)', () => {
     expect(ActionSchema.parse({ name: 'regenerate' }).path).toBe('agent')
   })
+
+  it('rejects a fast action without a stateKey (undispatchable)', () => {
+    const result = ActionSchema.safeParse({ name: 'toggle', path: 'fast' })
+    expect(result.success).toBe(false)
+  })
 })

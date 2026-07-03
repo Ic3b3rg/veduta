@@ -2,7 +2,7 @@
 
 ## Project status
 
-Veduta is in the **design phase**: this repository currently contains the full design corpus (architecture, PRD, ADRs, research, issues) but **no code yet**. Implementation starts with [issue 001](issues/001-monorepo-scaffold.md).
+Implementation is underway: the monorepo scaffold ([issue #1](https://github.com/Ic3b3rg/veduta/issues/1)) is in place — `pnpm dev` works as described below. The full design corpus (architecture, PRD, ADRs, research) drives the remaining [issues](issues/README.md).
 
 ## How to contribute today
 
