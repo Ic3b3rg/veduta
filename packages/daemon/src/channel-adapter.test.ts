@@ -36,6 +36,25 @@ function runChannelAdapterContract(name: string, createHarness: () => AdapterHar
       expect(Date.parse(events[0]!.receivedAt)).not.toBeNaN()
     })
 
+    it('preserves optional Space routing for PWA chat', () => {
+      const harness = createHarness()
+      const events: NormalizedChannelEvent[] = []
+      harness.adapter.onMessage((event) => events.push(event))
+      harness.connect('client-1')
+
+      if (harness.adapter instanceof PwaChannelAdapter) {
+        harness.adapter.receive('client-1', {
+          type: 'chat.send',
+          text: 'I ate a pizza',
+          spaceId: 'spc-health',
+        })
+        expect(events[0]?.spaceId).toBe('spc-health')
+      } else {
+        harness.receiveChat('client-1', 'I ate a pizza')
+        expect(events[0]?.spaceId).toBeUndefined()
+      }
+    })
+
     it('disconnects clients so later short sends are ignored', () => {
       const harness = createHarness()
       harness.connect('client-1')
@@ -114,11 +133,13 @@ class FakeChannelAdapter implements ChannelAdapter {
 
   receive(clientId: string, frame: GatewayClientMessage): void {
     if (frame.type !== 'chat.send') return
-    this.messageHandler({
+    const event: NormalizedChannelEvent = {
       adapterId: this.id,
       clientId,
       text: frame.text,
       receivedAt: new Date().toISOString(),
-    })
+    }
+    if (frame.spaceId !== undefined) event.spaceId = frame.spaceId
+    this.messageHandler(event)
   }
 }

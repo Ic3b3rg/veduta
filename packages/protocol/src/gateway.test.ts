@@ -13,6 +13,20 @@ describe('Gateway protocol', () => {
     })
   })
 
+  it('accepts pre-routed chat messages for a Space', () => {
+    expect(
+      GatewayClientMessageSchema.parse({
+        type: 'chat.send',
+        text: 'I ate a pizza',
+        spaceId: 'spc-health',
+      }),
+    ).toEqual({
+      type: 'chat.send',
+      text: 'I ate a pizza',
+      spaceId: 'spc-health',
+    })
+  })
+
   it('accepts typed Surface patch, presence and approval frames', () => {
     const event = SurfacePatchEventSchema.parse({
       cursor: 1,

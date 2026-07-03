@@ -68,5 +68,39 @@ export function seedSpaces(): { spaces: Space[]; surfaces: Surface[] } {
     freshness: { updatedAt: now(), updatedBy: 'seed' },
   })
 
-  return { spaces: [health], surfaces: [goal, groceries] }
+  const meals = SurfaceSchema.parse({
+    id: 'srf-meals',
+    spaceId: health.id,
+    title: 'Meals',
+    tree: {
+      id: 'root',
+      type: 'Box',
+      children: [
+        { id: 'title', type: 'Title', props: { text: 'Meals' } },
+        {
+          id: 'summary',
+          type: 'Row',
+          children: [
+            { id: 'meal-count', type: 'Stat', binding: 'mealCount', props: { label: 'Today' } },
+            { id: 'last-meal', type: 'Stat', binding: 'lastMeal', props: { label: 'Last meal' } },
+          ],
+        },
+        {
+          id: 'meal-table',
+          type: 'Table',
+          binding: 'meals',
+          props: { columns: ['time', 'meal'] },
+        },
+        {
+          id: 'hint',
+          type: 'Caption',
+          props: { text: 'Type "I ate a pizza" in chat to update this Surface.' },
+        },
+      ],
+    },
+    state: { meals: [], lastMeal: 'Nothing logged today', mealCount: 0 },
+    freshness: { updatedAt: now(), updatedBy: 'seed' },
+  })
+
+  return { spaces: [health], surfaces: [goal, groceries, meals] }
 }

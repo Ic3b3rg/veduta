@@ -81,7 +81,9 @@ export function buildServer(options: ServerOptions = {}) {
               auth.store.onSessionRevoked((event) => listener({ deviceId: event.deviceId })),
           },
         }
-      : {},
+      : // Only the dev profile gets the deterministic chat→Surface demo; a
+        // production deployment waits for the real Agent loop.
+        { mockChatEffects: true },
   )
   const pwaDistDir = options.pwaDistDir ?? defaultPwaDistDir
   const lockout = new ProgressiveAuthLockout()
@@ -179,9 +181,24 @@ export function buildServer(options: ServerOptions = {}) {
 
   app.get('/', (_request, reply) => sendPwaAsset(reply, pwaDistDir, 'index.html'))
 
+  app.get('/app/*', (_request, reply) => sendPwaAsset(reply, pwaDistDir, 'index.html'))
+
+  app.get('/manifest.webmanifest', (_request, reply) =>
+    sendPwaAsset(reply, pwaDistDir, 'manifest.webmanifest'),
+  )
+
+  app.get('/service-worker.js', (_request, reply) =>
+    sendPwaAsset(reply, pwaDistDir, 'service-worker.js'),
+  )
+
   app.get('/assets/*', (request, reply) => {
     const asset = (request.params as { '*': string })['*']
     return sendPwaAsset(reply, pwaDistDir, `assets/${asset}`)
+  })
+
+  app.get('/icons/*', (request, reply) => {
+    const asset = (request.params as { '*': string })['*']
+    return sendPwaAsset(reply, pwaDistDir, `icons/${asset}`)
   })
 
   app.get('/api/spaces', (request) => {
@@ -246,7 +263,11 @@ function isPublicUnauthenticatedPath(url: string): boolean {
   const path = url.split('?')[0] ?? url
   return (
     path === '/' ||
+    path.startsWith('/app/') ||
     path.startsWith('/assets/') ||
+    path.startsWith('/icons/') ||
+    path === '/manifest.webmanifest' ||
+    path === '/service-worker.js' ||
     path.startsWith('/.well-known/acme-challenge/') ||
     path === '/api/auth/status' ||
     path === '/api/auth/register/options' ||

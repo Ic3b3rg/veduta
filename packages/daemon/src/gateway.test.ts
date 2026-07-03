@@ -113,6 +113,60 @@ describe('GatewayHub Surface sync', () => {
       socket.surfacePatches().filter((frame) => frame.event.patch.surfaceId === 'srf-agent-action'),
     ).toHaveLength(0)
   })
+
+  it('patches the relevant Health Surface when mock chat logs a meal', () => {
+    const store = new Store({ now: fixedNow })
+    const gateway = new GatewayHub(store, { mockChatEffects: true })
+    const socket = new FakeGatewaySocket()
+    gateway.connect(socket)
+    socket.receive({
+      type: 'hello',
+      clientId: 'pwa-health',
+      surfaceCursor: store.latestSurfaceCursor(),
+    })
+
+    socket.receive({ type: 'chat.send', text: 'I ate a pizza', spaceId: 'spc-health' })
+
+    expect(store.getSurface('srf-meals')?.state).toMatchObject({
+      lastMeal: 'a pizza',
+      mealCount: 1,
+    })
+    expect(socket.lastSurfacePatch()?.event.patch).toMatchObject({
+      surfaceId: 'srf-meals',
+      operations: [
+        {
+          target: 'state',
+          op: 'replace',
+          path: '/meals',
+          value: [expect.objectContaining({ meal: 'a pizza' })],
+        },
+        { target: 'state', op: 'replace', path: '/lastMeal', value: 'a pizza' },
+        { target: 'state', op: 'replace', path: '/mealCount', value: 1 },
+      ],
+    })
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'chat.message',
+      message: { role: 'assistant' },
+    })
+  })
+
+  it('never mutates Surfaces from chat unless mock effects are enabled', () => {
+    const store = new Store({ now: fixedNow })
+    const gateway = new GatewayHub(store)
+    const socket = new FakeGatewaySocket()
+    gateway.connect(socket)
+    socket.receive({
+      type: 'hello',
+      clientId: 'pwa-health',
+      surfaceCursor: store.latestSurfaceCursor(),
+    })
+
+    socket.receive({ type: 'chat.send', text: 'I ate a pizza', spaceId: 'spc-health' })
+
+    expect(store.getSurface('srf-meals')?.state['mealCount']).toBe(0)
+    expect(socket.surfacePatches()).toHaveLength(0)
+    expect(socket.sent.at(-1)).toMatchObject({ type: 'chat.message' })
+  })
 })
 
 class FakeGatewaySocket implements GatewaySocket {
@@ -204,4 +258,8 @@ function agentActionSurface(): Surface {
     state: {},
     freshness: { updatedAt: '2026-07-03T12:00:00.000Z', updatedBy: 'seed' },
   })
+}
+
+function fixedNow(): Date {
+  return new Date('2026-07-03T12:00:00.000Z')
 }

@@ -6,6 +6,7 @@ export interface NormalizedChannelEvent {
   adapterId: string
   clientId: string
   text: string
+  spaceId?: string
   receivedAt: string
 }
 
@@ -54,12 +55,14 @@ export class PwaChannelAdapter implements ChannelAdapter {
 
   receive(clientId: string, frame: GatewayClientMessage): void {
     if (frame.type !== 'chat.send') return
-    this.messageHandler({
+    const event: NormalizedChannelEvent = {
       adapterId: this.id,
       clientId,
       text: frame.text,
       receivedAt: new Date().toISOString(),
-    })
+    }
+    if (frame.spaceId !== undefined) event.spaceId = frame.spaceId
+    this.messageHandler(event)
   }
 
   onMessage(handler: ChannelMessageHandler): void {

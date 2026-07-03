@@ -11,8 +11,12 @@ describe('PWA static assets', () => {
   it('serves the built PWA index and assets without allowing path traversal', async () => {
     const pwaDistDir = await mkdtemp(join(tmpdir(), 'veduta-pwa-'))
     await mkdir(join(pwaDistDir, 'assets'))
+    await mkdir(join(pwaDistDir, 'icons'))
     await writeFile(join(pwaDistDir, 'index.html'), '<div id="root"></div>')
     await writeFile(join(pwaDistDir, 'assets', 'app.js'), 'console.log("veduta")')
+    await writeFile(join(pwaDistDir, 'manifest.webmanifest'), '{"name":"Veduta"}')
+    await writeFile(join(pwaDistDir, 'service-worker.js'), 'self.addEventListener("fetch",()=>{})')
+    await writeFile(join(pwaDistDir, 'icons', 'icon-192.svg'), '<svg></svg>')
     const { app } = buildServer({ pwaDistDir })
 
     const index = await app.inject({ method: 'GET', url: '/' })
@@ -23,6 +27,25 @@ describe('PWA static assets', () => {
     const asset = await app.inject({ method: 'GET', url: '/assets/app.js' })
     expect(asset.statusCode).toBe(200)
     expect(asset.headers['content-type']).toContain('text/javascript')
+
+    const deepLink = await app.inject({
+      method: 'GET',
+      url: '/app/space/health/surface/srf-meals',
+    })
+    expect(deepLink.statusCode).toBe(200)
+    expect(deepLink.headers['content-type']).toContain('text/html')
+
+    const manifest = await app.inject({ method: 'GET', url: '/manifest.webmanifest' })
+    expect(manifest.statusCode).toBe(200)
+    expect(manifest.headers['content-type']).toContain('application/manifest+json')
+
+    const serviceWorker = await app.inject({ method: 'GET', url: '/service-worker.js' })
+    expect(serviceWorker.statusCode).toBe(200)
+    expect(serviceWorker.headers['content-type']).toContain('text/javascript')
+
+    const icon = await app.inject({ method: 'GET', url: '/icons/icon-192.svg' })
+    expect(icon.statusCode).toBe(200)
+    expect(icon.headers['content-type']).toContain('image/svg+xml')
 
     const traversal = await app.inject({ method: 'GET', url: '/assets/../index.html' })
     expect(traversal.statusCode).toBe(404)
@@ -50,8 +73,12 @@ describe('production auth boundary', () => {
   it('keeps PWA assets public but requires passkey sessions for application API routes', async () => {
     const pwaDistDir = await mkdtemp(join(tmpdir(), 'veduta-pwa-'))
     await mkdir(join(pwaDistDir, 'assets'))
+    await mkdir(join(pwaDistDir, 'icons'))
     await writeFile(join(pwaDistDir, 'index.html'), '<div id="root"></div>')
     await writeFile(join(pwaDistDir, 'assets', 'app.js'), 'console.log("veduta")')
+    await writeFile(join(pwaDistDir, 'manifest.webmanifest'), '{"name":"Veduta"}')
+    await writeFile(join(pwaDistDir, 'service-worker.js'), 'self.addEventListener("fetch",()=>{})')
+    await writeFile(join(pwaDistDir, 'icons', 'icon-192.svg'), '<svg></svg>')
     const { auth, token } = await readyAuthStore()
     const { app } = buildServer({
       pwaDistDir,
@@ -60,6 +87,12 @@ describe('production auth boundary', () => {
 
     expect((await app.inject({ method: 'GET', url: '/' })).statusCode).toBe(200)
     expect((await app.inject({ method: 'GET', url: '/assets/app.js' })).statusCode).toBe(200)
+    expect((await app.inject({ method: 'GET', url: '/manifest.webmanifest' })).statusCode).toBe(200)
+    expect((await app.inject({ method: 'GET', url: '/service-worker.js' })).statusCode).toBe(200)
+    expect((await app.inject({ method: 'GET', url: '/icons/icon-192.svg' })).statusCode).toBe(200)
+    expect(
+      (await app.inject({ method: 'GET', url: '/app/space/health/surface/srf-meals' })).statusCode,
+    ).toBe(200)
 
     const denied = await app.inject({ method: 'GET', url: '/api/spaces' })
     expect(denied.statusCode).toBe(401)

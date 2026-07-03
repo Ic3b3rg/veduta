@@ -7,7 +7,7 @@ import {
   type PresenceEntry,
   type SurfacePatchEvent,
 } from '@veduta/protocol'
-import { handleChatText } from './chat.ts'
+import { handleChatText, mealPatchFromChat } from './chat.ts'
 import { PwaChannelAdapter, type NormalizedChannelEvent } from './channel-adapter.ts'
 import { SurfaceActionError, type Store } from './store.ts'
 
@@ -40,7 +40,7 @@ export class GatewayHub {
 
   constructor(
     private readonly store: Store,
-    private readonly options: { auth?: GatewayAuth } = {},
+    private readonly options: { auth?: GatewayAuth; mockChatEffects?: boolean } = {},
   ) {
     this.pwa.onMessage((event) => this.handleChannelMessage(event))
     this.disposeAuthListener = options.auth?.onSessionRevoked((event) => {
@@ -184,7 +184,25 @@ export class GatewayHub {
     if (!session) return
     session.presence.lastSeenAt = event.receivedAt
     const reply = handleChatText(event.text, session.history)
+    if (this.options.mockChatEffects) this.applyMockChatSurfaceEffect(event)
     this.pwa.sendShort(event.clientId, reply.text)
+  }
+
+  // Dev-profile stand-in for the Agent loop: proves the chat→Surface patch
+  // flow end-to-end without an API key. The store's patchState appends the
+  // resulting surface.patch_state to the Space Event log, but the user's chat
+  // turn itself is not ingested yet — that lands with the real Agent loop,
+  // which replaces this method.
+  private applyMockChatSurfaceEffect(event: NormalizedChannelEvent): void {
+    const surface = this.store.getSurface('srf-meals')
+    if (!surface) return
+    if (event.spaceId !== undefined && event.spaceId !== surface.spaceId) return
+
+    const operations = mealPatchFromChat(event.text, surface.state, new Date(event.receivedAt))
+    if (!operations) return
+
+    const mutation = this.store.patchState(surface.id, operations, { updatedBy: 'agent' })
+    this.broadcastSurfacePatch(mutation.event)
   }
 
   private broadcastPresence(): void {

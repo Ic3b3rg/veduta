@@ -15,6 +15,7 @@ export type ChatMessage = z.infer<typeof ChatMessageSchema>
 /** What a client sends over the chat WebSocket. */
 export const ChatClientMessageSchema = z.object({
   text: z.string().min(1),
+  spaceId: z.string().min(1).optional(),
 })
 
 export type ChatClientMessage = z.infer<typeof ChatClientMessageSchema>
