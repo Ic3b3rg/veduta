@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@earendil-works/pi-agent-core": "0.80.3",
     "@fastify/cors": "^10.1.0",
     "@fastify/websocket": "^11.1.0",
     "@veduta/protocol": "workspace:*",

@@ -88,7 +88,7 @@ function SurfaceCard({
         .then(onPatched)
         .catch((e: Error) => onError(`"${surface.title}" update failed: ${e.message}`))
     }
-    // Agent-path actions arrive with issue #3 (AgentRunner).
+    // Agent path dispatch is wired after the runner through the Gateway and Surface engine slices.
   }
 
   return (

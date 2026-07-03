@@ -2,15 +2,14 @@ import type { ChatMessage } from '@veduta/protocol'
 
 /**
  * Deterministic mock LLM provider (issue #1): development and tests
- * must require no API keys. Real providers arrive behind the
- * AgentRunner wrapper (issue #3); this mock exists so `pnpm dev`
- * always answers in chat.
+ * must require no API keys. The Gateway keeps using it until the
+ * AgentRunner is wired into chat in the next foundation slice.
  */
 export function mockReply(history: ChatMessage[]): string {
   const last = history.at(-1)?.text.trim() ?? ''
   if (last === '') return 'Say something and I will echo it back.'
   if (/help|aiuto/i.test(last)) {
-    return 'I am the mock provider. The real Agent arrives with issue #3 — until then I answer deterministically, with no API key.'
+    return 'I am the mock provider. The Agent runtime is isolated behind AgentRunner; chat wiring still answers deterministically, with no API key.'
   }
-  return `[mock] You said: "${last}". The real Agent (issue #3) will act on this; for now I only prove the loop works.`
+  return `[mock] You said: "${last}". Chat wiring still uses the deterministic dev provider; AgentRunner owns the real runtime boundary.`
 }
