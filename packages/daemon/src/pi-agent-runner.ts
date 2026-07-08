@@ -96,10 +96,10 @@ export class PiAgentRunner implements AgentRunner {
       throw new Error('AgentRunner.prompt requires a model before issue 010 model routing')
 
     // Retry-safe contract: skip re-appending the user message only when
-    // the failed attempt actually got as far as appending it — failures
+    // a failed attempt actually got as far as appending it — failures
     // before the append (tool mapping, agent setup) must not skip it.
+    // The marker survives until the turn completes successfully.
     const userMessageAppended = options.retryOfFailedTurn === true && this.failedTurnInput === input
-    this.failedTurnInput = undefined
 
     if (!modelRefsEqual(model, this.currentModel)) {
       await this.sessionStore.append(sessionId, { type: 'model-change', model })
@@ -127,6 +127,7 @@ export class PiAgentRunner implements AgentRunner {
         type: 'message',
         message: { role: 'user', content: input },
       })
+      this.failedTurnInput = input
     }
 
     this.turnError = undefined
@@ -136,7 +137,6 @@ export class PiAgentRunner implements AgentRunner {
       // The live pi context already holds this turn's user message; a
       // retry rebuilds the agent from the session store instead.
       this.agent = undefined
-      this.failedTurnInput = input
       await this.events.emit({ type: 'error', message: errorMessage(error) })
       throw error
     }
@@ -148,9 +148,10 @@ export class PiAgentRunner implements AgentRunner {
       const message = this.turnError
       this.turnError = undefined
       this.agent = undefined
-      this.failedTurnInput = input
       throw new Error(message)
     }
+
+    this.failedTurnInput = undefined
   }
 
   abort(): void {
