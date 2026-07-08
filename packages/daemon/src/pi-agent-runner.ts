@@ -154,7 +154,7 @@ export class PiAgentRunner implements AgentRunner {
       throw new Error(message)
     }
 
-    this.failedTurn = undefined
+    if (this.failedTurn?.sessionId === sessionId) this.failedTurn = undefined
   }
 
   abort(): void {
