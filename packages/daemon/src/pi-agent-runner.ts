@@ -65,6 +65,8 @@ export class PiAgentRunner implements AgentRunner {
   private agent: Agent | undefined = undefined
   private unsubscribe: (() => void) | undefined = undefined
   private turnError: string | undefined = undefined
+  /** Input of a failed turn whose user message is already in the session. */
+  private failedTurnInput: string | undefined = undefined
 
   constructor(options: PiAgentRunnerOptions) {
     this.sessionStore = options.sessionStore
@@ -81,6 +83,7 @@ export class PiAgentRunner implements AgentRunner {
     const branch = await this.sessionStore.load(sessionId)
     this.currentModel = branch.model
     this.turnError = undefined
+    this.failedTurnInput = undefined
     this.agent = undefined
     if (this.currentModel)
       this.agent = this.createAgent(branch, this.currentModel, [], this.defaultContextPolicy)
@@ -91,6 +94,12 @@ export class PiAgentRunner implements AgentRunner {
     const model = options.model ?? this.currentModel ?? this.defaultModel
     if (!model)
       throw new Error('AgentRunner.prompt requires a model before issue 010 model routing')
+
+    // Retry-safe contract: skip re-appending the user message only when
+    // the failed attempt actually got as far as appending it — failures
+    // before the append (tool mapping, agent setup) must not skip it.
+    const userMessageAppended = options.retryOfFailedTurn === true && this.failedTurnInput === input
+    this.failedTurnInput = undefined
 
     if (!modelRefsEqual(model, this.currentModel)) {
       await this.sessionStore.append(sessionId, { type: 'model-change', model })
@@ -113,9 +122,7 @@ export class PiAgentRunner implements AgentRunner {
       delete this.agent.transformContext
     }
 
-    // Retry-safe contract: a failover retry re-sends the user message to
-    // the new model but must not append it to the session a second time.
-    if (!options.retryOfFailedTurn) {
+    if (!userMessageAppended) {
       await this.sessionStore.append(sessionId, {
         type: 'message',
         message: { role: 'user', content: input },
@@ -129,6 +136,7 @@ export class PiAgentRunner implements AgentRunner {
       // The live pi context already holds this turn's user message; a
       // retry rebuilds the agent from the session store instead.
       this.agent = undefined
+      this.failedTurnInput = input
       await this.events.emit({ type: 'error', message: errorMessage(error) })
       throw error
     }
@@ -140,6 +148,7 @@ export class PiAgentRunner implements AgentRunner {
       const message = this.turnError
       this.turnError = undefined
       this.agent = undefined
+      this.failedTurnInput = input
       throw new Error(message)
     }
   }

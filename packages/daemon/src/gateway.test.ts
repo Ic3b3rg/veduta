@@ -185,6 +185,23 @@ describe('GatewayHub system notices', () => {
       message: { role: 'assistant', text: expect.stringContaining('spending cap') },
     })
   })
+
+  it('queues a notice sent with nobody connected and delivers it on the next hello', () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store)
+
+    gateway.broadcastSystemNotice('Daily triage spending cap reached; proactivity is paused.')
+
+    const socket = new FakeGatewaySocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    const notice = socket.sent.find((frame) => frame.type === 'chat.message')
+    expect(notice).toMatchObject({
+      type: 'chat.message',
+      message: { role: 'assistant', text: expect.stringContaining('spending cap') },
+    })
+  })
 })
 
 class FakeGatewaySocket implements GatewaySocket {

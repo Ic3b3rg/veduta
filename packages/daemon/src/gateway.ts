@@ -37,6 +37,7 @@ export class GatewayHub {
   private clients = new Map<string, GatewayClientSession>()
   private nextClientId = 1
   private disposeAuthListener: (() => void) | undefined
+  private pendingSystemNotices: string[] = []
 
   constructor(
     private readonly store: Store,
@@ -104,8 +105,16 @@ export class GatewayHub {
     this.pwa.broadcast({ type: 'surface.patch', event })
   }
 
-  /** Daemon-originated notice (e.g. spending cap reached) to every client. */
+  /**
+   * Daemon-originated notice (e.g. spending cap reached) to every client.
+   * With nobody connected (boot-time re-notify) it queues and reaches the
+   * next client that completes the hello.
+   */
   broadcastSystemNotice(text: string): void {
+    if (this.clients.size === 0) {
+      this.pendingSystemNotices.push(text)
+      return
+    }
     this.pwa.broadcast({ type: 'chat.message', message: { role: 'assistant', text } })
   }
 
@@ -177,6 +186,7 @@ export class GatewayHub {
     if (deviceId !== undefined) session.deviceId = deviceId
     this.clients.set(clientId, session)
     this.pwa.connect({ clientId, send })
+    for (const text of this.pendingSystemNotices.splice(0)) this.pwa.sendShort(clientId, text)
   }
 
   private disconnectClient(clientId: string): void {

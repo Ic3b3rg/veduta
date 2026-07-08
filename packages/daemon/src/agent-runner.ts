@@ -45,8 +45,8 @@ export interface AgentPromptOptions {
   contextPolicy?: ContextPolicy
   /**
    * True when this prompt retries a turn that just failed (model
-   * failover): the user message is already in the session and must
-   * not be appended again.
+   * failover): if the failed attempt already appended the user message
+   * to the session, the runner must not append it again.
    */
   retryOfFailedTurn?: boolean
 }
