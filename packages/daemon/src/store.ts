@@ -27,6 +27,17 @@ export interface StoreOptions {
 export type SurfaceActionResult =
   { path: 'fast'; mutation: SurfaceMutation } | { path: 'agent'; turn: QueuedAgentTurn }
 
+/**
+ * A non-duplicate fast-path mutation as seen by observers: the explicit
+ * value (never a flip) so downstream state converges under retries.
+ */
+export interface FastMutationNotice {
+  surfaceId: string
+  stateKey: string
+  value: JsonValue
+  mutation: SurfaceMutation
+}
+
 export type SurfaceActionErrorCode = 'unknown_surface' | 'undeclared_action' | 'missing_value'
 
 export class SurfaceActionError extends Error {
@@ -52,6 +63,7 @@ export class Store {
   private readonly surfaceEngine: SurfaceEngine
   private readonly now: () => Date
   private readonly llmCalls = 0
+  private readonly fastMutationObservers = new Set<(notice: FastMutationNotice) => void>()
 
   constructor(options: StoreOptions = {}) {
     this.now = options.now ?? (() => new Date())
@@ -156,10 +168,23 @@ export class Store {
       )
     }
 
-    return {
-      path: 'fast',
-      mutation: this.applyFastAction(surfaceId, action.stateKey, value, invocation.idempotencyKey),
+    const mutation = this.applyFastAction(
+      surfaceId,
+      action.stateKey,
+      value,
+      invocation.idempotencyKey,
+    )
+    if (!mutation.duplicate) {
+      const notice = { surfaceId, stateKey: action.stateKey, value, mutation }
+      for (const observer of this.fastMutationObservers) observer(notice)
     }
+    return { path: 'fast', mutation }
+  }
+
+  /** Observe non-duplicate fast-path mutations (idempotent replays never notify). */
+  onFastMutation(observer: (notice: FastMutationNotice) => void): () => void {
+    this.fastMutationObservers.add(observer)
+    return () => this.fastMutationObservers.delete(observer)
   }
 
   createSurface(surface: Surface, updatedBy: 'agent' | 'user' | 'job'): Surface {
@@ -204,6 +229,11 @@ export class Store {
 
   eventLog(spaceId: string): SpaceEvent[] {
     return this.spacesEngine.readRecent(spaceId, Number.MAX_SAFE_INTEGER)
+  }
+
+  /** Bounded Event log read: only the daily files that can hold `sinceIso` or later. */
+  eventLogSince(spaceId: string, sinceIso: string): SpaceEvent[] {
+    return this.spacesEngine.readSince(spaceId, sinceIso)
   }
 
   writeFact(spaceId: string, fact: string) {

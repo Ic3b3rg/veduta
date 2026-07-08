@@ -76,6 +76,10 @@ export const SPACE_GRANULARITY_RULE =
 export const ABSTENTION_RULE =
   "If a user asks about something not present in USER, FACTS, INSTRUCTIONS, or recent Event log, say you don't know and do not invent it."
 
+/** ADR-0005: proactivity is timers, not promises to remember. */
+export const TIMER_RULE =
+  'Every learned deadline or habit arms a timer (arm_timer tool), never "I\'ll remember it": timers are visible Automations the user can switch off.'
+
 export class SpacesEngine {
   readonly rootDir: string
   private readonly now: () => Date
@@ -225,6 +229,20 @@ export class SpacesEngine {
     return this.readAllEvents(spaceId).slice(-limit)
   }
 
+  /** Events at or after `sinceIso`, reading only the daily log files that can contain them. */
+  readSince(spaceId: string, sinceIso: string): SpaceEvent[] {
+    const space = this.requireSpace(spaceId)
+    const dir = this.spacePath(space, 'log')
+    if (!existsSync(dir)) return []
+    const sinceDay = sinceIso.slice(0, 10)
+    return readdirSync(dir)
+      .filter((file) => file.endsWith('.jsonl') && file.slice(0, 10) >= sinceDay)
+      .sort()
+      .flatMap((file) => readEventsFile(join(dir, file)))
+      .filter((event) => event.at >= sinceIso)
+      .sort((left, right) => left.at.localeCompare(right.at))
+  }
+
   searchLog(spaceId: string, query: string, limit = 20): SpaceEvent[] {
     const needle = query.toLowerCase()
     if (!needle) return []
@@ -240,7 +258,10 @@ export class SpacesEngine {
     return [
       section('SOUL', readOrEmpty(this.globalPath('SOUL.md'))),
       section('USER', readOrEmpty(this.globalPath('USER.md'))),
-      section('Active Space', `${space.name} (${space.slug})\n${SPACE_GRANULARITY_RULE}`),
+      section(
+        'Active Space',
+        `${space.name} (${space.slug})\n${SPACE_GRANULARITY_RULE}\n${TIMER_RULE}`,
+      ),
       section('FACTS', factsForContext(facts)),
       section('Recent Event log', eventsForContext(recentEvents)),
       section('INSTRUCTIONS', readOrEmpty(this.spacePath(space, INSTRUCTIONS_FILE))),
@@ -465,6 +486,8 @@ You are Veduta's single Agent. You switch context between Spaces; you do not bec
 ${ABSTENTION_RULE}
 
 ${SPACE_GRANULARITY_RULE}
+
+${TIMER_RULE}
 `
 }
 

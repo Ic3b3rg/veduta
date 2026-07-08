@@ -41,7 +41,12 @@ export class GatewayHub {
 
   constructor(
     private readonly store: Store,
-    private readonly options: { auth?: GatewayAuth; mockChatEffects?: boolean } = {},
+    private readonly options: {
+      auth?: GatewayAuth
+      mockChatEffects?: boolean
+      /** Extra dev-profile chat effect (e.g. the scheduler's "remind me…" demo). */
+      onDevChatEffect?: (event: NormalizedChannelEvent) => void
+    } = {},
   ) {
     this.pwa.onMessage((event) => this.handleChannelMessage(event))
     this.disposeAuthListener = options.auth?.onSessionRevoked((event) => {
@@ -199,7 +204,10 @@ export class GatewayHub {
     if (!session) return
     session.presence.lastSeenAt = event.receivedAt
     const reply = handleChatText(event.text, session.history)
-    if (this.options.mockChatEffects) this.applyMockChatSurfaceEffect(event)
+    if (this.options.mockChatEffects) {
+      this.applyMockChatSurfaceEffect(event)
+      this.options.onDevChatEffect?.(event)
+    }
     this.pwa.sendShort(event.clientId, reply.text)
   }
 

@@ -14,9 +14,12 @@ import Fastify from 'fastify'
 import { z } from 'zod'
 import { ProgressiveAuthLockout } from './auth-rate-limit.ts'
 import { AuthStoreError, type AuthStore } from './auth-store.ts'
+import type { NormalizedChannelEvent } from './channel-adapter.ts'
+import { reminderFromChat } from './chat.ts'
 import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
 import { GatewayHub } from './gateway.ts'
 import { ModelRouter, loadRoutingConfig } from './model-routing.ts'
+import { Scheduler } from './scheduler.ts'
 import { sendPwaAsset } from './static-assets.ts'
 import { Store, SurfaceActionError } from './store.ts'
 import { appendSystemSurface } from './system-space.ts'
@@ -49,6 +52,8 @@ export interface ServerOptions {
   dataDir?: string
   auth?: ServerAuthOptions
   https?: { key: string; cert: string }
+  /** Injectable clock so tests drive the scheduler with a fake clock. */
+  now?: () => Date
 }
 
 export type ServerAuthOptions =
@@ -72,8 +77,30 @@ export function buildServer(options: ServerOptions = {}) {
     logger: false,
     ...(options.https ? { https: options.https } : {}),
   })
-  const store = new Store(options.dataDir === undefined ? {} : { rootDir: options.dataDir })
+  const now = options.now ?? (() => new Date())
+  const store = new Store({
+    now,
+    ...(options.dataDir === undefined ? {} : { rootDir: options.dataDir }),
+  })
   const auth = options.auth ?? { mode: 'dev' as const }
+  // Dev-profile stand-in for the Agent's arm_timer decision (scheduler is
+  // assigned right after the gateway; chat frames only arrive once both exist).
+  const armReminderFromChat = (event: NormalizedChannelEvent) => {
+    const reminder = reminderFromChat(event.text, now())
+    if (!reminder) return
+    const spaceId = event.spaceId ?? 'spc-health'
+    if (!store.getSpace(spaceId)) return
+    try {
+      scheduler.armTimer({
+        spaceId,
+        when: reminder.fireAtIso,
+        condition: { kind: 'event-logged', textIncludes: reminder.conditionNeedle },
+        action: reminder.action,
+      })
+    } catch {
+      // A malformed demo reminder must never take the chat socket down.
+    }
+  }
   const gateway = new GatewayHub(
     store,
     auth.mode === 'production'
@@ -86,8 +113,24 @@ export function buildServer(options: ServerOptions = {}) {
         }
       : // Only the dev profile gets the deterministic chat→Surface demo; a
         // production deployment waits for the real Agent loop.
-        { mockChatEffects: true },
+        { mockChatEffects: true, onDevChatEffect: armReminderFromChat },
   )
+  // The scheduler (issue #11): timers and jobs fire as visible Automations.
+  // The judgment path stays a deterministic "unknown" (fail-safe: escalate)
+  // stub because the daemon has no provider client yet — chat itself still
+  // answers via the mock provider. It lands with the real Agent loop wiring
+  // as router.execute({ purpose: 'classification', origin: 'proactive' })
+  // so the daily spending caps govern scheduler judgments too.
+  const scheduler = new Scheduler({
+    rootDir: store.spacesEngine.rootDir,
+    store,
+    now,
+    onEscalation: (_spaceId, text) => gateway.broadcastSystemNotice(text),
+    onSurfacePatch: (event) => gateway.broadcastSurfacePatch(event),
+    judge: () => 'unknown',
+  })
+  scheduler.start()
+  app.addHook('onClose', async () => scheduler.stop())
   // Model routing (issue #10): per-tier config from <dataDir>/routing.json,
   // spend persisted under <dataDir>/usage/. Past a daily cap the router
   // shuts proactivity off; the user hears about it in chat. Live spend
@@ -270,7 +313,7 @@ export function buildServer(options: ServerOptions = {}) {
     })
   })
 
-  return { app, store, gateway, router }
+  return { app, store, gateway, router, scheduler }
 }
 
 export function isAllowedOrigin(origin: string | undefined, allowedOrigins: string[]): boolean {

@@ -23,6 +23,7 @@ import {
 import { z } from 'zod'
 import { defineTool, type ToolDef } from './agent-runner.ts'
 import type { AppendSpaceEventInput } from './spaces-engine.ts'
+import { requiredNumber, requiredString, withImmediateTransaction } from './sqlite-rows.ts'
 
 type SurfaceWriteActor = Extract<Freshness['updatedBy'], 'agent' | 'user' | 'job'>
 
@@ -601,15 +602,7 @@ export class SurfaceEngine {
   }
 
   private runWrite<T>(write: () => T): T {
-    this.db.exec('begin immediate')
-    try {
-      const result = write()
-      this.db.exec('commit')
-      return result
-    } catch (error) {
-      this.db.exec('rollback')
-      throw error
-    }
+    return withImmediateTransaction(this.db, write)
   }
 }
 
@@ -647,19 +640,6 @@ function agentTurnFromRow(row: Record<string, unknown>): QueuedAgentTurn {
     surface: SurfaceSchema.parse(JSON.parse(requiredString(row, 'surface_json'))),
     atom: AtomNodeSchema.parse(JSON.parse(requiredString(row, 'atom_json'))),
   }
-}
-
-function requiredString(row: Record<string, unknown>, key: string): string {
-  const value = row[key]
-  if (typeof value !== 'string') throw new Error(`expected string column ${key}`)
-  return value
-}
-
-function requiredNumber(row: Record<string, unknown>, key: string): number {
-  const value = row[key]
-  if (typeof value === 'number') return value
-  if (typeof value === 'bigint') return Number(value)
-  throw new Error(`expected number column ${key}`)
 }
 
 function statePath(key: string): string {

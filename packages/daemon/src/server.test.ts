@@ -2,7 +2,12 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
-import { SurfaceSchema, type Surface } from '@veduta/protocol'
+import {
+  GatewayServerMessageSchema,
+  SurfaceSchema,
+  type GatewayServerMessage,
+  type Surface,
+} from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import { AuthStore, type PasskeyRelyingParty, type StoredPasskey } from './auth-store.ts'
 import { buildServer } from './server.ts'
@@ -320,6 +325,75 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
     ).toHaveLength(0)
   })
 })
+
+describe('scheduler wiring (issue #11)', () => {
+  it('pre-creates the Automations Surface, arms a timer from dev chat and escalates on fire', async () => {
+    let clock = new Date('2026-07-08T08:00:00.000Z')
+    clock.setHours(13, 0, 0, 0) // parser and clock work in daemon-local time
+    const { app, gateway, scheduler, store } = buildServer({
+      now: () => new Date(clock.getTime()),
+    })
+
+    const snapshot = await app.inject({ method: 'GET', url: '/api/spaces' })
+    const health = (
+      snapshot.json() as { spaces: { id: string; surfaces: { id: string }[] }[] }
+    ).spaces.find((space) => space.id === 'spc-health')
+    expect(health?.surfaces.some((surface) => surface.id === 'srf-health-automations')).toBe(true)
+
+    const socket = new SchedulerFakeSocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+    socket.receive({
+      type: 'chat.send',
+      text: 'Remind me to log my weight by 9pm',
+      spaceId: 'spc-health',
+    })
+
+    const automations = scheduler.listAutomations('spc-health')
+    expect(automations).toHaveLength(1)
+    expect(automations[0]).toMatchObject({
+      description: 'log my weight',
+      status: 'armed',
+      condition: { kind: 'event-logged', textIncludes: 'weight' },
+    })
+    // The timer landed in the Surface as a live patch, visible and toggleable.
+    expect(
+      socket.sent.some(
+        (frame) =>
+          frame.type === 'surface.patch' &&
+          frame.event.patch.surfaceId === 'srf-health-automations',
+      ),
+    ).toBe(true)
+
+    clock = new Date(automations[0]!.nextRunAt!)
+    await scheduler.runDue()
+    expect(
+      socket.sent.some(
+        (frame) =>
+          frame.type === 'chat.message' && frame.message.text === 'Reminder: log my weight',
+      ),
+    ).toBe(true)
+
+    await app.close() // onClose stops the scheduler loop
+  })
+})
+
+class SchedulerFakeSocket {
+  readonly sent: GatewayServerMessage[] = []
+  private readonly handlers = new Map<string, (raw: Buffer | string) => void>()
+
+  send(data: string): void {
+    this.sent.push(GatewayServerMessageSchema.parse(JSON.parse(data)))
+  }
+
+  on(event: 'message' | 'close', handler: (raw: Buffer | string) => void): void {
+    this.handlers.set(event, handler)
+  }
+
+  receive(frame: unknown): void {
+    this.handlers.get('message')?.(JSON.stringify(frame))
+  }
+}
 
 class ServerFakePasskeys implements PasskeyRelyingParty {
   private registrationCount = 0
