@@ -65,8 +65,8 @@ export class PiAgentRunner implements AgentRunner {
   private agent: Agent | undefined = undefined
   private unsubscribe: (() => void) | undefined = undefined
   private turnError: string | undefined = undefined
-  /** Input of a failed turn whose user message is already in the session. */
-  private failedTurnInput: string | undefined = undefined
+  /** Failed turn whose user message is already in that session's store. */
+  private failedTurn: { sessionId: string; input: string } | undefined = undefined
 
   constructor(options: PiAgentRunnerOptions) {
     this.sessionStore = options.sessionStore
@@ -83,7 +83,6 @@ export class PiAgentRunner implements AgentRunner {
     const branch = await this.sessionStore.load(sessionId)
     this.currentModel = branch.model
     this.turnError = undefined
-    this.failedTurnInput = undefined
     this.agent = undefined
     if (this.currentModel)
       this.agent = this.createAgent(branch, this.currentModel, [], this.defaultContextPolicy)
@@ -98,8 +97,12 @@ export class PiAgentRunner implements AgentRunner {
     // Retry-safe contract: skip re-appending the user message only when
     // a failed attempt actually got as far as appending it — failures
     // before the append (tool mapping, agent setup) must not skip it.
-    // The marker survives until the turn completes successfully.
-    const userMessageAppended = options.retryOfFailedTurn === true && this.failedTurnInput === input
+    // The marker is scoped to the session and survives until the turn
+    // completes successfully (including across a same-session restart).
+    const userMessageAppended =
+      options.retryOfFailedTurn === true &&
+      this.failedTurn?.sessionId === sessionId &&
+      this.failedTurn.input === input
 
     if (!modelRefsEqual(model, this.currentModel)) {
       await this.sessionStore.append(sessionId, { type: 'model-change', model })
@@ -127,7 +130,7 @@ export class PiAgentRunner implements AgentRunner {
         type: 'message',
         message: { role: 'user', content: input },
       })
-      this.failedTurnInput = input
+      this.failedTurn = { sessionId, input }
     }
 
     this.turnError = undefined
@@ -151,7 +154,7 @@ export class PiAgentRunner implements AgentRunner {
       throw new Error(message)
     }
 
-    this.failedTurnInput = undefined
+    this.failedTurn = undefined
   }
 
   abort(): void {
