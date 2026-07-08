@@ -312,6 +312,8 @@ export function App() {
     setSurfaceOrders({ ...surfaceOrders, [space.id]: nextOrder })
   }
 
+  const queuedCount = queuedChat.length + queuedFastActions.length
+
   if (authMode === 'production' && !authToken) {
     return (
       <AuthGate
@@ -339,11 +341,7 @@ export function App() {
           <span className={gatewayOnline ? 'status-pill online' : 'status-pill'}>
             {gatewayOnline ? 'Live' : 'Offline-ready'}
           </span>
-          {queuedChat.length + queuedFastActions.length > 0 && (
-            <span className="status-pill pending">
-              {queuedChat.length + queuedFastActions.length} queued
-            </span>
-          )}
+          {queuedCount > 0 && <span className="status-pill pending">{queuedCount} queued</span>}
           {showInstallGuide && (
             <InstallButton
               prompt={installPrompt}

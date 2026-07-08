@@ -13,6 +13,7 @@ import {
   type JsonValue,
   type Surface,
   type SurfacePatchEvent,
+  type SurfaceSnapshot,
 } from '@veduta/protocol'
 import {
   startAuthentication,
@@ -26,10 +27,7 @@ import { z } from 'zod'
 
 // The PWA never trusts the wire blindly (AGENTS.md): every response is
 // validated with the protocol schemas before it reaches a component.
-const SpacesResponseSchema = SurfaceSnapshotSchema
-
-export type SpaceWithSurfaces = z.infer<typeof SpacesResponseSchema>['spaces'][number]
-export type SpacesSnapshot = z.infer<typeof SpacesResponseSchema>
+export type SpaceWithSurfaces = SurfaceSnapshot['spaces'][number]
 
 const SurfaceActionResponseSchema = z.union([
   z.object({ surface: SurfaceSchema }),
@@ -61,10 +59,10 @@ export async function fetchAuthStatus(): Promise<AuthStatus> {
   return AuthStatusSchema.parse(await res.json())
 }
 
-export async function fetchSpaces(token?: string): Promise<SpacesSnapshot> {
+export async function fetchSpaces(token?: string): Promise<SurfaceSnapshot> {
   const res = await fetch('/api/spaces', { headers: authHeaders(token) })
   if (!res.ok) throw new Error(`GET /api/spaces failed: ${res.status}`)
-  return SpacesResponseSchema.parse(await res.json())
+  return SurfaceSnapshotSchema.parse(await res.json())
 }
 
 export async function invokeFastAction(
