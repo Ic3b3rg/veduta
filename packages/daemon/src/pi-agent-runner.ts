@@ -65,8 +65,8 @@ export class PiAgentRunner implements AgentRunner {
   private agent: Agent | undefined = undefined
   private unsubscribe: (() => void) | undefined = undefined
   private turnError: string | undefined = undefined
-  /** Failed turn whose user message is already in that session's store. */
-  private failedTurn: { sessionId: string; input: string } | undefined = undefined
+  /** Per session: input of a failed turn whose user message is already stored. */
+  private readonly failedTurns = new Map<string, string>()
 
   constructor(options: PiAgentRunnerOptions) {
     this.sessionStore = options.sessionStore
@@ -100,9 +100,7 @@ export class PiAgentRunner implements AgentRunner {
     // The marker is scoped to the session and survives until the turn
     // completes successfully (including across a same-session restart).
     const userMessageAppended =
-      options.retryOfFailedTurn === true &&
-      this.failedTurn?.sessionId === sessionId &&
-      this.failedTurn.input === input
+      options.retryOfFailedTurn === true && this.failedTurns.get(sessionId) === input
 
     if (!modelRefsEqual(model, this.currentModel)) {
       await this.sessionStore.append(sessionId, { type: 'model-change', model })
@@ -130,7 +128,7 @@ export class PiAgentRunner implements AgentRunner {
         type: 'message',
         message: { role: 'user', content: input },
       })
-      this.failedTurn = { sessionId, input }
+      this.failedTurns.set(sessionId, input)
     }
 
     this.turnError = undefined
@@ -154,7 +152,7 @@ export class PiAgentRunner implements AgentRunner {
       throw new Error(message)
     }
 
-    if (this.failedTurn?.sessionId === sessionId) this.failedTurn = undefined
+    this.failedTurns.delete(sessionId)
   }
 
   abort(): void {
