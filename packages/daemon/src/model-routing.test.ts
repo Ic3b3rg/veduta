@@ -62,14 +62,19 @@ describe('usage map (tierForRequest)', () => {
         workerTier: 'reasoning',
       }),
     ).toBe('reasoning')
-    expect(() => tierForRequest({ purpose: 'worker', origin: 'proactive', workerId: 'wrk-1' })).toThrow(
-      /declare/i,
-    )
+    expect(() =>
+      tierForRequest({ purpose: 'worker', origin: 'proactive', workerId: 'wrk-1' }),
+    ).toThrow(/declare/i)
   })
 
   it('never lets a Worker route as user origin', () => {
     expect(() =>
-      tierForRequest({ purpose: 'worker', origin: 'user', workerId: 'wrk-1', workerTier: 'triage' }),
+      tierForRequest({
+        purpose: 'worker',
+        origin: 'user',
+        workerId: 'wrk-1',
+        workerTier: 'triage',
+      }),
     ).toThrow(/proactive/i)
   })
 })
@@ -118,7 +123,10 @@ describe('route', () => {
   it('serves a chat turn and a triage round with different models (call log assert)', async () => {
     const router = testRouter()
     await router.execute({ purpose: 'chat-turn', origin: 'user' }, async () => 'chat ok')
-    await router.execute({ purpose: 'classification', origin: 'proactive' }, async () => 'triage ok')
+    await router.execute(
+      { purpose: 'classification', origin: 'proactive' },
+      async () => 'triage ok',
+    )
 
     const [chatCall, triageCall] = router.callLog()
     expect(chatCall?.model).toEqual({ provider: 'mock', modelId: 'strong', tier: 'reasoning' })

@@ -104,6 +104,11 @@ export class GatewayHub {
     this.pwa.broadcast({ type: 'surface.patch', event })
   }
 
+  /** Daemon-originated notice (e.g. spending cap reached) to every client. */
+  broadcastSystemNotice(text: string): void {
+    this.pwa.broadcast({ type: 'chat.message', message: { role: 'assistant', text } })
+  }
+
   private handleClientFrame(
     clientId: string,
     frame: Exclude<GatewayClientMessage, { type: 'hello' }>,

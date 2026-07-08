@@ -1,25 +1,14 @@
-import {
-  SpaceSchema,
-  SurfaceSchema,
-  type AuthDevice,
-  type SpaceWithSurfaces,
-  type SurfaceSnapshot,
-} from '@veduta/protocol'
+import { SurfaceSchema, type AuthDevice, type SurfaceSnapshot } from '@veduta/protocol'
+import { SYSTEM_SPACE_ID, appendSystemSurface } from './system-space.ts'
 
 export function appendConnectedDevicesSurface(
   snapshot: SurfaceSnapshot,
   devices: AuthDevice[],
   updatedAt = new Date().toISOString(),
 ): SurfaceSnapshot {
-  const systemSpace = SpaceSchema.parse({
-    id: 'spc-system',
-    slug: 'system',
-    name: 'System',
-    archived: false,
-  })
   const surface = SurfaceSchema.parse({
     id: 'srf-connected-devices',
-    spaceId: systemSpace.id,
+    spaceId: SYSTEM_SPACE_ID,
     title: 'Connected devices',
     tree: {
       id: 'root',
@@ -36,14 +25,7 @@ export function appendConnectedDevicesSurface(
     state: {},
     freshness: { updatedAt, updatedBy: 'system' },
   })
-  const spaceWithSurfaces: SpaceWithSurfaces = {
-    ...systemSpace,
-    surfaces: [surface],
-  }
-  return {
-    ...snapshot,
-    spaces: [...snapshot.spaces, spaceWithSurfaces],
-  }
+  return appendSystemSurface(snapshot, surface)
 }
 
 function shortDate(iso: string): string {

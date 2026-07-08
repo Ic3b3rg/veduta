@@ -239,10 +239,7 @@ export class ModelRouter {
   }
 
   /** One ordered pass over the tier's candidates; failover only on retryable errors. */
-  async execute<T>(
-    request: RouteRequest,
-    fn: (model: ModelRef) => Promise<T> | T,
-  ): Promise<T> {
+  async execute<T>(request: RouteRequest, fn: (model: ModelRef) => Promise<T> | T): Promise<T> {
     const tier = tierForRequest(request)
     this.assertSpendingAllowed(request, tier)
     const candidates = this.candidates(tier)

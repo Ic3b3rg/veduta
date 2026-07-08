@@ -16,8 +16,11 @@ import { ProgressiveAuthLockout } from './auth-rate-limit.ts'
 import { AuthStoreError, type AuthStore } from './auth-store.ts'
 import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
 import { GatewayHub } from './gateway.ts'
+import { ModelRouter, loadRoutingConfig } from './model-routing.ts'
 import { sendPwaAsset } from './static-assets.ts'
 import { Store, SurfaceActionError } from './store.ts'
+import { appendSystemSurface } from './system-space.ts'
+import { usageSurface } from './usage-surface.ts'
 
 // The client sends only node/action/payload: state keys come from declared
 // Atom actions, never from the client (ADR-0003).
@@ -85,6 +88,20 @@ export function buildServer(options: ServerOptions = {}) {
         // production deployment waits for the real Agent loop.
         { mockChatEffects: true },
   )
+  // Model routing (issue #10): per-tier config from <dataDir>/routing.json,
+  // spend persisted under <dataDir>/usage/. Past a daily cap the router
+  // shuts proactivity off; the user hears about it in chat.
+  const router = new ModelRouter({
+    rootDir: store.spacesEngine.rootDir,
+    config: loadRoutingConfig(store.spacesEngine.rootDir),
+    onEvent: (event) => {
+      if (event.type !== 'spending.cap-exceeded') return
+      gateway.broadcastSystemNotice(
+        `Daily ${event.tier} spending cap reached ($${event.spentUsd.toFixed(2)} of ` +
+          `$${event.capUsd.toFixed(2)}). Proactivity is paused until tomorrow; chat stays available.`,
+      )
+    },
+  })
   const pwaDistDir = options.pwaDistDir ?? defaultPwaDistDir
   const lockout = new ProgressiveAuthLockout()
 
@@ -202,7 +219,10 @@ export function buildServer(options: ServerOptions = {}) {
   })
 
   app.get('/api/spaces', (request) => {
-    const snapshot = store.snapshot()
+    const snapshot = appendSystemSurface(
+      store.snapshot(),
+      usageSurface(router.usage(), new Date().toISOString()),
+    )
     if (auth.mode !== 'production') return snapshot
     const token = extractBearer(request.headers.authorization)
     return token ? appendConnectedDevicesSurface(snapshot, auth.store.listDevices(token)) : snapshot
@@ -248,7 +268,7 @@ export function buildServer(options: ServerOptions = {}) {
     })
   })
 
-  return { app, store, gateway }
+  return { app, store, gateway, router }
 }
 
 export function isAllowedOrigin(origin: string | undefined, allowedOrigins: string[]): boolean {

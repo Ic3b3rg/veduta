@@ -169,6 +169,24 @@ describe('GatewayHub Surface sync', () => {
   })
 })
 
+describe('GatewayHub system notices', () => {
+  it('broadcasts a daemon-originated notice to every connected client', () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store)
+    const socket = new FakeGatewaySocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    gateway.broadcastSystemNotice('Daily triage spending cap reached; proactivity is paused.')
+
+    const notice = socket.sent.find((frame) => frame.type === 'chat.message')
+    expect(notice).toMatchObject({
+      type: 'chat.message',
+      message: { role: 'assistant', text: expect.stringContaining('spending cap') },
+    })
+  })
+})
+
 class FakeGatewaySocket implements GatewaySocket {
   sent: GatewayServerMessage[] = []
   closed = false

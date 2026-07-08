@@ -62,10 +62,24 @@ describe('GET /api/spaces', () => {
       spaces: { slug: string; surfaces: unknown[] }[]
     }
     expect(body.surfaceCursor).toBe(0)
-    expect(body.spaces.map((s) => s.slug)).toEqual(['health'])
-    for (const surface of body.spaces[0]!.surfaces) {
+    expect(body.spaces.map((s) => s.slug)).toEqual(['health', 'system'])
+    for (const surface of body.spaces.flatMap((space) => space.surfaces)) {
       expect(SurfaceSchema.safeParse(surface).success).toBe(true)
     }
+  })
+
+  it('exposes the model usage Surface in the System space (BYOK transparency)', async () => {
+    const { app, router } = buildServer()
+    router.recordSpend({ provider: 'anthropic', modelId: 'claude-sonnet-5', tier: 'reasoning' }, 2)
+
+    const res = await app.inject({ method: 'GET', url: '/api/spaces' })
+    const body = res.json() as {
+      spaces: { slug: string; surfaces: { id: string; tree: unknown }[] }[]
+    }
+    const system = body.spaces.find((space) => space.slug === 'system')
+    const usage = system?.surfaces.find((surface) => surface.id === 'srf-usage')
+    expect(usage).toBeDefined()
+    expect(JSON.stringify(usage?.tree)).toContain('$2.00')
   })
 })
 
