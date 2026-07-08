@@ -126,8 +126,8 @@ describe('AgentRunner contract', () => {
     })
 
     await runner.start('session-failover')
-    await router.execute({ purpose: 'chat-turn', origin: 'user' }, (model) =>
-      runner.prompt('hello', { model }),
+    await router.execute({ purpose: 'chat-turn', origin: 'user' }, (model, attempt) =>
+      runner.prompt('hello', { model, retryOfFailedTurn: attempt > 0 }),
     )
 
     const branch = await store.load('session-failover')
@@ -155,7 +155,6 @@ class ContractAgentRunner implements AgentRunner {
   private readonly failForProviders: Set<string>
   private sessionId: string | undefined = undefined
   private currentModel: ModelRef | undefined = undefined
-  private pendingInput: string | undefined = undefined
 
   constructor(store: SessionStore, options: { failForProviders?: Set<string> } = {}) {
     this.store = store
@@ -165,7 +164,6 @@ class ContractAgentRunner implements AgentRunner {
   async start(sessionId: string): Promise<void> {
     this.sessionId = sessionId
     this.currentModel = (await this.store.load(sessionId)).model
-    this.pendingInput = undefined
   }
 
   async prompt(input: string, options: AgentPromptOptions = {}): Promise<void> {
@@ -177,14 +175,13 @@ class ContractAgentRunner implements AgentRunner {
       this.currentModel = model
     }
 
-    // Retry-safe contract: a prompt retried after a failure (model
-    // failover) must not append the user message a second time.
-    if (this.pendingInput !== input) {
+    // Retry-safe contract: a failover retry must not append the user
+    // message a second time.
+    if (!options.retryOfFailedTurn) {
       await this.store.append(sessionId, {
         type: 'message',
         message: { role: 'user', content: input },
       })
-      this.pendingInput = input
     }
 
     if (this.failForProviders.has(model.provider)) {
@@ -201,7 +198,6 @@ class ContractAgentRunner implements AgentRunner {
       type: 'message',
       message: { role: 'assistant', content: answer, model },
     })
-    this.pendingInput = undefined
     await this.events.emit({ type: 'text-delta', text: answer })
     await this.events.emit({ type: 'turn-end', sessionId, model, text: answer })
   }

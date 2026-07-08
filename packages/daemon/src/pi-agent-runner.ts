@@ -64,7 +64,7 @@ export class PiAgentRunner implements AgentRunner {
   private currentModel: ModelRef | undefined = undefined
   private agent: Agent | undefined = undefined
   private unsubscribe: (() => void) | undefined = undefined
-  private pendingInput: string | undefined = undefined
+  private turnError: string | undefined = undefined
 
   constructor(options: PiAgentRunnerOptions) {
     this.sessionStore = options.sessionStore
@@ -80,7 +80,7 @@ export class PiAgentRunner implements AgentRunner {
     this.sessionId = sessionId
     const branch = await this.sessionStore.load(sessionId)
     this.currentModel = branch.model
-    this.pendingInput = undefined
+    this.turnError = undefined
     this.agent = undefined
     if (this.currentModel)
       this.agent = this.createAgent(branch, this.currentModel, [], this.defaultContextPolicy)
@@ -113,22 +113,34 @@ export class PiAgentRunner implements AgentRunner {
       delete this.agent.transformContext
     }
 
-    // Retry-safe contract: a prompt retried after a failure (model
-    // failover) must not append the user message a second time.
-    if (this.pendingInput !== input) {
+    // Retry-safe contract: a failover retry re-sends the user message to
+    // the new model but must not append it to the session a second time.
+    if (!options.retryOfFailedTurn) {
       await this.sessionStore.append(sessionId, {
         type: 'message',
         message: { role: 'user', content: input },
       })
-      this.pendingInput = input
     }
 
+    this.turnError = undefined
     try {
       await this.agent.prompt(input)
-      this.pendingInput = undefined
     } catch (error) {
+      // The live pi context already holds this turn's user message; a
+      // retry rebuilds the agent from the session store instead.
+      this.agent = undefined
       await this.events.emit({ type: 'error', message: errorMessage(error) })
       throw error
+    }
+
+    // pi reports provider failures as resolved turns whose assistant
+    // message has stopReason "error". The routing contract needs a
+    // rejection, with the poisoned agent state discarded for the retry.
+    if (this.turnError !== undefined) {
+      const message = this.turnError
+      this.turnError = undefined
+      this.agent = undefined
+      throw new Error(message)
     }
   }
 
@@ -202,13 +214,14 @@ export class PiAgentRunner implements AgentRunner {
         }
         return
       case 'message_end':
-        await this.persistPiMessage(event.message)
         if (isAssistantError(event.message)) {
-          await this.events.emit({
-            type: 'error',
-            message: event.message.errorMessage ?? 'Agent error',
-          })
+          // A failed assistant message never enters the session store:
+          // the failover retry must not rebuild a poisoned context.
+          this.turnError = event.message.errorMessage ?? 'Agent error'
+          await this.events.emit({ type: 'error', message: this.turnError })
+          return
         }
+        await this.persistPiMessage(event.message)
         return
       case 'tool_execution_start':
         await this.events.emit({
@@ -231,6 +244,8 @@ export class PiAgentRunner implements AgentRunner {
         return
       }
       case 'turn_end': {
+        // A failed turn rejects from prompt(); it is not a completed turn.
+        if (this.turnError !== undefined) return
         const costUsd = piMessageCostUsd(event.message)
         await this.events.emit({
           type: 'turn-end',

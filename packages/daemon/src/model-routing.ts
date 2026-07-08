@@ -64,6 +64,22 @@ export const RoutingConfigSchema = z.object({
 
 export type RoutingConfig = z.infer<typeof RoutingConfigSchema>
 
+const RoutingOverridesSchema = z.object({
+  tiers: z
+    .object({
+      triage: z.array(TierModelSchema).min(1).optional(),
+      reasoning: z.array(TierModelSchema).min(1).optional(),
+    })
+    .optional(),
+  providerKeys: z.record(SecretRefSchema).optional(),
+  dailyCapUsd: z
+    .object({
+      triage: z.number().positive().optional(),
+      reasoning: z.number().positive().optional(),
+    })
+    .optional(),
+})
+
 export function defaultRoutingConfig(): RoutingConfig {
   return {
     tiers: {
@@ -92,13 +108,19 @@ export function loadRoutingConfig(rootDir: string): RoutingConfig {
   const defaults = defaultRoutingConfig()
   const path = join(rootDir, 'routing.json')
   if (!existsSync(path)) return defaults
-  const overrides = RoutingConfigSchema.deepPartial().parse(JSON.parse(readFileSync(path, 'utf8')))
+  let raw: unknown
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf8'))
+  } catch (error) {
+    throw new Error(`invalid JSON in routing config ${path}: ${errorText(error)}`)
+  }
+  const overrides = RoutingOverridesSchema.parse(raw)
   return RoutingConfigSchema.parse({
     tiers: {
       triage: overrides.tiers?.triage ?? defaults.tiers.triage,
       reasoning: overrides.tiers?.reasoning ?? defaults.tiers.reasoning,
     },
-    providerKeys: overrides.providerKeys ?? defaults.providerKeys,
+    providerKeys: { ...defaults.providerKeys, ...overrides.providerKeys },
     dailyCapUsd: { ...defaults.dailyCapUsd, ...overrides.dailyCapUsd },
   })
 }
@@ -201,6 +223,7 @@ export interface ModelRouterOptions {
 }
 
 const BACKOFF_BASE_MS = 250
+const MAX_CALL_LOG = 500
 const TIERS: ModelTier[] = ['triage', 'reasoning']
 
 interface DailyUsage {
@@ -235,35 +258,47 @@ export class ModelRouter {
   route(request: RouteRequest): ModelRef {
     const tier = tierForRequest(request)
     this.assertSpendingAllowed(request, tier)
-    return this.candidates(tier)[0] as ModelRef
+    const [primary] = this.candidates(tier)
+    if (!primary) throw new NoAvailableModelError(tier, [])
+    return primary
   }
 
-  /** One ordered pass over the tier's candidates; failover only on retryable errors. */
-  async execute<T>(request: RouteRequest, fn: (model: ModelRef) => Promise<T> | T): Promise<T> {
+  /**
+   * One ordered pass over the tier's candidates; failover only on
+   * retryable errors. `fn` receives the attempt index so runner calls
+   * can mark retries (`retryOfFailedTurn`).
+   */
+  async execute<T>(
+    request: RouteRequest,
+    fn: (model: ModelRef, attempt: number) => Promise<T> | T,
+  ): Promise<T> {
     const tier = tierForRequest(request)
     this.assertSpendingAllowed(request, tier)
     const candidates = this.candidates(tier)
     let lastError: unknown
     for (const [attempt, model] of candidates.entries()) {
       try {
-        const result = await fn(model)
+        const result = await fn(model, attempt)
         this.logCall(request, model, 'ok')
         return result
       } catch (error) {
-        this.logCall(request, model, 'error', errorMessage(error))
+        const reason = sanitizeErrorText(error)
+        this.logCall(request, model, 'error', reason)
         if (!this.isRetryable(error)) throw error
         lastError = error
         const next = candidates[attempt + 1]
         if (next) {
-          this.emit({
+          const failover: RouterEvent = {
             type: 'model.failover',
             at: this.nowIso(),
             from: model,
             to: next,
             purpose: request.purpose,
-            reason: errorMessage(error),
+            reason,
             ...(request.spaceId === undefined ? {} : { spaceId: request.spaceId }),
-          })
+          }
+          this.persist({ kind: 'failover', ...failover })
+          this.emit(failover)
           await this.sleep(BACKOFF_BASE_MS * 2 ** attempt)
         }
       }
@@ -287,16 +322,11 @@ export class ModelRouter {
       usd,
       ...(options.workerId === undefined ? {} : { workerId: options.workerId }),
     })
-    const cap = this.config.dailyCapUsd[model.tier]
-    if (usage.tiers[model.tier] > cap && !usage.capNotified.has(model.tier)) {
-      usage.capNotified.add(model.tier)
-      this.emit({
-        type: 'spending.cap-exceeded',
-        at: this.nowIso(),
-        tier: model.tier,
-        spentUsd: usage.tiers[model.tier],
-        capUsd: cap,
-      })
+    if (
+      usage.tiers[model.tier] > this.config.dailyCapUsd[model.tier] &&
+      !usage.capNotified.has(model.tier)
+    ) {
+      this.notifyCapExceeded(usage, model.tier)
     }
   }
 
@@ -321,6 +351,19 @@ export class ModelRouter {
 
   callLog(): RoutedCall[] {
     return [...this.calls]
+  }
+
+  /** The user hears about a cap once per tier per day, restarts included. */
+  private notifyCapExceeded(usage: DailyUsage, tier: ModelTier): void {
+    usage.capNotified.add(tier)
+    this.persist({ kind: 'cap-notified', at: this.nowIso(), tier })
+    this.emit({
+      type: 'spending.cap-exceeded',
+      at: this.nowIso(),
+      tier,
+      spentUsd: usage.tiers[tier],
+      capUsd: this.config.dailyCapUsd[tier],
+    })
   }
 
   private candidates(tier: ModelTier): ModelRef[] {
@@ -361,6 +404,9 @@ export class ModelRouter {
       ...(request.workerId === undefined ? {} : { workerId: request.workerId }),
     }
     this.calls.push(call)
+    // In-memory log for assertions and the usage Surface; the JSONL file
+    // below is the durable record, so a long-running daemon stays bounded.
+    if (this.calls.length > MAX_CALL_LOG) this.calls.splice(0, this.calls.length - MAX_CALL_LOG)
     this.persist({ kind: 'call', ...call })
   }
 
@@ -381,17 +427,23 @@ export class ModelRouter {
     if (!path || !existsSync(path)) return usage
     for (const line of readFileSync(path, 'utf8').split('\n')) {
       if (!line.trim()) continue
-      const entry = parseSpendEntry(line)
+      const entry = parseUsageEntry(line)
       if (!entry) continue
+      if (entry.kind === 'cap-notified') {
+        usage.capNotified.add(entry.tier)
+        continue
+      }
       usage.tiers[entry.tier] += entry.usd
       if (entry.workerId) {
         usage.workers.set(entry.workerId, (usage.workers.get(entry.workerId) ?? 0) + entry.usd)
       }
     }
-    // Already past the cap at boot: proactivity stays off, but the crossing
-    // was notified when it happened — do not re-notify on every restart.
+    // Past the cap at boot without a persisted notification (crash between
+    // spend and notice): the user still has to hear about it.
     for (const tier of TIERS) {
-      if (usage.tiers[tier] > this.config.dailyCapUsd[tier]) usage.capNotified.add(tier)
+      if (usage.tiers[tier] > this.config.dailyCapUsd[tier] && !usage.capNotified.has(tier)) {
+        this.notifyCapExceeded(usage, tier)
+      }
     }
     return usage
   }
@@ -440,24 +492,41 @@ function statusOf(error: unknown): number | undefined {
   return undefined
 }
 
-function parseSpendEntry(
-  line: string,
-): { tier: ModelTier; usd: number; workerId?: string } | undefined {
+type UsageEntry =
+  | { kind: 'spend'; tier: ModelTier; usd: number; workerId?: string }
+  | { kind: 'cap-notified'; tier: ModelTier }
+
+function parseUsageEntry(line: string): UsageEntry | undefined {
   try {
     const entry: unknown = JSON.parse(line)
     if (typeof entry !== 'object' || entry === null) return undefined
     const record = entry as Record<string, unknown>
-    if (record['kind'] !== 'spend') return undefined
     const tier = record['tier']
+    if (tier !== 'triage' && tier !== 'reasoning') return undefined
+    if (record['kind'] === 'cap-notified') return { kind: 'cap-notified', tier }
+    if (record['kind'] !== 'spend') return undefined
     const usd = record['usd']
-    if ((tier !== 'triage' && tier !== 'reasoning') || typeof usd !== 'number') return undefined
+    // Same invariant as recordSpend: a corrupted or hand-edited log must
+    // not lower the counters and silently reopen proactivity.
+    if (typeof usd !== 'number' || !Number.isFinite(usd) || usd < 0) return undefined
     const workerId = typeof record['workerId'] === 'string' ? record['workerId'] : undefined
-    return { tier, usd, ...(workerId === undefined ? {} : { workerId }) }
+    return { kind: 'spend', tier, usd, ...(workerId === undefined ? {} : { workerId }) }
   } catch {
     return undefined
   }
 }
 
-function errorMessage(error: unknown): string {
+/**
+ * Keeps provider diagnostics out of durable logs: masks common API key
+ * shapes and truncates. Full pattern redaction is the issue #15 vault work.
+ */
+function sanitizeErrorText(error: unknown): string {
+  return errorText(error)
+    .replace(/\bsk-[A-Za-z0-9_-]{4,}/g, 'sk-***')
+    .replace(/\bbearer\s+\S+/gi, 'bearer ***')
+    .slice(0, 300)
+}
+
+function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }

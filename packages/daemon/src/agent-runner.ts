@@ -43,14 +43,20 @@ export interface AgentPromptOptions {
   model?: ModelRef
   tools?: ToolDef[]
   contextPolicy?: ContextPolicy
+  /**
+   * True when this prompt retries a turn that just failed (model
+   * failover): the user message is already in the session and must
+   * not be appended again.
+   */
+  retryOfFailedTurn?: boolean
 }
 
 export interface AgentRunner {
   start(sessionId: string): Promise<void>
   /**
-   * Retry-safe: when a prompt fails and is retried with a different model
-   * (router failover, issue #10), the pending user message must not be
-   * appended to the session a second time.
+   * A failed turn always rejects — provider errors never resolve as
+   * completed turns. Retries pass `retryOfFailedTurn` so the user
+   * message is not appended to the session a second time.
    */
   prompt(input: string, options?: AgentPromptOptions): Promise<void>
   abort(): Promise<void> | void

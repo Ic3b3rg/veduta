@@ -90,7 +90,9 @@ export function buildServer(options: ServerOptions = {}) {
   )
   // Model routing (issue #10): per-tier config from <dataDir>/routing.json,
   // spend persisted under <dataDir>/usage/. Past a daily cap the router
-  // shuts proactivity off; the user hears about it in chat.
+  // shuts proactivity off; the user hears about it in chat. Live spend
+  // recording (turn-end costUsd -> recordSpend) lands with the real Agent
+  // loop wiring — chat still answers via the mock provider.
   const router = new ModelRouter({
     rootDir: store.spacesEngine.rootDir,
     config: loadRoutingConfig(store.spacesEngine.rootDir),

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -117,6 +117,23 @@ describe('routing config', () => {
     expect(overridden.tiers.triage).toEqual(defaultRoutingConfig().tiers.triage)
     expect(overridden.dailyCapUsd).toEqual({ triage: 0.5, reasoning: 20 })
   })
+
+  it('merges partial providerKeys overrides instead of dropping the default key refs', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'veduta-routing-'))
+    const config = loadRoutingConfigFromJson(rootDir, {
+      providerKeys: { openrouter: 'secret://vault/openrouter' },
+    })
+    expect(config.providerKeys).toEqual({
+      ...defaultRoutingConfig().providerKeys,
+      openrouter: 'secret://vault/openrouter',
+    })
+  })
+
+  it('reports a malformed routing.json with the file path instead of crashing opaquely', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'veduta-routing-'))
+    writeFileSync(join(rootDir, 'routing.json'), '{not json')
+    expect(() => loadRoutingConfig(rootDir)).toThrow(/routing config .*routing\.json/)
+  })
 })
 
 describe('route', () => {
@@ -210,6 +227,22 @@ describe('failover', () => {
     expect(attempts).toEqual(['mock'])
   })
 
+  it('redacts key-shaped fragments from persisted call errors and failover reasons', async () => {
+    const events: RouterEvent[] = []
+    const router = testRouter({ onEvent: (event) => events.push(event) })
+
+    await router.execute({ purpose: 'chat-turn', origin: 'user' }, async (model) => {
+      if (model.provider === 'mock') throw new Error('401 for key sk-ant-veduta-1234567890')
+      return 'ok'
+    })
+
+    const failed = router.callLog()[0]
+    expect(failed?.errorMessage).toContain('sk-***')
+    expect(failed?.errorMessage).not.toContain('sk-ant-veduta-1234567890')
+    const failover = events.find((event) => event.type === 'model.failover')
+    expect(failover && 'reason' in failover ? failover.reason : '').toContain('sk-***')
+  })
+
   it('treats provider HTTP client errors as non-retryable', async () => {
     const attempts: string[] = []
     const router = testRouter()
@@ -296,6 +329,50 @@ describe('spending caps', () => {
     restarted.recordSpend({ provider: 'mock', modelId: 'cheap', tier: 'triage' }, 0.5)
     expect(restarted.proactivityAllowed('triage')).toBe(false)
     expect(notified).toBe(1)
+  })
+
+  it('re-notifies at boot when the daemon crashed between spend and notice', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'veduta-usage-'))
+    const usageDir = join(rootDir, 'usage')
+    mkdirSync(usageDir, { recursive: true })
+    // Over-cap spend persisted, but no cap-notified marker: the crash window.
+    writeFileSync(
+      join(usageDir, '2026-07-08.jsonl'),
+      `${JSON.stringify({ kind: 'spend', tier: 'triage', usd: 1.5 })}\n`,
+    )
+
+    let notified = 0
+    const onEvent = (event: RouterEvent) => {
+      if (event.type === 'spending.cap-exceeded') notified += 1
+    }
+    testRouter({ rootDir, onEvent })
+    expect(notified).toBe(1)
+
+    testRouter({ rootDir, onEvent })
+    expect(notified).toBe(1)
+  })
+
+  it('ignores negative spend entries from a corrupted usage log', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'veduta-usage-'))
+    const usageDir = join(rootDir, 'usage')
+    mkdirSync(usageDir, { recursive: true })
+    writeFileSync(
+      join(usageDir, '2026-07-08.jsonl'),
+      [
+        JSON.stringify({ kind: 'spend', tier: 'triage', usd: 0.5 }),
+        JSON.stringify({ kind: 'spend', tier: 'triage', usd: -100 }),
+      ].join('\n'),
+    )
+    const router = testRouter({ rootDir })
+    expect(router.usage().tiers.triage.spentUsd).toBe(0.5)
+  })
+
+  it('bounds the in-memory call log for a long-running daemon', async () => {
+    const router = testRouter()
+    for (let index = 0; index < 520; index += 1) {
+      await router.execute({ purpose: 'chat-turn', origin: 'user' }, async () => 'ok')
+    }
+    expect(router.callLog()).toHaveLength(500)
   })
 
   it('resets counters on the next day', () => {
