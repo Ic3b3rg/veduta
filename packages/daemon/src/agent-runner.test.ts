@@ -12,6 +12,7 @@ import {
   type SessionStore,
   type ToolDef,
 } from './agent-runner.ts'
+import { ModelRouter } from './model-routing.ts'
 
 const triageModel: ModelRef = { provider: 'mock', modelId: 'cheap', tier: 'triage' }
 const reasoningModel: ModelRef = { provider: 'mock', modelId: 'strong', tier: 'reasoning' }
@@ -105,21 +106,66 @@ describe('AgentRunner contract', () => {
       'second',
     )
   })
+
+  it('continues the conversation on the fallback model without duplicating the user message', async () => {
+    const store = new MemorySessionStore()
+    const runner = new ContractAgentRunner(store, { failForProviders: new Set(['down']) })
+    const router = new ModelRouter({
+      config: {
+        tiers: {
+          reasoning: [
+            { provider: 'down', modelId: 'primary' },
+            { provider: 'mock', modelId: 'fallback' },
+          ],
+          triage: [{ provider: 'mock', modelId: 'cheap' }],
+        },
+        providerKeys: {},
+        dailyCapUsd: { triage: 1, reasoning: 5 },
+      },
+      sleep: async () => {},
+    })
+
+    await runner.start('session-failover')
+    await router.execute({ purpose: 'chat-turn', origin: 'user' }, (model) =>
+      runner.prompt('hello', { model }),
+    )
+
+    const branch = await store.load('session-failover')
+    expect(branch.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
+    expect(branch.model).toEqual({ provider: 'mock', modelId: 'fallback', tier: 'reasoning' })
+    expect(router.callLog().map((call) => call.outcome)).toEqual(['error', 'ok'])
+  })
+
+  it('appends two intentional identical user messages as separate turns', async () => {
+    const store = new MemorySessionStore()
+    const runner = new ContractAgentRunner(store)
+
+    await runner.start('session-repeat')
+    await runner.prompt('hello', { model: reasoningModel })
+    await runner.prompt('hello', { model: reasoningModel })
+
+    const branch = await store.load('session-repeat')
+    expect(branch.messages.filter((message) => message.role === 'user')).toHaveLength(2)
+  })
 })
 
 class ContractAgentRunner implements AgentRunner {
   private readonly events = new AgentEventBus()
   private readonly store: SessionStore
+  private readonly failForProviders: Set<string>
   private sessionId: string | undefined = undefined
   private currentModel: ModelRef | undefined = undefined
+  private pendingInput: string | undefined = undefined
 
-  constructor(store: SessionStore) {
+  constructor(store: SessionStore, options: { failForProviders?: Set<string> } = {}) {
     this.store = store
+    this.failForProviders = options.failForProviders ?? new Set()
   }
 
   async start(sessionId: string): Promise<void> {
     this.sessionId = sessionId
     this.currentModel = (await this.store.load(sessionId)).model
+    this.pendingInput = undefined
   }
 
   async prompt(input: string, options: AgentPromptOptions = {}): Promise<void> {
@@ -131,10 +177,19 @@ class ContractAgentRunner implements AgentRunner {
       this.currentModel = model
     }
 
-    await this.store.append(sessionId, {
-      type: 'message',
-      message: { role: 'user', content: input },
-    })
+    // Retry-safe contract: a prompt retried after a failure (model
+    // failover) must not append the user message a second time.
+    if (this.pendingInput !== input) {
+      await this.store.append(sessionId, {
+        type: 'message',
+        message: { role: 'user', content: input },
+      })
+      this.pendingInput = input
+    }
+
+    if (this.failForProviders.has(model.provider)) {
+      throw new Error(`provider ${model.provider} is down`)
+    }
 
     const tool = options.tools?.find((candidate) => candidate.name === 'remember')
     const answer =
@@ -146,6 +201,7 @@ class ContractAgentRunner implements AgentRunner {
       type: 'message',
       message: { role: 'assistant', content: answer, model },
     })
+    this.pendingInput = undefined
     await this.events.emit({ type: 'text-delta', text: answer })
     await this.events.emit({ type: 'turn-end', sessionId, model, text: answer })
   }

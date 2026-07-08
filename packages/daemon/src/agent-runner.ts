@@ -27,7 +27,14 @@ export type AgentEvent =
       details: unknown
       isError: boolean
     }
-  | { type: 'turn-end'; sessionId: string; model: ModelRef; text: string }
+  | {
+      type: 'turn-end'
+      sessionId: string
+      model: ModelRef
+      text: string
+      /** Provider-reported cost when available; absent means unreported, not free. */
+      costUsd?: number
+    }
   | { type: 'error'; message: string }
 
 export type AgentEventHandler = (event: AgentEvent) => Promise<void> | void
@@ -40,6 +47,11 @@ export interface AgentPromptOptions {
 
 export interface AgentRunner {
   start(sessionId: string): Promise<void>
+  /**
+   * Retry-safe: when a prompt fails and is retried with a different model
+   * (router failover, issue #10), the pending user message must not be
+   * appended to the session a second time.
+   */
   prompt(input: string, options?: AgentPromptOptions): Promise<void>
   abort(): Promise<void> | void
   on(handler: AgentEventHandler): () => void

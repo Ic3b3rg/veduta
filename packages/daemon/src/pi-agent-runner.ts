@@ -64,6 +64,7 @@ export class PiAgentRunner implements AgentRunner {
   private currentModel: ModelRef | undefined = undefined
   private agent: Agent | undefined = undefined
   private unsubscribe: (() => void) | undefined = undefined
+  private pendingInput: string | undefined = undefined
 
   constructor(options: PiAgentRunnerOptions) {
     this.sessionStore = options.sessionStore
@@ -79,6 +80,7 @@ export class PiAgentRunner implements AgentRunner {
     this.sessionId = sessionId
     const branch = await this.sessionStore.load(sessionId)
     this.currentModel = branch.model
+    this.pendingInput = undefined
     this.agent = undefined
     if (this.currentModel)
       this.agent = this.createAgent(branch, this.currentModel, [], this.defaultContextPolicy)
@@ -111,13 +113,19 @@ export class PiAgentRunner implements AgentRunner {
       delete this.agent.transformContext
     }
 
-    await this.sessionStore.append(sessionId, {
-      type: 'message',
-      message: { role: 'user', content: input },
-    })
+    // Retry-safe contract: a prompt retried after a failure (model
+    // failover) must not append the user message a second time.
+    if (this.pendingInput !== input) {
+      await this.sessionStore.append(sessionId, {
+        type: 'message',
+        message: { role: 'user', content: input },
+      })
+      this.pendingInput = input
+    }
 
     try {
       await this.agent.prompt(input)
+      this.pendingInput = undefined
     } catch (error) {
       await this.events.emit({ type: 'error', message: errorMessage(error) })
       throw error
@@ -222,14 +230,17 @@ export class PiAgentRunner implements AgentRunner {
         })
         return
       }
-      case 'turn_end':
+      case 'turn_end': {
+        const costUsd = piMessageCostUsd(event.message)
         await this.events.emit({
           type: 'turn-end',
           sessionId,
           model: this.currentModel ?? this.defaultModel!,
           text: piMessageText(event.message),
+          ...(costUsd === undefined ? {} : { costUsd }),
         })
         return
+      }
       default:
         return
     }
@@ -495,6 +506,15 @@ function isAssistantError(
   message: AgentMessage,
 ): message is AgentMessage & { errorMessage?: string } {
   return isRecord(message) && message['role'] === 'assistant' && message['stopReason'] === 'error'
+}
+
+/** Provider-reported cost; undefined (unreported) when missing or invalid. */
+function piMessageCostUsd(message: unknown): number | undefined {
+  if (!isRecord(message)) return undefined
+  const usage = message['usage']
+  if (!isRecord(usage) || !isRecord(usage['cost'])) return undefined
+  const total = usage['cost']['total']
+  return typeof total === 'number' && Number.isFinite(total) && total >= 0 ? total : undefined
 }
 
 function piMessageText(message: unknown): string {
