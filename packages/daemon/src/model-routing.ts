@@ -41,7 +41,7 @@ export function tierForRequest(request: RouteRequest): ModelTier {
   return request.purpose === 'chat-turn' ? 'reasoning' : 'triage'
 }
 
-const SecretRefSchema = z
+export const SecretRefSchema = z
   .string()
   .regex(/^secret:\/\/.+$/, 'provider keys must be secret:// references, never plaintext')
 

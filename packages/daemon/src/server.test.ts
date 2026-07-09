@@ -11,6 +11,7 @@ import {
 import { describe, expect, it } from 'vitest'
 import { AuthStore, type PasskeyRelyingParty, type StoredPasskey } from './auth-store.ts'
 import { buildServer } from './server.ts'
+import { signBody } from './webhook-verify.ts'
 
 describe('PWA static assets', () => {
   it('serves the built PWA index and assets without allowing path traversal', async () => {
@@ -375,6 +376,138 @@ describe('scheduler wiring (issue #11)', () => {
     ).toBe(true)
 
     await app.close() // onClose stops the scheduler loop
+  })
+})
+
+describe('event ingestion wiring (issue #12)', () => {
+  const ingestSecret = 'ingest-test-secret'
+
+  const ingestionServer = async (filters: unknown) => {
+    process.env['VEDUTA_TEST_INGEST_SECRET'] = ingestSecret
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-ingest-server-'))
+    await writeFile(
+      join(dataDir, 'ingestion.json'),
+      JSON.stringify({
+        sources: {
+          mail: {
+            verification: 'hmac',
+            secret: 'secret://env/VEDUTA_TEST_INGEST_SECRET',
+            spaceId: 'spc-health',
+            filters,
+          },
+        },
+      }),
+    )
+    return buildServer({ dataDir })
+  }
+
+  const signedHeaders = (payload: string) => ({
+    'x-veduta-signature': signBody(ingestSecret, Buffer.from(payload)),
+    'content-type': 'application/json',
+  })
+
+  it('discards a newsletter in the pre-filter with zero LLM calls', async () => {
+    const { app, ingestion, router, store } = await ingestionServer({})
+    const payload = JSON.stringify({
+      id: 'news-1',
+      type: 'message.received',
+      kind: 'email',
+      sender: 'news@letters.example',
+      subject: 'Weekly digest',
+      headers: { 'List-Unsubscribe': '<mailto:unsub@letters.example>' },
+    })
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/ingest/mail',
+      headers: signedHeaders(payload),
+      payload,
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ outcome: 'discarded', reason: 'newsletter' })
+    expect(ingestion.queue.getEvent(1)?.status).toBe('discarded')
+    // The acceptance counter: nothing in the pipeline consulted a model.
+    expect(router.callLog()).toEqual([])
+    expect(store.llmCallCount()).toBe(0)
+    await app.close()
+  })
+
+  it('routes an allowlisted sender to the reader seam, structured, well under 30s', async () => {
+    const { app, ingestion, store } = await ingestionServer({
+      allowSenders: ['anna@example.com'],
+    })
+    const payload = JSON.stringify({
+      id: 'msg-7',
+      type: 'message.received',
+      kind: 'email',
+      sender: 'Anna <anna@example.com>',
+      subject: 'lunch tomorrow?',
+    })
+    const startedAt = Date.now()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/ingest/mail',
+      headers: signedHeaders(payload),
+      payload,
+    })
+    const elapsedMs = Date.now() - startedAt
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ outcome: 'accepted', queueId: 1 })
+    expect(elapsedMs).toBeLessThan(30_000)
+
+    const accepted = ingestion.queue.getEvent(1)
+    expect(accepted?.status).toBe('accepted')
+    // No quarantined reader is wired yet (issue #13): the row stays as
+    // the durable, undelivered backlog the reader will drain.
+    expect(accepted?.deliveredAt).toBeUndefined()
+    expect(accepted?.event.subject).toBe('lunch tomorrow?')
+
+    const notice = store.eventLog('spc-health').find((e) => e.type === 'ingestion.accept')
+    expect(notice?.origin).toBe('untrusted:external')
+    expect(notice?.text).not.toContain('lunch')
+    await app.close()
+  })
+
+  it('rejects an invalid signature: 401, a log entry, nothing queued', async () => {
+    const { app, ingestion } = await ingestionServer({})
+    const payload = JSON.stringify({ id: 'msg-1', type: 'message.received' })
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/ingest/mail',
+      headers: {
+        'x-veduta-signature': signBody('wrong-secret', Buffer.from(payload)),
+        'content-type': 'application/json',
+      },
+      payload,
+    })
+    expect(res.statusCode).toBe(401)
+    expect(ingestion.queue.refusalCount('mail', 'verification-rejected')).toBe(1)
+    expect(ingestion.queue.listEvents()).toEqual([])
+    await app.close()
+  })
+
+  it('locks out repeated verification failures with 429', async () => {
+    const { app } = await ingestionServer({})
+    const payload = JSON.stringify({ id: 'x', type: 'y' })
+    let sawLockout = false
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/ingest/mail',
+        headers: {
+          'x-veduta-signature': signBody('wrong-secret', Buffer.from(payload)),
+          'content-type': 'application/json',
+        },
+        payload,
+      })
+      if (res.statusCode === 429) {
+        sawLockout = true
+        expect(res.headers['retry-after']).toBeDefined()
+        break
+      }
+      expect(res.statusCode).toBe(401)
+    }
+    expect(sawLockout).toBe(true)
+    await app.close()
   })
 })
 

@@ -17,9 +17,13 @@ import { AuthStoreError, type AuthStore } from './auth-store.ts'
 import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import { reminderFromChat } from './chat.ts'
 import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
+import { EventIngestion, type FetchStage } from './event-ingestion.ts'
 import { GatewayHub } from './gateway.ts'
-import { ModelRouter, loadRoutingConfig } from './model-routing.ts'
+import { CalendarSource, GmailSource, GoogleTokenProvider } from './google-sources.ts'
+import { loadIngestionConfig } from './ingestion-config.ts'
+import { ModelRouter, envSecretResolver, loadRoutingConfig } from './model-routing.ts'
 import { Scheduler } from './scheduler.ts'
+import { WatchManager } from './watch-renewal.ts'
 import { sendPwaAsset } from './static-assets.ts'
 import { Store, SurfaceActionError } from './store.ts'
 import { appendSystemSurface } from './system-space.ts'
@@ -149,6 +153,99 @@ export function buildServer(options: ServerOptions = {}) {
   })
   const pwaDistDir = options.pwaDistDir ?? defaultPwaDistDir
   const lockout = new ProgressiveAuthLockout()
+
+  // Event ingestion (issue #12): the outside world becomes verified,
+  // deduped, pre-filtered events with zero LLM calls. Survivors stop at
+  // the quarantined reader seam (`onAccepted` — issue #13 plugs in here).
+  const ingestionConfig = loadIngestionConfig(store.spacesEngine.rootDir)
+  const watchManager = new WatchManager({
+    rootDir: store.spacesEngine.rootDir,
+    now,
+    onAlert: (sourceName, message) => {
+      gateway.broadcastSystemNotice(message)
+      const spaceId = ingestionConfig.sources[sourceName]?.spaceId
+      if (spaceId && store.getSpace(spaceId)) {
+        store.spacesEngine.appendEvent(spaceId, {
+          type: 'ingestion.watch-alert',
+          text: message,
+          origin: 'trusted:system',
+          payload: { source: sourceName },
+          at: now().toISOString(),
+        })
+      }
+    },
+  })
+  const fetchStages: Record<string, FetchStage> = {}
+  const registerWatches: (() => void)[] = []
+  for (const [sourceName, source] of Object.entries(ingestionConfig.sources)) {
+    const { google, gmail, calendar } = source
+    if (!google) continue
+    const tokens = new GoogleTokenProvider({ ...google, secrets: envSecretResolver, now })
+    if (source.adapter === 'gmail-push' && gmail) {
+      const gmailSource = new GmailSource({ source: sourceName, tokens })
+      fetchStages[sourceName] = (cursor) => gmailSource.fetchNewMessages(cursor)
+      registerWatches.push(() =>
+        watchManager.register(sourceName, 'gmail', {
+          renew: async () => {
+            const renewal = await gmailSource.renewWatch(gmail.topicName)
+            // First arm only: the watch's historyId catches messages that
+            // arrive before the first push; later renewals must not move
+            // an established cursor forward past unfetched history.
+            if (ingestion.queue.cursor(sourceName) === undefined) {
+              ingestion.queue.setCursor(sourceName, renewal.historyId)
+            }
+            return { expiresAt: renewal.expiresAt }
+          },
+        }),
+      )
+    }
+    if (source.adapter === 'calendar-push' && calendar) {
+      const calendarSource = new CalendarSource({ source: sourceName, tokens, now })
+      fetchStages[sourceName] = (cursor) =>
+        calendarSource.fetchChangedEvents(calendar.calendarId, cursor)
+      registerWatches.push(() =>
+        watchManager.register(sourceName, 'calendar', {
+          renew: async (registration) => {
+            const channelToken = envSecretResolver.resolve(source.secret)
+            if (channelToken === undefined) {
+              throw new Error(`channel token secret for source "${sourceName}" does not resolve`)
+            }
+            const renewal = await calendarSource.renewWatch({
+              calendarId: calendar.calendarId,
+              address: calendar.address,
+              channelToken,
+            })
+            if (ingestion.queue.cursor(sourceName) === undefined) {
+              ingestion.queue.setCursor(sourceName, now().toISOString())
+            }
+            // Best-effort: a stale channel is acknowledged-and-dropped by
+            // the pipeline anyway, but stopping it saves the noise.
+            if (registration.channelId && registration.resourceId) {
+              await calendarSource
+                .stopChannel(registration.channelId, registration.resourceId)
+                .catch(() => {})
+            }
+            return renewal
+          },
+        }),
+      )
+    }
+  }
+  const ingestion = new EventIngestion({
+    rootDir: store.spacesEngine.rootDir,
+    config: ingestionConfig,
+    store,
+    now,
+    onNotice: (text) => gateway.broadcastSystemNotice(text),
+    fetchStages,
+    expectedChannelId: (sourceName) =>
+      watchManager.registrations().find((registration) => registration.source === sourceName)
+        ?.channelId,
+  })
+  ingestion.recoverAtBoot()
+  for (const register of registerWatches) register()
+  watchManager.start()
+  app.addHook('onClose', async () => watchManager.stop())
 
   // Dev profile: only the Vite dev server may call the daemon from a browser.
   void app.register(cors, {
@@ -300,6 +397,45 @@ export function buildServer(options: ServerOptions = {}) {
     }
   })
 
+  // Ingestion lives in its own scope: signatures verify the exact raw
+  // bytes, so body parsing is raw-buffer here and JSON everywhere else.
+  void app.register(async (instance) => {
+    instance.removeAllContentTypeParsers()
+    instance.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body, done) => {
+      done(null, body)
+    })
+    instance.post(
+      '/api/ingest/:source',
+      // External senders are untrusted: cap the body well below anything
+      // a legitimate push notification needs.
+      { bodyLimit: 256 * 1024 },
+      async (request, reply) => {
+        const { source } = request.params as { source: string }
+        // Unknown source names are attacker-chosen: collapse them into one
+        // lockout bucket per ip so a flood cannot grow the lockout map.
+        const key = `ingest:${request.ip}:${source in ingestion.sources() ? source : 'unknown'}`
+        const check = lockout.check(key)
+        if (!check.allowed) {
+          return reply
+            .header('retry-after', String(check.retryAfterSeconds))
+            .status(429)
+            .send({ error: 'ingestion endpoint temporarily locked' })
+        }
+        const response = await ingestion.handleWebhook(source, {
+          rawBody: Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0),
+          headers: request.headers,
+          query: request.query as Record<string, unknown>,
+        })
+        if (response.status === 401) lockout.recordFailure(key)
+        else lockout.recordSuccess(key)
+        if (response.retryAfterSeconds !== undefined) {
+          reply.header('retry-after', String(response.retryAfterSeconds))
+        }
+        return reply.status(response.status).send(response.body)
+      },
+    )
+  })
+
   void app.register(async (instance) => {
     instance.get('/ws/gateway', { websocket: true }, (socket, request) => {
       if (
@@ -313,7 +449,7 @@ export function buildServer(options: ServerOptions = {}) {
     })
   })
 
-  return { app, store, gateway, router, scheduler }
+  return { app, store, gateway, router, scheduler, ingestion, watchManager }
 }
 
 export function isAllowedOrigin(origin: string | undefined, allowedOrigins: string[]): boolean {
@@ -334,6 +470,8 @@ function isPublicUnauthenticatedPath(url: string): boolean {
     path === '/manifest.webmanifest' ||
     path === '/service-worker.js' ||
     path.startsWith('/.well-known/acme-challenge/') ||
+    // Ingestion authenticates by per-source signature/token, not passkey.
+    path.startsWith('/api/ingest/') ||
     path === '/api/auth/status' ||
     path === '/api/auth/register/options' ||
     path === '/api/auth/register/verify' ||
