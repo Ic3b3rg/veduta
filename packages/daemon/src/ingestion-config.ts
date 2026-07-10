@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { SecretRefSchema } from './model-routing.ts'
 import { PreFilterRulesSchema } from './pre-filter.ts'
+import { SOURCE_NAME_RE } from './taint.ts'
 
 /**
  * Ingestion configuration (issue #12): `<dataDir>/ingestion.json`
@@ -57,6 +58,13 @@ export const IngestionConfigSchema = z
   })
   .superRefine((config, context) => {
     for (const [name, source] of Object.entries(config.sources)) {
+      if (!SOURCE_NAME_RE.test(name)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['sources', name],
+          message: `source names must match ${SOURCE_NAME_RE.toString()} (they become untrusted Origins)`,
+        })
+      }
       if (source.adapter === 'gmail-push' && (!source.gmail || !source.google)) {
         context.addIssue({
           code: z.ZodIssueCode.custom,

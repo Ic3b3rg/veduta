@@ -27,12 +27,79 @@ import {
   type ToolDef,
   type ToolResult,
 } from './agent-runner.ts'
+import {
+  effectiveOrigin,
+  gateToolsForOrigins,
+  isUntrusted,
+  isValidOrigin,
+  type Origin,
+} from './taint.ts'
 
 type PiInitialState = NonNullable<AgentOptions['initialState']>
 type PiModel = NonNullable<PiInitialState['model']>
 type PiToolParameters = AgentTool['parameters']
 
 const VEDUTA_MODEL_CHANGE = 'veduta:model-change'
+const VEDUTA_MESSAGE_ORIGIN = 'veduta:message-origin'
+const DEFAULT_USER_ORIGIN: Origin = 'trusted:user'
+
+/**
+ * A `VEDUTA_MESSAGE_ORIGIN` custom entry, as reconstructed from the pi
+ * session tree. Never surfaces outside this module: `applyOriginEntries`
+ * consumes it and attaches its origin to the next message entry.
+ */
+export interface OriginMarkerEntry {
+  kind: 'origin-marker'
+  origin: Origin
+}
+
+/** The raw shape `applyOriginEntries` walks: real entries plus origin markers. */
+export type RawSessionEntry = SessionEntry | OriginMarkerEntry
+
+/** Pure encode side of the `VEDUTA_MESSAGE_ORIGIN` custom-entry codec. */
+export function originEntryData(origin: Origin): { origin: Origin } {
+  return { origin }
+}
+
+/** Pure decode side; `undefined` for anything that is not a valid origin payload. */
+function parseOriginEntryData(value: unknown): Origin | undefined {
+  if (!isRecord(value)) return undefined
+  const origin = value['origin']
+  return typeof origin === 'string' && isValidOrigin(origin) ? origin : undefined
+}
+
+/**
+ * Annotates-next reconstruction (v3 Major F): a `VEDUTA_MESSAGE_ORIGIN`
+ * marker is appended immediately before the message entry it annotates.
+ * This walks the raw entry list, attaching each marker's origin to the
+ * very next entry when that entry is a message, and dropping the marker
+ * either way. A marker with no following entry (or whose next entry is
+ * not a message — which forking cannot actually produce, since marker and
+ * message are always appended adjacently) is a dangling marker and is
+ * ignored, per spec. Pure function: no pi-agent-core types involved.
+ */
+export function applyOriginEntries(entries: RawSessionEntry[]): SessionEntry[] {
+  const result: SessionEntry[] = []
+  let pendingOrigin: Origin | undefined
+  for (const entry of entries) {
+    if (isOriginMarker(entry)) {
+      pendingOrigin = entry.origin
+      continue
+    }
+    if (pendingOrigin !== undefined && entry.type === 'message') {
+      result.push({ ...entry, message: { ...entry.message, origin: pendingOrigin } })
+      pendingOrigin = undefined
+      continue
+    }
+    pendingOrigin = undefined
+    result.push(entry)
+  }
+  return result
+}
+
+function isOriginMarker(entry: RawSessionEntry): entry is OriginMarkerEntry {
+  return 'kind' in entry && entry.kind === 'origin-marker'
+}
 
 const EMPTY_USAGE = {
   input: 0,
@@ -67,6 +134,8 @@ export class PiAgentRunner implements AgentRunner {
   private turnError: string | undefined = undefined
   /** Per session: input of a failed turn whose user message is already stored. */
   private readonly failedTurns = new Map<string, string>()
+  /** The current turn's effective origin, threaded into every ToolContext it builds. */
+  private currentTurnOrigin: Origin = DEFAULT_USER_ORIGIN
 
   constructor(options: PiAgentRunnerOptions) {
     this.sessionStore = options.sessionStore
@@ -107,10 +176,25 @@ export class PiAgentRunner implements AgentRunner {
       this.currentModel = model
     }
 
-    const tools = this.toPiTools(options.tools ?? [])
+    // Turn taint (docs/SECURITY.md §3.2, ADR-0007): the effective origin is
+    // the most-untrusted of the prompt's own origin, its out-of-band
+    // context origins, and every message origin already in the session —
+    // untrusted state re-taints every future turn it enters (v3 Blocker A).
+    // Loaded fresh every turn (not only when (re)building the agent) so a
+    // long-running session picks up origins appended since the last turn.
+    const branch = await this.sessionStore.load(sessionId)
+    const promptOrigin = options.origin ?? DEFAULT_USER_ORIGIN
+    const candidateOrigins: (Origin | undefined)[] = [
+      promptOrigin,
+      ...(options.contextOrigins ?? []),
+      ...branch.messages.map((message) => message.origin),
+    ]
+    this.currentTurnOrigin = effectiveOrigin(candidateOrigins, promptOrigin)
+    const gatedTools = gateToolsForOrigins(options.tools ?? [], candidateOrigins)
+
+    const tools = this.toPiTools(gatedTools, this.currentTurnOrigin)
     const contextPolicy = options.contextPolicy ?? this.defaultContextPolicy
     if (!this.agent) {
-      const branch = await this.sessionStore.load(sessionId)
       this.agent = this.createAgent(branch, model, tools, contextPolicy)
     }
 
@@ -126,7 +210,11 @@ export class PiAgentRunner implements AgentRunner {
     if (!userMessageAppended) {
       await this.sessionStore.append(sessionId, {
         type: 'message',
-        message: { role: 'user', content: input },
+        message: {
+          role: 'user',
+          content: input,
+          ...(promptOrigin === DEFAULT_USER_ORIGIN ? {} : { origin: promptOrigin }),
+        },
       })
       this.failedTurns.set(sessionId, input)
     }
@@ -188,13 +276,13 @@ export class PiAgentRunner implements AgentRunner {
     return agent
   }
 
-  private toPiTools(tools: ToolDef[]): AgentTool[] {
+  private toPiTools(tools: ToolDef[], origin: Origin): AgentTool[] {
     return tools.map((tool) => {
       const parameters = this.toolParameters[tool.name]
       if (!parameters) {
         throw new Error(`missing pi parameters for tool "${tool.name}"`)
       }
-      return toPiAgentTool(tool, parameters)
+      return toPiAgentTool(tool, parameters, origin)
     })
   }
 
@@ -276,7 +364,13 @@ export class PiAgentRunner implements AgentRunner {
     const sessionId = this.requireSessionId()
     const mapped = fromPiMessage(message, new Date().toISOString())
     if (!mapped || mapped.role === 'user') return
-    await this.sessionStore.append(sessionId, { type: 'message', message: mapped })
+    // Derivation rule (v3 §B.5): assistant/tool messages produced during a
+    // tainted turn inherit the turn's untrusted origin, so the taint
+    // propagates to everything derived from it.
+    const stamped = isUntrusted(this.currentTurnOrigin)
+      ? { ...mapped, origin: this.currentTurnOrigin }
+      : mapped
+    await this.sessionStore.append(sessionId, { type: 'message', message: stamped })
   }
 
   private requireSessionId(): string {
@@ -308,6 +402,16 @@ export class PiJsonlSessionStore implements SessionStore {
     if (!entry) throw new Error(`session append did not return entry: ${entryId}`)
     const mapped = fromPiEntry(entry)
     if (!mapped) throw new Error(`session append returned an unsupported entry: ${entryId}`)
+    // The origin marker (if any) was just written by appendToPiSession and
+    // is already known here — no need to read it back through the marker
+    // reconstruction pipeline, which only `load`/`branch` require.
+    if (
+      append.type === 'message' &&
+      append.message.origin !== undefined &&
+      mapped.type === 'message'
+    ) {
+      return { ...mapped, message: { ...mapped.message, origin: append.message.origin } }
+    }
     return mapped
   }
 
@@ -315,11 +419,11 @@ export class PiJsonlSessionStore implements SessionStore {
     const metadata = await this.findMetadata(sessionId)
     if (!metadata) return { sessionId, entries: [], messages: [] }
     const session = await this.repo.open(metadata)
-    const entries = (await session.getEntries()).flatMap((entry) => {
-      const mapped = fromPiEntry(entry)
+    const rawEntries = (await session.getEntries()).flatMap((entry) => {
+      const mapped = fromPiEntryOrMarker(entry)
       return mapped ? [mapped] : []
     })
-    return buildSessionBranch(sessionId, entries)
+    return buildSessionBranch(sessionId, applyOriginEntries(rawEntries))
   }
 
   async branch(
@@ -347,6 +451,15 @@ export class PiJsonlSessionStore implements SessionStore {
     append: SessionAppend,
   ): Promise<string> {
     if (append.type === 'message') {
+      // Annotates-next (v3 Major F): pi's AgentMessage has no metadata
+      // slot, so a non-default origin is recorded as a custom entry
+      // immediately before the message it annotates.
+      if (append.message.origin !== undefined) {
+        await session.appendCustomEntry(
+          VEDUTA_MESSAGE_ORIGIN,
+          originEntryData(append.message.origin),
+        )
+      }
       return session.appendMessage(
         toPiMessage({ ...append.message, at: append.message.at ?? nowIso() }),
       )
@@ -375,7 +488,11 @@ export class PiJsonlSessionStore implements SessionStore {
   }
 }
 
-export function toPiAgentTool(tool: ToolDef, parameters: PiToolParameters): AgentTool {
+export function toPiAgentTool(
+  tool: ToolDef,
+  parameters: PiToolParameters,
+  origin: Origin,
+): AgentTool {
   return {
     name: tool.name,
     label: tool.name,
@@ -384,7 +501,7 @@ export function toPiAgentTool(tool: ToolDef, parameters: PiToolParameters): Agen
     execute: async (toolCallId, params, signal) => {
       const parsed = tool.schema.safeParse(params)
       if (!parsed.success) throw new Error(parsed.error.message)
-      const context = signal ? { toolCallId, signal } : { toolCallId }
+      const context = signal ? { toolCallId, signal, origin } : { toolCallId, origin }
       const result = await tool.handler(parsed.data, context)
       return toPiToolResult(result)
     },
@@ -511,6 +628,15 @@ function fromPiEntry(entry: SessionTreeEntry): SessionEntry | undefined {
     }
   }
   return undefined
+}
+
+/** Like `fromPiEntry`, but also surfaces `VEDUTA_MESSAGE_ORIGIN` markers for `applyOriginEntries`. */
+function fromPiEntryOrMarker(entry: SessionTreeEntry): RawSessionEntry | undefined {
+  if (entry.type === 'custom' && entry.customType === VEDUTA_MESSAGE_ORIGIN) {
+    const origin = parseOriginEntryData(entry.data)
+    return origin ? { kind: 'origin-marker', origin } : undefined
+  }
+  return fromPiEntry(entry)
 }
 
 function assistantModel(message: Record<string, unknown>): ModelRef | undefined {

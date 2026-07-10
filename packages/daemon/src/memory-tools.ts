@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { JsonObjectSchema } from '@veduta/protocol'
 import { defineTool, type ToolDef } from './agent-runner.ts'
-import type { SpacesEngine } from './spaces-engine.ts'
+import { renderEventForContext, type SpaceEvent, type SpacesEngine } from './spaces-engine.ts'
+import { toolWriteOrigin } from './taint.ts'
 
 export interface MemoryToolOptions {
   activeSpaceId?: string
@@ -40,9 +41,10 @@ export function createMemoryTools(
       description:
         'Write one durable FACTS entry for the active Space. The Curator decides Add, Update, Supersede, or Noop.',
       schema: WriteFactSchema,
-      handler(input) {
+      level: 'L0',
+      handler(input, context) {
         const spaceId = resolveSpaceId(input.spaceId, options.activeSpaceId)
-        const result = engine.writeFact(spaceId, input.fact)
+        const result = engine.writeFact(spaceId, input.fact, toolWriteOrigin(context.origin))
         return {
           content: `FACTS ${result.operation}: ${result.fact.text}`,
           details: result,
@@ -53,12 +55,15 @@ export function createMemoryTools(
       name: 'append_event',
       description: 'Append one event to the active Space Event log.',
       schema: AppendEventSchema,
-      handler(input) {
+      level: 'L0',
+      handler(input, context) {
         const spaceId = resolveSpaceId(input.spaceId, options.activeSpaceId)
         const event = engine.appendEvent(spaceId, {
           text: input.text,
           type: input.type ?? 'turn',
-          origin: 'trusted:system',
+          // Never `trusted:user`: an agent tool write must not be able to
+          // satisfy scheduler conditions reserved for genuine user events.
+          origin: toolWriteOrigin(context.origin),
           ...(input.payload === undefined ? {} : { payload: input.payload }),
         })
         return { content: event.text, details: event }
@@ -68,6 +73,7 @@ export function createMemoryTools(
       name: 'read_recent',
       description: 'Read recent entries from the active Space Event log.',
       schema: ReadRecentSchema,
+      level: 'L0',
       handler(input) {
         const spaceId = resolveSpaceId(input.spaceId, options.activeSpaceId)
         const events = engine.readRecent(spaceId, input.limit)
@@ -78,6 +84,7 @@ export function createMemoryTools(
       name: 'search_log',
       description: 'Search the active Space Event log for matching text.',
       schema: SearchLogSchema,
+      level: 'L0',
       handler(input) {
         const spaceId = resolveSpaceId(input.spaceId, options.activeSpaceId)
         const events = engine.searchLog(spaceId, input.query, input.limit)
@@ -96,7 +103,15 @@ function resolveSpaceId(
   return spaceId
 }
 
-function formatEvents(events: { at: string; type: string; text: string }[]): string {
+/**
+ * Tool results enter the turn's context too: read-side tools render events
+ * through the same taint-aware renderer as `assembleContext`, so untrusted
+ * text pulled up via `read_recent`/`search_log` still arrives origin-marked
+ * and inside delimiters. (Runtime re-gating of a turn that reads taint
+ * mid-flight is the trust layer's job, issue #14 — the rendering here keeps
+ * the content spotlighted either way.)
+ */
+function formatEvents(events: SpaceEvent[]): string {
   if (events.length === 0) return 'No matching Event log entries.'
-  return events.map((event) => `${event.at} [${event.type}] ${event.text}`).join('\n')
+  return events.map(renderEventForContext).join('\n')
 }

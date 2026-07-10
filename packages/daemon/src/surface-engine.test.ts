@@ -75,6 +75,46 @@ describe('Surface engine store', () => {
     expect(store.listSurfaces('spc-health').map((surface) => surface.id)).not.toContain('srf-water')
   })
 
+  it('declares every Surface tool L0 (daemon-internal, no outbound effect)', async () => {
+    const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+    const tools = store.surfaceTools()
+    expect(tools.map((tool) => tool.level)).toEqual(['L0', 'L0', 'L0', 'L0'])
+  })
+
+  it('stamps a tainted turn origin onto the surface.patch_state event, re-tainting future context', async () => {
+    const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+    const tools = store.surfaceTools()
+
+    await runTool(
+      tools,
+      'create_surface',
+      {
+        id: 'srf-tainted',
+        spaceId: 'spc-health',
+        title: 'Tainted',
+        tree: { id: 'root', type: 'Box', children: [] },
+        state: { count: 0 },
+      },
+      'untrusted:gmail',
+    )
+
+    await runTool(
+      tools,
+      'patch_state',
+      {
+        surfaceId: 'srf-tainted',
+        operations: [{ target: 'state', op: 'replace', path: '/count', value: 1 }],
+      },
+      'untrusted:gmail',
+    )
+
+    const events = store
+      .eventLog('spc-health')
+      .filter((event) => event.type === 'surface.patch_state' || event.type === 'surface.create')
+    expect(events.every((event) => event.origin === 'untrusted:gmail')).toBe(true)
+    expect(store.spacesEngine.contextOrigins('spc-health')).toContain('untrusted:gmail')
+  })
+
   it('rejects stale Agent tree patches so the Agent can re-read and re-patch', async () => {
     const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
     store.createSurface(checklistSurface('srf-tree-conflict', 1), 'agent')
@@ -164,10 +204,11 @@ async function runTool(
   tools: ReturnType<Store['surfaceTools']>,
   name: string,
   input: unknown,
+  origin: 'trusted:user' | 'trusted:system' | `untrusted:${string}` = 'trusted:user',
 ): Promise<void> {
   const tool = tools.find((candidate) => candidate.name === name)
   if (!tool) throw new Error(`missing tool: ${name}`)
-  await tool.handler(tool.schema.parse(input), { toolCallId: `call-${name}` })
+  await tool.handler(tool.schema.parse(input), { toolCallId: `call-${name}`, origin })
 }
 
 function checklistSurface(id: string, count: number): Surface {

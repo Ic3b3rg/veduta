@@ -19,6 +19,7 @@ import {
   withImmediateTransaction,
 } from './sqlite-rows.ts'
 import type { FastMutationNotice, Store } from './store.ts'
+import { effectiveOrigin, isValidOrigin, toolWriteOrigin, type Origin } from './taint.ts'
 
 /**
  * The daemon's scheduling system (issue #11, ADR-0005): one-shot timers
@@ -72,6 +73,8 @@ export interface Automation {
   lastRunAt?: string
   lastOutcome?: string
   createdAt: string
+  /** Origin of the turn that created this Automation. Absent = legacy = trusted:system. */
+  origin?: Origin
 }
 
 export interface SchedulerOptions {
@@ -156,7 +159,7 @@ export class Scheduler {
     )
   }
 
-  armTimer(input: z.input<typeof ArmTimerSchema>): Automation {
+  armTimer(input: z.input<typeof ArmTimerSchema>, origin?: Origin): Automation {
     const parsed = ArmTimerSchema.parse(input)
     this.requireSpace(parsed.spaceId)
     const fireAt = new Date(parsed.when).toISOString()
@@ -169,6 +172,7 @@ export class Scheduler {
       fireAt,
       nextRunAt: fireAt,
       ...(parsed.condition === undefined ? {} : { condition: parsed.condition }),
+      ...(origin === undefined ? {} : { origin }),
     })
     this.appendEvent(
       parsed.spaceId,
@@ -177,13 +181,14 @@ export class Scheduler {
       {
         automationId: automation.id,
       },
+      origin,
     )
     this.refreshSurface(parsed.spaceId)
     this.schedule()
     return automation
   }
 
-  createJob(input: z.input<typeof CreateJobSchema>): Automation {
+  createJob(input: z.input<typeof CreateJobSchema>, origin?: Origin): Automation {
     const parsed = CreateJobSchema.parse(input)
     this.requireSpace(parsed.spaceId)
     parseCron(parsed.cron)
@@ -196,19 +201,21 @@ export class Scheduler {
       cron: parsed.cron,
       nextRunAt,
       ...(parsed.condition === undefined ? {} : { condition: parsed.condition }),
+      ...(origin === undefined ? {} : { origin }),
     })
     this.appendEvent(
       parsed.spaceId,
       'automation.arm',
       `Created job "${parsed.briefing}" (cron ${parsed.cron}, next ${nextRunAt})`,
       { automationId: automation.id },
+      origin,
     )
     this.refreshSurface(parsed.spaceId)
     this.schedule()
     return automation
   }
 
-  cancel(automationId: number): Automation {
+  cancel(automationId: number, origin?: Origin): Automation {
     const automation = this.requireAutomation(automationId)
     if (automation.status === 'cancelled') return automation
     this.db
@@ -219,6 +226,9 @@ export class Scheduler {
       'automation.cancel',
       `Cancelled automation "${automation.description}"`,
       { automationId },
+      // The event embeds the automation's description: an untrusted-born
+      // automation keeps its mark on every event that carries its text.
+      effectiveOrigin([automation.origin, origin], origin ?? 'trusted:system'),
     )
     this.refreshSurface(automation.spaceId)
     return this.requireAutomation(automationId)
@@ -235,7 +245,12 @@ export class Scheduler {
       'automation.toggle',
       `Automation "${automation.description}" switched ${enabled ? 'on' : 'off'}`,
       { automationId, enabled },
-      source === 'surface' ? 'trusted:user' : 'trusted:system',
+      // Same rule as cancel(): the description's provenance wins over the
+      // caller's — a tainted description never re-enters context as trusted.
+      effectiveOrigin(
+        [automation.origin],
+        source === 'surface' ? 'trusted:user' : 'trusted:system',
+      ),
     )
     // A Surface-originated toggle already mutated the Surface state on the
     // fast path; re-projecting would only duplicate events.
@@ -279,8 +294,9 @@ export class Scheduler {
         description:
           'Arm a one-shot timer for a learned deadline or habit: at `when` the condition is checked and the user is escalated to unless it is already satisfied. Never promise to remember a deadline instead of arming a timer.',
         schema: ArmTimerSchema,
-        handler: (input) => {
-          const automation = this.armTimer(input)
+        level: 'L0',
+        handler: (input, context) => {
+          const automation = this.armTimer(input, toolWriteOrigin(context.origin))
           return {
             content: `armed timer ${automation.id} for ${automation.nextRunAt}`,
             details: { automation },
@@ -292,8 +308,9 @@ export class Scheduler {
         description:
           'Create a recurring job (5-field cron, UTC) that delivers a briefing on every occurrence. Visible to the user as an Automation in its Space.',
         schema: CreateJobSchema,
-        handler: (input) => {
-          const automation = this.createJob(input)
+        level: 'L0',
+        handler: (input, context) => {
+          const automation = this.createJob(input, toolWriteOrigin(context.origin))
           return {
             content: `created job ${automation.id}, next run ${automation.nextRunAt}`,
             details: { automation },
@@ -305,8 +322,9 @@ export class Scheduler {
         description:
           'Cancel an Automation (timer or job) by id. It stops firing and leaves the Space Surface.',
         schema: CancelSchema,
-        handler: (input) => {
-          const automation = this.cancel(input.automationId)
+        level: 'L0',
+        handler: (input, context) => {
+          const automation = this.cancel(input.automationId, toolWriteOrigin(context.origin))
           return { content: `cancelled automation ${automation.id}`, details: { automation } }
         },
       }),
@@ -335,12 +353,17 @@ export class Scheduler {
   }
 
   private async executeOccurrence(automation: Automation, scheduledFor: string): Promise<string> {
+    // Firing events carry the automation's own provenance (default
+    // trusted:system for legacy/tool-armed automations): an automation
+    // born from a tainted turn re-taints every occurrence it fires.
+    const firingOrigin = automation.origin ?? 'trusted:system'
     if (!automation.enabled) {
       this.appendEvent(
         automation.spaceId,
         'automation.skip',
         `Automation "${automation.description}" was due while switched off — not run`,
         { automationId: automation.id, scheduledFor },
+        firingOrigin,
       )
       return 'skipped:disabled'
     }
@@ -348,10 +371,13 @@ export class Scheduler {
     const overdueMs = this.now().getTime() - new Date(scheduledFor).getTime()
     if (overdueMs >= CATCH_UP_LIMIT_MS) {
       const text = `Missed automation "${automation.description}": it was due ${scheduledFor} while the daemon was down for more than 24h, so it was not run.`
-      this.appendEvent(automation.spaceId, 'automation.skip', text, {
-        automationId: automation.id,
-        scheduledFor,
-      })
+      this.appendEvent(
+        automation.spaceId,
+        'automation.skip',
+        text,
+        { automationId: automation.id, scheduledFor },
+        firingOrigin,
+      )
       this.onEscalation?.(automation.spaceId, text)
       return 'skipped:overdue'
     }
@@ -362,6 +388,7 @@ export class Scheduler {
         'automation.fire',
         `Automation "${automation.description}" fired — condition already satisfied, no action`,
         { automationId: automation.id, scheduledFor },
+        firingOrigin,
       )
       return 'condition-met:no-action'
     }
@@ -375,6 +402,7 @@ export class Scheduler {
       'automation.fire',
       `Automation "${automation.description}" fired — escalated to the user`,
       { automationId: automation.id, scheduledFor },
+      firingOrigin,
     )
     this.onEscalation?.(automation.spaceId, text)
     return 'escalated'
@@ -474,7 +502,8 @@ export class Scheduler {
     const interrupted = this.db
       .prepare(
         `select runs.automation_id as automation_id, runs.scheduled_for as scheduled_for,
-                automations.space_id as space_id, automations.description as description
+                automations.space_id as space_id, automations.description as description,
+                automations.origin as origin
          from automation_runs runs
          join automations on automations.id = runs.automation_id
          where runs.finished_at is null`,
@@ -487,11 +516,14 @@ export class Scheduler {
         .prepare('delete from automation_runs where automation_id = ? and scheduled_for = ?')
         .run(automationId, scheduledFor)
       try {
+        const storedOrigin = optionalString(row, 'origin')
         this.appendEvent(
           requiredString(row, 'space_id'),
           'automation.recover',
           `Recovered interrupted run of automation "${requiredString(row, 'description')}" — it will run again`,
           { automationId, scheduledFor },
+          // The recovery event embeds the description too: keep its mark.
+          isValidOrigin(storedOrigin) ? storedOrigin : 'trusted:system',
         )
       } catch {
         // The Space may be gone; recovery must never block boot.
@@ -514,9 +546,17 @@ export class Scheduler {
   private refreshSurface(spaceId: string): void {
     const space = this.store.getSpace(spaceId)
     if (!space) return
-    const items = this.listAutomations(spaceId)
-      .filter((automation) => automation.status !== 'cancelled')
-      .map((automation) => this.listItem(automation))
+    const listed = this.listAutomations(spaceId).filter(
+      (automation) => automation.status !== 'cancelled',
+    )
+    const items = listed.map((automation) => this.listItem(automation))
+    // The Surface projection derives from every listed automation: if any of
+    // them was born from a tainted turn, the projection's Space events carry
+    // that mark too (issue #13 — the mark propagates to everything derived).
+    const origin = effectiveOrigin(
+      listed.map((automation) => automation.origin),
+      'trusted:system',
+    )
     const surfaceId = automationsSurfaceId(space.slug)
     const existing = this.store.getSurface(surfaceId)
 
@@ -524,6 +564,7 @@ export class Scheduler {
       this.store.createSurface(
         automationsSurface(space, items, { updatedAt: this.nowIso(), updatedBy: 'job' }),
         'job',
+        origin,
       )
       return
     }
@@ -538,7 +579,7 @@ export class Scheduler {
       value,
     }))
     if (setOps.length > 0) {
-      this.broadcast(this.store.patchState(surfaceId, setOps, { updatedBy: 'job' }).event)
+      this.broadcast(this.store.patchState(surfaceId, setOps, { updatedBy: 'job', origin }).event)
     }
 
     const version = this.store.getSurfaceVersion(surfaceId)
@@ -547,7 +588,7 @@ export class Scheduler {
       this.store.patchTree(
         surfaceId,
         [{ target: 'tree', op: 'replace', path: '/children/1', value: automationsListNode(items) }],
-        { expectedTreeVersion: version.treeVersion, updatedBy: 'job' },
+        { expectedTreeVersion: version.treeVersion, updatedBy: 'job', origin },
       ).event,
     )
 
@@ -555,7 +596,7 @@ export class Scheduler {
       .filter((key) => automationIdFromStateKey(key) !== undefined && !(key in targetState))
       .map((key) => ({ target: 'state', op: 'remove', path: `/${key}` }))
     if (staleOps.length > 0) {
-      this.broadcast(this.store.patchState(surfaceId, staleOps, { updatedBy: 'job' }).event)
+      this.broadcast(this.store.patchState(surfaceId, staleOps, { updatedBy: 'job', origin }).event)
     }
   }
 
@@ -617,12 +658,13 @@ export class Scheduler {
     cron?: string
     condition?: Condition
     nextRunAt: string
+    origin?: Origin
   }): Automation {
     const result = this.db
       .prepare(
         `insert into automations
-           (kind, space_id, description, enabled, fire_at, cron, condition_json, next_run_at, status, created_at)
-         values (?, ?, ?, 1, ?, ?, ?, ?, 'armed', ?)`,
+           (kind, space_id, description, enabled, fire_at, cron, condition_json, next_run_at, status, created_at, origin)
+         values (?, ?, ?, 1, ?, ?, ?, ?, 'armed', ?, ?)`,
       )
       .run(
         input.kind,
@@ -633,6 +675,7 @@ export class Scheduler {
         input.condition === undefined ? null : JSON.stringify(input.condition),
         input.nextRunAt,
         this.nowIso(),
+        input.origin ?? null,
       )
     return this.requireAutomation(Number(result.lastInsertRowid))
   }
@@ -657,7 +700,7 @@ export class Scheduler {
     type: string,
     text: string,
     payload: JsonObject,
-    origin: 'trusted:user' | 'trusted:system' = 'trusted:system',
+    origin: Origin = 'trusted:system',
   ): void {
     this.store.spacesEngine.appendEvent(spaceId, {
       type,
@@ -689,7 +732,8 @@ export class Scheduler {
           check (status in ('armed', 'completed', 'cancelled')),
         last_run_at text,
         last_outcome text,
-        created_at text not null
+        created_at text not null,
+        origin text
       );
       create index if not exists automations_due
         on automations (status, next_run_at);
@@ -703,6 +747,17 @@ export class Scheduler {
         primary key (automation_id, scheduled_for)
       );
     `)
+    // Defensive migration: a `scheduler.sqlite` created before this column
+    // existed must keep working — `create table if not exists` above only
+    // applies to a fresh database, so an existing one is migrated here.
+    this.ensureColumn('automations', 'origin', 'text')
+  }
+
+  /** Adds `column` to `table` if an existing (pre-migration) database lacks it. */
+  private ensureColumn(table: string, column: string, sqlType: string): void {
+    const columns = this.db.prepare(`pragma table_info(${table})`).all()
+    const exists = columns.some((row) => requiredString(row, 'name') === column)
+    if (!exists) this.db.exec(`alter table ${table} add column ${column} ${sqlType}`)
   }
 
   private nowIso(): string {
@@ -734,6 +789,10 @@ function automationFromRow(row: Record<string, unknown>): Automation {
   const lastOutcome = optionalString(row, 'last_outcome')
   const status = requiredString(row, 'status')
   const kind = requiredString(row, 'kind')
+  // `origin` may be absent on rows written before this column existed, or
+  // on a legacy database not yet migrated; either way, absent = trusted.
+  const originValue = optionalString(row, 'origin')
+  const origin = originValue !== undefined && isValidOrigin(originValue) ? originValue : undefined
   if (status !== 'armed' && status !== 'completed' && status !== 'cancelled') {
     throw new Error(`unexpected automation status: ${status}`)
   }
@@ -751,6 +810,7 @@ function automationFromRow(row: Record<string, unknown>): Automation {
     ...(nextRunAt === undefined ? {} : { nextRunAt }),
     ...(lastRunAt === undefined ? {} : { lastRunAt }),
     ...(lastOutcome === undefined ? {} : { lastOutcome }),
+    ...(origin === undefined ? {} : { origin }),
     ...(conditionJson === undefined
       ? {}
       : { condition: ConditionSchema.parse(JSON.parse(conditionJson)) }),

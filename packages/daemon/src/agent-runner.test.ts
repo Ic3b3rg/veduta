@@ -21,6 +21,7 @@ const rememberTool = defineTool({
   name: 'remember',
   description: 'Stores one value in the session transcript',
   schema: z.object({ value: z.string().min(1) }),
+  level: 'L0',
   handler: ({ value }) => ({ content: `remembered ${value}`, details: { value } }),
 })
 
@@ -149,6 +150,30 @@ describe('AgentRunner contract', () => {
   })
 })
 
+describe('MemorySessionStore', () => {
+  it('round-trips SessionMessage.origin, leaving it absent when never set', async () => {
+    const store = new MemorySessionStore()
+
+    await store.append('session-origin', {
+      type: 'message',
+      message: { role: 'user', content: 'read this', origin: 'untrusted:gmail' },
+    })
+    await store.append('session-origin', {
+      type: 'message',
+      message: { role: 'assistant', content: 'Displayed the requested content.' },
+    })
+
+    const branch = await store.load('session-origin')
+    expect(branch.messages.map((message) => message.origin)).toEqual(['untrusted:gmail', undefined])
+
+    const branched = await store.branch('session-origin')
+    expect(branched.messages.map((message) => message.origin)).toEqual([
+      'untrusted:gmail',
+      undefined,
+    ])
+  })
+})
+
 class ContractAgentRunner implements AgentRunner {
   private readonly events = new AgentEventBus()
   private readonly store: SessionStore
@@ -218,7 +243,7 @@ class ContractAgentRunner implements AgentRunner {
       input: { value },
     })
     const parsed = tool.schema.parse({ value })
-    const result = await tool.handler(parsed, { toolCallId })
+    const result = await tool.handler(parsed, { toolCallId, origin: 'trusted:user' })
     const message = {
       role: 'tool' as const,
       content: result.content,

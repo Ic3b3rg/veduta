@@ -18,10 +18,15 @@ import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import { reminderFromChat } from './chat.ts'
 import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
 import { EventIngestion, type FetchStage } from './event-ingestion.ts'
+import type { ExternalEvent } from './external-event.ts'
+import { promptFullText } from './full-text-flow.ts'
 import { GatewayHub } from './gateway.ts'
 import { CalendarSource, GmailSource, GoogleTokenProvider } from './google-sources.ts'
 import { loadIngestionConfig } from './ingestion-config.ts'
+import { MockAgentRunner } from './mock-agent-runner.ts'
+import { mockReaderComplete } from './mock-provider.ts'
 import { ModelRouter, envSecretResolver, loadRoutingConfig } from './model-routing.ts'
+import { QuarantinedReader } from './quarantined-reader.ts'
 import { Scheduler } from './scheduler.ts'
 import { WatchManager } from './watch-renewal.ts'
 import { sendPwaAsset } from './static-assets.ts'
@@ -105,6 +110,13 @@ export function buildServer(options: ServerOptions = {}) {
       // A malformed demo reminder must never take the chat socket down.
     }
   }
+  // Late binding: the Gateway exists before event ingestion (which owns the
+  // queue the full-text flow reads from), so the handler is assigned further
+  // down, once the ingestion pipeline is constructed. Chat frames can only
+  // arrive after buildServer returns, so the binding is always in place.
+  let fullTextHandler: (queueId: number) => Promise<string> = () =>
+    Promise.reject(new Error('full-text flow not ready'))
+  const onFullTextRequest = (queueId: number) => fullTextHandler(queueId)
   const gateway = new GatewayHub(
     store,
     auth.mode === 'production'
@@ -114,10 +126,11 @@ export function buildServer(options: ServerOptions = {}) {
             onSessionRevoked: (listener) =>
               auth.store.onSessionRevoked((event) => listener({ deviceId: event.deviceId })),
           },
+          onFullTextRequest,
         }
       : // Only the dev profile gets the deterministic chat→Surface demo; a
         // production deployment waits for the real Agent loop.
-        { mockChatEffects: true, onDevChatEffect: armReminderFromChat },
+        { mockChatEffects: true, onDevChatEffect: armReminderFromChat, onFullTextRequest },
   )
   // The scheduler (issue #11): timers and jobs fire as visible Automations.
   // The judgment path stays a deterministic "unknown" (fail-safe: escalate)
@@ -140,9 +153,24 @@ export function buildServer(options: ServerOptions = {}) {
   // shuts proactivity off; the user hears about it in chat. Live spend
   // recording (turn-end costUsd -> recordSpend) lands with the real Agent
   // loop wiring — chat still answers via the mock provider.
+  const routingConfig = loadRoutingConfig(store.spacesEngine.rootDir)
+  const triageKeyResolves = routingConfig.tiers.triage.some((entry) => {
+    const secretRef = routingConfig.providerKeys[entry.provider]
+    return secretRef === undefined || envSecretResolver.resolve(secretRef) !== undefined
+  })
+  if (!triageKeyResolves) {
+    // Dev profile without provider keys (by design): keep one keyless mock
+    // candidate so the quarantined reader still has a triage model to route
+    // to. It disappears as soon as a real key resolves; the real provider
+    // client replaces `mockReaderComplete` with the Agent loop wiring.
+    routingConfig.tiers.triage = [
+      ...routingConfig.tiers.triage,
+      { provider: 'mock', modelId: 'reader-mock' },
+    ]
+  }
   const router = new ModelRouter({
     rootDir: store.spacesEngine.rootDir,
-    config: loadRoutingConfig(store.spacesEngine.rootDir),
+    config: routingConfig,
     onEvent: (event) => {
       if (event.type !== 'spending.cap-exceeded') return
       gateway.broadcastSystemNotice(
@@ -155,8 +183,8 @@ export function buildServer(options: ServerOptions = {}) {
   const lockout = new ProgressiveAuthLockout()
 
   // Event ingestion (issue #12): the outside world becomes verified,
-  // deduped, pre-filtered events with zero LLM calls. Survivors stop at
-  // the quarantined reader seam (`onAccepted` — issue #13 plugs in here).
+  // deduped, pre-filtered events with zero LLM calls. Survivors hand off
+  // to the quarantined reader (issue #13) via `onAccepted`.
   const ingestionConfig = loadIngestionConfig(store.spacesEngine.rootDir)
   const watchManager = new WatchManager({
     rootDir: store.spacesEngine.rootDir,
@@ -176,6 +204,7 @@ export function buildServer(options: ServerOptions = {}) {
     },
   })
   const fetchStages: Record<string, FetchStage> = {}
+  const gmailSources: Record<string, GmailSource> = {}
   const registerWatches: (() => void)[] = []
   for (const [sourceName, source] of Object.entries(ingestionConfig.sources)) {
     const { google, gmail, calendar } = source
@@ -183,6 +212,7 @@ export function buildServer(options: ServerOptions = {}) {
     const tokens = new GoogleTokenProvider({ ...google, secrets: envSecretResolver, now })
     if (source.adapter === 'gmail-push' && gmail) {
       const gmailSource = new GmailSource({ source: sourceName, tokens })
+      gmailSources[sourceName] = gmailSource
       fetchStages[sourceName] = (cursor) => gmailSource.fetchNewMessages(cursor)
       registerWatches.push(() =>
         watchManager.register(sourceName, 'gmail', {
@@ -231,6 +261,24 @@ export function buildServer(options: ServerOptions = {}) {
       )
     }
   }
+  // The quarantined reader (issue #13, SECURITY.md §3.1): accepted events
+  // become schema-validated, taint-marked structured fields — never raw
+  // text — before anything reaches the Agent's context. The deterministic
+  // mock completion stands in until the real provider client lands with
+  // the Agent loop, same as chat.
+  const fetchBody = (event: ExternalEvent) =>
+    event.fetchRef?.provider === 'gmail'
+      ? (gmailSources[event.source]?.fetchMessageBody(event.fetchRef.id) ??
+        Promise.resolve(undefined))
+      : Promise.resolve(undefined)
+  const reader = new QuarantinedReader({
+    router,
+    complete: mockReaderComplete,
+    store,
+    now,
+    fetchBody,
+    onNotice: (text) => gateway.broadcastSystemNotice(text),
+  })
   const ingestion = new EventIngestion({
     rootDir: store.spacesEngine.rootDir,
     config: ingestionConfig,
@@ -238,11 +286,34 @@ export function buildServer(options: ServerOptions = {}) {
     now,
     onNotice: (text) => gateway.broadcastSystemNotice(text),
     fetchStages,
+    onAccepted: (handoff) => reader.read(handoff),
     expectedChannelId: (sourceName) =>
       watchManager.registrations().find((registration) => registration.source === sourceName)
         ?.channelId,
   })
-  ingestion.recoverAtBoot()
+  // The "read me the full text" flow (SECURITY.md §3.3): a dedicated turn,
+  // delimited and marked untrusted, gated to L0 tools by the runner itself.
+  // The real Agent loop swaps the MockAgentRunner instance, nothing else.
+  const fullTextRunner = new MockAgentRunner()
+  const fullTextRunnerReady = fullTextRunner.start('full-text')
+  // Requests are serialized: `promptFullText` resolves on the runner's next
+  // `turn-end`, so two concurrent turns on the shared runner would
+  // cross-wire replies. The chain keeps one turn in flight at a time.
+  let fullTextChain: Promise<unknown> = fullTextRunnerReady
+  fullTextHandler = (queueId) => {
+    const next = fullTextChain
+      .catch(() => {})
+      .then(() => promptFullText(fullTextRunner, ingestion.queue, fetchBody, queueId))
+    fullTextChain = next
+    return next
+  }
+  // Boot redelivery is background work: `deliver` never throws, and its
+  // ordering with watch registration below is immaterial (it only touches
+  // already-accepted rows from a prior run). Queue/DB errors in the
+  // re-decide loop must not become an unhandled rejection at boot.
+  ingestion.recoverAtBoot().catch((error) => {
+    console.error('ingestion boot recovery failed', error)
+  })
   for (const register of registerWatches) register()
   watchManager.start()
   app.addHook('onClose', async () => watchManager.stop())

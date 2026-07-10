@@ -11,6 +11,7 @@ import {
 import type { ToolDef } from './agent-runner.ts'
 import type { FactRecord, FactsDocument } from './facts.ts'
 import { seedSpaces } from './seed.ts'
+import type { Origin } from './taint.ts'
 import { SpacesEngine, type SpaceEvent } from './spaces-engine.ts'
 import {
   SurfaceEngine,
@@ -187,14 +188,14 @@ export class Store {
     return () => this.fastMutationObservers.delete(observer)
   }
 
-  createSurface(surface: Surface, updatedBy: 'agent' | 'user' | 'job'): Surface {
-    return this.surfaceEngine.createSurface(surface, updatedBy)
+  createSurface(surface: Surface, updatedBy: 'agent' | 'user' | 'job', origin?: Origin): Surface {
+    return this.surfaceEngine.createSurface(surface, updatedBy, origin)
   }
 
   patchState(
     surfaceId: string,
     operations: PatchOperation[],
-    options: { updatedBy: 'agent' | 'user' | 'job' },
+    options: { updatedBy: 'agent' | 'user' | 'job'; origin?: Origin },
   ): SurfaceMutation {
     return this.surfaceEngine.patchState(surfaceId, operations, options)
   }
@@ -202,7 +203,7 @@ export class Store {
   patchTree(
     surfaceId: string,
     operations: PatchOperation[],
-    options: { expectedTreeVersion: number; updatedBy: 'agent' | 'user' | 'job' },
+    options: { expectedTreeVersion: number; updatedBy: 'agent' | 'user' | 'job'; origin?: Origin },
   ): SurfaceMutation {
     return this.surfaceEngine.patchTree(surfaceId, operations, options)
   }
