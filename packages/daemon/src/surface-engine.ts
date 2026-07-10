@@ -24,6 +24,7 @@ import { z } from 'zod'
 import { defineTool, type ToolDef } from './agent-runner.ts'
 import type { AppendSpaceEventInput } from './spaces-engine.ts'
 import { requiredNumber, requiredString, withImmediateTransaction } from './sqlite-rows.ts'
+import { toolWriteOrigin, type Origin } from './taint.ts'
 
 type SurfaceWriteActor = Extract<Freshness['updatedBy'], 'agent' | 'user' | 'job'>
 
@@ -158,7 +159,11 @@ export class SurfaceEngine {
       .map((row) => SurfacePatchEventSchema.parse(JSON.parse(requiredString(row, 'event_json'))))
   }
 
-  createSurface(input: Surface | CreateSurfaceInput, updatedBy: SurfaceWriteActor): Surface {
+  createSurface(
+    input: Surface | CreateSurfaceInput,
+    updatedBy: SurfaceWriteActor,
+    origin?: Origin,
+  ): Surface {
     const surface = this.surfaceForWrite(input, updatedBy)
     this.requireKnownSpace(surface.spaceId)
     this.runWrite(() => {
@@ -169,14 +174,14 @@ export class SurfaceEngine {
         at: surface.freshness.updatedAt,
         type: 'surface.create',
         text: `Created Surface "${surface.title}"`,
-        origin: 'trusted:system',
+        origin: origin ?? 'trusted:system',
         payload: { surfaceId: surface.id },
       })
     })
     return surface
   }
 
-  archiveSurface(surfaceId: string, updatedBy: SurfaceWriteActor): Surface {
+  archiveSurface(surfaceId: string, updatedBy: SurfaceWriteActor, origin?: Origin): Surface {
     const surface = this.requireActiveSurface(surfaceId)
     const archived = this.stampSurface(surface, updatedBy)
     this.runWrite(() => {
@@ -191,7 +196,7 @@ export class SurfaceEngine {
         at: archived.freshness.updatedAt,
         type: 'surface.archive',
         text: `Archived Surface "${surface.title}"`,
-        origin: 'trusted:system',
+        origin: origin ?? 'trusted:system',
         payload: { surfaceId },
       })
     })
@@ -201,7 +206,7 @@ export class SurfaceEngine {
   patchState(
     surfaceId: string,
     operations: PatchOperation[],
-    options: { updatedBy: SurfaceWriteActor },
+    options: { updatedBy: SurfaceWriteActor; origin?: Origin },
   ): SurfaceMutation {
     assertPatchTarget(operations, 'state')
     return this.patchSurface(surfaceId, operations, {
@@ -209,13 +214,14 @@ export class SurfaceEngine {
       eventType: 'surface.patch_state',
       eventText: (surface) => `Patched state for Surface "${surface.title}"`,
       updateTreeVersion: false,
+      ...(options.origin === undefined ? {} : { origin: options.origin }),
     })
   }
 
   patchTree(
     surfaceId: string,
     operations: PatchOperation[],
-    options: { expectedTreeVersion: number; updatedBy: SurfaceWriteActor },
+    options: { expectedTreeVersion: number; updatedBy: SurfaceWriteActor; origin?: Origin },
   ): SurfaceMutation {
     assertPatchTarget(operations, 'tree')
     const version = this.getSurfaceVersion(surfaceId)
@@ -232,6 +238,7 @@ export class SurfaceEngine {
       eventType: 'surface.patch_tree',
       eventText: (surface) => `Patched tree for Surface "${surface.title}"`,
       updateTreeVersion: true,
+      ...(options.origin === undefined ? {} : { origin: options.origin }),
     })
   }
 
@@ -328,8 +335,9 @@ export class SurfaceEngine {
         name: 'create_surface',
         description: 'Create a protocol-valid Surface inside a Space.',
         schema: CreateSurfaceToolInputSchema,
-        handler: (input) => {
-          const surface = this.createSurface(input, 'agent')
+        level: 'L0',
+        handler: (input, context) => {
+          const surface = this.createSurface(input, 'agent', toolWriteOrigin(context.origin))
           return { content: `created Surface ${surface.id}`, details: { surface } }
         },
       }),
@@ -337,9 +345,11 @@ export class SurfaceEngine {
         name: 'patch_state',
         description: 'Patch typed Surface state with protocol validation.',
         schema: PatchStateToolInputSchema,
-        handler: (input) => {
+        level: 'L0',
+        handler: (input, context) => {
           const mutation = this.patchState(input.surfaceId, input.operations, {
             updatedBy: 'agent',
+            origin: toolWriteOrigin(context.origin),
           })
           return { content: `patched state for Surface ${input.surfaceId}`, details: mutation }
         },
@@ -348,10 +358,12 @@ export class SurfaceEngine {
         name: 'patch_tree',
         description: 'Patch a Surface Atom tree when the expected tree version still matches.',
         schema: PatchTreeToolInputSchema,
-        handler: (input) => {
+        level: 'L0',
+        handler: (input, context) => {
           const mutation = this.patchTree(input.surfaceId, input.operations, {
             expectedTreeVersion: input.expectedTreeVersion,
             updatedBy: 'agent',
+            origin: toolWriteOrigin(context.origin),
           })
           return { content: `patched tree for Surface ${input.surfaceId}`, details: mutation }
         },
@@ -360,8 +372,13 @@ export class SurfaceEngine {
         name: 'archive_surface',
         description: 'Archive a Surface without deleting its Space memory.',
         schema: ArchiveSurfaceToolInputSchema,
-        handler: (input) => {
-          const surface = this.archiveSurface(input.surfaceId, 'agent')
+        level: 'L0',
+        handler: (input, context) => {
+          const surface = this.archiveSurface(
+            input.surfaceId,
+            'agent',
+            toolWriteOrigin(context.origin),
+          )
           return { content: `archived Surface ${surface.id}`, details: { surface } }
         },
       }),
@@ -378,6 +395,7 @@ export class SurfaceEngine {
       updateTreeVersion: boolean
       idempotencyKey?: string
       eventPayload?: JsonObject
+      origin?: Origin
     },
   ): SurfaceMutation {
     return this.runWrite(() => {
@@ -397,7 +415,8 @@ export class SurfaceEngine {
         at: patched.freshness.updatedAt,
         type: options.eventType,
         text: options.eventText(patched),
-        origin: options.eventType === 'fast_path' ? 'trusted:user' : 'trusted:system',
+        origin:
+          options.origin ?? (options.eventType === 'fast_path' ? 'trusted:user' : 'trusted:system'),
         payload: options.eventPayload ?? { surfaceId, operations: operations.length },
       })
       return { surface: patched, event, duplicate: false }

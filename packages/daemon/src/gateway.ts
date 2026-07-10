@@ -23,6 +23,15 @@ export interface GatewayAuth {
   onSessionRevoked(listener: (event: { deviceId: string }) => void): () => void
 }
 
+/**
+ * "show/read [me] the full text [of] [event|queue] #<id>" — recognized
+ * before the mock chat path so the real full-text flow (SECURITY.md §3.3)
+ * can answer it once wired; falls through to the ordinary chat reply when
+ * `onFullTextRequest` is not configured.
+ */
+const FULL_TEXT_REQUEST_RE =
+  /^(?:show|read)(?:\s+me)?\s+the\s+full\s+text(?:\s+of)?\s*(?:event|queue)?\s*#?(\d+)$/i
+
 interface GatewayClientSession {
   clientId: string
   deviceId?: string
@@ -46,6 +55,14 @@ export class GatewayHub {
       mockChatEffects?: boolean
       /** Extra dev-profile chat effect (e.g. the scheduler's "remind me…" demo). */
       onDevChatEffect?: (event: NormalizedChannelEvent) => void
+      /**
+       * Answers a recognized "show me the full text of event #N" request
+       * (docs/SECURITY.md §3.3): runs the dedicated, gated turn
+       * (`promptFullText`) and resolves with its reply. Rejection (unknown
+       * queue id, transport failure) yields a content-free system notice —
+       * never the underlying error detail.
+       */
+      onFullTextRequest?: (queueId: number) => Promise<string>
     } = {},
   ) {
     this.pwa.onMessage((event) => this.handleChannelMessage(event))
@@ -203,12 +220,30 @@ export class GatewayHub {
     const session = this.clients.get(event.clientId)
     if (!session) return
     session.presence.lastSeenAt = event.receivedAt
+
+    const fullTextMatch = FULL_TEXT_REQUEST_RE.exec(event.text)
+    if (fullTextMatch && this.options.onFullTextRequest) {
+      this.handleFullTextRequest(Number(fullTextMatch[1]), event.clientId)
+      return
+    }
+
     const reply = handleChatText(event.text, session.history)
     if (this.options.mockChatEffects) {
       this.applyMockChatSurfaceEffect(event)
       this.options.onDevChatEffect?.(event)
     }
     this.pwa.sendShort(event.clientId, reply.text)
+  }
+
+  private handleFullTextRequest(queueId: number, clientId: string): void {
+    const onFullTextRequest = this.options.onFullTextRequest
+    if (!onFullTextRequest) return
+    // Both outcomes answer only the requesting client; the failure message
+    // is content-free (never the underlying error detail).
+    onFullTextRequest(queueId).then(
+      (reply) => this.pwa.sendShort(clientId, reply),
+      () => this.pwa.sendShort(clientId, `Full text for queue #${queueId} is not available.`),
+    )
   }
 
   // Dev-profile stand-in for the Agent loop: proves the chat→Surface patch

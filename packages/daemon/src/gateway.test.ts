@@ -169,6 +169,69 @@ describe('GatewayHub Surface sync', () => {
   })
 })
 
+describe('GatewayHub full-text requests', () => {
+  it('recognizes a full-text request and sends the resolved reply as a chat message', async () => {
+    const store = new Store()
+    const requested: number[] = []
+    const gateway = new GatewayHub(store, {
+      onFullTextRequest: async (queueId) => {
+        requested.push(queueId)
+        return 'Displayed the requested content.'
+      },
+    })
+    const socket = new FakeGatewaySocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    socket.receive({ type: 'chat.send', text: 'show me the full text of event #42' })
+    await flushMicrotasks()
+
+    expect(requested).toEqual([42])
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'chat.message',
+      message: { role: 'assistant', text: 'Displayed the requested content.' },
+    })
+  })
+
+  it('broadcasts a content-free notice when the full-text request rejects', async () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store, {
+      onFullTextRequest: async () => {
+        throw new Error('do not leak this: secret detail')
+      },
+    })
+    const socket = new FakeGatewaySocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    socket.receive({ type: 'chat.send', text: 'read the full text of queue #7' })
+    await flushMicrotasks()
+
+    const notice = socket.sent.at(-1)
+    expect(notice).toMatchObject({
+      type: 'chat.message',
+      message: { role: 'assistant', text: 'Full text for queue #7 is not available.' },
+    })
+    expect(JSON.stringify(notice)).not.toContain('secret detail')
+  })
+
+  it('falls through to the ordinary mock chat reply when onFullTextRequest is not configured', async () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store)
+    const socket = new FakeGatewaySocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    socket.receive({ type: 'chat.send', text: 'show me the full text of event #1' })
+    await flushMicrotasks()
+
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'chat.message',
+      message: { role: 'assistant' },
+    })
+  })
+})
+
 describe('GatewayHub system notices', () => {
   it('broadcasts a daemon-originated notice to every connected client', () => {
     const store = new Store()
@@ -297,4 +360,9 @@ function agentActionSurface(): Surface {
 
 function fixedNow(): Date {
   return new Date('2026-07-03T12:00:00.000Z')
+}
+
+/** Full-text requests resolve `onFullTextRequest` asynchronously; flush the microtask queue before asserting. */
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
 }

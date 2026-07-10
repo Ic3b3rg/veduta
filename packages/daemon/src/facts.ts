@@ -1,8 +1,12 @@
+import { isUntrusted, isValidOrigin, type Origin } from './taint.ts'
+
 export interface FactRecord {
   text: string
   noted?: string
   supersededAt?: string
   supersededBy?: string
+  /** Absent means legacy/trusted. Set when the fact was curated from untrusted content. */
+  origin?: Origin
 }
 
 export interface FactsDocument {
@@ -104,13 +108,14 @@ export function curateFact(
   document: FactsDocument,
   factText: string,
   noted: string,
+  origin?: Origin,
 ): CuratorResult {
   const text = normalizeWhitespace(factText)
   if (!text) throw new Error('fact text is required')
 
   const active = document.active.map((fact) => ({ ...fact }))
   const superseded = document.superseded.map((fact) => ({ ...fact }))
-  const fact = { text, noted }
+  const fact: FactRecord = { text, noted, ...(origin === undefined ? {} : { origin }) }
   const exact = active.find(
     (candidate) => normalizeFactText(candidate.text) === normalizeFactText(text),
   )
@@ -171,8 +176,12 @@ export function searchFacts(document: FactsDocument, query: string): FactRecord[
 }
 
 function parseFactLine(line: string): FactRecord {
-  const metadataMatch = line.match(/^(.*?)(?:\s+\(([^()]*)\))\s*$/)
-  const text = normalizeWhitespace(metadataMatch?.[1] ?? line)
+  const originMatch = line.match(/^(.*)\s+—\s+origin:\s*(\S+)\s*$/)
+  const withoutOrigin = originMatch?.[1] ?? line
+  const origin = originMatch?.[2]
+
+  const metadataMatch = withoutOrigin.match(/^(.*?)(?:\s+\(([^()]*)\))\s*$/)
+  const text = normalizeWhitespace(metadataMatch?.[1] ?? withoutOrigin)
   const metadata = metadataMatch?.[2] ? parseMetadata(metadataMatch[2]) : {}
 
   return factRecord({
@@ -180,6 +189,7 @@ function parseFactLine(line: string): FactRecord {
     ...(metadata['noted'] === undefined ? {} : { noted: metadata['noted'] }),
     ...(metadata['superseded'] === undefined ? {} : { supersededAt: metadata['superseded'] }),
     ...(metadata['by'] === undefined ? {} : { supersededBy: metadata['by'] }),
+    ...(origin !== undefined && isValidOrigin(origin) ? { origin } : {}),
   })
 }
 
@@ -204,7 +214,8 @@ function formatFact(fact: FactRecord, fallbackDate: string): string {
   const metadata = [`noted: ${fact.noted ?? fallbackDate}`]
   if (fact.supersededAt) metadata.push(`superseded: ${fact.supersededAt}`)
   if (fact.supersededBy) metadata.push(`by: ${fact.supersededBy}`)
-  return `- ${fact.text} (${metadata.join('; ')})`
+  const base = `- ${fact.text} (${metadata.join('; ')})`
+  return fact.origin && isUntrusted(fact.origin) ? `${base} — origin: ${fact.origin}` : base
 }
 
 function factRecord(input: FactRecord): FactRecord {
@@ -213,6 +224,7 @@ function factRecord(input: FactRecord): FactRecord {
     ...(input.noted === undefined ? {} : { noted: input.noted }),
     ...(input.supersededAt === undefined ? {} : { supersededAt: input.supersededAt }),
     ...(input.supersededBy === undefined ? {} : { supersededBy: input.supersededBy }),
+    ...(input.origin === undefined ? {} : { origin: input.origin }),
   }
 }
 

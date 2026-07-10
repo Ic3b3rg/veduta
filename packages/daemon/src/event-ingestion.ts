@@ -26,7 +26,7 @@ export interface EventIngestionOptions {
   secrets?: SecretResolver
   now?: () => Date
   /** The quarantined reader seam (issue #13). Delivery is at-least-once. */
-  onAccepted?: (handoff: ReaderHandoff) => void
+  onAccepted?: (handoff: ReaderHandoff) => void | Promise<void>
   /** Operational notices for the user (wired to the Gateway system notice). */
   onNotice?: (text: string) => void
   /** Per-source fetch stages for push notifications that carry no content. */
@@ -63,7 +63,7 @@ export class EventIngestion {
   private readonly store: Store
   private readonly secrets: SecretResolver
   private readonly now: () => Date
-  private readonly onAccepted: ((handoff: ReaderHandoff) => void) | undefined
+  private readonly onAccepted: ((handoff: ReaderHandoff) => void | Promise<void>) | undefined
   private readonly onNotice: ((text: string) => void) | undefined
   private readonly fetchStages: Record<string, FetchStage>
   private readonly expectedChannelId: ((source: string) => string | undefined) | undefined
@@ -127,22 +127,22 @@ export class EventIngestion {
   }
 
   /** Boot recovery: at-least-once, mirroring the scheduler's discipline. */
-  recoverAtBoot(): void {
+  async recoverAtBoot(): Promise<void> {
     for (const row of this.queue.pendingEvents()) {
       const source = this.config.sources[row.source]
       if (!source) continue
-      this.decideAndDeliver(row.id, source)
+      await this.decideAndDeliver(row.id, source)
     }
     for (const row of this.queue.undeliveredAccepted()) {
-      this.deliver(row)
+      await this.deliver(row)
     }
   }
 
-  private handleGenericWebhook(
+  private async handleGenericWebhook(
     sourceName: string,
     source: IngestionSource,
     input: VerifyInput,
-  ): WebhookResponse {
+  ): Promise<WebhookResponse> {
     let event: ExternalEvent
     try {
       const payload = WebhookPayloadSchema.parse(JSON.parse(input.rawBody.toString('utf8')))
@@ -173,7 +173,7 @@ export class EventIngestion {
     }
     if (outcome.outcome === 'duplicate') return { status: 200, body: { outcome: 'duplicate' } }
 
-    const decided = this.decideAndDeliver(outcome.queueId, source)
+    const decided = await this.decideAndDeliver(outcome.queueId, source)
     return {
       status: 200,
       body:
@@ -255,20 +255,20 @@ export class EventIngestion {
     let accepted = 0
     for (const outcome of outcomes) {
       if (outcome.outcome !== 'queued') continue
-      const decided = this.decideAndDeliver(outcome.queueId, source)
+      const decided = await this.decideAndDeliver(outcome.queueId, source)
       if (decided.status === 'accepted') accepted += 1
     }
     return { status: 200, body: { outcome: 'fetched', queued: outcomes.length, accepted } }
   }
 
-  private decideAndDeliver(queueId: number, source: IngestionSource): QueuedEvent {
+  private async decideAndDeliver(queueId: number, source: IngestionSource): Promise<QueuedEvent> {
     const row = this.queue.getEvent(queueId)
     if (!row) throw new Error(`unknown queued event: ${queueId}`)
     const verdict = evaluatePreFilter(row.event, source.filters, this.similarity)
     const decided = this.queue.decide(queueId, verdict)
     if (decided.status === 'accepted') {
       this.appendAcceptNotice(decided)
-      this.deliver(decided)
+      await this.deliver(decided)
     }
     return this.queue.getEvent(queueId) ?? decided
   }
@@ -298,11 +298,19 @@ export class EventIngestion {
    * (issue #13 not landed) rows stay `accepted` and undelivered — the
    * durable backlog the reader drains at its first boot. `delivered_at`
    * only ever means "the reader handoff returned".
+   *
+   * `onAccepted` may be async (the reader call is an LLM round-trip): the
+   * webhook HTTP response now waits for it to resolve before `markDelivered`
+   * runs, so a crash between the two never loses the row. Dedup + this
+   * at-least-once discipline make provider redelivery safe; revisit with a
+   * worker queue if reader latency ever threatens push ack deadlines.
+   * This must never throw — a rejected `onAccepted` leaves the row
+   * undelivered for boot retry, exactly like the synchronous failure case.
    */
-  private deliver(row: QueuedEvent): void {
+  private async deliver(row: QueuedEvent): Promise<void> {
     if (!this.onAccepted) return
     try {
-      this.onAccepted({
+      await this.onAccepted({
         queueId: row.id,
         spaceId: row.spaceId,
         acceptedAt: row.decidedAt ?? this.now().toISOString(),

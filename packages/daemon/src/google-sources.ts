@@ -130,6 +130,62 @@ const GmailMessageSchema = z.object({
 
 const METADATA_HEADERS = ['From', 'Subject', 'List-Unsubscribe', 'Precedence']
 
+/**
+ * A MIME part of a `format=full` Gmail message: text/plain or text/html
+ * leaves, or a multipart node. Optional fields are typed `| undefined`
+ * explicitly (not just `?`) to match zod's `.optional()` output shape
+ * under `exactOptionalPropertyTypes`.
+ */
+interface GmailMessagePart {
+  mimeType?: string | undefined
+  body?: { data?: string | undefined; size?: number | undefined } | undefined
+  parts?: GmailMessagePart[] | undefined
+}
+
+const GmailMessagePartSchema: z.ZodType<GmailMessagePart> = z.lazy(() =>
+  z.object({
+    mimeType: z.string().optional(),
+    body: z.object({ data: z.string().optional(), size: z.number().optional() }).optional(),
+    parts: z.array(GmailMessagePartSchema).optional(),
+  }),
+)
+
+const GmailFullMessageSchema = z.object({
+  id: z.string().min(1),
+  payload: GmailMessagePartSchema.optional(),
+})
+
+/** Depth-first search for the first leaf part whose `mimeType` matches and that carries body data. */
+function findMessagePart(
+  part: GmailMessagePart | undefined,
+  mimeType: string,
+): GmailMessagePart | undefined {
+  if (!part) return undefined
+  if (part.mimeType === mimeType && part.body?.data !== undefined) return part
+  for (const child of part.parts ?? []) {
+    const found = findMessagePart(child, mimeType)
+    if (found) return found
+  }
+  return undefined
+}
+
+/** Gmail body data is base64url, unpadded (RFC 4648 §5) — Node's `base64url` encoding decodes it directly. */
+function decodeBase64Url(data: string): string {
+  return Buffer.from(data, 'base64url').toString('utf8')
+}
+
+const BODY_CAP_BYTES = 64 * 1024
+
+/** Approximate byte cap: bounds prompt size, not exact UTF-8 accounting (matches quarantined-reader.ts). */
+function capBody(value: string): string {
+  return value.length <= BODY_CAP_BYTES ? value : `${value.slice(0, BODY_CAP_BYTES)}…`
+}
+
+/** Naive tag-strip for the `text/html` fallback: good enough to bound size, not a sanitizer — the body stays quarantined regardless. */
+function stripHtmlTags(html: string): string {
+  return html.replace(/<[^>]*>/g, ' ')
+}
+
 export class GmailSource {
   private readonly source: string
   private readonly tokens: GoogleTokenProvider
@@ -196,6 +252,29 @@ export class GmailSource {
   private async baseline(reset: boolean): Promise<FetchStageResult> {
     const profile = GmailProfileSchema.parse(await this.request('GET', `${GMAIL_BASE}/profile`))
     return { events: [], nextCursor: profile.historyId, ...(reset ? { reset: true } : {}) }
+  }
+
+  /**
+   * Re-fetches the full body for the quarantined reader / full-text flow
+   * (issue #13): `format=full`, walk `payload.parts` for the first
+   * `text/plain` leaf (fallback: naive tag-strip on `text/html`),
+   * base64url-decode, cap at 64 KiB. `undefined` when no text body is
+   * found. This is quarantined data — the caller marks it untrusted; this
+   * method never interprets it.
+   */
+  async fetchMessageBody(messageId: string): Promise<string | undefined> {
+    const url = new URL(`${GMAIL_BASE}/messages/${messageId}`)
+    url.searchParams.set('format', 'full')
+    const message = GmailFullMessageSchema.parse(await this.request('GET', url.toString()))
+
+    const plain = findMessagePart(message.payload, 'text/plain')
+    if (plain?.body?.data !== undefined) return capBody(decodeBase64Url(plain.body.data))
+
+    const html = findMessagePart(message.payload, 'text/html')
+    if (html?.body?.data !== undefined)
+      return capBody(stripHtmlTags(decodeBase64Url(html.body.data)))
+
+    return undefined
   }
 
   private async fetchMessageMetadata(id: string): Promise<ExternalEvent> {

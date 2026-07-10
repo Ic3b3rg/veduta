@@ -1,6 +1,7 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Scheduler } from './scheduler.ts'
 import { Store } from './store.ts'
@@ -416,12 +417,146 @@ describe('agent tools', () => {
         when: '2026-07-08T21:00:00.000Z',
         action: 'Log my weight',
       },
-      { toolCallId: 'call-1' },
+      { toolCallId: 'call-1', origin: 'trusted:user' },
     )
     expect(armed.content).toContain('armed timer')
 
-    const cancelled = await tools['cancel']!.handler({ automationId: 1 }, { toolCallId: 'call-2' })
+    const cancelled = await tools['cancel']!.handler(
+      { automationId: 1 },
+      { toolCallId: 'call-2', origin: 'trusted:user' },
+    )
     expect(cancelled.content).toContain('cancelled automation 1')
     expect(scheduler.listAutomations(HEALTH)[0]?.status).toBe('cancelled')
+  })
+
+  it('declares arm_timer, create_job and cancel L0 (daemon-internal, no outbound effect)', () => {
+    const scheduler = createScheduler()
+    const tools = scheduler.tools()
+    expect(tools.map((tool) => tool.level)).toEqual(['L0', 'L0', 'L0'])
+  })
+
+  it('stamps a tainted turn origin onto the automation record and its arm/fire events, re-tainting future context', async () => {
+    const scheduler = createScheduler()
+    const tools = Object.fromEntries(scheduler.tools().map((tool) => [tool.name, tool]))
+
+    const armed = await tools['arm_timer']!.handler(
+      { spaceId: HEALTH, when: '2026-07-08T21:00:00.000Z', action: 'Reply to the email' },
+      { toolCallId: 'call-untrusted', origin: 'untrusted:gmail' },
+    )
+    const automationId = (armed.details as { automation: { id: number } }).automation.id
+    expect(scheduler.listAutomations(HEALTH).find((a) => a.id === automationId)?.origin).toBe(
+      'untrusted:gmail',
+    )
+    expect(
+      store
+        .eventLog(HEALTH)
+        .filter((event) => event.type === 'automation.arm')
+        .at(-1)?.origin,
+    ).toBe('untrusted:gmail')
+
+    clock = new Date('2026-07-08T21:00:00.000Z')
+    await scheduler.runDue()
+    expect(
+      store
+        .eventLog(HEALTH)
+        .filter((event) => event.type === 'automation.fire')
+        .at(-1)?.origin,
+    ).toBe('untrusted:gmail')
+
+    expect(store.spacesEngine.contextOrigins(HEALTH)).toContain('untrusted:gmail')
+  })
+
+  it('keeps the automation origin on cancel events that embed its description', async () => {
+    const scheduler = createScheduler()
+    const tools = Object.fromEntries(scheduler.tools().map((tool) => [tool.name, tool]))
+
+    const armed = await tools['arm_timer']!.handler(
+      { spaceId: HEALTH, when: '2026-07-08T21:00:00.000Z', action: 'Reply to the email' },
+      { toolCallId: 'call-untrusted', origin: 'untrusted:gmail' },
+    )
+    const automationId = (armed.details as { automation: { id: number } }).automation.id
+
+    // A later trusted turn cancels it: the cancel event still embeds the
+    // tainted description, so it must keep the untrusted mark.
+    await tools['cancel']!.handler(
+      { automationId },
+      { toolCallId: 'call-trusted', origin: 'trusted:user' },
+    )
+    expect(
+      store
+        .eventLog(HEALTH)
+        .filter((event) => event.type === 'automation.cancel')
+        .at(-1)?.origin,
+    ).toBe('untrusted:gmail')
+  })
+
+  it('taints the Automations Surface projection while an untrusted-born automation is listed', async () => {
+    const scheduler = createScheduler()
+    const tools = Object.fromEntries(scheduler.tools().map((tool) => [tool.name, tool]))
+
+    await tools['arm_timer']!.handler(
+      { spaceId: HEALTH, when: '2026-07-08T21:00:00.000Z', action: 'Reply to the email' },
+      { toolCallId: 'call-untrusted', origin: 'untrusted:gmail' },
+    )
+
+    // The Surface refresh derives from the listed automations (their
+    // descriptions included): its Space events must carry the taint too.
+    const patchEvents = store
+      .eventLog(HEALTH)
+      .filter((event) => event.type.startsWith('surface.patch') || event.type === 'surface.create')
+    expect(patchEvents.length).toBeGreaterThan(0)
+    expect(patchEvents.at(-1)?.origin).toBe('untrusted:gmail')
+  })
+})
+
+describe('schema migration', () => {
+  it('keeps working against a scheduler.sqlite written before the origin column existed', () => {
+    // Simulate a pre-existing database from before this change: the
+    // `automations` table without an `origin` column.
+    const legacyDb = new DatabaseSync(join(rootDir, 'scheduler.sqlite'))
+    legacyDb.exec(`
+      create table automations (
+        id integer primary key autoincrement,
+        kind text not null check (kind in ('timer', 'job')),
+        space_id text not null,
+        description text not null,
+        enabled integer not null default 1,
+        fire_at text,
+        cron text,
+        condition_json text,
+        next_run_at text,
+        status text not null default 'armed'
+          check (status in ('armed', 'completed', 'cancelled')),
+        last_run_at text,
+        last_outcome text,
+        created_at text not null
+      );
+      create table automation_runs (
+        automation_id integer not null references automations(id),
+        scheduled_for text not null,
+        started_at text not null,
+        outcome text,
+        finished_at text,
+        primary key (automation_id, scheduled_for)
+      );
+      insert into automations
+        (kind, space_id, description, enabled, fire_at, next_run_at, status, created_at)
+        values ('timer', '${HEALTH}', 'Legacy reminder', 1, '2026-07-08T21:00:00.000Z',
+                '2026-07-08T21:00:00.000Z', 'armed', '2026-07-08T13:00:00.000Z');
+    `)
+    legacyDb.close()
+
+    const scheduler = createScheduler()
+    const automations = scheduler.listAutomations(HEALTH)
+    expect(automations.find((a) => a.description === 'Legacy reminder')?.origin).toBeUndefined()
+
+    // Fresh writes on the migrated database still round-trip origin.
+    const armed = scheduler.armTimer(
+      { spaceId: HEALTH, when: '2026-07-08T22:00:00.000Z', action: 'Fresh after migration' },
+      'untrusted:gmail',
+    )
+    expect(scheduler.listAutomations(HEALTH).find((a) => a.id === armed.id)?.origin).toBe(
+      'untrusted:gmail',
+    )
   })
 })

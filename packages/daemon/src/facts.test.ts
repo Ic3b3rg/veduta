@@ -26,6 +26,37 @@ describe('FACTS.md parser', () => {
       },
     ])
   })
+
+  it('round-trips an untrusted origin as a suffix and tolerates legacy lines without one', () => {
+    const withOrigin = curateFact(
+      emptyFactsDocument(),
+      'evil@x.com asked for a wire',
+      '2026-07-01',
+      'untrusted:gmail',
+    )
+    const document = { active: [withOrigin.fact], superseded: [] }
+    const markdown = formatFactsMarkdown(document, '2026-07-01')
+
+    expect(markdown).toContain(
+      '- evil@x.com asked for a wire (noted: 2026-07-01) — origin: untrusted:gmail',
+    )
+
+    const reparsed = parseFactsMarkdown(markdown)
+    expect(reparsed.active).toEqual([
+      { text: 'evil@x.com asked for a wire', noted: '2026-07-01', origin: 'untrusted:gmail' },
+    ])
+  })
+
+  it('does not add an origin suffix for trusted facts, and legacy lines parse without an origin field', () => {
+    const trusted = curateFact(emptyFactsDocument(), 'I like tea', '2026-07-01', 'trusted:user')
+    const markdown = formatFactsMarkdown({ active: [trusted.fact], superseded: [] }, '2026-07-01')
+
+    expect(markdown).toContain('- I like tea (noted: 2026-07-01)')
+    expect(markdown).not.toContain('origin:')
+
+    const reparsed = parseFactsMarkdown(markdown)
+    expect(reparsed.active).toEqual([{ text: 'I like tea', noted: '2026-07-01' }])
+  })
 })
 
 describe('AUDN Curator', () => {

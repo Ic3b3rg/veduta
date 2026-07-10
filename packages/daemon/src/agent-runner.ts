@@ -1,4 +1,5 @@
 import type { z } from 'zod'
+import type { Origin } from './taint.ts'
 
 export type ModelTier = 'triage' | 'reasoning'
 
@@ -49,6 +50,15 @@ export interface AgentPromptOptions {
    * to the session, the runner must not append it again.
    */
   retryOfFailedTurn?: boolean
+  /** Origin of the user input for this turn. Defaults to `'trusted:user'`. */
+  origin?: Origin
+  /**
+   * Taint of out-of-band context assembled into this turn (e.g. the
+   * Space log, from `SpacesEngine.contextOrigins`). Merged with `origin`
+   * and session-message origins to compute the turn's effective origin
+   * for tool gating (docs/SECURITY.md §3.2, ADR-0007).
+   */
+  contextOrigins?: Origin[]
 }
 
 export interface AgentRunner {
@@ -72,12 +82,25 @@ export interface ToolResult {
 export interface ToolContext {
   toolCallId: string
   signal?: AbortSignal
+  /**
+   * The turn's effective origin (most-untrusted of the prompt's origin,
+   * its context origins, and the session's message origins). Tools that
+   * write Space state must stamp it onto whatever they persist so taint
+   * cannot be laundered through a state write (docs/SECURITY.md §3.2).
+   */
+  origin: Origin
 }
 
 export interface ToolDef<TSchema extends z.ZodTypeAny = z.ZodTypeAny> {
   name: string
   description: string
   schema: TSchema
+  /**
+   * ADR-0007 trust level: `L0` runs free inside the daemon; `L1` requires
+   * approval before an outbound effect; `L2` never runs automatically.
+   * Required — `gateToolsForOrigins` fails closed on a missing level.
+   */
+  level: 'L0' | 'L1' | 'L2'
   handler(input: z.infer<TSchema>, context: ToolContext): Promise<ToolResult> | ToolResult
 }
 
@@ -96,6 +119,8 @@ export interface SessionMessage {
   toolName?: string
   details?: unknown
   isError?: boolean
+  /** Absent means trusted (the pre-taint-tracking default). */
+  origin?: Origin
 }
 
 export type SessionEntry =

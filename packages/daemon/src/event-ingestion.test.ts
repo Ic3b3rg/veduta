@@ -52,7 +52,9 @@ describe('EventIngestion', () => {
       store,
       secrets,
       now: () => new Date('2026-07-09T10:00:00Z'),
-      onAccepted: (handoff) => handoffs.push(handoff),
+      onAccepted: (handoff) => {
+        handoffs.push(handoff)
+      },
       onNotice: (text) => notices.push(text),
       ...(extra.fetchStages === undefined ? {} : { fetchStages: extra.fetchStages }),
       ...(extra.expectedChannelId === undefined
@@ -353,8 +355,57 @@ describe('EventIngestion', () => {
     expect(broken.queue.undeliveredAccepted()).toHaveLength(1)
 
     const recovered = ingestion(sourcesConfig)
-    recovered.recoverAtBoot()
+    await recovered.recoverAtBoot()
     expect(handoffs).toHaveLength(1)
     expect(recovered.queue.undeliveredAccepted()).toEqual([])
+  })
+
+  it('marks a row delivered only after an async onAccepted resolves', async () => {
+    const sourcesConfig = { mail: mailSource({ allowSenders: ['anna@example.com'] }) }
+    let resolveHandoff: () => void = () => {}
+    const pending = new Promise<void>((resolve) => {
+      resolveHandoff = resolve
+    })
+    const pipeline = new EventIngestion({
+      rootDir,
+      config: config(sourcesConfig),
+      store,
+      secrets,
+      now: () => new Date('2026-07-09T10:00:00Z'),
+      onAccepted: async () => {
+        await pending
+      },
+    })
+
+    const responsePromise = pipeline.handleWebhook('mail', signedInput(emailPayload()))
+    // While the reader call is still in flight the row must stay undelivered.
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(pipeline.queue.getEvent(1)?.deliveredAt).toBeUndefined()
+
+    resolveHandoff()
+    const response = await responsePromise
+    expect(response.body).toEqual({ outcome: 'accepted', queueId: 1 })
+    expect(pipeline.queue.getEvent(1)?.deliveredAt).toBeDefined()
+  })
+
+  it('keeps a row undelivered and still answers the webhook when onAccepted rejects', async () => {
+    const sourcesConfig = { mail: mailSource({ allowSenders: ['anna@example.com'] }) }
+    const pipeline = new EventIngestion({
+      rootDir,
+      config: config(sourcesConfig),
+      store,
+      secrets,
+      now: () => new Date('2026-07-09T10:00:00Z'),
+      onAccepted: async () => {
+        throw new Error('reader failed asynchronously')
+      },
+    })
+
+    const response = await pipeline.handleWebhook('mail', signedInput(emailPayload()))
+    expect(response.status).toBe(200)
+    expect(response.body).toEqual({ outcome: 'accepted', queueId: 1 })
+    expect(pipeline.queue.getEvent(1)?.deliveredAt).toBeUndefined()
+    expect(pipeline.queue.undeliveredAccepted()).toHaveLength(1)
   })
 })

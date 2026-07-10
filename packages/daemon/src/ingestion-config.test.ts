@@ -73,6 +73,22 @@ describe('loadIngestionConfig', () => {
     ).toThrow(/gmail-push sources need/)
   })
 
+  it('rejects a source name that fails the untrusted-origin grammar', () => {
+    writeFileSync(
+      join(rootDir, 'ingestion.json'),
+      JSON.stringify({
+        sources: {
+          'Gmail Push': {
+            verification: 'hmac',
+            secret: 'secret://env/MAIL_WEBHOOK_SECRET',
+            spaceId: 'spc-health',
+          },
+        },
+      }),
+    )
+    expect(() => loadIngestionConfig(rootDir)).toThrow(/source names must match/)
+  })
+
   it('requires calendar and google settings on calendar-push sources', () => {
     expect(() =>
       IngestionConfigSchema.parse({
