@@ -12,11 +12,15 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 import { fileURLToPath } from 'node:url'
 import Fastify from 'fastify'
 import { z } from 'zod'
+import { AllowlistSurfaceManager } from './allowlist-surface.ts'
+import { ApprovalSurfaceManager } from './approval-surface.ts'
 import { ProgressiveAuthLockout } from './auth-rate-limit.ts'
+import { AuditSurfaceManager } from './audit-surface.ts'
 import { AuthStoreError, type AuthStore } from './auth-store.ts'
 import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import { reminderFromChat } from './chat.ts'
 import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
+import { createDevDispatch } from './dev-dispatch.ts'
 import { EventIngestion, type FetchStage } from './event-ingestion.ts'
 import type { ExternalEvent } from './external-event.ts'
 import { promptFullText } from './full-text-flow.ts'
@@ -26,12 +30,14 @@ import { loadIngestionConfig } from './ingestion-config.ts'
 import { MockAgentRunner } from './mock-agent-runner.ts'
 import { mockReaderComplete } from './mock-provider.ts'
 import { ModelRouter, envSecretResolver, loadRoutingConfig } from './model-routing.ts'
+import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
 import { QuarantinedReader } from './quarantined-reader.ts'
 import { Scheduler } from './scheduler.ts'
 import { WatchManager } from './watch-renewal.ts'
 import { sendPwaAsset } from './static-assets.ts'
 import { Store, SurfaceActionError } from './store.ts'
-import { appendSystemSurface } from './system-space.ts'
+import { appendSystemSurface, ensureSystemSpace } from './system-space.ts'
+import { isTrustWrapped, TrustLayer } from './trust-layer.ts'
 import { usageSurface } from './usage-surface.ts'
 
 // The client sends only node/action/payload: state keys come from declared
@@ -91,6 +97,10 @@ export function buildServer(options: ServerOptions = {}) {
     now,
     ...(options.dataDir === undefined ? {} : { rootDir: options.dataDir }),
   })
+  // The trust layer's admin Surfaces (allowlist, audit) need a durable home
+  // (issue #14, D8): materialize the System Space before anything else so
+  // it exists no matter which subsystem writes to it first.
+  ensureSystemSpace(store.spacesEngine)
   const auth = options.auth ?? { mode: 'dev' as const }
   // Dev-profile stand-in for the Agent's arm_timer decision (scheduler is
   // assigned right after the gateway; chat frames only arrive once both exist).
@@ -117,6 +127,11 @@ export function buildServer(options: ServerOptions = {}) {
   let fullTextHandler: (queueId: number) => Promise<string> = () =>
     Promise.reject(new Error('full-text flow not ready'))
   const onFullTextRequest = (queueId: number) => fullTextHandler(queueId)
+  // Late binding, same reasoning as `fullTextHandler`: the dev dispatcher
+  // (issue #14, D12) needs `gateway.replyToClient`, so it can only be built
+  // once the Gateway exists; chat frames can only arrive after buildServer
+  // returns, so the binding is always in place by then.
+  let devDispatchHandler: (event: NormalizedChannelEvent) => void = () => {}
   const gateway = new GatewayHub(
     store,
     auth.mode === 'production'
@@ -130,7 +145,14 @@ export function buildServer(options: ServerOptions = {}) {
         }
       : // Only the dev profile gets the deterministic chat→Surface demo; a
         // production deployment waits for the real Agent loop.
-        { mockChatEffects: true, onDevChatEffect: armReminderFromChat, onFullTextRequest },
+        {
+          mockChatEffects: true,
+          onDevChatEffect: (event) => {
+            armReminderFromChat(event)
+            devDispatchHandler(event)
+          },
+          onFullTextRequest,
+        },
   )
   // The scheduler (issue #11): timers and jobs fire as visible Automations.
   // The judgment path stays a deterministic "unknown" (fail-safe: escalate)
@@ -143,11 +165,96 @@ export function buildServer(options: ServerOptions = {}) {
     store,
     now,
     onEscalation: (_spaceId, text) => gateway.broadcastSystemNotice(text),
-    onSurfacePatch: (event) => gateway.broadcastSurfacePatch(event),
     judge: () => 'unknown',
   })
   scheduler.start()
   app.addHook('onClose', async () => scheduler.stop())
+
+  // The trust layer (issue #14, ADR-0007): the code-level decision
+  // authority for every L1/L2 tool call — approval cards, allowlists, the
+  // append-only audit log. `ApprovalSurfaceManager` is built first (its
+  // `ApprovalCardPort` is a TrustLayer constructor dependency); `setTrust`
+  // connects the two once the layer exists.
+  const approvalSurfaces = new ApprovalSurfaceManager({ store })
+  const trust = new TrustLayer({
+    rootDir: store.spacesEngine.rootDir,
+    approvalCardPort: approvalSurfaces,
+    onApprovalCard: (card) => gateway.broadcastApprovalCard(card),
+    appendOutcomeEvent: (spaceId, payload) =>
+      store.spacesEngine.appendEvent(spaceId, {
+        type: 'approval.outcome',
+        text: `${payload.tool}: ${payload.outcome}`,
+        // A tool's outcome is always daemon-produced, never a genuine user
+        // event (taint.ts's `toolWriteOrigin` doc): the human decision is
+        // already captured in the audit log's `approval.decided` row
+        // (`approvedBy`), so this must never launder as `trusted:user` —
+        // the scheduler's condition rule must not be self-satisfiable by
+        // an agent/daemon write.
+        origin: 'trusted:system',
+        payload,
+      }),
+    hasOutcomeEvent: (spaceId, effectId) =>
+      store.spacesEngine
+        .readRecent(spaceId, 500)
+        .some(
+          (event) => event.type === 'approval.outcome' && event.payload?.['effectId'] === effectId,
+        ),
+    onSystemNotice: (text) => gateway.broadcastSystemNotice(text),
+    now,
+  })
+  approvalSurfaces.setTrust(trust)
+
+  // The two example outbound tools (D11): registered with the trust layer,
+  // then wrapped so every call decides allow/card/deny before any effect.
+  // The mock transport records deliveries as Space events — there is no
+  // real mail/bank backend (issue #15 is network egress enforcement).
+  const outboundTransport = createMockOutboundTransport(store.spacesEngine)
+  const outboundTools = createOutboundTools(outboundTransport)
+  for (const { tool, meta } of outboundTools) trust.register(tool, meta)
+  const wrappedOutboundTools = trust.wrapTools(outboundTools.map(({ tool }) => tool))
+
+  // Admin Surfaces (D8): pre-created at boot, rebuilt on every trust-layer
+  // change. Both live in the System Space materialized above.
+  const allowlistSurfaces = new AllowlistSurfaceManager({ store, trust })
+  allowlistSurfaces.start()
+  const auditSurfaces = new AuditSurfaceManager({ store, trust })
+  auditSurfaces.start()
+
+  // Boot recovery (D7/A2): overdue pending rows expire, interrupted
+  // `executing` rows re-run through the same effectId. Fire-and-forget,
+  // same reasoning as `ingestion.recoverAtBoot()` below — nothing else
+  // waits on it, and a failure here must never take the daemon down. A
+  // click on a persisted card is correct the instant the store can be read
+  // (Fix A: `handleFastMutation` resolves against `trust.hasPendingCardSurface`,
+  // never an in-memory cache), so this ordering is not a correctness
+  // requirement any more — kept because `approvalSurfaces.start()` must
+  // still never repair a Surface for a row `recoverAtBoot()` is about to
+  // expire or mark indeterminate.
+  trust
+    .start()
+    .then(() => approvalSurfaces.start())
+    .catch((error) => {
+      console.error('trust layer boot recovery failed', error)
+    })
+  app.addHook('onClose', async () => {
+    allowlistSurfaces.dispose()
+    auditSurfaces.dispose()
+    approvalSurfaces.dispose()
+    trust.dispose()
+  })
+
+  // Dev-profile chat dispatcher (D12): a deterministic stand-in for the
+  // future Agent loop, parsing two fixed command shapes straight to the
+  // trust-wrapped outbound tools above. Real Agent loop wiring replaces
+  // this handler outright.
+  devDispatchHandler = createDevDispatch({
+    spacesEngine: store.spacesEngine,
+    tools: wrappedOutboundTools,
+    isTrustWrapped,
+    reply: (clientId, text) => gateway.replyToClient(clientId, text),
+    now,
+  })
+
   // Model routing (issue #10): per-tier config from <dataDir>/routing.json,
   // spend persisted under <dataDir>/usage/. Past a daily cap the router
   // shuts proactivity off; the user hears about it in chat. Live spend
@@ -456,9 +563,11 @@ export function buildServer(options: ServerOptions = {}) {
       return reply.status(400).send({ error: parsed.error.issues })
     }
     try {
+      // The mutation's own commit already reached every connected client
+      // through the Gateway's central Surface-event subscription; this
+      // endpoint only reports the result to the caller.
       const result = store.invokeSurfaceAction(surfaceId, parsed.data)
       if (result.path === 'agent') return reply.status(202).send({ turn: result.turn })
-      if (!result.mutation.duplicate) gateway.broadcastSurfacePatch(result.mutation.event)
       return { surface: result.mutation.surface }
     } catch (error) {
       if (error instanceof SurfaceActionError) {
@@ -520,7 +629,19 @@ export function buildServer(options: ServerOptions = {}) {
     })
   })
 
-  return { app, store, gateway, router, scheduler, ingestion, watchManager }
+  return {
+    app,
+    store,
+    gateway,
+    router,
+    scheduler,
+    ingestion,
+    watchManager,
+    trust,
+    approvalSurfaces,
+    allowlistSurfaces,
+    auditSurfaces,
+  }
 }
 
 export function isAllowedOrigin(origin: string | undefined, allowedOrigins: string[]): boolean {

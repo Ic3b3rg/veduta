@@ -1,12 +1,24 @@
+import { z } from 'zod'
+import type { AgentMessage } from '@earendil-works/pi-agent-core'
+import { fromPartial } from '@total-typescript/shoehorn'
 import { describe, expect, it } from 'vitest'
-import type { SessionEntry } from './agent-runner.ts'
+import {
+  defineTool,
+  disabledContextPolicy,
+  type ContextPolicy,
+  type SessionEntry,
+} from './agent-runner.ts'
 import {
   applyOriginEntries,
   originEntryData,
+  toPiAgentTool,
+  transformPiContext,
   type OriginMarkerEntry,
+  type PiContextTransformOptions,
+  type PiToolParameters,
   type RawSessionEntry,
 } from './pi-agent-runner.ts'
-import type { Origin } from './taint.ts'
+import { TurnTaintAccumulator, type Origin } from './taint.ts'
 
 /**
  * `applyOriginEntries` and `originEntryData` are the pure halves of the
@@ -136,5 +148,149 @@ describe('applyOriginEntries', () => {
     const entries: RawSessionEntry[] = [marker('untrusted:gmail'), modelChange('mc1')]
     const result = applyOriginEntries(entries)
     expect(result).toEqual([modelChange('mc1')])
+  })
+})
+
+/**
+ * `transformPiContext` and `toPiAgentTool` are the pieces of D10/A3 that are
+ * pure enough to unit-test without a live pi `Agent` (constructing one needs
+ * a working provider — impractical to unit-test, see the module doc comment
+ * above). Together they cover what `PiAgentRunner` wires internally: the
+ * always-installed context-transform wrapper recomputing the context hash
+ * on every model invocation, and a tool call folding its result's `origins`
+ * into the live taint accumulator.
+ */
+function piMessage(content: string, timestamp: number): AgentMessage {
+  return fromPartial<AgentMessage>({ role: 'user', content, timestamp })
+}
+
+function transformOptions(policy: ContextPolicy, input: string): PiContextTransformOptions {
+  return {
+    policy,
+    sessionId: 'session-1',
+    systemPrompt: undefined,
+    input,
+    fallbackModel: undefined,
+  }
+}
+
+describe('transformPiContext', () => {
+  it('reports a stable hash for an identical envelope', async () => {
+    const hashes: string[] = []
+    const messages = [piMessage('hello', 1)]
+
+    await transformPiContext(messages, transformOptions(disabledContextPolicy, 'hello'), (hash) =>
+      hashes.push(hash),
+    )
+    await transformPiContext(messages, transformOptions(disabledContextPolicy, 'hello'), (hash) =>
+      hashes.push(hash),
+    )
+
+    expect(hashes[0]).toMatch(/^[0-9a-f]{64}$/)
+    expect(hashes[0]).toBe(hashes[1])
+  })
+
+  it('recomputes a different hash once a tool result extends the message list mid-turn', async () => {
+    const hashes: string[] = []
+    const messages = [piMessage('hello', 1)]
+    await transformPiContext(messages, transformOptions(disabledContextPolicy, 'hello'), (hash) =>
+      hashes.push(hash),
+    )
+
+    const grown = [...messages, piMessage('a tool result', 2)]
+    await transformPiContext(grown, transformOptions(disabledContextPolicy, 'hello'), (hash) =>
+      hashes.push(hash),
+    )
+
+    expect(hashes[1]).not.toBe(hashes[0])
+  })
+
+  it('hashes the post-policy transformed messages, not the raw pi input, when a ContextPolicy is enabled', async () => {
+    const droppingPolicy: ContextPolicy = {
+      enabled: true,
+      transform: (msgs) => msgs.filter((message) => message.role !== 'user'),
+    }
+    const hashes: string[] = []
+    await transformPiContext(
+      [piMessage('secret', 1)],
+      transformOptions(droppingPolicy, 'secret'),
+      (hash) => hashes.push(hash),
+    )
+    await transformPiContext([], transformOptions(disabledContextPolicy, 'secret'), (hash) =>
+      hashes.push(hash),
+    )
+
+    // Both envelopes end up with an empty transformed message list plus the
+    // same input: hashing what actually crossed the wrapper boundary (not
+    // the raw pi messages) makes the two equal.
+    expect(hashes[0]).toBe(hashes[1])
+  })
+})
+
+describe('toPiAgentTool', () => {
+  const parameters = fromPartial<PiToolParameters>({})
+
+  it("folds a tool result's origins into the live taint accumulator and reports them for persistence", async () => {
+    const taint = new TurnTaintAccumulator(['trusted:user'])
+    const tool = defineTool({
+      name: 'read_recent',
+      description: 'read-only',
+      schema: z.object({}),
+      level: 'L0',
+      egressDomains: [],
+      handler: () => ({ content: 'an untrusted event', origins: ['untrusted:gmail'] }),
+    })
+    const recorded: [string, Origin[]][] = []
+
+    const agentTool = toPiAgentTool(
+      tool,
+      parameters,
+      (toolCallId, signal) => ({
+        toolCallId,
+        origin: 'trusted:user',
+        origins: ['trusted:user'],
+        taint,
+        contextHash: 'irrelevant-for-this-test',
+        ...(signal ? { signal } : {}),
+      }),
+      (toolCallId, origins) => recorded.push([toolCallId, origins]),
+    )
+
+    const result = await agentTool.execute('call-1', {})
+
+    expect(taint.origins()).toEqual(['trusted:user', 'untrusted:gmail'])
+    expect(recorded).toEqual([['call-1', ['untrusted:gmail']]])
+    expect(result.content).toEqual([{ type: 'text', text: 'an untrusted event' }])
+  })
+
+  it('never records or accumulates when the tool result reports no origins', async () => {
+    const taint = new TurnTaintAccumulator(['trusted:user'])
+    const tool = defineTool({
+      name: 'noop',
+      description: 'no provenance',
+      schema: z.object({}),
+      level: 'L0',
+      egressDomains: [],
+      handler: () => ({ content: 'ok' }),
+    })
+    const recorded: unknown[] = []
+
+    const agentTool = toPiAgentTool(
+      tool,
+      parameters,
+      (toolCallId) => ({
+        toolCallId,
+        origin: 'trusted:user',
+        origins: ['trusted:user'],
+        taint,
+        contextHash: 'irrelevant-for-this-test',
+      }),
+      (...args) => recorded.push(args),
+    )
+
+    await agentTool.execute('call-2', {})
+
+    expect(recorded).toEqual([])
+    expect(taint.origins()).toEqual(['trusted:user'])
   })
 })

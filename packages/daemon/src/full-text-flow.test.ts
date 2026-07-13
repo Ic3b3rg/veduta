@@ -34,6 +34,7 @@ const l0Tool: ToolDef = defineTool({
   description: 'read-only',
   schema: z.object({}),
   level: 'L0',
+  egressDomains: [],
   handler: () => ({ content: 'ok' }),
 })
 
@@ -42,6 +43,7 @@ const l1Tool: ToolDef = defineTool({
   description: 'outbound',
   schema: z.object({}),
   level: 'L1',
+  egressDomains: ['mail.example.com'],
   handler: () => ({ content: 'sent' }),
 })
 

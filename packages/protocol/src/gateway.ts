@@ -40,6 +40,22 @@ export const ApprovalCardSchema = z.object({
   body: z.string().min(1),
   actionLabel: z.string().min(1),
   createdAt: z.string().datetime(),
+  surfaceId: z.string().min(1),
+  expiresAt: z.string().datetime(),
+})
+
+export const SurfaceCreatedEventSchema = z.object({
+  cursor: GatewayCursorSchema,
+  at: z.string().datetime(),
+  spaceId: z.string().min(1),
+  surface: SurfaceSchema,
+})
+
+export const SurfaceArchivedEventSchema = z.object({
+  cursor: GatewayCursorSchema,
+  at: z.string().datetime(),
+  spaceId: z.string().min(1),
+  surfaceId: z.string().min(1),
 })
 
 export const GatewayClientMessageSchema = z.discriminatedUnion('type', [
@@ -77,6 +93,14 @@ export const GatewayServerMessageSchema = z.discriminatedUnion('type', [
     event: SurfacePatchEventSchema,
   }),
   z.object({
+    type: z.literal('surface.created'),
+    event: SurfaceCreatedEventSchema,
+  }),
+  z.object({
+    type: z.literal('surface.archived'),
+    event: SurfaceArchivedEventSchema,
+  }),
+  z.object({
     type: z.literal('chat.message'),
     message: ChatMessageSchema,
   }),
@@ -98,6 +122,8 @@ export type GatewayCursor = z.infer<typeof GatewayCursorSchema>
 export type SpaceWithSurfaces = z.infer<typeof SpaceWithSurfacesSchema>
 export type SurfaceSnapshot = z.infer<typeof SurfaceSnapshotSchema>
 export type SurfacePatchEvent = z.infer<typeof SurfacePatchEventSchema>
+export type SurfaceCreatedEvent = z.infer<typeof SurfaceCreatedEventSchema>
+export type SurfaceArchivedEvent = z.infer<typeof SurfaceArchivedEventSchema>
 export type PresenceStatus = z.infer<typeof PresenceStatusSchema>
 export type PresenceEntry = z.infer<typeof PresenceEntrySchema>
 export type ApprovalCard = z.infer<typeof ApprovalCardSchema>

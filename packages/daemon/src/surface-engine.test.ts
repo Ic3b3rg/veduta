@@ -2,9 +2,13 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { performance } from 'node:perf_hooks'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import { fromPartial } from '@total-typescript/shoehorn'
 import { SurfaceSchema, type Surface } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
+import type { ToolContext } from './agent-runner.ts'
 import { Store } from './store.ts'
+import { SurfaceEngine, type SurfaceEngineEvent } from './surface-engine.ts'
 
 describe('Surface engine store', () => {
   it('persists Surface state and version metadata in SQLite across Store restarts', async () => {
@@ -20,7 +24,7 @@ describe('Surface engine store', () => {
       version: 2,
       treeVersion: 1,
     })
-    expect(second.surfaceEventsAfter(0).map((event) => event.cursor)).toEqual([1])
+    expect(second.surfaceEventsAfter(0).map((entry) => entry.event.cursor)).toEqual([1])
   })
 
   it('exposes Agent tools for create_surface, patch_state, patch_tree and archive_surface', async () => {
@@ -182,13 +186,189 @@ describe('Surface engine store', () => {
     expect(surface).toBeDefined()
     expect(Object.values(surface?.state ?? {}).every((value) => value === true)).toBe(true)
     expect(
-      store.surfaceEventsAfter(0).filter((event) => event.patch.surfaceId === 'srf-stress'),
+      store
+        .surfaceEventsAfter(0)
+        .filter((entry) => entry.kind === 'patch' && entry.event.patch.surfaceId === 'srf-stress'),
     ).toHaveLength(50)
     expect(store.eventLog('spc-health').filter((event) => event.type === 'fast_path')).toHaveLength(
       50,
     )
     expect(p95(timings)).toBeLessThan(100)
     expect(store.llmCallCount()).toBe(0)
+  })
+
+  it('backfills kind="patch" for surface_events rows written before the column existed', async () => {
+    const rootDir = await tempRoot()
+    // Simulate a `surfaces.sqlite` created before the `kind` column existed:
+    // one legacy patch-event row, no `kind` column at all.
+    const legacyDb = new DatabaseSync(join(rootDir, 'surfaces.sqlite'))
+    legacyDb.exec(`
+      create table surface_events (
+        cursor integer primary key,
+        at text not null,
+        space_id text not null,
+        surface_id text not null,
+        event_json text not null
+      );
+    `)
+    const legacyEvent = {
+      cursor: 1,
+      at: fixedNow().toISOString(),
+      spaceId: 'spc-health',
+      patch: {
+        surfaceId: 'srf-legacy',
+        operations: [{ target: 'state', op: 'replace', path: '/count', value: 1 }],
+      },
+      freshness: { updatedAt: fixedNow().toISOString(), updatedBy: 'seed' },
+    }
+    legacyDb
+      .prepare(
+        `insert into surface_events (cursor, at, space_id, surface_id, event_json)
+         values (?, ?, ?, ?, ?)`,
+      )
+      .run(1, legacyEvent.at, legacyEvent.spaceId, 'srf-legacy', JSON.stringify(legacyEvent))
+    legacyDb.close()
+
+    const engine = new SurfaceEngine({
+      rootDir,
+      now: fixedNow,
+      hasSpace: () => true,
+      appendSpaceEvent: () => undefined,
+    })
+
+    expect(engine.surfaceEventsAfter(0)).toMatchObject([
+      { kind: 'patch', event: { cursor: 1, spaceId: 'spc-health' } },
+    ])
+  })
+
+  it('notifies the Surface-event observer exactly once per committed event, after commit', async () => {
+    const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+    const observed: SurfaceEngineEvent[] = []
+    const dispose = store.onSurfaceEvent((event) => observed.push(event))
+
+    store.createSurface(checklistSurface('srf-observed', 1), 'agent')
+    store.patchState(
+      'srf-observed',
+      [{ target: 'state', op: 'replace', path: '/item0', value: true }],
+      { updatedBy: 'agent' },
+    )
+    const first = store.applyFastAction('srf-observed', 'item0', false, 'tap-once')
+    const second = store.applyFastAction('srf-observed', 'item0', false, 'tap-once')
+    expect(first.duplicate).toBe(false)
+    expect(second.duplicate).toBe(true)
+    store.archiveSurface('srf-observed', 'agent')
+
+    expect(observed.map((event) => event.kind)).toEqual(['created', 'patch', 'patch', 'archived'])
+    dispose()
+
+    // Disposed observers hear nothing further.
+    store.createSurface(checklistSurface('srf-after-dispose', 1), 'agent')
+    expect(observed).toHaveLength(4)
+  })
+
+  describe('daemon-owned Surfaces (trust-owned write protection)', () => {
+    it('refuses Agent patch_state on a daemon-owned Surface', async () => {
+      const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+      store.createSurface(checklistSurface('srf-approval-1', 1), 'job', { daemonOwned: true })
+
+      expect(() =>
+        store.patchState(
+          'srf-approval-1',
+          [{ target: 'state', op: 'replace', path: '/item0', value: true }],
+          { updatedBy: 'agent' },
+        ),
+      ).toThrow(/daemon-owned/)
+
+      // Refused before any side effect: the state is untouched.
+      expect(store.getSurface('srf-approval-1')?.state['item0']).toBe(false)
+    })
+
+    it('refuses Agent patch_tree on a daemon-owned Surface', async () => {
+      const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+      store.createSurface(checklistSurface('srf-approval-2', 1), 'job', { daemonOwned: true })
+      const version = store.getSurfaceVersion('srf-approval-2')
+      if (!version) throw new Error('expected Surface version')
+
+      expect(() =>
+        store.patchTree(
+          'srf-approval-2',
+          [
+            {
+              target: 'tree',
+              op: 'add',
+              path: '/children/1',
+              value: { id: 'injected', type: 'Caption', props: { text: 'laundered' } },
+            },
+          ],
+          { expectedTreeVersion: version.treeVersion, updatedBy: 'agent' },
+        ),
+      ).toThrow(/daemon-owned/)
+
+      expect(store.getSurfaceVersion('srf-approval-2')?.treeVersion).toBe(version.treeVersion)
+    })
+
+    it('refuses Agent archive_surface on a daemon-owned Surface', async () => {
+      const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+      store.createSurface(checklistSurface('srf-approval-3', 1), 'job', { daemonOwned: true })
+
+      expect(() => store.archiveSurface('srf-approval-3', 'agent')).toThrow(/daemon-owned/)
+      expect(store.getSurface('srf-approval-3')).toBeDefined()
+    })
+
+    it('rejects daemon-owned writes through the Agent tools too (not just the Store API)', async () => {
+      const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+      store.createSurface(checklistSurface('srf-approval-4', 1), 'job', { daemonOwned: true })
+      const tools = store.surfaceTools()
+
+      await expect(
+        runTool(tools, 'patch_state', {
+          surfaceId: 'srf-approval-4',
+          operations: [{ target: 'state', op: 'replace', path: '/item0', value: true }],
+        }),
+      ).rejects.toThrow(/daemon-owned/)
+    })
+
+    it('still allows a fast-path user action on a daemon-owned Surface', async () => {
+      const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+      store.createSurface(checklistSurface('srf-approval-5', 1), 'job', { daemonOwned: true })
+
+      const mutation = store.applyFastAction('srf-approval-5', 'item0', true, 'tap-once')
+      expect(mutation.duplicate).toBe(false)
+      expect(store.getSurface('srf-approval-5')?.state['item0']).toBe(true)
+    })
+
+    it("still allows the owning manager's own updatedBy: 'job' writes on a daemon-owned Surface", async () => {
+      const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+      store.createSurface(checklistSurface('srf-approval-6', 1), 'job', { daemonOwned: true })
+      const version = store.getSurfaceVersion('srf-approval-6')
+      if (!version) throw new Error('expected Surface version')
+
+      store.patchState(
+        'srf-approval-6',
+        [{ target: 'state', op: 'replace', path: '/item0', value: true }],
+        { updatedBy: 'job' },
+      )
+      expect(store.getSurface('srf-approval-6')?.state['item0']).toBe(true)
+
+      const archived = store.archiveSurface('srf-approval-6', 'job')
+      expect(archived.freshness.updatedBy).toBe('job')
+      expect(store.getSurface('srf-approval-6')).toBeUndefined()
+    })
+
+    it('leaves an ordinary Agent-created Surface fully writable by the Agent (default not daemon-owned)', async () => {
+      const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+      store.createSurface(checklistSurface('srf-app-1', 1), 'agent')
+
+      store.patchState(
+        'srf-app-1',
+        [{ target: 'state', op: 'replace', path: '/item0', value: true }],
+        { updatedBy: 'agent' },
+      )
+      expect(store.getSurface('srf-app-1')?.state['item0']).toBe(true)
+
+      const archived = store.archiveSurface('srf-app-1', 'agent')
+      expect(archived.freshness.updatedBy).toBe('agent')
+    })
   })
 })
 
@@ -208,7 +388,10 @@ async function runTool(
 ): Promise<void> {
   const tool = tools.find((candidate) => candidate.name === name)
   if (!tool) throw new Error(`missing tool: ${name}`)
-  await tool.handler(tool.schema.parse(input), { toolCallId: `call-${name}`, origin })
+  await tool.handler(
+    tool.schema.parse(input),
+    fromPartial<ToolContext>({ toolCallId: `call-${name}`, origin }),
+  )
 }
 
 function checklistSurface(id: string, count: number): Surface {

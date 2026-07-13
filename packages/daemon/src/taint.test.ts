@@ -9,6 +9,7 @@ import {
   neutralizeDelimiters,
   SOURCE_NAME_RE,
   toolWriteOrigin,
+  TurnTaintAccumulator,
   untrustedOrigin,
   untrustedSource,
 } from './taint.ts'
@@ -105,6 +106,88 @@ describe('gateToolsForOrigins', () => {
 
   it('is fail-closed: a tainted turn admits nothing when no tool is exactly L0', () => {
     expect(gateToolsForOrigins([l1, l2, noLevel], ['untrusted:gmail'])).toEqual([])
+  })
+
+  describe('with an isWrapped predicate (D5, issue #14)', () => {
+    const isWrapped = (tool: ToolFixture) => tool.name === 'send_email'
+
+    it('admits L0 always and a wrapped L1 tool even in a tainted turn, regardless of taint', () => {
+      const gated = gateToolsForOrigins([l0, l1, l2, noLevel], ['untrusted:gmail'], isWrapped)
+      expect(gated.map((tool) => tool.name)).toEqual(['read_recent', 'send_email'])
+    })
+
+    it('admits the same set for a fully trusted turn — wrapping, not taint, decides here', () => {
+      const gated = gateToolsForOrigins([l0, l1, l2, noLevel], ['trusted:user'], isWrapped)
+      expect(gated.map((tool) => tool.name)).toEqual(['read_recent', 'send_email'])
+    })
+
+    it('still strips an unwrapped L2 tool and a missing/unrecognized level (fail-closed)', () => {
+      const gated = gateToolsForOrigins([l0, l1, l2, noLevel], ['untrusted:gmail'], isWrapped)
+      expect(gated.some((tool) => tool.name === 'delete_account')).toBe(false)
+      expect(gated.some((tool) => tool.name === 'legacy_tool')).toBe(false)
+    })
+
+    it('is fail-closed even if a caller-supplied predicate wrongly wraps a missing-level tool', () => {
+      const wrapsEverything = () => true
+      const gated = gateToolsForOrigins([noLevel], ['trusted:user'], wrapsEverything)
+      expect(gated).toEqual([])
+    })
+  })
+
+  describe('L0 tools that declare egress (fail-closed backstop)', () => {
+    // `TrustLayer.register` rejects this combination for registered tools,
+    // but an unregistered L0 tool bypasses that check entirely — this is
+    // the fixture for the gate's own backstop.
+    const l0WithEgress = fromPartial<ToolFixture & { egressDomains: readonly string[] }>({
+      name: 'sneaky_egress',
+      level: 'L0',
+      egressDomains: ['evil.example.com'],
+    })
+
+    it('strips an unregistered L0 tool with egressDomains on a fully trusted turn', () => {
+      const gated = gateToolsForOrigins([l0, l0WithEgress, l1], ['trusted:user'])
+      expect(gated.map((tool) => tool.name)).toEqual(['read_recent', 'send_email'])
+    })
+
+    it('strips it on a tainted turn too, alongside the usual L1/L2 stripping', () => {
+      const gated = gateToolsForOrigins([l0, l0WithEgress, l1], ['untrusted:gmail'])
+      expect(gated.map((tool) => tool.name)).toEqual(['read_recent'])
+    })
+
+    it('strips it even when an isWrapped predicate wrongly claims it', () => {
+      const wrapsEverything = () => true
+      const gated = gateToolsForOrigins([l0, l0WithEgress], ['trusted:user'], wrapsEverything)
+      expect(gated.map((tool) => tool.name)).toEqual(['read_recent'])
+    })
+
+    it('keeps an L0 tool whose egressDomains is an empty array', () => {
+      const l0EmptyEgress = fromPartial<ToolFixture & { egressDomains: readonly string[] }>({
+        name: 'no_egress',
+        level: 'L0',
+        egressDomains: [],
+      })
+      const gated = gateToolsForOrigins([l0EmptyEgress], ['trusted:user'])
+      expect(gated).toEqual([l0EmptyEgress])
+    })
+  })
+})
+
+describe('TurnTaintAccumulator', () => {
+  it('seeds from an iterable, ignoring undefined entries', () => {
+    const taint = new TurnTaintAccumulator(['trusted:user', undefined, 'untrusted:gmail'])
+    expect(taint.origins()).toEqual(['trusted:user', 'untrusted:gmail'])
+  })
+
+  it('defaults to an empty seed', () => {
+    expect(new TurnTaintAccumulator().origins()).toEqual([])
+  })
+
+  it('grows as tool results reveal further provenance mid-turn, de-duplicating repeats', () => {
+    const taint = new TurnTaintAccumulator(['trusted:user'])
+    taint.add('untrusted:gmail')
+    taint.add('untrusted:gmail')
+    taint.add('untrusted:webhook')
+    expect(taint.origins()).toEqual(['trusted:user', 'untrusted:gmail', 'untrusted:webhook'])
   })
 })
 

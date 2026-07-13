@@ -1,14 +1,15 @@
 import {
   GatewayClientMessageSchema,
   GatewayServerMessageSchema,
+  type ApprovalCard,
   type ChatMessage,
   type GatewayClientMessage,
   type GatewayServerMessage,
   type PresenceEntry,
-  type SurfacePatchEvent,
 } from '@veduta/protocol'
 import { handleChatText, mealPatchFromChat } from './chat.ts'
 import { PwaChannelAdapter, type NormalizedChannelEvent } from './channel-adapter.ts'
+import type { SurfaceEngineEvent } from './surface-engine.ts'
 import { SurfaceActionError, type Store } from './store.ts'
 
 export interface GatewaySocket {
@@ -46,6 +47,7 @@ export class GatewayHub {
   private clients = new Map<string, GatewayClientSession>()
   private nextClientId = 1
   private disposeAuthListener: (() => void) | undefined
+  private disposeSurfaceEventListener: () => void
   private pendingSystemNotices: string[] = []
 
   constructor(
@@ -68,6 +70,14 @@ export class GatewayHub {
     this.pwa.onMessage((event) => this.handleChannelMessage(event))
     this.disposeAuthListener = options.auth?.onSessionRevoked((event) => {
       this.closeRevokedDevice(event.deviceId)
+    })
+    // The one and only Surface-lifecycle broadcaster (D9): every committed
+    // patch/created/archived event flows through here exactly once, however
+    // it was produced (fast path, Agent tool, scheduler projection, mock
+    // chat effect) — nothing else in this class calls `pwa.broadcast` with a
+    // surface.* frame.
+    this.disposeSurfaceEventListener = this.store.onSurfaceEvent((event) => {
+      this.pwa.broadcast(surfaceEventFrame(event))
     })
   }
 
@@ -102,7 +112,7 @@ export class GatewayHub {
           surfaceCursor: this.store.latestSurfaceCursor(),
           replayed: replay.length,
         })
-        for (const event of replay) send({ type: 'surface.patch', event })
+        for (const event of replay) send(surfaceEventFrame(event))
         this.broadcastPresence()
         return
       }
@@ -123,10 +133,6 @@ export class GatewayHub {
     })
   }
 
-  broadcastSurfacePatch(event: SurfacePatchEvent): void {
-    this.pwa.broadcast({ type: 'surface.patch', event })
-  }
-
   /**
    * Daemon-originated notice (e.g. spending cap reached) to every client.
    * With nobody connected (boot-time re-notify) it queues and reaches the
@@ -138,6 +144,21 @@ export class GatewayHub {
       return
     }
     this.pwa.broadcast({ type: 'chat.message', message: { role: 'assistant', text } })
+  }
+
+  /** Broadcasts a new approval card chip (issue #14, D13) to every connected client. */
+  broadcastApprovalCard(card: ApprovalCard): void {
+    this.pwa.broadcast({ type: 'approval.card', card })
+  }
+
+  /**
+   * Out-of-band reply to one specific client (issue #14's dev dispatcher):
+   * `onDevChatEffect` itself is a fire-and-forget void callback with no
+   * reply channel of its own — this is that channel, mirroring the same
+   * `pwa.sendShort` every ordinary chat reply already uses.
+   */
+  replyToClient(clientId: string, text: string): void {
+    this.pwa.sendShort(clientId, text)
   }
 
   private handleClientFrame(
@@ -165,9 +186,10 @@ export class GatewayHub {
     }
 
     try {
-      const result = this.store.invokeSurfaceAction(frame.surfaceId, frame.invocation)
-      if (result.path === 'agent') return
-      if (!result.mutation.duplicate) this.broadcastSurfacePatch(result.mutation.event)
+      // The mutation's own commit already reached every client through the
+      // central Surface-event subscription above — this call is only about
+      // routing the request and surfacing errors to the requester.
+      this.store.invokeSurfaceAction(frame.surfaceId, frame.invocation)
     } catch (error) {
       if (error instanceof SurfaceActionError) {
         send({ type: 'error', error: error.message })
@@ -179,6 +201,7 @@ export class GatewayHub {
 
   dispose(): void {
     this.disposeAuthListener?.()
+    this.disposeSurfaceEventListener()
   }
 
   private connectClient(
@@ -259,8 +282,9 @@ export class GatewayHub {
     const operations = mealPatchFromChat(event.text, surface.state, new Date(event.receivedAt))
     if (!operations) return
 
-    const mutation = this.store.patchState(surface.id, operations, { updatedBy: 'agent' })
-    this.broadcastSurfacePatch(mutation.event)
+    // The commit reaches every client through the central Surface-event
+    // subscription; no manual broadcast here.
+    this.store.patchState(surface.id, operations, { updatedBy: 'agent' })
   }
 
   private broadcastPresence(): void {
@@ -286,6 +310,13 @@ export class GatewayHub {
     this.nextClientId += 1
     return clientId
   }
+}
+
+/** The one place a `SurfaceEngineEvent` becomes a Gateway server frame, shared by hello replay and the live broadcast. */
+function surfaceEventFrame(event: SurfaceEngineEvent): GatewayServerMessage {
+  if (event.kind === 'created') return { type: 'surface.created', event: event.event }
+  if (event.kind === 'archived') return { type: 'surface.archived', event: event.event }
+  return { type: 'surface.patch', event: event.event }
 }
 
 function parseClientFrame(raw: Buffer | string): GatewayClientMessage | null {

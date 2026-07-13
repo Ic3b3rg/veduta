@@ -67,7 +67,11 @@ describe('GET /api/spaces', () => {
       surfaceCursor: number
       spaces: { slug: string; surfaces: unknown[] }[]
     }
-    expect(body.surfaceCursor).toBe(0)
+    // Boot pre-creates several cursor-bearing Surfaces (D9): the scheduler's
+    // Automations Surface for every persisted Space (health, and now the
+    // real System Space too — issue #14, D8), plus the trust layer's
+    // allowlist and audit admin Surfaces in the System Space.
+    expect(body.surfaceCursor).toBe(4)
     expect(body.spaces.map((s) => s.slug)).toEqual(['health', 'system'])
     for (const surface of body.spaces.flatMap((space) => space.surfaces)) {
       expect(SurfaceSchema.safeParse(surface).success).toBe(true)
@@ -233,6 +237,9 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
   it('mutates the declared stateKey, stamps freshness and logs the event — no LLM involved', async () => {
     const { app, store } = buildServer()
     expect(store.llmCallCount()).toBe(0)
+    // The scheduler's boot-time Automations Surface create already consumed
+    // a cursor (D9); assert relative to that baseline instead of assuming 0.
+    const baseline = store.latestSurfaceCursor()
     const res = await app.inject({
       method: 'POST',
       url: '/api/surfaces/srf-groceries/actions',
@@ -243,12 +250,14 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
     expect(surface.state['milk']).toBe(true)
     const events = store.eventLog('spc-health')
     expect(events.at(-1)?.text).toContain('milk')
-    expect(store.surfaceEventsAfter(0)).toMatchObject([
+    expect(store.surfaceEventsAfter(baseline)).toMatchObject([
       {
-        cursor: 1,
-        patch: {
-          surfaceId: 'srf-groceries',
-          operations: [{ target: 'state', op: 'replace', path: '/milk', value: true }],
+        kind: 'patch',
+        event: {
+          patch: {
+            surfaceId: 'srf-groceries',
+            operations: [{ target: 'state', op: 'replace', path: '/milk', value: true }],
+          },
         },
       },
     ])
@@ -322,7 +331,11 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
       actionName: 'regenerate_plan',
     })
     expect(
-      store.surfaceEventsAfter(0).filter((event) => event.patch.surfaceId === 'srf-agent-action'),
+      store
+        .surfaceEventsAfter(0)
+        .filter(
+          (entry) => entry.kind === 'patch' && entry.event.patch.surfaceId === 'srf-agent-action',
+        ),
     ).toHaveLength(0)
   })
 })
@@ -604,6 +617,146 @@ describe('event ingestion wiring (issue #12)', () => {
     }
     expect(sawLockout).toBe(true)
     await app.close()
+  })
+})
+
+describe('trust layer wiring (issue #14)', () => {
+  it('boots the System Space with the allowlist and audit admin Surfaces', async () => {
+    const { app } = buildServer()
+    const res = await app.inject({ method: 'GET', url: '/api/spaces' })
+    const body = res.json() as { spaces: { slug: string; surfaces: { id: string }[] }[] }
+    const system = body.spaces.find((space) => space.slug === 'system')
+    expect(system?.surfaces.some((surface) => surface.id === 'srf-trust-allowlist')).toBe(true)
+    expect(system?.surfaces.some((surface) => surface.id === 'srf-trust-audit')).toBe(true)
+    await app.close()
+  })
+
+  it('cards a dev-chat "send to" request, then approving it executes the send and audits the trail', async () => {
+    const { app, gateway, store, trust } = buildServer()
+    const socket = new SchedulerFakeSocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+    socket.receive({
+      type: 'chat.send',
+      text: 'send to alice@example.com: hi there',
+      spaceId: 'spc-health',
+    })
+
+    await vi.waitFor(() => {
+      expect(socket.sent.some((frame) => frame.type === 'approval.card')).toBe(true)
+    })
+    const cardFrame = socket.sent.find(
+      (frame): frame is Extract<GatewayServerMessage, { type: 'approval.card' }> =>
+        frame.type === 'approval.card',
+    )!
+    expect(cardFrame.card.level).toBe('L1')
+    const surfaceId = cardFrame.card.surfaceId
+    expect(store.getSurface(surfaceId)?.spaceId).toBe('spc-health')
+    // No delivery yet — the human has not decided.
+    expect(store.eventLog('spc-health').some((e) => e.type === 'outbound.delivery')).toBe(false)
+
+    const approve = await app.inject({
+      method: 'POST',
+      url: `/api/surfaces/${surfaceId}/actions`,
+      payload: { nodeId: 'decision-approve', name: 'press', payload: { value: true } },
+    })
+    expect(approve.statusCode).toBe(200)
+
+    // Wait for the *outcome* audit row specifically (not just the delivery
+    // event): both are appended by the same async resolution chain, but the
+    // delivery event lands one microtask turn earlier, which would make a
+    // wait on it alone racy against the ordering assertion below.
+    await vi.waitFor(() => {
+      expect(trust.auditEntries().some((e) => e.kind === 'action.outcome')).toBe(true)
+    })
+    expect(store.eventLog('spc-health').some((e) => e.type === 'outbound.delivery')).toBe(true)
+    // The card Surface is archived once resolved.
+    expect(store.getSurface(surfaceId)).toBeUndefined()
+
+    const audit = trust.auditEntries()
+    const decisionIndex = audit.findIndex((e) => e.kind === 'approval.decided')
+    const outcomeIndex = audit.findIndex((e) => e.kind === 'action.outcome')
+    expect(decisionIndex).toBeGreaterThanOrEqual(0)
+    expect(outcomeIndex).toBeGreaterThanOrEqual(0)
+    // `auditEntries()` is newest-first, so the later-appended outcome row
+    // sits at a lower index than the decision that preceded it.
+    expect(outcomeIndex).toBeLessThan(decisionIndex)
+    expect(audit.find((e) => e.kind === 'action.outcome')?.outcome).toBe('executed')
+
+    await app.close()
+  })
+
+  it('always cards transfer_funds (L2), even after a send_message allowlist rule exists', async () => {
+    const { app, gateway, store } = buildServer()
+    const socket = new SchedulerFakeSocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+    socket.receive({
+      type: 'chat.send',
+      text: 'send to alice@example.com: hi there',
+      spaceId: 'spc-health',
+    })
+    await vi.waitFor(() => {
+      expect(socket.sent.some((frame) => frame.type === 'approval.card')).toBe(true)
+    })
+    const firstCard = socket.sent.find(
+      (frame): frame is Extract<GatewayServerMessage, { type: 'approval.card' }> =>
+        frame.type === 'approval.card',
+    )!
+    const surfaceId = firstCard.card.surfaceId
+
+    // Check the allowlist checkbox, then approve — grants a standing rule.
+    await app.inject({
+      method: 'POST',
+      url: `/api/surfaces/${surfaceId}/actions`,
+      payload: { nodeId: 'decision-allowlist', name: 'toggle', payload: { value: true } },
+    })
+    await app.inject({
+      method: 'POST',
+      url: `/api/surfaces/${surfaceId}/actions`,
+      payload: { nodeId: 'decision-approve', name: 'press', payload: { value: true } },
+    })
+    await vi.waitFor(() => {
+      expect(store.eventLog('spc-health').some((e) => e.type === 'outbound.delivery')).toBe(true)
+    })
+
+    // A second send to the same recipient now auto-executes: no new card.
+    const cardsSoFar = socket.sent.filter((frame) => frame.type === 'approval.card').length
+    socket.receive({
+      type: 'chat.send',
+      text: 'send to alice@example.com: a second message',
+      spaceId: 'spc-health',
+    })
+    await vi.waitFor(() => {
+      expect(
+        store.eventLog('spc-health').filter((e) => e.type === 'outbound.delivery'),
+      ).toHaveLength(2)
+    })
+    expect(socket.sent.filter((frame) => frame.type === 'approval.card')).toHaveLength(cardsSoFar)
+
+    // transfer_funds (L2) still always cards, regardless of any allowlist.
+    socket.receive({ type: 'chat.send', text: 'transfer 10 to x@y.z', spaceId: 'spc-health' })
+    await vi.waitFor(() => {
+      expect(socket.sent.filter((frame) => frame.type === 'approval.card')).toHaveLength(
+        cardsSoFar + 1,
+      )
+    })
+    const transferCard = socket.sent
+      .filter(
+        (frame): frame is Extract<GatewayServerMessage, { type: 'approval.card' }> =>
+          frame.type === 'approval.card',
+      )
+      .at(-1)!
+    expect(transferCard.card.level).toBe('L2')
+
+    await app.close()
+  })
+
+  it('disposes the trust layer and its Surface managers on server close', async () => {
+    const { app, trust } = buildServer()
+    await app.close()
+    // Idempotent: the onClose hook already disposed it once.
+    expect(() => trust.dispose()).not.toThrow()
   })
 })
 
