@@ -12,6 +12,8 @@ import {
   type JsonObject,
   type JsonValue,
   type Surface,
+  type SurfaceArchivedEvent,
+  type SurfaceCreatedEvent,
   type SurfacePatchEvent,
   type SurfaceSnapshot,
 } from '@veduta/protocol'
@@ -46,6 +48,8 @@ export interface GatewayHandlers {
   surfaceCursor: number
   onHello(cursor: number): void
   onSurfacePatch(event: SurfacePatchEvent): void
+  onSurfaceCreated(event: SurfaceCreatedEvent): void
+  onSurfaceArchived(event: SurfaceArchivedEvent): void
   onChatMessage(message: Extract<GatewayServerMessage, { type: 'chat.message' }>): void
   onApprovalCard(message: Extract<GatewayServerMessage, { type: 'approval.card' }>): void
   onPresence(message: Extract<GatewayServerMessage, { type: 'presence.update' }>): void
@@ -168,6 +172,16 @@ export function connectGateway(handlers: GatewayHandlers): GatewayConnection {
       return
     }
 
+    if (message.type === 'surface.created') {
+      handlers.onSurfaceCreated(message.event)
+      return
+    }
+
+    if (message.type === 'surface.archived') {
+      handlers.onSurfaceArchived(message.event)
+      return
+    }
+
     if (message.type === 'chat.message') {
       handlers.onChatMessage(message)
       return
@@ -228,6 +242,17 @@ export function freshnessLabel(updatedAt: string, now = Date.now()): string {
   if (minutes < 60) return `${minutes}m ago`
   const hours = Math.round(minutes / 60)
   return hours < 24 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`
+}
+
+/** Human-readable expiry for an approval chip (D13): the chip is a pure
+ * notification, the decision UI lives on the card Surface itself. */
+export function expiresInLabel(expiresAt: string, now = Date.now()): string {
+  const ms = Date.parse(expiresAt) - now
+  if (ms <= 0) return 'expired'
+  const minutes = Math.max(1, Math.round(ms / 60_000))
+  if (minutes < 60) return `expires in ${minutes}m`
+  const hours = Math.round(minutes / 60)
+  return hours < 24 ? `expires in ${hours}h` : `expires in ${Math.round(hours / 24)}d`
 }
 
 function parseGatewayMessage(input: unknown): GatewayServerMessage | null {

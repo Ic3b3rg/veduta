@@ -15,7 +15,9 @@ import type { Origin } from './taint.ts'
 import { SpacesEngine, type SpaceEvent } from './spaces-engine.ts'
 import {
   SurfaceEngine,
+  type CreateSurfaceOptions,
   type QueuedAgentTurn,
+  type SurfaceEngineEvent,
   type SurfaceMutation,
   type SurfaceVersion,
 } from './surface-engine.ts'
@@ -125,8 +127,17 @@ export class Store {
     return this.surfaceEngine.latestSurfaceCursor()
   }
 
-  surfaceEventsAfter(cursor: number) {
+  surfaceEventsAfter(cursor: number): SurfaceEngineEvent[] {
     return this.surfaceEngine.surfaceEventsAfter(cursor)
+  }
+
+  /**
+   * Observe every committed Surface-lifecycle event (patch, created,
+   * archived) exactly once, after it commits. The Gateway is the sole
+   * subscriber in production: one central broadcast, never a manual one.
+   */
+  onSurfaceEvent(observer: (event: SurfaceEngineEvent) => void): () => void {
+    return this.surfaceEngine.onSurfaceEvent(observer)
   }
 
   /** Fast path: mutate one state key, stamp freshness, log the event. No LLM. */
@@ -188,8 +199,12 @@ export class Store {
     return () => this.fastMutationObservers.delete(observer)
   }
 
-  createSurface(surface: Surface, updatedBy: 'agent' | 'user' | 'job', origin?: Origin): Surface {
-    return this.surfaceEngine.createSurface(surface, updatedBy, origin)
+  createSurface(
+    surface: Surface,
+    updatedBy: 'agent' | 'user' | 'job',
+    options?: CreateSurfaceOptions,
+  ): Surface {
+    return this.surfaceEngine.createSurface(surface, updatedBy, options)
   }
 
   patchState(
@@ -214,6 +229,17 @@ export class Store {
 
   getSurfaceVersion(surfaceId: string): SurfaceVersion | undefined {
     return this.surfaceEngine.getSurfaceVersion(surfaceId)
+  }
+
+  /**
+   * Whether `surfaceId` was created with `daemonOwned: true` (approval
+   * cards, trust admin Surfaces). `false` for an unknown surfaceId. Lets a
+   * caller distinguish the daemon's own canonical Surface from an impostor
+   * occupying the same (deterministic) id before adopting it — see
+   * `ApprovalSurfaceManager.start()`.
+   */
+  isSurfaceDaemonOwned(surfaceId: string): boolean {
+    return this.surfaceEngine.isDaemonOwned(surfaceId)
   }
 
   surfaceTools(): ToolDef[] {

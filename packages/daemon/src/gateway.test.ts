@@ -43,8 +43,9 @@ describe('GatewayHub Surface sync', () => {
     offline.receive({ type: 'hello', surfaceCursor: 0 })
     offline.close()
 
-    const mutation = store.applyFastAction('srf-groceries', 'eggs', false)
-    gateway.broadcastSurfacePatch(mutation.event)
+    // The commit alone reaches every connected client through the Gateway's
+    // central Surface-event subscription — no manual broadcast call needed.
+    store.applyFastAction('srf-groceries', 'eggs', false)
 
     const reconnected = new FakeGatewaySocket()
     gateway.connect(reconnected)
@@ -166,6 +167,81 @@ describe('GatewayHub Surface sync', () => {
     expect(store.getSurface('srf-meals')?.state['mealCount']).toBe(0)
     expect(socket.surfacePatches()).toHaveLength(0)
     expect(socket.sent.at(-1)).toMatchObject({ type: 'chat.message' })
+  })
+
+  it('produces exactly one surface.patch broadcast per fast action, from the central subscription alone', () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store)
+    const socket = new FakeGatewaySocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    socket.receive({
+      type: 'surface.action',
+      surfaceId: 'srf-groceries',
+      invocation: { nodeId: 'item-milk', name: 'toggle', payload: { value: true } },
+    })
+
+    expect(socket.surfacePatches()).toHaveLength(1)
+  })
+
+  it('broadcasts exactly one surface.created message when a Surface is created', () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store)
+    const socket = new FakeGatewaySocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    store.createSurface(agentActionSurface(), 'agent')
+
+    const created = socket.sent.filter((frame) => frame.type === 'surface.created')
+    expect(created).toHaveLength(1)
+    expect(created[0]).toMatchObject({
+      type: 'surface.created',
+      event: { spaceId: 'spc-health', surface: { id: 'srf-agent-action' } },
+    })
+  })
+
+  it('broadcasts exactly one surface.archived message when a Surface is archived', () => {
+    const store = new Store()
+    store.createSurface(agentActionSurface(), 'agent')
+    const gateway = new GatewayHub(store)
+    const socket = new FakeGatewaySocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    store.archiveSurface('srf-agent-action', 'agent')
+
+    const archived = socket.sent.filter((frame) => frame.type === 'surface.archived')
+    expect(archived).toHaveLength(1)
+    expect(archived[0]).toMatchObject({
+      type: 'surface.archived',
+      event: { surfaceId: 'srf-agent-action' },
+    })
+  })
+
+  it('replays created and archived events in cursor order after reconnect', () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store)
+    const offline = new FakeGatewaySocket()
+    gateway.connect(offline)
+    offline.receive({ type: 'hello', surfaceCursor: 0 })
+    offline.close()
+
+    store.createSurface(agentActionSurface(), 'agent')
+    store.archiveSurface('srf-agent-action', 'agent')
+
+    const reconnected = new FakeGatewaySocket()
+    gateway.connect(reconnected)
+    reconnected.receive({ type: 'hello', clientId: 'pwa-reconnected', surfaceCursor: 0 })
+
+    const hello = reconnected.sent.find((frame) => frame.type === 'hello')
+    expect(hello).toMatchObject({ type: 'hello', replayed: 2 })
+    expect(
+      reconnected.sent
+        .filter((frame) => frame.type === 'surface.created' || frame.type === 'surface.archived')
+        .map((frame) => frame.type),
+    ).toEqual(['surface.created', 'surface.archived'])
   })
 })
 

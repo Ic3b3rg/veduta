@@ -12,6 +12,7 @@ import { NodeExecutionEnv } from '@earendil-works/pi-agent-core/node'
 import {
   AgentEventBus,
   buildSessionBranch,
+  computeContextHash,
   disabledContextPolicy,
   modelRefsEqual,
   type AgentEvent,
@@ -24,20 +25,24 @@ import {
   type SessionEntry,
   type SessionMessage,
   type SessionStore,
+  type ToolContext,
   type ToolDef,
   type ToolResult,
+  type TriggerRef,
 } from './agent-runner.ts'
 import {
   effectiveOrigin,
   gateToolsForOrigins,
   isUntrusted,
   isValidOrigin,
+  TurnTaintAccumulator,
   type Origin,
+  type TurnTaint,
 } from './taint.ts'
 
 type PiInitialState = NonNullable<AgentOptions['initialState']>
 type PiModel = NonNullable<PiInitialState['model']>
-type PiToolParameters = AgentTool['parameters']
+export type PiToolParameters = AgentTool['parameters']
 
 const VEDUTA_MODEL_CHANGE = 'veduta:model-change'
 const VEDUTA_MESSAGE_ORIGIN = 'veduta:message-origin'
@@ -117,6 +122,14 @@ export interface PiAgentRunnerOptions {
   systemPrompt?: string
   contextPolicy?: ContextPolicy
   toolParameters?: Record<string, PiToolParameters>
+  /**
+   * Trust-layer wrapping predicate (D5/issue #14), forwarded to
+   * `gateToolsForOrigins` as its third argument: when supplied, L1/L2 tools
+   * pass the gate iff wrapped, regardless of taint (the wrapped handler
+   * decides at execution time). Omit to keep the pre-trust-layer,
+   * taint-only gating (issue #13).
+   */
+  isToolTrustWrapped?: (tool: ToolDef) => boolean
 }
 
 export class PiAgentRunner implements AgentRunner {
@@ -127,6 +140,7 @@ export class PiAgentRunner implements AgentRunner {
   private readonly systemPrompt: string | undefined
   private readonly defaultContextPolicy: ContextPolicy
   private readonly toolParameters: Record<string, PiToolParameters>
+  private readonly isToolTrustWrapped: ((tool: ToolDef) => boolean) | undefined
   private sessionId: string | undefined = undefined
   private currentModel: ModelRef | undefined = undefined
   private agent: Agent | undefined = undefined
@@ -136,6 +150,22 @@ export class PiAgentRunner implements AgentRunner {
   private readonly failedTurns = new Map<string, string>()
   /** The current turn's effective origin, threaded into every ToolContext it builds. */
   private currentTurnOrigin: Origin = DEFAULT_USER_ORIGIN
+  /** The origin chain the current turn started with (D10, `ToolContext.origins`). */
+  private currentTurnOrigins: Origin[] = []
+  /** Live per-turn taint accumulator (D10/A1), seeded at the start of `prompt()`, threaded into every ToolContext. */
+  private currentTaint: TurnTaint = new TurnTaintAccumulator([])
+  /** The current turn's raw input, part of the context-hash envelope (A3). */
+  private currentTurnInput = ''
+  private currentSpaceId: string | undefined = undefined
+  private currentTrigger: TriggerRef | undefined = undefined
+  /**
+   * Hash of the model-visible context for the immediately preceding
+   * inference (BINDING amendment A3), recomputed by the always-installed
+   * context-transform wrapper on every model invocation.
+   */
+  private currentContextHash = ''
+  /** Origins a tool's `ToolResult` reported, keyed by toolCallId, consumed once by `persistPiMessage` when that tool message is stored. */
+  private readonly pendingToolOrigins = new Map<string, Origin[]>()
 
   constructor(options: PiAgentRunnerOptions) {
     this.sessionStore = options.sessionStore
@@ -144,6 +174,7 @@ export class PiAgentRunner implements AgentRunner {
     this.systemPrompt = options.systemPrompt
     this.defaultContextPolicy = options.contextPolicy ?? disabledContextPolicy
     this.toolParameters = options.toolParameters ?? {}
+    this.isToolTrustWrapped = options.isToolTrustWrapped
   }
 
   async start(sessionId: string): Promise<void> {
@@ -190,9 +221,20 @@ export class PiAgentRunner implements AgentRunner {
       ...branch.messages.map((message) => message.origin),
     ]
     this.currentTurnOrigin = effectiveOrigin(candidateOrigins, promptOrigin)
-    const gatedTools = gateToolsForOrigins(options.tools ?? [], candidateOrigins)
+    this.currentTurnOrigins = candidateOrigins.filter(
+      (origin): origin is Origin => origin !== undefined,
+    )
+    this.currentTaint = new TurnTaintAccumulator(candidateOrigins)
+    this.currentTurnInput = input
+    this.currentSpaceId = options.spaceId
+    this.currentTrigger = options.trigger
+    const gatedTools = gateToolsForOrigins(
+      options.tools ?? [],
+      candidateOrigins,
+      this.isToolTrustWrapped,
+    )
 
-    const tools = this.toPiTools(gatedTools, this.currentTurnOrigin)
+    const tools = this.toPiTools(gatedTools)
     const contextPolicy = options.contextPolicy ?? this.defaultContextPolicy
     if (!this.agent) {
       this.agent = this.createAgent(branch, model, tools, contextPolicy)
@@ -200,12 +242,10 @@ export class PiAgentRunner implements AgentRunner {
 
     this.agent.state.model = this.resolveModel(model)
     this.agent.state.tools = tools
-    const transformContext = this.toPiContextTransform(contextPolicy)
-    if (transformContext) {
-      this.agent.transformContext = transformContext
-    } else {
-      delete this.agent.transformContext
-    }
+    // A3: a transform wrapper is always installed, identity included, so
+    // every model invocation has a hook to recompute `currentContextHash`
+    // from exactly what crossed the wrapper boundary.
+    this.agent.transformContext = this.toPiContextTransform(contextPolicy)
 
     if (!userMessageAppended) {
       await this.sessionStore.append(sessionId, {
@@ -264,43 +304,68 @@ export class PiAgentRunner implements AgentRunner {
     }
     if (this.systemPrompt) initialState.systemPrompt = this.systemPrompt
 
-    const transformContext = this.toPiContextTransform(contextPolicy)
     const agentOptions: AgentOptions = {
       sessionId: branch.sessionId,
       initialState,
+      // A3: always installed, identity when no policy is configured — the
+      // only hook available for recomputing `currentContextHash` on every
+      // model invocation.
+      transformContext: this.toPiContextTransform(contextPolicy),
     }
-    if (transformContext) agentOptions.transformContext = transformContext
 
     const agent = new Agent(agentOptions)
     this.unsubscribe = agent.subscribe((event) => this.handlePiEvent(event))
     return agent
   }
 
-  private toPiTools(tools: ToolDef[], origin: Origin): AgentTool[] {
+  private toPiTools(tools: ToolDef[]): AgentTool[] {
     return tools.map((tool) => {
       const parameters = this.toolParameters[tool.name]
       if (!parameters) {
         throw new Error(`missing pi parameters for tool "${tool.name}"`)
       }
-      return toPiAgentTool(tool, parameters, origin)
+      return toPiAgentTool(
+        tool,
+        parameters,
+        (toolCallId, signal) => this.buildToolContext(toolCallId, signal),
+        (toolCallId, origins) => this.pendingToolOrigins.set(toolCallId, origins),
+      )
     })
+  }
+
+  /** Builds the live `ToolContext` (D10/A3) a tool call reads at execution time. */
+  private buildToolContext(toolCallId: string, signal?: AbortSignal): ToolContext {
+    const base: ToolContext = {
+      toolCallId,
+      origin: this.currentTurnOrigin,
+      origins: this.currentTurnOrigins,
+      taint: this.currentTaint,
+      contextHash: this.currentContextHash,
+    }
+    return {
+      ...base,
+      ...(signal ? { signal } : {}),
+      ...(this.currentSpaceId === undefined ? {} : { spaceId: this.currentSpaceId }),
+      ...(this.currentTrigger === undefined ? {} : { trigger: this.currentTrigger }),
+    }
   }
 
   private toPiContextTransform(
     policy: ContextPolicy,
-  ): ((messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>) | undefined {
-    if (!policy.enabled) return undefined
-    return async (messages, signal) => {
+  ): (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]> {
+    return (messages, signal) => {
       const sessionId = this.requireSessionId()
-      const sessionMessages = messages.flatMap((message) => {
-        const mapped = fromPiMessage(message, new Date().toISOString())
-        return mapped ? [mapped] : []
+      const options: PiContextTransformOptions = {
+        policy,
+        sessionId,
+        systemPrompt: this.systemPrompt,
+        input: this.currentTurnInput,
+        fallbackModel: this.currentModel ?? this.defaultModel,
+        ...(signal ? { signal } : {}),
+      }
+      return transformPiContext(messages, options, (hash) => {
+        this.currentContextHash = hash
       })
-      const context = signal ? { sessionId, signal } : { sessionId }
-      const transformed = await policy.transform(sessionMessages, context)
-      return transformed.map((message) =>
-        toPiMessage(message, this.currentModel ?? this.defaultModel),
-      )
     }
   }
 
@@ -364,12 +429,25 @@ export class PiAgentRunner implements AgentRunner {
     const sessionId = this.requireSessionId()
     const mapped = fromPiMessage(message, new Date().toISOString())
     if (!mapped || mapped.role === 'user') return
-    // Derivation rule (v3 §B.5): assistant/tool messages produced during a
-    // tainted turn inherit the turn's untrusted origin, so the taint
-    // propagates to everything derived from it.
-    const stamped = isUntrusted(this.currentTurnOrigin)
-      ? { ...mapped, origin: this.currentTurnOrigin }
-      : mapped
+    // A tool message whose ToolResult reported `origins` (D10) carries its
+    // own provenance, consumed once here; every other message keeps the
+    // pre-existing derivation rule (v3 §B.5): assistant/tool messages
+    // produced during a tainted turn inherit the turn's untrusted origin.
+    const toolOrigins =
+      mapped.role === 'tool' && mapped.toolCallId !== undefined
+        ? this.pendingToolOrigins.get(mapped.toolCallId)
+        : undefined
+    if (toolOrigins && mapped.toolCallId !== undefined) {
+      this.pendingToolOrigins.delete(mapped.toolCallId)
+    }
+    const singleOrigin = toolOrigins
+      ? effectiveOrigin([this.currentTurnOrigin, ...toolOrigins], this.currentTurnOrigin)
+      : this.currentTurnOrigin
+    const stamped: SessionMessage = {
+      ...mapped,
+      ...(toolOrigins ? { origins: toolOrigins } : {}),
+      ...(isUntrusted(singleOrigin) ? { origin: singleOrigin } : {}),
+    }
     await this.sessionStore.append(sessionId, { type: 'message', message: stamped })
   }
 
@@ -488,10 +566,61 @@ export class PiJsonlSessionStore implements SessionStore {
   }
 }
 
+/**
+ * Options for `transformPiContext`, the always-installed context-transform
+ * wrapper (BINDING amendment A3): identity when `policy.enabled` is false,
+ * purely so every model invocation has a hook to recompute the context
+ * hash from exactly what crossed the wrapper boundary.
+ */
+export interface PiContextTransformOptions {
+  policy: ContextPolicy
+  sessionId: string
+  systemPrompt: string | undefined
+  input: string
+  fallbackModel: ModelRef | undefined
+  signal?: AbortSignal
+}
+
+/**
+ * Pure(ish) transform-and-hash step, exported so it is unit-testable
+ * without a live pi `Agent` (constructing one needs a working provider,
+ * impractical to unit-test — see the module doc comment on
+ * `applyOriginEntries`). Maps pi's outgoing `AgentMessage[]` to
+ * `SessionMessage[]`, applies the `ContextPolicy` transform when enabled
+ * (identity otherwise), reports the sha256 of the canonical envelope
+ * (`systemPrompt` + the transformed messages + `input`) via `onHash`, then
+ * maps back to pi's message shape.
+ */
+export async function transformPiContext(
+  messages: AgentMessage[],
+  options: PiContextTransformOptions,
+  onHash: (hash: string) => void,
+): Promise<AgentMessage[]> {
+  const sessionMessages = messages.flatMap((message) => {
+    const mapped = fromPiMessage(message, new Date().toISOString())
+    return mapped ? [mapped] : []
+  })
+  const policyContext = options.signal
+    ? { sessionId: options.sessionId, signal: options.signal }
+    : { sessionId: options.sessionId }
+  const transformed = options.policy.enabled
+    ? await options.policy.transform(sessionMessages, policyContext)
+    : sessionMessages
+  onHash(
+    computeContextHash({
+      systemPrompt: options.systemPrompt,
+      messages: transformed,
+      input: options.input,
+    }),
+  )
+  return transformed.map((message) => toPiMessage(message, options.fallbackModel))
+}
+
 export function toPiAgentTool(
   tool: ToolDef,
   parameters: PiToolParameters,
-  origin: Origin,
+  buildContext: (toolCallId: string, signal?: AbortSignal) => ToolContext,
+  recordToolOrigins: (toolCallId: string, origins: Origin[]) => void,
 ): AgentTool {
   return {
     name: tool.name,
@@ -501,8 +630,12 @@ export function toPiAgentTool(
     execute: async (toolCallId, params, signal) => {
       const parsed = tool.schema.safeParse(params)
       if (!parsed.success) throw new Error(parsed.error.message)
-      const context = signal ? { toolCallId, signal, origin } : { toolCallId, origin }
+      const context = buildContext(toolCallId, signal)
       const result = await tool.handler(parsed.data, context)
+      if (result.origins && result.origins.length > 0) {
+        for (const origin of result.origins) context.taint.add(origin)
+        recordToolOrigins(toolCallId, result.origins)
+      }
       return toPiToolResult(result)
     },
   }

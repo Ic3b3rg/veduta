@@ -1,7 +1,6 @@
-import type { ApprovalCard, ChatMessage, Surface, SurfacePatchEvent } from '@veduta/protocol'
-import { applySurfacePatchEvent } from '@veduta/protocol'
+import type { ApprovalCard, ChatMessage, Surface } from '@veduta/protocol'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ApprovalCards } from './approval-cards.tsx'
+import { ApprovalCards, dismissCardsForSurface } from './approval-cards.tsx'
 import {
   connectGateway,
   fetchAuthStatus,
@@ -13,12 +12,15 @@ import {
 import { AuthGate } from './auth-gate.tsx'
 import { ChatBar } from './chat-bar.tsx'
 import {
+  applyBufferedSurfaceStreamEvents,
+  applySurfaceStreamEvent,
   cachedSnapshot,
   mergeSurfaceOrder,
   moveSurfaceId,
   parseSurfaceDeepLink,
   saveSnapshot,
   surfaceDeepLink,
+  type SurfaceStreamEvent,
 } from './home-state.ts'
 import { InstallButton } from './install-button.tsx'
 import {
@@ -111,30 +113,66 @@ export function App() {
     )
   }, [])
 
-  const applySurfaceEvent = useCallback(
-    (event: SurfacePatchEvent) => {
-      let applied = false
-      try {
-        const next = spacesRef.current.map((space) => ({
-          ...space,
-          surfaces: space.surfaces.map((surface) => {
-            if (surface.id !== event.patch.surfaceId) return surface
-            applied = true
-            return applySurfacePatchEvent(surface, event)
-          }),
-        }))
+  // Surface lifecycle stream (D9/R2-M2): surface.patch / surface.created /
+  // surface.archived can arrive for a Space or Surface this client hasn't
+  // seen yet (e.g. right after a reconnect). Rather than erroring straight
+  // away, refetch the /api/spaces snapshot and replay whatever arrived
+  // meanwhile, in cursor order, once it lands.
+  const refetchingRef = useRef(false)
+  const bufferedStreamEventsRef = useRef<SurfaceStreamEvent[]>([])
 
-        if (!applied) {
-          setError(`patch for unknown Surface: ${event.patch.surfaceId}`)
+  const refetchAndReplay = useCallback(() => {
+    if (refetchingRef.current) return
+    refetchingRef.current = true
+
+    fetchSpaces(authToken)
+      .then((snapshot) => {
+        const buffered = bufferedStreamEventsRef.current
+        bufferedStreamEventsRef.current = []
+        refetchingRef.current = false
+
+        const replay = applyBufferedSurfaceStreamEvents(
+          snapshot.spaces,
+          snapshot.surfaceCursor,
+          buffered,
+        )
+        replaceSpaces(replay.spaces, replay.cursor)
+        for (const unresolved of replay.unresolved) {
+          setError(surfaceStreamEventErrorMessage(unresolved))
+        }
+      })
+      .catch((e: Error) => {
+        refetchingRef.current = false
+        setError(`failed to refetch Spaces snapshot: ${e.message}`)
+      })
+  }, [authToken, replaceSpaces])
+
+  const handleSurfaceStreamEvent = useCallback(
+    (streamEvent: SurfaceStreamEvent) => {
+      // Idempotent and independent of whether the Space/Surface is known
+      // yet, so the chip clears even if this event is about to be buffered.
+      if (streamEvent.type === 'surface.archived') {
+        setApprovalCards((prev) => dismissCardsForSurface(prev, streamEvent.event.surfaceId))
+      }
+
+      if (refetchingRef.current) {
+        bufferedStreamEventsRef.current.push(streamEvent)
+        return
+      }
+
+      try {
+        const result = applySurfaceStreamEvent(spacesRef.current, streamEvent)
+        if (!result.applied) {
+          bufferedStreamEventsRef.current.push(streamEvent)
+          refetchAndReplay()
           return
         }
-
-        replaceSpaces(next, event.cursor)
+        replaceSpaces(result.spaces, streamEvent.event.cursor)
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'failed to apply Surface patch')
+        setError(e instanceof Error ? e.message : 'failed to apply Surface event')
       }
     },
-    [replaceSpaces],
+    [refetchAndReplay, replaceSpaces],
   )
 
   useEffect(() => {
@@ -169,7 +207,15 @@ export function App() {
           setGatewayOnline(true)
           setError(null)
         },
-        onSurfacePatch: applySurfaceEvent,
+        onSurfacePatch(event) {
+          handleSurfaceStreamEvent({ type: 'surface.patch', event })
+        },
+        onSurfaceCreated(event) {
+          handleSurfaceStreamEvent({ type: 'surface.created', event })
+        },
+        onSurfaceArchived(event) {
+          handleSurfaceStreamEvent({ type: 'surface.archived', event })
+        },
         onChatMessage(message) {
           appendChatEntry(message.message)
         },
@@ -215,7 +261,7 @@ export function App() {
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
       gatewayRef.current?.close()
     }
-  }, [applySurfaceEvent, appendChatEntry, authToken, replaceSpaces])
+  }, [handleSurfaceStreamEvent, appendChatEntry, authToken, replaceSpaces])
 
   useEffect(() => {
     if (!gatewayOnline || queuedChat.length === 0) return
@@ -416,4 +462,15 @@ export function App() {
       />
     </div>
   )
+}
+
+function surfaceStreamEventErrorMessage(streamEvent: SurfaceStreamEvent): string {
+  switch (streamEvent.type) {
+    case 'surface.patch':
+      return `patch for unknown Surface: ${streamEvent.event.patch.surfaceId}`
+    case 'surface.created':
+      return `Surface created for unknown Space: ${streamEvent.event.spaceId}`
+    case 'surface.archived':
+      return `archived unknown Surface: ${streamEvent.event.surfaceId}`
+  }
 }

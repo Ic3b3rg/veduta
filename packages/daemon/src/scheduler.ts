@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { JsonObject, PatchOperation, SurfacePatchEvent } from '@veduta/protocol'
+import type { JsonObject, PatchOperation } from '@veduta/protocol'
 import { z } from 'zod'
 import { defineTool, type ToolDef } from './agent-runner.ts'
 import {
@@ -83,8 +83,6 @@ export interface SchedulerOptions {
   now?: () => Date
   /** Deliver an escalation to the user (chat notice); Space event is appended regardless. */
   onEscalation?: (spaceId: string, text: string) => void
-  /** Broadcast Surface patch events produced by projection refreshes. */
-  onSurfacePatch?: (event: SurfacePatchEvent) => void
   judge?: JudgeFn
 }
 
@@ -117,7 +115,6 @@ export class Scheduler {
   private readonly store: Store
   private readonly now: () => Date
   private readonly onEscalation: ((spaceId: string, text: string) => void) | undefined
-  private readonly onSurfacePatch: ((event: SurfacePatchEvent) => void) | undefined
   private readonly judge: JudgeFn
   private disposeFastMutationObserver: (() => void) | undefined
   private timer: NodeJS.Timeout | undefined
@@ -130,7 +127,6 @@ export class Scheduler {
     this.store = options.store
     this.now = options.now ?? (() => new Date())
     this.onEscalation = options.onEscalation
-    this.onSurfacePatch = options.onSurfacePatch
     this.judge = options.judge ?? (() => 'unknown')
     this.initializeSchema()
     this.recoverInterruptedRuns()
@@ -295,6 +291,7 @@ export class Scheduler {
           'Arm a one-shot timer for a learned deadline or habit: at `when` the condition is checked and the user is escalated to unless it is already satisfied. Never promise to remember a deadline instead of arming a timer.',
         schema: ArmTimerSchema,
         level: 'L0',
+        egressDomains: [],
         handler: (input, context) => {
           const automation = this.armTimer(input, toolWriteOrigin(context.origin))
           return {
@@ -309,6 +306,7 @@ export class Scheduler {
           'Create a recurring job (5-field cron, UTC) that delivers a briefing on every occurrence. Visible to the user as an Automation in its Space.',
         schema: CreateJobSchema,
         level: 'L0',
+        egressDomains: [],
         handler: (input, context) => {
           const automation = this.createJob(input, toolWriteOrigin(context.origin))
           return {
@@ -323,6 +321,7 @@ export class Scheduler {
           'Cancel an Automation (timer or job) by id. It stops firing and leaves the Space Surface.',
         schema: CancelSchema,
         level: 'L0',
+        egressDomains: [],
         handler: (input, context) => {
           const automation = this.cancel(input.automationId, toolWriteOrigin(context.origin))
           return { content: `cancelled automation ${automation.id}`, details: { automation } }
@@ -564,7 +563,7 @@ export class Scheduler {
       this.store.createSurface(
         automationsSurface(space, items, { updatedAt: this.nowIso(), updatedBy: 'job' }),
         'job',
-        origin,
+        { origin },
       )
       return
     }
@@ -578,25 +577,25 @@ export class Scheduler {
       path: `/${key}`,
       value,
     }))
+    // Every `store.patch*` call below reaches connected clients through the
+    // Gateway's central Surface-event subscription; nothing here broadcasts.
     if (setOps.length > 0) {
-      this.broadcast(this.store.patchState(surfaceId, setOps, { updatedBy: 'job', origin }).event)
+      this.store.patchState(surfaceId, setOps, { updatedBy: 'job', origin })
     }
 
     const version = this.store.getSurfaceVersion(surfaceId)
     if (!version) return
-    this.broadcast(
-      this.store.patchTree(
-        surfaceId,
-        [{ target: 'tree', op: 'replace', path: '/children/1', value: automationsListNode(items) }],
-        { expectedTreeVersion: version.treeVersion, updatedBy: 'job', origin },
-      ).event,
+    this.store.patchTree(
+      surfaceId,
+      [{ target: 'tree', op: 'replace', path: '/children/1', value: automationsListNode(items) }],
+      { expectedTreeVersion: version.treeVersion, updatedBy: 'job', origin },
     )
 
     const staleOps: PatchOperation[] = Object.keys(existing.state)
       .filter((key) => automationIdFromStateKey(key) !== undefined && !(key in targetState))
       .map((key) => ({ target: 'state', op: 'remove', path: `/${key}` }))
     if (staleOps.length > 0) {
-      this.broadcast(this.store.patchState(surfaceId, staleOps, { updatedBy: 'job', origin }).event)
+      this.store.patchState(surfaceId, staleOps, { updatedBy: 'job', origin })
     }
   }
 
@@ -709,10 +708,6 @@ export class Scheduler {
       payload,
       at: this.nowIso(),
     })
-  }
-
-  private broadcast(event: SurfacePatchEvent): void {
-    this.onSurfacePatch?.(event)
   }
 
   private initializeSchema(): void {

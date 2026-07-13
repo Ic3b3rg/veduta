@@ -2,9 +2,16 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { fromPartial } from '@total-typescript/shoehorn'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { ToolContext } from './agent-runner.ts'
 import { Scheduler } from './scheduler.ts'
 import { Store } from './store.ts'
+import type { Origin } from './taint.ts'
+
+function toolContext(toolCallId: string, origin: Origin): ToolContext {
+  return fromPartial<ToolContext>({ toolCallId, origin })
+}
 
 const HEALTH = 'spc-health'
 const SURFACE = 'srf-health-automations'
@@ -417,13 +424,13 @@ describe('agent tools', () => {
         when: '2026-07-08T21:00:00.000Z',
         action: 'Log my weight',
       },
-      { toolCallId: 'call-1', origin: 'trusted:user' },
+      toolContext('call-1', 'trusted:user'),
     )
     expect(armed.content).toContain('armed timer')
 
     const cancelled = await tools['cancel']!.handler(
       { automationId: 1 },
-      { toolCallId: 'call-2', origin: 'trusted:user' },
+      toolContext('call-2', 'trusted:user'),
     )
     expect(cancelled.content).toContain('cancelled automation 1')
     expect(scheduler.listAutomations(HEALTH)[0]?.status).toBe('cancelled')
@@ -441,7 +448,7 @@ describe('agent tools', () => {
 
     const armed = await tools['arm_timer']!.handler(
       { spaceId: HEALTH, when: '2026-07-08T21:00:00.000Z', action: 'Reply to the email' },
-      { toolCallId: 'call-untrusted', origin: 'untrusted:gmail' },
+      toolContext('call-untrusted', 'untrusted:gmail'),
     )
     const automationId = (armed.details as { automation: { id: number } }).automation.id
     expect(scheduler.listAutomations(HEALTH).find((a) => a.id === automationId)?.origin).toBe(
@@ -472,16 +479,13 @@ describe('agent tools', () => {
 
     const armed = await tools['arm_timer']!.handler(
       { spaceId: HEALTH, when: '2026-07-08T21:00:00.000Z', action: 'Reply to the email' },
-      { toolCallId: 'call-untrusted', origin: 'untrusted:gmail' },
+      toolContext('call-untrusted', 'untrusted:gmail'),
     )
     const automationId = (armed.details as { automation: { id: number } }).automation.id
 
     // A later trusted turn cancels it: the cancel event still embeds the
     // tainted description, so it must keep the untrusted mark.
-    await tools['cancel']!.handler(
-      { automationId },
-      { toolCallId: 'call-trusted', origin: 'trusted:user' },
-    )
+    await tools['cancel']!.handler({ automationId }, toolContext('call-trusted', 'trusted:user'))
     expect(
       store
         .eventLog(HEALTH)
@@ -496,7 +500,7 @@ describe('agent tools', () => {
 
     await tools['arm_timer']!.handler(
       { spaceId: HEALTH, when: '2026-07-08T21:00:00.000Z', action: 'Reply to the email' },
-      { toolCallId: 'call-untrusted', origin: 'untrusted:gmail' },
+      toolContext('call-untrusted', 'untrusted:gmail'),
     )
 
     // The Surface refresh derives from the listed automations (their

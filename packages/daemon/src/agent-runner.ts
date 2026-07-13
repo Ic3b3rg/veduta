@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto'
 import type { z } from 'zod'
-import type { Origin } from './taint.ts'
+import type { Origin, TurnTaint } from './taint.ts'
 
 export type ModelTier = 'triage' | 'reasoning'
 
@@ -40,6 +41,27 @@ export type AgentEvent =
 
 export type AgentEventHandler = (event: AgentEvent) => Promise<void> | void
 
+/**
+ * What caused this turn (D10/D12, issue #14): informational provenance for
+ * the audit trail and approval cards. Never itself a trust-decision input —
+ * only taint (`ToolContext.taint`) governs gating; a `trigger` just records
+ * why the turn happened, for the humans and Surfaces reading the audit log.
+ *
+ * `parent` (immutable linked chain, SECURITY.md §5): the complete trigger
+ * chain for the audit log. Today only single-hop triggers exist (a chat
+ * message, an external event) so `parent` is always absent; the field
+ * future-proofs a multi-hop chain (event -> automation -> turn) without a
+ * schema change once the scheduler/automations can themselves trigger a
+ * turn that triggers a tool call.
+ */
+export interface TriggerRef {
+  kind: 'chat' | 'external-event' | 'automation' | 'agent-turn'
+  id?: string
+  source?: string
+  summary?: string
+  parent?: TriggerRef
+}
+
 export interface AgentPromptOptions {
   model?: ModelRef
   tools?: ToolDef[]
@@ -59,6 +81,10 @@ export interface AgentPromptOptions {
    * for tool gating (docs/SECURITY.md §3.2, ADR-0007).
    */
   contextOrigins?: Origin[]
+  /** The Space this turn is scoped to, when known (threaded into `ToolContext.spaceId`). */
+  spaceId?: string
+  /** What caused this turn (threaded into `ToolContext.trigger`). */
+  trigger?: TriggerRef
 }
 
 export interface AgentRunner {
@@ -77,6 +103,15 @@ export interface ToolResult {
   content: string
   details?: unknown
   terminate?: boolean
+  /**
+   * Origins of stored content this result derives from (D10, issue #14):
+   * read-side tools (`read_recent`, `search_log`) report the origin of
+   * every event/fact they rendered. The runner folds these into the live
+   * `ToolContext.taint` accumulator and persists them on the tool's
+   * `SessionMessage.origins`, so a turn that starts trusted but reads
+   * untrusted stored content is tainted for whatever it does next.
+   */
+  origins?: Origin[]
 }
 
 export interface ToolContext {
@@ -84,11 +119,35 @@ export interface ToolContext {
   signal?: AbortSignal
   /**
    * The turn's effective origin (most-untrusted of the prompt's origin,
-   * its context origins, and the session's message origins). Tools that
-   * write Space state must stamp it onto whatever they persist so taint
-   * cannot be laundered through a state write (docs/SECURITY.md §3.2).
+   * its context origins, and the session's message origins), fixed at
+   * turn start. Tools that write Space state must stamp it onto whatever
+   * they persist so taint cannot be laundered through a state write
+   * (docs/SECURITY.md §3.2).
    */
   origin: Origin
+  /** The origin chain the turn started with — the seed `origin` was derived from, before any mid-turn growth (D10). */
+  origins: Origin[]
+  /**
+   * Live per-turn taint accumulator (D10/A1): starts seeded with `origins`
+   * and grows as tool results report further provenance. Trust decisions
+   * (issue #14) must read `taint.origins()` at execution time, never a
+   * pre-turn snapshot — a trusted turn that reads untrusted content
+   * partway through must still gate as tainted afterward.
+   */
+  taint: TurnTaint
+  /** The Space this turn is scoped to, when known. */
+  spaceId?: string
+  /** What caused this turn — chat, an external event, an automation, or a follow-up agent turn. */
+  trigger?: TriggerRef
+  /**
+   * sha256 of the canonical model-visible context envelope for the
+   * immediately preceding model inference (BINDING amendment A3): proof of
+   * exactly what crossed the runner's wrapper boundary before this tool
+   * was called. See `computeContextHash`.
+   */
+  contextHash: string
+  /** Set by the trust layer (issue #14) when this call executes as part of an approved/allowed effect; executors must be idempotent per `effectId`. */
+  effectId?: string
 }
 
 export interface ToolDef<TSchema extends z.ZodTypeAny = z.ZodTypeAny> {
@@ -101,6 +160,14 @@ export interface ToolDef<TSchema extends z.ZodTypeAny = z.ZodTypeAny> {
    * Required — `gateToolsForOrigins` fails closed on a missing level.
    */
   level: 'L0' | 'L1' | 'L2'
+  /**
+   * Network hosts this tool's handler may contact (ADR-0007, SECURITY.md
+   * §3.4): declared here so the daemon can one day deny everything else at
+   * the network layer — enforcement itself is issue #15, this field is
+   * only the declaration. `L0` tools never leave the daemon and declare
+   * `[]`.
+   */
+  egressDomains: readonly string[]
   handler(input: z.infer<TSchema>, context: ToolContext): Promise<ToolResult> | ToolResult
 }
 
@@ -121,6 +188,12 @@ export interface SessionMessage {
   isError?: boolean
   /** Absent means trusted (the pre-taint-tracking default). */
   origin?: Origin
+  /**
+   * Full provenance of a tool result (BINDING amendment A1): every origin
+   * the tool's `ToolResult` reported, not only the most-untrusted mark
+   * kept in `origin`. Absent for messages with no reported origins.
+   */
+  origins?: Origin[]
 }
 
 export type SessionEntry =
@@ -202,6 +275,35 @@ export interface ContextPolicyContext {
 export const disabledContextPolicy: ContextPolicy = {
   enabled: false,
   transform: (messages) => messages,
+}
+
+/**
+ * Canonical envelope hash (BINDING amendment A3, docs/SECURITY.md §5): sha256
+ * over a key-sorted JSON encoding of `envelope`, so the hash depends only on
+ * the envelope's content, never on incidental object-key insertion order.
+ * Runners build `envelope` from exactly what crossed their wrapper boundary
+ * into the model for one inference (system prompt, transformed messages,
+ * user input) and store the result as `ToolContext.contextHash`.
+ */
+export function computeContextHash(envelope: unknown): string {
+  return createHash('sha256').update(canonicalJson(envelope)).digest('hex')
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(sortKeysDeep(value))
+}
+
+function sortKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeysDeep)
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return Object.fromEntries(
+      Object.keys(record)
+        .sort()
+        .map((key) => [key, sortKeysDeep(record[key])]),
+    )
+  }
+  return value
 }
 
 export class AgentEventBus {

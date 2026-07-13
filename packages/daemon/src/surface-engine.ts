@@ -6,6 +6,8 @@ import {
   JsonObjectSchema,
   PatchOperationSchema,
   PatchSchema,
+  SurfaceArchivedEventSchema,
+  SurfaceCreatedEventSchema,
   SurfacePatchEventSchema,
   SurfaceSchema,
   applySurfacePatch,
@@ -18,6 +20,8 @@ import {
   type JsonValue,
   type PatchOperation,
   type Surface,
+  type SurfaceArchivedEvent,
+  type SurfaceCreatedEvent,
   type SurfacePatchEvent,
 } from '@veduta/protocol'
 import { z } from 'zod'
@@ -38,6 +42,16 @@ export interface SurfaceVersion {
   version: number
   treeVersion: number
 }
+
+/**
+ * One committed Surface-lifecycle event, as replayed or observed: `kind`
+ * selects which protocol schema validated `event`, so callers get a typed
+ * union instead of re-discriminating on shape.
+ */
+export type SurfaceEngineEvent =
+  | { kind: 'patch'; event: SurfacePatchEvent }
+  | { kind: 'created'; event: SurfaceCreatedEvent }
+  | { kind: 'archived'; event: SurfaceArchivedEvent }
 
 export interface QueuedAgentTurn {
   id: string
@@ -72,6 +86,24 @@ export class SurfaceTreeConflictError extends Error {
   }
 }
 
+/**
+ * Raised by `patchState`/`patchTree`/`archiveSurface` when `updatedBy:
+ * 'agent'` targets a daemon-owned Surface (approval cards, the trust admin
+ * Surfaces — ADR-0007's structural-defense contract): a tainted-but-L0 turn
+ * must never be able to rewrite a pending approval card's `field.*` content
+ * or pre-set its `decision.*` state after the human has read it. Enforced
+ * here in the engine — the one write path for Surface state and tree
+ * changes — so no tool-level wrapper can bypass it. `updatedBy: 'user'`
+ * (fast-path clicks) and `updatedBy: 'job'` (the owning manager's own
+ * writes) are never subject to this check.
+ */
+export class SurfaceOwnershipError extends Error {
+  constructor(readonly surfaceId: string) {
+    super(`Surface ${surfaceId} is daemon-owned and cannot be written by the Agent`)
+    this.name = 'SurfaceOwnershipError'
+  }
+}
+
 const CreateSurfaceToolInputSchema = z.object({
   id: z.string().min(1),
   spaceId: z.string().min(1),
@@ -95,6 +127,19 @@ const ArchiveSurfaceToolInputSchema = z.object({
 
 type CreateSurfaceInput = z.infer<typeof CreateSurfaceToolInputSchema>
 
+export interface CreateSurfaceOptions {
+  origin?: Origin
+  /**
+   * Marks the created Surface as owned by the daemon itself (approval
+   * cards, trust admin Surfaces), not by the Agent: `patchState`/
+   * `patchTree`/`archiveSurface` then refuse `updatedBy: 'agent'` writes
+   * against it (see `SurfaceOwnershipError`). Defaults to `false` — an
+   * ordinary Agent-created Surface (the `create_surface` tool) stays fully
+   * writable by the Agent, as before.
+   */
+  daemonOwned?: boolean
+}
+
 /**
  * SQLite-backed owner of persistent Surfaces.
  *
@@ -108,6 +153,7 @@ export class SurfaceEngine {
   private readonly now: () => Date
   private readonly hasSpace: (spaceId: string) => boolean
   private readonly appendSpaceEvent: (spaceId: string, input: AppendSpaceEventInput) => unknown
+  private readonly surfaceEventObservers = new Set<(event: SurfaceEngineEvent) => void>()
 
   constructor(options: SurfaceEngineOptions) {
     mkdirSync(options.rootDir, { recursive: true })
@@ -152,39 +198,53 @@ export class SurfaceEngine {
     return row ? requiredNumber(row, 'cursor') : 0
   }
 
-  surfaceEventsAfter(cursor: number): SurfacePatchEvent[] {
+  surfaceEventsAfter(cursor: number): SurfaceEngineEvent[] {
     return this.db
-      .prepare('select event_json from surface_events where cursor > ? order by cursor')
+      .prepare('select kind, event_json from surface_events where cursor > ? order by cursor')
       .all(cursor)
-      .map((row) => SurfacePatchEventSchema.parse(JSON.parse(requiredString(row, 'event_json'))))
+      .map((row) => surfaceEngineEventFromRow(row))
+  }
+
+  /**
+   * Observe every committed Surface-lifecycle event (patch, created,
+   * archived) exactly once, after its SQLite write transaction commits.
+   * The Gateway subscribes once, centrally, so nothing double-broadcasts.
+   */
+  onSurfaceEvent(observer: (event: SurfaceEngineEvent) => void): () => void {
+    this.surfaceEventObservers.add(observer)
+    return () => this.surfaceEventObservers.delete(observer)
   }
 
   createSurface(
     input: Surface | CreateSurfaceInput,
     updatedBy: SurfaceWriteActor,
-    origin?: Origin,
+    options?: CreateSurfaceOptions,
   ): Surface {
     const surface = this.surfaceForWrite(input, updatedBy)
     this.requireKnownSpace(surface.spaceId)
-    this.runWrite(() => {
+    const daemonOwned = options?.daemonOwned ?? false
+    const event = this.runWrite(() => {
       const existing = this.db.prepare('select id from surfaces where id = ?').get(surface.id)
       if (existing) throw new Error(`Surface already exists: ${surface.id}`)
-      this.insertSurface(surface, 1, 1, false)
+      this.insertSurface(surface, 1, 1, false, daemonOwned)
       this.appendSpaceEvent(surface.spaceId, {
         at: surface.freshness.updatedAt,
         type: 'surface.create',
         text: `Created Surface "${surface.title}"`,
-        origin: origin ?? 'trusted:system',
+        origin: options?.origin ?? 'trusted:system',
         payload: { surfaceId: surface.id },
       })
+      return this.insertCreatedEvent(surface)
     })
+    this.notifySurfaceEvent({ kind: 'created', event })
     return surface
   }
 
   archiveSurface(surfaceId: string, updatedBy: SurfaceWriteActor, origin?: Origin): Surface {
+    this.assertWritableByAgent(surfaceId, updatedBy)
     const surface = this.requireActiveSurface(surfaceId)
     const archived = this.stampSurface(surface, updatedBy)
-    this.runWrite(() => {
+    const event = this.runWrite(() => {
       this.db
         .prepare(
           `update surfaces
@@ -199,7 +259,9 @@ export class SurfaceEngine {
         origin: origin ?? 'trusted:system',
         payload: { surfaceId },
       })
+      return this.insertArchivedEvent(archived)
     })
+    this.notifySurfaceEvent({ kind: 'archived', event })
     return archived
   }
 
@@ -336,8 +398,11 @@ export class SurfaceEngine {
         description: 'Create a protocol-valid Surface inside a Space.',
         schema: CreateSurfaceToolInputSchema,
         level: 'L0',
+        egressDomains: [],
         handler: (input, context) => {
-          const surface = this.createSurface(input, 'agent', toolWriteOrigin(context.origin))
+          const surface = this.createSurface(input, 'agent', {
+            origin: toolWriteOrigin(context.origin),
+          })
           return { content: `created Surface ${surface.id}`, details: { surface } }
         },
       }),
@@ -346,6 +411,7 @@ export class SurfaceEngine {
         description: 'Patch typed Surface state with protocol validation.',
         schema: PatchStateToolInputSchema,
         level: 'L0',
+        egressDomains: [],
         handler: (input, context) => {
           const mutation = this.patchState(input.surfaceId, input.operations, {
             updatedBy: 'agent',
@@ -359,6 +425,7 @@ export class SurfaceEngine {
         description: 'Patch a Surface Atom tree when the expected tree version still matches.',
         schema: PatchTreeToolInputSchema,
         level: 'L0',
+        egressDomains: [],
         handler: (input, context) => {
           const mutation = this.patchTree(input.surfaceId, input.operations, {
             expectedTreeVersion: input.expectedTreeVersion,
@@ -373,6 +440,7 @@ export class SurfaceEngine {
         description: 'Archive a Surface without deleting its Space memory.',
         schema: ArchiveSurfaceToolInputSchema,
         level: 'L0',
+        egressDomains: [],
         handler: (input, context) => {
           const surface = this.archiveSurface(
             input.surfaceId,
@@ -398,7 +466,8 @@ export class SurfaceEngine {
       origin?: Origin
     },
   ): SurfaceMutation {
-    return this.runWrite(() => {
+    this.assertWritableByAgent(surfaceId, options.updatedBy)
+    const mutation = this.runWrite(() => {
       const current = this.requireActiveSurface(surfaceId)
       const patch = PatchSchema.parse({ surfaceId, operations })
       const patched = this.stampSurface(applySurfacePatch(current, patch), options.updatedBy)
@@ -421,6 +490,8 @@ export class SurfaceEngine {
       })
       return { surface: patched, event, duplicate: false }
     })
+    this.notifySurfaceEvent({ kind: 'patch', event: mutation.event })
+    return mutation
   }
 
   private findIdempotentMutation(idempotencyKey: string): SurfaceMutation | undefined {
@@ -454,13 +525,52 @@ export class SurfaceEngine {
       patch,
       freshness: surface.freshness,
     })
+    this.insertEventRow(cursor, event.at, event.spaceId, event.patch.surfaceId, 'patch', event)
+    return event
+  }
+
+  private insertCreatedEvent(surface: Surface): SurfaceCreatedEvent {
+    const cursor = this.latestSurfaceCursor() + 1
+    const event = SurfaceCreatedEventSchema.parse({
+      cursor,
+      at: surface.freshness.updatedAt,
+      spaceId: surface.spaceId,
+      surface,
+    })
+    this.insertEventRow(cursor, event.at, event.spaceId, surface.id, 'created', event)
+    return event
+  }
+
+  private insertArchivedEvent(surface: Surface): SurfaceArchivedEvent {
+    const cursor = this.latestSurfaceCursor() + 1
+    const event = SurfaceArchivedEventSchema.parse({
+      cursor,
+      at: surface.freshness.updatedAt,
+      spaceId: surface.spaceId,
+      surfaceId: surface.id,
+    })
+    this.insertEventRow(cursor, event.at, event.spaceId, surface.id, 'archived', event)
+    return event
+  }
+
+  private insertEventRow(
+    cursor: number,
+    at: string,
+    spaceId: string,
+    surfaceId: string,
+    kind: 'patch' | 'created' | 'archived',
+    event: unknown,
+  ): void {
     this.db
       .prepare(
-        `insert into surface_events (cursor, at, space_id, surface_id, event_json)
-         values (?, ?, ?, ?, ?)`,
+        `insert into surface_events (cursor, at, space_id, surface_id, kind, event_json)
+         values (?, ?, ?, ?, ?, ?)`,
       )
-      .run(cursor, event.at, event.spaceId, event.patch.surfaceId, JSON.stringify(event))
-    return event
+      .run(cursor, at, spaceId, surfaceId, kind, JSON.stringify(event))
+  }
+
+  private notifySurfaceEvent(event: SurfaceEngineEvent): void {
+    for (const observer of this.surfaceEventObservers) observer(event)
   }
 
   private rememberIdempotencyKey(key: string, eventCursor: number): void {
@@ -498,6 +608,29 @@ export class SurfaceEngine {
     return surface
   }
 
+  /**
+   * The write-protection check backing `SurfaceOwnershipError`: only
+   * `updatedBy: 'agent'` is ever refused, and only against a Surface
+   * stamped `daemonOwned` at creation. Checked before any transaction
+   * opens, so a refused write has no side effects at all.
+   */
+  private assertWritableByAgent(surfaceId: string, updatedBy: SurfaceWriteActor): void {
+    if (updatedBy !== 'agent') return
+    if (this.isDaemonOwned(surfaceId)) throw new SurfaceOwnershipError(surfaceId)
+  }
+
+  /**
+   * Public lookup (issue #14 review fix): callers that must not treat an
+   * impostor Surface as daemon-owned — e.g. `ApprovalSurfaceManager.start()`
+   * verifying a Surface it is about to adopt at a deterministic id — need
+   * this alongside `assertWritableByAgent`'s internal check. Returns `false`
+   * for an unknown surfaceId (nothing to adopt either way).
+   */
+  isDaemonOwned(surfaceId: string): boolean {
+    const row = this.db.prepare('select daemon_owned from surfaces where id = ?').get(surfaceId)
+    return row !== undefined && requiredNumber(row, 'daemon_owned') === 1
+  }
+
   private requireVersion(id: string): SurfaceVersion {
     const version = this.getSurfaceVersion(id)
     if (!version) throw new Error(`unknown Surface: ${id}`)
@@ -513,13 +646,14 @@ export class SurfaceEngine {
     version: number,
     treeVersion: number,
     archived: boolean,
+    daemonOwned = false,
   ): void {
     this.db
       .prepare(
         `insert into surfaces
            (id, space_id, title, tree_json, state_json, version, tree_version,
-            updated_at, updated_by, archived)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            updated_at, updated_by, archived, daemon_owned)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         surface.id,
@@ -532,6 +666,7 @@ export class SurfaceEngine {
         surface.freshness.updatedAt,
         surface.freshness.updatedBy,
         archived ? 1 : 0,
+        daemonOwned ? 1 : 0,
       )
   }
 
@@ -568,7 +703,8 @@ export class SurfaceEngine {
         tree_version integer not null,
         updated_at text not null,
         updated_by text not null,
-        archived integer not null default 0
+        archived integer not null default 0,
+        daemon_owned integer not null default 0
       );
       create index if not exists surfaces_space_active
         on surfaces (space_id, archived, title);
@@ -578,6 +714,7 @@ export class SurfaceEngine {
         at text not null,
         space_id text not null,
         surface_id text not null,
+        kind text not null default 'patch',
         event_json text not null
       );
 
@@ -598,6 +735,24 @@ export class SurfaceEngine {
         atom_json text not null
       );
     `)
+    // Defensive migration: a `surfaces.sqlite` created before `kind` existed
+    // must keep working — `create table if not exists` above only applies to
+    // a fresh database, so an existing one is migrated here. Every row
+    // written before this column existed was a patch event.
+    this.ensureColumn('surface_events', 'kind', "text not null default 'patch'")
+    // Defensive migration, same reasoning: a `surfaces.sqlite` created
+    // before `daemon_owned` existed must keep working. Every Surface written
+    // before this column existed predates ownership enforcement, so it
+    // defaults to Agent-writable (0) — none of them were approval cards or
+    // trust admin Surfaces, which did not exist yet either.
+    this.ensureColumn('surfaces', 'daemon_owned', 'integer not null default 0')
+  }
+
+  /** Adds `column` to `table` if an existing (pre-migration) database lacks it. */
+  private ensureColumn(table: string, column: string, sqlType: string): void {
+    const columns = this.db.prepare(`pragma table_info(${table})`).all()
+    const exists = columns.some((row) => requiredString(row, 'name') === column)
+    if (!exists) this.db.exec(`alter table ${table} add column ${column} ${sqlType}`)
   }
 
   private surfaceCount(): number {
@@ -644,6 +799,17 @@ function surfaceFromRow(row: Record<string, unknown>): Surface {
       updatedBy: requiredString(row, 'updated_by'),
     },
   })
+}
+
+function surfaceEngineEventFromRow(row: Record<string, unknown>): SurfaceEngineEvent {
+  const kind = requiredString(row, 'kind')
+  const json = JSON.parse(requiredString(row, 'event_json'))
+  if (kind === 'created') return { kind: 'created', event: SurfaceCreatedEventSchema.parse(json) }
+  if (kind === 'archived') {
+    return { kind: 'archived', event: SurfaceArchivedEventSchema.parse(json) }
+  }
+  if (kind === 'patch') return { kind: 'patch', event: SurfacePatchEventSchema.parse(json) }
+  throw new Error(`unknown surface_events kind: ${kind}`)
 }
 
 function agentTurnFromRow(row: Record<string, unknown>): QueuedAgentTurn {

@@ -1,6 +1,11 @@
 import { SurfaceSchema } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
-import { fastActionIdempotencyKey, freshnessLabel, optimisticFastSurface } from './api.ts'
+import {
+  expiresInLabel,
+  fastActionIdempotencyKey,
+  freshnessLabel,
+  optimisticFastSurface,
+} from './api.ts'
 
 describe('freshnessLabel', () => {
   const now = Date.parse('2026-07-03T12:00:00.000Z')
@@ -16,6 +21,21 @@ describe('freshnessLabel', () => {
   it('uses hours under a day and days beyond', () => {
     expect(freshnessLabel('2026-07-03T09:00:00.000Z', now)).toBe('3h ago')
     expect(freshnessLabel('2026-07-01T12:00:00.000Z', now)).toBe('2d ago')
+  })
+})
+
+describe('expiresInLabel', () => {
+  const now = Date.parse('2026-07-03T12:00:00.000Z')
+
+  it('counts down in minutes, then hours, then days', () => {
+    expect(expiresInLabel('2026-07-03T12:05:00.000Z', now)).toBe('expires in 5m')
+    expect(expiresInLabel('2026-07-03T15:00:00.000Z', now)).toBe('expires in 3h')
+    expect(expiresInLabel('2026-07-05T12:00:00.000Z', now)).toBe('expires in 2d')
+  })
+
+  it('reports "expired" once the deadline has passed', () => {
+    expect(expiresInLabel('2026-07-03T11:59:00.000Z', now)).toBe('expired')
+    expect(expiresInLabel('2026-07-03T12:00:00.000Z', now)).toBe('expired')
   })
 })
 

@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { describe, expect, it } from 'vitest'
 import {
   AgentEventBus,
+  computeContextHash,
   MemorySessionStore,
   defineTool,
   modelRefsEqual,
@@ -13,6 +14,7 @@ import {
   type ToolDef,
 } from './agent-runner.ts'
 import { ModelRouter } from './model-routing.ts'
+import { TurnTaintAccumulator } from './taint.ts'
 
 const triageModel: ModelRef = { provider: 'mock', modelId: 'cheap', tier: 'triage' }
 const reasoningModel: ModelRef = { provider: 'mock', modelId: 'strong', tier: 'reasoning' }
@@ -22,6 +24,7 @@ const rememberTool = defineTool({
   description: 'Stores one value in the session transcript',
   schema: z.object({ value: z.string().min(1) }),
   level: 'L0',
+  egressDomains: [],
   handler: ({ value }) => ({ content: `remembered ${value}`, details: { value } }),
 })
 
@@ -150,6 +153,27 @@ describe('AgentRunner contract', () => {
   })
 })
 
+describe('computeContextHash (BINDING amendment A3)', () => {
+  it('is a sha256 hex digest', () => {
+    expect(computeContextHash({ messages: [], input: 'hello' })).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('is stable for an identical envelope, independent of key insertion order', () => {
+    const left = computeContextHash({ input: 'hello', messages: [{ role: 'user', content: 'hi' }] })
+    const right = computeContextHash({
+      messages: [{ content: 'hi', role: 'user' }],
+      input: 'hello',
+    })
+    expect(left).toBe(right)
+  })
+
+  it('differs when the envelope content differs', () => {
+    const first = computeContextHash({ messages: [], input: 'hello' })
+    const second = computeContextHash({ messages: [], input: 'goodbye' })
+    expect(first).not.toBe(second)
+  })
+})
+
 describe('MemorySessionStore', () => {
   it('round-trips SessionMessage.origin, leaving it absent when never set', async () => {
     const store = new MemorySessionStore()
@@ -243,7 +267,13 @@ class ContractAgentRunner implements AgentRunner {
       input: { value },
     })
     const parsed = tool.schema.parse({ value })
-    const result = await tool.handler(parsed, { toolCallId, origin: 'trusted:user' })
+    const result = await tool.handler(parsed, {
+      toolCallId,
+      origin: 'trusted:user',
+      origins: ['trusted:user'],
+      taint: new TurnTaintAccumulator(['trusted:user']),
+      contextHash: computeContextHash({ value }),
+    })
     const message = {
       role: 'tool' as const,
       content: result.content,
