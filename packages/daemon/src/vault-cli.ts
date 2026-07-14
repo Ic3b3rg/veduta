@@ -65,7 +65,14 @@ export function run(argv: string[], context: { env?: NodeJS.ProcessEnv; io?: Cli
   const [command, name, value] = parsed.positionals
   const rootDir = parsed.flags['root'] ?? env['VEDUTA_DATA_DIR'] ?? join(process.cwd(), '.veduta')
 
-  const keyMaterial = resolveVaultKeyMaterial(env)
+  let keyMaterial: Buffer | undefined
+  try {
+    keyMaterial = resolveVaultKeyMaterial(env)
+  } catch (error) {
+    // e.g. VEDUTA_VAULT_KEYFILE points at a missing/unreadable file.
+    io.stderr(errorText(error))
+    return 1
+  }
   if (!keyMaterial) {
     io.stderr(
       'no vault key material found; set VEDUTA_VAULT_KEYFILE (path to a keyfile) or VEDUTA_VAULT_KEY',

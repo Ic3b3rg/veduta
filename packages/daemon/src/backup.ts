@@ -17,6 +17,7 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -229,10 +230,12 @@ export async function createBackup(options: CreateBackupOptions): Promise<string
   mkdirSync(outDir, { recursive: true })
 
   // Unencrypted intermediate material (the staged file tree and the plain
-  // tar) stays inside a private 0700 directory under `outDir`, never in a
-  // world-readable shared tmp, and is removed in `finally` on both success
-  // and failure.
-  const workDir = mkdtempSync(join(outDir, '.veduta-backup-tmp-'))
+  // tar) stays inside a single private directory (`mkdtemp` creates it 0700,
+  // so it is never world-readable) and is removed in `finally` on both
+  // success and failure. It lives under the system tmp dir — deliberately
+  // NOT under `rootDir`/`outDir`, so a staging tree can never be recursively
+  // copied into its own backup.
+  const workDir = mkdtempSync(join(tmpdir(), 'veduta-backup-'))
   const stagingDir = join(workDir, 'staging')
   const tarPath = join(workDir, 'archive.tar')
   try {
@@ -278,10 +281,9 @@ export async function restoreBackup(options: RestoreBackupOptions): Promise<void
   const fileBuffer = readFileSync(options.file)
   const tarBuffer = decryptArchive(fileBuffer, options.keyMaterial)
 
-  // The decrypted tar is plaintext daemon state — stage it in a private 0700
-  // directory beside the restore target, never in shared tmp, and remove it
-  // in `finally`.
-  const workDir = mkdtempSync(join(dirname(targetRootDir), '.veduta-restore-tmp-'))
+  // The decrypted tar is plaintext daemon state — stage it in a private
+  // directory (`mkdtemp` creates it 0700) and remove it in `finally`.
+  const workDir = mkdtempSync(join(tmpdir(), 'veduta-restore-'))
   const tarPath = join(workDir, 'archive.tar')
   try {
     writeFileSync(tarPath, tarBuffer, { mode: 0o600 })

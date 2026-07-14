@@ -55,6 +55,14 @@ describe('vault-cli run', () => {
     expect(err.join(' ')).toContain('no vault key material')
   })
 
+  it('returns 1 (never throws) when the keyfile path is unreadable', () => {
+    const root = makeRoot()
+    const env = { VEDUTA_VAULT_KEYFILE: join(root, 'does-not-exist.key') } as NodeJS.ProcessEnv
+    const { io } = collectIo()
+    expect(() => run(['list', '--root', root], { env, io })).not.toThrow()
+    expect(run(['list', '--root', root], { env, io })).toBe(1)
+  })
+
   it('prefers --root over VEDUTA_DATA_DIR', () => {
     const rootFlag = makeRoot()
     const rootEnv = makeRoot()

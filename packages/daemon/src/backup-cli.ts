@@ -73,7 +73,14 @@ export async function run(
   const outDir = flags['out'] ?? join(rootDir, 'backups')
   const keep = flags['keep'] !== undefined ? Number(flags['keep']) : undefined
 
-  const keyMaterial = resolveVaultKeyMaterial(env)
+  let keyMaterial: Buffer | undefined
+  try {
+    keyMaterial = resolveVaultKeyMaterial(env)
+  } catch (error) {
+    // e.g. VEDUTA_VAULT_KEYFILE points at a missing/unreadable file.
+    io.stderr(errorText(error))
+    return 1
+  }
   if (!keyMaterial) {
     io.stderr(
       'no vault key material found; set VEDUTA_VAULT_KEYFILE (path to a keyfile) or VEDUTA_VAULT_KEY',
