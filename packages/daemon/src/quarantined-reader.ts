@@ -44,14 +44,47 @@ export type ReaderOutput = z.infer<typeof ReaderOutputSchema>
 
 export type SanitizeOutcome = { ok: true; output: ReaderOutput } | { ok: false; reason: string }
 
-/** Zero-width and line/paragraph separator characters a forgery can hide instructions in. */
-const ZERO_WIDTH_RE = /[\u200B-\u200F\uFEFF\u2028\u2029]/g
+/**
+ * Invisible-channel characters a forgery can use for Unicode smuggling
+ * (issue #015 corpus entry `unicode-smuggling`): a hidden instruction does
+ * not need to be readable by a human to reach a model, and it does not need
+ * to survive as a contiguous word to defeat `REJECT_PATTERNS` below \u2014 one
+ * stray codepoint spliced into "ignore" or "instructions" is enough to break
+ * a `\b...\b` word match. Three families, all stripped outright (never
+ * decoded \u2014 the payload just needs to stop existing before anything reads
+ * it):
+ *   - zero-width joiners/spaces, BOM, line/paragraph separators
+ *     (U+200B-U+200F, U+FEFF, U+2028, U+2029) \u2014 the classic zero-width
+ *     smuggling channel;
+ *   - bidi embedding/override/isolate controls (U+202A-U+202E,
+ *     U+2066-U+2069) \u2014 invisible in most renderers, and can reorder or
+ *     split a trigger word without changing its Unicode "letters";
+ *   - Unicode Tag characters (U+E0000-U+E007F) \u2014 the "ASCII smuggling"
+ *     steganography block: an entirely separate, invisible shadow-ASCII
+ *     plane some models will decode and act on even though no
+ *     REJECT_PATTERNS regex can see it as text.
+ */
+const HIDDEN_CHAR_RE =
+  /[\u200B-\u200F\uFEFF\u2028\u2029\u202A-\u202E\u2066-\u2069\u{E0000}-\u{E007F}]/gu
 /** C0 control characters other than tab/newline/CR, plus DEL. Whitespace collapse handles the rest. */
 // eslint-disable-next-line no-control-regex -- intentional: stripping forged control characters
 const CONTROL_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g
 
+/**
+ * The pre-extraction normalization step: strips Unicode-smuggling
+ * characters (see `HIDDEN_CHAR_RE`) from untrusted text BEFORE it is even
+ * placed in the reader's prompt (`delimitedField` below), so a hidden
+ * instruction can never reach the model in the first place \u2014 not just
+ * before it leaves quarantine. `normalizeText` (applied to the reader's
+ * OUTPUT fields) reuses it too, as defense in depth for whatever a
+ * completion echoes back.
+ */
+function stripHiddenChars(input: string): string {
+  return input.replace(HIDDEN_CHAR_RE, '')
+}
+
 function normalizeText(input: string): string {
-  return input.replace(ZERO_WIDTH_RE, '').replace(CONTROL_RE, '').replace(/\s+/g, ' ').trim()
+  return stripHiddenChars(input).replace(CONTROL_RE, '').replace(/\s+/g, ' ').trim()
 }
 
 /**
@@ -142,7 +175,14 @@ function capText(value: string, maxBytes = FIELD_CAP_BYTES): string {
 }
 
 function delimitedField(name: string, value: string): string {
-  return `<<<UNTRUSTED ${name}>>>\n${neutralizeDelimiters(capText(value))}\n<<<END ${name}>>>`
+  // Pre-extraction normalization (issue #015 D4): strip Unicode-smuggling
+  // characters from the untrusted field before it ever reaches the model's
+  // prompt, not only from what the model hands back. `stripHiddenChars` is
+  // deliberately narrower than `normalizeText` here — it must not collapse
+  // whitespace or otherwise reshape content the reader is meant to extract
+  // from, only remove the invisible smuggling channel.
+  const withoutHiddenChars = stripHiddenChars(value)
+  return `<<<UNTRUSTED ${name}>>>\n${neutralizeDelimiters(capText(withoutHiddenChars))}\n<<<END ${name}>>>`
 }
 
 /** Builds the reader's prompt: fixed header, then each untrusted field in its own delimited block. */

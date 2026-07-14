@@ -9,6 +9,8 @@ import {
   WebAuthnOptionsEnvelopeSchema,
 } from '@veduta/protocol'
 import type { FastifyReply, FastifyRequest } from 'fastify'
+import { appendFileSync, existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Fastify from 'fastify'
 import { z } from 'zod'
@@ -21,6 +23,7 @@ import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import { reminderFromChat } from './chat.ts'
 import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
 import { createDevDispatch } from './dev-dispatch.ts'
+import { EgressPolicy, installEgressEnforcement } from './egress.ts'
 import { EventIngestion, type FetchStage } from './event-ingestion.ts'
 import type { ExternalEvent } from './external-event.ts'
 import { promptFullText } from './full-text-flow.ts'
@@ -29,10 +32,22 @@ import { CalendarSource, GmailSource, GoogleTokenProvider } from './google-sourc
 import { loadIngestionConfig } from './ingestion-config.ts'
 import { MockAgentRunner } from './mock-agent-runner.ts'
 import { mockReaderComplete } from './mock-provider.ts'
-import { ModelRouter, envSecretResolver, loadRoutingConfig } from './model-routing.ts'
+import {
+  ModelRouter,
+  envSecretResolver,
+  loadRoutingConfig,
+  type SecretResolver,
+} from './model-routing.ts'
 import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
 import { QuarantinedReader } from './quarantined-reader.ts'
+import { defaultRedactor } from './redaction.ts'
 import { Scheduler } from './scheduler.ts'
+import {
+  compositeSecretResolver,
+  resolveVaultKeyMaterial,
+  SecretsVault,
+  VAULT_FILE_NAME,
+} from './secrets-vault.ts'
 import { WatchManager } from './watch-renewal.ts'
 import { sendPwaAsset } from './static-assets.ts'
 import { Store, SurfaceActionError } from './store.ts'
@@ -69,6 +84,13 @@ export interface ServerOptions {
   https?: { key: string; cert: string }
   /** Injectable clock so tests drive the scheduler with a fake clock. */
   now?: () => Date
+  /**
+   * Egress allowlist (issue #15, docs/SECURITY.md §3.4). `enforce` installs
+   * the policy as the process-wide dispatcher — only the production/VPS
+   * profile sets this (`index.ts`); the mock/Local VPS profile and the test
+   * suite must never get a global denying dispatcher by default.
+   */
+  egress?: { enforce?: boolean; extraAllow?: readonly string[] }
 }
 
 export type ServerAuthOptions =
@@ -81,6 +103,103 @@ export type ServerAuthOptions =
     }
 
 const defaultPwaDistDir = fileURLToPath(new URL('../../pwa/dist/', import.meta.url))
+
+/**
+ * Resolves `secret://` references for the whole daemon (issue #15 D2/D3):
+ * the vault when one is configured and openable, falling back to
+ * `secret://env/...` alone otherwise (mock/Local VPS profile unaffected —
+ * neither `secrets.vault` nor vault key material exists there). Every
+ * successful resolution registers the value with `defaultRedactor` so it
+ * never survives into a durable sink or console output (issue #15 T4).
+ */
+function buildSecretResolver(rootDir: string): SecretResolver {
+  const vaultPath = join(rootDir, VAULT_FILE_NAME)
+  const keyMaterial = resolveVaultKeyMaterial()
+  const vaultFileExists = existsSync(vaultPath)
+  if (vaultFileExists && !keyMaterial) {
+    // Fail closed (docs/SECURITY.md §4, D2): a vault file with no key
+    // material to open it is a misconfiguration, never a silent fall-back
+    // to unresolved secret://vault/... references.
+    throw new Error(
+      `${vaultPath} exists but no vault key material is set (VEDUTA_VAULT_KEYFILE or VEDUTA_VAULT_KEY)`,
+    )
+  }
+  const inner: SecretResolver =
+    keyMaterial && vaultFileExists
+      ? compositeSecretResolver(SecretsVault.open(rootDir, keyMaterial), envSecretResolver)
+      : envSecretResolver
+  return {
+    resolve(secretRef: string) {
+      const value = inner.resolve(secretRef)
+      if (typeof value === 'string') defaultRedactor.register(value)
+      return value
+    },
+  }
+}
+
+/** Known egress hosts per LLM provider (issue #15 D1). Providers outside this map have no fetch-based transport this daemon can enforce yet. */
+const PROVIDER_HOSTS: Record<string, string> = {
+  anthropic: 'api.anthropic.com',
+  openai: 'api.openai.com',
+  openrouter: 'openrouter.ai',
+}
+
+const EgressConfigSchema = z.object({ allow: z.array(z.string()) })
+
+/**
+ * Builds the process-wide egress allowlist (issue #15 D1, docs/SECURITY.md
+ * §3.4) from everything the daemon is actually configured to reach:
+ * configured LLM providers, Google's OAuth/API hosts (when ingestion has a
+ * Google source), the ACME directory host, every registered tool's declared
+ * `egressDomains`, operator-supplied extra hosts, and `<rootDir>/egress.json`
+ * if present. A configured provider outside `PROVIDER_HOSTS` fails boot
+ * outright — unsupported until its transport can be enforced (fail closed,
+ * never a silent gap in the allowlist).
+ */
+export function assembleEgressPolicy(input: {
+  rootDir: string
+  providers: readonly string[]
+  googleHosts?: readonly string[]
+  acmeDirectoryUrl?: string
+  toolDomains: readonly string[]
+  extraAllow?: readonly string[]
+  allowLoopback?: boolean
+}): EgressPolicy {
+  // Fail closed by default, matching `EgressPolicy`'s own default: the VPS
+  // profile — which must NOT trust loopback specially — never sets this,
+  // and only the mock/Local VPS profile's `buildServer` call site opts in.
+  const policy = new EgressPolicy({ allowLoopback: input.allowLoopback ?? false })
+  for (const provider of input.providers) {
+    const host = PROVIDER_HOSTS[provider]
+    if (!host) {
+      throw new Error(
+        `egress policy: provider "${provider}" has no known egress host — declare it in <rootDir>/egress.json (docs/SECURITY.md §3.4) before configuring it`,
+      )
+    }
+    policy.allow(host)
+  }
+  if (input.googleHosts) policy.allow(input.googleHosts)
+  if (input.acmeDirectoryUrl) {
+    let acmeHost: string
+    try {
+      acmeHost = new URL(input.acmeDirectoryUrl).hostname
+    } catch {
+      throw new Error('egress policy: acmeDirectoryUrl is not a valid URL')
+    }
+    policy.allow(acmeHost)
+  }
+  policy.allow(input.toolDomains)
+  if (input.extraAllow) policy.allow(input.extraAllow)
+  const egressJsonPath = join(input.rootDir, 'egress.json')
+  if (existsSync(egressJsonPath)) {
+    const raw: unknown = JSON.parse(readFileSync(egressJsonPath, 'utf8'))
+    policy.allow(EgressConfigSchema.parse(raw).allow)
+  }
+  // Push service host (issue #18, not yet built): this is the assembly
+  // point for that allowlist entry once the push service lands — nothing
+  // else about this function needs to change.
+  return policy
+}
 
 /**
  * The Gateway in scaffold form (issue #1): HTTP API + chat WebSocket
@@ -97,6 +216,10 @@ export function buildServer(options: ServerOptions = {}) {
     now,
     ...(options.dataDir === undefined ? {} : { rootDir: options.dataDir }),
   })
+  // The secrets resolver for the whole daemon (issue #15 D2/D3): the vault
+  // when configured and openable, `secret://env/...` alone otherwise, with
+  // every resolved value registered against the shared redactor.
+  const secrets = buildSecretResolver(store.spacesEngine.rootDir)
   // The trust layer's admin Surfaces (allowlist, audit) need a durable home
   // (issue #14, D8): materialize the System Space before anything else so
   // it exists no matter which subsystem writes to it first.
@@ -263,7 +386,7 @@ export function buildServer(options: ServerOptions = {}) {
   const routingConfig = loadRoutingConfig(store.spacesEngine.rootDir)
   const triageKeyResolves = routingConfig.tiers.triage.some((entry) => {
     const secretRef = routingConfig.providerKeys[entry.provider]
-    return secretRef === undefined || envSecretResolver.resolve(secretRef) !== undefined
+    return secretRef === undefined || secrets.resolve(secretRef) !== undefined
   })
   if (!triageKeyResolves) {
     // Dev profile without provider keys (by design): keep one keyless mock
@@ -278,6 +401,7 @@ export function buildServer(options: ServerOptions = {}) {
   const router = new ModelRouter({
     rootDir: store.spacesEngine.rootDir,
     config: routingConfig,
+    secrets,
     onEvent: (event) => {
       if (event.type !== 'spending.cap-exceeded') return
       gateway.broadcastSystemNotice(
@@ -316,7 +440,7 @@ export function buildServer(options: ServerOptions = {}) {
   for (const [sourceName, source] of Object.entries(ingestionConfig.sources)) {
     const { google, gmail, calendar } = source
     if (!google) continue
-    const tokens = new GoogleTokenProvider({ ...google, secrets: envSecretResolver, now })
+    const tokens = new GoogleTokenProvider({ ...google, secrets, now })
     if (source.adapter === 'gmail-push' && gmail) {
       const gmailSource = new GmailSource({ source: sourceName, tokens })
       gmailSources[sourceName] = gmailSource
@@ -343,7 +467,7 @@ export function buildServer(options: ServerOptions = {}) {
       registerWatches.push(() =>
         watchManager.register(sourceName, 'calendar', {
           renew: async (registration) => {
-            const channelToken = envSecretResolver.resolve(source.secret)
+            const channelToken = secrets.resolve(source.secret)
             if (channelToken === undefined) {
               throw new Error(`channel token secret for source "${sourceName}" does not resolve`)
             }
@@ -629,6 +753,34 @@ export function buildServer(options: ServerOptions = {}) {
     })
   })
 
+  // Egress allowlist (issue #15 D1, docs/SECURITY.md §3.4): assembled from
+  // what this daemon is actually configured to reach — the configured LLM
+  // providers, Google's hosts when ingestion has a Google source, every
+  // registered outbound tool's declared `egressDomains`, and any
+  // operator-supplied extra hosts. Denials are logged (redacted) to a
+  // durable JSONL file and to console regardless of profile; only the
+  // production/VPS profile turns on enforcement (`options.egress?.enforce`,
+  // set by `index.ts`) — the mock/Local VPS profile and the test suite must
+  // never inherit a global denying dispatcher by default.
+  const egress = assembleEgressPolicy({
+    rootDir: store.spacesEngine.rootDir,
+    providers: Object.keys(routingConfig.providerKeys),
+    ...(Object.values(ingestionConfig.sources).some((source) => Boolean(source.google))
+      ? { googleHosts: ['oauth2.googleapis.com', 'www.googleapis.com'] }
+      : {}),
+    toolDomains: outboundTools.flatMap(({ tool }) => tool.egressDomains),
+    ...(options.egress?.extraAllow === undefined ? {} : { extraAllow: options.egress.extraAllow }),
+    // The mock/Local VPS profile and the test suite talk to loopback
+    // constantly; the VPS profile must not trust it specially.
+    allowLoopback: auth.mode !== 'production',
+  })
+  egress.onDenial((denial) => {
+    const line = defaultRedactor.redactText(JSON.stringify(denial))
+    appendFileSync(join(store.spacesEngine.rootDir, 'egress-denials.jsonl'), `${line}\n`)
+    console.error('egress denied', denial.host)
+  })
+  if (options.egress?.enforce === true) installEgressEnforcement(egress)
+
   return {
     app,
     store,
@@ -641,6 +793,7 @@ export function buildServer(options: ServerOptions = {}) {
     approvalSurfaces,
     allowlistSurfaces,
     auditSurfaces,
+    egress,
   }
 }
 

@@ -1,0 +1,85 @@
+# Hardened systemd unit for the Veduta daemon (the Gateway), running the VPS profile
+# (docs/adr/0008-vps-passkey-byok.md, docs/adr/0009-local-vps-profile.md).
+#
+# Install and verification steps: deploy/README.md in this repository.
+#
+# Threat model this hardens against (docs/SECURITY.md §6, "Daemon attack surface"): the
+# Gateway is exposed on a public IP, so a compromise of the Node process should not translate
+# into a compromise of the host. The directives below run the daemon as an unprivileged,
+# heavily sandboxed service account.
+
+[Unit]
+Description=Veduta daemon (Gateway) -- self-hosted personal agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=veduta
+Group=veduta
+WorkingDirectory=/var/lib/veduta
+
+# Entry point of the built daemon. This path assumes packages/daemon has been built into
+# plain JS at /opt/veduta/packages/daemon/dist/index.js -- ADJUST TO YOUR ACTUAL BUILD
+# OUTPUT. At the time of writing, `pnpm --filter @veduta/daemon build` runs `tsc -p
+# tsconfig.json` and packages/tsconfig.base.json sets `noEmit: true`, so plain `pnpm build`
+# alone is a type-check only and does NOT produce this file; you need an emitting build step
+# (a bundler, or `tsc` with `outDir`/`noEmit: false`) before this ExecStart will work as
+# written. If you deploy by running the daemon from source instead, point ExecStart at your
+# `node`/`tsx` invocation of packages/daemon/src/index.ts and keep everything else below
+# unchanged.
+ExecStart=/usr/bin/node /opt/veduta/packages/daemon/dist/index.js
+
+Restart=on-failure
+RestartSec=5
+
+# --- Configuration -----------------------------------------------------------------------
+# See packages/daemon/src/index.ts for exactly how each of these is consumed. Setting
+# VEDUTA_PUBLIC_DOMAIN is what switches the daemon from the loopback `pnpm dev` profile into
+# the VPS profile (ACME-issued TLS, passkey/WebAuthn auth, binds 0.0.0.0).
+Environment=VEDUTA_PUBLIC_DOMAIN=example.com
+Environment=VEDUTA_ACME_EMAIL=admin@example.com
+Environment=VEDUTA_ACME_DIR=/var/lib/veduta/acme
+Environment=VEDUTA_AUTH_STATE=/var/lib/veduta/auth.json
+# NOTE: as of this issue, packages/daemon/src/index.ts does not read VEDUTA_DATA_DIR -- the
+# daemon's data root (Spaces, trust/audit store, scheduler, event ingestion, sessions,
+# secrets vault) defaults to `<WorkingDirectory>/.veduta`, i.e. effectively
+# /var/lib/veduta/.veduta given the WorkingDirectory above. This line is kept so the intended
+# production location is documented and so nothing needs to change here once the daemon
+# reads it directly; until then, treat /var/lib/veduta/.veduta as the real data directory for
+# backup/restore purposes (see deploy/README.md).
+Environment=VEDUTA_DATA_DIR=/var/lib/veduta
+Environment=VEDUTA_VAULT_KEYFILE=/etc/veduta/vault.key
+Environment=HTTP_PORT=80
+Environment=HTTPS_PORT=443
+# Secrets themselves (LLM provider API keys, OAuth tokens, ...) are NEVER set as
+# environment variables here -- only the path to the vault keyfile that decrypts the
+# encrypted secrets vault (docs/SECURITY.md §4; deploy/README.md "Secrets vault").
+
+# --- Hardening (docs/SECURITY.md §6, "Daemon attack surface") ----------------------------
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/veduta
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# CAP_NET_BIND_SERVICE only, so the otherwise-unprivileged `veduta` user can bind the
+# privileged ports 80/443 (HTTP_PORT/HTTPS_PORT above) without running the daemon as root.
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# MemoryDenyWriteExecute is intentionally NOT set: Node's V8 JIT needs pages that are
+# writable and later made executable (W^X-violating by design), and this directive would
+# make the daemon crash (or fail to JIT, tanking performance) on startup. Do not add it.
+
+[Install]
+WantedBy=multi-user.target
