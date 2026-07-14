@@ -1,4 +1,3 @@
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto'
 import {
   closeSync,
   constants as fsConstants,
@@ -14,6 +13,7 @@ import {
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import type { SecretResolver } from './model-routing.ts'
+import { openGcm, sealGcm } from './secret-crypto.ts'
 
 /**
  * Secrets vault (issue #15 D2, docs/SECURITY.md §4): API keys and OAuth
@@ -41,6 +41,9 @@ interface VaultPayload {
 
 const SECRET_REF_PATTERN = /^secret:\/\/vault\/(.+)$/
 
+/** Domain-separation label for the vault's scrypt key (see `secret-crypto.ts`). */
+const VAULT_LABEL = 'vault:'
+
 /**
  * Reads vault key material: a keyfile named by `VEDUTA_VAULT_KEYFILE` wins
  * over the inline `VEDUTA_VAULT_KEY`; neither is required (a fresh install
@@ -53,21 +56,6 @@ export function resolveVaultKeyMaterial(env: NodeJS.ProcessEnv = process.env): B
   return inline !== undefined ? Buffer.from(inline, 'utf8') : undefined
 }
 
-/** Fixed header field order so the AAD bytes are reproducible on read and write. */
-function headerAad(header: { v: 1; salt: string; iv: string }): Buffer {
-  return Buffer.from(JSON.stringify({ v: header.v, salt: header.salt, iv: header.iv }), 'utf8')
-}
-
-/** Domain-separated scrypt: the `vault:` label keeps this key distinct from other purposes. */
-function deriveVaultKey(keyMaterial: Buffer, salt: Buffer): Buffer {
-  return scryptSync(keyMaterial, Buffer.concat([Buffer.from('vault:'), salt]), 32, {
-    N: 2 ** 15,
-    r: 8,
-    p: 1,
-    maxmem: 64 * 1024 * 1024,
-  })
-}
-
 function readVaultFile(path: string, keyMaterial: Buffer): Map<string, string> {
   let raw: unknown
   try {
@@ -76,21 +64,13 @@ function readVaultFile(path: string, keyMaterial: Buffer): Map<string, string> {
     throw new Error(`secrets vault at ${path} is not valid JSON: ${errorText(error)}`)
   }
   const file = VaultFileSchema.parse(raw)
-  const salt = Buffer.from(file.salt, 'base64')
-  const iv = Buffer.from(file.iv, 'base64')
-  const tag = Buffer.from(file.tag, 'base64')
-  const ciphertext = Buffer.from(file.ct, 'base64')
-  const key = deriveVaultKey(keyMaterial, salt)
-  const decipher = createDecipheriv('aes-256-gcm', key, iv)
-  decipher.setAuthTag(tag)
-  decipher.setAAD(headerAad(file))
   let plaintext: Buffer
   try {
-    plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()])
+    plaintext = openGcm({ label: VAULT_LABEL, keyMaterial, ...file })
   } catch {
     // Wrong key material or a tampered header/ciphertext (the AAD covers
-    // v/salt/iv, GCM covers the ciphertext) both surface as an auth
-    // failure here — never partial or silently-wrong data.
+    // salt/iv, GCM covers the ciphertext) both surface as an auth failure
+    // here — never partial or silently-wrong data.
     throw new Error(
       `failed to decrypt secrets vault at ${path}: wrong key material or corrupted file`,
     )
@@ -100,21 +80,13 @@ function readVaultFile(path: string, keyMaterial: Buffer): Map<string, string> {
 }
 
 function writeVaultFile(path: string, keyMaterial: Buffer, entries: Map<string, string>): void {
-  // Fresh salt and IV on every write: never reuse an IV under a derived key.
-  const salt = randomBytes(16)
-  const iv = randomBytes(12)
-  const key = deriveVaultKey(keyMaterial, salt)
-  const header = { v: 1 as const, salt: salt.toString('base64'), iv: iv.toString('base64') }
-  const cipher = createCipheriv('aes-256-gcm', key, iv)
-  cipher.setAAD(headerAad(header))
   const payload: VaultPayload = { version: 1, entries: Object.fromEntries(entries) }
-  const plaintext = Buffer.from(JSON.stringify(payload), 'utf8')
-  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()])
-  const file: VaultFile = {
-    ...header,
-    tag: cipher.getAuthTag().toString('base64'),
-    ct: ciphertext.toString('base64'),
-  }
+  const sealed = sealGcm({
+    label: VAULT_LABEL,
+    keyMaterial,
+    plaintext: Buffer.from(JSON.stringify(payload), 'utf8'),
+  })
+  const file: VaultFile = { v: 1, ...sealed }
   writeFileAtomic(path, JSON.stringify(file))
 }
 

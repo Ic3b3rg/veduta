@@ -35,20 +35,16 @@ RestartSec=5
 
 # --- Configuration -----------------------------------------------------------------------
 # See packages/daemon/src/index.ts for exactly how each of these is consumed. Setting
-# VEDUTA_PUBLIC_DOMAIN is what switches the daemon from the loopback `pnpm dev` profile into
+# VEDUTA_PUBLIC_DOMAIN is what switches the daemon from the loopback Local VPS profile into
 # the VPS profile (ACME-issued TLS, passkey/WebAuthn auth, binds 0.0.0.0).
 Environment=VEDUTA_PUBLIC_DOMAIN=example.com
 Environment=VEDUTA_ACME_EMAIL=admin@example.com
 Environment=VEDUTA_ACME_DIR=/var/lib/veduta/acme
 Environment=VEDUTA_AUTH_STATE=/var/lib/veduta/auth.json
-# NOTE: as of this issue, packages/daemon/src/index.ts does not read VEDUTA_DATA_DIR -- the
-# daemon's data root (Spaces, trust/audit store, scheduler, event ingestion, sessions,
-# secrets vault) defaults to `<WorkingDirectory>/.veduta`, i.e. effectively
-# /var/lib/veduta/.veduta given the WorkingDirectory above. This line is kept so the intended
-# production location is documented and so nothing needs to change here once the daemon
-# reads it directly; until then, treat /var/lib/veduta/.veduta as the real data directory for
-# backup/restore purposes (see deploy/README.md).
-Environment=VEDUTA_DATA_DIR=/var/lib/veduta
+# The daemon's data root (Spaces, trust/audit store, scheduler, event ingestion, sessions,
+# secrets vault). index.ts reads VEDUTA_DATA_DIR directly, so this is the single source of
+# truth for where state lives -- the vault and backup CLIs must be pointed at the same path.
+Environment=VEDUTA_DATA_DIR=/var/lib/veduta/.veduta
 Environment=VEDUTA_VAULT_KEYFILE=/etc/veduta/vault.key
 Environment=HTTP_PORT=80
 Environment=HTTPS_PORT=443

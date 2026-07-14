@@ -55,7 +55,7 @@ function errorText(error: unknown): string {
 export async function run(
   argv: string[],
   context: { env?: NodeJS.ProcessEnv; io?: CliIo } = {},
-): Promise<void> {
+): Promise<number> {
   const env = context.env ?? process.env
   const io = context.io ?? defaultIo
   const [command, ...rest] = argv
@@ -65,8 +65,7 @@ export async function run(
     parsed = parseArgs(rest)
   } catch (error) {
     io.stderr(errorText(error))
-    process.exitCode = 1
-    return
+    return 1
   }
   const { positionals, flags } = parsed
 
@@ -79,8 +78,7 @@ export async function run(
     io.stderr(
       'no vault key material found; set VEDUTA_VAULT_KEYFILE (path to a keyfile) or VEDUTA_VAULT_KEY',
     )
-    process.exitCode = 1
-    return
+    return 1
   }
 
   try {
@@ -88,40 +86,41 @@ export async function run(
       case 'backup': {
         const path = await createBackup({ rootDir, outDir, keyMaterial })
         io.stdout(`backup written: ${path}`)
-        return
+        return 0
       }
       case 'restore': {
         const file = positionals[0]
         const target = flags['target']
         if (!file || !target) {
           io.stderr('usage: backup restore <file> --target <dir>')
-          process.exitCode = 1
-          return
+          return 1
         }
         await restoreBackup({ file, targetRootDir: target, keyMaterial })
         io.stdout(`restored to: ${target}`)
-        return
+        return 0
       }
       case 'prune': {
         const deleted = pruneBackups(keep === undefined ? { outDir } : { outDir, keep })
         for (const path of deleted) io.stdout(`deleted: ${path}`)
-        return
+        return 0
       }
       default: {
         io.stderr(
           'usage: backup <backup|restore <file> --target <dir>|prune> [--root <dir>] [--out <dir>] [--keep <n>]',
         )
-        process.exitCode = 1
+        return 1
       }
     }
   } catch (error) {
     io.stderr(errorText(error))
-    process.exitCode = 1
+    return 1
   }
 }
 
 function main(): void {
-  void run(process.argv.slice(2))
+  void run(process.argv.slice(2)).then((code) => {
+    process.exitCode = code
+  })
 }
 
 if (process.argv[1] && process.argv[1].endsWith('backup-cli.ts')) main()

@@ -23,12 +23,12 @@ sudo useradd --system --gid veduta --home /var/lib/veduta --shell /usr/sbin/nolo
 
 Layout:
 
-| Path                      | Owner           | Mode | Purpose                                                                |
-| ------------------------- | --------------- | ---- | ---------------------------------------------------------------------- |
-| `/opt/veduta`             | `root:root`     | 0755 | Checked-out / built code (read-only to the `veduta` user)              |
-| `/var/lib/veduta`         | `veduta:veduta` | 0700 | Data directory: the daemon's own home (`WorkingDirectory` in the unit) |
-| `/var/lib/veduta/.veduta` | `veduta:veduta` | 0700 | Actual runtime root -- see the note below                              |
-| `/etc/veduta/vault.key`   | `veduta:veduta` | 0400 | Secrets vault keyfile                                                  |
+| Path                      | Owner           | Mode | Purpose                                                          |
+| ------------------------- | --------------- | ---- | ---------------------------------------------------------------- |
+| `/opt/veduta`             | `root:root`     | 0755 | Checked-out / built code (read-only to the `veduta` user)        |
+| `/var/lib/veduta`         | `veduta:veduta` | 0700 | The `veduta` user's home (`WorkingDirectory` in the unit)        |
+| `/var/lib/veduta/.veduta` | `veduta:veduta` | 0700 | Data root -- `VEDUTA_DATA_DIR` (Spaces, stores, sessions, vault) |
+| `/etc/veduta/vault.key`   | `veduta:veduta` | 0400 | Secrets vault keyfile                                            |
 
 ```sh
 sudo mkdir -p /var/lib/veduta
@@ -39,18 +39,12 @@ sudo chown root:root /etc/veduta
 sudo chmod 0755 /etc/veduta
 ```
 
-**Known quirk, documented rather than papered over:** `packages/daemon/src/index.ts`
-already reads `VEDUTA_ACME_DIR` and `VEDUTA_AUTH_STATE` from the environment (so the unit
-points them explicitly at `/var/lib/veduta/acme` and `/var/lib/veduta/auth.json`), but it
-does **not** yet read a `VEDUTA_DATA_DIR` variable for the Spaces/trust/scheduler/ingestion
-root. That root (where `trust.sqlite`, `surfaces.sqlite`, `scheduler.sqlite`,
+`index.ts` reads `VEDUTA_DATA_DIR` directly, so the data root is exactly what the unit sets:
+**`/var/lib/veduta/.veduta`** (where `trust.sqlite`, `surfaces.sqlite`, `scheduler.sqlite`,
 `ingestion.sqlite`, `spaces/`, session files, `secrets.vault`, `routing.json`,
-`ingestion.json`, `usage/`, and `egress-denials.jsonl` all live) defaults to
-`<WorkingDirectory>/.veduta`, i.e. **`/var/lib/veduta/.veduta`** given the unit's
-`WorkingDirectory=/var/lib/veduta`. The `veduta.service` unit still sets `VEDUTA_DATA_DIR`
-for forward compatibility (see the comment in the unit file); until the daemon consumes it
-directly, treat `/var/lib/veduta/.veduta` as the real data directory everywhere below --
-in particular, that is what you back up and restore.
+`ingestion.json`, `usage/`, and `egress-denials.jsonl` all live). The vault and backup CLIs
+must be pointed at this same path (`--root /var/lib/veduta/.veduta`) so they operate on the
+data the running daemon actually reads -- that is also what you back up and restore.
 
 ## 2. Secrets vault
 
@@ -193,7 +187,7 @@ Event log) and Surfaces intact -- on a machine that has never run Veduta before.
 4. Restore:
    ```sh
    sudo -u veduta env VEDUTA_VAULT_KEYFILE=/etc/veduta/vault.key \
-     pnpm --filter @veduta/daemon backup restore veduta-backup-<ISO>.tar.enc /var/lib/veduta/.veduta
+     pnpm --filter @veduta/daemon backup restore veduta-backup-<ISO>.tar.enc --target /var/lib/veduta/.veduta
    ```
 5. Start the daemon and verify:
    ```sh

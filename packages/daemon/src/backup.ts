@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import {
   closeSync,
   constants as fsConstants,
@@ -17,11 +17,11 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
+import { openGcm, sealGcm } from './secret-crypto.ts'
 
 /**
  * Encrypted backups (issue #15 D5, docs/SECURITY.md): a point-in-time,
@@ -47,19 +47,22 @@ import { promisify } from 'node:util'
  *
  * FRAMING: `<outDir>/veduta-backup-<ISO>.tar.enc` is a UTF-8 JSON header
  * line `{v, salt, iv, tag}` (base64 fields) followed by `\n`, followed by
- * the raw AES-256-GCM ciphertext bytes of the tar archive. The header's
- * `v`/`salt`/`iv` fields (not `tag`, which does not exist yet when the AAD
- * is computed) are passed as GCM AAD, so tampering with the header fails
- * authentication exactly like tampering with the ciphertext — this mirrors
- * `secrets-vault.ts`'s framing. The key is domain-separated from the vault
- * key (`deriveBackupKey`, label `backup:`) so the same key material yields
- * a different key for a different purpose.
+ * the raw AES-256-GCM ciphertext bytes of the tar archive. Encryption uses
+ * the shared `sealGcm`/`openGcm` primitives (`secret-crypto.ts`) with the
+ * `backup:` label, so the key is domain-separated from the vault's even
+ * under identical key material, and a tampered salt/iv/tag/ciphertext all
+ * fail authentication. Only the on-disk envelope (a header line plus raw
+ * ciphertext bytes, rather than the vault's single base64 JSON object) is
+ * local to this module — keeping a large tar's ciphertext raw avoids the
+ * ~33% base64 bloat of embedding it in JSON.
  */
 
 const execFileAsync = promisify(execFile)
 
 export const BACKUP_FILE_PREFIX = 'veduta-backup-'
 export const BACKUP_FILE_SUFFIX = '.tar.enc'
+
+const BACKUP_LABEL = 'backup:'
 
 interface BackupHeader {
   v: 1
@@ -68,31 +71,11 @@ interface BackupHeader {
   tag: string
 }
 
-/** Domain-separated scrypt: the `backup:` label keeps this key distinct from the vault's, even under identical key material. */
-export function deriveBackupKey(keyMaterial: Buffer, salt: Buffer): Buffer {
-  return scryptSync(keyMaterial, Buffer.concat([Buffer.from('backup:'), salt]), 32, {
-    N: 2 ** 15,
-    r: 8,
-    p: 1,
-    maxmem: 64 * 1024 * 1024,
-  })
-}
-
-/** Fixed header field order so the AAD bytes are reproducible on read and write; `tag` is deliberately excluded (it does not exist until encryption finishes). */
-function headerAad(header: { v: 1; salt: string; iv: string }): Buffer {
-  return Buffer.from(JSON.stringify({ v: header.v, salt: header.salt, iv: header.iv }), 'utf8')
-}
-
 function encryptArchive(plaintext: Buffer, keyMaterial: Buffer): Buffer {
-  const salt = randomBytes(16)
-  const iv = randomBytes(12)
-  const key = deriveBackupKey(keyMaterial, salt)
-  const header = { v: 1 as const, salt: salt.toString('base64'), iv: iv.toString('base64') }
-  const cipher = createCipheriv('aes-256-gcm', key, iv)
-  cipher.setAAD(headerAad(header))
-  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()])
-  const file: BackupHeader = { ...header, tag: cipher.getAuthTag().toString('base64') }
-  return Buffer.concat([Buffer.from(`${JSON.stringify(file)}\n`, 'utf8'), ciphertext])
+  const sealed = sealGcm({ label: BACKUP_LABEL, keyMaterial, plaintext })
+  const header: BackupHeader = { v: 1, salt: sealed.salt, iv: sealed.iv, tag: sealed.tag }
+  const ciphertext = Buffer.from(sealed.ct, 'base64')
+  return Buffer.concat([Buffer.from(`${JSON.stringify(header)}\n`, 'utf8'), ciphertext])
 }
 
 function decryptArchive(fileBuffer: Buffer, keyMaterial: Buffer): Buffer {
@@ -107,20 +90,20 @@ function decryptArchive(fileBuffer: Buffer, keyMaterial: Buffer): Buffer {
   if (header.v !== 1 || !header.salt || !header.iv || !header.tag) {
     throw new Error('backup file header is missing required fields')
   }
-  const ciphertext = fileBuffer.subarray(newlineIndex + 1)
-  const salt = Buffer.from(header.salt, 'base64')
-  const iv = Buffer.from(header.iv, 'base64')
-  const tag = Buffer.from(header.tag, 'base64')
-  const key = deriveBackupKey(keyMaterial, salt)
-  const decipher = createDecipheriv('aes-256-gcm', key, iv)
-  decipher.setAuthTag(tag)
-  decipher.setAAD(headerAad({ v: header.v, salt: header.salt, iv: header.iv }))
+  const ct = fileBuffer.subarray(newlineIndex + 1).toString('base64')
   try {
-    return Buffer.concat([decipher.update(ciphertext), decipher.final()])
+    return openGcm({
+      label: BACKUP_LABEL,
+      keyMaterial,
+      salt: header.salt,
+      iv: header.iv,
+      tag: header.tag,
+      ct,
+    })
   } catch {
     // Wrong key material or a tampered header/ciphertext (the AAD covers
-    // v/salt/iv, GCM covers the ciphertext) both surface as an auth
-    // failure here — never partial or silently-wrong data.
+    // salt/iv, GCM covers the ciphertext) both surface as an auth failure
+    // here — never partial or silently-wrong data.
     throw new Error('failed to decrypt backup: wrong key material or corrupted file')
   }
 }
@@ -245,9 +228,15 @@ export async function createBackup(options: CreateBackupOptions): Promise<string
   if (!existsSync(rootDir)) throw new Error(`backup source rootDir does not exist: ${rootDir}`)
   mkdirSync(outDir, { recursive: true })
 
-  const stagingDir = mkdtempSync(join(tmpdir(), 'veduta-backup-staging-'))
-  const tarPath = join(tmpdir(), `veduta-backup-${randomBytes(8).toString('hex')}.tar`)
+  // Unencrypted intermediate material (the staged file tree and the plain
+  // tar) stays inside a private 0700 directory under `outDir`, never in a
+  // world-readable shared tmp, and is removed in `finally` on both success
+  // and failure.
+  const workDir = mkdtempSync(join(outDir, '.veduta-backup-tmp-'))
+  const stagingDir = join(workDir, 'staging')
+  const tarPath = join(workDir, 'archive.tar')
   try {
+    mkdirSync(stagingDir, { recursive: true, mode: 0o700 })
     await stageRootDir(rootDir, outDir, stagingDir)
     await execFileAsync('tar', ['-cf', tarPath, '-C', stagingDir, '.'])
     const tarBuffer = readFileSync(tarPath)
@@ -259,8 +248,7 @@ export async function createBackup(options: CreateBackupOptions): Promise<string
     writeFileAtomic(outPath, encrypted)
     return outPath
   } finally {
-    rmSync(stagingDir, { recursive: true, force: true })
-    rmSync(tarPath, { force: true })
+    rmSync(workDir, { recursive: true, force: true })
   }
 }
 
@@ -290,12 +278,16 @@ export async function restoreBackup(options: RestoreBackupOptions): Promise<void
   const fileBuffer = readFileSync(options.file)
   const tarBuffer = decryptArchive(fileBuffer, options.keyMaterial)
 
-  const tarPath = join(tmpdir(), `veduta-restore-${randomBytes(8).toString('hex')}.tar`)
+  // The decrypted tar is plaintext daemon state — stage it in a private 0700
+  // directory beside the restore target, never in shared tmp, and remove it
+  // in `finally`.
+  const workDir = mkdtempSync(join(dirname(targetRootDir), '.veduta-restore-tmp-'))
+  const tarPath = join(workDir, 'archive.tar')
   try {
-    writeFileSync(tarPath, tarBuffer)
+    writeFileSync(tarPath, tarBuffer, { mode: 0o600 })
     await execFileAsync('tar', ['-xf', tarPath, '-C', targetRootDir])
   } finally {
-    rmSync(tarPath, { force: true })
+    rmSync(workDir, { recursive: true, force: true })
   }
 
   const restored = readdirSync(targetRootDir, { withFileTypes: true })
