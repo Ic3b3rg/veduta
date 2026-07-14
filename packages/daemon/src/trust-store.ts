@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { TriggerRef } from './agent-runner.ts'
+import { defaultRedactor } from './redaction.ts'
 import {
   optionalString,
   requiredNumber,
@@ -484,9 +485,12 @@ export class TrustStore {
         entry.originChain ? JSON.stringify(entry.originChain) : null,
         entry.trigger ? JSON.stringify(entry.trigger) : null,
         entry.contextHash ?? null,
-        entry.input === undefined ? null : JSON.stringify(entry.input),
+        // Redacted at the insert boundary (issue #15 D3, SECURITY.md §4): a
+        // tool's recorded input can carry a secret verbatim (an echoed key,
+        // a token), and this append-only table is never rewritten.
+        entry.input === undefined ? null : JSON.stringify(defaultRedactor.redactDeep(entry.input)),
         entry.outcome ?? null,
-        entry.detail ?? null,
+        entry.detail === undefined ? null : defaultRedactor.redactText(entry.detail),
         entry.approvedBy ?? null,
         entry.allowlistRuleId ?? null,
         entry.spaceId ?? null,

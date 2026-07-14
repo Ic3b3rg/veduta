@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { join } from 'node:path'
 import { AuthStore } from './auth-store.ts'
 import { loadAuthState, saveAuthState } from './auth-state-file.ts'
+import { installConsoleRedaction } from './redaction.ts'
 import { buildServer } from './server.ts'
 import { AcmeCertificateManager, AcmeChallengeStore, createHttp01RequestHandler } from './tls.ts'
 import { SimpleWebAuthnRelyingParty } from './webauthn.ts'
@@ -13,10 +14,14 @@ start().catch((err) => {
 })
 
 async function start(): Promise<void> {
+  // Every current and future console sink is covered from the very first
+  // line (issue #15 D3, v3): nothing logs before secrets can be redacted.
+  installConsoleRedaction()
+  const dataDirOption = process.env.VEDUTA_DATA_DIR ? { dataDir: process.env.VEDUTA_DATA_DIR } : {}
   const domain = process.env.VEDUTA_PUBLIC_DOMAIN
   if (!domain) {
     const port = Number(process.env.PORT ?? 8787)
-    const { app } = buildServer()
+    const { app } = buildServer({ ...dataDirOption })
     await app.listen({ port, host: '127.0.0.1' })
     console.log(`veduta daemon (dev profile) -> http://127.0.0.1:${port}`)
     return
@@ -66,8 +71,12 @@ async function start(): Promise<void> {
   )
   const certificate = await certManager.loadOrIssue()
   const { app } = buildServer({
+    ...dataDirOption,
     https: certificate,
     auth: { mode: 'production', store: auth, allowedOrigins: [origin] },
+    // Global egress enforcement (issue #15 D1): only the production/VPS
+    // profile installs the process-wide denying dispatcher.
+    egress: { enforce: true },
   })
   await app.listen({ port: httpsPort, host: '0.0.0.0' })
   console.log(`veduta daemon (production profile) -> ${origin}`)

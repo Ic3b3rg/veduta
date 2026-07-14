@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
 import type { ModelRef, ModelTier } from './agent-runner.ts'
+import { defaultRedactor } from './redaction.ts'
 
 /**
  * Per-call model routing (issue #10, ADR-0002): the usage map decides the
@@ -518,12 +519,18 @@ function parseUsageEntry(line: string): UsageEntry | undefined {
 
 /**
  * Keeps provider diagnostics out of durable logs: masks common API key
- * shapes and truncates. Full pattern redaction is the issue #15 vault work.
+ * shapes, then delegates to the shared redactor (registered secret values
+ * + built-in patterns — issue #15 D3), then truncates. Truncation happens
+ * LAST so a partially-cut secret can never survive by falling on the
+ * boundary before redaction runs.
  */
-function sanitizeErrorText(error: unknown): string {
-  return errorText(error)
-    .replace(/\bsk-[A-Za-z0-9_-]{4,}/g, 'sk-***')
-    .replace(/\bbearer\s+\S+/gi, 'bearer ***')
+export function sanitizeErrorText(error: unknown): string {
+  return defaultRedactor
+    .redactText(
+      errorText(error)
+        .replace(/\bsk-[A-Za-z0-9_-]{4,}/g, 'sk-***')
+        .replace(/\bbearer\s+\S+/gi, 'bearer ***'),
+    )
     .slice(0, 300)
 }
 

@@ -28,6 +28,7 @@ import {
   type FactRecord,
   type FactsDocument,
 } from './facts.ts'
+import { defaultRedactor } from './redaction.ts'
 import {
   isUntrusted,
   isValidOrigin,
@@ -219,13 +220,18 @@ export class SpacesEngine {
   appendEvent(spaceId: string, input: AppendSpaceEventInput): SpaceEvent {
     const space = this.requireSpace(spaceId)
     const at = input.at ?? this.nowIso()
+    // SECURITY.md §4: no secret ever appears in the Event log. Redaction
+    // happens PRE-append (ADR-0003: the log is never rewritten), so a
+    // secret that reached this call never lands durably in the first place.
     const event: SpaceEvent = {
       at,
       spaceId: space.id,
       type: input.type ?? 'turn',
-      text: input.text,
+      text: defaultRedactor.redactText(input.text),
       origin: input.origin ?? 'trusted:system',
-      ...(input.payload === undefined ? {} : { payload: input.payload }),
+      ...(input.payload === undefined
+        ? {}
+        : { payload: defaultRedactor.redactDeep(input.payload) as JsonObject }),
     }
     appendFileSync(this.logPath(space, at), `${JSON.stringify(event)}\n`)
     return event

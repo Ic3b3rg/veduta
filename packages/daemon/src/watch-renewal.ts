@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { defaultRedactor } from './redaction.ts'
 import { optionalString, requiredNumber, requiredString } from './sqlite-rows.ts'
 
 /**
@@ -162,7 +163,12 @@ export class WatchManager {
         .run(
           failures,
           shouldAlert || registration.alerted ? 1 : 0,
-          (error instanceof Error ? error.message : String(error)).slice(0, 300),
+          // Persisted durably (issue #15 D3, SECURITY.md §4): a provider or
+          // transport error can carry a leaked key, so it is redacted
+          // before it ever reaches `ingestion.sqlite`.
+          defaultRedactor
+            .redactText(error instanceof Error ? error.message : String(error))
+            .slice(0, 300),
           this.nowIso(),
           registration.source,
         )
