@@ -9,7 +9,7 @@ Intelligence:  010 model-routing → 011 scheduler → 012 event-ingestion → 0
 Trust:         014 trust-layer → 015 security-hardening
 Proactivity:   016 heartbeat → 017 worker-review → 018 push-notifications
 Adoption:      019 onboarding-wizard → 020 importer
-Polish:        021 advanced-memory → 022 emergent-templates
+Polish:        032 facts-hygiene → 021 advanced-memory → 022 emergent-templates
 ```
 
 Parallelizable: (006,007,008) after 002; (010,011) after 003; (019,020) after 009.
@@ -39,3 +39,4 @@ Parallelizable: (006,007,008) after 002; (010,011) after 003; (019,020) after 00
 | 021 | [Advanced memory](021-advanced-memory.md)               | Polish       |
 | 022 | [Emergent templates](022-emergent-templates.md)         | Polish       |
 | 023 | [Local VPS profile](023-local-vps-profile.md)           | Core         |
+| 032 | [FACTS hygiene and context budget](032-facts-hygiene-context-budget.md) | Polish |
