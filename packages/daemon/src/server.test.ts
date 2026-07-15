@@ -396,6 +396,45 @@ describe('scheduler wiring (issue #11)', () => {
   })
 })
 
+describe('worker wiring (issue #17)', () => {
+  it('spawns a Worker from dev chat and delivers a reviewed report into the Space', async () => {
+    const { app, gateway, store, workerPool } = buildServer()
+
+    const socket = new SchedulerFakeSocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+    socket.receive({
+      type: 'chat.send',
+      text: 'research the ketogenic diet',
+      spaceId: 'spc-health',
+    })
+
+    // The active Surface appears synchronously: `spawn()` never awaits the
+    // run, so chat stays responsive while the Worker investigates.
+    const activeSurface = store
+      .listSurfaces()
+      .find((surface) => surface.id.startsWith('srf-worker-') && surface.spaceId === 'spc-health')
+    expect(activeSurface).toBeDefined()
+    const workerId = activeSurface!.id.slice('srf-worker-'.length)
+
+    // The scripted mock runner settles promptly; await the pool's own hook
+    // instead of a fixed sleep.
+    await workerPool.whenSettled(workerId)
+
+    const terminalSurface = store.getSurface(activeSurface!.id)
+    expect(JSON.stringify(terminalSurface?.tree)).toContain('Research summary')
+
+    const delivered = store
+      .eventLog('spc-health')
+      .find((event) => event.type === 'worker.delivered')
+    expect(delivered).toBeDefined()
+    expect(delivered?.origin).toBe('untrusted:worker')
+    expect(delivered?.payload).toMatchObject({ workerId, reviewStatus: 'passed' })
+
+    await app.close()
+  })
+})
+
 describe('event ingestion wiring (issue #12)', () => {
   const ingestSecret = 'ingest-test-secret'
 

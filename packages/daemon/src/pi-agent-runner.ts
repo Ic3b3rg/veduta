@@ -411,12 +411,14 @@ export class PiAgentRunner implements AgentRunner {
         // A failed turn rejects from prompt(); it is not a completed turn.
         if (this.turnError !== undefined) return
         const costUsd = piMessageCostUsd(event.message)
+        const tokensUsed = piMessageTokens(event.message)
         await this.events.emit({
           type: 'turn-end',
           sessionId,
           model: this.currentModel ?? this.defaultModel!,
           text: piMessageText(event.message),
           ...(costUsd === undefined ? {} : { costUsd }),
+          ...(tokensUsed === undefined ? {} : { tokensUsed }),
         })
         return
       }
@@ -799,6 +801,15 @@ function piMessageCostUsd(message: unknown): number | undefined {
   const usage = message['usage']
   if (!isRecord(usage) || !isRecord(usage['cost'])) return undefined
   const total = usage['cost']['total']
+  return typeof total === 'number' && Number.isFinite(total) && total >= 0 ? total : undefined
+}
+
+/** Provider-reported total token count; undefined (unreported) when missing or invalid. */
+export function piMessageTokens(message: unknown): number | undefined {
+  if (!isRecord(message)) return undefined
+  const usage = message['usage']
+  if (!isRecord(usage)) return undefined
+  const total = usage['totalTokens']
   return typeof total === 'number' && Number.isFinite(total) && total >= 0 ? total : undefined
 }
 

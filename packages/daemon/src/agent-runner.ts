@@ -36,6 +36,8 @@ export type AgentEvent =
       text: string
       /** Provider-reported cost when available; absent means unreported, not free. */
       costUsd?: number
+      /** Provider-reported total token count when available; absent means unreported, not zero. */
+      tokensUsed?: number
     }
   | { type: 'error'; message: string }
 

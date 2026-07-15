@@ -11,6 +11,7 @@ import {
 import {
   applyOriginEntries,
   originEntryData,
+  piMessageTokens,
   toPiAgentTool,
   transformPiContext,
   type OriginMarkerEntry,
@@ -224,6 +225,28 @@ describe('transformPiContext', () => {
     // same input: hashing what actually crossed the wrapper boundary (not
     // the raw pi messages) makes the two equal.
     expect(hashes[0]).toBe(hashes[1])
+  })
+})
+
+/**
+ * `piMessageTokens` is the pure extraction the `turn_end` case of
+ * `handlePiEvent` uses to populate `tokensUsed` on the emitted `turn-end`
+ * `AgentEvent` (constructing a `PiAgentRunner` to exercise `handlePiEvent`
+ * end-to-end needs a live pi `Agent`, impractical here for the same reason
+ * noted above for gating).
+ */
+describe('piMessageTokens', () => {
+  it('reads usage.totalTokens off a pi message when present', () => {
+    // `usage` sits alongside the pi `AgentMessage` shape but is not part of
+    // its declared type (see `piMessage` above); `piMessageTokens` reads
+    // `unknown`, matching the untyped `event.message` it is called with in
+    // `handlePiEvent`.
+    const message = { ...piMessage('done', 1), usage: { totalTokens: 4200 } }
+    expect(piMessageTokens(message)).toBe(4200)
+  })
+
+  it('is undefined (unreported, not zero) when the message carries no usage', () => {
+    expect(piMessageTokens(piMessage('done', 1))).toBeUndefined()
   })
 })
 

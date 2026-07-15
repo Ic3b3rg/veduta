@@ -63,7 +63,7 @@ API keys and OAuth tokens live in an **encrypted secrets vault** (key derived at
 ## 7. Continuous verification
 
 - **Injection test suite in CI**: a corpus of malicious emails/webhooks (exfiltration, escalation, nested instructions) that must produce zero ungated L1+ actions. Every bypass found becomes a test.
-- Mandatory adversarial review (separate context) on worker outputs before delivery.
+- All Worker output is treated as untrusted (`untrusted:worker`) and quarantined; a mandatory adversarial review in a separate context refutes/corrects **high-risk** Worker outputs (flagged in the briefing) before delivery into the Space.
 - Threat model revisited on every new integration (every event source is a new perimeter).
 
 ## References

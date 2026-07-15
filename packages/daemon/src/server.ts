@@ -35,6 +35,7 @@ import { Heartbeat } from './heartbeat.ts'
 import { loadIngestionConfig } from './ingestion-config.ts'
 import { MockAgentRunner } from './mock-agent-runner.ts'
 import { mockReaderComplete } from './mock-provider.ts'
+import { createMockWorkerRunner, createMockWorkerReviewComplete } from './mock-worker-runner.ts'
 import {
   ModelRouter,
   envSecretResolver,
@@ -53,10 +54,13 @@ import {
 } from './secrets-vault.ts'
 import { WatchManager } from './watch-renewal.ts'
 import { sendPwaAsset } from './static-assets.ts'
+import { createSpawnWorkerTool } from './spawn-worker-tool.ts'
 import { Store, SurfaceActionError } from './store.ts'
 import { appendSystemSurface, ensureSystemSpace } from './system-space.ts'
 import { isTrustWrapped, TrustLayer } from './trust-layer.ts'
 import { usageSurface } from './usage-surface.ts'
+import { truncateGoalLabel, WorkerBriefingSchema } from './worker-briefing.ts'
+import { WorkerPool } from './worker.ts'
 
 // The client sends only node/action/payload: state keys come from declared
 // Atom actions, never from the client (ADR-0003).
@@ -258,6 +262,11 @@ export function buildServer(options: ServerOptions = {}) {
   // once the Gateway exists; chat frames can only arrive after buildServer
   // returns, so the binding is always in place by then.
   let devDispatchHandler: (event: NormalizedChannelEvent) => void = () => {}
+  // Late binding, same reasoning: the `research <topic>` dev stand-in
+  // (issue #17, plan v2 T6) needs the WorkerPool, which needs `router`
+  // (constructed further down); chat frames can only arrive after
+  // buildServer returns, so the binding is always in place by then.
+  let spawnWorkerFromChat: (event: NormalizedChannelEvent) => void = () => {}
   const gateway = new GatewayHub(
     store,
     auth.mode === 'production'
@@ -276,6 +285,7 @@ export function buildServer(options: ServerOptions = {}) {
           onDevChatEffect: (event) => {
             armReminderFromChat(event)
             devDispatchHandler(event)
+            spawnWorkerFromChat(event)
           },
           onFullTextRequest,
         },
@@ -403,6 +413,20 @@ export function buildServer(options: ServerOptions = {}) {
       { provider: 'mock', modelId: 'reader-mock' },
     ]
   }
+  // Symmetric with `triageKeyResolves` above (issue #17, plan v2 B5): Workers
+  // and their review both route to the reasoning tier, and `router.execute`
+  // throws `NoAvailableModelError` with no reasoning candidate at all. Keep
+  // one keyless mock candidate there too until a real key resolves.
+  const reasoningKeyResolves = routingConfig.tiers.reasoning.some((entry) => {
+    const secretRef = routingConfig.providerKeys[entry.provider]
+    return secretRef === undefined || secrets.resolve(secretRef) !== undefined
+  })
+  if (!reasoningKeyResolves) {
+    routingConfig.tiers.reasoning = [
+      ...routingConfig.tiers.reasoning,
+      { provider: 'mock', modelId: 'worker-mock' },
+    ]
+  }
   const router = new ModelRouter({
     rootDir: store.spacesEngine.rootDir,
     config: routingConfig,
@@ -444,6 +468,67 @@ export function buildServer(options: ServerOptions = {}) {
     scheduler.stop()
     heartbeatSurfaces.dispose()
   })
+
+  // Background Workers (issue #17, ADR-0002, ARCHITECTURE §3.6): ephemeral
+  // investigate-and-report steps, run in an isolated session under a
+  // token/iteration budget, with a separate adversarial review before
+  // delivery for high-risk briefings. `runnerFactory`/`reviewComplete` are
+  // dev stand-ins, same rationale as the mock quarantined reader/Heartbeat
+  // completion above — no provider key, deterministic, replaced outright by
+  // the real `PiAgentRunner` factory once the Agent loop lands. `workerTools`
+  // is empty in the dev profile: an L0-only registry (asserted in the
+  // constructor) that the scripted runner never dispatches against; the
+  // real Agent loop grows this alongside whatever L0 tools it offers.
+  const workerPool = new WorkerPool({
+    store,
+    router,
+    now,
+    runnerFactory: () => createMockWorkerRunner(),
+    // A dev stand-in with a small stateful fixture (mock-worker-runner.ts):
+    // passes every review by default, except a goal containing the word
+    // "unsupported" first rejects (with a caveat), then passes on the
+    // corrective retry — enough to exercise acceptance C's reject → correct
+    // flow via `pnpm dev` with no provider key. Replaced outright by the
+    // real reviewer completion once the Agent loop lands.
+    reviewComplete: createMockWorkerReviewComplete(),
+    workerTools: [],
+  })
+  workerPool.recoverAtBoot()
+  app.addHook('onClose', async () => {
+    workerPool.dispose()
+  })
+
+  // `spawn_worker` (issue #17, T5): built here so it exists and type-checks
+  // against the pool it wraps. Not yet dispatched by a model — there is no
+  // real Agent loop yet — so the dev `research <topic>` chat stand-in below
+  // calls the pool directly instead. Once the Agent loop lands, this is the
+  // ToolDef it offers to the model alongside whatever else it can call.
+  const _spawnWorkerTool = createSpawnWorkerTool(workerPool)
+  // Dev-profile stand-in for the Agent's spawn_worker decision, same idiom
+  // as `armReminderFromChat`/`devDispatchHandler`: "research <topic>" spawns
+  // a high-risk Worker (so the adversarial review runs, demonstrating
+  // acceptance criterion A's "review passed" badge) straight into the
+  // triggering Space.
+  spawnWorkerFromChat = (event) => {
+    const match = /^research\s+(.+)$/i.exec(event.text.trim())
+    if (!match) return
+    const topic = match[1]!.trim()
+    if (!topic) return
+    const spaceId = event.spaceId ?? 'spc-health'
+    if (!store.getSpace(spaceId)) return
+    try {
+      const briefing = WorkerBriefingSchema.parse({
+        goal: topic,
+        tokenBudget: 100_000,
+        maxIterations: 6,
+        tier: 'reasoning',
+        highRisk: true,
+      })
+      workerPool.spawn({ briefing, spaceId, goalLabel: truncateGoalLabel(topic) })
+    } catch {
+      // A malformed demo research command must never take the chat socket down.
+    }
+  }
 
   const pwaDistDir = options.pwaDistDir ?? defaultPwaDistDir
   const lockout = new ProgressiveAuthLockout()
@@ -828,6 +913,7 @@ export function buildServer(options: ServerOptions = {}) {
     approvalSurfaces,
     allowlistSurfaces,
     auditSurfaces,
+    workerPool,
     egress,
   }
 }
