@@ -513,6 +513,101 @@ describe('agent tools', () => {
   })
 })
 
+describe('generic job-handler registry (issue #16)', () => {
+  it('runs a registered handler on its occurrence and persists the returned outcome', async () => {
+    const scheduler = createScheduler()
+    const seen: { automationId: number; scheduledFor: string }[] = []
+    scheduler.registerHandler('ping', ({ automation, scheduledFor }) => {
+      seen.push({ automationId: automation.id, scheduledFor })
+      return 'handled:ping'
+    })
+    const job = scheduler.createManagedJob({
+      spaceId: HEALTH,
+      cron: '0 8 * * *',
+      description: 'Internal ping',
+      handler: 'ping',
+    })
+
+    clock = new Date('2026-07-09T08:00:00.000Z')
+    await scheduler.runDue()
+
+    expect(seen).toEqual([{ automationId: job.id, scheduledFor: '2026-07-09T08:00:00.000Z' }])
+    expect(scheduler.listAutomations(HEALTH)[0]?.lastOutcome).toBe('handled:ping')
+    // A handler-driven occurrence never falls through to the generic
+    // "Scheduled briefing" escalation.
+    expect(escalations).toEqual([])
+  })
+
+  it('skips (no escalation) a job whose handler is not registered', async () => {
+    const scheduler = createScheduler()
+    scheduler.createManagedJob({
+      spaceId: HEALTH,
+      cron: '0 8 * * *',
+      description: 'Orphaned job',
+      handler: 'does-not-exist',
+    })
+
+    clock = new Date('2026-07-09T08:00:00.000Z')
+    await scheduler.runDue()
+
+    expect(escalations).toEqual([])
+    expect(scheduler.listAutomations(HEALTH)[0]?.lastOutcome).toBe('skipped:unknown-handler')
+    expect(store.eventLog(HEALTH).some((event) => event.type === 'automation.skip')).toBe(true)
+  })
+
+  it('rejects an empty or blank handler, never creating a job that would fall through to the generic briefing escalation', () => {
+    const scheduler = createScheduler()
+    expect(() =>
+      scheduler.createManagedJob({
+        spaceId: HEALTH,
+        cron: '0 8 * * *',
+        description: 'Blank handler',
+        handler: '',
+      }),
+    ).toThrow(/handler/)
+    expect(() =>
+      scheduler.createManagedJob({
+        spaceId: HEALTH,
+        cron: '0 8 * * *',
+        description: 'Whitespace handler',
+        handler: '   ',
+      }),
+    ).toThrow(/handler/)
+    expect(scheduler.listAutomations(HEALTH)).toHaveLength(0)
+  })
+
+  it('round-trips handler and targetSurfaceId through armTimer/createManagedJob and listAutomations', () => {
+    const scheduler = createScheduler()
+    scheduler.registerHandler('noop', () => 'noop')
+
+    const timer = scheduler.armTimer({
+      spaceId: HEALTH,
+      when: '2026-07-08T21:00:00.000Z',
+      action: 'Covering timer',
+      targetSurfaceId: 'srf-covered',
+    })
+    expect(scheduler.listAutomations(HEALTH).find((a) => a.id === timer.id)).toMatchObject({
+      targetSurfaceId: 'srf-covered',
+    })
+    expect(timer.handler).toBeUndefined()
+
+    const job = scheduler.createManagedJob(
+      {
+        spaceId: HEALTH,
+        cron: '0 8 * * *',
+        description: 'Managed',
+        handler: 'noop',
+        targetSurfaceId: 'srf-managed',
+      },
+      'trusted:system',
+    )
+    expect(scheduler.listAutomations(HEALTH).find((a) => a.id === job.id)).toMatchObject({
+      handler: 'noop',
+      targetSurfaceId: 'srf-managed',
+    })
+  })
+})
+
 describe('schema migration', () => {
   it('keeps working against a scheduler.sqlite written before the origin column existed', () => {
     // Simulate a pre-existing database from before this change: the
@@ -562,5 +657,64 @@ describe('schema migration', () => {
     expect(scheduler.listAutomations(HEALTH).find((a) => a.id === armed.id)?.origin).toBe(
       'untrusted:gmail',
     )
+  })
+
+  it('keeps working against a scheduler.sqlite written before the handler/target_surface_id columns existed', () => {
+    // Simulate a database from just before issue #16: `origin` exists, but
+    // `handler`/`target_surface_id` do not yet.
+    const legacyDb = new DatabaseSync(join(rootDir, 'scheduler.sqlite'))
+    legacyDb.exec(`
+      create table automations (
+        id integer primary key autoincrement,
+        kind text not null check (kind in ('timer', 'job')),
+        space_id text not null,
+        description text not null,
+        enabled integer not null default 1,
+        fire_at text,
+        cron text,
+        condition_json text,
+        next_run_at text,
+        status text not null default 'armed'
+          check (status in ('armed', 'completed', 'cancelled')),
+        last_run_at text,
+        last_outcome text,
+        created_at text not null,
+        origin text
+      );
+      create table automation_runs (
+        automation_id integer not null references automations(id),
+        scheduled_for text not null,
+        started_at text not null,
+        outcome text,
+        finished_at text,
+        primary key (automation_id, scheduled_for)
+      );
+      insert into automations
+        (kind, space_id, description, enabled, fire_at, next_run_at, status, created_at, origin)
+        values ('timer', '${HEALTH}', 'Pre-handler reminder', 1, '2026-07-08T21:00:00.000Z',
+                '2026-07-08T21:00:00.000Z', 'armed', '2026-07-08T13:00:00.000Z', 'trusted:system');
+    `)
+    legacyDb.close()
+
+    const scheduler = createScheduler()
+    const legacy = scheduler
+      .listAutomations(HEALTH)
+      .find((a) => a.description === 'Pre-handler reminder')
+    expect(legacy?.handler).toBeUndefined()
+    expect(legacy?.targetSurfaceId).toBeUndefined()
+
+    // Fresh writes on the migrated database round-trip both new columns.
+    scheduler.registerHandler('noop', () => 'noop')
+    const job = scheduler.createManagedJob({
+      spaceId: HEALTH,
+      cron: '0 8 * * *',
+      description: 'Fresh managed job',
+      handler: 'noop',
+      targetSurfaceId: 'srf-fresh',
+    })
+    expect(scheduler.listAutomations(HEALTH).find((a) => a.id === job.id)).toMatchObject({
+      handler: 'noop',
+      targetSurfaceId: 'srf-fresh',
+    })
   })
 })

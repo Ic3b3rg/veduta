@@ -53,6 +53,13 @@ describe('usage map (tierForRequest)', () => {
     }
   })
 
+  it('routes heartbeat-reasoning to reasoning while heartbeat stays triage', () => {
+    expect(tierForRequest({ purpose: 'heartbeat-reasoning', origin: 'proactive' })).toBe(
+      'reasoning',
+    )
+    expect(tierForRequest({ purpose: 'heartbeat', origin: 'proactive' })).toBe('triage')
+  })
+
   it('requires Workers to declare their tier in the briefing', () => {
     expect(
       tierForRequest({

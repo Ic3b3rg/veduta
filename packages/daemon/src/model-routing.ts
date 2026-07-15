@@ -15,6 +15,7 @@ export type CallPurpose =
   | 'mechanical-update'
   | 'quarantined-reader'
   | 'heartbeat'
+  | 'heartbeat-reasoning'
   | 'worker'
 
 export type CallOrigin = 'user' | 'proactive'
@@ -39,7 +40,10 @@ export function tierForRequest(request: RouteRequest): ModelTier {
     }
     return request.workerTier
   }
-  return request.purpose === 'chat-turn' ? 'reasoning' : 'triage'
+  if (request.purpose === 'chat-turn' || request.purpose === 'heartbeat-reasoning') {
+    return 'reasoning'
+  }
+  return 'triage'
 }
 
 export const SecretRefSchema = z

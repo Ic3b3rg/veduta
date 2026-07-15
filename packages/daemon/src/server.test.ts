@@ -69,9 +69,13 @@ describe('GET /api/spaces', () => {
     }
     // Boot pre-creates several cursor-bearing Surfaces (D9): the scheduler's
     // Automations Surface for every persisted Space (health, and now the
-    // real System Space too — issue #14, D8), plus the trust layer's
-    // allowlist and audit admin Surfaces in the System Space.
-    expect(body.surfaceCursor).toBe(4)
+    // real System Space too — issue #14, D8), the trust layer's allowlist
+    // and audit admin Surfaces in the System Space (4 cursor ticks so far),
+    // plus the Heartbeat's boot-time reconciliation (issue #16): two default
+    // heartbeat times each arm a managed job on the System Space's
+    // Automations Surface (a state patch + a tree patch per job, 4 more
+    // ticks), and its own metrics Surface is pre-created (1 more tick).
+    expect(body.surfaceCursor).toBe(9)
     expect(body.spaces.map((s) => s.slug)).toEqual(['health', 'system'])
     for (const surface of body.spaces.flatMap((space) => space.surfaces)) {
       expect(SurfaceSchema.safeParse(surface).success).toBe(true)

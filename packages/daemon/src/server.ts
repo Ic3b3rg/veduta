@@ -29,6 +29,9 @@ import type { ExternalEvent } from './external-event.ts'
 import { promptFullText } from './full-text-flow.ts'
 import { GatewayHub } from './gateway.ts'
 import { CalendarSource, GmailSource, GoogleTokenProvider } from './google-sources.ts'
+import { loadHeartbeatConfig } from './heartbeat-config.ts'
+import { HeartbeatSurfaceManager } from './heartbeat-surface.ts'
+import { Heartbeat } from './heartbeat.ts'
 import { loadIngestionConfig } from './ingestion-config.ts'
 import { MockAgentRunner } from './mock-agent-runner.ts'
 import { mockReaderComplete } from './mock-provider.ts'
@@ -283,6 +286,10 @@ export function buildServer(options: ServerOptions = {}) {
   // answers via the mock provider. It lands with the real Agent loop wiring
   // as router.execute({ purpose: 'classification', origin: 'proactive' })
   // so the daily spending caps govern scheduler judgments too.
+  // Construction only: `scheduler.start()` is deferred until after the
+  // Heartbeat (issue #16) has registered its handler and reconciled its
+  // Automations, further down — the scheduler must never fire a job before
+  // the handler it's for exists.
   const scheduler = new Scheduler({
     rootDir: store.spacesEngine.rootDir,
     store,
@@ -290,8 +297,6 @@ export function buildServer(options: ServerOptions = {}) {
     onEscalation: (_spaceId, text) => gateway.broadcastSystemNotice(text),
     judge: () => 'unknown',
   })
-  scheduler.start()
-  app.addHook('onClose', async () => scheduler.stop())
 
   // The trust layer (issue #14, ADR-0007): the code-level decision
   // authority for every L1/L2 tool call — approval cards, allowlists, the
@@ -410,6 +415,36 @@ export function buildServer(options: ServerOptions = {}) {
       )
     },
   })
+
+  // The Heartbeat (issue #16, ADR-0005): the daemon's own proactivity loop,
+  // twice a day by default. It needs the ModelRouter above (triage/reasoning
+  // calls go through the same daily spending caps as everything else) and
+  // must register its handler and reconcile its Automations before
+  // `scheduler.start()` fires anything.
+  const heartbeatConfig = loadHeartbeatConfig(store.spacesEngine.rootDir)
+  const heartbeat = new Heartbeat({
+    store,
+    scheduler,
+    router,
+    config: heartbeatConfig,
+    now,
+    // Dev stub, same rationale as the scheduler.judge stub and the mock
+    // quarantined reader: the real Agent-loop wiring replaces this with a
+    // live triage/reasoning completion.
+    complete: () => Promise.resolve({ text: '{"status":"nothing"}' }),
+    onEscalation: (_spaceId, text) => gateway.broadcastSystemNotice(text),
+    onSwept: () => heartbeatSurfaces.refresh(),
+  })
+  const heartbeatSurfaces = new HeartbeatSurfaceManager({ store, heartbeat })
+  heartbeat.register()
+  heartbeat.reconcileJobs()
+  heartbeatSurfaces.start()
+  scheduler.start()
+  app.addHook('onClose', async () => {
+    scheduler.stop()
+    heartbeatSurfaces.dispose()
+  })
+
   const pwaDistDir = options.pwaDistDir ?? defaultPwaDistDir
   const lockout = new ProgressiveAuthLockout()
 

@@ -75,6 +75,10 @@ export interface Automation {
   createdAt: string
   /** Origin of the turn that created this Automation. Absent = legacy = trusted:system. */
   origin?: Origin
+  /** Names a registered internal handler (issue #16); absent for ordinary user jobs/timers. */
+  handler?: string
+  /** The Surface this timer/job covers, if any. */
+  targetSurfaceId?: string
 }
 
 export interface SchedulerOptions {
@@ -97,6 +101,8 @@ const ArmTimerSchema = z.object({
   when: z.string().datetime({ offset: true }),
   condition: ConditionSchema.optional(),
   action: z.string().trim().min(1),
+  /** The Surface this timer covers, if any (issue #16). */
+  targetSurfaceId: z.string().min(1).optional(),
 })
 
 const CreateJobSchema = z.object({
@@ -121,6 +127,11 @@ export class Scheduler {
   private running = false
   /** The run loop is armed only between start() and stop(). */
   private stopped = true
+  /** Registered daemon-owned Automation handlers (issue #16), keyed by `Automation.handler`. */
+  private readonly handlers = new Map<
+    string,
+    (ctx: { automation: Automation; scheduledFor: string }) => Promise<string> | string
+  >()
 
   constructor(options: SchedulerOptions) {
     this.db = new DatabaseSync(join(options.rootDir, 'scheduler.sqlite'))
@@ -168,6 +179,7 @@ export class Scheduler {
       fireAt,
       nextRunAt: fireAt,
       ...(parsed.condition === undefined ? {} : { condition: parsed.condition }),
+      ...(parsed.targetSurfaceId === undefined ? {} : { targetSurfaceId: parsed.targetSurfaceId }),
       ...(origin === undefined ? {} : { origin }),
     })
     this.appendEvent(
@@ -209,6 +221,69 @@ export class Scheduler {
     this.refreshSurface(parsed.spaceId)
     this.schedule()
     return automation
+  }
+
+  /**
+   * Internal-only counterpart to `createJob` (issue #16): creates a job
+   * wired to a registered handler instead of the generic "briefing"
+   * escalation. Deliberately not exposed as an Agent tool or through
+   * `CreateJobSchema` — only daemon code may create handler-driven jobs.
+   */
+  createManagedJob(
+    input: {
+      spaceId: string
+      cron: string
+      description: string
+      handler: string
+      targetSurfaceId?: string
+    },
+    origin?: Origin,
+  ): Automation {
+    const handler = input.handler.trim()
+    // An empty/blank handler must never reach a row: a job with no
+    // registered handler falls through `executeOccurrence` to the
+    // generic "Scheduled briefing" escalation, silently losing the
+    // handler-driven behavior the caller intended.
+    if (!handler) throw new Error('createManagedJob requires a non-empty handler name')
+
+    this.requireSpace(input.spaceId)
+    parseCron(input.cron)
+    const nextRunAt = nextCronOccurrence(input.cron, this.now()).toISOString()
+
+    const automation = this.insertAutomation({
+      kind: 'job',
+      spaceId: input.spaceId,
+      description: input.description,
+      cron: input.cron,
+      nextRunAt,
+      handler,
+      ...(input.targetSurfaceId === undefined ? {} : { targetSurfaceId: input.targetSurfaceId }),
+      ...(origin === undefined ? {} : { origin }),
+    })
+    this.appendEvent(
+      input.spaceId,
+      'automation.arm',
+      `Created job "${input.description}" (cron ${input.cron}, next ${nextRunAt})`,
+      { automationId: automation.id },
+      origin,
+    )
+    this.refreshSurface(input.spaceId)
+    this.schedule()
+    return automation
+  }
+
+  /**
+   * Registers a daemon-owned Automation handler by name (issue #16): a
+   * managed job's `handler` field looks up its function here at occurrence
+   * time. This file is generic — it knows nothing about what any
+   * registered handler does; the returned string becomes the occurrence
+   * outcome, same as any other automation.
+   */
+  registerHandler(
+    name: string,
+    fn: (ctx: { automation: Automation; scheduledFor: string }) => Promise<string> | string,
+  ): void {
+    this.handlers.set(name, fn)
   }
 
   cancel(automationId: number, origin?: Origin): Automation {
@@ -379,6 +454,21 @@ export class Scheduler {
       )
       this.onEscalation?.(automation.spaceId, text)
       return 'skipped:overdue'
+    }
+
+    if (automation.handler) {
+      const handler = this.handlers.get(automation.handler)
+      if (!handler) {
+        this.appendEvent(
+          automation.spaceId,
+          'automation.skip',
+          `Automation "${automation.description}" was due but its handler "${automation.handler}" is not registered — not run`,
+          { automationId: automation.id, scheduledFor },
+          firingOrigin,
+        )
+        return 'skipped:unknown-handler'
+      }
+      return await handler({ automation, scheduledFor })
     }
 
     if (await this.conditionSatisfied(automation, scheduledFor)) {
@@ -658,12 +748,14 @@ export class Scheduler {
     condition?: Condition
     nextRunAt: string
     origin?: Origin
+    handler?: string
+    targetSurfaceId?: string
   }): Automation {
     const result = this.db
       .prepare(
         `insert into automations
-           (kind, space_id, description, enabled, fire_at, cron, condition_json, next_run_at, status, created_at, origin)
-         values (?, ?, ?, 1, ?, ?, ?, ?, 'armed', ?, ?)`,
+           (kind, space_id, description, enabled, fire_at, cron, condition_json, next_run_at, status, created_at, origin, handler, target_surface_id)
+         values (?, ?, ?, 1, ?, ?, ?, ?, 'armed', ?, ?, ?, ?)`,
       )
       .run(
         input.kind,
@@ -675,6 +767,8 @@ export class Scheduler {
         input.nextRunAt,
         this.nowIso(),
         input.origin ?? null,
+        input.handler ?? null,
+        input.targetSurfaceId ?? null,
       )
     return this.requireAutomation(Number(result.lastInsertRowid))
   }
@@ -728,7 +822,9 @@ export class Scheduler {
         last_run_at text,
         last_outcome text,
         created_at text not null,
-        origin text
+        origin text,
+        handler text,
+        target_surface_id text
       );
       create index if not exists automations_due
         on automations (status, next_run_at);
@@ -746,6 +842,10 @@ export class Scheduler {
     // existed must keep working — `create table if not exists` above only
     // applies to a fresh database, so an existing one is migrated here.
     this.ensureColumn('automations', 'origin', 'text')
+    // Same defensive migration for the handler-registry columns (issue #16):
+    // a pre-existing database predates them and must keep working.
+    this.ensureColumn('automations', 'handler', 'text')
+    this.ensureColumn('automations', 'target_surface_id', 'text')
   }
 
   /** Adds `column` to `table` if an existing (pre-migration) database lacks it. */
@@ -788,6 +888,8 @@ function automationFromRow(row: Record<string, unknown>): Automation {
   // on a legacy database not yet migrated; either way, absent = trusted.
   const originValue = optionalString(row, 'origin')
   const origin = originValue !== undefined && isValidOrigin(originValue) ? originValue : undefined
+  const handler = optionalString(row, 'handler')
+  const targetSurfaceId = optionalString(row, 'target_surface_id')
   if (status !== 'armed' && status !== 'completed' && status !== 'cancelled') {
     throw new Error(`unexpected automation status: ${status}`)
   }
@@ -806,6 +908,8 @@ function automationFromRow(row: Record<string, unknown>): Automation {
     ...(lastRunAt === undefined ? {} : { lastRunAt }),
     ...(lastOutcome === undefined ? {} : { lastOutcome }),
     ...(origin === undefined ? {} : { origin }),
+    ...(handler === undefined ? {} : { handler }),
+    ...(targetSurfaceId === undefined ? {} : { targetSurfaceId }),
     ...(conditionJson === undefined
       ? {}
       : { condition: ConditionSchema.parse(JSON.parse(conditionJson)) }),
