@@ -17,11 +17,13 @@ A Space's injected FACTS projection is bounded and deterministic, no valid fact 
 ## Tasks
 
 ### Dormant tier (amends ADR-0006 + CONTEXT.md)
+
 - Add a third FACTS state: `active | dormant | superseded`. **Dormant** = valid, kept on disk, **not injected**, retrieved on demand. It is not `superseded` (not replaced) and never deleted — so it is not destructive forgetting.
 - `factsForContext`/`assembleContext` inject only the **hot active set** plus a bounded tail of recent supersessions; dormant and older superseded stay on disk.
 - Amend `docs/adr/0006-file-based-memory.md` and the FACTS entry in `CONTEXT.md` to define the dormant state and the working-set/demand-paging model.
 
 ### Context budget (watermarks + backstop) — FACTS only
+
 - Two watermarks with hysteresis over the **rendered** active projection (facts + dates + origin labels + spotlighting wrappers, not raw text): `low` (target after compaction) / `high` (marks a pending Reflection) / `hard` (backstop). Defaults, tunable: low ~4000 / high ~6000 / hard ~8000 characters. Define the unit explicitly (UTF-16 code units) and calibrate against the rendered projection.
 - Over `high`: flag a pending Reflection ([#21](021-advanced-memory.md) demotes least-relevant valid facts to dormant — the escape valve that makes rejection rare). Between reflections the set may exceed `high`; it must never silently drop injected facts.
 - Over `hard`: `write_fact` returns an explicit tool error (never truncates the injected copy).
@@ -30,10 +32,12 @@ A Space's injected FACTS projection is bounded and deterministic, no valid fact 
 - Boot/restore migration for FACTS files already over `hard`: audit at load, persistent user-visible warning, allow Noop and size-reducing writes while over cap, flag excess for demotion to dormant on the next Reflection.
 
 ### Provenance-aware FACTS retrieval (the recovery path — must ship with the truncation)
+
 - A `search_facts`-style retrieval over active + dormant + superseded that **dereferences the original FACTS record**, returns its origins, and **grows the turn's live taint** on every hit. Truncation of the injected superseded set is only safe once this exists.
 - Rendering and origin selection go through **one shared projection** so what is injected and what taints the turn cannot diverge.
 
 ### Write-path security hardening (pre-existing gaps this work depends on)
+
 - **Live-taint into writes**: `write_fact` and `append_event` must derive their write origin from the live taint accumulator at execution time (conservatively pick an untrusted origin when present), not the origin fixed at turn start. Prevents laundering an `untrusted:*` fact into a `trusted:system` record readable clean next session.
 - **Secret redaction in `writeFact`**: reach parity with `appendEvent` — reject/redact recognized credentials before Curator comparison and persistence, with a user-visible explanation. Covers plain and hidden-character-split key shapes.
 - **Unicode hard-gate at a central persistence boundary, before redaction**: extract the quarantined-reader's `stripHiddenChars` into a shared module and apply it at persistence for FACTS **and** every Event log field/payload leaf and key (deep traversal), routing every FACTS rewrite (including `mergeSpaces`) through one validated helper. Ordering matters: strip hidden characters before secret redaction so `sk-<zero-width>...` cannot evade the regex. Specify exactly which code points are forbidden and whether writes reject or transform; **preserve** legitimate joiners (ZWNJ/ZWJ U+200C/U+200D) needed for Persian/Indic/emoji. Claim: "injection-corpus characters never persist", not "all invisible Unicode eliminated". For legacy append-only logs, sanitize at render/index time (never rewrite provenance).
@@ -50,4 +54,4 @@ A Space's injected FACTS projection is bounded and deterministic, no valid fact 
 
 ## Dependencies
 
-006. (Enables the budget compaction in 021, which demotes valid facts to dormant; 021 depends on this issue.)
+6. (Enables the budget compaction in 021, which demotes valid facts to dormant; 021 depends on this issue.)
