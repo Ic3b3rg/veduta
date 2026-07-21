@@ -6,6 +6,7 @@ import {
   ActionInvocationSchema,
   OneTimeCodeSchema,
   PairingCodeSchema,
+  PushSubscriptionSchema,
   WebAuthnOptionsEnvelopeSchema,
 } from '@veduta/protocol'
 import type { FastifyReply, FastifyRequest } from 'fastify'
@@ -42,7 +43,11 @@ import {
   loadRoutingConfig,
   type SecretResolver,
 } from './model-routing.ts'
+import { NotificationCenter } from './notification-center.ts'
+import { NotificationSettingsSurfaceManager } from './notification-settings-surface.ts'
+import { loadNotificationsConfig } from './notifications-config.ts'
 import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
+import { PushStore } from './push-store.ts'
 import { QuarantinedReader } from './quarantined-reader.ts'
 import { defaultRedactor } from './redaction.ts'
 import { Scheduler } from './scheduler.ts'
@@ -59,6 +64,12 @@ import { Store, SurfaceActionError } from './store.ts'
 import { appendSystemSurface, ensureSystemSpace } from './system-space.ts'
 import { isTrustWrapped, TrustLayer } from './trust-layer.ts'
 import { usageSurface } from './usage-surface.ts'
+import {
+  ensureVapidKeys,
+  isAllowedPushEndpoint,
+  WebPushTransport,
+  type PushTransport,
+} from './web-push-transport.ts'
 import { truncateGoalLabel, WorkerBriefingSchema } from './worker-briefing.ts'
 import { WorkerPool } from './worker.ts'
 
@@ -84,6 +95,8 @@ const LoginVerifyBodySchema = RegistrationVerifyBodySchema.extend({
   deviceName: DeviceNameSchema.optional(),
 })
 
+const PushSubscriptionDeleteBodySchema = z.object({ endpoint: z.string().min(1) })
+
 export interface ServerOptions {
   pwaDistDir?: string
   dataDir?: string
@@ -98,6 +111,13 @@ export interface ServerOptions {
    * suite must never get a global denying dispatcher by default.
    */
   egress?: { enforce?: boolean; extraAllow?: readonly string[] }
+  /**
+   * Injectable Web Push transport (issue #18): tests and a future dev
+   * profile inject a recording fake so no real push service is ever
+   * contacted. Defaults to `WebPushTransport` with the daemon's own
+   * generated-or-loaded VAPID keypair.
+   */
+  pushTransport?: PushTransport
 }
 
 export type ServerAuthOptions =
@@ -202,9 +222,12 @@ export function assembleEgressPolicy(input: {
     const raw: unknown = JSON.parse(readFileSync(egressJsonPath, 'utf8'))
     policy.allow(EgressConfigSchema.parse(raw).allow)
   }
-  // Push service host (issue #18, not yet built): this is the assembly
-  // point for that allowlist entry once the push service lands — nothing
-  // else about this function needs to change.
+  // Push service hosts (issue #18) are deliberately absent from this
+  // policy: `web-push` calls `https.request` directly, bypassing the
+  // Undici dispatcher this policy installs into, so it cannot be the
+  // enforcement point for push egress. That enforcement lives in
+  // `web-push-transport.ts`'s static `isAllowedPushEndpoint` allowlist,
+  // checked both at subscribe time and again before every send.
   return policy
 }
 
@@ -290,6 +313,54 @@ export function buildServer(options: ServerOptions = {}) {
           onFullTextRequest,
         },
   )
+
+  // Web Push notifications (issue #18, plan v2 decisions 1-14): the
+  // daemon's one choke point for surfacing anything to the user outside a
+  // Surface's own patches. Built before the Scheduler/Heartbeat below so
+  // both can wire their escalations straight into it. VAPID keys are
+  // generated-or-loaded once here regardless of whether `options.pushTransport`
+  // overrides the transport itself, so `GET /api/push/vapid-public-key`
+  // always answers with the daemon's real key.
+  const pushStore = new PushStore({ rootDir: store.spacesEngine.rootDir })
+  const notificationsConfig = loadNotificationsConfig(store.spacesEngine.rootDir)
+  const vapid = ensureVapidKeys(store.spacesEngine.rootDir)
+  const pushTransport: PushTransport = options.pushTransport ?? new WebPushTransport({ vapid })
+  const notificationCenter = new NotificationCenter({
+    store,
+    pushStore,
+    transport: pushTransport,
+    config: notificationsConfig,
+    now,
+    onAttention: (spaceId, count, revision) =>
+      gateway.broadcastSpaceAttention(spaceId, count, revision),
+    // Late-binding reference, same idiom as `heartbeat`/`heartbeatSurfaces`
+    // below: `notificationSettings` is declared right after this
+    // constructor call, but `onStats` is never invoked before both exist.
+    onStats: () => notificationSettings.refresh(),
+  })
+  const notificationSettings = new NotificationSettingsSurfaceManager({
+    store,
+    source: notificationCenter,
+    rootDir: store.spacesEngine.rootDir,
+    onConfigChanged: (config) => notificationCenter.updateConfig(config),
+    now,
+  })
+  // Device lifecycle (plan v2 decision 11): a revoked device's push
+  // subscriptions must not keep receiving pushes. Only the production
+  // profile has a real AuthStore to revoke sessions on.
+  const disposePushRevocationListener =
+    auth.mode === 'production'
+      ? auth.store.onSessionRevoked((event) =>
+          pushStore.deleteSubscriptionsByDevice(event.deviceId),
+        )
+      : undefined
+  app.addHook('onClose', async () => {
+    disposePushRevocationListener?.()
+    notificationCenter.dispose()
+    notificationSettings.dispose()
+    pushStore.close()
+  })
+
   // The scheduler (issue #11): timers and jobs fire as visible Automations.
   // The judgment path stays a deterministic "unknown" (fail-safe: escalate)
   // stub because the daemon has no provider client yet — chat itself still
@@ -304,7 +375,34 @@ export function buildServer(options: ServerOptions = {}) {
     rootDir: store.spacesEngine.rootDir,
     store,
     now,
-    onEscalation: (_spaceId, text) => gateway.broadcastSystemNotice(text),
+    onEscalation: (spaceId, text, context) => {
+      gateway.broadcastSystemNotice(text)
+      // Daemon-managed handler jobs carry no Agent decision — attributing
+      // an "Agent-armed" justification to them would fabricate provenance
+      // (plan v2 decision 2), so they surface as a badge, never a push.
+      if (context?.managed) {
+        notificationCenter.notify({
+          level: 'badge',
+          spaceId,
+          text,
+          ...(context.origin ? { origin: context.origin } : {}),
+        })
+        return
+      }
+      // Timer escalations are always urgent (plan v2 decision 2): the
+      // Agent's explicit act of arming the timer is the decision, and the
+      // justification traces straight back to it.
+      notificationCenter.notify({
+        level: 'push',
+        spaceId,
+        text,
+        urgent: true,
+        justification: `Agent-armed timer reached its deadline unsatisfied: ${text}`,
+        ...(context?.surfaceId ? { surfaceId: context.surfaceId } : {}),
+        ...(context?.origin ? { origin: context.origin } : {}),
+        ...(context?.automationId !== undefined ? { automationId: context.automationId } : {}),
+      })
+    },
     judge: () => 'unknown',
   })
 
@@ -456,13 +554,40 @@ export function buildServer(options: ServerOptions = {}) {
     // quarantined reader: the real Agent-loop wiring replaces this with a
     // live triage/reasoning completion.
     complete: () => Promise.resolve({ text: '{"status":"nothing"}' }),
-    onEscalation: (_spaceId, text) => gateway.broadcastSystemNotice(text),
+    onEscalation: (spaceId, text, context) => {
+      gateway.broadcastSystemNotice(text)
+      // Heartbeat escalations are never urgent (plan v2 decision 2). The
+      // triage model's own justification is the only acceptable one — the
+      // daemon never fabricates a substitute. Should an escalation arrive
+      // without one (schema-invalid fixtures, older data), it degrades to
+      // a badge rather than pushing on fabricated provenance.
+      const justification = context?.justification
+      if (justification === undefined) {
+        notificationCenter.notify({
+          level: 'badge',
+          spaceId,
+          text,
+          ...(context?.origin ? { origin: context.origin } : {}),
+        })
+        return
+      }
+      notificationCenter.notify({
+        level: 'push',
+        spaceId,
+        text,
+        justification,
+        ...(context?.surfaceId ? { surfaceId: context.surfaceId } : {}),
+        ...(context?.origin ? { origin: context.origin } : {}),
+      })
+    },
     onSwept: () => heartbeatSurfaces.refresh(),
   })
   const heartbeatSurfaces = new HeartbeatSurfaceManager({ store, heartbeat })
   heartbeat.register()
   heartbeat.reconcileJobs()
   heartbeatSurfaces.start()
+  notificationSettings.start()
+  notificationCenter.start()
   scheduler.start()
   app.addHook('onClose', async () => {
     scheduler.stop()
@@ -783,10 +908,19 @@ export function buildServer(options: ServerOptions = {}) {
   })
 
   app.get('/api/spaces', (request) => {
-    const snapshot = appendSystemSurface(
+    const rawSnapshot = appendSystemSurface(
       store.snapshot(),
       usageSurface(router.usage(), new Date().toISOString()),
     )
+    // Attention (issue #18, plan v2 decision 12): PushStore is the source of
+    // truth (0/0 default for a Space `notify()` has never touched).
+    const snapshot = {
+      ...rawSnapshot,
+      spaces: rawSnapshot.spaces.map((space) => {
+        const attention = pushStore.getAttention(space.id)
+        return { ...space, attention: attention.count, attentionRevision: attention.revision }
+      }),
+    }
     if (auth.mode !== 'production') return snapshot
     const token = extractBearer(request.headers.authorization)
     return token ? appendConnectedDevicesSurface(snapshot, auth.store.listDevices(token)) : snapshot
@@ -798,6 +932,70 @@ export function buildServer(options: ServerOptions = {}) {
       return reply.status(404).send({ error: `unknown space: ${spaceId}` })
     }
     return { events: store.eventLog(spaceId) }
+  })
+
+  // Web Push routes (issue #18): auth-gated by the same `onRequest` hook as
+  // every other `/api/*` route above — deliberately NOT added to
+  // `isPublicUnauthenticatedPath`, so a production deployment requires a
+  // passkey session for all four.
+  app.get('/api/push/vapid-public-key', () => ({ publicKey: vapid.publicKey }))
+
+  app.post('/api/push/subscriptions', (request, reply) => {
+    const parsed = PushSubscriptionSchema.safeParse(request.body)
+    if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
+    if (!isAllowedPushEndpoint(parsed.data.endpoint)) {
+      return reply
+        .status(422)
+        .send({ error: 'push subscription endpoint host is not on the allowed push-service list' })
+    }
+    // Upsert by endpoint replaces any previous device binding (plan v2
+    // decision 11): one subscription per endpoint, a device may hold several
+    // (one per browser/profile). Dev profile (no auth): deviceId stays NULL.
+    const deviceId =
+      auth.mode === 'production'
+        ? auth.store.verifySession(extractBearer(request.headers.authorization))?.device.id
+        : undefined
+    pushStore.upsertSubscription({
+      endpoint: parsed.data.endpoint,
+      p256dh: parsed.data.keys.p256dh,
+      auth: parsed.data.keys.auth,
+      ...(deviceId === undefined ? {} : { deviceId }),
+    })
+    return reply.status(204).send()
+  })
+
+  app.delete('/api/push/subscriptions', (request, reply) => {
+    const parsed = PushSubscriptionDeleteBodySchema.safeParse(request.body)
+    if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
+    if (auth.mode === 'production') {
+      const deviceId = auth.store.verifySession(extractBearer(request.headers.authorization))
+        ?.device.id
+      const subscription = pushStore
+        .listSubscriptions()
+        .find((candidate) => candidate.endpoint === parsed.data.endpoint)
+      // A subscription bound to a different (or no) device may not be
+      // deleted by this caller; an already-gone subscription is a no-op.
+      if (subscription && subscription.deviceId !== deviceId) {
+        return reply.status(403).send({ error: 'subscription does not belong to this device' })
+      }
+    }
+    // Dev profile (no auth): unscoped delete by endpoint, documented.
+    pushStore.deleteSubscription(parsed.data.endpoint)
+    return reply.status(204).send()
+  })
+
+  app.post('/api/spaces/:spaceId/attention/seen', (request, reply) => {
+    const { spaceId } = request.params as { spaceId: string }
+    if (!store.getSpace(spaceId)) {
+      return reply.status(404).send({ error: `unknown space: ${spaceId}` })
+    }
+    // `markSeen` is the no-silent-mutations gate (AGENTS.md): it appends a
+    // `notification.seen` Space event, and broadcasts via `onAttention`
+    // (wired to `gateway.broadcastSpaceAttention` above), only when the
+    // count actually changes. A zero-to-zero clear returns the unchanged
+    // current value instead.
+    const result = notificationCenter.markSeen(spaceId) ?? pushStore.getAttention(spaceId)
+    return { count: result.count, revision: result.revision }
   })
 
   app.post('/api/surfaces/:surfaceId/actions', (request, reply) => {
@@ -915,6 +1113,9 @@ export function buildServer(options: ServerOptions = {}) {
     auditSurfaces,
     workerPool,
     egress,
+    pushStore,
+    notificationCenter,
+    notificationSettings,
   }
 }
 

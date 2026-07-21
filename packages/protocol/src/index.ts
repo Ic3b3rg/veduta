@@ -78,3 +78,9 @@ export {
   findDeclaredFastAction,
   findDeclaredAgentAction,
 } from './tree.ts'
+export {
+  PushSubscriptionSchema,
+  PushPayloadSchema,
+  type PushSubscription,
+  type PushPayload,
+} from './notification.ts'

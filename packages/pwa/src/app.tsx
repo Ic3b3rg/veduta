@@ -1,11 +1,13 @@
 import type { ApprovalCard, ChatMessage, Surface } from '@veduta/protocol'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApprovalCards, dismissCardsForSurface } from './approval-cards.tsx'
+import { AttentionBadge } from './attention-badge.tsx'
 import {
   connectGateway,
   fetchAuthStatus,
   fetchSpaces,
   invokeFastAction,
+  markSpaceAttentionSeen,
   type GatewayConnection,
   type SpaceWithSurfaces,
 } from './api.ts'
@@ -13,8 +15,10 @@ import { AuthGate } from './auth-gate.tsx'
 import { ChatBar } from './chat-bar.tsx'
 import {
   applyBufferedSurfaceStreamEvents,
+  applySpaceAttention,
   applySurfaceStreamEvent,
   cachedSnapshot,
+  mergeSpaceAttention,
   mergeSurfaceOrder,
   moveSurfaceId,
   parseSurfaceDeepLink,
@@ -23,6 +27,7 @@ import {
   type SurfaceStreamEvent,
 } from './home-state.ts'
 import { InstallButton } from './install-button.tsx'
+import { NotificationBell } from './notification-bell.tsx'
 import {
   AUTH_TOKEN_KEY,
   CHAT_HISTORY_LIMIT,
@@ -41,6 +46,7 @@ import {
   type BrowserInstallPromptEvent,
   type QueuedFastAction,
 } from './pwa-storage.ts'
+import { syncPush } from './push.ts'
 import { SpaceSection } from './space-section.tsx'
 import './app.css'
 
@@ -131,8 +137,12 @@ export function App() {
         bufferedStreamEventsRef.current = []
         refetchingRef.current = false
 
+        // Revision-wins (home-state.ts): a space.attention frame may have
+        // landed on spacesRef.current while this refetch was in flight —
+        // the refetched snapshot must not clobber it with a stale count.
+        const reconciled = mergeSpaceAttention(snapshot.spaces, spacesRef.current)
         const replay = applyBufferedSurfaceStreamEvents(
-          snapshot.spaces,
+          reconciled,
           snapshot.surfaceCursor,
           buffered,
         )
@@ -206,6 +216,13 @@ export function App() {
           reconnectDelay = 1000
           setGatewayOnline(true)
           setError(null)
+          // space.attention frames carry no cursor, so an attention update
+          // broadcast while this client was disconnected leaves no trace to
+          // replay. A hello-triggered refetch is the recovery path: it's
+          // safe because refetchAndReplay's revision-wins merge
+          // (mergeSpaceAttention) never lets the refetched snapshot clobber
+          // a newer attention count already applied locally.
+          refetchAndReplay()
         },
         onSurfacePatch(event) {
           handleSurfaceStreamEvent({ type: 'surface.patch', event })
@@ -226,6 +243,9 @@ export function App() {
         },
         onPresence() {
           // Presence is part of the Gateway protocol; device detail lives in the linked devices Surface.
+        },
+        onSpaceAttention(message) {
+          replaceSpaces(applySpaceAttention(spacesRef.current, message))
         },
         onError: setError,
         onClose: scheduleReconnect,
@@ -261,7 +281,7 @@ export function App() {
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
       gatewayRef.current?.close()
     }
-  }, [handleSurfaceStreamEvent, appendChatEntry, authToken, replaceSpaces])
+  }, [handleSurfaceStreamEvent, appendChatEntry, authToken, replaceSpaces, refetchAndReplay])
 
   useEffect(() => {
     if (!gatewayOnline || queuedChat.length === 0) return
@@ -310,28 +330,77 @@ export function App() {
     }
   }, [authToken, gatewayOnline, queuedFastActions, replaceSurface])
 
+  // The single parser for "current URL -> focused Space/Surface": popstate
+  // (back/forward) and the service-worker 'navigate' message (below) both
+  // call this instead of duplicating the parsing logic.
+  const applyLocation = useCallback(() => {
+    const link = parseSurfaceDeepLink(location.pathname)
+    const space = link
+      ? spacesRef.current.find((candidate) => candidate.slug === link.spaceSlug)
+      : undefined
+    if (!link || !space) {
+      // Back to a non-Surface URL (e.g. "/") returns chat to global scope.
+      setFocusedSpaceId(undefined)
+      setFocusedSurfaceId(undefined)
+      return
+    }
+    setFocusedSpaceId(space.id)
+    setFocusedSurfaceId(link.surfaceId)
+    setFocusChatToken((value) => value + 1)
+  }, [])
+
   const spacesLoaded = spaces.length > 0
   useEffect(() => {
-    const applyLocation = () => {
-      const link = parseSurfaceDeepLink(location.pathname)
-      const space = link
-        ? spacesRef.current.find((candidate) => candidate.slug === link.spaceSlug)
-        : undefined
-      if (!link || !space) {
-        // Back to a non-Surface URL (e.g. "/") returns chat to global scope.
-        setFocusedSpaceId(undefined)
-        setFocusedSurfaceId(undefined)
-        return
-      }
-      setFocusedSpaceId(space.id)
-      setFocusedSurfaceId(link.surfaceId)
-      setFocusChatToken((value) => value + 1)
-    }
-
     window.addEventListener('popstate', applyLocation)
     if (spacesLoaded) applyLocation()
     return () => window.removeEventListener('popstate', applyLocation)
-  }, [spacesLoaded])
+  }, [spacesLoaded, applyLocation])
+
+  // A push notification click (public/service-worker.js) posts this message
+  // to an already-open client instead of always opening a new tab; routing
+  // it through history.pushState + applyLocation keeps a single code path
+  // with the popstate/deep-link handling above.
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return
+
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: unknown; url?: unknown } | undefined
+      if (data?.type !== 'navigate' || typeof data.url !== 'string') return
+      history.pushState(null, '', data.url)
+      applyLocation()
+    }
+
+    navigator.serviceWorker.addEventListener('message', onMessage)
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage)
+  }, [applyLocation])
+
+  // Re-registers an already-granted push subscription at boot and on every
+  // login/token change (D15): keeps the daemon's push store fresh after
+  // e.g. a data-dir reset, and re-associates the subscription with the
+  // right user once `authToken` settles instead of only firing once at boot
+  // with whatever was in storage at first render.
+  useEffect(() => {
+    void syncPush(authToken ?? null)
+  }, [authToken])
+
+  // Clearing the attention badge is a fast-path mutation (AGENTS.md: every
+  // mutation appends to the Event log) — fire it whenever focus lands on a
+  // Space that still has attention, whether via a click (focusSpace) or a
+  // deep link/popstate/SW-navigate (all of which go through applyLocation
+  // above and land here via focusedSpaceId).
+  useEffect(() => {
+    if (!focusedSpaceId) return
+    const space = spacesRef.current.find((candidate) => candidate.id === focusedSpaceId)
+    if (!space || space.attention <= 0) return
+
+    markSpaceAttentionSeen(focusedSpaceId, authToken)
+      .then(({ count, revision }) => {
+        replaceSpaces(
+          applySpaceAttention(spacesRef.current, { spaceId: focusedSpaceId, count, revision }),
+        )
+      })
+      .catch(() => undefined)
+  }, [focusedSpaceId, authToken, replaceSpaces])
 
   // Undefined until the user (or a deep link) picks a Space: chat stays
   // global instead of silently pre-routing to the first Space.
@@ -388,6 +457,7 @@ export function App() {
             {gatewayOnline ? 'Live' : 'Offline-ready'}
           </span>
           {queuedCount > 0 && <span className="status-pill pending">{queuedCount} queued</span>}
+          <NotificationBell token={authToken} />
           {showInstallGuide && (
             <InstallButton
               prompt={installPrompt}
@@ -416,7 +486,10 @@ export function App() {
               onClick={() => focusSpace(space)}
             >
               <span>{space.name}</span>
-              <span className="space-badge">{space.surfaces.length}</span>
+              <span className="badge-group">
+                <AttentionBadge count={space.attention} />
+                <span className="space-badge">{space.surfaces.length}</span>
+              </span>
             </button>
           ))}
         </aside>

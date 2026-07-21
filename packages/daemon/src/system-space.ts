@@ -48,5 +48,11 @@ export function appendSystemSurface(snapshot: SurfaceSnapshot, surface: Surface)
     name: 'System',
     archived: false,
   })
-  return { ...snapshot, spaces: [...snapshot.spaces, { ...systemSpace, surfaces: [surface] }] }
+  return {
+    ...snapshot,
+    spaces: [
+      ...snapshot.spaces,
+      { ...systemSpace, surfaces: [surface], attention: 0, attentionRevision: 0 },
+    ],
+  }
 }

@@ -157,6 +157,53 @@ export function applySurfaceStreamEvent(
   }
 }
 
+// Attention badge (ADR decision 12): the daemon's `space.attention` WS frame
+// and the `/api/spaces` snapshot can race (e.g. a snapshot refetch triggered
+// by an unrelated Surface event lands after a newer WS frame already bumped
+// the badge). Both merge points below apply REVISION-WINS: a frame only
+// takes effect when its revision is strictly newer than what's already held,
+// so a stale refetch can never claw back a badge to an older count.
+
+export interface SpaceAttentionFrame {
+  spaceId: string
+  count: number
+  revision: number
+}
+
+export function applySpaceAttention(
+  spaces: SpaceWithSurfaces[],
+  frame: SpaceAttentionFrame,
+): SpaceWithSurfaces[] {
+  return spaces.map((space) => {
+    if (space.id !== frame.spaceId) return space
+    if (frame.revision <= space.attentionRevision) return space
+    return { ...space, attention: frame.count, attentionRevision: frame.revision }
+  })
+}
+
+/**
+ * Reconciles a freshly-fetched snapshot against the attention state already
+ * held in memory: per Space, whichever side has the higher
+ * `attentionRevision` wins. Used after `/api/spaces` refetches so a WS
+ * `space.attention` frame that arrived while the refetch was in flight isn't
+ * clobbered by the (now stale) snapshot response.
+ */
+export function mergeSpaceAttention(
+  freshSpaces: SpaceWithSurfaces[],
+  previousSpaces: SpaceWithSurfaces[],
+): SpaceWithSurfaces[] {
+  const previousById = new Map(previousSpaces.map((space) => [space.id, space]))
+  return freshSpaces.map((space) => {
+    const previous = previousById.get(space.id)
+    if (!previous || previous.attentionRevision <= space.attentionRevision) return space
+    return {
+      ...space,
+      attention: previous.attention,
+      attentionRevision: previous.attentionRevision,
+    }
+  })
+}
+
 /**
  * Replays stream events buffered while a snapshot refetch was in flight
  * (D9/R2-M2): events are applied in cursor order and events at or below the

@@ -10,7 +10,15 @@ import {
 } from '@veduta/protocol'
 import { describe, expect, it, vi } from 'vitest'
 import { AuthStore, type PasskeyRelyingParty, type StoredPasskey } from './auth-store.ts'
+import { NOTIFICATION_SETTINGS_SURFACE_ID } from './notification-settings-surface.ts'
+import { NotificationsConfigSchema, saveNotificationsConfig } from './notifications-config.ts'
 import { buildServer } from './server.ts'
+import type {
+  PushPayload,
+  PushSendResult,
+  PushSubscriptionInput,
+  PushTransport,
+} from './web-push-transport.ts'
 import { signBody } from './webhook-verify.ts'
 
 describe('PWA static assets', () => {
@@ -74,8 +82,10 @@ describe('GET /api/spaces', () => {
     // plus the Heartbeat's boot-time reconciliation (issue #16): two default
     // heartbeat times each arm a managed job on the System Space's
     // Automations Surface (a state patch + a tree patch per job, 4 more
-    // ticks), and its own metrics Surface is pre-created (1 more tick).
-    expect(body.surfaceCursor).toBe(9)
+    // ticks), and its own metrics Surface is pre-created (1 more tick), plus
+    // the Notification settings Surface (issue #18) pre-created in the
+    // System Space (1 more tick).
+    expect(body.surfaceCursor).toBe(10)
     expect(body.spaces.map((s) => s.slug)).toEqual(['health', 'system'])
     for (const surface of body.spaces.flatMap((space) => space.surfaces)) {
       expect(SurfaceSchema.safeParse(surface).success).toBe(true)
@@ -802,6 +812,391 @@ describe('trust layer wiring (issue #14)', () => {
     expect(() => trust.dispose()).not.toThrow()
   })
 })
+
+describe('Web Push notifications (issue #18)', () => {
+  const validSubscription = {
+    endpoint: 'https://fcm.googleapis.com/fcm/send/abc123def456',
+    keys: {
+      p256dh: 'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I3OJEMk',
+      auth: 'tBHItJI5svbpez7KI4CCXg',
+    },
+  }
+
+  it('(A) a fast-path action and a routine patchState never touch push, attention, or the notification log', async () => {
+    const transport = new NotificationFakeTransport()
+    const { app, store, pushStore } = buildServer({ pushTransport: transport })
+
+    const action = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-groceries/actions',
+      payload: { nodeId: 'item-milk', name: 'toggle', payload: { value: true } },
+    })
+    expect(action.statusCode).toBe(200)
+
+    store.patchState(
+      'srf-goal',
+      [{ target: 'state', op: 'replace', path: '/currentKg', value: 80 }],
+      { updatedBy: 'job' },
+    )
+
+    await flushNotificationAsync()
+
+    expect(transport.calls).toHaveLength(0)
+    expect(pushStore.getAttention('spc-health')).toEqual({ count: 0, revision: 0 })
+    expect(store.eventLog('spc-health').some((event) => event.type === 'notification')).toBe(false)
+
+    await app.close()
+  })
+
+  it('(B) an armed timer that fires unsatisfied sends exactly one push to the deep-linked target Surface', async () => {
+    let clock = new Date('2026-07-08T08:00:00.000Z')
+    const transport = new NotificationFakeTransport()
+    const { app, scheduler, store, pushStore } = buildServer({
+      now: () => new Date(clock.getTime()),
+      pushTransport: transport,
+    })
+
+    const subscribed = await app.inject({
+      method: 'POST',
+      url: '/api/push/subscriptions',
+      payload: validSubscription,
+    })
+    expect(subscribed.statusCode).toBe(204)
+
+    const automation = scheduler.armTimer({
+      spaceId: 'spc-health',
+      when: '2026-07-08T21:00:00.000Z',
+      condition: { kind: 'event-logged', textIncludes: 'this-will-never-match-xyz' },
+      action: 'Log my weight',
+      targetSurfaceId: 'srf-goal',
+    })
+
+    clock = new Date('2026-07-08T21:00:00.000Z')
+    await scheduler.runDue()
+    await flushNotificationAsync()
+
+    expect(transport.calls).toHaveLength(1)
+    expect(transport.calls[0]?.payload.url).toBe('/app/space/health/surface/srf-goal')
+
+    const notificationEvent = store
+      .eventLog('spc-health')
+      .find((event) => event.type === 'notification')
+    expect(notificationEvent).toBeDefined()
+    expect(notificationEvent?.payload).toMatchObject({
+      automationId: automation.id,
+      justification: expect.stringContaining('Agent-armed timer'),
+    })
+    expect(pushStore.getAttention('spc-health')).toEqual({ count: 1, revision: 1 })
+
+    await app.close()
+  })
+
+  it('(C) a second escalation past a 1-per-day Space budget degrades to badge-only: one send, attention 2, degraded 1', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-notif-budget-'))
+    saveNotificationsConfig(
+      dataDir,
+      NotificationsConfigSchema.parse({
+        defaultDailyPushBudget: 1,
+        spaceBudgets: {},
+        quietHours: null,
+        digestThreshold: 3,
+        timezone: 'UTC',
+      }),
+    )
+
+    let clock = new Date('2026-07-08T08:00:00.000Z')
+    const transport = new NotificationFakeTransport()
+    const { app, scheduler, store, pushStore } = buildServer({
+      dataDir,
+      now: () => new Date(clock.getTime()),
+      pushTransport: transport,
+    })
+
+    const subscribed = await app.inject({
+      method: 'POST',
+      url: '/api/push/subscriptions',
+      payload: validSubscription,
+    })
+    expect(subscribed.statusCode).toBe(204)
+
+    scheduler.armTimer({
+      spaceId: 'spc-health',
+      when: '2026-07-08T21:00:00.000Z',
+      action: 'First reminder',
+    })
+    scheduler.armTimer({
+      spaceId: 'spc-health',
+      when: '2026-07-08T22:00:00.000Z',
+      action: 'Second reminder',
+    })
+
+    clock = new Date('2026-07-08T21:00:00.000Z')
+    await scheduler.runDue()
+    clock = new Date('2026-07-08T22:00:00.000Z')
+    await scheduler.runDue()
+    await flushNotificationAsync()
+
+    expect(transport.calls).toHaveLength(1)
+    expect(pushStore.getAttention('spc-health')).toEqual({ count: 2, revision: 2 })
+
+    const notificationEvents = store
+      .eventLog('spc-health')
+      .filter((event) => event.type === 'notification')
+    expect(notificationEvents).toHaveLength(2)
+    expect(notificationEvents[0]?.payload).toMatchObject({ outcome: 'push' })
+    expect(notificationEvents[1]?.payload).toMatchObject({ outcome: 'degraded' })
+
+    const settingsSurface = store.getSurface(NOTIFICATION_SETTINGS_SURFACE_ID)
+    // The per-Space Rows live nested inside the "notif-rows" Box, not as
+    // direct children of the tree root.
+    const rowsBox = settingsSurface?.tree.children?.find((node) => node.id === 'notif-rows')
+    const row = rowsBox?.children?.find((node) => node.id === 'notif-row-spc-health')
+    const degradedNode = row?.children?.find((node) => node.id === 'notif-degraded-spc-health')
+    expect(degradedNode?.props?.['value']).toBe('1')
+
+    await app.close()
+  })
+
+  it('requires an authenticated session in production for all four push/attention routes', async () => {
+    const { auth } = await readyAuthStore()
+    const { app } = buildServer({
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+    })
+
+    const requests = [
+      { method: 'GET' as const, url: '/api/push/vapid-public-key' },
+      { method: 'POST' as const, url: '/api/push/subscriptions', payload: validSubscription },
+      {
+        method: 'DELETE' as const,
+        url: '/api/push/subscriptions',
+        payload: { endpoint: validSubscription.endpoint },
+      },
+      { method: 'POST' as const, url: '/api/spaces/spc-health/attention/seen' },
+    ]
+    for (const request of requests) {
+      const res = await app.inject(request)
+      expect(res.statusCode).toBe(401)
+    }
+
+    await app.close()
+  })
+
+  it("device isolation: one device cannot delete another device's push subscription (403)", async () => {
+    const { auth, token: tokenA } = await readyAuthStore()
+    // A second device, paired through device A's own pairing code (the same
+    // flow a real second-device setup uses) — the fake passkeys accept any
+    // response.id as a distinct credential.
+    const pairing = auth.createPairingCode(tokenA)
+    const registration = await auth.startPasskeyRegistration({
+      oneTimeCode: pairing.code,
+      deviceName: 'Second device',
+    })
+    const sessionB = await auth.finishPasskeyRegistration({
+      ceremonyId: registration.ceremonyId,
+      response: { id: 'credential-second' },
+    })
+
+    const { app, pushStore } = buildServer({
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+    })
+
+    const deviceBSubscription = {
+      ...validSubscription,
+      endpoint: 'https://fcm.googleapis.com/fcm/send/device-b-endpoint',
+    }
+    const subscribed = await app.inject({
+      method: 'POST',
+      url: '/api/push/subscriptions',
+      headers: { authorization: `Bearer ${sessionB.token}` },
+      payload: deviceBSubscription,
+    })
+    expect(subscribed.statusCode).toBe(204)
+    expect(pushStore.listSubscriptions()).toHaveLength(1)
+
+    // Device A (a different device) may not delete device B's subscription.
+    const denied = await app.inject({
+      method: 'DELETE',
+      url: '/api/push/subscriptions',
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: { endpoint: deviceBSubscription.endpoint },
+    })
+    expect(denied.statusCode).toBe(403)
+    expect(pushStore.listSubscriptions()).toHaveLength(1)
+
+    // Device B may delete its own subscription.
+    const ownDelete = await app.inject({
+      method: 'DELETE',
+      url: '/api/push/subscriptions',
+      headers: { authorization: `Bearer ${sessionB.token}` },
+      payload: { endpoint: deviceBSubscription.endpoint },
+    })
+    expect(ownDelete.statusCode).toBe(204)
+    expect(pushStore.listSubscriptions()).toHaveLength(0)
+
+    await app.close()
+  })
+
+  it('a managed (handler-driven) automation escalation never reaches a push send, only a badge', async () => {
+    let clock = new Date('2026-07-08T08:00:00.000Z')
+    const transport = new NotificationFakeTransport()
+    const { app, scheduler, store, pushStore } = buildServer({
+      now: () => new Date(clock.getTime()),
+      pushTransport: transport,
+    })
+
+    const subscribed = await app.inject({
+      method: 'POST',
+      url: '/api/push/subscriptions',
+      payload: validSubscription,
+    })
+    expect(subscribed.statusCode).toBe(204)
+
+    // A managed job's overdue-escalation branch is the one reachable seam
+    // for a `context.managed === true` escalation through the public
+    // buildServer API (a registered handler is never invoked for an
+    // overdue occurrence — the overdue check runs first in
+    // `executeOccurrence`, see scheduler.ts). Scheduled to fire almost
+    // immediately, then the clock jumps forward more than 24h so the next
+    // `runDue()` treats it as overdue rather than running it.
+    scheduler.createManagedJob({
+      spaceId: 'spc-health',
+      cron: '* * * * *',
+      description: 'Managed sweep',
+      handler: 'does-not-matter-for-the-overdue-path',
+    })
+
+    clock = new Date('2026-07-10T09:00:00.000Z') // > 24h past the first minute occurrence
+    await scheduler.runDue()
+    await flushNotificationAsync()
+
+    // Managed escalations must never fabricate an "Agent-armed" push
+    // justification (plan v2 decision 2): they surface as a badge only.
+    expect(transport.calls).toHaveLength(0)
+    expect(pushStore.getAttention('spc-health')).toEqual({ count: 1, revision: 1 })
+    const notificationEvent = store
+      .eventLog('spc-health')
+      .find((event) => event.type === 'notification')
+    expect(notificationEvent?.payload).toMatchObject({ level: 'badge', outcome: 'badge' })
+
+    await app.close()
+  })
+
+  it('rejects a subscribe body whose endpoint host is not on the push-service allowlist (422)', async () => {
+    const { app } = buildServer()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/push/subscriptions',
+      payload: { ...validSubscription, endpoint: 'https://evil.example/push' },
+    })
+    expect(res.statusCode).toBe(422)
+    await app.close()
+  })
+
+  it('rejects a malformed subscribe body (400)', async () => {
+    const { app } = buildServer()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/push/subscriptions',
+      payload: { endpoint: 'not-a-url' },
+    })
+    expect(res.statusCode).toBe(400)
+    await app.close()
+  })
+
+  it('marks attention as seen, appending notification.seen only when the count was already > 0', async () => {
+    const { app, store, notificationCenter } = buildServer()
+
+    const zero = await app.inject({
+      method: 'POST',
+      url: '/api/spaces/spc-health/attention/seen',
+    })
+    expect(zero.statusCode).toBe(200)
+    expect(zero.json()).toEqual({ count: 0, revision: 0 })
+    expect(store.eventLog('spc-health').some((event) => event.type === 'notification.seen')).toBe(
+      false,
+    )
+
+    notificationCenter.notify({ level: 'badge', spaceId: 'spc-health', text: 'something happened' })
+
+    const seen = await app.inject({
+      method: 'POST',
+      url: '/api/spaces/spc-health/attention/seen',
+    })
+    expect(seen.statusCode).toBe(200)
+    expect(seen.json()).toMatchObject({ count: 0 })
+    expect(
+      store.eventLog('spc-health').filter((event) => event.type === 'notification.seen'),
+    ).toHaveLength(1)
+
+    await app.close()
+  })
+
+  it('returns 404 for attention/seen on an unknown Space', async () => {
+    const { app } = buildServer()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/spaces/spc-ghost/attention/seen',
+    })
+    expect(res.statusCode).toBe(404)
+    await app.close()
+  })
+
+  it("deletes a device's push subscriptions when its session is revoked", async () => {
+    const { auth, token } = await readyAuthStore()
+    const { app, pushStore } = buildServer({
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+    })
+
+    const subscribed = await app.inject({
+      method: 'POST',
+      url: '/api/push/subscriptions',
+      headers: { authorization: `Bearer ${token}` },
+      payload: validSubscription,
+    })
+    expect(subscribed.statusCode).toBe(204)
+    expect(pushStore.listSubscriptions()).toHaveLength(1)
+
+    const session = auth.verifySession(token)
+    expect(session).toBeDefined()
+    auth.revokeDevice(token, session!.device.id)
+
+    expect(pushStore.listSubscriptions()).toHaveLength(0)
+
+    await app.close()
+  })
+
+  it('broadcasts a space.attention frame to a connected Gateway client when attention changes', async () => {
+    const { app, gateway, store, notificationCenter } = buildServer()
+    const socket = new SchedulerFakeSocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    notificationCenter.notify({ level: 'badge', spaceId: 'spc-health', text: 'something happened' })
+
+    expect(socket.sent.some((frame) => frame.type === 'space.attention')).toBe(true)
+    const frame = socket.sent.find(
+      (frame): frame is Extract<GatewayServerMessage, { type: 'space.attention' }> =>
+        frame.type === 'space.attention',
+    )!
+    expect(frame).toMatchObject({ spaceId: 'spc-health', count: 1, revision: 1 })
+
+    await app.close()
+  })
+})
+
+class NotificationFakeTransport implements PushTransport {
+  calls: Array<{ subscription: PushSubscriptionInput; payload: PushPayload }> = []
+
+  async send(subscription: PushSubscriptionInput, payload: PushPayload): Promise<PushSendResult> {
+    this.calls.push({ subscription, payload })
+    return 'ok'
+  }
+}
+
+/** Lets pending microtasks (onStats/deliverPending fire-and-forget work) settle before assertions. */
+function flushNotificationAsync(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
 
 class SchedulerFakeSocket {
   readonly sent: GatewayServerMessage[] = []

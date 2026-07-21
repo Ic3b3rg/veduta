@@ -8,6 +8,7 @@ import { SpendingCapError, type ModelRouter } from './model-routing.ts'
 import type { Scheduler } from './scheduler.ts'
 import type { Store } from './store.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
+import type { Origin } from './taint.ts'
 
 /**
  * The Heartbeat (issue #16, ADR-0005): the daemon's own proactivity loop.
@@ -41,17 +42,49 @@ export const TriageOutputSchema = z.discriminatedUnion('status', [
 
 export type TriageOutput = z.infer<typeof TriageOutputSchema>
 
+/**
+ * `justification` is required, non-empty, whenever `action` is `escalate`
+ * (issue #18, plan v2 decision 2): the model must state why a good human
+ * assistant would interrupt for this — never daemon boilerplate. Absent or
+ * empty for `arm-timer`/`ignore`. A `superRefine` (not a discriminated
+ * union) keeps the three actions sharing one flat shape, matching this
+ * repo's existing conditional-field idiom (`notifications-config.ts`'s
+ * `NotificationsConfigSchema`).
+ */
 const HeartbeatDecisionSchema = z
   .object({
     spaceId: z.string().min(1),
     surfaceId: z.string().min(1).optional(),
     action: z.enum(['arm-timer', 'escalate', 'ignore']),
+    justification: z.string().trim().min(1).optional(),
   })
   .strict()
+  .superRefine((decision, context) => {
+    if (decision.action === 'escalate' && decision.justification === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['justification'],
+        message: 'escalate decisions require a non-empty justification',
+      })
+    }
+  })
 
 export const ReasonOutputSchema = z.object({ decisions: z.array(HeartbeatDecisionSchema) }).strict()
 
 export type ReasonOutput = z.infer<typeof ReasonOutputSchema>
+
+/**
+ * Context threaded through `onEscalation` (issue #18, plan v2 decisions
+ * 2-3): the same shape the Scheduler passes, plus the triage-model-supplied
+ * `justification`. `automationId` never applies to a Heartbeat concern (it
+ * names no Automation of its own), so it is always absent here.
+ */
+export interface HeartbeatEscalationContext {
+  surfaceId?: string
+  origin?: Origin
+  automationId?: number
+  justification?: string
+}
 
 /** Pure, LLM-free per-Surface signals (`buildChecklist`): ids and booleans only, never titles. */
 export interface ChecklistSurface {
@@ -85,7 +118,7 @@ export interface HeartbeatOptions {
   /** No tools by construction, same idiom as the quarantined reader: a model and a prompt in, text and cost out. */
   complete: (model: ModelRef, prompt: string) => Promise<{ text: string; costUsd?: number }>
   now?: () => Date
-  onEscalation?: (spaceId: string, text: string) => void
+  onEscalation?: (spaceId: string, text: string, context?: HeartbeatEscalationContext) => void
   /** Fired after every recorded sweep so the metrics Surface manager can refresh. */
   onSwept?: () => void
 }
@@ -178,7 +211,10 @@ export function buildReasonPrompt(concerns: HeartbeatConcern[]): string {
   return [
     PROMPT_PREAMBLE,
     'Schema: {"decisions":[{"spaceId":string,"surfaceId"?:string,' +
-      '"action":"arm-timer"|"escalate"|"ignore"}]}',
+      '"action":"arm-timer"|"escalate"|"ignore","justification"?:string}]}. ' +
+      'When "action" is "escalate", "justification" is REQUIRED and must be a ' +
+      'non-empty string: state briefly why a good human assistant would interrupt ' +
+      'the user for this right now. Omit "justification" for "arm-timer" and "ignore".',
     `Concerns: ${JSON.stringify(concerns)}`,
   ].join('\n\n')
 }
@@ -192,7 +228,8 @@ export class Heartbeat {
   private readonly config: HeartbeatConfig
   private readonly complete: HeartbeatOptions['complete']
   private readonly now: () => Date
-  private readonly onEscalation: ((spaceId: string, text: string) => void) | undefined
+  private readonly onEscalation:
+    ((spaceId: string, text: string, context?: HeartbeatEscalationContext) => void) | undefined
   private readonly onSwept: (() => void) | undefined
 
   constructor(options: HeartbeatOptions) {
@@ -501,7 +538,7 @@ export class Heartbeat {
       const concern = byKey.get(concernKey(decision.spaceId, decision.surfaceId))
       if (!concern) continue
       if (decision.action === 'arm-timer') this.armTimerForConcern(concern)
-      else if (decision.action === 'escalate') this.escalateConcern(concern)
+      else if (decision.action === 'escalate') this.escalateConcern(concern, decision.justification)
     }
   }
 
@@ -538,12 +575,20 @@ export class Heartbeat {
   }
 
   /** Reserved for concerns with no self-heal: a deterministic, daemon-composed notice. */
-  private escalateConcern(concern: HeartbeatConcern): void {
+  private escalateConcern(concern: HeartbeatConcern, justification: string | undefined): void {
     const text =
       concern.kind === 'stale-surface'
         ? 'Heartbeat: a Surface has gone stale with no automated self-heal available — please take a look.'
         : 'Heartbeat: a time-sensitive Surface has no coverage and no automated self-heal available — please take a look.'
-    this.onEscalation?.(concern.spaceId, text)
+    // The same origin this method stamps on its own `heartbeat.escalate`
+    // Space event below (issue #18, plan v2 decision 3) — reused, not
+    // re-derived, so the notification's provenance always matches the log.
+    const origin: Origin = 'trusted:system'
+    this.onEscalation?.(concern.spaceId, text, {
+      ...(concern.surfaceId === undefined ? {} : { surfaceId: concern.surfaceId }),
+      origin,
+      ...(justification === undefined ? {} : { justification }),
+    })
     this.appendSpaceEvent(concern.spaceId, 'heartbeat.escalate', text, {
       ...(concern.surfaceId === undefined ? {} : { surfaceId: concern.surfaceId }),
       kind: concern.kind,

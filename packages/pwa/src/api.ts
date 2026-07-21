@@ -53,9 +53,15 @@ export interface GatewayHandlers {
   onChatMessage(message: Extract<GatewayServerMessage, { type: 'chat.message' }>): void
   onApprovalCard(message: Extract<GatewayServerMessage, { type: 'approval.card' }>): void
   onPresence(message: Extract<GatewayServerMessage, { type: 'presence.update' }>): void
+  onSpaceAttention(message: Extract<GatewayServerMessage, { type: 'space.attention' }>): void
   onError(message: string): void
   onClose(): void
 }
+
+const SpaceAttentionSeenResponseSchema = z.object({
+  count: z.number().int().min(0),
+  revision: z.number().int().min(0),
+})
 
 export async function fetchAuthStatus(): Promise<AuthStatus> {
   const res = await fetch('/api/auth/status')
@@ -67,6 +73,23 @@ export async function fetchSpaces(token?: string): Promise<SurfaceSnapshot> {
   const res = await fetch('/api/spaces', { headers: authHeaders(token) })
   if (!res.ok) throw new Error(`GET /api/spaces failed: ${res.status}`)
   return SurfaceSnapshotSchema.parse(await res.json())
+}
+
+/** Clears a Space's attention badge on focus (ADR decision 12/14): the
+ * daemon appends a `notification.seen` event only when count > 0, so callers
+ * should only invoke this when the Space currently has attention to clear. */
+export async function markSpaceAttentionSeen(
+  spaceId: string,
+  token?: string,
+): Promise<{ count: number; revision: number }> {
+  const res = await fetch(`/api/spaces/${encodeURIComponent(spaceId)}/attention/seen`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  })
+  if (!res.ok) {
+    throw new Error(`POST /api/spaces/${spaceId}/attention/seen failed: ${res.status}`)
+  }
+  return SpaceAttentionSeenResponseSchema.parse(await res.json())
 }
 
 export async function invokeFastAction(
@@ -197,6 +220,11 @@ export function connectGateway(handlers: GatewayHandlers): GatewayConnection {
       return
     }
 
+    if (message.type === 'space.attention') {
+      handlers.onSpaceAttention(message)
+      return
+    }
+
     if (message.type === 'error') handlers.onError(message.error)
   }
 
@@ -296,6 +324,8 @@ async function postJson(path: string, body: unknown, token?: string): Promise<un
   return res.json()
 }
 
-function authHeaders(token: string | undefined): HeadersInit {
+/** Shared with push.ts so the push-subscription requests use the exact same
+ * Bearer-token convention as every other /api call. */
+export function authHeaders(token: string | undefined): HeadersInit {
   return token ? { authorization: `Bearer ${token}` } : {}
 }

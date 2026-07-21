@@ -7,6 +7,7 @@ export const CHAT_QUEUE_KEY = 'veduta.chatQueue'
 export const FAST_ACTION_QUEUE_KEY = 'veduta.fastActionQueue'
 export const SURFACE_ORDER_KEY = 'veduta.surfaceOrder'
 export const INSTALL_DISMISSED_KEY = 'veduta.installDismissed'
+export const NOTIF_BELL_DISMISSED_KEY = 'veduta.notifBellDismissed'
 
 export interface QueuedChat {
   id: string

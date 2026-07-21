@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ToolContext } from './agent-runner.ts'
-import { Scheduler } from './scheduler.ts'
+import { Scheduler, type EscalationContext } from './scheduler.ts'
 import { Store } from './store.ts'
 import type { Origin } from './taint.ts'
 
@@ -605,6 +605,59 @@ describe('generic job-handler registry (issue #16)', () => {
       handler: 'noop',
       targetSurfaceId: 'srf-managed',
     })
+  })
+})
+
+describe('escalation context (issue #18, plan v2 decision 2)', () => {
+  // The generic handler dispatch never reaches `onEscalation` (a
+  // handler-driven occurrence returns straight from `executeOccurrence`),
+  // so the overdue branch — which runs before handler dispatch — is the
+  // one seam through the public Scheduler API where a managed job's
+  // escalation context is observable.
+  it('an overdue managed job escalation carries context.managed === true', async () => {
+    const contexts: (EscalationContext | undefined)[] = []
+    const scheduler = new Scheduler({
+      rootDir,
+      store,
+      now,
+      onEscalation: (_spaceId, _text, context) => contexts.push(context),
+    })
+    schedulers.push(scheduler)
+    scheduler.registerHandler('ping', () => 'handled:ping')
+    scheduler.createManagedJob({
+      spaceId: HEALTH,
+      cron: '* * * * *',
+      description: 'Managed sweep',
+      handler: 'ping',
+    })
+
+    clock = new Date('2026-07-10T09:00:00.000Z') // > 24h past the first minute occurrence
+    await scheduler.runDue()
+
+    expect(contexts).toHaveLength(1)
+    expect(contexts[0]).toMatchObject({ managed: true })
+  })
+
+  it('an overdue plain timer escalation carries context.managed === false', async () => {
+    const contexts: (EscalationContext | undefined)[] = []
+    const scheduler = new Scheduler({
+      rootDir,
+      store,
+      now,
+      onEscalation: (_spaceId, _text, context) => contexts.push(context),
+    })
+    schedulers.push(scheduler)
+    scheduler.armTimer({
+      spaceId: HEALTH,
+      when: '2026-07-08T21:00:00.000Z',
+      action: 'Log my weight',
+    })
+
+    clock = new Date('2026-07-10T03:00:00.000Z')
+    await scheduler.runDue()
+
+    expect(contexts).toHaveLength(1)
+    expect(contexts[0]).toMatchObject({ managed: false })
   })
 })
 

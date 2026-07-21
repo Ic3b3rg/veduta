@@ -81,12 +81,31 @@ export interface Automation {
   targetSurfaceId?: string
 }
 
+/**
+ * Context threaded through `onEscalation` for a firing occurrence (issue
+ * #18, plan v2 decisions 2-3): `surfaceId` lets the caller build a deep
+ * link, `origin` is the occurrence's own re-tainted origin (never a fresh
+ * derivation), `automationId` is the durable link back to the Automation
+ * that fired.
+ */
+export interface EscalationContext {
+  surfaceId?: string
+  origin?: Origin
+  automationId?: number
+  /**
+   * True for daemon-managed handler jobs (issue #16): their escalations
+   * carry no Agent decision, so callers must not attribute an
+   * "Agent-armed" justification to them (plan v2 decision 2).
+   */
+  managed: boolean
+}
+
 export interface SchedulerOptions {
   rootDir: string
   store: Store
   now?: () => Date
   /** Deliver an escalation to the user (chat notice); Space event is appended regardless. */
-  onEscalation?: (spaceId: string, text: string) => void
+  onEscalation?: (spaceId: string, text: string, context?: EscalationContext) => void
   judge?: JudgeFn
 }
 
@@ -120,7 +139,8 @@ export class Scheduler {
   private readonly db: DatabaseSync
   private readonly store: Store
   private readonly now: () => Date
-  private readonly onEscalation: ((spaceId: string, text: string) => void) | undefined
+  private readonly onEscalation:
+    ((spaceId: string, text: string, context?: EscalationContext) => void) | undefined
   private readonly judge: JudgeFn
   private disposeFastMutationObserver: (() => void) | undefined
   private timer: NodeJS.Timeout | undefined
@@ -431,6 +451,17 @@ export class Scheduler {
     // trusted:system for legacy/tool-armed automations): an automation
     // born from a tainted turn re-taints every occurrence it fires.
     const firingOrigin = automation.origin ?? 'trusted:system'
+    // Shared by every onEscalation call this occurrence may make below: the
+    // deep-link Surface (if any), the occurrence's own re-tainted origin
+    // (never a fresh derivation), and the durable Automation link.
+    const escalationContext: EscalationContext = {
+      ...(automation.targetSurfaceId === undefined
+        ? {}
+        : { surfaceId: automation.targetSurfaceId }),
+      origin: firingOrigin,
+      automationId: automation.id,
+      managed: automation.handler !== undefined,
+    }
     if (!automation.enabled) {
       this.appendEvent(
         automation.spaceId,
@@ -452,7 +483,7 @@ export class Scheduler {
         { automationId: automation.id, scheduledFor },
         firingOrigin,
       )
-      this.onEscalation?.(automation.spaceId, text)
+      this.onEscalation?.(automation.spaceId, text, escalationContext)
       return 'skipped:overdue'
     }
 
@@ -493,7 +524,7 @@ export class Scheduler {
       { automationId: automation.id, scheduledFor },
       firingOrigin,
     )
-    this.onEscalation?.(automation.spaceId, text)
+    this.onEscalation?.(automation.spaceId, text, escalationContext)
     return 'escalated'
   }
 

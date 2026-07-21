@@ -1,5 +1,6 @@
 import type { Surface } from '@veduta/protocol'
 import { freshnessLabel, type SpaceWithSurfaces } from './api.ts'
+import { AttentionBadge } from './attention-badge.tsx'
 import { mergeSurfaceOrder } from './home-state.ts'
 import type { QueuedFastAction } from './pwa-storage.ts'
 import { SurfaceCard } from './surface-card.tsx'
@@ -45,7 +46,10 @@ export function SpaceSection({
           <h2 id={`${space.id}-title`}>{space.name}</h2>
           <p>{freshestLabel(surfaces)}</p>
         </div>
-        <span className="space-badge">{surfaces.length} Surfaces</span>
+        <span className="badge-group">
+          <AttentionBadge count={space.attention} />
+          <span className="space-badge">{surfaces.length} Surfaces</span>
+        </span>
       </div>
       <div className="surface-grid">
         {surfaces.map((surface, index) => (

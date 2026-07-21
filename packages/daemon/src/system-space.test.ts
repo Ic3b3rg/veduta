@@ -77,7 +77,9 @@ describe('ensureSystemSpace', () => {
     ensureSystemSpace(spacesEngine)
     const snapshotWithSystemSpace: SurfaceSnapshot = {
       surfaceCursor: 0,
-      spaces: spacesEngine.listSpaces().map((space) => ({ ...space, surfaces: [] })),
+      spaces: spacesEngine
+        .listSpaces()
+        .map((space) => ({ ...space, surfaces: [], attention: 0, attentionRevision: 0 })),
     }
 
     const merged = appendSystemSurface(snapshotWithSystemSpace, systemSurface('srf-usage'))

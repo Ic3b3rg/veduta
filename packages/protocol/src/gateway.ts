@@ -9,6 +9,8 @@ export const GatewayCursorSchema = z.number().int().nonnegative()
 
 export const SpaceWithSurfacesSchema = SpaceSchema.extend({
   surfaces: z.array(SurfaceSchema),
+  attention: z.number().int().min(0).default(0),
+  attentionRevision: z.number().int().min(0).default(0),
 })
 
 export const SurfaceSnapshotSchema = z.object({
@@ -111,6 +113,12 @@ export const GatewayServerMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('presence.update'),
     presence: z.array(PresenceEntrySchema),
+  }),
+  z.object({
+    type: z.literal('space.attention'),
+    spaceId: z.string().min(1),
+    count: z.number().int().min(0),
+    revision: z.number().int().min(0),
   }),
   z.object({
     type: z.literal('error'),

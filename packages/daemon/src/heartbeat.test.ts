@@ -188,7 +188,12 @@ describe('acceptance criteria', () => {
           text: JSON.stringify({
             decisions: [
               { spaceId: HEALTH, surfaceId: surface.id, action: 'arm-timer' },
-              { spaceId: HEALTH, surfaceId: surface.id, action: 'escalate' },
+              {
+                spaceId: HEALTH,
+                surfaceId: surface.id,
+                action: 'escalate',
+                justification: 'No self-heal is available and the plan is now stale.',
+              },
             ],
           }),
         }

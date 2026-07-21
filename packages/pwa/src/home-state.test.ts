@@ -3,11 +3,13 @@ import { describe, expect, it } from 'vitest'
 import type { SpaceWithSurfaces } from './api.ts'
 import {
   applyBufferedSurfaceStreamEvents,
+  applySpaceAttention,
   applySurfaceArchivedToSpaces,
   applySurfaceCreatedToSpaces,
   applySurfacePatchToSpaces,
   applySurfaceStreamEvent,
   cachedSnapshot,
+  mergeSpaceAttention,
   mergeSurfaceOrder,
   moveSurfaceId,
   parseSurfaceDeepLink,
@@ -27,8 +29,20 @@ function testSurface(id: string, spaceId: string, updatedAt: string): Surface {
   }
 }
 
-function testSpace(id: string, surfaces: Surface[]): SpaceWithSurfaces {
-  return { id, slug: id, name: id, archived: false, surfaces }
+function testSpace(
+  id: string,
+  surfaces: Surface[],
+  attention: { attention?: number; attentionRevision?: number } = {},
+): SpaceWithSurfaces {
+  return {
+    id,
+    slug: id,
+    name: id,
+    archived: false,
+    surfaces,
+    attention: attention.attention ?? 0,
+    attentionRevision: attention.attentionRevision ?? 0,
+  }
 }
 
 describe('Surface deep links', () => {
@@ -265,6 +279,74 @@ describe('applySurfaceStreamEvent', () => {
     })
     expect(archived.applied).toBe(true)
     expect(archived.spaces[0]?.surfaces).toEqual([])
+  })
+})
+
+describe('applySpaceAttention', () => {
+  it('applies a frame with a strictly higher revision', () => {
+    const spaces = [testSpace('spc-health', [], { attention: 1, attentionRevision: 3 })]
+
+    const next = applySpaceAttention(spaces, { spaceId: 'spc-health', count: 4, revision: 5 })
+
+    expect(next[0]).toMatchObject({ attention: 4, attentionRevision: 5 })
+  })
+
+  it('ignores a stale frame (lower or equal revision)', () => {
+    const spaces = [testSpace('spc-health', [], { attention: 4, attentionRevision: 5 })]
+
+    const equal = applySpaceAttention(spaces, { spaceId: 'spc-health', count: 9, revision: 5 })
+    const lower = applySpaceAttention(spaces, { spaceId: 'spc-health', count: 9, revision: 2 })
+
+    expect(equal[0]).toMatchObject({ attention: 4, attentionRevision: 5 })
+    expect(lower[0]).toMatchObject({ attention: 4, attentionRevision: 5 })
+  })
+
+  it('leaves unrelated Spaces untouched', () => {
+    const spaces = [testSpace('spc-other', [], { attention: 1, attentionRevision: 1 })]
+
+    const next = applySpaceAttention(spaces, { spaceId: 'spc-health', count: 9, revision: 9 })
+
+    expect(next).toEqual(spaces)
+  })
+
+  it('defaults new/legacy Spaces to revision 0, so any first frame applies', () => {
+    const spaces = [testSpace('spc-health', [])]
+
+    const next = applySpaceAttention(spaces, { spaceId: 'spc-health', count: 1, revision: 1 })
+
+    expect(next[0]).toMatchObject({ attention: 1, attentionRevision: 1 })
+  })
+})
+
+describe('mergeSpaceAttention', () => {
+  it('keeps the fresher revision when the previously-held state is newer than the refetch', () => {
+    // Simulates the stale-refetch race: a space.attention WS frame lands
+    // (revision 5) while an /api/spaces refetch triggered by an unrelated
+    // Surface event is still in flight and comes back with the older
+    // revision 3 snapshot value.
+    const fresh = [testSpace('spc-health', [], { attention: 0, attentionRevision: 3 })]
+    const previous = [testSpace('spc-health', [], { attention: 2, attentionRevision: 5 })]
+
+    const merged = mergeSpaceAttention(fresh, previous)
+
+    expect(merged[0]).toMatchObject({ attention: 2, attentionRevision: 5 })
+  })
+
+  it('keeps the fresh snapshot value when it is the newer revision', () => {
+    const fresh = [testSpace('spc-health', [], { attention: 3, attentionRevision: 7 })]
+    const previous = [testSpace('spc-health', [], { attention: 2, attentionRevision: 5 })]
+
+    const merged = mergeSpaceAttention(fresh, previous)
+
+    expect(merged[0]).toMatchObject({ attention: 3, attentionRevision: 7 })
+  })
+
+  it('leaves a Space with no previous counterpart as-is', () => {
+    const fresh = [testSpace('spc-new', [], { attention: 1, attentionRevision: 1 })]
+
+    const merged = mergeSpaceAttention(fresh, [])
+
+    expect(merged).toEqual(fresh)
   })
 })
 

@@ -343,6 +343,30 @@ describe('GatewayHub system notices', () => {
   })
 })
 
+describe('GatewayHub space attention', () => {
+  it('broadcasts a space.attention frame to every connected client when attention changes', () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store)
+    const first = new FakeGatewaySocket()
+    const second = new FakeGatewaySocket()
+    gateway.connect(first)
+    gateway.connect(second)
+    first.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+    second.receive({ type: 'hello', clientId: 'pwa-2', surfaceCursor: store.latestSurfaceCursor() })
+
+    gateway.broadcastSpaceAttention('spc-health', 2, 5)
+
+    for (const socket of [first, second]) {
+      expect(socket.sent.at(-1)).toMatchObject({
+        type: 'space.attention',
+        spaceId: 'spc-health',
+        count: 2,
+        revision: 5,
+      })
+    }
+  })
+})
+
 class FakeGatewaySocket implements GatewaySocket {
   sent: GatewayServerMessage[] = []
   closed = false

@@ -152,6 +152,18 @@ export class GatewayHub {
   }
 
   /**
+   * Broadcasts a Space's updated attention badge (issue #18, plan v2
+   * decision 12) to every connected client. No queueing for offline
+   * clients, unlike `broadcastSystemNotice`: a reconnecting/late client
+   * always gets the authoritative value from the next `/api/spaces`
+   * snapshot, and the client applies highest-revision-wins, so a missed
+   * live frame is never lost, only superseded.
+   */
+  broadcastSpaceAttention(spaceId: string, count: number, revision: number): void {
+    this.pwa.broadcast({ type: 'space.attention', spaceId, count, revision })
+  }
+
+  /**
    * Out-of-band reply to one specific client (issue #14's dev dispatcher):
    * `onDevChatEffect` itself is a fire-and-forget void callback with no
    * reply channel of its own — this is that channel, mirroring the same
