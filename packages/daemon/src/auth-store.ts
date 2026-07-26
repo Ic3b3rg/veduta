@@ -61,6 +61,23 @@ export interface SessionRevokedEvent {
 
 export interface AuthState {
   bootstrapCodeHash?: string
+  /**
+   * ISO expiry set the first time `bootstrapCodeHash` is seeded (plan v2
+   * decision 11): 60 minutes from seeding. Optional for backward
+   * compatibility — an `auth.json` written before this field existed loads
+   * fine, and its bootstrap code (if any) is treated as never expiring.
+   */
+  bootstrapCodeExpiresAt?: string
+  /**
+   * FIFO log (capped at 10) of every bootstrap code hash this daemon has ever
+   * seeded, oldest first (issue #19 fix). Consulted, not just
+   * `bootstrapCodeHash`, so a `VEDUTA_BOOTSTRAP_CODE` that already seeded once
+   * — including one that has since expired or been superseded — can never
+   * seed again: expiry (or supersession) is permanent, not just "not the
+   * current value". Optional for backward compatibility — an `auth.json`
+   * written before this field existed loads fine, treated as an empty log.
+   */
+  seenBootstrapCodeHashes?: string[]
   passkeys: PersistedPasskey[]
   devices: AuthDevice[]
   sessions: PersistedSession[]
@@ -116,6 +133,9 @@ interface StoredPairingCode {
   usedAt?: string
 }
 
+/** FIFO cap on `AuthState.seenBootstrapCodeHashes` (issue #19 fix). */
+const SEEN_BOOTSTRAP_CODE_HASH_CAP = 10
+
 export class AuthStoreError extends Error {
   constructor(
     public readonly code:
@@ -141,6 +161,13 @@ export class AuthStore {
   private now: () => Date
   private randomBytes: (length: number) => Buffer
   private publicOrigin: string
+  /**
+   * The plaintext bootstrap code this boot actually knows, if any (plan v2
+   * decision 11) — only `hashSecret(...)` of it is ever persisted, so this
+   * is the one seam `bootstrapCode()` exposes for `index.ts` to print the
+   * code that is genuinely valid right now.
+   */
+  private effectiveBootstrapCode: string | undefined
 
   constructor(private readonly options: AuthStoreOptions) {
     this.now = options.now ?? (() => new Date())
@@ -150,14 +177,60 @@ export class AuthStore {
       ? cloneState(options.state)
       : { passkeys: [], devices: [], sessions: [] }
 
-    if (
-      options.bootstrapCode &&
-      !this.state.bootstrapCodeHash &&
-      this.state.passkeys.every((passkey) => passkey.revokedAt)
-    ) {
-      this.state.bootstrapCodeHash = hashSecret(options.bootstrapCode)
+    const noActivePasskeys = this.state.passkeys.every((passkey) => passkey.revokedAt)
+
+    if (noActivePasskeys) {
+      const envCode = options.bootstrapCode
+      const envHash = envCode !== undefined ? hashSecret(envCode) : undefined
+      const seenHashes = this.state.seenBootstrapCodeHashes ?? []
+      const alreadySeen = envHash !== undefined && seenHashes.includes(envHash)
+
+      if (envHash !== undefined && !alreadySeen) {
+        // A genuinely fresh env code — this process has never seeded this
+        // hash before — always seeds, with its own fresh 60-minute expiry.
+        // Covers both "nothing seeded yet" and "an operator rotated
+        // `VEDUTA_BOOTSTRAP_CODE` to a new value while the old one was still
+        // valid" (plan v2 decision 11 + issue #19 fix).
+        this.seedBootstrapCode(envCode!, envHash)
+      } else {
+        const persistedAbsent = this.state.bootstrapCodeHash === undefined
+        const persistedExpired =
+          !persistedAbsent &&
+          this.state.bootstrapCodeExpiresAt !== undefined &&
+          isPast(this.state.bootstrapCodeExpiresAt, this.now)
+
+        if (persistedAbsent || persistedExpired) {
+          // Either no code is provided/persisted at all, or the env code (if
+          // any) has already been seen — never revive an expired or
+          // already-consumed code (issue #19 fix): mint a fresh,
+          // never-before-seen random code instead. This runs on EVERY boot
+          // that finds an expired/absent code, not just the first, since
+          // nothing here ever re-persists a still-expired hash.
+          const fresh = this.randomCode()
+          this.seedBootstrapCode(fresh, hashSecret(fresh))
+        } else if (envHash !== undefined && safeEqual(this.state.bootstrapCodeHash, envHash)) {
+          // The still-valid persisted code happens to equal the freshly
+          // supplied env value (already seen, and correctly not reseeded
+          // above) — nothing to reseed, but this boot does know its
+          // plaintext, so it can still be printed.
+          this.effectiveBootstrapCode = envCode
+        }
+      }
     }
     this.sequence = nextSequence(this.state)
+  }
+
+  /**
+   * The plaintext bootstrap code this boot knows is valid right now, if
+   * any (plan v2 decision 11) — `undefined` once a passkey is registered,
+   * or when this boot neither seeded nor re-confirmed one (a still-valid
+   * code minted on an earlier boot whose plaintext this process never saw).
+   * `index.ts` prints this instead of blindly printing whatever
+   * `VEDUTA_BOOTSTRAP_CODE`/random value it generated before constructing
+   * this store, so a stale env var never gets echoed as if it still worked.
+   */
+  bootstrapCode(): string | undefined {
+    return this.effectiveBootstrapCode
   }
 
   status(): { mode: AuthMode; passkeyRegistered: boolean; bootstrapRequired: boolean } {
@@ -373,8 +446,26 @@ export class AuthStore {
   }
 
   private assertValidOneTimeCode(codeHash: string): void {
-    if (this.activePasskeys().length === 0 && safeEqual(this.state.bootstrapCodeHash, codeHash))
+    if (this.activePasskeys().length === 0 && safeEqual(this.state.bootstrapCodeHash, codeHash)) {
+      if (
+        this.state.bootstrapCodeExpiresAt !== undefined &&
+        isPast(this.state.bootstrapCodeExpiresAt, this.now)
+      ) {
+        // Dead-end discipline (plan v2 decision 11): the fix is a restart
+        // (which mints a fresh code, see the constructor) plus the journal
+        // line that prints it — never a code the daemon can hand back here.
+        throw new AuthStoreError(
+          'invalid-code',
+          [
+            'bootstrap code has expired.',
+            'Restart the daemon to mint a fresh one, then read it from the journal:',
+            '  sudo systemctl restart veduta',
+            "  sudo journalctl -u veduta | grep 'first-boot'",
+          ].join('\n'),
+        )
+      }
       return
+    }
     const pairing = this.pairingCodes.get(codeHash)
     if (pairing && !pairing.usedAt && !isPast(pairing.expiresAt, this.now)) return
     throw new AuthStoreError('invalid-code', 'one-time code is invalid or expired')
@@ -383,6 +474,8 @@ export class AuthStore {
   private consumeOneTimeCode(codeHash: string): void {
     if (this.activePasskeys().length === 1 && safeEqual(this.state.bootstrapCodeHash, codeHash)) {
       delete this.state.bootstrapCodeHash
+      delete this.state.bootstrapCodeExpiresAt
+      this.effectiveBootstrapCode = undefined
       return
     }
     const pairing = this.pairingCodes.get(codeHash)
@@ -404,6 +497,21 @@ export class AuthStore {
     device.lastSeenAt = createdAt
     this.persist()
     return { token, device: { ...device } }
+  }
+
+  /**
+   * Seeds `code` as the currently valid bootstrap code: sets the plaintext
+   * this boot knows, persists its hash with a fresh 60-minute expiry, and
+   * records the hash in the FIFO seen-log (capped, issue #19 fix) so it can
+   * never seed again once it expires or is superseded.
+   */
+  private seedBootstrapCode(code: string, hash: string): void {
+    this.effectiveBootstrapCode = code
+    this.state.bootstrapCodeHash = hash
+    this.state.bootstrapCodeExpiresAt = minutesFrom(this.now(), 60)
+    const seen = [...(this.state.seenBootstrapCodeHashes ?? []), hash]
+    this.state.seenBootstrapCodeHashes = seen.slice(-SEEN_BOOTSTRAP_CODE_HASH_CAP)
+    this.persist()
   }
 
   private persist(): void {
@@ -465,6 +573,12 @@ function cloneState(state: AuthState): AuthState {
     sessions: state.sessions.map((session) => ({ ...session })),
   }
   if (state.bootstrapCodeHash !== undefined) cloned.bootstrapCodeHash = state.bootstrapCodeHash
+  if (state.bootstrapCodeExpiresAt !== undefined) {
+    cloned.bootstrapCodeExpiresAt = state.bootstrapCodeExpiresAt
+  }
+  if (state.seenBootstrapCodeHashes !== undefined) {
+    cloned.seenBootstrapCodeHashes = [...state.seenBootstrapCodeHashes]
+  }
   return cloned
 }
 

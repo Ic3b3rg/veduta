@@ -9,7 +9,7 @@ import {
   PushSubscriptionSchema,
   WebAuthnOptionsEnvelopeSchema,
 } from '@veduta/protocol'
-import type { FastifyReply, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -46,6 +46,7 @@ import {
 import { NotificationCenter } from './notification-center.ts'
 import { NotificationSettingsSurfaceManager } from './notification-settings-surface.ts'
 import { loadNotificationsConfig } from './notifications-config.ts'
+import { registerOnboardingRoutes } from './onboarding-routes.ts'
 import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
 import { PushStore } from './push-store.ts'
 import { QuarantinedReader } from './quarantined-reader.ts'
@@ -118,6 +119,27 @@ export interface ServerOptions {
    * generated-or-loaded VAPID keypair.
    */
   pushTransport?: PushTransport
+  /**
+   * Onboarding wizard wiring (issue #19 T4). `domain`/`tlsActive` are the
+   * domain/TLS state the wizard's `domain` step confirms — the wizard never
+   * accepts a domain value, it only reflects what this profile already
+   * detected (`index.ts` knows `VEDUTA_PUBLIC_DOMAIN`; loopback has none).
+   * `scheduleExit` is `POST /api/onboarding/finish`'s graceful-exit hook,
+   * fired only on the VPS profile so systemd (`Restart=always`) reboots the
+   * daemon with the new boot-time-immutable routing/vault/ingestion config;
+   * injectable so tests can assert it fires (or doesn't) without actually
+   * killing the process. `env` feeds `buildOnboardingStatus`'s
+   * `VEDUTA_LEGACY_HOME`/`VEDUTA_ONBOARDING=force` reads. All four default
+   * to the loopback profile's shape: no domain, no TLS, `process.env`, and a
+   * real (unref'd, so it never keeps the event loop alive by itself) exit
+   * scheduled ~500ms out.
+   */
+  onboarding?: {
+    domain?: string
+    tlsActive?: boolean
+    scheduleExit?: () => void
+    env?: NodeJS.ProcessEnv
+  }
 }
 
 export type ServerAuthOptions =
@@ -132,14 +154,23 @@ export type ServerAuthOptions =
 const defaultPwaDistDir = fileURLToPath(new URL('../../pwa/dist/', import.meta.url))
 
 /**
- * Resolves `secret://` references for the whole daemon (issue #15 D2/D3):
- * the vault when one is configured and openable, falling back to
- * `secret://env/...` alone otherwise (mock/Local VPS profile unaffected —
- * neither `secrets.vault` nor vault key material exists there). Every
+ * Opens the vault once and derives the whole daemon's `secret://` resolver
+ * from it (issue #15 D2/D3; issue #19 decision 9). The vault is opened
+ * whenever key material is available — even with no `secrets.vault` file
+ * yet (`SecretsVault.open` starts an empty in-memory vault in that case) —
+ * so the returned instance is the single one both `ModelRouter`'s secrets
+ * resolver AND the onboarding BYOK/integrations routes write through;
+ * opening a second `SecretsVault` over the same file would race on the
+ * write-tmp-then-rename lock. With no key material at all, `vault` is
+ * `undefined` and the resolver falls back to `secret://env/...` alone
+ * (mock/Local VPS profile unaffected — neither exists there). Every
  * successful resolution registers the value with `defaultRedactor` so it
  * never survives into a durable sink or console output (issue #15 T4).
  */
-function buildSecretResolver(rootDir: string): SecretResolver {
+function openVaultAndSecrets(rootDir: string): {
+  vault: SecretsVault | undefined
+  secrets: SecretResolver
+} {
   const vaultPath = join(rootDir, VAULT_FILE_NAME)
   const keyMaterial = resolveVaultKeyMaterial()
   const vaultFileExists = existsSync(vaultPath)
@@ -151,16 +182,39 @@ function buildSecretResolver(rootDir: string): SecretResolver {
       `${vaultPath} exists but no vault key material is set (VEDUTA_VAULT_KEYFILE or VEDUTA_VAULT_KEY)`,
     )
   }
-  const inner: SecretResolver =
-    keyMaterial && vaultFileExists
-      ? compositeSecretResolver(SecretsVault.open(rootDir, keyMaterial), envSecretResolver)
-      : envSecretResolver
-  return {
+  const vault = keyMaterial ? SecretsVault.open(rootDir, keyMaterial) : undefined
+  const inner: SecretResolver = vault
+    ? compositeSecretResolver(vault, envSecretResolver)
+    : envSecretResolver
+  const secrets: SecretResolver = {
     resolve(secretRef: string) {
       const value = inner.resolve(secretRef)
       if (typeof value === 'string') defaultRedactor.register(value)
       return value
     },
+  }
+  return { vault, secrets }
+}
+
+/**
+ * `POST /api/onboarding/finish`'s default graceful-exit hook (VPS profile
+ * only, code review fix): after a 500ms grace period (so the HTTP response
+ * has time to actually flush to the client), close `app` — draining open
+ * connections, stopping the scheduler/gateway — THEN exit, instead of
+ * killing the process out from under any in-flight work. A ~3s unref'd
+ * fallback force-exits regardless, in case `app.close()` itself hangs (e.g.
+ * a socket that never drains): systemd (`Restart=always`) must still get
+ * its restart even if graceful shutdown gets stuck. Both timers are
+ * unref'd so neither keeps the event loop alive by itself.
+ */
+function defaultScheduleExit(app: FastifyInstance): () => void {
+  return () => {
+    const graceTimer = setTimeout(() => {
+      void app.close().finally(() => process.exit(0))
+    }, 500)
+    graceTimer.unref()
+    const forceExitTimer = setTimeout(() => process.exit(0), 3_500)
+    forceExitTimer.unref()
   }
 }
 
@@ -248,13 +302,20 @@ export function buildServer(options: ServerOptions = {}) {
   })
   // The secrets resolver for the whole daemon (issue #15 D2/D3): the vault
   // when configured and openable, `secret://env/...` alone otherwise, with
-  // every resolved value registered against the shared redactor.
-  const secrets = buildSecretResolver(store.spacesEngine.rootDir)
+  // every resolved value registered against the shared redactor. `vault` is
+  // the one instance also threaded into the onboarding routes below (issue
+  // #19 decision 9) — never opened a second time over the same file.
+  const { vault, secrets } = openVaultAndSecrets(store.spacesEngine.rootDir)
   // The trust layer's admin Surfaces (allowlist, audit) need a durable home
   // (issue #14, D8): materialize the System Space before anything else so
   // it exists no matter which subsystem writes to it first.
   ensureSystemSpace(store.spacesEngine)
   const auth = options.auth ?? { mode: 'dev' as const }
+  // Onboarding wizard profile (issue #19 decision 5/T4): mirrors
+  // `index.ts`'s own vps/loopback split — a production auth store means the
+  // VPS profile, everything else (dev auth, tests) is loopback.
+  const profile: 'loopback' | 'vps' = auth.mode === 'production' ? 'vps' : 'loopback'
+  const onboardingOptions = options.onboarding ?? {}
   // Dev-profile stand-in for the Agent's arm_timer decision (scheduler is
   // assigned right after the gateway; chat frames only arrive once both exist).
   const armReminderFromChat = (event: NormalizedChannelEvent) => {
@@ -889,6 +950,12 @@ export function buildServer(options: ServerOptions = {}) {
 
   app.get('/app/*', (_request, reply) => sendPwaAsset(reply, pwaDistDir, 'index.html'))
 
+  // The onboarding wizard's pairing landing page (issue #19 decision 12):
+  // served as the SPA, same as `/app/*`, and public (below) so the printed
+  // first-boot/pairing URL (`<origin>/setup?code=...`) works before any
+  // session exists.
+  app.get('/setup', (_request, reply) => sendPwaAsset(reply, pwaDistDir, 'index.html'))
+
   app.get('/manifest.webmanifest', (_request, reply) =>
     sendPwaAsset(reply, pwaDistDir, 'manifest.webmanifest'),
   )
@@ -996,6 +1063,21 @@ export function buildServer(options: ServerOptions = {}) {
     // current value instead.
     const result = notificationCenter.markSeen(spaceId) ?? pushStore.getAttention(spaceId)
     return { count: result.count, revision: result.revision }
+  })
+
+  // Onboarding wizard routes (issue #19 T4): registered directly on `app`,
+  // same as every route above, so the production `onRequest` auth hook
+  // already installed covers them too — nothing here is added to
+  // `isPublicUnauthenticatedPath` (only `/setup`, above, is).
+  registerOnboardingRoutes(app, {
+    rootDir: store.spacesEngine.rootDir,
+    profile,
+    domain: onboardingOptions.domain ?? null,
+    tlsActive: onboardingOptions.tlsActive ?? false,
+    vault,
+    spacesEngine: store.spacesEngine,
+    env: onboardingOptions.env ?? process.env,
+    scheduleExit: onboardingOptions.scheduleExit ?? defaultScheduleExit(app),
   })
 
   app.post('/api/surfaces/:surfaceId/actions', (request, reply) => {
@@ -1131,6 +1213,7 @@ function isPublicUnauthenticatedPath(url: string): boolean {
   const path = url.split('?')[0] ?? url
   return (
     path === '/' ||
+    path === '/setup' ||
     path.startsWith('/app/') ||
     path.startsWith('/assets/') ||
     path.startsWith('/icons/') ||

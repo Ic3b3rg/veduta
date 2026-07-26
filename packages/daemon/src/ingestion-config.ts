@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { backupFile, writeJsonAtomic } from './config-backup.ts'
 import { SecretRefSchema } from './model-routing.ts'
 import { PreFilterRulesSchema } from './pre-filter.ts'
 import { SOURCE_NAME_RE } from './taint.ts'
@@ -96,4 +97,18 @@ export function loadIngestionConfig(rootDir: string): IngestionConfig {
     )
   }
   return IngestionConfigSchema.parse(raw)
+}
+
+/**
+ * Validates `config`, backs up the existing `ingestion.json` (if any —
+ * issue #19 decision 6, ingestion is a wizard-driven config file), then
+ * writes the new state atomically. Ingestion sources are boot-time wiring
+ * (`server.ts`): callers must restart the daemon for a saved config to
+ * take effect.
+ */
+export function saveIngestionConfig(rootDir: string, config: IngestionConfig): void {
+  const validated = IngestionConfigSchema.parse(config)
+  const path = join(rootDir, 'ingestion.json')
+  backupFile(path)
+  writeJsonAtomic(path, validated)
 }

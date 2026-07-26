@@ -1,8 +1,14 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { IngestionConfigSchema, loadIngestionConfig } from './ingestion-config.ts'
+import {
+  IngestionConfigSchema,
+  loadIngestionConfig,
+  saveIngestionConfig,
+  type IngestionConfig,
+} from './ingestion-config.ts'
+import { PreFilterRulesSchema } from './pre-filter.ts'
 
 describe('loadIngestionConfig', () => {
   let rootDir: string
@@ -102,5 +108,54 @@ describe('loadIngestionConfig', () => {
         },
       }),
     ).toThrow(/calendar-push sources need/)
+  })
+})
+
+describe('saveIngestionConfig', () => {
+  let rootDir: string
+
+  beforeEach(() => {
+    rootDir = mkdtempSync(join(tmpdir(), 'veduta-ingestion-config-'))
+  })
+
+  afterEach(() => {
+    rmSync(rootDir, { recursive: true, force: true })
+  })
+
+  function webhookFixture(): IngestionConfig {
+    return {
+      sources: {
+        mail: {
+          verification: 'hmac',
+          secret: 'secret://vault/mail-webhook',
+          spaceId: 'spc-health',
+          adapter: 'webhook',
+          ratePerMinute: 60,
+          filters: PreFilterRulesSchema.parse({}),
+        },
+      },
+    }
+  }
+
+  it('round-trips a webhook source through save then load', () => {
+    const config = webhookFixture()
+    saveIngestionConfig(rootDir, config)
+    expect(loadIngestionConfig(rootDir)).toEqual(config)
+  })
+
+  it('creates a .bak file when overwriting an existing ingestion.json', () => {
+    saveIngestionConfig(rootDir, webhookFixture())
+    saveIngestionConfig(rootDir, { sources: {} })
+
+    const backups = readdirSync(rootDir).filter((entry) => entry.startsWith('ingestion.json.bak-'))
+    expect(backups).toHaveLength(1)
+  })
+
+  it('writes a file that parses cleanly against the strict schema', () => {
+    const config = webhookFixture()
+    saveIngestionConfig(rootDir, config)
+
+    const raw = JSON.parse(readFileSync(join(rootDir, 'ingestion.json'), 'utf8')) as unknown
+    expect(IngestionConfigSchema.parse(raw)).toEqual(config)
   })
 })

@@ -47,8 +47,17 @@ async function start(): Promise<void> {
   const auth = new AuthStore(authState ? { ...authOptions, state: authState } : authOptions)
 
   if (auth.status().bootstrapRequired) {
-    console.log(`veduta first-boot code: ${bootstrapCode}`)
-    console.log(`veduta first-boot setup URL: ${origin}/setup?code=${bootstrapCode}`)
+    // `auth.bootstrapCode()` (not the local `bootstrapCode` this process
+    // generated/read from the env) is the effective code (plan v2 decision
+    // 11): a restart after a code expired unconsumed mints and persists a
+    // fresh one internally, and this accessor is the seam that surfaces it —
+    // printing the stale local value here would print a code that no longer
+    // works.
+    const effectiveCode = auth.bootstrapCode()
+    if (effectiveCode) {
+      console.log(`veduta first-boot code: ${effectiveCode}`)
+      console.log(`veduta first-boot setup URL: ${origin}/setup?code=${effectiveCode}`)
+    }
   }
 
   const challenges = new AcmeChallengeStore()
@@ -77,6 +86,10 @@ async function start(): Promise<void> {
     // Global egress enforcement (issue #15 D1): only the production/VPS
     // profile installs the process-wide denying dispatcher.
     egress: { enforce: true },
+    // Onboarding wizard wiring (issue #19 T4): the VPS profile's real
+    // domain/TLS state, so the wizard's `domain` step reflects what this
+    // daemon actually detected rather than the loopback defaults.
+    onboarding: { domain, tlsActive: true, env: process.env },
   })
   await app.listen({ port: httpsPort, host: '0.0.0.0' })
   console.log(`veduta daemon (production profile) -> ${origin}`)

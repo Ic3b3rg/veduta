@@ -11,6 +11,141 @@ guide is specifically about the real VPS profile.
 Hardening rationale (why each directive exists) is in
 [docs/SECURITY.md](../docs/SECURITY.md), particularly §6 "Daemon attack surface".
 
+## Zero -- one-command install
+
+On a clean Ubuntu 22.04/24.04 VPS with a domain's A/AAAA record already pointing at it, this
+one command automates everything in sections 1-3 below (user/group/directory layout, the
+secrets vault keyfile, and the systemd unit), plus installing the pinned Node.js version,
+building the daemon, starting it, and printing the pairing QR code:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.sh | sudo bash
+```
+
+Run it while logged in over SSH (interactively) and it will prompt for your domain and ACME
+contact email, then walk through preflight, Node/build, the systemd unit, first boot, and the
+pairing QR. For a fully unattended run (e.g. from provisioning automation), pass the values
+explicitly:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.sh | \
+  sudo bash -s -- --apply --domain example.com --email admin@example.com
+```
+
+### Flags
+
+| Flag               | Default                                    | Meaning                                                                                                         |
+| ------------------ | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `--domain <d>`     | (prompted)                                 | Public domain (A/AAAA -> this VPS)                                                                              |
+| `--email <e>`      | (prompted)                                 | ACME contact email                                                                                              |
+| `--repo <url>`     | `https://github.com/Ic3b3rg/veduta.git`    | Repository to clone                                                                                             |
+| `--ref <tag\|sha>` | `main` (resolved to a concrete commit SHA) | Git ref to check out                                                                                            |
+| `--data-dir <p>`   | `/var/lib/veduta/.veduta`                  | Daemon data directory (`VEDUTA_DATA_DIR`) -- must be strictly under `/var/lib`, `/srv`, `/opt`, or `/var/local` |
+| `--apply`          | off                                        | Run unattended (needs `--domain`/`--email` when no tty is attached)                                             |
+| `--preview`        | off                                        | Force preview mode, even with a tty attached                                                                    |
+| `--help`           | --                                         | Print usage                                                                                                     |
+
+### Reruns are pinned
+
+On a rerun, if `/opt/veduta` already has a checkout and no explicit `--ref` is given, the
+installer reuses whatever commit is already checked out instead of re-resolving the moving
+`main` branch -- a recovery rerun (retrying after a failed `build` or `systemd-unit` stage,
+say) must not silently advance the running code out from under you. Pass `--ref main`
+explicitly on a rerun to upgrade to the latest commit.
+
+### The stage protocol
+
+The installer writes a machine-readable event to **stdout** after every stage transition, one
+JSON object per line, and nothing else -- every human-readable message (prompts, progress,
+warnings, the final pairing URL and QR code) goes to **stderr** instead. A GUI (the PWA's
+onboarding wizard) can render a progress bar from stdout alone, without reimplementing any of
+the installer's logic:
+
+```json
+{
+  "protocol_version": 1,
+  "stages": [
+    { "id": "preflight", "title": "...", "status": "pending|running|done|failed|skipped" }
+  ],
+  "needs_user_input": false
+}
+```
+
+The schema is `InstallerStageEventSchema` in `@veduta/protocol`. Stage ids, in order:
+`preflight`, `legacy-detect`, `deps`, `user-layout`, `checkout`, `build`, `vault-keyfile`,
+`systemd-unit`, `first-boot`, `pairing`. The final stage snapshot is also written to
+`<data-dir>/installer-stages.json` (owner `veduta:veduta`, mode `0600`) so the onboarding
+wizard can render an installer summary even if it starts well after the install finished.
+
+### Preview discipline
+
+Run without a controlling tty and without `--apply` (for example, piped into a subshell with
+its stdin already consumed, or invoked from a script that redirects everything) and the
+installer is **preview-only**: it prints the full stage plan (every stage `pending`,
+`needs_user_input: true`) on stdout, a human summary of exactly what an apply run would do on
+stderr, and exits `0` having written or downloaded nothing. `--preview` forces this mode
+explicitly, even with a tty attached. This is structural, not just a convention: every
+mutating command in every stage goes through a `run()` wrapper that, in preview mode, only
+echoes the command to stderr instead of executing it.
+
+### What the installer never does
+
+- **Never rotates an existing `/etc/veduta/vault.key`.** A keyfile is generated only when
+  absent; rotating one in place would make the vault it decrypts undecryptable. Back the
+  keyfile up out-of-band (a password manager, not the encrypted application backups, which
+  deliberately exclude it -- see §2 below).
+- **Never clobbers an existing `<data-dir>/onboarding.json`.** The legacy-detect seed (see
+  below) is written only when the file does not already exist, so a rerun never resets a wizard
+  that is already in progress or complete.
+- **Never fabricates recovery steps.** Every failure prints the exact next command
+  (`journalctl -u veduta -n 50`, the rerun invocation) instead of a vague "something went
+  wrong"; every stage is idempotent, so reruns are always safe.
+
+### Legacy agent migration
+
+Before any escalation side effect, the installer captures the invoking admin's home directory
+(the `SUDO_USER`'s home, or `/root`) and checks it for `.openclaw` and `.hermes`. If either is
+found, the result (never the file contents) is seeded into
+`<data-dir>/onboarding.json` as `legacy: { openclaw, hermes, sourceHome }` -- the daemon itself
+runs as the unprivileged `veduta` user under `ProtectHome=yes` and can never see `/home/*`
+directly. The onboarding wizard's `migration` step then offers to import before any manual
+configuration happens (issue 019 AC3); the importer itself ships with issue 020.
+
+### Supply-chain trust root
+
+- The repository is cloned over GitHub's TLS and pinned to a concrete commit SHA, resolved
+  with `git rev-parse` and hard-reset to -- even when `--ref` names a branch or tag, the
+  resolved SHA (printed to stderr, and part of the final human summary) is what actually gets
+  built and run.
+- The Node.js tarball is downloaded over TLS from `nodejs.org` and verified against that
+  release's published `SHASUMS256.txt` with `sha256sum -c` before extraction.
+- Full release-signature verification (a GPG keyring covering signed Veduta releases) is **out
+  of scope** for this installer -- it is the [docs/SECURITY.md](../docs/SECURITY.md) §6 "signed
+  updates" follow-up, tracked separately.
+
+### Timed acceptance checklist (AC1: clean VPS -> Home in < 15 minutes)
+
+Run this on an actual clean Ubuntu VPS with a domain already pointed at it (this is a manual,
+timed exercise -- it cannot be executed from an agent session without a real VPS):
+
+1. Start a timer.
+2. `curl -fsSL https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.sh | sudo bash`
+3. Answer the domain/email prompts (or skip them by having passed `--apply --domain --email`).
+4. Watch preflight -> legacy-detect -> deps -> user-layout -> checkout -> build ->
+   vault-keyfile -> systemd-unit -> first-boot complete.
+5. Scan the printed QR code (or open the printed `https://<domain>/setup?code=...` URL) with a
+   passkey-capable device/browser.
+6. Register a passkey.
+7. Walk the onboarding wizard's steps: migration (if a legacy install was detected) -> domain
+   confirmation -> BYOK (or skip, for the mock provider) -> model tiers -> first Space ->
+   integrations (or skip) -> finish.
+8. Land on Home.
+9. Stop the timer -- target: **under 15 minutes** end to end.
+
+The sections below (1-5) are the manual reference for exactly what the installer automates --
+use them if you are deploying by hand, auditing what the installer does, or debugging a step
+it got stuck on.
+
 ## 1. Dedicated user, group, and directory layout
 
 Create a system account with no login shell and no password -- the daemon never needs an

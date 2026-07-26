@@ -38,6 +38,16 @@ const PersistedSessionSchema = z.object({
 
 const AuthStateFileSchema = z.object({
   bootstrapCodeHash: z.string().optional(),
+  // Optional for backward compatibility (issue #19 T4/decision 11): an
+  // `auth.json` written before this field existed parses fine, and its
+  // absence is treated as "this bootstrap code never expires" (see
+  // `AuthStore`'s constructor).
+  bootstrapCodeExpiresAt: z.string().datetime().optional(),
+  // Optional for backward compatibility (issue #19 fix): an `auth.json`
+  // written before this field existed parses fine, treated as an empty log
+  // (see `AuthStore`'s constructor). Capped at 10 entries by `AuthStore`
+  // itself before every persist, not enforced here.
+  seenBootstrapCodeHashes: z.array(z.string().min(1)).optional(),
   passkeys: z.array(PersistedPasskeySchema),
   devices: z.array(AuthDeviceFileSchema),
   sessions: z.array(PersistedSessionSchema),
@@ -52,6 +62,12 @@ export function loadAuthState(path: string): AuthState | undefined {
       sessions: parsed.sessions.map(toPersistedSession),
     }
     if (parsed.bootstrapCodeHash !== undefined) state.bootstrapCodeHash = parsed.bootstrapCodeHash
+    if (parsed.bootstrapCodeExpiresAt !== undefined) {
+      state.bootstrapCodeExpiresAt = parsed.bootstrapCodeExpiresAt
+    }
+    if (parsed.seenBootstrapCodeHashes !== undefined) {
+      state.seenBootstrapCodeHashes = parsed.seenBootstrapCodeHashes
+    }
     return state
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined

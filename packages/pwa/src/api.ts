@@ -1,16 +1,28 @@
 import {
   AuthSessionSchema,
   AuthStatusSchema,
+  ByokTestResponseSchema,
+  FinishResponseSchema,
   GatewayServerMessageSchema,
+  OnboardingStatusSchema,
   SurfaceSnapshotSchema,
   SurfaceSchema,
   WebAuthnOptionsEnvelopeSchema,
   type AtomNode,
   type AuthSession,
   type AuthStatus,
+  type ByokApplyRequest,
+  type ByokTestRequest,
+  type ByokTestResponse,
+  type FinishResponse,
+  type FirstSpaceRequest,
   type GatewayServerMessage,
+  type IntegrationsApplyRequest,
   type JsonObject,
   type JsonValue,
+  type MigrationChoiceRequest,
+  type ModelsApplyRequest,
+  type OnboardingStatus,
   type Surface,
   type SurfaceArchivedEvent,
   type SurfaceCreatedEvent,
@@ -73,6 +85,68 @@ export async function fetchSpaces(token?: string): Promise<SurfaceSnapshot> {
   const res = await fetch('/api/spaces', { headers: authHeaders(token) })
   if (!res.ok) throw new Error(`GET /api/spaces failed: ${res.status}`)
   return SurfaceSnapshotSchema.parse(await res.json())
+}
+
+// Onboarding wizard (issue 019, `tasks/plan.md` "Design decisions (v2)" §4):
+// every response is zod-parsed against `@veduta/protocol`'s onboarding
+// schemas before it reaches `onboarding-state.ts` or a wizard component.
+
+export async function fetchOnboardingStatus(token?: string): Promise<OnboardingStatus> {
+  return OnboardingStatusSchema.parse(await getJson('/api/onboarding', token))
+}
+
+export async function submitMigrationChoice(
+  choice: MigrationChoiceRequest['choice'],
+  token?: string,
+): Promise<OnboardingStatus> {
+  return OnboardingStatusSchema.parse(
+    await postJson('/api/onboarding/migration', { choice }, token),
+  )
+}
+
+export async function confirmDomainStep(token?: string): Promise<OnboardingStatus> {
+  return OnboardingStatusSchema.parse(await postJson('/api/onboarding/domain', {}, token))
+}
+
+export async function testByokKey(
+  request: ByokTestRequest,
+  token?: string,
+): Promise<ByokTestResponse> {
+  return ByokTestResponseSchema.parse(await postJson('/api/onboarding/byok/test', request, token))
+}
+
+export async function applyByokStep(
+  request: ByokApplyRequest,
+  token?: string,
+): Promise<OnboardingStatus> {
+  return OnboardingStatusSchema.parse(await postJson('/api/onboarding/byok', request, token))
+}
+
+export async function applyModelsStep(
+  tiers: ModelsApplyRequest['tiers'],
+  token?: string,
+): Promise<OnboardingStatus> {
+  return OnboardingStatusSchema.parse(await postJson('/api/onboarding/models', { tiers }, token))
+}
+
+export async function applyFirstSpaceStep(
+  request: FirstSpaceRequest,
+  token?: string,
+): Promise<OnboardingStatus> {
+  return OnboardingStatusSchema.parse(await postJson('/api/onboarding/first-space', request, token))
+}
+
+export async function applyIntegrationsStep(
+  request: IntegrationsApplyRequest,
+  token?: string,
+): Promise<OnboardingStatus> {
+  return OnboardingStatusSchema.parse(
+    await postJson('/api/onboarding/integrations', request, token),
+  )
+}
+
+export async function finishOnboarding(token?: string): Promise<FinishResponse> {
+  return FinishResponseSchema.parse(await postJson('/api/onboarding/finish', {}, token))
 }
 
 /** Clears a Space's attention badge on focus (ADR decision 12/14): the
@@ -314,14 +388,78 @@ async function verifyLogin(
   )
 }
 
+async function getJson(path: string, token?: string): Promise<unknown> {
+  const res = await fetch(path, { headers: authHeaders(token) })
+  if (!res.ok) throw new Error(await errorMessageFromResponse(res, path))
+  return res.json()
+}
+
 async function postJson(path: string, body: unknown, token?: string): Promise<unknown> {
   const res = await fetch(path, {
     method: 'POST',
     headers: { ...authHeaders(token), 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`${path} failed: ${res.status}`)
+  if (!res.ok) throw new Error(await errorMessageFromResponse(res, path))
   return res.json()
+}
+
+async function errorMessageFromResponse(res: Response, path: string): Promise<string> {
+  let body: unknown
+  try {
+    body = await res.json()
+  } catch {
+    body = undefined
+  }
+  return errorMessageFromBody(res.status, path, body)
+}
+
+/**
+ * Renders the daemon's error body into a message the user can act on, instead
+ * of a bare status code. The daemon returns `{error: "<exact dead-end
+ * command>"}` on 409 (`VaultUnavailableError`) and most 400/500s
+ * (`OnboardingStepError`, the generic 500 fallback) -- Hermes discipline: dead
+ * ends print the exact next command. Body-validation failures instead return
+ * `{error: <zod issues array>}` (see e.g. `onboarding-routes.ts`,
+ * `server.ts`): `error` there is an array of `{path, message}` objects, not a
+ * string, so it is rendered the same compact "path: message; …" list a
+ * top-level `issues` array would be. The top-level `issues` shape is kept for
+ * defensiveness/forward-compatibility even though no current route emits it.
+ * Falls back to the status code only when the body has none of these shapes.
+ * Exported and pure so it can be table-tested without a network call.
+ */
+export function errorMessageFromBody(status: number, path: string, body: unknown): string {
+  if (body !== null && typeof body === 'object') {
+    const record = body as Record<string, unknown>
+    if (typeof record['error'] === 'string' && record['error'].length > 0) {
+      return record['error']
+    }
+    if (Array.isArray(record['error'])) {
+      const rendered = renderZodIssues(record['error'])
+      if (rendered.length > 0) return `${path} failed: ${rendered}`
+    }
+    if (Array.isArray(record['issues'])) {
+      const rendered = renderZodIssues(record['issues'])
+      if (rendered.length > 0) return `${path} failed: ${rendered}`
+    }
+  }
+  return `${path} failed: ${status}`
+}
+
+function renderZodIssues(issues: unknown[]): string {
+  return issues
+    .map((issue) => renderZodIssue(issue))
+    .filter((message) => message.length > 0)
+    .join('; ')
+}
+
+function renderZodIssue(issue: unknown): string {
+  if (issue === null || typeof issue !== 'object') return ''
+  const record = issue as Record<string, unknown>
+  const message = typeof record['message'] === 'string' ? record['message'] : ''
+  if (message.length === 0) return ''
+  const path = Array.isArray(record['path']) ? record['path'].join('.') : ''
+  return path.length > 0 ? `${path}: ${message}` : message
 }
 
 /** Shared with push.ts so the push-subscription requests use the exact same

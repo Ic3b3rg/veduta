@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -46,5 +46,79 @@ describe('auth state file', () => {
     saveAuthState(path, state)
 
     expect(loadAuthState(path)).toEqual(state)
+  })
+
+  it('round-trips a persisted bootstrapCodeExpiresAt alongside the hash', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'veduta-auth-'))
+    const path = join(dir, 'auth.json')
+    const state: AuthState = {
+      bootstrapCodeHash: 'a-hash',
+      bootstrapCodeExpiresAt: '2026-07-24T11:00:00.000Z',
+      passkeys: [],
+      devices: [],
+      sessions: [],
+    }
+
+    saveAuthState(path, state)
+
+    expect(loadAuthState(path)).toEqual(state)
+  })
+
+  it('loads a pre-existing auth.json written before bootstrapCodeExpiresAt existed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'veduta-auth-'))
+    const path = join(dir, 'auth.json')
+    // Hand-written, deliberately missing the field entirely — simulates an
+    // auth.json from before issue #19 T4 added it.
+    await writeFile(
+      path,
+      JSON.stringify({
+        bootstrapCodeHash: 'a-hash',
+        passkeys: [],
+        devices: [],
+        sessions: [],
+      }),
+    )
+
+    const loaded = loadAuthState(path)
+    expect(loaded?.bootstrapCodeHash).toBe('a-hash')
+    expect(loaded?.bootstrapCodeExpiresAt).toBeUndefined()
+  })
+
+  it('round-trips a persisted seenBootstrapCodeHashes log alongside the hash', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'veduta-auth-'))
+    const path = join(dir, 'auth.json')
+    const state: AuthState = {
+      bootstrapCodeHash: 'a-hash',
+      bootstrapCodeExpiresAt: '2026-07-24T11:00:00.000Z',
+      seenBootstrapCodeHashes: ['hash-1', 'hash-2', 'a-hash'],
+      passkeys: [],
+      devices: [],
+      sessions: [],
+    }
+
+    saveAuthState(path, state)
+
+    expect(loadAuthState(path)).toEqual(state)
+  })
+
+  it('loads a pre-existing auth.json written before seenBootstrapCodeHashes existed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'veduta-auth-'))
+    const path = join(dir, 'auth.json')
+    // Hand-written, deliberately missing the field entirely — simulates an
+    // auth.json from before issue #19's fix added it.
+    await writeFile(
+      path,
+      JSON.stringify({
+        bootstrapCodeHash: 'a-hash',
+        bootstrapCodeExpiresAt: '2026-07-24T11:00:00.000Z',
+        passkeys: [],
+        devices: [],
+        sessions: [],
+      }),
+    )
+
+    const loaded = loadAuthState(path)
+    expect(loaded?.bootstrapCodeHash).toBe('a-hash')
+    expect(loaded?.seenBootstrapCodeHashes).toBeUndefined()
   })
 })

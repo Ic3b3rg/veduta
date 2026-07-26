@@ -239,6 +239,50 @@ describe('production auth boundary', () => {
   })
 })
 
+describe('onboarding wizard routes (issue #19 T4)', () => {
+  it('serves /setup as the SPA without auth, but requires a session for /api/onboarding in the vps profile', async () => {
+    const pwaDistDir = await mkdtemp(join(tmpdir(), 'veduta-pwa-'))
+    await writeFile(join(pwaDistDir, 'index.html'), '<div id="root"></div>')
+    const { auth, token } = await readyAuthStore()
+    const { app } = buildServer({
+      pwaDistDir,
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+    })
+
+    const setup = await app.inject({ method: 'GET', url: '/setup' })
+    expect(setup.statusCode).toBe(200)
+    expect(setup.headers['content-type']).toContain('text/html')
+
+    const denied = await app.inject({ method: 'GET', url: '/api/onboarding' })
+    expect(denied.statusCode).toBe(401)
+
+    const migrationDenied = await app.inject({
+      method: 'POST',
+      url: '/api/onboarding/domain',
+      payload: {},
+    })
+    expect(migrationDenied.statusCode).toBe(401)
+
+    const allowed = await app.inject({
+      method: 'GET',
+      url: '/api/onboarding',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(allowed.statusCode).toBe(200)
+    expect(allowed.json()).toMatchObject({ profile: 'vps' })
+
+    await app.close()
+  })
+
+  it('reports the loopback profile and never requires the wizard by default in the dev profile', async () => {
+    const { app } = buildServer()
+    const res = await app.inject({ method: 'GET', url: '/api/onboarding' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ profile: 'loopback', required: false })
+    await app.close()
+  })
+})
+
 describe('GET /api/spaces/:id/events', () => {
   it('returns 404 for an unknown space instead of an empty list', async () => {
     const { app } = buildServer()

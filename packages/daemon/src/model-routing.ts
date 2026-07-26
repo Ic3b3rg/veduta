@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
 import type { ModelRef, ModelTier } from './agent-runner.ts'
+import { backupFile, writeJsonAtomic } from './config-backup.ts'
 import { defaultRedactor } from './redaction.ts'
 
 /**
@@ -128,6 +129,20 @@ export function loadRoutingConfig(rootDir: string): RoutingConfig {
     providerKeys: { ...defaults.providerKeys, ...overrides.providerKeys },
     dailyCapUsd: { ...defaults.dailyCapUsd, ...overrides.dailyCapUsd },
   })
+}
+
+/**
+ * Validates `config` against the strict schema, backs up the existing
+ * `routing.json` (if any — issue #19 decision 6, routing is a wizard-driven
+ * config file), then writes the new state atomically. Routing is boot-time
+ * wiring (`server.ts`): callers must restart the daemon for a saved config
+ * to take effect.
+ */
+export function saveRoutingConfig(rootDir: string, config: RoutingConfig): void {
+  const validated = RoutingConfigSchema.parse(config)
+  const path = join(rootDir, 'routing.json')
+  backupFile(path)
+  writeJsonAtomic(path, validated)
 }
 
 /**

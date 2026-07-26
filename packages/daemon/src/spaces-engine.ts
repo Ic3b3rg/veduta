@@ -496,7 +496,18 @@ function defaultDataDir(): string {
   return join(process.cwd(), '.veduta')
 }
 
-function slugify(input: string): string {
+/**
+ * Lowercase, non-`[a-z0-9]` runs collapsed to a single `-`, leading/trailing
+ * `-` trimmed. Kept in lockstep with `SpaceSchema`'s `^[a-z0-9-]+$` slug
+ * pattern (`@veduta/protocol`) so a name always slugifies to something the
+ * schema accepts (a name with no letters or digits at all slugifies to `''`
+ * — callers that mint a Space slug from user input, e.g.
+ * `onboarding-step-first-space.ts`, must guard that case themselves rather
+ * than letting it reach `SpaceSchema.parse` as an opaque ZodError).
+ * Exported so every caller shares this one canonical rule instead of
+ * keeping its own copy.
+ */
+export function slugify(input: string): string {
   return input
     .trim()
     .toLowerCase()

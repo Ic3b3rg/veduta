@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -11,6 +11,7 @@ import {
   SpendingCapError,
   defaultRoutingConfig,
   loadRoutingConfig,
+  saveRoutingConfig,
   tierForRequest,
   type RouterEvent,
   type RoutingConfig,
@@ -140,6 +141,55 @@ describe('routing config', () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'veduta-routing-'))
     writeFileSync(join(rootDir, 'routing.json'), '{not json')
     expect(() => loadRoutingConfig(rootDir)).toThrow(/routing config .*routing\.json/)
+  })
+})
+
+describe('saveRoutingConfig', () => {
+  it('round-trips tiers, providerKeys and caps through save then load', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'veduta-routing-'))
+    // Every default provider key is present so `loadRoutingConfig`'s
+    // defaults-merge is a no-op — this isolates the round-trip assertion
+    // to what `saveRoutingConfig`/`writeJsonAtomic` actually persisted.
+    const config: RoutingConfig = {
+      tiers: {
+        reasoning: [{ provider: 'anthropic', modelId: 'claude-sonnet-5' }],
+        triage: [{ provider: 'anthropic', modelId: 'claude-haiku-4-5' }],
+      },
+      providerKeys: {
+        anthropic: 'secret://vault/anthropic',
+        openai: 'secret://vault/openai',
+        openrouter: 'secret://vault/openrouter',
+      },
+      dailyCapUsd: { triage: 2, reasoning: 10 },
+    }
+
+    saveRoutingConfig(rootDir, config)
+
+    expect(loadRoutingConfig(rootDir)).toEqual(config)
+
+    const raw = JSON.parse(readFileSync(join(rootDir, 'routing.json'), 'utf8')) as unknown
+    expect(raw).toEqual(config)
+  })
+
+  it('creates a .bak file when overwriting an existing routing.json', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'veduta-routing-'))
+    saveRoutingConfig(rootDir, defaultRoutingConfig())
+    saveRoutingConfig(rootDir, {
+      ...defaultRoutingConfig(),
+      dailyCapUsd: { triage: 1, reasoning: 1 },
+    })
+
+    const backups = readdirSync(rootDir).filter((entry) => entry.startsWith('routing.json.bak-'))
+    expect(backups).toHaveLength(1)
+  })
+
+  it('writes a file that parses cleanly against the strict schema', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'veduta-routing-'))
+    const config = defaultRoutingConfig()
+    saveRoutingConfig(rootDir, config)
+
+    const raw = JSON.parse(readFileSync(join(rootDir, 'routing.json'), 'utf8')) as unknown
+    expect(RoutingConfigSchema.parse(raw)).toEqual(config)
   })
 })
 

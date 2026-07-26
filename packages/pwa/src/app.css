@@ -509,9 +509,219 @@ input:focus-visible {
   padding: 8px 10px;
 }
 
+/* Onboarding wizard (issue 019): same visual family as .auth-shell/.auth-form
+   (bespoke full-screen app chrome, not a Surface — `tasks/plan.md` §1) and
+   .status-pill/.error — no new custom properties, only the tokens above. */
+.wizard-shell {
+  display: grid;
+  gap: 16px;
+  margin: 6vh auto 40px;
+  max-width: 560px;
+  padding: 16px;
+}
+
+.wizard-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.wizard-header h1 {
+  font-size: 22px;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.wizard-header p {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+
+.wizard-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wizard-progress-item.current .status-pill {
+  background: var(--accent-soft-bg);
+  border-color: var(--accent-soft);
+  color: var(--text);
+}
+
+.wizard-step-form {
+  display: grid;
+  gap: 10px;
+}
+
+.wizard-step-form label {
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.wizard-step-form input,
+.wizard-step-form select {
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  min-height: 40px;
+  padding: 8px 10px;
+}
+
+.wizard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wizard-actions button {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+.wizard-actions button.wizard-skip,
+.wizard-skip {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text);
+  font-weight: 400;
+}
+
+.wizard-help {
+  background: var(--pill-bg);
+  border-radius: 8px;
+  color: var(--text-soft);
+  font-size: 13px;
+  padding: 10px 12px;
+}
+
+.wizard-help code,
+.wizard-step-form code {
+  background: var(--pill-bg);
+  border-radius: 4px;
+  font-size: 12px;
+  padding: 2px 5px;
+}
+
+.wizard-help-note {
+  color: var(--warning-text);
+  font-size: 12px;
+  margin: 0;
+}
+
+.wizard-test-result {
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.wizard-test-result.valid {
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  color: var(--success-text);
+}
+
+.wizard-test-result.invalid,
+.wizard-test-result.unreachable {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  color: var(--danger-text);
+}
+
+.wizard-status-note {
+  border-radius: 8px;
+  font-size: 13px;
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.wizard-status-note.info {
+  background: var(--accent-soft-bg);
+  border: 1px solid var(--accent-soft);
+  color: var(--text);
+}
+
+.wizard-status-note.notice {
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  color: var(--warning-text);
+}
+
+.wizard-tier {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.wizard-tier legend {
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 0 4px;
+}
+
+.wizard-tier-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+}
+
+.wizard-integration {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.wizard-integration summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.wizard-integration-fields {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.wizard-installer-summary {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.wizard-installer-summary ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
 @media (max-width: 760px) {
   .app-shell {
     padding: 14px 12px 190px;
+  }
+
+  .wizard-shell {
+    margin-top: 3vh;
+    padding: 12px;
+  }
+
+  .wizard-tier-row {
+    grid-template-columns: 1fr;
   }
 
   .topbar,

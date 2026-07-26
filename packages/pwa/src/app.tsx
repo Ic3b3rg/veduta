@@ -1,10 +1,11 @@
-import type { ApprovalCard, ChatMessage, Surface } from '@veduta/protocol'
+import type { ApprovalCard, ChatMessage, OnboardingStatus, Surface } from '@veduta/protocol'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApprovalCards, dismissCardsForSurface } from './approval-cards.tsx'
 import { AttentionBadge } from './attention-badge.tsx'
 import {
   connectGateway,
   fetchAuthStatus,
+  fetchOnboardingStatus,
   fetchSpaces,
   invokeFastAction,
   markSpaceAttentionSeen,
@@ -12,6 +13,7 @@ import {
   type SpaceWithSurfaces,
 } from './api.ts'
 import { AuthGate } from './auth-gate.tsx'
+import { OnboardingWizard } from './onboarding-wizard.tsx'
 import { ChatBar } from './chat-bar.tsx'
 import {
   applyBufferedSurfaceStreamEvents,
@@ -65,6 +67,8 @@ export function App() {
   const [authMode, setAuthMode] = useState<'dev' | 'production' | undefined>(undefined)
   const [bootstrapRequired, setBootstrapRequired] = useState(false)
   const [passkeyRegistered, setPasskeyRegistered] = useState(false)
+  const [onboardingStatus, setOnboardingStatus] = useState<OnboardingStatus | null>(null)
+  const [onboardingLoad, setOnboardingLoad] = useState<'loading' | 'ready' | 'error'>('loading')
   const [gatewayOnline, setGatewayOnline] = useState(false)
   const [installPrompt, setInstallPrompt] = useState<BrowserInstallPromptEvent | null>(null)
   const [showInstallGuide, setShowInstallGuide] = useState(
@@ -274,6 +278,14 @@ export function App() {
         setError(
           spacesRef.current.length > 0 ? `Offline: showing cached Home. ${e.message}` : e.message,
         )
+        // A failed /api/auth/status leaves `authMode` undefined forever, so the
+        // onboarding-wizard effect below (gated on `authMode !== undefined`)
+        // never runs and `onboardingLoad` would otherwise stay stuck at its
+        // initial 'loading' value — dead-ending on the "Loading…" screen even
+        // when there is cached Home data to show. Fail open to Home here too,
+        // the same availability choice already made for a failed onboarding
+        // fetch below.
+        setOnboardingLoad('error')
       })
 
     return () => {
@@ -282,6 +294,31 @@ export function App() {
       gatewayRef.current?.close()
     }
   }, [handleSurfaceStreamEvent, appendChatEntry, authToken, replaceSpaces, refetchAndReplay])
+
+  // Onboarding wizard gate (issue 019, `tasks/plan.md` §1/§5): fetched once
+  // authenticated (or immediately in loopback, where no token is required).
+  // `onboardingLoad` starts (and is reset to) 'loading' so the render below
+  // shows a neutral wait state instead of flashing Home before this resolves.
+  // A failed fetch fails open to Home — a broken onboarding endpoint must
+  // never brick access to the user's data (deliberate availability choice) —
+  // so any error here is logged, not surfaced as a blocking error banner.
+  useEffect(() => {
+    if (authMode === undefined) return
+    if (authMode === 'production' && !authToken) return
+
+    const load = async () => {
+      setOnboardingLoad('loading')
+      try {
+        const status = await fetchOnboardingStatus(authToken)
+        setOnboardingStatus(status)
+        setOnboardingLoad('ready')
+      } catch (e) {
+        console.warn('failed to fetch onboarding status, failing open to Home:', e)
+        setOnboardingLoad('error')
+      }
+    }
+    void load()
+  }, [authMode, authToken])
 
   useEffect(() => {
     if (!gatewayOnline || queuedChat.length === 0) return
@@ -441,6 +478,37 @@ export function App() {
           setError(null)
         }}
         onError={setError}
+      />
+    )
+  }
+
+  // While the onboarding status fetch is in flight, hold on a neutral view
+  // rather than rendering Home (which would flash before the wizard gate
+  // below can decide whether it applies). This branch is reachable only in
+  // contexts where the wizard could be required — the effect above only sets
+  // 'loading' after auth resolves to loopback, or to production with a token.
+  if (onboardingLoad === 'loading') {
+    return (
+      <main className="wizard-shell">
+        <p>Loading…</p>
+      </main>
+    )
+  }
+
+  if (onboardingStatus?.required && !onboardingStatus.completed) {
+    return (
+      <OnboardingWizard
+        status={onboardingStatus}
+        token={authToken}
+        onStatus={setOnboardingStatus}
+        onCompleted={() => {
+          setOnboardingStatus((prev) =>
+            prev ? { ...prev, required: false, completed: true } : prev,
+          )
+          fetchSpaces(authToken)
+            .then((snapshot) => replaceSpaces(snapshot.spaces, snapshot.surfaceCursor))
+            .catch((e: Error) => setError(e.message))
+        }}
       />
     )
   }
