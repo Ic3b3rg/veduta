@@ -59,6 +59,25 @@ describe('detectLegacyAgents', () => {
     mkdirSync(join(dir, '.hermes'))
     expect(detectLegacyAgents(dir)).toEqual({ openclaw: false, hermes: true, sourceHome: dir })
   })
+
+  it('detects OpenClaw under its former names .clawdbot/.moltbot as openclaw', () => {
+    const clawdbotDir = freshRoot()
+    mkdirSync(join(clawdbotDir, '.clawdbot'))
+    expect(detectLegacyAgents(clawdbotDir)).toEqual({
+      openclaw: true,
+      hermes: false,
+      sourceHome: clawdbotDir,
+    })
+    rmSync(clawdbotDir, { recursive: true, force: true })
+
+    const moltbotDir = freshRoot()
+    mkdirSync(join(moltbotDir, '.moltbot'))
+    expect(detectLegacyAgents(moltbotDir)).toEqual({
+      openclaw: true,
+      hermes: false,
+      sourceHome: moltbotDir,
+    })
+  })
 })
 
 describe('ONBOARDING_STEP_ORDER', () => {

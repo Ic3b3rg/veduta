@@ -10,6 +10,7 @@ import {
   type OnboardingStepId,
   type Space,
 } from '@veduta/protocol'
+import { OPENCLAW_ALIASES } from './import-source.ts'
 import { loadIngestionConfig } from './ingestion-config.ts'
 import { loadRoutingConfig } from './model-routing.ts'
 import { loadOnboardingConfig } from './onboarding-config.ts'
@@ -37,7 +38,8 @@ const BYOK_PROVIDERS = ByokProviderSchema.options
 
 /**
  * Scans `home` for a legacy Hermes/OpenClaw install (`~/.hermes`,
- * `~/.openclaw`). Used by the daemon only as a loopback-profile fallback
+ * `~/.openclaw`, or either of OpenClaw's former names `~/.clawdbot`/
+ * `~/.moltbot`). Used by the daemon only as a loopback-profile fallback
  * (`VEDUTA_LEGACY_HOME`, verification per ADR-0009); on a real VPS install
  * the daemon runs as `veduta` under `ProtectHome=yes` and can never see the
  * admin's real home — that detection happens in the installer's
@@ -45,9 +47,15 @@ const BYOK_PROVIDERS = ByokProviderSchema.options
  * the daemon ever boots (`tasks/plan.md` §10), which is why
  * `buildOnboardingStatus` always prefers the persisted value over calling
  * this function again.
+ *
+ * B13 (code review): imports `OPENCLAW_ALIASES` from `import-source.ts`
+ * instead of keeping a second, independently-maintained copy of OpenClaw's
+ * former names — the two had drifted into two TypeScript lists doing the
+ * same job. `deploy/install.sh`'s own copy is the one duplication left,
+ * since bash cannot import a TypeScript constant.
  */
 export function detectLegacyAgents(home: string): LegacyDetection {
-  const openclaw = existsSync(join(home, '.openclaw'))
+  const openclaw = OPENCLAW_ALIASES.some((alias) => existsSync(join(home, alias)))
   const hermes = existsSync(join(home, '.hermes'))
   return {
     openclaw,
@@ -58,23 +66,29 @@ export function detectLegacyAgents(home: string): LegacyDetection {
 
 /**
  * Dead-end copy shared by every step module that needs the vault and finds
- * none open (`tasks/plan.md` §9): the exact commands to provision a keyfile.
- * Routes map this to a 409 (T4); it is never thrown with any secret value
- * attached.
+ * none open (`tasks/plan.md` §9), and by the importer (`import-apply.ts` T5,
+ * decision 10) when it needs vault key material for a backup: the exact
+ * commands to provision a keyfile. Exported as a standalone constant (rather
+ * than only living inside `VaultUnavailableError`'s message) so a second
+ * caller can quote the identical text without constructing this error type
+ * — `import-apply.ts` throws its own `ImportRefusedError` with this same
+ * message, since the importer's refusal has its own `blocked` list shape.
+ * Routes map `VaultUnavailableError` to a 409 (T4); neither this constant
+ * nor the error is ever built with any secret value attached.
  */
+export const VAULT_UNAVAILABLE_MESSAGE = [
+  'no secrets vault is available: this daemon booted with no vault key material.',
+  'Generate a keyfile and restart:',
+  '  sudo install -d -m 0755 /etc/veduta',
+  '  head -c 48 /dev/urandom | base64 | sudo tee /etc/veduta/vault.key > /dev/null',
+  '  sudo chown veduta:veduta /etc/veduta/vault.key',
+  '  sudo chmod 0400 /etc/veduta/vault.key',
+  'then set VEDUTA_VAULT_KEYFILE=/etc/veduta/vault.key (see deploy/README.md §2).',
+].join('\n')
+
 export class VaultUnavailableError extends Error {
   constructor() {
-    super(
-      [
-        'no secrets vault is available: this daemon booted with no vault key material.',
-        'Generate a keyfile and restart:',
-        '  sudo install -d -m 0755 /etc/veduta',
-        '  head -c 48 /dev/urandom | base64 | sudo tee /etc/veduta/vault.key > /dev/null',
-        '  sudo chown veduta:veduta /etc/veduta/vault.key',
-        '  sudo chmod 0400 /etc/veduta/vault.key',
-        'then set VEDUTA_VAULT_KEYFILE=/etc/veduta/vault.key (see deploy/README.md §2).',
-      ].join('\n'),
-    )
+    super(VAULT_UNAVAILABLE_MESSAGE)
     this.name = 'VaultUnavailableError'
   }
 }

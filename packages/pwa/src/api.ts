@@ -4,6 +4,8 @@ import {
   ByokTestResponseSchema,
   FinishResponseSchema,
   GatewayServerMessageSchema,
+  ImportApplyResponseSchema,
+  ImportPlanSchema,
   OnboardingStatusSchema,
   SurfaceSnapshotSchema,
   SurfaceSchema,
@@ -17,6 +19,10 @@ import {
   type FinishResponse,
   type FirstSpaceRequest,
   type GatewayServerMessage,
+  type ImportApplyRequest,
+  type ImportApplyResponse,
+  type ImportPlan,
+  type ImportPreviewRequest,
   type IntegrationsApplyRequest,
   type JsonObject,
   type JsonValue,
@@ -101,6 +107,37 @@ export async function submitMigrationChoice(
 ): Promise<OnboardingStatus> {
   return OnboardingStatusSchema.parse(
     await postJson('/api/onboarding/migration', { choice }, token),
+  )
+}
+
+/**
+ * `POST /api/onboarding/migration/preview` (issue 020, `tasks/plan.md` "Wire
+ * API"): a pure dry-run that writes nothing to source or target -- this
+ * helper only reads the returned plan, it never mutates anything itself.
+ * `request.overwrite` must match whatever the wizard is about to apply
+ * (design decision 7): re-preview on every toggle rather than reusing a
+ * stale plan.
+ */
+export async function previewLegacyImport(
+  request: ImportPreviewRequest,
+  token?: string,
+): Promise<ImportPlan> {
+  return ImportPlanSchema.parse(await postJson('/api/onboarding/migration/preview', request, token))
+}
+
+/**
+ * `POST /api/onboarding/migration/import` (`tasks/plan.md` "Wire API"):
+ * recomputes and actually applies the plan for one legacy source. The
+ * response's `status` is a fresh `GET`-equivalent (a successful import sets
+ * `migrationChoice: 'imported'` and completes the `migration` step), so the
+ * caller does not need a second round trip to advance the wizard.
+ */
+export async function runLegacyImport(
+  request: ImportApplyRequest,
+  token?: string,
+): Promise<ImportApplyResponse> {
+  return ImportApplyResponseSchema.parse(
+    await postJson('/api/onboarding/migration/import', request, token),
   )
 }
 

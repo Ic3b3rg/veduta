@@ -82,8 +82,8 @@ export const InstallerStageEventSchema = z.object({
  * persisted into `onboarding.json` so the daemon — which runs as the
  * `veduta` user under `ProtectHome=yes` and can never see `/home/*` itself —
  * can offer the `migration` step first. `sourceHome` is the detected legacy
- * home directory, when found, so the (future, issue 020) importer knows
- * where to read from.
+ * home directory, when found, so the importer (`import-source.ts`'s
+ * `resolveLegacyDir`, issue 020) knows where to read from.
  */
 export const LegacyDetectionSchema = z.object({
   openclaw: z.boolean(),
@@ -179,9 +179,11 @@ export const OnboardingStatusSchema = z.object({
 
 /**
  * `POST /api/onboarding/migration` body. An honest deferral: recording
- * `migrate-later` does not run anything — it just marks the choice so the
- * (future, issue 020) importer can pick it up. No fake command is printed
- * for either choice (`tasks/plan.md` §4).
+ * `migrate-later` does not run anything — it just marks the choice. The
+ * importer itself is reached separately, via `/api/onboarding/migration/preview`
+ * and `/api/onboarding/migration/import` (`onboarding-step-migration.ts`,
+ * issue 020), which set `migrationChoice: 'imported'` on success. No fake
+ * command is printed for either choice here (`tasks/plan.md` §4).
  */
 export const MigrationChoiceRequestSchema = z.object({
   choice: z.enum(['migrate-later', 'manual']),

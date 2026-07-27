@@ -71,14 +71,66 @@ export interface ByokDeps {
 }
 
 /**
+ * Points `routing.json`'s `providerKeys[name]` at `secret://vault/<name>`
+ * (`tasks/plan.md` decision 12), split out of `storeProviderKey` (B2, this
+ * fix group's report) so both places that can make a provider key "current"
+ * — actually storing a new value, and `applyByok`'s keep-existing branch,
+ * where a key may already be sitting in the vault (from an earlier submit,
+ * or placed there out-of-band via the vault CLI) with nothing yet pointing
+ * `routing.json` at it — reconcile the pointer the same way. Before this
+ * split, only `storeProviderKey` ever wrote the pointer, so a keep-existing
+ * submit against an out-of-band vault entry completed the step while leaving
+ * `routing.json.providerKeys` untouched — exactly the drift this function's
+ * doc comment on `storeProviderKey` claims never happens.
+ */
+function pointRoutingAtVault(rootDir: string, name: string): void {
+  const routing = loadRoutingConfig(rootDir)
+  saveRoutingConfig(rootDir, {
+    ...routing,
+    providerKeys: { ...routing.providerKeys, [name]: `secret://vault/${name}` },
+  })
+}
+
+/**
+ * Stores one provider key in the vault AND points `routing.json`'s
+ * `providerKeys[name]` at the vault reference, as a single unit of work
+ * (`tasks/plan.md` decision 12): the two must never drift apart, since a
+ * vault entry with nothing in `routing.json` pointing at it is invisible to
+ * the router, and a `routing.json` pointer with nothing in the vault is a
+ * dangling reference. Extracted out of `applyByok` (issue #19) so the
+ * importer's secrets step (`import-apply.ts` T5) shares this exact
+ * implementation instead of a second hand-rolled copy — `name` is a BYOK
+ * provider id (`anthropic`/`openai`/`openrouter`) in both callers, but this
+ * function does not itself constrain it, since the importer's allowlist
+ * (`import-secrets.ts`) already guarantees only those three ever reach here.
+ * `value` is registered with `defaultRedactor` before anything else, so it
+ * can never survive into a log line or thrown error from this point on. The
+ * vault file is backed up before the write (issue #15 discipline: every
+ * mutation of a durable store gets a restorable backup first).
+ */
+export function storeProviderKey(
+  deps: { rootDir: string; vault: SecretsVault },
+  name: string,
+  value: string,
+): void {
+  defaultRedactor.register(value)
+  backupFile(join(deps.rootDir, VAULT_FILE_NAME))
+  deps.vault.set(name, value)
+  pointRoutingAtVault(deps.rootDir, name)
+}
+
+/**
  * `POST /api/onboarding/byok` (`tasks/plan.md` §4, decision 4/9). Idempotent,
  * side-effects-first: skip just records `skipped`; otherwise a submitted key
- * is registered with `defaultRedactor` immediately on receipt, the vault is
- * backed up before the write, then the key is stored and `routing.json`'s
- * `providerKeys[provider]` is pointed at the vault reference — only then is
- * the step marked `completed`. Omitting `key` means "keep the existing
- * stored key" (the keep-existing sentinel): it requires a key already be in
- * the vault, or throws an `OnboardingStepError` that never echoes any key value.
+ * is registered with `defaultRedactor` immediately on receipt (even on the
+ * `VaultUnavailableError` path below, so the key never survives into that
+ * thrown error), then `storeProviderKey` stores it and points routing at it
+ * — only then is the step marked `completed`. Omitting `key` means "keep the
+ * existing stored key" (the keep-existing sentinel): it requires a key
+ * already be in the vault, or throws an `OnboardingStepError` that never
+ * echoes any key value — and B2, this fix group's report: it now also calls
+ * `pointRoutingAtVault` itself, on this branch, since `storeProviderKey`
+ * (which used to be the only place that ran it) is never called here.
  */
 export function applyByok(deps: ByokDeps, request: ByokApplyRequest): void {
   const config = loadOnboardingConfig(deps.rootDir)
@@ -95,17 +147,13 @@ export function applyByok(deps: ByokDeps, request: ByokApplyRequest): void {
   if (key !== undefined) {
     defaultRedactor.register(key)
     if (!deps.vault) throw new VaultUnavailableError()
-    backupFile(join(deps.rootDir, VAULT_FILE_NAME))
-    deps.vault.set(provider, key)
-  } else if (!deps.vault?.has(provider)) {
-    throw new OnboardingStepError(`no stored key for ${provider}; submit a key or skip`)
+    storeProviderKey({ rootDir: deps.rootDir, vault: deps.vault }, provider, key)
+  } else {
+    if (!deps.vault?.has(provider)) {
+      throw new OnboardingStepError(`no stored key for ${provider}; submit a key or skip`)
+    }
+    pointRoutingAtVault(deps.rootDir, provider)
   }
-
-  const routing = loadRoutingConfig(deps.rootDir)
-  saveRoutingConfig(deps.rootDir, {
-    ...routing,
-    providerKeys: { ...routing.providerKeys, [provider]: `secret://vault/${provider}` },
-  })
 
   saveOnboardingConfig(deps.rootDir, {
     ...config,

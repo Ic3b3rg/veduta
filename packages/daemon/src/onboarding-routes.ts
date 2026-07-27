@@ -5,6 +5,10 @@ import {
   ByokTestResponseSchema,
   FinishResponseSchema,
   FirstSpaceRequestSchema,
+  ImportApplyRequestSchema,
+  ImportApplyResponseSchema,
+  ImportPlanSchema,
+  ImportPreviewRequestSchema,
   IntegrationsApplyRequestSchema,
   MigrationChoiceRequestSchema,
   ModelsApplyRequestSchema,
@@ -12,12 +16,18 @@ import {
   type OnboardingStatus,
 } from '@veduta/protocol'
 import { z } from 'zod'
+import { ImportRefusedError } from './import-apply.ts'
 import { applyByok, testProviderKey } from './onboarding-step-byok.ts'
 import { confirmDomain } from './onboarding-step-domain.ts'
 import { applyFinish } from './onboarding-step-finish.ts'
 import { applyFirstSpace } from './onboarding-step-first-space.ts'
 import { applyIntegrations } from './onboarding-step-integrations.ts'
-import { applyMigrationChoice } from './onboarding-step-migration.ts'
+import {
+  applyMigrationChoice,
+  previewLegacyImport,
+  runLegacyImport,
+  type MigrationImportDeps,
+} from './onboarding-step-migration.ts'
 import { applyModels } from './onboarding-step-models.ts'
 import {
   buildOnboardingStatus,
@@ -42,6 +52,15 @@ export interface OnboardingRoutesDeps {
   domain: string | null
   tlsActive: boolean
   vault: SecretsVault | undefined
+  /**
+   * The vault key material `server.ts`'s `openVaultAndSecrets` already
+   * resolves (issue 020 T7, `tasks/plan.md` decision 10) — threaded through
+   * so the migration routes' backup pre-check (`buildImportPlan`'s
+   * `backupAvailable`) and `runLegacyImport`'s actual `createBackup` call
+   * agree with what the rest of the daemon booted with, without opening a
+   * second vault or re-deriving key material a second way.
+   */
+  vaultKeyMaterial: Buffer | undefined
   spacesEngine: SpacesEngine
   env: NodeJS.ProcessEnv
   scheduleExit: () => void
@@ -69,17 +88,42 @@ function currentStatus(deps: OnboardingRoutesDeps): OnboardingStatus {
 }
 
 /**
+ * Narrows `OnboardingRoutesDeps` down to what `onboarding-step-migration.ts`
+ * needs (issue 020 T7), so that module never imports the route-layer type.
+ * B9: no `spacesEngine` — neither `previewLegacyImport` nor `runLegacyImport`
+ * ever read it (apply always constructs its own `SpacesEngine` inside
+ * `applyImport`'s lock), so threading it through here was a pass-through to
+ * nowhere; `currentStatus` below already has its own `deps.spacesEngine` for
+ * refreshing `GET /api/onboarding`'s status.
+ */
+function migrationImportDeps(deps: OnboardingRoutesDeps): MigrationImportDeps {
+  return {
+    rootDir: deps.rootDir,
+    vault: deps.vault,
+    keyMaterial: deps.vaultKeyMaterial,
+    env: deps.env,
+  }
+}
+
+/**
  * The one error-mapping seam every onboarding route shares (T4 spec, code
- * review fix): `VaultUnavailableError` (decision 9's dead-end copy) maps to
- * 409; `OnboardingStepError` (a step module's own user-facing failure —
- * missing credential, first-space-before-integrations, an empty slug, the
- * finish completion gate) maps to its own `statusCode`, defaulting to 400;
- * anything else is unexpected (a bug, not bad input) and maps to a generic
- * 500 — its real message is never echoed to the client, since it was never
- * written to be safe to show one.
+ * review fix): `VaultUnavailableError` (decision 9's dead-end copy) and
+ * `ImportRefusedError` (issue 020 decision 8: a blocked import plan — a
+ * conflict `--overwrite` did not clear, a held lock, no vault key material)
+ * both map to 409 — a refusal is "fix something first, then retry", the same
+ * class of failure as the vault dead end, not a second error-mapping seam;
+ * `OnboardingStepError` (a step module's own user-facing failure — missing
+ * credential, first-space-before-integrations, an empty slug, the finish
+ * completion gate, an unreadable/secret-requiring migration source) maps to
+ * its own `statusCode`, defaulting to 400; anything else is unexpected (a
+ * bug, not bad input) and maps to a generic 500 — its real message is never
+ * echoed to the client, since it was never written to be safe to show one.
  */
 function sendStepError(reply: FastifyReply, error: unknown): FastifyReply {
   if (error instanceof VaultUnavailableError) {
+    return reply.status(409).send({ error: error.message })
+  }
+  if (error instanceof ImportRefusedError) {
     return reply.status(409).send({ error: error.message })
   }
   if (error instanceof OnboardingStepError) {
@@ -120,6 +164,39 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingR
       return sendStepError(reply, error)
     }
     return currentStatus(deps)
+  })
+
+  // Issue 020 (`tasks/plan.md` "Wire API"): `source` is always the
+  // `'openclaw' | 'hermes'` enum, never a path — the daemon resolves the
+  // directory itself (staged dir, then `resolveLegacy`, then `homedir()`),
+  // so no client request can point the importer anywhere. Preview is a pure
+  // dry-run (writes nothing); import recomputes the same plan and actually
+  // applies it. Both share `migrationImportDeps(deps)` below so a step
+  // module never has to reach into `OnboardingRoutesDeps` directly.
+  app.post('/api/onboarding/migration/preview', (request, reply) => {
+    const parsed = ImportPreviewRequestSchema.safeParse(request.body)
+    if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
+    try {
+      const plan = previewLegacyImport(migrationImportDeps(deps), parsed.data)
+      return ImportPlanSchema.parse(plan)
+    } catch (error) {
+      return sendStepError(reply, error)
+    }
+  })
+
+  app.post('/api/onboarding/migration/import', async (request, reply) => {
+    const parsed = ImportApplyRequestSchema.safeParse(request.body)
+    if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
+    try {
+      const result = await runLegacyImport(migrationImportDeps(deps), parsed.data)
+      // A successful import already set `migrationChoice: 'imported'` and
+      // completed the `migration` step (side-effects-first, decision 4) —
+      // `status` is a fresh `GET`-equivalent so the wizard never needs a
+      // second round trip to advance.
+      return ImportApplyResponseSchema.parse({ result, status: currentStatus(deps) })
+    } catch (error) {
+      return sendStepError(reply, error)
+    }
   })
 
   app.post('/api/onboarding/domain', (request, reply) => {

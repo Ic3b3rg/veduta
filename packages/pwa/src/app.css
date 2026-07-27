@@ -244,6 +244,10 @@ input:focus-visible {
   margin: 0 auto 14px;
   max-width: 1180px;
   padding: 10px 12px;
+  /* Some dead-end messages (issue 020's migration 409s) are multi-line and
+     carry an exact shell command -- it must stay copyable and on its own
+     line, never reflowed into one unreadable run (`tasks/plan.md` T8 AC). */
+  white-space: pre-wrap;
 }
 
 .home-layout {
@@ -678,6 +682,42 @@ input:focus-visible {
   display: grid;
   gap: 8px;
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+}
+
+/* Migration step's Import/Overwrite/Skip groups (issue 020, `tasks/plan.md`
+   T8): same box as .wizard-tier, a real <h3> heading instead of a <legend>
+   since a group is a <section>, not a <fieldset>. */
+.wizard-import-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.wizard-import-group h3 {
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0;
+  padding: 0 4px;
+}
+
+/* The adapted SOUL.md text inside the migration step's <details> (issue 020,
+   `tasks/plan.md` design decision 3): the one place a wizard step shows a
+   large text block, so it scrolls in its own box instead of stretching the
+   step or forcing a horizontal page scroll. */
+.wizard-soul-preview {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: monospace;
+  font-size: 12px;
+  margin: 8px 0 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 10px 12px;
+  white-space: pre-wrap;
 }
 
 .wizard-integration {

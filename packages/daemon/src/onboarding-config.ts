@@ -37,7 +37,7 @@ export const OnboardingConfigSchema = z
   .object({
     version: z.literal(1).default(1),
     steps: z.record(OnboardingStepIdSchema, OnboardingStepStatusSchema).default({}),
-    migrationChoice: z.enum(['migrate-later', 'manual']).optional(),
+    migrationChoice: z.enum(['migrate-later', 'manual', 'imported']).optional(),
     legacy: z
       .object({
         openclaw: z.boolean(),

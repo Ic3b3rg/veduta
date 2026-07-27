@@ -88,6 +88,15 @@ RESOLVED_SHA=""
 BOOTSTRAP_CODE=""
 CURRENT_STAGE=""
 
+# OpenClaw's former names (docs/references/04-onboarding-migration.md §B: "Legacy name
+# support (.clawdbot, .moltbot)"). Mirrors packages/daemon/src/import-source.ts's exported
+# OPENCLAW_ALIASES (B13, code review: the TypeScript side used to keep this list twice --
+# packages/daemon/src/onboarding-status.ts now imports the one export instead of a second
+# copy). This shell copy is the one duplication left standing on purpose: bash cannot import
+# a TypeScript constant, so a plain string is the only way this installer -- which runs
+# before Node/pnpm are even installed -- can know the same three names.
+readonly OPENCLAW_HOME_ALIASES=".openclaw .clawdbot .moltbot"
+
 # --- Stage protocol emission (printf-composed JSON, no jq dependency) ---------------------
 
 set_stage_status() {
@@ -520,6 +529,37 @@ preflight_stage() {
   fi
 }
 
+# True (exit 0) when $1 exists and is NOT itself a symlink (B10, security review): the guard
+# every legacy source-root/source-directory check in this section applies before its `-e`/`-d`
+# test. This root-run installer must never follow a symlinked source root or subdirectory (a
+# planted `~/.hermes/memories -> /root/...`, or `~/.openclaw` itself replaced by a symlink) into
+# staging or detecting files from outside the legacy install it thinks it is reading.
+not_symlink() {
+  [ ! -L "$1" ]
+}
+
+# Echoes the first of $home/.openclaw, $home/.clawdbot, $home/.moltbot that exists AND is not
+# itself a symlink (OpenClaw's former names, docs/references/04-onboarding-migration.md §B;
+# B10 symlink guard), or nothing and exits non-zero if none qualify. Shared by
+# legacy_detect_stage (which only needs a yes/no) and stage_legacy_memory (T9, which needs the
+# actual directory to copy from).
+resolve_openclaw_home() {
+  local home="$1" alias candidate
+  for alias in $OPENCLAW_HOME_ALIASES; do
+    candidate="$home/$alias"
+    if not_symlink "$candidate" && [ -e "$candidate" ]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# True (exit 0) when $1/.hermes exists and is not a symlink (B10 symlink guard).
+hermes_root_present() {
+  not_symlink "$1/.hermes" && [ -e "$1/.hermes" ]
+}
+
 legacy_detect_stage() {
   LEGACY_OPENCLAW=false
   LEGACY_HERMES=false
@@ -541,12 +581,12 @@ legacy_detect_stage() {
   fi
 
   for home in $candidates; do
-    if [ -e "$home/.openclaw" ] || [ -e "$home/.hermes" ]; then
+    if resolve_openclaw_home "$home" >/dev/null || hermes_root_present "$home"; then
       found_home="$home"
-      if [ -e "$home/.openclaw" ]; then
+      if resolve_openclaw_home "$home" >/dev/null; then
         LEGACY_OPENCLAW=true
       fi
-      if [ -e "$home/.hermes" ]; then
+      if hermes_root_present "$home"; then
         LEGACY_HERMES=true
       fi
       break
@@ -585,6 +625,157 @@ persist_legacy_seed() {
   printf 'seeded %s with the legacy detection result\n' "$seed_path" >&2
 }
 
+# --- Legacy memory staging (tasks/plan.md decision 16) ------------------------------------
+#
+# The daemon runs as `veduta` under ProtectHome=yes (deploy/veduta.service) and can therefore
+# NEVER read /home/<admin>/.hermes or /home/<admin>/.openclaw -- the same constraint that
+# already pushed legacy *detection* (above) into this installer. Without staging, the
+# onboarding wizard's migration step could never actually import anything on a real VPS
+# profile. So, once $DATA_DIR exists and is owned veduta:veduta (persist_legacy_seed already
+# ran), this installer -- which runs as root and can read both sides -- copies ONLY the
+# memory-and-identity files into a flat layout under $DATA_DIR/import-source/<kind>/, matching
+# the flat fallback packages/daemon/src/import-source.ts's readLegacySource already reads:
+# SOUL.md, USER.md, MEMORY.md, and a notes/ directory of .md files. Nothing else is ever
+# staged -- no .env, auth.json, openclaw.json, state.db, sessions/, logs/, skills/, cron/,
+# pending/, or anything unrecognised -- which is what makes the wizard's import path
+# secret-free by construction; importing a secret stays a CLI-only operation (--secrets flag,
+# issue 020). The source install itself is never modified.
+
+# Copies a single file from $1 to $2, refusing anything that is not a plain regular file
+# (never a symlink -- a symlinked SOUL.md in the source must never be dereferenced into the
+# daemon's data dir) and anything over the 1 MiB cap the daemon-side reader also enforces
+# (import-source.ts's MAX_FILE_BYTES). Uses a plain `cp` of one named file, never `cp -a`/`-r`
+# of a whole tree. Does nothing (not even a log line) when $1 simply does not exist -- every
+# one of these files is optional in the vendor layout.
+stage_legacy_file() {
+  local src="$1" dest="$2"
+  if [ -L "$src" ]; then
+    printf 'refusing to stage %s -- it is a symlink, not a regular file\n' "$src" >&2
+    return 0
+  fi
+  if [ ! -f "$src" ]; then
+    return 0
+  fi
+  if [ -n "$(find "$src" -size +1M 2>/dev/null)" ]; then
+    printf 'refusing to stage %s -- larger than the 1 MiB cap\n' "$src" >&2
+    return 0
+  fi
+  run cp "$src" "$dest"
+  run chown veduta:veduta "$dest"
+  run chmod 0600 "$dest"
+}
+
+# Copies the flat .md notes directly under $1 into $2 (already created, veduta:veduta 0700),
+# applying stage_legacy_file's same per-file checks -- so a symlinked or oversized note is
+# refused exactly like a symlinked or oversized SOUL/USER/MEMORY. $3 is a space-separated list
+# of basenames to skip (Hermes keeps USER.md/MEMORY.md inside the same memories/ directory as
+# the notes; OpenClaw's workspace/memory/ has no such overlap, so it passes an empty list).
+stage_legacy_notes() {
+  local src_dir="$1" dest_dir="$2" exclude="$3" src_file name skip excluded
+  for src_file in "$src_dir"/*.md; do
+    [ -e "$src_file" ] || continue
+    name=$(basename "$src_file")
+    excluded=false
+    for skip in $exclude; do
+      if [ "$name" = "$skip" ]; then
+        excluded=true
+      fi
+    done
+    if [ "$excluded" = "true" ]; then
+      continue
+    fi
+    stage_legacy_file "$src_file" "$dest_dir/$name"
+  done
+}
+
+# Stages one detected kind (openclaw|hermes) from $2 (the vendor-layout source directory --
+# already resolved to whichever alias matched) into $DATA_DIR/import-source/$1. Idempotent: an
+# already-existing destination directory is left completely untouched on a rerun, same shape
+# as persist_legacy_seed's existing-file message. Does nothing if $2 was not resolved (should
+# not happen when the corresponding LEGACY_* flag is true, but this function never assumes).
+#
+# B10: refuses a symlinked source root outright, and a symlinked workspace/memories
+# subdirectory (the one nested directory each vendor layout reads files out of) -- staging
+# individual files through a symlinked *intermediate* directory component would let a planted
+# symlink (e.g. `~/.hermes/memories -> /root/somewhere-else`) smuggle files from outside the
+# legacy install past stage_legacy_file's own guard, which only ever checks the final path
+# component.
+#
+# B11: stages into a sibling temporary directory ($staging_dir) and atomically `mv`s it into
+# $dest_dir only once every file has been copied, rather than creating $dest_dir itself up
+# front and copying into it in place. A crash or kill mid-copy previously left a permanently
+# partial $dest_dir that this function's own "already exists" rerun check would treat as
+# complete forever; now only the final, renamed-into-place $dest_dir ever counts as done.
+stage_one_legacy_kind() {
+  local kind="$1" src_dir="$2" dest_dir staging_dir
+  local soul_src user_src memory_src notes_src_dir notes_exclude
+  if [ -z "$src_dir" ] || [ -L "$src_dir" ] || [ ! -d "$src_dir" ]; then
+    return 0
+  fi
+
+  dest_dir="$DATA_DIR/import-source/$kind"
+  if [ -e "$dest_dir" ]; then
+    printf '%s already exists -- leaving existing staged copy untouched\n' "$dest_dir" >&2
+    return 0
+  fi
+
+  case "$kind" in
+    hermes)
+      if [ -L "$src_dir/memories" ]; then
+        printf 'refusing to stage from %s -- memories is a symlink, not a directory\n' "$src_dir" >&2
+        return 0
+      fi
+      soul_src="$src_dir/SOUL.md"
+      user_src="$src_dir/memories/USER.md"
+      memory_src="$src_dir/memories/MEMORY.md"
+      notes_src_dir="$src_dir/memories"
+      notes_exclude="USER.md MEMORY.md"
+      ;;
+    openclaw)
+      if [ -L "$src_dir/workspace" ]; then
+        printf 'refusing to stage from %s -- workspace is a symlink, not a directory\n' "$src_dir" >&2
+        return 0
+      fi
+      soul_src="$src_dir/workspace/SOUL.md"
+      user_src="$src_dir/workspace/USER.md"
+      memory_src="$src_dir/workspace/MEMORY.md"
+      notes_src_dir="$src_dir/workspace/memory"
+      notes_exclude=""
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  staging_dir="$DATA_DIR/import-source/.${kind}.staging.$$"
+  run rm -rf "$staging_dir"
+  run install -d -o veduta -g veduta -m 0700 "$staging_dir"
+  stage_legacy_file "$soul_src" "$staging_dir/SOUL.md"
+  stage_legacy_file "$user_src" "$staging_dir/USER.md"
+  stage_legacy_file "$memory_src" "$staging_dir/MEMORY.md"
+
+  if [ -d "$notes_src_dir" ] && [ ! -L "$notes_src_dir" ]; then
+    run install -d -o veduta -g veduta -m 0700 "$staging_dir/notes"
+    stage_legacy_notes "$notes_src_dir" "$staging_dir/notes" "$notes_exclude"
+  fi
+
+  run mv "$staging_dir" "$dest_dir"
+
+  printf 'staged legacy %s memory files from %s into %s (veduta:veduta, secrets never staged)\n' \
+    "$kind" "$src_dir" "$dest_dir" >&2
+}
+
+# Called from user_layout_stage, right after persist_legacy_seed (i.e. once $DATA_DIR exists
+# and is owned veduta:veduta). Does nothing when legacy_detect_stage found nothing.
+stage_legacy_memory() {
+  if [ "$LEGACY_OPENCLAW" = "true" ]; then
+    stage_one_legacy_kind openclaw "$(resolve_openclaw_home "$ADMIN_HOME" || true)"
+  fi
+  if [ "$LEGACY_HERMES" = "true" ]; then
+    stage_one_legacy_kind hermes "$ADMIN_HOME/.hermes"
+  fi
+}
+
 deps_stage() {
   run apt-get update
   run apt-get install -y git curl ca-certificates qrencode xz-utils
@@ -604,6 +795,7 @@ user_layout_stage() {
   run install -d -o root -g root -m 0755 /etc/veduta
 
   persist_legacy_seed
+  stage_legacy_memory
 }
 
 checkout_stage() {

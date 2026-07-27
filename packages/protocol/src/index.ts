@@ -133,3 +133,32 @@ export {
   type IntegrationsApplyRequest,
   type FinishResponse,
 } from './onboarding.ts'
+// Importer wire protocol (issue 020): plan/result schemas shared by the CLI's
+// text preview and the wizard's rendered preview, and the two
+// `/api/onboarding/migration/*` request/response bodies (see `tasks/plan.md`
+// design decision 20 and "Wire API").
+export {
+  ImportSourceKindSchema,
+  ImportActionSchema,
+  ImportItemSchema,
+  ImportOptionsSchema,
+  ImportPlanSchema,
+  ImportFactCountsSchema,
+  ImportResultSchema,
+  ImportPreviewRequestSchema,
+  ImportApplyRequestSchema,
+  ImportApplyResponseSchema,
+  type ImportSourceKind,
+  type ImportAction,
+  type ImportItem,
+  type ImportOptions,
+  type ImportOptionsInput,
+  type ImportPlan,
+  type ImportFactCounts,
+  type ImportResult,
+  type ImportPreviewRequest,
+  type ImportPreviewRequestInput,
+  type ImportApplyRequest,
+  type ImportApplyRequestInput,
+  type ImportApplyResponse,
+} from './import.ts'

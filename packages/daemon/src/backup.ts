@@ -185,12 +185,20 @@ async function vacuumIntoWithRetry(sourcePath: string, destPath: string): Promis
 // Staging
 // ---------------------------------------------------------------------------
 
-/** Every direct child of `rootDir`, staged into `stagingDir`: `*.sqlite` files via a busy-safe `VACUUM INTO`, everything else copied as a tree. */
+/**
+ * Every direct child of `rootDir`, staged into `stagingDir`: `*.sqlite` files via a busy-safe
+ * `VACUUM INTO`, everything else copied as a tree.
+ *
+ * `*.lock` files are skipped. A lock records that some process is holding a resource *right
+ * now* — the importer takes `import.lock` before it calls `createBackup`, so a naive copy
+ * captures it held. Restoring that into a clean machine would leave a lock nobody owns,
+ * blocking the very operation the restore exists to enable.
+ */
 async function stageRootDir(rootDir: string, outDir: string, stagingDir: string): Promise<void> {
   const resolvedOutDir = resolve(outDir)
   for (const entry of readdirSync(rootDir, { withFileTypes: true })) {
     const name = entry.name
-    if (name.endsWith('-wal') || name.endsWith('-shm')) continue
+    if (name.endsWith('-wal') || name.endsWith('-shm') || name.endsWith('.lock')) continue
     const srcPath = join(rootDir, name)
     if (resolve(srcPath) === resolvedOutDir) continue
     const destPath = join(stagingDir, name)

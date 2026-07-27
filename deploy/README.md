@@ -111,6 +111,35 @@ runs as the unprivileged `veduta` user under `ProtectHome=yes` and can never see
 directly. The onboarding wizard's `migration` step then offers to import before any manual
 configuration happens (issue 019 AC3); the importer itself ships with issue 020.
 
+### Migrating from OpenClaw or Hermes
+
+Detection alone (above) isn't enough to make the wizard's `migration` step useful on a real
+VPS: it only records a boolean, and the daemon running as `veduta` under `ProtectHome=yes` can
+never itself read `/home/<admin>/.hermes` or `/home/<admin>/.openclaw` to import from them. So
+the `user-layout` stage, once it has created `<data-dir>` as `veduta:veduta`, also stages the
+detected install's memory-and-identity files -- and only those -- into
+`<data-dir>/import-source/<openclaw|hermes>/`: `SOUL.md`, `USER.md`, `MEMORY.md`, and a
+`notes/` directory of `.md` daily/topic notes, owned `veduta:veduta`, mode `0600` (`0700` for
+the directories). **Secrets are never staged** -- `.env`, `auth.json`, `openclaw.json`,
+`state.db`, `sessions/`, `logs/`, `skills/`, `cron/`, `pending/`, and anything else in the
+legacy install stay exactly where they are, untouched, unread, uncopied. That is what makes
+the wizard's import path secret-free by construction: the wizard previews and imports only
+this staged, non-secret memory.
+
+Importing a secret (a provider API key found in a legacy `.env` or `openclaw.json`), or
+migrating from a source the daemon cannot read at all, is instead a CLI-only operation:
+
+```sh
+sudo pnpm --filter @veduta/daemon run import-legacy <openclaw|hermes> \
+  --root /var/lib/veduta/.veduta --home /home/<admin> --apply --secrets
+```
+
+Drop `--apply` for a dry run (the default: it prints the grouped preview and writes nothing)
+and `--secrets` to leave the provider keys behind. The script is `import-legacy`, not
+`import`, because pnpm has a built-in `import` command that would shadow it. Stop the daemon
+before importing secrets — the CLI refuses otherwise, since it must not race the running
+daemon's in-memory vault.
+
 ### Supply-chain trust root
 
 - The repository is cloned over GitHub's TLS and pinned to a concrete commit SHA, resolved

@@ -525,7 +525,15 @@ function uniqueSurfaceId(surfaceId: string, sourceSlug: string, usedIds: Set<str
   }
 }
 
-function defaultSoul(): string {
+/**
+ * Exported for the importer (issue 020 T4, `tasks/plan.md` decision 8):
+ * `readTargetState` needs the literal default template text to detect
+ * whether an existing `SOUL.md` is still untouched (safe to import into
+ * without `--overwrite`) or was already customized by the user (a
+ * conflict). Behaviour is unchanged — this is the same private helper
+ * `ensureBaseLayout` always used, now also callable from outside.
+ */
+export function defaultSoul(): string {
   return `# SOUL
 
 You are Veduta's single Agent. You switch context between Spaces; you do not become a different agent per Space.
@@ -552,8 +560,14 @@ const UNTRUSTED_SPOTLIGHT =
  * The delimited block untrusted data is rendered inside (reader.summary
  * payloads, tainted facts): a spotlighting note plus fixed, forgery-resistant
  * delimiters so the Agent can tell data from instructions (docs/SECURITY.md §3.2).
+ *
+ * Exported for the importer (issue 020 T4, `tasks/plan.md` decision 2):
+ * an imported `USER.md` must render inside the exact same delimited
+ * envelope every other piece of untrusted content uses, rather than a
+ * second hand-rolled copy of the delimiter format drifting out of sync
+ * with this one. Behaviour is unchanged.
  */
-function untrustedDataBlock(source: string, fields: [string, string][]): string {
+export function untrustedDataBlock(source: string, fields: [string, string][]): string {
   return [
     UNTRUSTED_SPOTLIGHT,
     `<<<UNTRUSTED data from ${source}>>>`,

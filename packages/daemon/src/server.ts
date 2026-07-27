@@ -166,10 +166,16 @@ const defaultPwaDistDir = fileURLToPath(new URL('../../pwa/dist/', import.meta.u
  * (mock/Local VPS profile unaffected — neither exists there). Every
  * successful resolution registers the value with `defaultRedactor` so it
  * never survives into a durable sink or console output (issue #15 T4).
+ * Also returns the raw `keyMaterial` it resolved (issue 020 T7): the
+ * migration routes' `buildImportPlan`/`applyImport` need the same key
+ * material `createBackup` requires, and re-deriving it a second way (or
+ * skipping the backup pre-check entirely) would let the wizard and the CLI
+ * disagree about whether a backup — and therefore an import — is possible.
  */
 function openVaultAndSecrets(rootDir: string): {
   vault: SecretsVault | undefined
   secrets: SecretResolver
+  keyMaterial: Buffer | undefined
 } {
   const vaultPath = join(rootDir, VAULT_FILE_NAME)
   const keyMaterial = resolveVaultKeyMaterial()
@@ -193,7 +199,7 @@ function openVaultAndSecrets(rootDir: string): {
       return value
     },
   }
-  return { vault, secrets }
+  return { vault, secrets, keyMaterial }
 }
 
 /**
@@ -305,7 +311,11 @@ export function buildServer(options: ServerOptions = {}) {
   // every resolved value registered against the shared redactor. `vault` is
   // the one instance also threaded into the onboarding routes below (issue
   // #19 decision 9) — never opened a second time over the same file.
-  const { vault, secrets } = openVaultAndSecrets(store.spacesEngine.rootDir)
+  const {
+    vault,
+    secrets,
+    keyMaterial: vaultKeyMaterial,
+  } = openVaultAndSecrets(store.spacesEngine.rootDir)
   // The trust layer's admin Surfaces (allowlist, audit) need a durable home
   // (issue #14, D8): materialize the System Space before anything else so
   // it exists no matter which subsystem writes to it first.
@@ -1075,6 +1085,7 @@ export function buildServer(options: ServerOptions = {}) {
     domain: onboardingOptions.domain ?? null,
     tlsActive: onboardingOptions.tlsActive ?? false,
     vault,
+    vaultKeyMaterial,
     spacesEngine: store.spacesEngine,
     env: onboardingOptions.env ?? process.env,
     scheduleExit: onboardingOptions.scheduleExit ?? defaultScheduleExit(app),

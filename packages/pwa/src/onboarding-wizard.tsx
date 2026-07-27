@@ -1,4 +1,4 @@
-import type { ByokProvider, OnboardingStatus } from '@veduta/protocol'
+import type { ByokProvider, ImportSourceKind, OnboardingStatus } from '@veduta/protocol'
 import { useState } from 'react'
 import {
   applyByokStep,
@@ -8,9 +8,12 @@ import {
   confirmDomainStep,
   fetchAuthStatus,
   finishOnboarding,
+  previewLegacyImport,
+  runLegacyImport,
   submitMigrationChoice,
   testByokKey,
 } from './api.ts'
+import { startMigrationPreview, type MigrationPreviewState } from './import-preview-state.ts'
 import {
   currentStep,
   isStepDone,
@@ -60,6 +63,14 @@ export function OnboardingWizard({
     restartRequired: false,
     restartTimedOut: false,
   })
+  const [migrationPreview, setMigrationPreview] = useState<MigrationPreviewState | undefined>(
+    undefined,
+  )
+  // Held rather than fed to `onStatus` immediately after a successful import
+  // (`tasks/plan.md` T8): see `onMigrationContinue` below for why.
+  const [migrationPendingStatus, setMigrationPendingStatus] = useState<
+    OnboardingStatus | undefined
+  >(undefined)
 
   const run = async (fn: () => Promise<OnboardingStatus>) => {
     setBusy(true)
@@ -71,6 +82,68 @@ export function OnboardingWizard({
     } finally {
       setBusy(false)
     }
+  }
+
+  /**
+   * `POST /api/onboarding/migration/preview` (issue 020, `tasks/plan.md`
+   * T8): a pure dry-run, so this never touches `onStatus` -- only local
+   * preview state. Re-run on every "Preview" click (fresh source, overwrite
+   * reset to false) and on every `overwrite` toggle (design decision 7: the
+   * preview must always describe exactly what Apply would do), clearing any
+   * previous plan/result first so a stale one is never shown as current.
+   */
+  const runMigrationPreview = async (source: ImportSourceKind, overwrite: boolean) => {
+    setBusy(true)
+    setError(undefined)
+    setMigrationPreview(startMigrationPreview(source, overwrite))
+    try {
+      const plan = await previewLegacyImport({ source, overwrite, secrets: false }, token)
+      setMigrationPreview({ source, overwrite, plan, result: undefined })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'preview failed')
+      setMigrationPreview(undefined)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const onMigrationOverwriteChange = (overwrite: boolean) => {
+    if (migrationPreview === undefined) return
+    void runMigrationPreview(migrationPreview.source, overwrite)
+  }
+
+  /**
+   * `POST /api/onboarding/migration/import`: recomputes and applies the plan
+   * (the daemon never trusts the client-supplied preview -- decision 7), then
+   * holds the returned `{result, status}` rather than calling `onStatus`
+   * synchronously like `run()` does for every other step. Calling it here
+   * would advance `currentStep` past `migration` in the same render that
+   * sets the result (React batches both state updates together), so the
+   * result summary would never actually render -- `onMigrationContinue`
+   * applies the held status once the user has read it.
+   */
+  const onMigrationApply = async (source: ImportSourceKind, overwrite: boolean) => {
+    setBusy(true)
+    setError(undefined)
+    try {
+      const { result, status: nextStatus } = await runLegacyImport(
+        { source, overwrite, secrets: false },
+        token,
+      )
+      setMigrationPreview({ source, overwrite, plan: result.plan, result })
+      setMigrationPendingStatus(nextStatus)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'import failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const onMigrationContinue = () => {
+    if (migrationPendingStatus === undefined) return
+    onStatus(migrationPendingStatus)
+    setMigrationPendingStatus(undefined)
+    setMigrationPreview(undefined)
   }
 
   const onFinish = async () => {
@@ -172,6 +245,11 @@ export function OnboardingWizard({
             busy={busy}
             error={error}
             onChoice={(choice) => void run(() => submitMigrationChoice(choice, token))}
+            preview={migrationPreview}
+            onPreview={(source) => void runMigrationPreview(source, false)}
+            onOverwriteChange={onMigrationOverwriteChange}
+            onApply={(source, overwrite) => void onMigrationApply(source, overwrite)}
+            onContinue={onMigrationContinue}
           />
         )}
         {active === 'domain' && (

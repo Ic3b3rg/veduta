@@ -29,9 +29,10 @@ export const WIZARD_STEP_META: Record<OnboardingStepId, OnboardingStepMeta> = {
   migration: {
     title: 'Existing installation',
     description:
-      'An existing OpenClaw/Hermes installation was detected. The importer ships with the ' +
-      'next release (issue 020); your choice is recorded so migration can pick up from here. ' +
-      'You can proceed with manual setup now.',
+      'An existing OpenClaw/Hermes installation was detected. Preview what would be imported ' +
+      'before anything is written -- facts, SOUL and USER content, and what would be skipped or ' +
+      'overwritten -- then apply it, or defer and configure manually instead. Provider API keys ' +
+      'are never imported here; that stays a CLI-only, explicit step.',
   },
   domain: {
     title: 'Domain',

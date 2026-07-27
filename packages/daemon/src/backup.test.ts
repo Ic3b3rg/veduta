@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SurfaceSchema } from '@veduta/protocol'
@@ -125,6 +125,22 @@ describe('createBackup / restoreBackup', () => {
     expect(readFileSync(join(targetRootDir, 'sessions', 's.jsonl'), 'utf8')).toBe(
       readFileSync(join(rootDir, 'sessions', 's.jsonl'), 'utf8'),
     )
+  })
+
+  it('never captures a held *.lock into the backup', async () => {
+    const rootDir = freshDir('veduta-backup-lock-root-')
+    const outDir = freshDir('veduta-backup-lock-out-')
+    buildPopulatedRoot(rootDir)
+    // The importer holds `import.lock` across its own `createBackup` call, so a naive
+    // copy captures it held; restoring that would block imports on the clean machine.
+    writeFileSync(join(rootDir, 'import.lock'), '')
+
+    const backupPath = await createBackup({ rootDir, outDir, keyMaterial: KEY_MATERIAL })
+    const targetRootDir = join(freshDir('veduta-backup-lock-restore-'), 'restored')
+    await restoreBackup({ file: backupPath, targetRootDir, keyMaterial: KEY_MATERIAL })
+
+    expect(existsSync(join(targetRootDir, 'import.lock'))).toBe(false)
+    expect(existsSync(join(targetRootDir, 'spaces'))).toBe(true)
   })
 
   it('throws on restore with the wrong key material (GCM auth failure)', async () => {

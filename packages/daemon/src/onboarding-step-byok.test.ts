@@ -147,6 +147,24 @@ describe('applyByok', () => {
     applyByok({ rootDir: dir, vault }, { provider: 'anthropic' })
 
     expect(vault.resolve('secret://vault/anthropic')).toBe(DISTINCTIVE_KEY)
+    expect(loadRoutingConfig(dir).providerKeys.anthropic).toBe('secret://vault/anthropic')
+    expect(loadOnboardingConfig(dir).steps.byok).toBe('completed')
+  })
+
+  it('B2 regression: keep-existing against a key placed in the vault out-of-band still points routing at it', () => {
+    const dir = freshRoot()
+    const vault = SecretsVault.open(dir, KEY_MATERIAL)
+    // Simulate a key that reached the vault some other way (the vault CLI, an
+    // earlier process) with nothing having ever run `storeProviderKey` for it.
+    // `routing.json` is untouched, so the provider still resolves through
+    // `model-routing.ts`'s `secret://env/...` default — the vault entry is
+    // invisible to the router until something points `providerKeys` at it.
+    vault.set('anthropic', DISTINCTIVE_KEY)
+    expect(loadRoutingConfig(dir).providerKeys.anthropic).toBe('secret://env/ANTHROPIC_API_KEY')
+
+    applyByok({ rootDir: dir, vault }, { provider: 'anthropic' })
+
+    expect(loadRoutingConfig(dir).providerKeys.anthropic).toBe('secret://vault/anthropic')
     expect(loadOnboardingConfig(dir).steps.byok).toBe('completed')
   })
 

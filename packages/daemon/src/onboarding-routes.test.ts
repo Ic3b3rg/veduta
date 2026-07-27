@@ -1,8 +1,13 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
-import { OnboardingStatusSchema, type OnboardingStatus } from '@veduta/protocol'
+import {
+  ImportApplyResponseSchema,
+  ImportPlanSchema,
+  OnboardingStatusSchema,
+  type OnboardingStatus,
+} from '@veduta/protocol'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { saveOnboardingConfig } from './onboarding-config.ts'
@@ -38,6 +43,7 @@ function baseDeps(
     domain: null,
     tlsActive: false,
     vault: undefined,
+    vaultKeyMaterial: undefined,
     spacesEngine: new SpacesEngine({ rootDir: dir, seed: { spaces: [], surfaces: [] } }),
     // Pinned to a clean temp dir rather than the real `~` so a stray
     // `.hermes`/`.openclaw` on the host running the tests never changes
@@ -52,6 +58,16 @@ function buildApp(deps: OnboardingRoutesDeps): FastifyInstance {
   const app = Fastify()
   registerOnboardingRoutes(app, deps)
   return app
+}
+
+/** The flat staged layout the installer writes (`tasks/plan.md` decision 16): `<root>/import-source/hermes/{SOUL,USER,MEMORY}.md`. */
+function buildStagedHermesFixture(dir: string): string {
+  const stagedDir = join(dir, 'import-source', 'hermes')
+  mkdirSync(stagedDir, { recursive: true })
+  writeFileSync(join(stagedDir, 'SOUL.md'), 'You are calm and thorough.\n')
+  writeFileSync(join(stagedDir, 'USER.md'), 'Name: Test User\nTimezone: UTC\n')
+  writeFileSync(join(stagedDir, 'MEMORY.md'), 'Prefers async updates.\n§\nShips on Thursdays.')
+  return stagedDir
 }
 
 function okResponse(status: number): Response {
@@ -270,6 +286,148 @@ describe('POST /api/onboarding/byok — vault dead end', () => {
     expect(body.error).toContain('VEDUTA_VAULT_KEYFILE')
     expect(body.error).toContain('head -c 48 /dev/urandom')
     expect(body.error).not.toContain('sk-test-key')
+
+    await app.close()
+  })
+})
+
+describe('POST /api/onboarding/migration/preview', () => {
+  it('returns a schema-valid plan for a staged hermes source and writes nothing', async () => {
+    const dir = freshRoot()
+    buildStagedHermesFixture(dir)
+    const app = buildApp(baseDeps(dir, { vaultKeyMaterial: KEY_MATERIAL }))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/onboarding/migration/preview',
+      payload: { source: 'hermes' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(ImportPlanSchema.safeParse(res.json()).success).toBe(true)
+
+    await app.close()
+  })
+
+  it('no readable source -> 409 with the exact CLI command', async () => {
+    const dir = freshRoot()
+    const app = buildApp(baseDeps(dir, { vaultKeyMaterial: KEY_MATERIAL }))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/onboarding/migration/preview',
+      payload: { source: 'hermes' },
+    })
+    expect(res.statusCode).toBe(409)
+    const body = res.json() as { error: string }
+    // B1: renamed `import` -> `import-legacy` (pnpm's own built-in `import`
+    // command shadowed the old script name entirely).
+    expect(body.error).toContain('pnpm --filter @veduta/daemon import-legacy hermes')
+    expect(body.error).toContain('--apply')
+
+    await app.close()
+  })
+
+  it('secrets: true -> 400, CLI-only', async () => {
+    const dir = freshRoot()
+    buildStagedHermesFixture(dir)
+    const app = buildApp(baseDeps(dir, { vaultKeyMaterial: KEY_MATERIAL }))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/onboarding/migration/preview',
+      payload: { source: 'hermes', secrets: true },
+    })
+    expect(res.statusCode).toBe(400)
+    expect((res.json() as { error: string }).error).toContain('--secrets')
+
+    await app.close()
+  })
+
+  it('a malformed body -> 400 with zod issues', async () => {
+    const dir = freshRoot()
+    const app = buildApp(baseDeps(dir))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/onboarding/migration/preview',
+      payload: { source: 'not-a-real-source' },
+    })
+    expect(res.statusCode).toBe(400)
+    expect(Array.isArray((res.json() as { error: unknown }).error)).toBe(true)
+
+    await app.close()
+  })
+})
+
+describe('POST /api/onboarding/migration/import', () => {
+  it('imports a staged hermes source, sets migrationChoice: imported, and returns a schema-valid {result, status}', async () => {
+    const dir = freshRoot()
+    const staged = buildStagedHermesFixture(dir)
+    const app = buildApp(baseDeps(dir, { vaultKeyMaterial: KEY_MATERIAL }))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/onboarding/migration/import',
+      payload: { source: 'hermes' },
+    })
+    expect(res.statusCode).toBe(200)
+    const parsed = ImportApplyResponseSchema.safeParse(res.json())
+    expect(parsed.success).toBe(true)
+    expect(existsSync(staged)).toBe(false)
+
+    await app.close()
+  })
+
+  it('a second import without --overwrite -> 409, not 500', async () => {
+    const dir = freshRoot()
+    buildStagedHermesFixture(dir)
+    const app = buildApp(baseDeps(dir, { vaultKeyMaterial: KEY_MATERIAL }))
+
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/onboarding/migration/import',
+      payload: { source: 'hermes' },
+    })
+    expect(first.statusCode).toBe(200)
+
+    // The installer would re-stage a re-detected install on a second wizard run.
+    buildStagedHermesFixture(dir)
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/onboarding/migration/import',
+      payload: { source: 'hermes' },
+    })
+    expect(second.statusCode).toBe(409)
+    expect((second.json() as { error: string }).error).toContain('already imported')
+
+    await app.close()
+  })
+
+  it('secrets: true -> 400, CLI-only', async () => {
+    const dir = freshRoot()
+    buildStagedHermesFixture(dir)
+    const app = buildApp(baseDeps(dir, { vaultKeyMaterial: KEY_MATERIAL }))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/onboarding/migration/import',
+      payload: { source: 'hermes', secrets: true },
+    })
+    expect(res.statusCode).toBe(400)
+
+    await app.close()
+  })
+
+  it('a malformed body -> 400 with zod issues', async () => {
+    const dir = freshRoot()
+    const app = buildApp(baseDeps(dir))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/onboarding/migration/import',
+      payload: { source: 'hermes', extra: true },
+    })
+    expect(res.statusCode).toBe(400)
 
     await app.close()
   })

@@ -11,7 +11,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "vault": "tsx src/vault-cli.ts",
-    "backup": "tsx src/backup-cli.ts"
+    "backup": "tsx src/backup-cli.ts",
+    "import-legacy": "tsx src/import-cli.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.80.3",
