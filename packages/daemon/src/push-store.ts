@@ -57,9 +57,9 @@ export interface PushStoreOptions {
   rootDir: string
 }
 
-/** Linear backoff step for outbox retries (decision 6): 30s, 60s, 90s, ... */
+/** Linear backoff step for outbox retries: 30s, 60s, 90s, ... */
 const OUTBOX_BACKOFF_STEP_MS = 30 * 1000
-/** Attempts at which an undelivered outbox row is dropped (decision 6). */
+/** Attempts at which an undelivered outbox row is dropped. */
 const OUTBOX_MAX_ATTEMPTS = 5
 
 export class PushStore {
@@ -144,7 +144,7 @@ export class PushStore {
   }
 
   /**
-   * Crash-durable push commit (plan decision 5/6): the budget gate and the
+   * Crash-durable push commit (plan): the budget gate and the
    * per-endpoint outbox fan-out land in ONE transaction, so a crash can
    * never consume budget without materializing the delivery rows.
    */
@@ -164,7 +164,7 @@ export class PushStore {
 
   // --- outbox ---
 
-  /** Atomic digest swap (plan decision 7): the individual rows leave and the digest rows land together. */
+  /** Atomic digest swap (plan): the individual rows leave and the digest rows land together. */
   replaceOutbox(
     ids: number[],
     rows: Array<{ endpoint: string; title: string; body: string; url: string }>,
@@ -243,7 +243,7 @@ export class PushStore {
   }
 
   /**
-   * Crash-durable per-item flush (plan decision 7): budget gate, outbox
+   * Crash-durable per-item flush (plan): budget gate, outbox
    * fan-out (when the gate passes), and the deferred row's deletion land in
    * ONE transaction — a crash mid-flush leaves the unprocessed remainder of
    * the queue intact instead of losing it wholesale.

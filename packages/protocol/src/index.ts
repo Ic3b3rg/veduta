@@ -86,7 +86,7 @@ export {
 } from './notification.ts'
 // Onboarding wizard protocol (issue 019): step ids/status, installer JSON stage
 // protocol, legacy detection, and every request/response schema for
-// `/api/onboarding/*` (see `tasks/plan.md` "Design decisions (v2)" §3-4 and
+// `/api/onboarding/*` (see `issues/019-onboarding-wizard.md` and
 // `docs/references/04-onboarding-migration.md`).
 export {
   OnboardingStepIdSchema,
@@ -135,8 +135,8 @@ export {
 } from './onboarding.ts'
 // Importer wire protocol (issue 020): plan/result schemas shared by the CLI's
 // text preview and the wizard's rendered preview, and the two
-// `/api/onboarding/migration/*` request/response bodies (see `tasks/plan.md`
-// design decision 20 and "Wire API").
+// `/api/onboarding/migration/*` request/response bodies (see
+// `docs/adr/0010-importer-trust-and-refusal.md`).
 export {
   ImportSourceKindSchema,
   ImportActionSchema,

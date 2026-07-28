@@ -608,7 +608,7 @@ describe('generic job-handler registry (issue #16)', () => {
   })
 })
 
-describe('escalation context (issue #18, plan v2 decision 2)', () => {
+describe('escalation context (issue #18)', () => {
   // The generic handler dispatch never reaches `onEscalation` (a
   // handler-driven occurrence returns straight from `executeOccurrence`),
   // so the overdue branch — which runs before handler dispatch — is the

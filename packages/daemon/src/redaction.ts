@@ -1,12 +1,12 @@
 /**
- * Secret redaction (issue #15 T3, docs/SECURITY.md §4): the single place
+ * Secret redaction (issue #15, docs/SECURITY.md §4): the single place
  * that turns a string, an error, or an arbitrary structured value into a
  * version safe to hand to a durable sink (Event log, audit rows,
  * usage JSONL, denial logs) or a user-visible/console surface.
  *
  * Two redaction sources compose:
  *  - Registered literal values: exact secrets seen at resolution time
- *    (vault/env resolution registers here — issue #15 T2 wiring). Matched
+ *    (vault/env resolution registers here — issue #15 wiring). Matched
  *    longest-first so one registered value can never leave a fragment of
  *    another behind (e.g. a short secret that happens to be a prefix of a
  *    longer one).
@@ -15,7 +15,7 @@
  *    before resolution, or from a provider we don't have a literal for)
  *    still gets caught.
  *
- * `defaultRedactor` is the process-wide shared instance: T4 wiring
+ * `defaultRedactor` is the process-wide shared instance: wiring
  * registers resolved secrets against this instance, and every sink
  * (`sanitizeErrorText` below, the future console wrapper, event/audit
  * writes) redacts through it, so a secret registered anywhere is redacted
@@ -116,7 +116,7 @@ export class SecretRedactor {
 }
 
 /**
- * Process-wide shared instance. T4 wiring registers resolved vault/env
+ * Process-wide shared instance. Wiring registers resolved vault/env
  * secret values against this instance so every sink shares one set of
  * known secrets.
  */
@@ -127,8 +127,8 @@ let consoleRedactionInstalled = false
 
 /**
  * Wraps `console.log/info/warn/error` process-wide so every current and
- * future console call site is covered without touching it (issue #15 D3,
- * v3): a string argument is redacted with `redactText`, an `Error` argument
+ * future console call site is covered without touching it (issue #15):
+ * a string argument is redacted with `redactText`, an `Error` argument
  * becomes a redacted message string via `redactError`, and everything else
  * (objects, arrays, ...) is structurally redacted with `redactDeep`.
  *

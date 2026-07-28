@@ -4,7 +4,7 @@ import { sourceLabel } from './import-mapping.ts'
 import { VAULT_UNAVAILABLE_MESSAGE } from './onboarding-status.ts'
 
 /**
- * The CLI's text format (`tasks/plan.md` T6), split out of `import-cli.ts` so the format is
+ * The CLI's text format, split out of `import-cli.ts` so the format is
  * testable in isolation from process plumbing (argv/env/exit codes). Every function here
  * only ever writes through the injected `io` — never `console.*` directly — and never reads
  * a secret value: vault items are rendered straight from `plan.items[].detail`, which
@@ -19,20 +19,19 @@ export interface CliIo {
 }
 
 /**
- * Single-quote-escapes `value` for safe interpolation into a printed shell command
- * (decision 14). A thin wrapper, not a second implementation (B12/A15's own rule extended to
- * this module): `escapeSingleQuotes` in `import-archive.ts` is the one escaping
- * implementation; this only adds the surrounding quotes.
+ * Single-quote-escapes `value` for safe interpolation into a printed shell command . A thin
+ * wrapper, not a second implementation ('s own rule extended to this module): `escapeSingleQuotes`
+ * in `import-archive.ts` is the one escaping implementation; this only adds the surrounding quotes.
  */
 export function quote(value: string): string {
   return `'${escapeSingleQuotes(value)}'`
 }
 
-/** What every printed/documented import command needs (B7): built in exactly one place, so
+/** What every printed/documented import command needs: built in exactly one place, so
  * the CLI's own blocked-refusal printer, the wizard routes' dead ends, and `deploy/README.md`
  * (which reproduces this shape by hand, since docs cannot import this module) can never drift
  * into three independently-wrong command strings again. `script` defaults to `import-legacy`
- * (B1: `pnpm ... import` is shadowed by pnpm's own built-in `import` command, so the package
+ * (`pnpm ... import` is shadowed by pnpm's own built-in `import` command, so the package
  * script was renamed) — parameterized only so a test can override it if the script is ever
  * renamed again. Every path is escaped through `quote` above.
  */
@@ -81,17 +80,16 @@ function defaultItemLine(item: ImportItem): string {
 }
 
 /**
- * The grouped preview (`tasks/plan.md` T6): always printed first, whatever the flags, so a
- * dry run and an about-to-apply run render identically up to this point. Order is fixed —
- * Import, Overwrite, Skip, Warnings, the adapted SOUL.md text (when `plan.soulPreview` is
- * present, decision 3), Not migrated, Blocked — and an empty group prints a single "none"
- * line rather than vanishing, so the shape of the output never depends on how much a given
- * source happened to have. Vault items are rendered exactly like every other item, straight
- * from `item.target`/`item.detail`/`item.reason` (A19/this fix group's report: the former
- * `describeSecrets`-based rendering was a second, parallel implementation of exactly what
- * `buildImportPlan` already guarantees — its `detail` for a `vault:*` item is names-only at
- * either value of `options.secrets`, asserted directly by `import-plan.test.ts` — so this
- * function no longer needs a `SecretScan` argument at all).
+ * The grouped preview: always printed first, whatever the flags, so a dry run and an about-to-apply
+ * run render identically up to this point. Order is fixed — Import, Overwrite, Skip, Warnings, the
+ * adapted SOUL.md text (when `plan.soulPreview` is present), Not migrated, Blocked — and an empty
+ * group prints a single "none" line rather than vanishing, so the shape of the output never depends
+ * on how much a given source happened to have. Vault items are rendered exactly like every other
+ * item, straight from `item.target`/`item.detail`/`item.reason` (the former `describeSecrets`-based
+ * rendering was a second, parallel implementation of exactly what `buildImportPlan` already
+ * guarantees — its `detail` for a `vault:*` item is names-only at either value of
+ * `options.secrets`, asserted directly by `import-plan.test.ts` — so this function no longer needs
+ * a `SecretScan` argument at all).
  */
 export function printPreview(io: CliIo, plan: ImportPlan): void {
   io.stdout(`Import plan for ${sourceLabel(plan.source)} — source: ${plan.sourceDir}`)
@@ -116,12 +114,10 @@ export function printPreview(io: CliIo, plan: ImportPlan): void {
 const SOUL_PREVIEW_RULE = '-'.repeat(50)
 
 /**
- * The one place this CLI intentionally prints a large block (`tasks/plan.md`
- * design decision 3, ADR-0010): the full adapted `SOUL.md` text, so the user
- * can actually act on the warning above telling them to read it before
- * anything is written. Clearly delimited so it cannot be mistaken for
- * another group's output; a no-op when the plan has nothing to write to
- * `SOUL.md` (skipped, blocked, or absent from the source).
+ * The one place this CLI intentionally prints a large block (ADR-0010): the full adapted `SOUL.md`
+ * text, so the user can actually act on the warning above telling them to read it before anything
+ * is written. Clearly delimited so it cannot be mistaken for another group's output; a no-op when
+ * the plan has nothing to write to `SOUL.md` (skipped, blocked, or absent from the source).
  */
 function printSoulPreview(io: CliIo, soulPreview: string | undefined): void {
   if (soulPreview === undefined) return
@@ -133,7 +129,7 @@ function printSoulPreview(io: CliIo, soulPreview: string | undefined): void {
 }
 
 /**
- * Printed once `--apply` hits a blocked plan (decision 8, issue AC2). Every blocked reason
+ * Printed once `--apply` hits a blocked plan (issue AC2). Every blocked reason
  * is printed verbatim, plus the exact next command for whichever blockers are clearable: a
  * re-run with `--overwrite` when a conflict caused the block, the vault keyfile provisioning
  * commands when the block is "no backup possible". A stale `import.lock` never reaches this
@@ -154,7 +150,7 @@ export function printBlockedRefusal(
   if (plan.requiresOverwrite) {
     io.stdout('')
     io.stdout('next command:')
-    // B7: carries forward this run's own `--secrets` choice (`plan.options.secrets`) — a
+    // carries forward this run's own `--secrets` choice (`plan.options.secrets`) — a
     // recovery command that silently dropped an already-made `--secrets` choice would import
     // fewer things than the run the user actually meant to retry.
     io.stdout(

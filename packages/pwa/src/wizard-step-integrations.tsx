@@ -56,7 +56,7 @@ function initialCalendar(status: OnboardingStatus): CalendarForm {
 }
 
 /**
- * Integrations step (`tasks/plan.md` §4/§8): gmail and calendar are each
+ * Integrations step: gmail and calendar are each
  * optional and independently enabled. Secrets left blank on an already
  * `hasCredentials` section mean "keep the existing stored value" — they are
  * omitted from the request rather than sent empty. One-tap Skip is always

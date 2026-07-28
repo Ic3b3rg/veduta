@@ -37,8 +37,8 @@ interface FinishState {
 }
 
 /**
- * Onboarding wizard shell (issue 019, `tasks/plan.md` §1/§13): bespoke
- * full-screen React flow gated at App level like `AuthGate`. The daemon's
+ * Onboarding wizard shell (issue 019): bespoke full-screen React flow gated
+ * at App level like `AuthGate`. The daemon's
  * `OnboardingStatus` is the single source of truth — every step submit
  * re-fetches it via the matching `api.ts` helper and hands the fresh status
  * back to `onStatus`, so resume (first incomplete step) comes for free from
@@ -66,8 +66,8 @@ export function OnboardingWizard({
   const [migrationPreview, setMigrationPreview] = useState<MigrationPreviewState | undefined>(
     undefined,
   )
-  // Held rather than fed to `onStatus` immediately after a successful import
-  // (`tasks/plan.md` T8): see `onMigrationContinue` below for why.
+  // Held rather than fed to `onStatus` immediately after a successful
+  // import: see `onMigrationContinue` below for why.
   const [migrationPendingStatus, setMigrationPendingStatus] = useState<
     OnboardingStatus | undefined
   >(undefined)
@@ -85,12 +85,12 @@ export function OnboardingWizard({
   }
 
   /**
-   * `POST /api/onboarding/migration/preview` (issue 020, `tasks/plan.md`
-   * T8): a pure dry-run, so this never touches `onStatus` -- only local
-   * preview state. Re-run on every "Preview" click (fresh source, overwrite
-   * reset to false) and on every `overwrite` toggle (design decision 7: the
-   * preview must always describe exactly what Apply would do), clearing any
-   * previous plan/result first so a stale one is never shown as current.
+   * `POST /api/onboarding/migration/preview` (issue 020): a pure dry-run, so
+   * this never touches `onStatus` -- only local preview state. Re-run on
+   * every "Preview" click (fresh source, overwrite reset to false) and on
+   * every `overwrite` toggle (the preview must always describe exactly what
+   * Apply would do), clearing any previous plan/result first so a stale one
+   * is never shown as current.
    */
   const runMigrationPreview = async (source: ImportSourceKind, overwrite: boolean) => {
     setBusy(true)
@@ -114,7 +114,7 @@ export function OnboardingWizard({
 
   /**
    * `POST /api/onboarding/migration/import`: recomputes and applies the plan
-   * (the daemon never trusts the client-supplied preview -- decision 7), then
+   * (the daemon never trusts the client-supplied preview --), then
    * holds the returned `{result, status}` rather than calling `onStatus`
    * synchronously like `run()` does for every other step. Calling it here
    * would advance `currentStep` past `migration` in the same render that
@@ -330,8 +330,8 @@ export function OnboardingWizard({
  * Polls the public, lightweight `/api/auth/status` every 2s (max ~90s) until
  * the daemon answers again — used only on the VPS profile, where `finish`
  * replies then exits gracefully so systemd (`Restart=always`) can reboot it
- * with the new boot-time-immutable config (`tasks/plan.md` §4). Returns
- * whether the daemon came back before the deadline; the caller must not
+ * with the new boot-time-immutable config. Returns whether the daemon came
+ * back before the deadline; the caller must not
  * silently enter Home when it didn't.
  */
 async function waitForDaemonRestart(maxMs = 90_000, intervalMs = 2000): Promise<boolean> {

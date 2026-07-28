@@ -12,7 +12,7 @@ import { effectiveOrigin, isUntrusted, type Origin } from './taint.ts'
 import { endpointHost, type PushPayload, type PushTransport } from './web-push-transport.ts'
 
 /**
- * NotificationCenter (issue #18, plan decisions 1-7, 14): the daemon's one
+ * NotificationCenter (issue #18, plan 7, 14): the daemon's one
  * choke point for surfacing anything to the user outside a Surface's own
  * patches. Silent is the absence of a call. Every `notify()` invocation
  * appends exactly one `notification` Space event (Agent-context hygiene:
@@ -58,7 +58,7 @@ function truncate(text: string, maxLength: number): string {
   return text.length > maxLength ? text.slice(0, maxLength) : text
 }
 
-/** The calendar date of `date` in `timeZone`, as YYYY-MM-DD — the budget "day" (plan decision 7). */
+/** The calendar date of `date` in `timeZone`, as YYYY-MM-DD — the budget "day" (plan). */
 function budgetDay(date: Date, timeZone: string): string {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone,
@@ -303,7 +303,7 @@ export class NotificationCenter {
   }
 
   /**
-   * Quiet-hours digest flush (plan decision 7): each deferred item passes
+   * Quiet-hours digest flush (plan): each deferred item passes
    * its own Space's budget gate again at flush time — over-budget/zero-
    * budget items degrade to badge-only silently (their decision event was
    * already appended at queue time; no new Space event here, delivery

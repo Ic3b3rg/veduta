@@ -12,7 +12,7 @@ const TIER_LABELS: Record<TierId, string> = {
 const EMPTY_ROW: OnboardingTierModel = { provider: 'anthropic', modelId: '' }
 
 /**
- * Models step (`tasks/plan.md` §4): edit the current default tier chains
+ * Models step: edit the current default tier chains
  * in place. Rows can be added/removed since `providerKeys` may not cover
  * every provider a default chain assumes; the client-side guard keeps at
  * least one model per tier before Save is allowed (the daemon re-validates

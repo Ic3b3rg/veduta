@@ -163,7 +163,7 @@ export class WatchManager {
         .run(
           failures,
           shouldAlert || registration.alerted ? 1 : 0,
-          // Persisted durably (issue #15 D3, SECURITY.md §4): a provider or
+          // Persisted durably (issue #15 SECURITY.md §4): a provider or
           // transport error can carry a leaked key, so it is redacted
           // before it ever reaches `ingestion.sqlite`.
           defaultRedactor

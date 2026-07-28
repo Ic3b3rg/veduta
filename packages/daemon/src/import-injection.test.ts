@@ -95,7 +95,7 @@ async function importEntry(
   const secrets = scanLegacySecrets({ kind: 'hermes', dir: sourceDir })
   const target = readTargetState(rootDir)
   const options = { overwrite: false, secrets: false }
-  // A2: `applyImport` recomputes its own plan inside the lock now — this
+  // `applyImport` recomputes its own plan inside the lock now — this
   // standalone `buildImportPlan` call is kept only to assert the precondition
   // (nothing blocked) before applying, matching `import-apply.test.ts`.
   const plan = buildImportPlan({ snapshot, secrets, target, options, backupAvailable: true })
@@ -238,8 +238,8 @@ describe('import injection corpus × trust gating (issue 020, seeds docs/SECURIT
 
         // 4. SOUL entries specifically: `adaptSoul`'s output still carries
         // all three Veduta invariants, and they sit BEFORE the imported
-        // text (`tasks/plan.md` decision 3's whole mitigation is this
-        // ordering) — checked by index, not just presence.
+        // text (that ordering IS the mitigation) — checked by index,
+        // not just presence.
         if (entry.file === 'SOUL.md') {
           const soulContent = readFileSync(join(rootDir, 'SOUL.md'), 'utf8')
           expect(soulContent).toBe(adaptSoul(entry.text, 'hermes'))

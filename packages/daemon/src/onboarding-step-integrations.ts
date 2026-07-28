@@ -123,7 +123,7 @@ function googleRefs(kind: GoogleServiceKind): NonNullable<IngestionSource['googl
 }
 
 /**
- * `POST /api/onboarding/integrations` (`tasks/plan.md` §4/§8). Skip records
+ * `POST /api/onboarding/integrations` (§4/§8). Skip records
  * `skipped` and does nothing else. Otherwise: the first-space step must
  * already be recorded (every source needs a target `spaceId` — reused from
  * `config.firstSpace.spaceId` rather than re-derived, falling back to the

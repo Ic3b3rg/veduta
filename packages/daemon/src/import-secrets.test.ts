@@ -100,7 +100,7 @@ describe('scanLegacySecrets — hermes', () => {
     expect(scan.notImportable.some((n) => n.sourceKey === 'TELEGRAM_BOT_TOKEN')).toBe(true)
     expect(scan.importable.some((s) => s.sourceKey === 'TELEGRAM_BOT_TOKEN')).toBe(false)
 
-    // A9: a not-importable-but-credential-looking value is still registered
+    // a not-importable-but-credential-looking value is still registered
     // for redaction, so the same token pasted into MEMORY.md prose is caught.
     expect(defaultRedactor.redactText('leaked 123456:ABC-DEF-hermes-bot')).not.toContain(
       '123456:ABC-DEF-hermes-bot',
@@ -156,7 +156,7 @@ describe('scanLegacySecrets — openclaw', () => {
     expect(scan.notImportable.some((n) => n.sourceKey === 'BOT_TOKEN')).toBe(true)
     expect(scan.importable.some((s) => s.sourceKey === 'BOT_TOKEN')).toBe(false)
 
-    // A9: registered for redaction even though it is not importable.
+    // registered for redaction even though it is not importable.
     expect(defaultRedactor.redactText('leaked openclaw-telegram-bot-token')).not.toContain(
       'openclaw-telegram-bot-token',
     )
@@ -205,11 +205,11 @@ describe('redaction discipline (the key assertion)', () => {
     expect(defaultRedactor.redactText(`leaked ${SECRET}`)).not.toContain(SECRET)
   })
 
-  it('A9: registers a not-importable, credential-looking value too — not just the three allowlisted providers', () => {
+  it('registers a not-importable, credential-looking value too — not just the three allowlisted providers', () => {
     const home = freshDir()
     // Shaped like a Telegram bot token, and deliberately NOT matching any of
     // `redaction.ts`'s built-in patterns (`sk-…`/`Bearer …`/`AKIA…`) — before
-    // A9 this value was found by name only and never registered, so the
+    // Previously this value was found by name only and never registered, so the
     // same string in MEMORY.md prose reached FACTS unredacted.
     const NOT_IMPORTABLE_SECRET = '123456789:AAHhermesBotTokenNotAllowlisted'
     writeFileSync(join(home, '.env'), `TELEGRAM_BOT_TOKEN=${NOT_IMPORTABLE_SECRET}\n`)

@@ -6,8 +6,8 @@ const SYSTEM_SPACE_SLUG = 'system'
 const SYSTEM_SPACE_NAME = 'System'
 
 /**
- * Materializes the System Space as a real, persisted Space (issue #14,
- * D8): the trust admin Surfaces (allowlist, audit) need a durable home a
+ * Materializes the System Space as a real, persisted Space (issue #14):
+ * the trust admin Surfaces (allowlist, audit) need a durable home a
  * user can navigate to, so it can no longer stay purely synthetic like
  * the usage/connected-devices Surfaces below. This is a deliberate,
  * documented deviation from "every Space is user-confirmed" (ADR-0002's

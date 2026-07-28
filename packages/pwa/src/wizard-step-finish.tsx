@@ -1,7 +1,7 @@
 import { WIZARD_STEP_META } from './onboarding-state.ts'
 
 /**
- * Finish step (`tasks/plan.md` §4): on the VPS profile the daemon exits and
+ * Finish step: on the VPS profile the daemon exits and
  * systemd restarts it with the new config — the wizard shell polls
  * `/api/auth/status` and shows a spinner while `restarting` is true. If the
  * daemon never comes back, `restartTimedOut` shows the exact command to

@@ -16,7 +16,7 @@ import type { SecretResolver } from './model-routing.ts'
 import { openGcm, sealGcm } from './secret-crypto.ts'
 
 /**
- * Secrets vault (issue #15 D2, docs/SECURITY.md §4): API keys and OAuth
+ * Secrets vault (issue #15, docs/SECURITY.md §4): API keys and OAuth
  * tokens live encrypted at rest under `<rootDir>/secrets.vault`; the agent
  * only ever sees opaque `secret://vault/<name>` references, resolved here
  * at call time by transport-layer constructors — never handed to the

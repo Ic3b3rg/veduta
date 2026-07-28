@@ -123,7 +123,7 @@ export function App() {
     )
   }, [])
 
-  // Surface lifecycle stream (D9/R2-M2): surface.patch / surface.created /
+  // Surface lifecycle stream (R2-M2): surface.patch / surface.created /
   // surface.archived can arrive for a Space or Surface this client hasn't
   // seen yet (e.g. right after a reconnect). Rather than erroring straight
   // away, refetch the /api/spaces snapshot and replay whatever arrived
@@ -295,7 +295,7 @@ export function App() {
     }
   }, [handleSurfaceStreamEvent, appendChatEntry, authToken, replaceSpaces, refetchAndReplay])
 
-  // Onboarding wizard gate (issue 019, `tasks/plan.md` §1/§5): fetched once
+  // Onboarding wizard gate (issue 019): fetched once
   // authenticated (or immediately in loopback, where no token is required).
   // `onboardingLoad` starts (and is reset to) 'loading' so the render below
   // shows a neutral wait state instead of flashing Home before this resolves.
@@ -412,7 +412,7 @@ export function App() {
   }, [applyLocation])
 
   // Re-registers an already-granted push subscription at boot and on every
-  // login/token change (D15): keeps the daemon's push store fresh after
+  // login/token change: keeps the daemon's push store fresh after
   // e.g. a data-dir reset, and re-associates the subscription with the
   // right user once `authToken` settles instead of only firing once at boot
   // with whatever was in storage at first render.

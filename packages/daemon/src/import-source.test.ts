@@ -77,7 +77,7 @@ describe('resolveLegacyDir', () => {
     expect(resolveLegacyDir({ kind: 'hermes', stagedDir: staged, home })).toBe(staged)
   })
 
-  it('B8: an empty staged directory (created but nothing staged into it) never shadows a readable live home', () => {
+  it('an empty staged directory (created but nothing staged into it) never shadows a readable live home', () => {
     const home = freshDir('veduta-home-')
     const staged = freshDir('veduta-staged-empty-') // exists, but nothing written into it
     mkdirSync(join(home, '.hermes'))
@@ -86,7 +86,7 @@ describe('resolveLegacyDir', () => {
     )
   })
 
-  it('B8: a staged directory with only a notes/ subdirectory still counts as present', () => {
+  it('a staged directory with only a notes/ subdirectory still counts as present', () => {
     const home = freshDir('veduta-home-')
     const staged = freshDir('veduta-staged-notes-only-')
     mkdirSync(join(staged, 'notes'))
@@ -139,7 +139,7 @@ describe('readLegacySource — hermes', () => {
     expect(topicNote?.date).toBeUndefined()
 
     // `.env` is claimed (excluded from `notMigrated` below) but never
-    // exposed on the snapshot itself (A22) — nothing outside this module
+    // exposed on the snapshot itself — nothing outside this module
     // consumes a `secretFiles` field, `import-secrets.ts` re-scans the
     // source directory independently.
     for (const note of snapshot.notes) {
@@ -175,7 +175,7 @@ describe('readLegacySource — openclaw', () => {
     expect(topicNote?.date).toBeUndefined()
 
     // `openclaw.json` is claimed (excluded from `notMigrated` below) but not
-    // exposed on the snapshot itself — see the hermes test's comment (A22).
+    // exposed on the snapshot itself — see the hermes test's comment.
     expect(snapshot.notMigrated).toEqual(['sessions', 'workspace/AGENTS.md'])
     for (const note of snapshot.notes) {
       expect(note.text).not.toContain('sk-should-never-be-read')
@@ -184,7 +184,7 @@ describe('readLegacySource — openclaw', () => {
 })
 
 describe('readLegacySource — staged flat layout', () => {
-  it('resolves and maps a flat staged directory (decision 16)', () => {
+  it('resolves and maps a flat staged directory', () => {
     const dir = freshDir('veduta-staged-flat-')
     writeFileSync(join(dir, 'SOUL.md'), '# Flat Soul\n')
     writeFileSync(join(dir, 'USER.md'), '# User\nName: Cy\n')

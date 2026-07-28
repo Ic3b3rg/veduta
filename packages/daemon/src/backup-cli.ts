@@ -4,7 +4,7 @@ import { resolveVaultKeyMaterial } from './secrets-vault.ts'
 
 /**
  * `pnpm --filter @veduta/daemon backup <backup|restore <file>|prune>`
- * (issue #15 D5). `run` takes injectable `argv`/`env`/`io` so it is testable
+ * (issue #15). `run` takes injectable `argv`/`env`/`io` so it is testable
  * without touching `process.*`; `main` wires it to the real process and is
  * gated behind the file-identity check below so importing this module (e.g.
  * from a future test) never executes it as a side effect.

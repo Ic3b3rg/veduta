@@ -5,22 +5,22 @@ import { SYSTEM_SPACE_ID } from './system-space.ts'
 import type { TrustStore } from './trust-store.ts'
 
 /**
- * The trust layer's allowlist policy/operations (issue #14 review Fix C):
+ * The trust layer's allowlist policy/operations (issue #14):
  * rule matching, grant (upsert + provenance audit), revoke (+ audit), and
  * listing — split out of the `TrustLayer` facade because these are
  * self-contained. Unlike the claim/resolve/recovery state machine `TrustLayer`
  * keeps (deliberately: see its own comment), nothing here needs to interleave
  * with that machine's control flow — `grant` is the one exception, and it is
  * written to compose into a caller's existing transaction exactly as
- * `TrustStore.upsertAllowlistRule` already supports (nested transactions,
- * Fix 7), so `TrustLayer.claimAndApprove` can call it from inside its own
+ * `TrustStore.upsertAllowlistRule` already supports (nested transactions),
+ * so `TrustLayer.claimAndApprove` can call it from inside its own
  * `runInTransaction` without this module knowing anything about approvals,
  * cards, or claims.
  *
  * `TrustLayer.decide()` still owns *whether* an allowlist rule may even be
- * consulted (A1: untainted snapshot, `trusted:user` prompt origin, L1 level,
+ * consulted (untainted snapshot, `trusted:user` prompt origin, L1 level,
  * `allowlistParams` declared) and *whether* a grant is eligible on approve
- * (the same checks, re-verified against the decision-time snapshot, A4) —
+ * (the same checks, re-verified against the decision-time snapshot) —
  * this module only owns the mechanics once that policy decision is made.
  */
 export class TrustAllowlist {
@@ -32,8 +32,8 @@ export class TrustAllowlist {
 
   /**
    * The id of the active rule covering this exact call shape, `undefined`
-   * when none does. The caller decides whether it is even eligible to ask
-   * (A1); the id lets the `allowed` decision audit row name the exact rule
+   * when none does. The caller decides whether it is even eligible to ask;
+   * the id lets the `allowed` decision audit row name the exact rule
    * that authorized it (SECURITY.md §5 trigger chain).
    */
   matchingRuleId(toolName: string, params: Record<string, string>): number | undefined {
@@ -46,12 +46,12 @@ export class TrustAllowlist {
 
   /**
    * Upserts the rule and, only when newly created, audits its full
-   * provenance (Fix 5): the same origin chain, trigger, context hash, Space,
+   * provenance: the same origin chain, trigger, context hash, Space,
    * and approval ref the accompanying `approval.decided` row carries, plus
-   * the approved final input (Fix B) — a standing allowlist grant is exactly
+   * the approved final input — a standing allowlist grant is exactly
    * as auditable as the single decision that authorized it. Must be called
    * from inside the caller's own transaction: the claim and this grant
-   * commit atomically together (A4).
+   * commit atomically together.
    */
   grant(params: {
     toolName: string
@@ -101,7 +101,7 @@ export class TrustAllowlist {
    * `trusted:user`, and its Space is always the System Space the allowlist
    * Surface itself lives in (`system-space.ts`) — this is not the rule's
    * originating Space, which the `allowlist.created` row already carries.
-   * Transactional (Fix 5): the UPDATE and the audit insert commit together.
+   * Transactional: the UPDATE and the audit insert commit together.
    * Returns the just-revoked rule, or `undefined` if `id` was unknown or
    * already revoked (the caller then skips notifying listeners).
    */

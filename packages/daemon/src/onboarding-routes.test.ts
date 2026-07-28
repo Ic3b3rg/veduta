@@ -60,7 +60,7 @@ function buildApp(deps: OnboardingRoutesDeps): FastifyInstance {
   return app
 }
 
-/** The flat staged layout the installer writes (`tasks/plan.md` decision 16): `<root>/import-source/hermes/{SOUL,USER,MEMORY}.md`. */
+/** The flat staged layout the installer writes (`docs/adr/0010-importer-trust-and-refusal.md`): `<root>/import-source/hermes/{SOUL,USER,MEMORY}.md`. */
 function buildStagedHermesFixture(dir: string): string {
   const stagedDir = join(dir, 'import-source', 'hermes')
   mkdirSync(stagedDir, { recursive: true })
@@ -319,7 +319,7 @@ describe('POST /api/onboarding/migration/preview', () => {
     })
     expect(res.statusCode).toBe(409)
     const body = res.json() as { error: string }
-    // B1: renamed `import` -> `import-legacy` (pnpm's own built-in `import`
+    // Renamed `import` -> `import-legacy` (pnpm's own built-in `import`
     // command shadowed the old script name entirely).
     expect(body.error).toContain('pnpm --filter @veduta/daemon import-legacy hermes')
     expect(body.error).toContain('--apply')

@@ -17,8 +17,7 @@ import { loadOnboardingConfig } from './onboarding-config.ts'
 import type { SecretsVault } from './secrets-vault.ts'
 
 /**
- * `tasks/plan.md` "Design decisions (v2)" §3: the wizard's canonical step
- * order. `migration` is filtered out of the *visible* set by
+ * The wizard's canonical step order. `migration` is filtered out of the *visible* set by
  * `buildOnboardingStatus` when no legacy install is detected — this array
  * itself always lists every step so callers have one source of truth for
  * ordering.
@@ -44,11 +43,11 @@ const BYOK_PROVIDERS = ByokProviderSchema.options
  * the daemon runs as `veduta` under `ProtectHome=yes` and can never see the
  * admin's real home — that detection happens in the installer's
  * legacy-detect stage and is persisted into `onboarding.json.legacy` before
- * the daemon ever boots (`tasks/plan.md` §10), which is why
+ * the daemon ever boots, which is why
  * `buildOnboardingStatus` always prefers the persisted value over calling
  * this function again.
  *
- * B13 (code review): imports `OPENCLAW_ALIASES` from `import-source.ts`
+ * Imports `OPENCLAW_ALIASES` from `import-source.ts`
  * instead of keeping a second, independently-maintained copy of OpenClaw's
  * former names — the two had drifted into two TypeScript lists doing the
  * same job. `deploy/install.sh`'s own copy is the one duplication left,
@@ -66,14 +65,14 @@ export function detectLegacyAgents(home: string): LegacyDetection {
 
 /**
  * Dead-end copy shared by every step module that needs the vault and finds
- * none open (`tasks/plan.md` §9), and by the importer (`import-apply.ts` T5,
- * decision 10) when it needs vault key material for a backup: the exact
+ * none open, and by the importer (`import-apply.ts`) when it needs vault
+ * key material for a backup: the exact
  * commands to provision a keyfile. Exported as a standalone constant (rather
  * than only living inside `VaultUnavailableError`'s message) so a second
  * caller can quote the identical text without constructing this error type
  * — `import-apply.ts` throws its own `ImportRefusedError` with this same
  * message, since the importer's refusal has its own `blocked` list shape.
- * Routes map `VaultUnavailableError` to a 409 (T4); neither this constant
+ * Routes map `VaultUnavailableError` to a 409; neither this constant
  * nor the error is ever built with any secret value attached.
  */
 export const VAULT_UNAVAILABLE_MESSAGE = [
@@ -155,7 +154,7 @@ export interface OnboardingStatusDeps {
 }
 
 /**
- * Reads `<rootDir>/installer-stages.json` (`tasks/plan.md` §10) if present.
+ * Reads `<rootDir>/installer-stages.json` if present.
  * A missing file, unparseable JSON, or a payload that fails
  * `InstallerStageEventSchema` are all treated the same way: no installer
  * summary is surfaced. The wizard must still work end-to-end when the
@@ -175,7 +174,7 @@ function readInstallerSummary(rootDir: string): InstallerStageEvent | undefined 
 }
 
 /**
- * Assembles `GET /api/onboarding`'s response (`tasks/plan.md` §4): the
+ * Assembles `GET /api/onboarding`'s response: the
  * single source of truth for resuming the wizard and for pre-filling every
  * step's form with current values. Never returns a secret value, only
  * `hasKey`/`hasCredentials` booleans.

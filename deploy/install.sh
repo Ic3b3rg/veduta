@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Veduta installer -- automates deploy/README.md §1-3 (user/group/directory layout, the
 # secrets vault keyfile, and the systemd unit) plus Node install, checkout, build, first boot,
-# and passkey pairing. See tasks/plan.md, design decision 10, for the authoritative contract.
+# and passkey pairing. See issues/019-onboarding-wizard.md for the contract this automates.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.sh | sudo bash
@@ -24,11 +24,10 @@
 #
 # Stage ids (stable, referenced by the PWA onboarding wizard and by tests): preflight,
 # legacy-detect, deps, user-layout, checkout, build, vault-keyfile, systemd-unit, first-boot,
-# pairing. Deviation from tasks/plan.md's decision-10 sketch, noted here for reviewers: Node
-# installation (which needs the exact version pinned by the checked-out repo's .node-version)
-# is folded into the "build" stage rather than added as its own "node" stage id, so the ids stay
-# exactly the ten enumerated above -- plan.md explicitly allows this ("reordering is ALLOWED if
-# you keep ids stable and documented").
+# pairing. Node installation (which needs the exact version pinned by the checked-out repo's
+# .node-version) is folded into the "build" stage rather than added as its own "node" stage id,
+# so the ids stay exactly the ten enumerated above; reordering stage ids is fine as long as they
+# stay stable and documented.
 #
 # Supply-chain trust root: the repository is cloned over GitHub TLS and pinned to a concrete
 # commit SHA (resolved with `git rev-parse` and hard-reset to, even when --ref names a branch or
@@ -90,7 +89,7 @@ CURRENT_STAGE=""
 
 # OpenClaw's former names (docs/references/04-onboarding-migration.md §B: "Legacy name
 # support (.clawdbot, .moltbot)"). Mirrors packages/daemon/src/import-source.ts's exported
-# OPENCLAW_ALIASES (B13, code review: the TypeScript side used to keep this list twice --
+# OPENCLAW_ALIASES (the TypeScript side used to keep this list twice --
 # packages/daemon/src/onboarding-status.ts now imports the one export instead of a second
 # copy). This shell copy is the one duplication left standing on purpose: bash cannot import
 # a TypeScript constant, so a plain string is the only way this installer -- which runs
@@ -145,8 +144,8 @@ emit_event() {
   printf '\n'
 }
 
-# `<dataDir>/installer-stages.json` -- the PWA onboarding wizard's installer summary
-# (tasks/plan.md decision 10). Silently skipped when DATA_DIR does not exist yet (an early
+# `<dataDir>/installer-stages.json` -- the PWA onboarding wizard's installer summary.
+# Silently skipped when DATA_DIR does not exist yet (an early
 # failure, before user-layout has run, has nowhere durable to write to).
 write_stage_file() {
   local needs="$1" path tmp
@@ -529,7 +528,7 @@ preflight_stage() {
   fi
 }
 
-# True (exit 0) when $1 exists and is NOT itself a symlink (B10, security review): the guard
+# True (exit 0) when $1 exists and is NOT itself a symlink (security review): the guard
 # every legacy source-root/source-directory check in this section applies before its `-e`/`-d`
 # test. This root-run installer must never follow a symlinked source root or subdirectory (a
 # planted `~/.hermes/memories -> /root/...`, or `~/.openclaw` itself replaced by a symlink) into
@@ -540,8 +539,8 @@ not_symlink() {
 
 # Echoes the first of $home/.openclaw, $home/.clawdbot, $home/.moltbot that exists AND is not
 # itself a symlink (OpenClaw's former names, docs/references/04-onboarding-migration.md §B;
-# B10 symlink guard), or nothing and exits non-zero if none qualify. Shared by
-# legacy_detect_stage (which only needs a yes/no) and stage_legacy_memory (T9, which needs the
+# symlink guard), or nothing and exits non-zero if none qualify. Shared by
+# legacy_detect_stage (which only needs a yes/no) and stage_legacy_memory (which needs the
 # actual directory to copy from).
 resolve_openclaw_home() {
   local home="$1" alias candidate
@@ -555,7 +554,7 @@ resolve_openclaw_home() {
   return 1
 }
 
-# True (exit 0) when $1/.hermes exists and is not a symlink (B10 symlink guard).
+# True (exit 0) when $1/.hermes exists and is not a symlink (symlink guard).
 hermes_root_present() {
   not_symlink "$1/.hermes" && [ -e "$1/.hermes" ]
 }
@@ -600,8 +599,8 @@ legacy_detect_stage() {
 }
 
 # Persists the legacy-detect result into the onboarding.json seed. Called from
-# user_layout_stage, once DATA_DIR (owned by veduta:veduta) exists -- see tasks/plan.md
-# decision 10: "held in memory until the layout stage exists, then persisted atomically".
+# user_layout_stage, once DATA_DIR (owned by veduta:veduta) exists: held in memory until the
+# layout stage exists, then persisted atomically.
 persist_legacy_seed() {
   local seed_path="$DATA_DIR/onboarding.json" legacy_json content tmp
   if [ -e "$seed_path" ]; then
@@ -625,7 +624,7 @@ persist_legacy_seed() {
   printf 'seeded %s with the legacy detection result\n' "$seed_path" >&2
 }
 
-# --- Legacy memory staging (tasks/plan.md decision 16) ------------------------------------
+# --- Legacy memory staging (docs/adr/0010-importer-trust-and-refusal.md) ------------------
 #
 # The daemon runs as `veduta` under ProtectHome=yes (deploy/veduta.service) and can therefore
 # NEVER read /home/<admin>/.hermes or /home/<admin>/.openclaw -- the same constraint that
@@ -694,14 +693,14 @@ stage_legacy_notes() {
 # as persist_legacy_seed's existing-file message. Does nothing if $2 was not resolved (should
 # not happen when the corresponding LEGACY_* flag is true, but this function never assumes).
 #
-# B10: refuses a symlinked source root outright, and a symlinked workspace/memories
+# Refuses a symlinked source root outright, and a symlinked workspace/memories
 # subdirectory (the one nested directory each vendor layout reads files out of) -- staging
 # individual files through a symlinked *intermediate* directory component would let a planted
 # symlink (e.g. `~/.hermes/memories -> /root/somewhere-else`) smuggle files from outside the
 # legacy install past stage_legacy_file's own guard, which only ever checks the final path
 # component.
 #
-# B11: stages into a sibling temporary directory ($staging_dir) and atomically `mv`s it into
+# Stages into a sibling temporary directory ($staging_dir) and atomically `mv`s it into
 # $dest_dir only once every file has been copied, rather than creating $dest_dir itself up
 # front and copying into it in place. A crash or kill mid-copy previously left a permanently
 # partial $dest_dir that this function's own "already exists" rerun check would treat as

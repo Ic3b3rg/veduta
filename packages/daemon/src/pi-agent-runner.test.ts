@@ -23,7 +23,7 @@ import { TurnTaintAccumulator, type Origin } from './taint.ts'
 
 /**
  * `applyOriginEntries` and `originEntryData` are the pure halves of the
- * `VEDUTA_MESSAGE_ORIGIN` annotates-next codec (v3 Major F): they operate
+ * `VEDUTA_MESSAGE_ORIGIN` annotates-next codec: they operate
  * on plain `SessionEntry`/marker literals, with no `@earendil-works/pi-agent-core`
  * involved, so the annotate/reconstruct logic is testable in isolation from
  * the real pi session tree.
@@ -153,8 +153,8 @@ describe('applyOriginEntries', () => {
 })
 
 /**
- * `transformPiContext` and `toPiAgentTool` are the pieces of D10/A3 that are
- * pure enough to unit-test without a live pi `Agent` (constructing one needs
+ * `transformPiContext` and `toPiAgentTool` are the pieces of the taint/context-hash
+ * machinery that are pure enough to unit-test without a live pi `Agent` (constructing one needs
  * a working provider — impractical to unit-test, see the module doc comment
  * above). Together they cover what `PiAgentRunner` wires internally: the
  * always-installed context-transform wrapper recomputing the context hash

@@ -2,9 +2,9 @@ import { z } from 'zod'
 import { neutralizeDelimiters } from './taint.ts'
 
 /**
- * Worker briefing + report contract (issue #17, plan v2 T1): a Worker is an
+ * Worker briefing + report contract (issue #17): a Worker is an
  * ephemeral background investigate-and-report step, spawned by the Agent
- * (`spawn_worker`, T5) and run by the `WorkerPool` (T4) in an isolated
+ * (`spawn_worker`) and run by the `WorkerPool` in an isolated
  * session. The briefing is the deterministic, daemon-computed input to that
  * run; the report is the ONLY thing a Worker is ever allowed to hand back —
  * a versioned, schema-validated shape, never free text, so a Worker can only
@@ -74,9 +74,9 @@ export type ParseWorkerReportOutcome = { ok: true; report: WorkerReport } | { ok
 /**
  * Strips an optional code fence, parses JSON, then validates against
  * `WorkerReportSchema`. Any failure (invalid JSON, schema mismatch) collapses
- * to `{ ok: false }` — never throws, never repairs — the caller (T4) decides
+ * to `{ ok: false }` — never throws, never repairs — the caller (`WorkerPool`) decides
  * whether to retry, fall back to the last valid report, or deliver a
- * deterministic daemon-authored fallback (plan v2 B6).
+ * deterministic daemon-authored fallback.
  */
 export function parseWorkerReport(text: string): ParseWorkerReportOutcome {
   let json: unknown
@@ -141,7 +141,7 @@ export function truncateGoalLabel(goal: string, max: number = GOAL_LABEL_MAX_LEN
 /**
  * Builds the Worker's investigation prompt: fixed preamble, the goal, any
  * hard-constraint boundaries, and the exact expected report shape — the
- * "output format with schema" the issue requires (plan v2, T1 final fix).
+ * "output format with schema" the issue requires.
  * `reviewFeedback` (acceptance C) takes precedence over `corrective`: a
  * rejected review is never a schema failure, so it never gets the "failed
  * validation" wording.

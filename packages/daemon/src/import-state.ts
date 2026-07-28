@@ -5,15 +5,15 @@ import { z } from 'zod'
 import { backupFile, writeJsonAtomic } from './config-backup.ts'
 
 /**
- * The import marker (`tasks/plan.md` decision 8/9): `<rootDir>/import.json`
+ * The import marker: `<rootDir>/import.json`
  * is apply's own record of every completed import, mirroring
  * `onboarding-config.ts`'s discipline exactly (strict schema, absent file →
  * empty state, corrupt file → throw rather than silently reset). This is
  * the file `buildImportPlan`'s `alreadyImported` conflict check reads
- * (issue AC2, decision 8's "conflicts refuse, never skip"): a second apply
+ * (issue AC2 "conflicts refuse, never skip"): a second apply
  * of the same source without `--overwrite` must name the previous run and
  * its date instead of quietly repeating it. It is written LAST inside
- * apply's lock (decision 9) — a crash before this write leaves per-item
+ * apply's lock — a crash before this write leaves per-item
  * conflicts (SOUL/USER/`imported` Space already there) that make the retry
  * refuse with an actionable message on their own, which is why this marker
  * never needs a "partial import" state of its own.
@@ -70,7 +70,7 @@ export function loadImportState(rootDir: string): ImportState {
  * Validates `state`, backs up the existing `import.json` (if any), then
  * writes the new state atomically — the same backup-then-write discipline
  * `saveOnboardingConfig` uses. Called once, last, inside apply's lock
- * (`import-apply.ts` T5 step 10, decision 9): every side effect of the run
+ * (`import-apply.ts` step 10): every side effect of the run
  * has already happened by the time this is called.
  */
 export function saveImportState(rootDir: string, state: ImportState): void {
@@ -83,7 +83,7 @@ export function saveImportState(rootDir: string, state: ImportState): void {
 /**
  * The most recent completed import of `source`, or `undefined` when none
  * exists — what `buildImportPlan` needs for its `alreadyImported` conflict
- * check (decision 8) and what `applyImport` needs to decide whether this
+ * check and what `applyImport` needs to decide whether this
  * run is a first import or a `--overwrite` re-run. "Most recent" is decided
  * by `at` (ISO-8601, so a plain string comparison is also a chronological
  * one) rather than array order, so a hand-reordered or merged `import.json`

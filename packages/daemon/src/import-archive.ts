@@ -6,23 +6,18 @@ import { MAX_FILE_BYTES, readRegularFileHardened, sanitizeDisplayPath } from './
 import { defaultRedactor } from './redaction.ts'
 
 /**
- * `writeImportArchive` (`tasks/plan.md` T5/decision 11): a bounded, redacted
- * copy of the legacy install's non-secret text files that the importer does
- * not otherwise map (prompt files, `config.yaml`, `skills/`, `cron/`) — the
- * material `NOTES.md` (`buildNotesMarkdown`, merged into this module by
- * A17 — NOTES is written into the archive directory and describes it, so the
- * two belong together) tells the user to keep, since it has no 1:1 home in
- * Veduta. The source install is only ever read here, never written to.
- *
- * `NEVER_ARCHIVED` is the security property this module exists to enforce
- * (`tasks/plan.md` "Source layouts" tables): these names hold secrets
- * (`.env`, `auth.json`, `openclaw.json`) or runtime state (`state.db`,
- * `sessions/`, `logs/`, `pending/`) and must never reach the archive, no
- * matter what extension filter or depth/size cap logic exists around them.
- * Kept as one exported constant with its predicate (A15 — `import-plan.ts`
- * used to keep an identical, copy-pasted second list and predicate; both now
- * import this one), asserted directly in `import-archive.test.ts`, rather
- * than folded into the walk logic where a future edit could silently narrow it.
+ * `writeImportArchive`: a bounded, redacted copy of the legacy install's non-secret text files that
+ * the importer does not otherwise map (prompt files, `config.yaml`, `skills/`, `cron/`) — the
+ * material `NOTES.md` (`buildNotesMarkdown`, merged into this module by NOTES is written into the
+ * archive directory and describes it, so the two belong together) tells the user to keep, since it
+ * has no 1:1 home in Veduta. The source install is only ever read here, never written to.
+ * `NEVER_ARCHIVED` is the security property this module exists to enforce ("Source layouts"
+ * tables): these names hold secrets (`.env`, `auth.json`, `openclaw.json`) or runtime state
+ * (`state.db`, `sessions/`, `logs/`, `pending/`) and must never reach the archive, no matter what
+ * extension filter or depth/size cap logic exists around them. Kept as one exported constant with
+ * its predicate (`import-plan.ts` used to keep an identical, copy-pasted second list and predicate;
+ * both now import this one), asserted directly in `import-archive.test.ts`, rather than folded into
+ * the walk logic where a future edit could silently narrow it.
  */
 export const NEVER_ARCHIVED: readonly string[] = Object.freeze([
   '.env',
@@ -39,15 +34,13 @@ export function isNeverArchived(relPath: string): boolean {
 }
 
 /**
- * Already mapped elsewhere by this importer (SOUL/USER/MEMORY → the
- * adapted target files; the memory/notes directories → FACTS + the Event
- * log), so archiving them again would just duplicate content the user
- * already has in Veduta under a different, adapted form. Listed by known
- * vendor-layout relative path (both nested and the installer's flat staged
- * layout, `tasks/plan.md` decision 16) rather than derived from a live
- * `LegacySourceSnapshot`, since `writeImportArchive`'s contract deliberately
- * does not take one — this module's only job is a bounded, redacted copy of
- * a directory tree, kept decoupled from `import-source.ts`'s read machinery.
+ * Already mapped elsewhere by this importer (SOUL/USER/MEMORY → the adapted target files; the
+ * memory/notes directories → FACTS + the Event log), so archiving them again would just duplicate
+ * content the user already has in Veduta under a different, adapted form. Listed by known
+ * vendor-layout relative path (both nested and the installer's flat staged layout) rather than
+ * derived from a live `LegacySourceSnapshot`, since `writeImportArchive`'s contract deliberately
+ * does not take one — this module's only job is a bounded, redacted copy of a directory tree, kept
+ * decoupled from `import-source.ts`'s read machinery.
  */
 const MAPPED_FILE_RELPATHS = new Set([
   'SOUL.md',
@@ -59,7 +52,7 @@ const MAPPED_FILE_RELPATHS = new Set([
 ])
 
 /**
- * Directory *prefixes*, not bare segment names (A16 fix): the previous
+ * Directory *prefixes*, not bare segment names (fix): the previous
  * version stored `join('workspace', 'memory')` in a `Set` and then tested
  * each path *segment* individually against it — `'workspace/memory'` never
  * equals either `'workspace'` or `'memory'` alone, so that entry could never
@@ -78,7 +71,7 @@ function isMappedElsewhere(relPath: string): boolean {
 }
 
 /**
- * A11: a broader filename guard on top of the exact-name `NEVER_ARCHIVED`
+ * a broader filename guard on top of the exact-name `NEVER_ARCHIVED`
  * denylist — a `credentials.json`, `oauth.txt` or `my-secret-notes.md` sitting
  * next to `config.yaml` in the legacy install is not one of the seven exact
  * names, so the denylist alone would let it through. Matched against the
@@ -89,14 +82,13 @@ const CREDENTIAL_LIKE_NAME_RE = /credential|secret|token|password|auth/i
 
 const ALLOWED_EXTENSIONS = new Set(['.md', '.yaml', '.yml', '.json', '.txt'])
 
-/** `tasks/plan.md` decision 11: "no recursion beyond 3 levels". Depth 1 is `sourceDir`'s direct children. */
+/** No recursion beyond 3 levels. Depth 1 is `sourceDir`'s direct children. */
 const MAX_DEPTH = 3
 
 /**
- * `tasks/plan.md` decision 11: "200 files" for the archive specifically —
- * a distinct cap from `import-source.ts`'s `MAX_NOTES` (the unrelated
- * per-memory-directory notes cap), even though both currently read 200;
- * conflating the two would make an unrelated future change to one silently
+ * Archive-specific file cap — a distinct cap from
+ * `import-source.ts`'s `MAX_NOTES` (the unrelated per-memory-directory notes cap), even though both
+ * currently read 200; conflating the two would make an unrelated future change to one silently
  * change the other.
  */
 const MAX_ARCHIVE_FILES = 200
@@ -135,7 +127,7 @@ function archiveFile(input: WriteImportArchiveInput, relPath: string, state: Wal
     return
   }
 
-  // A14: the one hardened-read primitive for the whole importer, exported by
+  // the one hardened-read primitive for the whole importer, exported by
   // `import-source.ts` — this used to be a byte-for-byte second copy of that
   // module's open/fstat/read hardening ("one security primitive, one
   // implementation").
@@ -148,7 +140,7 @@ function archiveFile(input: WriteImportArchiveInput, relPath: string, state: Wal
     return
   }
 
-  // A12: the archive destination uses the sanitized display name — a hostile
+  // the archive destination uses the sanitized display name — a hostile
   // filename (a control character, a terminal escape sequence) must never
   // reach the archive directory tree verbatim.
   const destPath = join(input.archiveDir, displayPath)
@@ -212,16 +204,14 @@ function walk(
 }
 
 /**
- * Walks `sourceDir` (bounded: `MAX_DEPTH` levels, `MAX_ARCHIVE_FILES` files,
- * `MAX_FILE_BYTES` each, `.md`/`.yaml`/`.yml`/`.json`/`.txt` only) and
- * copies every eligible file into `archiveDir`, redacted through
- * `defaultRedactor.redactText` — `tasks/plan.md` T5/decision 11. Overflow
- * past any cap, a refused symlink, a credential-like filename (A11), or an
- * unmapped/unarchivable entry all land in `skipped` with a reason rather
- * than vanishing silently. `archiveDir` and every directory created under it
- * are `0700`; every archived file is `0600` — the archive can hold no
- * secrets by construction, but it can still hold identifying personal text,
- * so it gets the same restrictive permissions as the vault and config files.
+ * Walks `sourceDir` (bounded: `MAX_DEPTH` levels, `MAX_ARCHIVE_FILES` files, `MAX_FILE_BYTES` each,
+ * `.md`/`.yaml`/`.yml`/`.json`/`.txt` only) and copies every eligible file into `archiveDir`,
+ * redacted through `defaultRedactor.redactText`. Overflow past any
+ * cap, a refused symlink, a credential-like filename, or an unmapped/unarchivable entry all land in
+ * `skipped` with a reason rather than vanishing silently. `archiveDir` and every directory created
+ * under it are `0700`; every archived file is `0600` — the archive can hold no secrets by
+ * construction, but it can still hold identifying personal text, so it gets the same restrictive
+ * permissions as the vault and config files.
  */
 export function writeImportArchive(input: WriteImportArchiveInput): WriteImportArchiveResult {
   mkdirSync(input.archiveDir, { recursive: true, mode: 0o700 })
@@ -230,13 +220,13 @@ export function writeImportArchive(input: WriteImportArchiveInput): WriteImportA
   return { archived: state.archived, skipped: state.skipped }
 }
 
-// --- NOTES.md (A17: merged in from the former `import-notes.ts` — NOTES is ---
+// --- NOTES.md (merged in from the former `import-notes.ts` — NOTES is ---
 // --- written into this archive directory and describes it, so they belong ---
 // --- in the same module, and apply can pass the real archive result in.) ---
 
 /**
  * Escapes `'` for safe interpolation into a single-quoted shell argument.
- * Exported so `onboarding-step-migration.ts` (T7) can quote the same way when
+ * Exported so `onboarding-step-migration.ts` can quote the same way when
  * it prints the CLI dead-end command — one escaping implementation, not two.
  */
 export function escapeSingleQuotes(value: string): string {
@@ -244,24 +234,18 @@ export function escapeSingleQuotes(value: string): string {
 }
 
 /**
- * Builds the `NOTES.md` an apply always writes alongside the archive
- * (`tasks/plan.md` decision 11): what was archived and where, what must be
- * recreated by hand, what was deliberately never copied and why, and — for
- * every secret skipped because `--secrets` was not passed — the exact
- * `vault set` command to import it later. `rootDir` is threaded in
- * separately from `plan` because that command needs the *target* data
- * directory, which `ImportPlan` itself has no reason to carry (it already
- * has `sourceDir`, a different path). Never emits a secret value: only
- * `vaultName` (not a secret) and `rootDir` are interpolated into the
- * command, both single-quote escaped for safe shell use.
- *
- * `archiveResult` is the REAL `WriteImportArchiveResult` from the archive
- * walk that just ran (A17): the plan's own archive item only ever counted
- * candidate files before any cap/filter was applied, which could — and did —
- * disagree with what was actually archived. NOTES.md now reports what
- * happened, not what the preview guessed might happen; every skipped entry
- * is rendered with its reason under "Not archived" (`tasks/plan.md`
- * decision 11's promise, previously discarded entirely).
+ * Builds the `NOTES.md` an apply always writes alongside the archive : what was archived and where,
+ * what must be recreated by hand, what was deliberately never copied and why, and — for every
+ * secret skipped because `--secrets` was not passed — the exact `vault set` command to import it
+ * later. `rootDir` is threaded in separately from `plan` because that command needs the *target*
+ * data directory, which `ImportPlan` itself has no reason to carry (it already has `sourceDir`, a
+ * different path). Never emits a secret value: only `vaultName` (not a secret) and `rootDir` are
+ * interpolated into the command, both single-quote escaped for safe shell use. `archiveResult` is
+ * the REAL `WriteImportArchiveResult` from the archive walk that just ran: the plan's own archive
+ * item only ever counted candidate files before any cap/filter was applied, which could — and did —
+ * disagree with what was actually archived. NOTES.md now reports what happened, not what the
+ * preview guessed might happen; every skipped entry is rendered with its reason under "Not
+ * archived" (promise, previously discarded entirely).
  */
 export function buildNotesMarkdown(input: {
   plan: ImportPlan
@@ -318,7 +302,7 @@ export function buildNotesMarkdown(input: {
       lines.push(
         `- ${item.detail}:`,
         '  ```',
-        // B7 (fix group B's report): `<YOUR_VALUE>` must be quoted -- an
+        // `<YOUR_VALUE>` must be quoted -- an
         // unquoted `<` is parsed by the shell as input redirection, not as a
         // literal placeholder character, which would make this exact command
         // fail (or silently redirect from a file literally named

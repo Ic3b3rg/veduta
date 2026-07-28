@@ -16,9 +16,9 @@ afterEach(() => {
 })
 
 /** A fully schema-valid `ImportPlan`, built by hand rather than `fromPartial`
- * (issue 020, `tasks/plan.md` T8): `previewLegacyImport`/`runLegacyImport`
- * really parse this through `ImportPlanSchema`, so a merely-typed partial
- * would not exercise the real validation path. */
+ * (issue 020): `previewLegacyImport`/`runLegacyImport` really parse this
+ * through `ImportPlanSchema`, so a merely-typed partial would not exercise
+ * the real validation path. */
 function buildImportPlan(): ImportPlan {
   return {
     source: 'hermes',

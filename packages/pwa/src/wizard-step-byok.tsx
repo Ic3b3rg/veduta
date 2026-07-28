@@ -10,7 +10,7 @@ import { byokKeepExistingAvailable, WIZARD_STEP_META } from './onboarding-state.
 type TestState = 'idle' | 'testing' | 'valid' | 'invalid' | 'unreachable'
 
 /**
- * BYOK step (`tasks/plan.md` §4/§7): provider + key, "Test key" runs the
+ * BYOK step: provider + key, "Test key" runs the
  * daemon's deterministic key check before Save is allowed, or the
  * keep-existing sentinel (empty key input when a key is already stored)
  * skips the test entirely. Changing either input invalidates a prior test

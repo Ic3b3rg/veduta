@@ -93,8 +93,8 @@ describe('showsOverwriteToggle', () => {
 describe('startMigrationPreview', () => {
   it('clears any previous plan and result for the new (source, overwrite) pair', () => {
     // Simulates toggling Overwrite while a plan (and, in principle, a stale
-    // result) is already on screen (`tasks/plan.md` design decision 7): the
-    // fresh preview state must never carry the old plan forward, since
+    // result) is already on screen: the fresh preview state must never
+    // carry the old plan forward, since
     // `isApplyOffered` would otherwise let Apply run against it before the
     // re-preview for the new toggle value has come back.
     const started = startMigrationPreview('hermes', true)

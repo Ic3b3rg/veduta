@@ -3,7 +3,7 @@ import { loadRoutingConfig, saveRoutingConfig } from './model-routing.ts'
 import { loadOnboardingConfig, saveOnboardingConfig } from './onboarding-config.ts'
 
 /**
- * `POST /api/onboarding/models` (`tasks/plan.md` §4): replaces
+ * `POST /api/onboarding/models` (§4): replaces
  * `routing.json`'s `tiers`, preserving `providerKeys`/`dailyCapUsd` as they
  * are. `saveRoutingConfig` validates the merged config against
  * `RoutingConfigSchema` before writing, so an invalid tier list never lands

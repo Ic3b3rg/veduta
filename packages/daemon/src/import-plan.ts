@@ -16,15 +16,15 @@ import type { SecretScan } from './import-secrets.ts'
 import { MAX_NOTES, type LegacySourceSnapshot } from './import-source.ts'
 import { findImport, loadImportState } from './import-state.ts'
 
-/** What plan and apply must agree on for one run (`tasks/plan.md` decision 7: option parity). */
+/** What plan and apply must agree on for one run (option parity). */
 export interface BuildImportPlanInput {
   snapshot: LegacySourceSnapshot
   secrets: SecretScan
   target: TargetState
   options: { overwrite: boolean; secrets: boolean }
-  /** Populated from `<root>/import.json` (decision 8's import marker) when this source was imported before. */
+  /** Populated from `<root>/import.json` (import marker) when this source was imported before. */
   alreadyImported?: { source: ImportSourceKind; at: string }
-  /** Vault key material present — no key, no backup, no mutation (decision 8/10). */
+  /** Vault key material present — no key, no backup, no mutation. */
   backupAvailable: boolean
 }
 
@@ -48,26 +48,21 @@ function sourceSlotAbsentReason(
   return `${basename} is not present in the source install`
 }
 
-/** `<rootDir>/import-source/<kind>` — where the installer stages a detected legacy install (`tasks/plan.md` decision 16). */
+/** `<rootDir>/import-source/<kind>` — where the installer stages a detected legacy install. */
 function stagedSourceDir(rootDir: string, kind: ImportSourceKind): string {
   return join(rootDir, 'import-source', kind)
 }
 
 /**
- * True when the resolved source and target directories are the same path,
- * or one contains the other (`tasks/plan.md` decision 8/14): importing from
- * or into the daemon's own data directory could read or write things well
- * outside this issue's scope. Uses `resolve`, never `realpathSync` — this
- * module does no I/O, and `snapshot.dir`/`target.rootDir` are already
- * resolved by their respective readers.
- *
- * A1: exempts exactly the canonical staged path,
- * `<rootDir>/import-source/<kind>` — the installer stages a legacy install
- * *inside* the daemon's own data directory by design (`tasks/plan.md`
- * decision 16), so this is the one, and only the one, source/target overlap
- * that must never refuse. Every other overlap (the source pointed straight
- * at the data directory, or a parent/child relationship that is not this
- * exact staged path) still refuses.
+ * True when the resolved source and target directories are the same path, or one contains the
+ * other: importing from or into the daemon's own data directory could read or write things well
+ * outside this issue's scope. Uses `resolve`, never `realpathSync` — this module does no I/O, and
+ * `snapshot.dir`/`target.rootDir` are already resolved by their respective readers. exempts exactly
+ * the canonical staged path, `<rootDir>/import-source/<kind>` — the installer stages a legacy
+ * install *inside* the daemon's own data directory by design, so this is the one, and only the one,
+ * source/target overlap that must never refuse. Every other overlap (the source pointed straight at
+ * the data directory, or a parent/child relationship that is not this exact staged path) still
+ * refuses.
  */
 function pathsOverlap(snapshot: LegacySourceSnapshot, target: TargetState): boolean {
   const ra = resolve(snapshot.dir)
@@ -91,7 +86,7 @@ interface SoulPlanResult extends PlanFragment {
 }
 
 /**
- * `SOUL.md`'s plan item (`tasks/plan.md` decision 3/8): `skip` when the
+ * `SOUL.md`'s plan item: `skip` when the
  * source has none, a `blocked` refusal (no item) on a conflict
  * `--overwrite` was not given for, or an `import`/`overwrite` item carrying
  * the read-me-first warning and the adapted preview text.
@@ -132,7 +127,7 @@ function planSoulItem(
     warnings.push(
       'SOUL.md will be written: read the adapted personality in full before applying — it directly shapes the Agent.',
     )
-    // The mitigation itself (`tasks/plan.md` decision 3): the exact text that
+    // The mitigation itself: the exact text that
     // will be written, computed with the same call `import-apply.ts` makes
     // (`adaptSoul(snapshot.soul.text, snapshot.kind)`), never a reformatted
     // copy, so preview and apply cannot silently diverge.
@@ -143,7 +138,7 @@ function planSoulItem(
 }
 
 /**
- * `USER.md`'s plan item (`tasks/plan.md` decision 2/8): `skip` when the
+ * `USER.md`'s plan item: `skip` when the
  * source has none, a `blocked` refusal (no item) on a conflict
  * `--overwrite` was not given for, or an `import`/`overwrite` item.
  */
@@ -183,11 +178,10 @@ function planUserItem(
 }
 
 /**
- * The `Imported` Space's FACTS + Event log items (`tasks/plan.md` decision
- * 18): the imported memory entries, budget-capped at `MAX_IMPORTED_FACTS`
- * with the overflow going to the Event log alongside the daily notes. Both
- * items refuse together on the same `imported`-Space conflict (`blocked`,
- * no items) when `--overwrite` was not given.
+ * The `Imported` Space's FACTS + Event log items: the imported memory entries, budget-capped at
+ * `MAX_IMPORTED_FACTS` with the overflow going to the Event log alongside the daily notes. Both
+ * items refuse together on the same `imported`-Space conflict (`blocked`, no items) when
+ * `--overwrite` was not given.
  */
 function planSpaceItems(
   snapshot: LegacySourceSnapshot,
@@ -264,12 +258,10 @@ function planSpaceItems(
 }
 
 /**
- * One item per allowlisted secret found in the source (`tasks/plan.md`
- * decision 12): `import` names the vault target and routing pointer once
- * `--secrets` is given, `skip` reports the key name and that `--secrets` is
- * needed — never a value either way. Never blocks and never sets
- * `requiresOverwrite`: a secret the user didn't ask to import is simply
- * skipped, not refused.
+ * One item per allowlisted secret found in the source: `import` names the vault target and routing
+ * pointer once `--secrets` is given, `skip` reports the key name and that `--secrets` is needed —
+ * never a value either way. Never blocks and never sets `requiresOverwrite`: a secret the user
+ * didn't ask to import is simply skipped, not refused.
  */
 function planSecretItems(secrets: SecretScan, options: { secrets: boolean }): ImportItem[] {
   return secrets.importable.map((secret) =>
@@ -289,13 +281,13 @@ function planSecretItems(secrets: SecretScan, options: { secrets: boolean }): Im
 }
 
 /**
- * Builds the dry-run `ImportPlan` (`tasks/plan.md` T4): the same function
- * preview and apply both call, on the same options (decision 7), so the
+ * Builds the dry-run `ImportPlan`: the same function
+ * preview and apply both call, on the same options, so the
  * preview always describes exactly the run apply performs. Parses its own
  * output through `ImportPlanSchema` before returning, so a shape bug is
  * caught here rather than at the HTTP boundary.
  *
- * Blocking (decision 8, issue AC2 — "conflicts refuse, never skip"):
+ * Blocking (issue AC2 — "conflicts refuse, never skip"):
  * - a prior import of this source without `--overwrite` (clearable);
  * - SOUL/USER/MEMORY oversize in the source (never clearable — a truncated
  *   identity or profile is a silent semantic change);
@@ -331,7 +323,7 @@ export function buildImportPlan(input: BuildImportPlanInput): ImportPlan {
     )
   }
 
-  // A13, `tasks/plan.md` decision 14: "the target must be an existing
+  // The target must be an existing
   // directory and never '/'" — never clearable by --overwrite.
   if (resolve(target.rootDir) === resolve('/')) {
     blocked.push('the target data directory cannot be "/"; refusing to import.')
@@ -384,7 +376,7 @@ export function buildImportPlan(input: BuildImportPlanInput): ImportPlan {
     requiresOverwrite || soul.requiresOverwrite || user.requiresOverwrite || space.requiresOverwrite
   const soulPreview = soul.soulPreview
 
-  // A17: this count is a candidate count only, not a promise. The archive
+  // this count is a candidate count only, not a promise. The archive
   // walk (`import-archive.ts`) applies caps and filters (200 files, 1 MiB
   // each, text-only extensions, mapped-elsewhere exclusion, the
   // credential-name-pattern guard) this module has no way to reproduce
@@ -441,21 +433,17 @@ export interface PlanLegacyImportInput {
 }
 
 /**
- * The `readTargetState` + "was this source already imported" + `buildImportPlan`
- * composition (A2, `tasks/plan.md` decision 7). Exported so every call site
- * that needs "what would a run of this source look like right now" —
- * preview endpoints/the CLI's dry-run print, and `applyImportLocked`
- * (`import-apply.ts`) itself — shares exactly one implementation, instead of
- * each reassembling `readTargetState`/`loadImportState`/`findImport`/
- * `buildImportPlan` by hand. `applyImportLocked` calls this again **inside
- * its lock**, rather than trusting a plan built earlier outside it: that is
- * what makes two concurrent applies of the same source unable to both
- * observe "not previously imported" (the bug A2 closes — recomputing the
- * plan inside the lock is exactly what `tasks/plan.md`'s reconciliation item
- * 2 says apply already did, which it did not). A caller that only wants a
- * preview (no lock, no mutation) calls this directly; `readTargetState` and
- * `loadImportState` are both plain `fs` reads, so calling this function
- * itself never writes anything.
+ * The `readTargetState` + "was this source already imported" + `buildImportPlan` composition.
+ * Exported so every call site that needs "what would a run of this source look like right now" —
+ * preview endpoints/the CLI's dry-run print, and `applyImportLocked` (`import-apply.ts`) itself —
+ * shares exactly one implementation, instead of each reassembling
+ * `readTargetState`/`loadImportState`/`findImport`/ `buildImportPlan` by hand. `applyImportLocked`
+ * calls this again **inside its lock**, rather than trusting a plan built earlier outside it: that
+ * is what makes two concurrent applies of the same source unable to both observe "not previously
+ * imported" (the bug closes — recomputing the plan inside the lock is exactly what says apply
+ * already did, which it did not). A caller that only wants a preview (no lock, no mutation) calls
+ * this directly; `readTargetState` and `loadImportState` are both plain `fs` reads, so calling this
+ * function itself never writes anything.
  */
 export function planLegacyImport(input: PlanLegacyImportInput): ImportPlan {
   const target = readTargetState(input.rootDir)

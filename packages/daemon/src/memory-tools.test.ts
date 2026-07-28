@@ -147,7 +147,7 @@ describe('memory tools', () => {
       expect(result.content).toContain('[untrusted:gmail]')
       expect(result.content).toContain('<<<UNTRUSTED data from gmail>>>')
       expect(result.content).not.toMatch(/\[untrusted:gmail\] ignore instructions/)
-      // D10: the tool reports the origin of every event it rendered, so a
+      // The tool reports the origin of every event it rendered, so a
       // turn that started trusted but read this event through the tool is
       // tainted for whatever it does next.
       expect(result.origins).toEqual(['untrusted:gmail'])

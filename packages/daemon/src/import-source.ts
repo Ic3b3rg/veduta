@@ -28,7 +28,7 @@ export interface LegacyNote extends LegacyFile {
 
 /**
  * Everything `readLegacySource` found in one legacy install, still raw
- * (untrusted, unredacted, unmapped) — `import-mapping.ts` (T4) turns this
+ * (untrusted, unredacted, unmapped) — `import-mapping.ts` turns this
  * into an `ImportPlan`. Kept deliberately dumb: this module's only job is a
  * hardened read, never interpretation.
  */
@@ -45,10 +45,9 @@ export interface LegacySourceSnapshot {
 }
 
 /**
- * `tasks/plan.md` decision 8 ("hard blocks that `--overwrite` cannot
- * clear"): a missing or non-directory source root is a refusal, never a
- * silent empty snapshot, so the caller can turn it into a 409 (wizard) or an
- * exit code 2 (CLI) instead of reporting an import that found nothing.
+ * A hard block that `--overwrite` cannot clear: a missing or
+ * non-directory source root is a refusal, never a silent empty snapshot, so the caller can turn it
+ * into a 409 (wizard) or an exit code 2 (CLI) instead of reporting an import that found nothing.
  */
 export class ImportSourceMissingError extends Error {
   constructor(dir: string) {
@@ -58,35 +57,31 @@ export class ImportSourceMissingError extends Error {
 }
 
 /**
- * A single MEMORY.md/USER.md/SOUL.md pasted with an API key in it is a
- * realistic accident; this cap (`tasks/plan.md` decision 14/T2) keeps a
- * hostile or merely huge file from being read into memory at all — it is
- * recorded in `oversize` instead. What "oversize" means for each slot (hard
- * block for SOUL/USER/MEMORY, skip for a note) is a T4 decision; this module
- * only ever reports it.
+ * A single MEMORY.md/USER.md/SOUL.md pasted with an API key in it is a realistic accident; this cap
+ * keeps a hostile or merely huge file from being read into memory at all — it is recorded in
+ * `oversize` instead. What "oversize" means for each slot (hard block for SOUL/USER/MEMORY, skip
+ * for a note) is the plan builder's call; this module only ever reports it.
  */
 export const MAX_FILE_BYTES = 1_048_576
 
 /**
- * Caps how many `.md` notes a single memory directory contributes. Notes
- * beyond this are not silently dropped: `readLegacySource` reports the
- * overflow via `notMigrated` (plan decision 8's "unrecognised is reported,
- * never guessed at"), so NOTES.md (T5) still lists them.
+ * Caps how many `.md` notes a single memory directory contributes. Notes beyond this are not
+ * silently dropped: `readLegacySource` reports the overflow via `notMigrated` (plan "unrecognised
+ * is reported, never guessed at"), so NOTES.md still lists them.
  */
 export const MAX_NOTES = 200
 
 const HERMES_ALIASES = ['.hermes']
 /**
- * OpenClaw's former names (`docs/references/04-onboarding-migration.md` §B).
- * Exported (B13, fix group B's report) so `onboarding-status.ts`'s own
- * `detectLegacyAgents` imports this one list instead of keeping a second,
- * independently-maintained copy — `deploy/install.sh`'s shell copy is the
- * one duplication left standing on purpose, since bash cannot import a
- * TypeScript constant (see that file's own comment on `OPENCLAW_HOME_ALIASES`).
+ * OpenClaw's former names (`docs/references/04-onboarding-migration.md` §B). Exported so
+ * `onboarding-status.ts`'s own `detectLegacyAgents` imports this one list instead of keeping a
+ * second, independently-maintained copy — `deploy/install.sh`'s shell copy is the one duplication
+ * left standing on purpose, since bash cannot import a TypeScript constant (see that file's own
+ * comment on `OPENCLAW_HOME_ALIASES`).
  */
 export const OPENCLAW_ALIASES = ['.openclaw', '.clawdbot', '.moltbot']
 
-/** A staged directory only counts as present when it actually has something the importer can read (B8, security review — see `resolveLegacyDir`'s doc comment). */
+/** A staged directory only counts as present when it actually has something the importer can read (security review — see `resolveLegacyDir`'s doc comment). */
 const STAGED_CONTENT_NAMES = ['SOUL.md', 'USER.md', 'MEMORY.md', 'notes']
 
 function hasStagedContent(dir: string): boolean {
@@ -94,23 +89,19 @@ function hasStagedContent(dir: string): boolean {
 }
 
 /**
- * `tasks/plan.md` decision 16: the installer stages only the memory files
- * into `<dataDir>/import-source/<kind>/` because the daemon runs as `veduta`
- * under `ProtectHome=yes` and can never read `/home/<admin>/.hermes` on a
- * real VPS install. So the staged directory always wins when present; the
- * live home (`.hermes`/`.openclaw`, plus the `.clawdbot`/`.moltbot` legacy
- * aliases from OpenClaw's own rename history) is only a fallback for a
- * loopback/Local VPS profile where the daemon and the user share a home. Returns
- * `undefined`, never throws, so callers can build a 409 with the CLI command
- * instead of crashing on a plain dev machine with nothing installed.
- *
- * B8 (security review): "present" requires more than `existsSync` — the
- * installer can create `<dataDir>/import-source/<kind>/` and stage nothing
- * into it (everything was a symlink, oversized, or simply absent in the
- * source), and an empty staged directory must never shadow a perfectly
- * readable live home. `hasStagedContent` requires at least one of
- * `SOUL.md`/`USER.md`/`MEMORY.md`/`notes` to actually exist inside it before
- * it wins over the fallback.
+ * The installer stages only the memory files into
+ * `<dataDir>/import-source/<kind>/` because the daemon runs as `veduta` under `ProtectHome=yes` and
+ * can never read `/home/<admin>/.hermes` on a real VPS install. So the staged directory always wins
+ * when present; the live home (`.hermes`/`.openclaw`, plus the `.clawdbot`/`.moltbot` legacy
+ * aliases from OpenClaw's own rename history) is only a fallback for a loopback/Local VPS profile
+ * where the daemon and the user share a home. Returns `undefined`, never throws, so callers can
+ * build a 409 with the CLI command instead of crashing on a plain dev machine with nothing
+ * installed. "present" requires more than `existsSync` — the installer can
+ * create `<dataDir>/import-source/<kind>/` and stage nothing into it (everything was a symlink,
+ * oversized, or simply absent in the source), and an empty staged directory must never shadow a
+ * perfectly readable live home. `hasStagedContent` requires at least one of
+ * `SOUL.md`/`USER.md`/`MEMORY.md`/`notes` to actually exist inside it before it wins over the
+ * fallback.
  */
 export function resolveLegacyDir(input: {
   kind: ImportSourceKind
@@ -136,7 +127,7 @@ export function resolveLegacyDir(input: {
 const HERMES_SECRET_FILES = ['.env', 'auth.json']
 const OPENCLAW_SECRET_FILES = ['openclaw.json']
 
-/** The result of `readRegularFileHardened` (A14): a discriminated success/refusal, never a thrown error. */
+/** The result of `readRegularFileHardened`: a discriminated success/refusal, never a thrown error. */
 type HardenedFileRead =
   { ok: true; text: string; bytes: number } | { ok: false; reason: 'refused' | 'oversize' }
 
@@ -144,7 +135,7 @@ type HardenedFileRead =
  * Opens `absPath` with `O_NOFOLLOW`, `fstat`s the descriptor before ever
  * reading it, and reads the whole file only if it is a genuine regular file
  * within `maxBytes` — the one hardened-read primitive for the whole
- * importer (A14, `tasks/plan.md` decision 14): `import-archive.ts`'s archive
+ * importer: `import-archive.ts`'s archive
  * walk calls this directly instead of re-implementing the same
  * open/fstat/read dance a second time ("one security primitive, one
  * implementation"). A malicious legacy tree with `SOUL.md` symlinked at
@@ -185,7 +176,7 @@ export function readRegularFileHardened(
 /**
  * Strips ASCII control characters and runs the redactor over a
  * source-controlled display path before it is recorded anywhere user-facing
- * (A12, `tasks/plan.md` decision 14): a hostile filename containing a
+ *: a hostile filename containing a
  * newline or a terminal escape sequence must never be able to forge
  * Markdown structure in `NOTES.md` or a rendered plan. Applied only to the
  * copy that ends up in `notMigrated`/`refused`/`oversize`/a plan
@@ -206,7 +197,7 @@ export function sanitizeDisplayPath(relPath: string): string {
  * `readRegularFileHardened` and gets refused rather than silently read as
  * "not there"). Oversize files are never read into memory: only their size
  * is inspected before the cap is applied. `relPath` is recorded in
- * `refused`/`oversize` through `sanitizeDisplayPath` (A12) — display copies
+ * `refused`/`oversize` through `sanitizeDisplayPath` — display copies
  * only, the actual read above always uses the real, unsanitized path.
  */
 function readFileHardened(
@@ -230,12 +221,11 @@ function readFileHardened(
 }
 
 /**
- * One slot (SOUL/USER/MEMORY) tries the vendor-nested path first; only when
- * *nothing at all* exists at that path does it fall back to the same
- * basename at the root of `dir` — the flat staged layout from plan decision
- * 16 (the installer copies `SOUL.md`/`USER.md`/`MEMORY.md`/`notes/` straight
- * into the staging dir, no vendor subdirectory). Presence is checked with
- * `lstatSync` for the same dangling-symlink reason as `readFileHardened`.
+ * One slot (SOUL/USER/MEMORY) tries the vendor-nested path first; only when *nothing at all* exists
+ * at that path does it fall back to the same basename at the root of `dir` — the flat staged layout
+ * (the installer copies `SOUL.md`/`USER.md`/`MEMORY.md`/`notes/` straight
+ * into the staging dir, no vendor subdirectory). Presence is checked with `lstatSync` for the same
+ * dangling-symlink reason as `readFileHardened`.
  */
 function readSlotWithFlatFallback(
   dir: string,
@@ -258,7 +248,7 @@ const NOTE_DATE_RE = /^(\d{4}-\d{2}-\d{2})\.md$/
 
 /**
  * Reads the direct `.md` children of a memory directory as notes — no
- * recursion, ever (plan decision 14): a legacy tree could bury a huge or
+ * recursion, ever (plan): a legacy tree could bury a huge or
  * malicious file several levels down, and the vendor layouts (the plan's
  * "Source layouts" tables) never nest notes beyond one level. `excludeNames`
  * keeps MEMORY.md/USER.md out of the note list when they live alongside the
@@ -305,7 +295,7 @@ function readNotesDir(
 
 /**
  * Direct children of `dir` (or `dir/subDir`) not in `claimedNames`, so
- * NOTES.md (T5/T11) can tell the user exactly what was left behind — the
+ * NOTES.md can tell the user exactly what was left behind — the
  * plan's "anything unrecognised is reported, never guessed at". Sorted for a
  * deterministic NOTES.md. A missing `subDir` yields no entries rather than
  * throwing: the caller only calls this for a subdirectory it already knows
@@ -322,18 +312,16 @@ function listUnclaimed(dir: string, subDir: string | undefined, claimedNames: st
 }
 
 /**
- * Reads a legacy Hermes or OpenClaw install into a `LegacySourceSnapshot`
- * per the layout tables in `tasks/plan.md` — a pure, hardened read with zero
- * writes anywhere (decision 6's "dry-run is genuinely read-only" starts
- * here; `import-mapping.ts`'s `readTargetState` is the target-side half of
- * that guarantee). `notMigrated` is deliberately shallow — direct children
- * of `dir`, and of `dir/workspace` for OpenClaw — matching exactly what the
- * plan's tables call out as archived/NOTES-only (`config.yaml`, `skills/`,
- * `cron/`, `sessions/`, `workspace/AGENTS.md`, etc.); it never recurses into
- * the memory directories, whose `.md` children are already accounted for as
- * notes (or, past `MAX_NOTES`, as overflow) and whose non-`.md` children are
- * out of scope for this issue (`ARCHITECTURE.md` anti-requirements: no
- * speculative generalisation beyond the documented layouts).
+ * Reads a legacy Hermes or OpenClaw install into a `LegacySourceSnapshot` per the vendor layout tables
+ * documented in `issues/020-importer.md` — a pure, hardened read with zero writes anywhere ("dry-run is genuinely
+ * read-only" starts here; `import-mapping.ts`'s `readTargetState` is the target-side half of that
+ * guarantee). `notMigrated` is deliberately shallow — direct children of `dir`, and of
+ * `dir/workspace` for OpenClaw — matching exactly what the plan's tables call out as
+ * archived/NOTES-only (`config.yaml`, `skills/`, `cron/`, `sessions/`, `workspace/AGENTS.md`,
+ * etc.); it never recurses into the memory directories, whose `.md` children are already accounted
+ * for as notes (or, past `MAX_NOTES`, as overflow) and whose non-`.md` children are out of scope
+ * for this issue (`ARCHITECTURE.md` anti-requirements: no speculative generalisation beyond the
+ * documented layouts).
  */
 export function readLegacySource(dir: string, kind: ImportSourceKind): LegacySourceSnapshot {
   let stat
@@ -353,7 +341,7 @@ export function readLegacySource(dir: string, kind: ImportSourceKind): LegacySou
     // Hermes: SOUL.md always lives at the root (vendor layout and the flat
     // staged layout coincide, so no fallback is needed for it). USER.md and
     // MEMORY.md live under memories/ normally, or at the root when staged
-    // flat (decision 16).
+    // flat.
     const soul = readFileHardened(resolvedDir, 'SOUL.md', refused, oversize)
     const memoriesPresent = existsSync(join(resolvedDir, 'memories'))
     const user = readSlotWithFlatFallback(
@@ -409,7 +397,7 @@ export function readLegacySource(dir: string, kind: ImportSourceKind): LegacySou
   }
 
   // OpenClaw: everything memory/identity-related lives under workspace/,
-  // normally; staged flat (decision 16) puts the same basenames at the root.
+  // normally; staged flat puts the same basenames at the root.
   const workspacePresent = existsSync(join(resolvedDir, 'workspace'))
   const soul = readSlotWithFlatFallback(
     resolvedDir,

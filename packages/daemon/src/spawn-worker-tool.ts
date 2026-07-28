@@ -3,7 +3,7 @@ import { WorkerBriefingSchema, truncateGoalLabel } from './worker-briefing.ts'
 import type { WorkerPool } from './worker.ts'
 
 /**
- * `spawn_worker` (issue #17, plan v2 T5): the Agent's only entry point for
+ * `spawn_worker` (issue #17): the Agent's only entry point for
  * starting a Worker. Resolves the active Space from `ToolContext.spaceId` —
  * a Worker always delivers its report into a Space, so a turn with no
  * active Space cannot spawn one — hands the briefing straight to the

@@ -38,9 +38,9 @@ import type { SecretsVault } from './secrets-vault.ts'
 import type { SpacesEngine } from './spaces-engine.ts'
 
 /**
- * `tasks/plan.md` §4/T4: everything `registerOnboardingRoutes` needs to wire
- * `/api/onboarding/*` up to the T3 step modules. The vault is opened once by
- * `buildServer` (decision 9) and threaded through here rather than reopened —
+ * Everything `registerOnboardingRoutes` needs to wire
+ * `/api/onboarding/*` up to the step modules. The vault is opened once by
+ * `buildServer` and threaded through here rather than reopened —
  * two `SecretsVault` instances writing the same file would race.
  * `scheduleExit` is `applyFinish`'s injectable graceful-exit hook (VPS
  * profile only); `fetchImpl` lets tests stub the BYOK key check without a
@@ -54,7 +54,7 @@ export interface OnboardingRoutesDeps {
   vault: SecretsVault | undefined
   /**
    * The vault key material `server.ts`'s `openVaultAndSecrets` already
-   * resolves (issue 020 T7, `tasks/plan.md` decision 10) — threaded through
+   * resolves (issue 020) — threaded through
    * so the migration routes' backup pre-check (`buildImportPlan`'s
    * `backupAvailable`) and `runLegacyImport`'s actual `createBackup` call
    * agree with what the rest of the daemon booted with, without opening a
@@ -89,8 +89,8 @@ function currentStatus(deps: OnboardingRoutesDeps): OnboardingStatus {
 
 /**
  * Narrows `OnboardingRoutesDeps` down to what `onboarding-step-migration.ts`
- * needs (issue 020 T7), so that module never imports the route-layer type.
- * B9: no `spacesEngine` — neither `previewLegacyImport` nor `runLegacyImport`
+ * needs (issue 020), so that module never imports the route-layer type.
+ * No `spacesEngine` — neither `previewLegacyImport` nor `runLegacyImport`
  * ever read it (apply always constructs its own `SpacesEngine` inside
  * `applyImport`'s lock), so threading it through here was a pass-through to
  * nowhere; `currentStatus` below already has its own `deps.spacesEngine` for
@@ -106,9 +106,9 @@ function migrationImportDeps(deps: OnboardingRoutesDeps): MigrationImportDeps {
 }
 
 /**
- * The one error-mapping seam every onboarding route shares (T4 spec, code
- * review fix): `VaultUnavailableError` (decision 9's dead-end copy) and
- * `ImportRefusedError` (issue 020 decision 8: a blocked import plan — a
+ * The one error-mapping seam every onboarding route shares (code
+ * review fix): `VaultUnavailableError` (its own dead-end copy) and
+ * `ImportRefusedError` (issue 020: a blocked import plan — a
  * conflict `--overwrite` did not clear, a held lock, no vault key material)
  * both map to 409 — a refusal is "fix something first, then retry", the same
  * class of failure as the vault dead end, not a second error-mapping seam;
@@ -142,13 +142,13 @@ function rejectUnexpectedBody(reply: FastifyReply, body: unknown): FastifyReply 
 
 /**
  * Registers `GET /api/onboarding` and every `POST /api/onboarding/*` step
- * endpoint (`tasks/plan.md` §4) directly on `app` — the caller
+ * endpoint directly on `app` — the caller
  * (`buildServer`) registers these on the same top-level instance as every
  * other `/api/*` route, so the existing production `onRequest` auth hook
  * covers them too; nothing here is added to `isPublicUnauthenticatedPath`.
  * Every POST validates its body with the matching `@veduta/protocol` schema
  * (bad body -> 400 with the zod issues, mirroring every other route in
- * `server.ts`), applies its step (side effects first, per decision 4), and
+ * `server.ts`), applies its step (side effects first), and
  * replies with a fresh `GET`-equivalent status — except `byok/test` (a pure
  * check, no step to complete) and `finish` (its own response shape).
  */
@@ -166,7 +166,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingR
     return currentStatus(deps)
   })
 
-  // Issue 020 (`tasks/plan.md` "Wire API"): `source` is always the
+  // Issue 020 (`docs/adr/0010-importer-trust-and-refusal.md`): `source` is always the
   // `'openclaw' | 'hermes'` enum, never a path — the daemon resolves the
   // directory itself (staged dir, then `resolveLegacy`, then `homedir()`),
   // so no client request can point the importer anywhere. Preview is a pure
@@ -190,7 +190,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingR
     try {
       const result = await runLegacyImport(migrationImportDeps(deps), parsed.data)
       // A successful import already set `migrationChoice: 'imported'` and
-      // completed the `migration` step (side-effects-first, decision 4) —
+      // completed the `migration` step (side-effects-first) —
       // `status` is a fresh `GET`-equivalent so the wizard never needs a
       // second round trip to advance.
       return ImportApplyResponseSchema.parse({ result, status: currentStatus(deps) })
@@ -218,7 +218,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingR
     if (parsed.data.key !== undefined) {
       key = parsed.data.key
     } else {
-      // Keep-existing sentinel (decision 4/7): test whatever key is already
+      // Keep-existing sentinel: test whatever key is already
       // stored for this provider instead of requiring it be resubmitted.
       const stored = deps.vault?.resolve(`secret://vault/${parsed.data.provider}`)
       if (stored === undefined) {

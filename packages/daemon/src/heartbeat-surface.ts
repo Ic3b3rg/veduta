@@ -4,7 +4,7 @@ import type { Store } from './store.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 
 /**
- * The Heartbeat metrics Surface (issue #16, T5): today's sweep counts, the
+ * The Heartbeat metrics Surface (issue #16): today's sweep counts, the
  * "nothing-to-do" ratio (target >80% — the Heartbeat should mostly find
  * nothing to act on) and the average triage+reasoning cost per sweep, so a
  * user can see the daemon's own proactivity loop is actually running.

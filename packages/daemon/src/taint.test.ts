@@ -108,7 +108,7 @@ describe('gateToolsForOrigins', () => {
     expect(gateToolsForOrigins([l1, l2, noLevel], ['untrusted:gmail'])).toEqual([])
   })
 
-  describe('with an isWrapped predicate (D5, issue #14)', () => {
+  describe('with an isWrapped predicate (issue #14)', () => {
     const isWrapped = (tool: ToolFixture) => tool.name === 'send_email'
 
     it('admits L0 always and a wrapped L1 tool even in a tainted turn, regardless of taint', () => {

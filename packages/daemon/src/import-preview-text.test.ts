@@ -80,7 +80,7 @@ describe('buildImportCommand', () => {
     )
   })
 
-  it('B7: includes --home when given, quoted the same way as --root', () => {
+  it('includes --home when given, quoted the same way as --root', () => {
     expect(buildImportCommand({ kind: 'hermes', rootDir: '/data', home: "/home/o'brien" })).toBe(
       "pnpm --filter @veduta/daemon import-legacy hermes --root '/data' --home '/home/o'\\''brien'",
     )
@@ -153,7 +153,7 @@ describe('printPreview', () => {
 
   it(
     'renders a vault: item exactly like any other item, straight from target/detail/reason ' +
-      '(A19/B group report: no second describeSecrets-based rendering — buildImportPlan ' +
+      '(no second describeSecrets-based rendering — buildImportPlan ' +
       'already guarantees detail is names-only, asserted directly by import-plan.test.ts)',
     () => {
       const io = capturingIo()
@@ -240,7 +240,7 @@ describe('printBlockedRefusal', () => {
     expect(commandLine).toContain(`--home ${quote('/home/priya')}`)
   })
 
-  it("B7: carries forward this run's own --secrets choice into the recovery command", () => {
+  it("carries forward this run's own --secrets choice into the recovery command", () => {
     const io = capturingIo()
     const plan = basePlan({
       blocked: ['SOUL.md already exists and differs from the default template'],

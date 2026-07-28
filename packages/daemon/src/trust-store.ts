@@ -68,7 +68,7 @@ export interface NewApprovalRow {
 }
 
 /**
- * A row's decision-time provenance, decoded once (Fix 7): every audit writer
+ * A row's decision-time provenance, decoded once: every audit writer
  * that copies a row's origin chain, trigger, context hash, and original
  * input into a new audit entry used to reconstruct this by hand — five
  * separate `JSON.parse(row.originChainJson)` / `row.triggerJson ? JSON.parse
@@ -83,7 +83,7 @@ export interface RowProvenance {
   input: unknown
 }
 
-/** The shared provenance decoder (Fix 7): every audit writer reconstructs a row's decision-time snapshot through this, never by hand. */
+/** The shared provenance decoder: every audit writer reconstructs a row's decision-time snapshot through this, never by hand. */
 export function rowProvenance(row: ApprovalRow): RowProvenance {
   return {
     effectiveOrigin: row.effectiveOrigin,
@@ -346,7 +346,7 @@ export class TrustStore {
       .map(approvalRowFromRow)
   }
 
-  /** Fix 10: terminal rows whose Space outcome event never landed (crash between the status transaction and the append). */
+  /** Terminal rows whose Space outcome event never landed (crash between the status transaction and the append). */
   listTerminalMissingOutcomeEvent(): ApprovalRow[] {
     return this.db
       .prepare(
@@ -420,7 +420,7 @@ export class TrustStore {
     return row ? allowlistRuleFromRow(row) : undefined
   }
 
-  /** Idempotent upsert (A5): an identical active rule is never duplicated. Safe standalone or nested in a caller's transaction. */
+  /** Idempotent upsert: an identical active rule is never duplicated. Safe standalone or nested in a caller's transaction. */
   upsertAllowlistRule(
     toolName: string,
     paramsJson: string,
@@ -485,7 +485,7 @@ export class TrustStore {
         entry.originChain ? JSON.stringify(entry.originChain) : null,
         entry.trigger ? JSON.stringify(entry.trigger) : null,
         entry.contextHash ?? null,
-        // Redacted at the insert boundary (issue #15 D3, SECURITY.md §4): a
+        // Redacted at the insert boundary (issue #15, SECURITY.md §4): a
         // tool's recorded input can carry a secret verbatim (an echoed key,
         // a token), and this append-only table is never rewritten.
         entry.input === undefined ? null : JSON.stringify(defaultRedactor.redactDeep(entry.input)),

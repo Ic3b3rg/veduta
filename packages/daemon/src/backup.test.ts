@@ -15,7 +15,7 @@ import { canonicalAllowlistParams } from './trust-contracts.ts'
 import { TrustStore } from './trust-store.ts'
 
 /**
- * `backup.ts` (issue #15 D5): round-trip on a realistic rootDir built from
+ * `backup.ts` (issue #15): round-trip on a realistic rootDir built from
  * the real `Store`/`TrustStore` classes, plus the security properties a
  * backup module must hold — wrong-key and tampered-ciphertext both fail
  * closed, encryption at rest holds even for the raw `.tar.enc` bytes, and

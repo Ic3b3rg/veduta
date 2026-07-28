@@ -7,7 +7,7 @@ import {
 import { NOTIF_BELL_DISMISSED_KEY, isStandalone } from './pwa-storage.ts'
 import { enablePush, pushSupported, type EnablePushResult } from './push.ts'
 
-// Header affordance for issue 018 decision 16: an "Enable notifications"
+// Header affordance for issue 018: an "Enable notifications"
 // bell that either subscribes directly (desktop/Android, or iOS already
 // installed to the Home Screen) or, on iOS Safari not yet installed,
 // opens a small guided sheet pointing at Add to Home Screen.
@@ -52,7 +52,7 @@ export function NotificationBell({ token }: { token: string | undefined }) {
   // reading a few properties): a Home Screen relaunch after the guided
   // install is a fresh page load, so this naturally re-runs on mount and
   // flips from 'ios-needs-install' to 'ready' once the PWA is standalone —
-  // that re-check on next launch IS the verification step for decision 16.
+  // that re-check on next launch IS the verification step.
   const platform = detectPushPlatform({
     userAgent: navigator.userAgent,
     standalone: isStandalone(),

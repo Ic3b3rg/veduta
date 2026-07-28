@@ -4,13 +4,11 @@ import type { ImportSourceKind } from '@veduta/protocol'
 import { defaultRedactor } from './redaction.ts'
 
 /**
- * A secret this module has decided IS safe to move into the vault: it is
- * one of the three providers Veduta has a home for
- * (`routing.json.providerKeys` → `secret://vault/<provider>`, `tasks/plan.md`
- * decision 12). `value` lives only inside this result object, never inside
- * `describeSecrets`' output — `import-apply.ts` (T5) needs the literal
- * value to call `storeProviderKey`, but nothing downstream of that call
- * should ever see it again.
+ * A secret this module has decided IS safe to move into the vault: it is one of the three providers
+ * Veduta has a home for (`routing.json.providerKeys` → `secret://vault/<provider>`). `value` lives
+ * only inside this result object, never inside `describeSecrets`' output — `import-apply.ts` needs
+ * the literal value to call `storeProviderKey`, but nothing downstream of that call should ever see
+ * it again.
  */
 export interface ImportableSecret {
   vaultName: string
@@ -20,12 +18,10 @@ export interface ImportableSecret {
 }
 
 /**
- * Result of scanning one legacy source for secrets
- * (`docs/references/04-onboarding-migration.md` §C3: "secrets never
- * migrated implicitly... explicit allowlist, redaction in reports";
- * `tasks/plan.md` decision 12). Three buckets, never merged, because each
- * gets a different downstream treatment: vault import, a NOTES.md
- * "recreate by hand" line, or a NOTES.md "could not be parsed" line.
+ * Result of scanning one legacy source for secrets (`docs/references/04-onboarding-migration.md`
+ * §C3: "secrets never migrated implicitly... explicit allowlist, redaction in reports"). Three
+ * buckets, never merged, because each gets a different downstream treatment: vault import, a
+ * NOTES.md "recreate by hand" line, or a NOTES.md "could not be parsed" line.
  */
 export interface SecretScan {
   importable: ImportableSecret[]
@@ -36,13 +32,11 @@ export interface SecretScan {
 }
 
 /**
- * The only three secrets Veduta can do anything useful with (`tasks/plan.md`
- * decision 12). `routing.json.providerKeys` only ever points at
- * `secret://vault/anthropic`, `.../openai` or `.../openrouter`
- * (`onboarding-step-byok.ts`) — there is no home for a bot token, an OAuth
- * blob, or a Nous portal password, so importing one would create a vault
- * entry nothing in Veduta ever reads. Keyed by the env-var spelling both
- * Hermes' `.env` and OpenClaw's `openclaw.json` use for these three.
+ * The only three secrets Veduta can do anything useful with. `routing.json.providerKeys` only ever
+ * points at `secret://vault/anthropic`, `.../openai` or `.../openrouter`
+ * (`onboarding-step-byok.ts`) — there is no home for a bot token, an OAuth blob, or a Nous portal
+ * password, so importing one would create a vault entry nothing in Veduta ever reads. Keyed by the
+ * env-var spelling both Hermes' `.env` and OpenClaw's `openclaw.json` use for these three.
  */
 export const SECRET_ALLOWLIST: Readonly<Record<string, string>> = Object.freeze({
   ANTHROPIC_API_KEY: 'anthropic',
@@ -55,12 +49,10 @@ const ALLOWLIST_BY_LOWER_KEY = new Map(
 )
 
 /**
- * Broader "this looks like a credential" shape (`tasks/plan.md` decision 12,
- * T3 AC): catches a Telegram bot token, an OAuth client secret, a Nous
- * portal password — anything that must never be silently dropped just
- * because it isn't one of the three importable providers. Matched only
- * against the source's own key name, never its value — a key name is not
- * itself a secret.
+ * Broader "this looks like a credential" shape (AC): catches a Telegram bot token, an OAuth client
+ * secret, a Nous portal password — anything that must never be silently dropped just because it
+ * isn't one of the three importable providers. Matched only against the source's own key name,
+ * never its value — a key name is not itself a secret.
  */
 const CREDENTIAL_LOOKING_KEY_RE = /(api[_-]?key|token|secret|password|credential)/i
 
@@ -77,22 +69,18 @@ function classifyKey(key: string): KeyClassification {
 const DOTENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 /**
- * Parses a DELIBERATELY conservative subset of `.env` syntax (`tasks/plan.md`
- * T3, decision 12: "unsupported lines reported, never guessed"). Supported:
- * blank lines and full-line `#` comments (ignored); `KEY=value` with an
- * optional leading `export `; a value wrapped in matching single or double
- * quotes, unquoted with NO escape processing (a backslash stays a literal
- * backslash); `KEY` must match `/^[A-Za-z_][A-Za-z0-9_]*$/`. Deliberately
- * NOT supported, and reported instead of guessed at: variable interpolation
- * (`$FOO`, `${FOO}`), multiline/heredoc values, backslash escape sequences,
- * and a line whose quoting never closes (`FOO="bar` with no closing quote).
- * A parser that guessed at any of these would risk turning half a secret
- * into a differently-wrong string, which is worse than refusing. Every
- * unsupported case is reported by key name or line number ONLY — the raw
- * value is stripped before reporting, because an unsupported line can still
- * contain a secret. Exported so `import-secrets.test.ts` can exercise this
- * edge-case-heavy grammar directly, independent of `scanLegacySecrets`'
- * allowlist/redaction wrapping.
+ * Parses a DELIBERATELY conservative subset of `.env` syntax ("unsupported lines reported, never
+ * guessed"). Supported: blank lines and full-line `#` comments (ignored); `KEY=value` with an
+ * optional leading `export `; a value wrapped in matching single or double quotes, unquoted with NO
+ * escape processing (a backslash stays a literal backslash); `KEY` must match
+ * `/^[A-Za-z_][A-Za-z0-9_]*$/`. Deliberately NOT supported, and reported instead of guessed at:
+ * variable interpolation (`$FOO`, `${FOO}`), multiline/heredoc values, backslash escape sequences,
+ * and a line whose quoting never closes (`FOO="bar` with no closing quote). A parser that guessed
+ * at any of these would risk turning half a secret into a differently-wrong string, which is worse
+ * than refusing. Every unsupported case is reported by key name or line number ONLY — the raw value
+ * is stripped before reporting, because an unsupported line can still contain a secret. Exported so
+ * `import-secrets.test.ts` can exercise this edge-case-heavy grammar directly, independent of
+ * `scanLegacySecrets`' allowlist/redaction wrapping.
  */
 export function parseDotEnv(text: string): {
   entries: Map<string, string>
@@ -153,12 +141,11 @@ const OPENCLAW_MAX_DEPTH = 6
 const OPENCLAW_MAX_KEYS = 200
 
 /**
- * Recursively walks a parsed `openclaw.json`, collecting only STRING leaves
- * whose own object key looks like a secret (`tasks/plan.md` T3, decision
- * 12). Depth is capped at `OPENCLAW_MAX_DEPTH` and total collected entries
- * at `OPENCLAW_MAX_KEYS` — bounds that exist only so a hostile or
- * pathologically deep/wide config can't spin forever or flood `NOTES.md`;
- * hitting either cap is reported once in `unsupported`, never thrown.
+ * Recursively walks a parsed `openclaw.json`, collecting only STRING leaves whose own object key
+ * looks like a secret. Depth is capped at `OPENCLAW_MAX_DEPTH` and total collected entries at
+ * `OPENCLAW_MAX_KEYS` — bounds that exist only so a hostile or pathologically deep/wide config
+ * can't spin forever or flood `NOTES.md`; hitting either cap is reported once in `unsupported`,
+ * never thrown.
  */
 function collectOpenclawSecrets(root: unknown, sourceFile: string): SecretScan {
   const importable: ImportableSecret[] = []
@@ -204,7 +191,7 @@ function collectOpenclawSecrets(root: unknown, sourceFile: string): SecretScan {
           value: node,
         })
       } else {
-        // A9: register the value even though it is not importable — see the
+        // register the value even though it is not importable — see the
         // matching comment in `scanHermesSecrets`.
         defaultRedactor.register(node)
         notImportable.push({ sourceKey: key, sourceFile })
@@ -249,7 +236,7 @@ function scanHermesSecrets(dir: string): SecretScan {
           value,
         })
       } else if (classification.kind === 'notImportable') {
-        // A9: a Telegram bot token, an OAuth client secret, etc. is never
+        // a Telegram bot token, an OAuth client secret, etc. is never
         // importable (no home for it in `routing.json`), but its VALUE must
         // still be registered — otherwise the same string, pasted into
         // someone's MEMORY.md prose, reaches FACTS/the Event log/the archive
@@ -263,7 +250,7 @@ function scanHermesSecrets(dir: string): SecretScan {
 
   // Hermes' own guideline: `.env` is secrets only, `auth.json` is OAuth
   // credentials with an entirely different shape. Recorded by name, never
-  // opened or parsed (`tasks/plan.md` §"Hermes" table, decision 12).
+  // opened or parsed (§"Hermes" table).
   if (existsSync(join(dir, 'auth.json'))) {
     notImportable.push({ sourceKey: 'auth.json (OAuth credentials)', sourceFile: 'auth.json' })
   }
@@ -287,7 +274,7 @@ function scanOpenclawSecrets(dir: string): SecretScan {
 
 /**
  * Scans one legacy source directory for the only secrets Veduta can import
- * (`tasks/plan.md` T3, decision 12). Read-only and tolerant of absence: a
+ *. Read-only and tolerant of absence: a
  * missing `.env`/`openclaw.json`/`auth.json` simply yields nothing, never an
  * error, matching the discovery discipline the rest of the importer uses
  * for optional files. A malformed `openclaw.json` is reported in
@@ -300,9 +287,9 @@ export function scanLegacySecrets(input: { kind: ImportSourceKind; dir: string }
   return input.kind === 'hermes' ? scanHermesSecrets(input.dir) : scanOpenclawSecrets(input.dir)
 }
 
-// `describeSecrets` was deleted here (A19): it was a second rendering of
+// `describeSecrets` was deleted here: it was a second rendering of
 // exactly what `buildImportPlan` (`import-plan.ts`) already produces —
 // `scan.notImportable`/`scan.unsupported` reach the user through
 // `plan.notMigrated` instead. The CLI's `import-preview-text.ts` (owned by
 // another work stream) called this function and must switch to rendering
-// `plan.items`/`plan.notMigrated` directly; see this fix group's report.
+// `plan.items`/`plan.notMigrated` directly.

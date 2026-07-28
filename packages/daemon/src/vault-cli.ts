@@ -3,7 +3,7 @@ import { SecretsVault, resolveVaultKeyMaterial } from './secrets-vault.ts'
 
 /**
  * `pnpm --filter @veduta/daemon vault <set <name> <value>|list|delete <name>> [--root <dir>]`
- * (issue #15 D2). `run` takes injectable `argv`/`env`/`io` so it is testable
+ * (issue #15). `run` takes injectable `argv`/`env`/`io` so it is testable
  * without touching `process.*` and returns an exit code; `main` wires it to
  * the real process and is gated behind the file-identity check below so
  * importing this module (e.g. from a test) never executes it.

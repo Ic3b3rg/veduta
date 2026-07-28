@@ -5,7 +5,7 @@ import { neutralizeDelimiters, type Origin } from './taint.ts'
 import type { AuditEntry } from './trust-layer.ts'
 
 /**
- * The trust admin "Audit log" Surface (issue #14, D8): the last ~50 audit
+ * The trust admin "Audit log" Surface (issue #14): the last ~50 audit
  * rows, newest-first (`TrustLayer.auditEntries` already orders that way),
  * read-only — no actions, unlike the allowlist Surface. Lives in the
  * (persisted, `ensureSystemSpace`) System Space. Tree shape is fixed —
@@ -150,7 +150,7 @@ export class AuditSurfaceManager {
    * `trust.onChange` can fire 2-4x per user action and each firing would
    * otherwise synchronously rebuild this Surface from scratch. Coalesce
    * every firing within the same microtask burst into a single rebuild
-   * (Fix 9b): a `dirty` flag plus one shared, self-clearing microtask.
+   * a `dirty` flag plus one shared, self-clearing microtask.
    */
   private scheduleRebuild(): void {
     this.dirty = true

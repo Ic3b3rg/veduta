@@ -120,7 +120,7 @@ export interface ServerOptions {
    */
   pushTransport?: PushTransport
   /**
-   * Onboarding wizard wiring (issue #19 T4). `domain`/`tlsActive` are the
+   * Onboarding wizard wiring (issue #19). `domain`/`tlsActive` are the
    * domain/TLS state the wizard's `domain` step confirms — the wizard never
    * accepts a domain value, it only reflects what this profile already
    * detected (`index.ts` knows `VEDUTA_PUBLIC_DOMAIN`; loopback has none).
@@ -155,7 +155,7 @@ const defaultPwaDistDir = fileURLToPath(new URL('../../pwa/dist/', import.meta.u
 
 /**
  * Opens the vault once and derives the whole daemon's `secret://` resolver
- * from it (issue #15 D2/D3; issue #19 decision 9). The vault is opened
+ * from it (issue #15; issue #19). The vault is opened
  * whenever key material is available — even with no `secrets.vault` file
  * yet (`SecretsVault.open` starts an empty in-memory vault in that case) —
  * so the returned instance is the single one both `ModelRouter`'s secrets
@@ -165,8 +165,8 @@ const defaultPwaDistDir = fileURLToPath(new URL('../../pwa/dist/', import.meta.u
  * `undefined` and the resolver falls back to `secret://env/...` alone
  * (mock/Local VPS profile unaffected — neither exists there). Every
  * successful resolution registers the value with `defaultRedactor` so it
- * never survives into a durable sink or console output (issue #15 T4).
- * Also returns the raw `keyMaterial` it resolved (issue 020 T7): the
+ * never survives into a durable sink or console output (issue #15).
+ * Also returns the raw `keyMaterial` it resolved (issue 020): the
  * migration routes' `buildImportPlan`/`applyImport` need the same key
  * material `createBackup` requires, and re-deriving it a second way (or
  * skipping the backup pre-check entirely) would let the wizard and the CLI
@@ -181,7 +181,7 @@ function openVaultAndSecrets(rootDir: string): {
   const keyMaterial = resolveVaultKeyMaterial()
   const vaultFileExists = existsSync(vaultPath)
   if (vaultFileExists && !keyMaterial) {
-    // Fail closed (docs/SECURITY.md §4, D2): a vault file with no key
+    // Fail closed (docs/SECURITY.md §4): a vault file with no key
     // material to open it is a misconfiguration, never a silent fall-back
     // to unresolved secret://vault/... references.
     throw new Error(
@@ -224,7 +224,7 @@ function defaultScheduleExit(app: FastifyInstance): () => void {
   }
 }
 
-/** Known egress hosts per LLM provider (issue #15 D1). Providers outside this map have no fetch-based transport this daemon can enforce yet. */
+/** Known egress hosts per LLM provider (issue #15). Providers outside this map have no fetch-based transport this daemon can enforce yet. */
 const PROVIDER_HOSTS: Record<string, string> = {
   anthropic: 'api.anthropic.com',
   openai: 'api.openai.com',
@@ -234,7 +234,7 @@ const PROVIDER_HOSTS: Record<string, string> = {
 const EgressConfigSchema = z.object({ allow: z.array(z.string()) })
 
 /**
- * Builds the process-wide egress allowlist (issue #15 D1, docs/SECURITY.md
+ * Builds the process-wide egress allowlist (issue #15, docs/SECURITY.md
  * §3.4) from everything the daemon is actually configured to reach:
  * configured LLM providers, Google's OAuth/API hosts (when ingestion has a
  * Google source), the ACME directory host, every registered tool's declared
@@ -306,22 +306,22 @@ export function buildServer(options: ServerOptions = {}) {
     now,
     ...(options.dataDir === undefined ? {} : { rootDir: options.dataDir }),
   })
-  // The secrets resolver for the whole daemon (issue #15 D2/D3): the vault
+  // The secrets resolver for the whole daemon (issue #15): the vault
   // when configured and openable, `secret://env/...` alone otherwise, with
   // every resolved value registered against the shared redactor. `vault` is
   // the one instance also threaded into the onboarding routes below (issue
-  // #19 decision 9) — never opened a second time over the same file.
+  // #19) — never opened a second time over the same file.
   const {
     vault,
     secrets,
     keyMaterial: vaultKeyMaterial,
   } = openVaultAndSecrets(store.spacesEngine.rootDir)
   // The trust layer's admin Surfaces (allowlist, audit) need a durable home
-  // (issue #14, D8): materialize the System Space before anything else so
+  // (issue #14): materialize the System Space before anything else so
   // it exists no matter which subsystem writes to it first.
   ensureSystemSpace(store.spacesEngine)
   const auth = options.auth ?? { mode: 'dev' as const }
-  // Onboarding wizard profile (issue #19 decision 5/T4): mirrors
+  // Onboarding wizard profile (issue #19): mirrors
   // `index.ts`'s own vps/loopback split — a production auth store means the
   // VPS profile, everything else (dev auth, tests) is loopback.
   const profile: 'loopback' | 'vps' = auth.mode === 'production' ? 'vps' : 'loopback'
@@ -352,12 +352,12 @@ export function buildServer(options: ServerOptions = {}) {
     Promise.reject(new Error('full-text flow not ready'))
   const onFullTextRequest = (queueId: number) => fullTextHandler(queueId)
   // Late binding, same reasoning as `fullTextHandler`: the dev dispatcher
-  // (issue #14, D12) needs `gateway.replyToClient`, so it can only be built
+  // (issue #14) needs `gateway.replyToClient`, so it can only be built
   // once the Gateway exists; chat frames can only arrive after buildServer
   // returns, so the binding is always in place by then.
   let devDispatchHandler: (event: NormalizedChannelEvent) => void = () => {}
   // Late binding, same reasoning: the `research <topic>` dev stand-in
-  // (issue #17, plan v2 T6) needs the WorkerPool, which needs `router`
+  // (issue #17) needs the WorkerPool, which needs `router`
   // (constructed further down); chat frames can only arrive after
   // buildServer returns, so the binding is always in place by then.
   let spawnWorkerFromChat: (event: NormalizedChannelEvent) => void = () => {}
@@ -385,7 +385,7 @@ export function buildServer(options: ServerOptions = {}) {
         },
   )
 
-  // Web Push notifications (issue #18, plan v2 decisions 1-14): the
+  // Web Push notifications (issue #18): the
   // daemon's one choke point for surfacing anything to the user outside a
   // Surface's own patches. Built before the Scheduler/Heartbeat below so
   // both can wire their escalations straight into it. VAPID keys are
@@ -416,7 +416,7 @@ export function buildServer(options: ServerOptions = {}) {
     onConfigChanged: (config) => notificationCenter.updateConfig(config),
     now,
   })
-  // Device lifecycle (plan v2 decision 11): a revoked device's push
+  // Device lifecycle: a revoked device's push
   // subscriptions must not keep receiving pushes. Only the production
   // profile has a real AuthStore to revoke sessions on.
   const disposePushRevocationListener =
@@ -449,8 +449,8 @@ export function buildServer(options: ServerOptions = {}) {
     onEscalation: (spaceId, text, context) => {
       gateway.broadcastSystemNotice(text)
       // Daemon-managed handler jobs carry no Agent decision — attributing
-      // an "Agent-armed" justification to them would fabricate provenance
-      // (plan v2 decision 2), so they surface as a badge, never a push.
+      // an "Agent-armed" justification to them would fabricate provenance,
+      // so they surface as a badge, never a push.
       if (context?.managed) {
         notificationCenter.notify({
           level: 'badge',
@@ -460,7 +460,7 @@ export function buildServer(options: ServerOptions = {}) {
         })
         return
       }
-      // Timer escalations are always urgent (plan v2 decision 2): the
+      // Timer escalations are always urgent: the
       // Agent's explicit act of arming the timer is the decision, and the
       // justification traces straight back to it.
       notificationCenter.notify({
@@ -511,7 +511,7 @@ export function buildServer(options: ServerOptions = {}) {
   })
   approvalSurfaces.setTrust(trust)
 
-  // The two example outbound tools (D11): registered with the trust layer,
+  // The two example outbound tools: registered with the trust layer,
   // then wrapped so every call decides allow/card/deny before any effect.
   // The mock transport records deliveries as Space events — there is no
   // real mail/bank backend (issue #15 is network egress enforcement).
@@ -520,19 +520,19 @@ export function buildServer(options: ServerOptions = {}) {
   for (const { tool, meta } of outboundTools) trust.register(tool, meta)
   const wrappedOutboundTools = trust.wrapTools(outboundTools.map(({ tool }) => tool))
 
-  // Admin Surfaces (D8): pre-created at boot, rebuilt on every trust-layer
+  // Admin Surfaces: pre-created at boot, rebuilt on every trust-layer
   // change. Both live in the System Space materialized above.
   const allowlistSurfaces = new AllowlistSurfaceManager({ store, trust })
   allowlistSurfaces.start()
   const auditSurfaces = new AuditSurfaceManager({ store, trust })
   auditSurfaces.start()
 
-  // Boot recovery (D7/A2): overdue pending rows expire, interrupted
+  // Boot recovery: overdue pending rows expire, interrupted
   // `executing` rows re-run through the same effectId. Fire-and-forget,
   // same reasoning as `ingestion.recoverAtBoot()` below — nothing else
   // waits on it, and a failure here must never take the daemon down. A
   // click on a persisted card is correct the instant the store can be read
-  // (Fix A: `handleFastMutation` resolves against `trust.hasPendingCardSurface`,
+  // (`handleFastMutation` resolves against `trust.hasPendingCardSurface`,
   // never an in-memory cache), so this ordering is not a correctness
   // requirement any more — kept because `approvalSurfaces.start()` must
   // still never repair a Surface for a row `recoverAtBoot()` is about to
@@ -550,7 +550,7 @@ export function buildServer(options: ServerOptions = {}) {
     trust.dispose()
   })
 
-  // Dev-profile chat dispatcher (D12): a deterministic stand-in for the
+  // Dev-profile chat dispatcher: a deterministic stand-in for the
   // future Agent loop, parsing two fixed command shapes straight to the
   // trust-wrapped outbound tools above. Real Agent loop wiring replaces
   // this handler outright.
@@ -582,7 +582,7 @@ export function buildServer(options: ServerOptions = {}) {
       { provider: 'mock', modelId: 'reader-mock' },
     ]
   }
-  // Symmetric with `triageKeyResolves` above (issue #17, plan v2 B5): Workers
+  // Symmetric with `triageKeyResolves` above (issue #17): Workers
   // and their review both route to the reasoning tier, and `router.execute`
   // throws `NoAvailableModelError` with no reasoning candidate at all. Keep
   // one keyless mock candidate there too until a real key resolves.
@@ -627,7 +627,7 @@ export function buildServer(options: ServerOptions = {}) {
     complete: () => Promise.resolve({ text: '{"status":"nothing"}' }),
     onEscalation: (spaceId, text, context) => {
       gateway.broadcastSystemNotice(text)
-      // Heartbeat escalations are never urgent (plan v2 decision 2). The
+      // Heartbeat escalations are never urgent. The
       // triage model's own justification is the only acceptable one — the
       // daemon never fabricates a substitute. Should an escalation arrive
       // without one (schema-invalid fixtures, older data), it degrades to
@@ -694,7 +694,7 @@ export function buildServer(options: ServerOptions = {}) {
     workerPool.dispose()
   })
 
-  // `spawn_worker` (issue #17, T5): built here so it exists and type-checks
+  // `spawn_worker` (issue #17): built here so it exists and type-checks
   // against the pool it wraps. Not yet dispatched by a model — there is no
   // real Agent loop yet — so the dev `research <topic>` chat stand-in below
   // calls the pool directly instead. Once the Agent loop lands, this is the
@@ -960,7 +960,7 @@ export function buildServer(options: ServerOptions = {}) {
 
   app.get('/app/*', (_request, reply) => sendPwaAsset(reply, pwaDistDir, 'index.html'))
 
-  // The onboarding wizard's pairing landing page (issue #19 decision 12):
+  // The onboarding wizard's pairing landing page (issue #19):
   // served as the SPA, same as `/app/*`, and public (below) so the printed
   // first-boot/pairing URL (`<origin>/setup?code=...`) works before any
   // session exists.
@@ -989,7 +989,7 @@ export function buildServer(options: ServerOptions = {}) {
       store.snapshot(),
       usageSurface(router.usage(), new Date().toISOString()),
     )
-    // Attention (issue #18, plan v2 decision 12): PushStore is the source of
+    // Attention (issue #18): PushStore is the source of
     // truth (0/0 default for a Space `notify()` has never touched).
     const snapshot = {
       ...rawSnapshot,
@@ -1025,8 +1025,8 @@ export function buildServer(options: ServerOptions = {}) {
         .status(422)
         .send({ error: 'push subscription endpoint host is not on the allowed push-service list' })
     }
-    // Upsert by endpoint replaces any previous device binding (plan v2
-    // decision 11): one subscription per endpoint, a device may hold several
+    // Upsert by endpoint replaces any previous device binding: one
+    // subscription per endpoint, a device may hold several
     // (one per browser/profile). Dev profile (no auth): deviceId stays NULL.
     const deviceId =
       auth.mode === 'production'
@@ -1075,7 +1075,7 @@ export function buildServer(options: ServerOptions = {}) {
     return { count: result.count, revision: result.revision }
   })
 
-  // Onboarding wizard routes (issue #19 T4): registered directly on `app`,
+  // Onboarding wizard routes (issue #19): registered directly on `app`,
   // same as every route above, so the production `onRequest` auth hook
   // already installed covers them too — nothing here is added to
   // `isPublicUnauthenticatedPath` (only `/setup`, above, is).
@@ -1164,7 +1164,7 @@ export function buildServer(options: ServerOptions = {}) {
     })
   })
 
-  // Egress allowlist (issue #15 D1, docs/SECURITY.md §3.4): assembled from
+  // Egress allowlist (issue #15, docs/SECURITY.md §3.4): assembled from
   // what this daemon is actually configured to reach — the configured LLM
   // providers, Google's hosts when ingestion has a Google source, every
   // registered outbound tool's declared `egressDomains`, and any

@@ -526,7 +526,7 @@ function uniqueSurfaceId(surfaceId: string, sourceSlug: string, usedIds: Set<str
 }
 
 /**
- * Exported for the importer (issue 020 T4, `tasks/plan.md` decision 8):
+ * Exported for the importer (issue 020):
  * `readTargetState` needs the literal default template text to detect
  * whether an existing `SOUL.md` is still untouched (safe to import into
  * without `--overwrite`) or was already customized by the user (a
@@ -561,7 +561,7 @@ const UNTRUSTED_SPOTLIGHT =
  * payloads, tainted facts): a spotlighting note plus fixed, forgery-resistant
  * delimiters so the Agent can tell data from instructions (docs/SECURITY.md §3.2).
  *
- * Exported for the importer (issue 020 T4, `tasks/plan.md` decision 2):
+ * Exported for the importer (issue 020):
  * an imported `USER.md` must render inside the exact same delimited
  * envelope every other piece of untrusted content uses, rather than a
  * second hand-rolled copy of the delimiter format drifting out of sync

@@ -82,11 +82,9 @@ export interface Automation {
 }
 
 /**
- * Context threaded through `onEscalation` for a firing occurrence (issue
- * #18, plan v2 decisions 2-3): `surfaceId` lets the caller build a deep
- * link, `origin` is the occurrence's own re-tainted origin (never a fresh
- * derivation), `automationId` is the durable link back to the Automation
- * that fired.
+ * Context threaded through `onEscalation` for a firing occurrence (issue #18 2-3): `surfaceId` lets
+ * the caller build a deep link, `origin` is the occurrence's own re-tainted origin (never a fresh
+ * derivation), `automationId` is the durable link back to the Automation that fired.
  */
 export interface EscalationContext {
   surfaceId?: string
@@ -95,7 +93,7 @@ export interface EscalationContext {
   /**
    * True for daemon-managed handler jobs (issue #16): their escalations
    * carry no Agent decision, so callers must not attribute an
-   * "Agent-armed" justification to them (plan v2 decision 2).
+   * "Agent-armed" justification to them.
    */
   managed: boolean
 }

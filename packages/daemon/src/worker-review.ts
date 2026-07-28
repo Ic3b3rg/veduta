@@ -5,10 +5,10 @@ import { neutralizeDelimiters } from './taint.ts'
 import { stripCodeFence, type WorkerBriefing, type WorkerReport } from './worker-briefing.ts'
 
 /**
- * The adversarial review (issue #17, plan v2 T3, ADR-0002/ARCHITECTURE §3.6):
+ * The adversarial review (issue #17, ADR-0002/ARCHITECTURE §3.6):
  * a SECOND, FRESH, tool-less LLM pass whose only mandate is to REFUTE a
  * Worker's draft report before it is delivered into the Space. The
- * `WorkerPool` (T4) decides WHEN this runs — only for `briefing.highRisk`
+ * `WorkerPool` decides WHEN this runs — only for `briefing.highRisk`
  * reports — this module only implements the pass itself.
  *
  * Same Dual-LLM shape as the quarantined reader (docs/SECURITY.md §3.1):

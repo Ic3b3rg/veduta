@@ -68,7 +68,7 @@ export function hasUntrusted(origins: Iterable<Origin | undefined>): boolean {
  *   turn's taint**. The model is allowed to see and call a wrapped action
  *   even in a tainted turn, because the wrapped handler makes the real
  *   allow/card/deny decision at execution time, reading the *live* taint
- *   accumulator (`ToolContext.taint`, D10/A1) rather than this pre-turn
+ *   accumulator (`ToolContext.taint`) rather than this pre-turn
  *   snapshot — that is how issue #14's approval cards re-admit L1+ instead
  *   of stripping it. An unwrapped L1/L2 tool is still stripped
  *   unconditionally: nothing reaches the model without either `L0` or a
@@ -137,7 +137,7 @@ export function untrustedSource(origin: Origin): string | undefined {
 }
 
 /**
- * Per-turn mutable taint accumulator (D10/A1, issue #14): seeded by the
+ * Per-turn mutable taint accumulator (issue #14): seeded by the
  * runner from the turn's origin chain (prompt origin + `contextOrigins` +
  * every session-message origin) at turn start, then grown as tool results
  * reveal further provenance mid-turn — e.g. `read_recent` surfacing an

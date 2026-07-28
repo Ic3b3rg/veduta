@@ -74,7 +74,7 @@ function parseOriginEntryData(value: unknown): Origin | undefined {
 }
 
 /**
- * Annotates-next reconstruction (v3 Major F): a `VEDUTA_MESSAGE_ORIGIN`
+ * Annotates-next reconstruction: a `VEDUTA_MESSAGE_ORIGIN`
  * marker is appended immediately before the message entry it annotates.
  * This walks the raw entry list, attaching each marker's origin to the
  * very next entry when that entry is a message, and dropping the marker
@@ -123,7 +123,7 @@ export interface PiAgentRunnerOptions {
   contextPolicy?: ContextPolicy
   toolParameters?: Record<string, PiToolParameters>
   /**
-   * Trust-layer wrapping predicate (D5/issue #14), forwarded to
+   * Trust-layer wrapping predicate (issue #14), forwarded to
    * `gateToolsForOrigins` as its third argument: when supplied, L1/L2 tools
    * pass the gate iff wrapped, regardless of taint (the wrapped handler
    * decides at execution time). Omit to keep the pre-trust-layer,
@@ -150,17 +150,17 @@ export class PiAgentRunner implements AgentRunner {
   private readonly failedTurns = new Map<string, string>()
   /** The current turn's effective origin, threaded into every ToolContext it builds. */
   private currentTurnOrigin: Origin = DEFAULT_USER_ORIGIN
-  /** The origin chain the current turn started with (D10, `ToolContext.origins`). */
+  /** The origin chain the current turn started with (`ToolContext.origins`). */
   private currentTurnOrigins: Origin[] = []
-  /** Live per-turn taint accumulator (D10/A1), seeded at the start of `prompt()`, threaded into every ToolContext. */
+  /** Live per-turn taint accumulator, seeded at the start of `prompt()`, threaded into every ToolContext. */
   private currentTaint: TurnTaint = new TurnTaintAccumulator([])
-  /** The current turn's raw input, part of the context-hash envelope (A3). */
+  /** The current turn's raw input, part of the context-hash envelope. */
   private currentTurnInput = ''
   private currentSpaceId: string | undefined = undefined
   private currentTrigger: TriggerRef | undefined = undefined
   /**
    * Hash of the model-visible context for the immediately preceding
-   * inference (BINDING amendment A3), recomputed by the always-installed
+   * inference, recomputed by the always-installed
    * context-transform wrapper on every model invocation.
    */
   private currentContextHash = ''
@@ -210,7 +210,7 @@ export class PiAgentRunner implements AgentRunner {
     // Turn taint (docs/SECURITY.md §3.2, ADR-0007): the effective origin is
     // the most-untrusted of the prompt's own origin, its out-of-band
     // context origins, and every message origin already in the session —
-    // untrusted state re-taints every future turn it enters (v3 Blocker A).
+    // untrusted state re-taints every future turn it enters.
     // Loaded fresh every turn (not only when (re)building the agent) so a
     // long-running session picks up origins appended since the last turn.
     const branch = await this.sessionStore.load(sessionId)
@@ -242,7 +242,7 @@ export class PiAgentRunner implements AgentRunner {
 
     this.agent.state.model = this.resolveModel(model)
     this.agent.state.tools = tools
-    // A3: a transform wrapper is always installed, identity included, so
+    // A transform wrapper is always installed, identity included, so
     // every model invocation has a hook to recompute `currentContextHash`
     // from exactly what crossed the wrapper boundary.
     this.agent.transformContext = this.toPiContextTransform(contextPolicy)
@@ -307,7 +307,7 @@ export class PiAgentRunner implements AgentRunner {
     const agentOptions: AgentOptions = {
       sessionId: branch.sessionId,
       initialState,
-      // A3: always installed, identity when no policy is configured — the
+      // Always installed, identity when no policy is configured — the
       // only hook available for recomputing `currentContextHash` on every
       // model invocation.
       transformContext: this.toPiContextTransform(contextPolicy),
@@ -333,7 +333,7 @@ export class PiAgentRunner implements AgentRunner {
     })
   }
 
-  /** Builds the live `ToolContext` (D10/A3) a tool call reads at execution time. */
+  /** Builds the live `ToolContext` a tool call reads at execution time. */
   private buildToolContext(toolCallId: string, signal?: AbortSignal): ToolContext {
     const base: ToolContext = {
       toolCallId,
@@ -431,9 +431,9 @@ export class PiAgentRunner implements AgentRunner {
     const sessionId = this.requireSessionId()
     const mapped = fromPiMessage(message, new Date().toISOString())
     if (!mapped || mapped.role === 'user') return
-    // A tool message whose ToolResult reported `origins` (D10) carries its
+    // A tool message whose ToolResult reported `origins` carries its
     // own provenance, consumed once here; every other message keeps the
-    // pre-existing derivation rule (v3 §B.5): assistant/tool messages
+    // pre-existing derivation rule: assistant/tool messages
     // produced during a tainted turn inherit the turn's untrusted origin.
     const toolOrigins =
       mapped.role === 'tool' && mapped.toolCallId !== undefined
@@ -531,7 +531,7 @@ export class PiJsonlSessionStore implements SessionStore {
     append: SessionAppend,
   ): Promise<string> {
     if (append.type === 'message') {
-      // Annotates-next (v3 Major F): pi's AgentMessage has no metadata
+      // Annotates-next: pi's AgentMessage has no metadata
       // slot, so a non-default origin is recorded as a custom entry
       // immediately before the message it annotates.
       if (append.message.origin !== undefined) {
@@ -570,7 +570,7 @@ export class PiJsonlSessionStore implements SessionStore {
 
 /**
  * Options for `transformPiContext`, the always-installed context-transform
- * wrapper (BINDING amendment A3): identity when `policy.enabled` is false,
+ * wrapper: identity when `policy.enabled` is false,
  * purely so every model invocation has a hook to recompute the context
  * hash from exactly what crossed the wrapper boundary.
  */

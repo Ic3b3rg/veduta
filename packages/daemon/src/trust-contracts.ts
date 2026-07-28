@@ -30,7 +30,7 @@ export type AuditKind =
 
 export type AuditOutcome = 'executed' | 'rejected' | 'expired' | 'error'
 
-/** Registration metadata for one L1/L2 tool (D2). `TInput` is the tool's parsed input type. */
+/** Registration metadata for one L1/L2 tool. `TInput` is the tool's parsed input type. */
 export interface ToolMeta<TInput = unknown> {
   /** Approval card title, computed from the (unedited) input. */
   title(input: TInput): string
@@ -38,7 +38,7 @@ export interface ToolMeta<TInput = unknown> {
   summary(input: TInput): string
   /**
    * Bare identifiers (no `field.` prefix) the human may edit on the card
-   * before approving. Rendered/bound as `field.<key>` state keys (D2).
+   * before approving. Rendered/bound as `field.<key>` state keys.
    */
   editableKeys?: readonly string[]
   /**
@@ -56,9 +56,9 @@ export interface PendingApproval {
   toolName: string
   level: 'L1' | 'L2'
   input: unknown
-  /** Decision-time taint snapshot's derived effective origin (A1). */
+  /** Decision-time taint snapshot's derived effective origin. */
   effectiveOrigin: Origin
-  /** Decision-time taint snapshot (A1) — the provenance truth for this approval, forever. */
+  /** Decision-time taint snapshot — the provenance truth for this approval, forever. */
   originChain: Origin[]
   trigger?: TriggerRef
   contextHash: string
@@ -73,7 +73,7 @@ export interface PendingApproval {
  * recomputed from the live registry exactly as `createCard()` computed it
  * originally — `listPending()`'s element type. `surfaceId` mirrors the
  * row's persisted column: `undefined` means the row's own card-creation
- * crashed before recording one (D7's rehydration gap `ApprovalSurfaceManager
+ * crashed before recording one (the rehydration gap `ApprovalSurfaceManager
  * .start()` closes).
  */
 export interface PendingApprovalRecord {
@@ -82,7 +82,7 @@ export interface PendingApprovalRecord {
   surfaceId?: string
 }
 
-/** Card-model data computed once at card-creation time (D4/D8, checkbox eligibility). */
+/** Card-model data computed once at card-creation time (checkbox eligibility). */
 export interface ApprovalCardModel {
   title: string
   summary: string
@@ -92,19 +92,19 @@ export interface ApprovalCardModel {
   expiresAt: string
   editableFields: readonly { key: string; value: unknown }[]
   /**
-   * Whether "from now on approve like this" should render (D4/D8): the
+   * Whether "from now on approve like this" should render: the
    * eligibility computed here is UI-only — the actual grant is re-checked
-   * against the decision-time snapshot inside the approve transaction (A4).
+   * against the decision-time snapshot inside the approve transaction.
    */
   showAllowlistCheckbox: boolean
 }
 
 /**
- * Injected by T6 (`approval-surface.ts`): the trust layer must not import
+ * Injected by `approval-surface.ts`: the trust layer must not import
  * surface modules directly, so card creation/mutation is abstracted here.
  * All methods are synchronous by contract — `resolve()`'s approve path
  * depends on `readEditedFields` being synchronous to keep the
- * claim-after-validate window free of `await` (exactly-once, A4).
+ * claim-after-validate window free of `await` (exactly-once).
  */
 export interface ApprovalCardPort {
   create(approval: PendingApproval, card: ApprovalCardModel): { surfaceId: string }
@@ -114,7 +114,7 @@ export interface ApprovalCardPort {
   archive(surfaceId: string): void
 }
 
-/** Content-free outcome event payload (A2): `effectId` is the read-side dedupe key. */
+/** Content-free outcome event payload: `effectId` is the read-side dedupe key. */
 export interface OutcomeEventPayload {
   approvalId: string
   effectId: string
@@ -155,7 +155,7 @@ export interface AuditEntry {
 
 export interface TrustDecision {
   outcome: 'allowed' | 'card' | 'denied'
-  /** Correlates this decision with the pending/execution row and every later audit row (A1/A2). */
+  /** Correlates this decision with the pending/execution row and every later audit row. */
   effectId: string
   toolName: string
   level?: 'L1' | 'L2'
@@ -167,19 +167,19 @@ export interface TrustDecision {
 export interface TrustLayerOptions {
   rootDir: string
   approvalCardPort: ApprovalCardPort
-  /** Ephemeral chip notification (D13) — decision UI lives on the card Surface itself. */
+  /** Ephemeral chip notification — decision UI lives on the card Surface itself. */
   onApprovalCard: (card: ApprovalCard) => void
-  /** Content-free Space event, made idempotent by `outcome_event_at` (A2). */
+  /** Content-free Space event, made idempotent by `outcome_event_at`. */
   appendOutcomeEvent: (spaceId: string, payload: OutcomeEventPayload) => void
   /**
-   * Recovery-only duplicate check (A2/Fix 6): true if an `approval.outcome`
+   * Recovery-only duplicate check: true if an `approval.outcome`
    * event carrying this `effectId` already exists in the Space's event
    * log. `appendOutcomeEvent` runs before `outcome_event_at` is persisted,
    * so a crash in between the two leaves a row recovery will revisit with
    * the event already durably appended; consulted only while replaying
    * recovery's own re-finalization, never on the live path, so it costs
    * nothing outside a crash's aftermath. Omitting it preserves the
-   * pre-Fix-6 behavior (no recovery-time dedupe).
+   * previous behavior (no recovery-time dedupe).
    */
   hasOutcomeEvent?: (spaceId: string, effectId: string) => boolean
   /** Recovery escalation for `indeterminate` rows (unregistered-tool crash recovery). */
@@ -192,8 +192,8 @@ export interface TrustLayerOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Reserved card state keys (D2) — exported so T6's Surface builder and T5
-// share one vocabulary instead of duplicating magic strings.
+// Reserved card state keys — exported so the Surface builder and the trust
+// layer share one vocabulary instead of duplicating magic strings.
 // ---------------------------------------------------------------------------
 
 export const DECISION_APPROVE_KEY = 'decision.approve'
@@ -206,7 +206,7 @@ export const RESERVED_DECISION_KEYS: ReadonlySet<string> = new Set([
   DECISION_ALLOWLIST_CHECKBOX_KEY,
 ])
 
-/** The card state key an editable `key` from `ToolMeta.editableKeys` binds to (D2). */
+/** The card state key an editable `key` from `ToolMeta.editableKeys` binds to. */
 export function fieldStateKey(key: string): string {
   return `field.${key}`
 }

@@ -93,9 +93,9 @@ export async function fetchSpaces(token?: string): Promise<SurfaceSnapshot> {
   return SurfaceSnapshotSchema.parse(await res.json())
 }
 
-// Onboarding wizard (issue 019, `tasks/plan.md` "Design decisions (v2)" §4):
-// every response is zod-parsed against `@veduta/protocol`'s onboarding
-// schemas before it reaches `onboarding-state.ts` or a wizard component.
+// Onboarding wizard (issue 019): every response is zod-parsed against
+// `@veduta/protocol`'s onboarding schemas before it reaches
+// `onboarding-state.ts` or a wizard component.
 
 export async function fetchOnboardingStatus(token?: string): Promise<OnboardingStatus> {
   return OnboardingStatusSchema.parse(await getJson('/api/onboarding', token))
@@ -111,12 +111,11 @@ export async function submitMigrationChoice(
 }
 
 /**
- * `POST /api/onboarding/migration/preview` (issue 020, `tasks/plan.md` "Wire
- * API"): a pure dry-run that writes nothing to source or target -- this
- * helper only reads the returned plan, it never mutates anything itself.
- * `request.overwrite` must match whatever the wizard is about to apply
- * (design decision 7): re-preview on every toggle rather than reusing a
- * stale plan.
+ * `POST /api/onboarding/migration/preview` (issue 020): a pure dry-run that
+ * writes nothing to source or target -- this helper only reads the returned
+ * plan, it never mutates anything itself. `request.overwrite` must match
+ * whatever the wizard is about to apply: re-preview on every toggle rather
+ * than reusing a stale plan.
  */
 export async function previewLegacyImport(
   request: ImportPreviewRequest,
@@ -126,8 +125,8 @@ export async function previewLegacyImport(
 }
 
 /**
- * `POST /api/onboarding/migration/import` (`tasks/plan.md` "Wire API"):
- * recomputes and actually applies the plan for one legacy source. The
+ * `POST /api/onboarding/migration/import`: recomputes and actually applies
+ * the plan for one legacy source. The
  * response's `status` is a fresh `GET`-equivalent (a successful import sets
  * `migrationChoice: 'imported'` and completes the `migration` step), so the
  * caller does not need a second round trip to advance the wizard.
@@ -186,7 +185,7 @@ export async function finishOnboarding(token?: string): Promise<FinishResponse> 
   return FinishResponseSchema.parse(await postJson('/api/onboarding/finish', {}, token))
 }
 
-/** Clears a Space's attention badge on focus (ADR decision 12/14): the
+/** Clears a Space's attention badge on focus (ADR): the
  * daemon appends a `notification.seen` event only when count > 0, so callers
  * should only invoke this when the Space currently has attention to clear. */
 export async function markSpaceAttentionSeen(
@@ -383,7 +382,7 @@ export function freshnessLabel(updatedAt: string, now = Date.now()): string {
   return hours < 24 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`
 }
 
-/** Human-readable expiry for an approval chip (D13): the chip is a pure
+/** Human-readable expiry for an approval chip: the chip is a pure
  * notification, the decision UI lives on the card Surface itself. */
 export function expiresInLabel(expiresAt: string, now = Date.now()): string {
   const ms = Date.parse(expiresAt) - now

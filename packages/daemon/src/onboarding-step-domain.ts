@@ -1,7 +1,7 @@
 import { loadOnboardingConfig, saveOnboardingConfig } from './onboarding-config.ts'
 
 /**
- * `POST /api/onboarding/domain` (`tasks/plan.md` §4): read-mostly — this
+ * `POST /api/onboarding/domain` (§4): read-mostly — this
  * step confirms the domain/TLS state the daemon already detected at boot
  * (`server.ts`), it never accepts or writes a domain value. Changing the
  * public domain is a systemd drop-in edit (out of band); this step just

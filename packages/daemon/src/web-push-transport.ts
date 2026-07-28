@@ -4,7 +4,7 @@ import webpush from 'web-push'
 import { z } from 'zod'
 
 /**
- * Web Push transport (issue #18 T4, plan decisions 9-10): the daemon's only
+ * Web Push transport (issue #18 plan 10): the daemon's only
  * outbound delivery path for browser push notifications. `web-push` calls
  * Node's `https.request` directly, which bypasses the Undici egress
  * dispatcher (`egress.ts`) entirely — so this module, not `egress.ts`, is
@@ -57,19 +57,15 @@ const VapidFileSchema = z.object({
 })
 
 /**
- * Loads `<rootDir>/vapid.json`, generating and persisting a fresh VAPID
- * keypair on first call. Idempotent: a second call with the same `rootDir`
- * returns the identical keys.
- *
- * Rationale for storing this as plaintext JSON, mode 0600, alongside the
- * daemon's other at-rest state (deviation from the adversarial review's
- * finding 6, documented here per plan decision 10): the VAPID keypair is a
- * daemon-generated *signing* key, not a third-party API key or OAuth token
- * — docs/SECURITY.md §4 (encrypted secrets vault) governs the latter, not
- * this. It follows the same at-rest model as `auth-state-file.ts`'s
- * plaintext auth state. The dev profile has no vault key material at all,
- * so vault storage would break `pnpm dev` push testing out of the box.
- * This key never enters LLM context, logs, or the Event log.
+ * Loads `<rootDir>/vapid.json`, generating and persisting a fresh VAPID keypair on first call.
+ * Idempotent: a second call with the same `rootDir` returns the identical keys. Rationale for
+ * storing this as plaintext JSON, mode 0600, alongside the daemon's other at-rest state (deviation
+ * from the adversarial review's finding 6, documented here per plan): the VAPID keypair is a
+ * daemon-generated *signing* key, not a third-party API key or OAuth token — docs/SECURITY.md §4
+ * (encrypted secrets vault) governs the latter, not this. It follows the same at-rest model as
+ * `auth-state-file.ts`'s plaintext auth state. The dev profile has no vault key material at all, so
+ * vault storage would break `pnpm dev` push testing out of the box. This key never enters LLM
+ * context, logs, or the Event log.
  */
 export function ensureVapidKeys(
   rootDir: string,

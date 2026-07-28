@@ -100,11 +100,9 @@ export function loadIngestionConfig(rootDir: string): IngestionConfig {
 }
 
 /**
- * Validates `config`, backs up the existing `ingestion.json` (if any —
- * issue #19 decision 6, ingestion is a wizard-driven config file), then
- * writes the new state atomically. Ingestion sources are boot-time wiring
- * (`server.ts`): callers must restart the daemon for a saved config to
- * take effect.
+ * Validates `config`, backs up the existing `ingestion.json` (if any — issue #19 ingestion is a
+ * wizard-driven config file), then writes the new state atomically. Ingestion sources are boot-time
+ * wiring (`server.ts`): callers must restart the daemon for a saved config to take effect.
  */
 export function saveIngestionConfig(rootDir: string, config: IngestionConfig): void {
   const validated = IngestionConfigSchema.parse(config)

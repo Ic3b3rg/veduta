@@ -44,11 +44,11 @@ function listRecursive(root: string): string[] {
 }
 
 /**
- * A realistic `~/.hermes` install (`tasks/plan.md` "Source layouts" table; fixture shape
- * copied from `import-apply.test.ts`'s `buildHermesFixture`): SOUL.md, a real-shaped
- * USER.md profile, `§`-separated MEMORY.md entries, a dated daily note, and a `.env` with
- * one importable provider key. `home` is the fake home directory the CLI's `--home` (or
- * `VEDUTA_LEGACY_HOME`) points at; `.hermes` is created directly under it.
+ * A realistic `~/.hermes` install ("Source layouts" table; fixture shape copied from
+ * `import-apply.test.ts`'s `buildHermesFixture`): SOUL.md, a real-shaped USER.md profile,
+ * `§`-separated MEMORY.md entries, a dated daily note, and a `.env` with one importable provider
+ * key. `home` is the fake home directory the CLI's `--home` (or `VEDUTA_LEGACY_HOME`) points at;
+ * `.hermes` is created directly under it.
  */
 function buildHermesHome(): string {
   const home = freshDir('veduta-cli-home-')
@@ -194,7 +194,7 @@ describe('import-cli run', () => {
     expect(existsSync(join(fixture.rootDir, 'secrets.vault'))).toBe(false)
   })
 
-  it('B5: --apply --secrets refuses when the service probe itself failed, rather than assuming inactive', async () => {
+  it('--apply --secrets refuses when the service probe itself failed, rather than assuming inactive', async () => {
     const fixture = setup()
     const io = capturingIo()
 
@@ -212,7 +212,7 @@ describe('import-cli run', () => {
     expect(existsSync(join(fixture.rootDir, 'secrets.vault'))).toBe(false)
   })
 
-  it('B5: --apply --secrets proceeds with a restart reminder when there is no systemd at all', async () => {
+  it('--apply --secrets proceeds with a restart reminder when there is no systemd at all', async () => {
     const fixture = setup()
     const io = capturingIo()
 
@@ -251,7 +251,7 @@ describe('import-cli run', () => {
     expect(io.lines.some((line) => line.startsWith('usage:'))).toBe(true)
   })
 
-  it('B6: a missing source positional returns 1 with the usage line', async () => {
+  it('a missing source positional returns 1 with the usage line', async () => {
     const io = capturingIo()
 
     const code = await run(['--home', '/tmp', '--root', '/tmp'], { env: {}, io, stdinIsTty: false })
@@ -261,7 +261,7 @@ describe('import-cli run', () => {
     expect(io.lines.some((line) => line.startsWith('usage:'))).toBe(true)
   })
 
-  it('B6: an extra positional argument returns 1 with the usage line, instead of being silently ignored', async () => {
+  it('an extra positional argument returns 1 with the usage line, instead of being silently ignored', async () => {
     const fixture = setup()
     const io = capturingIo()
 
@@ -275,7 +275,7 @@ describe('import-cli run', () => {
     expect(io.lines.some((line) => line.startsWith('usage:'))).toBe(true)
   })
 
-  it('B6: a planning error (a corrupt import.json) yields exit code 1 instead of an unhandled rejection', async () => {
+  it('a planning error (a corrupt import.json) yields exit code 1 instead of an unhandled rejection', async () => {
     const fixture = setup()
     mkdirSync(fixture.rootDir, { recursive: true })
     writeFileSync(join(fixture.rootDir, 'import.json'), '{ not valid json')

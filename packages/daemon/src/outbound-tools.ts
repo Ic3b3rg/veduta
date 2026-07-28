@@ -5,10 +5,10 @@ import { isValidOrigin, toolWriteOrigin } from './taint.ts'
 import type { ToolMeta } from './trust-layer.ts'
 
 /**
- * Outbound tools (D11, issue #14): the two example L1/L2 tools whose
+ * Outbound tools (issue #14): the two example L1/L2 tools whose
  * `handler` actually leaves the daemon process. This module only *defines*
  * `send_message` and `transfer_funds` plus their `ToolMeta` — it does not
- * register them with a `TrustLayer` (that is T9's job in `server.ts`), so a
+ * register them with a `TrustLayer` (that is `server.ts`'s job), so a
  * fresh `TrustLayer` in a test can register either tool with whatever
  * `ApprovalCardPort`/options it needs without this module reaching into it.
  */
@@ -22,8 +22,8 @@ import type { ToolMeta } from './trust-layer.ts'
  * process (an email send, a bank transfer, ...). Implementations MUST be
  * idempotent per `effectId`: the trust layer re-executes a tool's handler
  * with the *same* `effectId` during crash recovery for both `executing` rows
- * interrupted mid-flight and approvals re-approved after a crash (A2,
- * docs/SECURITY.md §5) — a transport that sends twice for one `effectId`
+ * interrupted mid-flight and approvals re-approved after a crash
+ * (docs/SECURITY.md §5) — a transport that sends twice for one `effectId`
  * would double-charge a bank account or double-send an email on every crash
  * that happens to land between the durable state transition and delivery.
  */
@@ -225,7 +225,7 @@ export const transferFundsMeta: ToolMeta<TransferFundsInput> = {
 }
 
 // ---------------------------------------------------------------------------
-// Registration bundle (T9 registers these against a `TrustLayer`)
+// Registration bundle (`server.ts` registers these against a `TrustLayer`)
 // ---------------------------------------------------------------------------
 
 export interface OutboundToolRegistration {

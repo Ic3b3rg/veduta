@@ -65,12 +65,12 @@ describe('readTargetState — purity (issue 020 AC3)', () => {
     })
   })
 
-  it('A13: reports rootIsDirectory false for a missing target directory', () => {
+  it('reports rootIsDirectory false for a missing target directory', () => {
     const rootDir = join(freshDir(), 'does-not-exist')
     expect(readTargetState(rootDir).rootIsDirectory).toBe(false)
   })
 
-  it('A13: reports rootIsDirectory false when the target path is a file, not a directory', () => {
+  it('reports rootIsDirectory false when the target path is a file, not a directory', () => {
     const parent = freshDir()
     const filePath = join(parent, 'not-a-directory')
     writeFileSync(filePath, 'x')
@@ -185,13 +185,13 @@ describe('wrapImportedUser', () => {
 })
 
 describe('importedSpaceInstructions', () => {
-  it('frames the Space as a staging area without naming a single source (A25)', () => {
+  it('frames the Space as a staging area without naming a single source', () => {
     const instructions = importedSpaceInstructions()
     expect(instructions.startsWith('# INSTRUCTIONS')).toBe(true)
     expect(instructions).toContain('staging area')
     expect(instructions).toContain('untrusted')
-    // A25: this Space is reused across a later import of the *other* source
-    // (decision 18) — the text must not commit to just one of them.
+    // this Space is reused across a later import of the *other* source
+    // — the text must not commit to just one of them.
     expect(instructions).toContain('OpenClaw')
     expect(instructions).toContain('Hermes')
   })
@@ -206,7 +206,7 @@ describe('extractMemoryEntries — § delimiter (Hermes)', () => {
     ])
   })
 
-  it('A5(a): does not treat an inline § as a delimiter — a bullet mentioning "see §3.2" stays intact', () => {
+  it('does not treat an inline § as a delimiter — a bullet mentioning "see §3.2" stays intact', () => {
     const text = '- read the doc, see §3.2\n- second fact'
     expect(extractMemoryEntries(text)).toEqual(['read the doc, see §3.2', 'second fact'])
   })
@@ -227,12 +227,12 @@ describe('extractMemoryEntries — markdown bullets (OpenClaw)', () => {
     expect(extractMemoryEntries(text)).toEqual(['fact one continues here', 'fact two'])
   })
 
-  it('A5(d): folds an indented sub-bullet into the parent entry rather than promoting it to top level', () => {
+  it('folds an indented sub-bullet into the parent entry rather than promoting it to top level', () => {
     const text = '- fact one\n  - sub-detail\n- fact two\n'
     expect(extractMemoryEntries(text)).toEqual(['fact one - sub-detail', 'fact two'])
   })
 
-  it('A5(d): keeps prose before the first bullet as its own entry instead of discarding it', () => {
+  it('keeps prose before the first bullet as its own entry instead of discarding it', () => {
     const text = 'Some intro paragraph\nstill intro\n- fact one\n- fact two\n'
     expect(extractMemoryEntries(text)).toEqual([
       'Some intro paragraph still intro',
@@ -252,7 +252,7 @@ describe('extractMemoryEntries — blank-line paragraphs', () => {
     ])
   })
 
-  it('A5(c): splits on CRLF blank lines the same as LF ones', () => {
+  it('splits on CRLF blank lines the same as LF ones', () => {
     const text = 'First paragraph\r\nstill first\r\n\r\nSecond paragraph'
     expect(extractMemoryEntries(text)).toEqual(['First paragraph still first', 'Second paragraph'])
   })
@@ -264,7 +264,7 @@ describe('extractMemoryEntries — universal cleanup', () => {
     expect(extractMemoryEntries(text)).toEqual(['Real entry'])
   })
 
-  it('A5(b): strips a heading line but keeps its body when they are not blank-line separated', () => {
+  it('strips a heading line but keeps its body when they are not blank-line separated', () => {
     const text = '## Preferences\nlikes tea\n\nOther paragraph'
     expect(extractMemoryEntries(text)).toEqual(['likes tea', 'Other paragraph'])
   })

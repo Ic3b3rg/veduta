@@ -24,7 +24,7 @@ import { OnboardingStepError, resolveLegacy } from './onboarding-status.ts'
 import type { SecretsVault } from './secrets-vault.ts'
 
 /**
- * `POST /api/onboarding/migration` (`tasks/plan.md` "Wire API"): an honest
+ * `POST /api/onboarding/migration`: an honest
  * deferral, not a fake import. Recording `migrate-later` runs nothing — it
  * only persists the choice so `previewLegacyImport`/`runLegacyImport` below
  * can be reached from the wizard's migration step on the user's own timeline.
@@ -44,15 +44,15 @@ export function applyMigrationChoice(rootDir: string, choice: 'migrate-later' | 
 }
 
 /**
- * What `previewLegacyImport`/`runLegacyImport` need beyond the request body
- * (`tasks/plan.md` T7). `keyMaterial` is the vault key material `server.ts`'s
- * `openVaultAndSecrets` already resolves, threaded through (decision 10) so
+ * What `previewLegacyImport`/`runLegacyImport` need beyond the request body.
+ * `keyMaterial` is the vault key material `server.ts`'s
+ * `openVaultAndSecrets` already resolves, threaded through so
  * the wizard's backup pre-check agrees with the CLI's.
  *
- * B9: no longer carries `spacesEngine` — it was threaded through only so a
+ * No longer carries `spacesEngine` — it was threaded through only so a
  * caller *could* reach it, but neither `previewLegacyImport` nor
  * `runLegacyImport` ever read it (apply always constructs its own
- * `SpacesEngine` inside `applyImport`'s lock, decision 6, never a
+ * `SpacesEngine` inside `applyImport`'s lock, never a
  * caller-supplied one, since dry-run previewing must never touch it).
  * `onboarding-routes.ts` already has its own `spacesEngine` for refreshing
  * `GET /api/onboarding`'s status and does not need a second copy threaded
@@ -65,7 +65,7 @@ export interface MigrationImportDeps {
   env: NodeJS.ProcessEnv
   /**
    * Removes the staged copy after a successful import. Injectable purely so
-   * B4's "a failed cleanup never undoes a completed import" test can make it
+   * the "a failed cleanup never undoes a completed import" test can make it
    * throw: the obvious alternative — chmodding the staged directory
    * unwritable — also propagates into `createBackup`'s own recursive copy of
    * `rootDir` and breaks that step instead, which would test nothing.
@@ -74,7 +74,7 @@ export interface MigrationImportDeps {
   removeStagedCopy?: (dir: string) => void
 }
 
-/** Where the installer stages a detected legacy install (decision 16): `<rootDir>/import-source/<kind>/`. */
+/** Where the installer stages a detected legacy install: `<rootDir>/import-source/<kind>/`. */
 function stagedSourceDir(rootDir: string, kind: ImportSourceKind): string {
   return join(rootDir, 'import-source', kind)
 }
@@ -82,12 +82,12 @@ function stagedSourceDir(rootDir: string, kind: ImportSourceKind): string {
 /**
  * The exact CLI command every dead end in this module points at, built
  * through the one shared command-builder (`import-preview-text.ts`'s
- * `buildImportCommand`, B7 — closes the "three independent implementations"
+ * `buildImportCommand` — closes the "three independent implementations"
  * duplication finding together with `import-cli.ts`'s own printer and
  * `deploy/README.md`). Always `sudo`-prefixed (the admin runs this from
  * their own shell, which needs root to read their home under
  * `ProtectHome=yes`) and always carries `--home` pointing at the admin's own
- * resolved home — omitting it (the bug this fixes, B7) would have this
+ * resolved home — omitting it (the bug this fixes) would have this
  * `sudo`-run command search root's home instead of the admin's.
  */
 function cliImportCommand(
@@ -117,8 +117,9 @@ function isReadableDirectory(dir: string): boolean {
 }
 
 /**
- * The one source-resolution helper preview and apply both call (`tasks/plan.md`
- * decision 16/17: "shared by both so preview and apply can never disagree").
+ * The one source-resolution helper preview and apply both call, so preview
+ * and apply can never disagree (`docs/adr/0010-importer-trust-and-refusal.md`,
+ * invariant 2: preview and apply take the same options and produce the same plan).
  * Tries, in order: the installer-staged copy (what a real VPS install can
  * actually read, since the daemon runs under `ProtectHome=yes` and usually
  * cannot see `/home/<admin>/.hermes` at all); the legacy home this run
@@ -129,7 +130,7 @@ function isReadableDirectory(dir: string): boolean {
  * so the caller can turn "nothing readable" into a 409 with the CLI command
  * instead of crashing.
  *
- * B3: `resolveLegacyDir` only ever checks `existsSync` — a candidate that
+ * `resolveLegacyDir` only ever checks `existsSync` — a candidate that
  * exists but is a plain file, or a directory this process cannot actually
  * list, must not be accepted as "found" here, only to blow up later as an
  * uncaught `ImportSourceMissingError` past `sendStepError`'s specific
@@ -156,11 +157,11 @@ function resolveMigrationSourceDir(
 }
 
 /**
- * The wizard's one dead end for a source the daemon cannot read at all
- * (`tasks/plan.md` "Wire API": "Missing/unreadable source -> 409 with the CLI
- * command"). The message states why (the daemon usually cannot read the
+ * The wizard's one dead end for a source the daemon cannot read at all —
+ * every dead end prints the exact next command (`issues/019-onboarding-wizard.md`).
+ * The message states why (the daemon usually cannot read the
  * admin's home under `ProtectHome=yes`) and gives the exact command to run
- * from a shell that can. Built as its own function (B3) so both
+ * from a shell that can. Built as its own function so both
  * `requireReadableSource` (nothing was ever found) and `buildPlanForRequest`
  * (something was found but reading it raced into `ImportSourceMissingError`
  * anyway) throw the identical 409, rather than the latter falling through to
@@ -182,7 +183,7 @@ function sourceMissingError(
   )
 }
 
-/** Resolves the source directory or throws `sourceMissingError` (B3). */
+/** Resolves the source directory or throws `sourceMissingError`. */
 function requireReadableSource(deps: MigrationImportDeps, kind: ImportSourceKind): string {
   const dir = resolveMigrationSourceDir(deps, kind)
   if (dir !== undefined) return dir
@@ -191,7 +192,7 @@ function requireReadableSource(deps: MigrationImportDeps, kind: ImportSourceKind
 
 /**
  * `request.secrets === true` is rejected before anything else runs
- * (`tasks/plan.md` decision 13/16, "Wire API"): the installer never stages
+ * (`docs/adr/0010-importer-trust-and-refusal.md`): the installer never stages
  * secrets, so the wizard path is secret-free by construction, and the CLI's
  * own `--secrets` refuses to race the daemon-owned vault file from a second
  * process. Importing a secret is therefore CLI-only, never a wizard option —
@@ -223,13 +224,13 @@ interface PlannedImport {
 }
 
 /**
- * Builds the plan for one request exactly once (`tasks/plan.md` decision 7:
- * "preview and apply take the same options... toggling an option in the
- * wizard re-previews"). `previewLegacyImport` returns just the `plan`;
+ * Builds the plan for one request exactly once — preview and apply take the
+ * same options and produce the same plan, and toggling an option in the
+ * wizard re-previews (`docs/adr/0010-importer-trust-and-refusal.md`,
+ * invariant 2). `previewLegacyImport` returns just the `plan`;
  * `runLegacyImport` recomputes this same plan inside `applyImport` rather
- * than trusting a client-supplied one (decision 7's own "recomputing it,
- * never trusting a client-supplied plan" — a stale or tampered preview must
- * never be what actually gets applied). Uses `planLegacyImport`
+ * than trusting a client-supplied one — a stale or tampered preview must
+ * never be what actually gets applied. Uses `planLegacyImport`
  * (`import-plan.ts`) — the exact `readTargetState`/`loadImportState`/
  * `buildImportPlan` composition the CLI's own dry-run print and
  * `applyImportLocked` share — instead of reassembling it by hand a third
@@ -244,7 +245,7 @@ function buildPlanForRequest(
   try {
     snapshot = readLegacySource(dir, request.source)
   } catch (error) {
-    // B3: `resolveMigrationSourceDir`'s readability check is a point-in-time
+    // `resolveMigrationSourceDir`'s readability check is a point-in-time
     // check, not a guarantee — a source removed or made unreadable between
     // that check and this read must still surface as the same actionable
     // 409, never `sendStepError`'s generic 500 catch-all.
@@ -263,10 +264,11 @@ function buildPlanForRequest(
 }
 
 /**
- * `POST /api/onboarding/migration/preview` (`tasks/plan.md` T7). Pure
+ * `POST /api/onboarding/migration/preview`. Pure
  * dry-run: `planLegacyImport`'s `readTargetState`/`loadImportState` reads are
- * both plain `fs` reads (decision 6), and this function never calls
- * `applyImport` or constructs a `SpacesEngine` — so calling it twice in a
+ * both plain `fs` reads — read-only by construction, not by intention
+ * (`docs/adr/0010-importer-trust-and-refusal.md`, invariant 1) — and this
+ * function never calls `applyImport` or constructs a `SpacesEngine` — so calling it twice in a
  * row, or after toggling `overwrite`, writes nothing to either the source or
  * the target.
  */
@@ -279,19 +281,18 @@ export function previewLegacyImport(
 }
 
 /**
- * `POST /api/onboarding/migration/import` (`tasks/plan.md` T7). Recomputes
- * the plan (never trusts a client-supplied one — decision 7; `applyImport`
- * itself recomputes it again a second time, inside its lock — A2), delegates
- * the actual write to `applyImport` (decision 17: "the CLI is the engine;
- * routes are a second front end" — no logic duplicated; the `snapshot`,
+ * `POST /api/onboarding/migration/import`. Recomputes
+ * the plan (never trusts a client-supplied one; `applyImport`
+ * itself recomputes it again a second time, inside its lock), delegates
+ * the actual write to `applyImport` — no logic duplicated; the `snapshot`,
  * `secrets` and `options` triple is `applyImport`'s current signature, not a
  * pre-built `plan`, so the recomputation inside the lock is the only plan
- * that ever actually gets applied). `applyImport` itself throws
+ * that ever actually gets applied. `applyImport` itself throws
  * `ImportRefusedError` for a blocked plan (a conflict `--overwrite` did not
  * clear, no vault key material, a held lock) — `onboarding-routes.ts` maps
  * that to a 409, same as `VaultUnavailableError`.
  *
- * B4: the onboarding config is saved BEFORE the staged copy is removed, not
+ * The onboarding config is saved BEFORE the staged copy is removed, not
  * after. `applyImport` having already returned means the import itself
  * fully happened (backup, writes, archive, marker — all already durable);
  * removing the staged directory afterwards is pure best-effort cleanup of a
@@ -330,7 +331,7 @@ export async function runLegacyImport(
     try {
       remove(staged)
     } catch {
-      // Best-effort only (B4) — see the doc comment above. The import is
+      // Best-effort only — see the doc comment above. The import is
       // already durably recorded by this point; a failure here just leaves
       // a harmless, redundant staged copy behind for a later cleanup.
     }

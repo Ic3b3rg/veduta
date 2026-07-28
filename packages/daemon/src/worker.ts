@@ -28,14 +28,14 @@ import {
 } from './worker-surface.ts'
 
 /**
- * The Worker run-state machine (issue #17, plan v2 T4): spawns ephemeral
+ * The Worker run-state machine (issue #17): spawns ephemeral
  * Workers, runs each on its own `AgentRunner` in an isolated session,
  * enforces the briefing's iteration/token budget, runs the adversarial
  * review (worker-review.ts) for high-risk briefings, and delivers exactly
  * one schema-valid `WorkerReport` into the Space — never worker→worker, a
  * Worker only ever reports back to the Space/main loop that spawned it.
  *
- * B4 (lethal trifecta defense, ADR-0007): every tool offered to a Worker
+ * Lethal trifecta defense (ADR-0007): every tool offered to a Worker
  * must be `L0` with empty `egressDomains` — asserted in the constructor —
  * and the Worker's runner is never given a trust-wrap predicate, so an L1/L2
  * tool can never slip through `gateToolsForOrigins`'s taint gate. A Worker is
@@ -43,12 +43,12 @@ import {
  * registry is a ceiling, not a grant — an empty `allowedTools` offers zero
  * tools, never the whole registry.
  *
- * B2 (budget, fail-closed): the pool counts every `turn-end` event (one real
+ * Budget (fail-closed): the pool counts every `turn-end` event (one real
  * agent turn) regardless of whether the model reported `tokensUsed` — the
  * iteration cap is the hard backstop, the token budget is best-effort on
- * reported usage. B3 (provenance): the delivered report Event is stamped
+ * reported usage. Provenance: the delivered report Event is stamped
  * `untrusted:worker`; lifecycle-only events (spawn/cancel) are content-free
- * and `trusted:system`. B6: invalid model text is never delivered — the
+ * and `trusted:system`. Invalid model text is never delivered — the
  * last schema-valid report, or a deterministic daemon-authored fallback, is
  * delivered instead.
  *
@@ -108,7 +108,7 @@ interface LiveWorker {
   turnCount: number
   tokens: number
   lastValidReport?: WorkerReport
-  /** Incremented every time a turn's text parses as a schema-valid report (issue #17 re-review, Fix 3). Lets `reviewAndDeliver` tell "the corrective prompt produced a genuinely new draft" apart from "it produced nothing parseable at all". */
+  /** Incremented every time a turn's text parses as a schema-valid report (issue #17 re-review). Lets `reviewAndDeliver` tell "the corrective prompt produced a genuinely new draft" apart from "it produced nothing parseable at all". */
   reportRevision: number
   budgetExceeded: boolean
   cancelled: boolean
@@ -392,7 +392,7 @@ export class WorkerPool {
     }
 
     // Captured BEFORE the corrective prompt so it can be compared against
-    // afterward (issue #17 re-review, Fix 3): re-reviewing is only ever
+    // afterward (issue #17 re-review): re-reviewing is only ever
     // meaningful when the corrective turn actually produced a NEW
     // schema-valid draft, never when it re-parses to nothing and
     // `lastValidReport` is left exactly as it was before this call.
@@ -577,20 +577,20 @@ export class WorkerPool {
   }
 
   /**
-   * Single terminal guard (B-major): idempotent, so abort/late turn-end/cap/
+   * Single terminal guard: idempotent, so abort/late turn-end/cap/
    * dispose all converge to exactly one delivery. Never delivers invalid
-   * model text (B6) — the last valid report, or a deterministic
+   * model text — the last valid report, or a deterministic
    * daemon-authored fallback, always wins. No-ops once `dispose()` has run
    * (shutdown must never deliver) or once already settled.
    *
-   * Crash consistency (issue #17 re-review, Fix 1): the `worker.delivered`
+   * Crash consistency (issue #17 re-review): the `worker.delivered`
    * Event is appended BEFORE the Surface is patched/marked settled — it is
    * the COMMIT POINT `recoverAtBoot` reconciles from on a restart. A crash
    * between the two now always resolves to "delivered" (reconciled from the
    * event), never to a clobbered "Interrupted", and the event itself is
    * never silently lost.
    *
-   * High-risk invariant (issue #17 re-review, Fix 2): enforced in this one
+   * High-risk invariant (issue #17 re-review): enforced in this one
    * place, after any `caveatOverride` has already been applied — a
    * high-risk report that is not `reviewStatus: 'passed'` and still carries
    * no caveat (e.g. the no-valid-draft fallback, or any future `'skipped'`
@@ -729,7 +729,7 @@ export class WorkerPool {
    * Scans the Space's Event log for a previously-appended `worker.delivered`
    * event for `workerId` (mirrors `quarantined-reader.alreadyHandled`'s
    * "idempotency via the Event log" idiom). This is the crash-consistency
-   * commit point `recoverAtBoot` (Fix 1, issue #17 re-review) reconciles
+   * commit point `recoverAtBoot` (issue #17 re-review) reconciles
    * boot recovery from, rather than treating every unsettled Surface as a
    * genuine orphan.
    */

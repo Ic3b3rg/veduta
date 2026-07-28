@@ -38,7 +38,7 @@ const PersistedSessionSchema = z.object({
 
 const AuthStateFileSchema = z.object({
   bootstrapCodeHash: z.string().optional(),
-  // Optional for backward compatibility (issue #19 T4/decision 11): an
+  // Optional for backward compatibility (issue #19): an
   // `auth.json` written before this field existed parses fine, and its
   // absence is treated as "this bootstrap code never expires" (see
   // `AuthStore`'s constructor).

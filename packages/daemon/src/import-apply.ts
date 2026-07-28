@@ -45,11 +45,10 @@ import { untrustedOrigin } from './taint.ts'
 import type { SecretsVault } from './secrets-vault.ts'
 
 /**
- * Thrown whenever apply must refuse rather than write anything (`tasks/plan.md`
- * decision 8: "conflicts refuse, never skip"). `blocked` always echoes every
- * reason the refusal covers — the CLI/wizard use it verbatim, never just the
- * first line of `message`, so a multi-reason refusal is never silently
- * truncated to one item.
+ * Thrown whenever apply must refuse rather than write anything ("conflicts refuse, never skip").
+ * `blocked` always echoes every reason the refusal covers — the CLI/wizard use it verbatim, never
+ * just the first line of `message`, so a multi-reason refusal is never silently truncated to one
+ * item.
  */
 export class ImportRefusedError extends Error {
   constructor(
@@ -69,7 +68,7 @@ export interface ApplyImportDeps {
 }
 
 /**
- * A2: no longer carries a pre-built `plan` — `applyImportLocked` recomputes
+ * no longer carries a pre-built `plan` — `applyImportLocked` recomputes
  * it itself, as the first thing inside the lock, via `planLegacyImport`
  * (`import-plan.ts`). A plan built outside the lock (by a preview call, by
  * the CLI before the user confirms, by a wizard round trip) could be stale
@@ -87,7 +86,7 @@ const LOCK_FILE = 'import.lock'
 
 /**
  * Looks up the plan item for `target`, throwing rather than silently
- * treating "not found" as "nothing to do" (A21): `buildImportPlan` always
+ * treating "not found" as "nothing to do": `buildImportPlan` always
  * pushes exactly one item per `IMPORT_TARGETS` slot (as `skip`, `import`, or
  * `overwrite`), so a missing item here can only mean the target string
  * drifted between the plan builder and this lookup — previously a fail-open
@@ -111,7 +110,7 @@ function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
 }
 
 /**
- * The pure decision behind the ownership fix (`tasks/plan.md` decision 15):
+ * The pure decision behind the ownership fix:
  * kept separate from the filesystem walk so it is testable without root.
  * Returns the uid to `lchown` the whole `rootDir` tree to, or `undefined`
  * when no fix is needed — which is every case except "this process is root
@@ -144,11 +143,10 @@ function chownTreeRecursive(path: string, uid: number, gid: number): void {
 }
 
 /**
- * `tasks/plan.md` decision 15, step 9: when this process runs as root
- * against a `rootDir` some other uid owns, every path apply (and
- * `createBackup`, `SpacesEngine`, the vault) may have created is fixed up
- * in one pass, because none of those callers hand back a full path list.
- * A non-root process, or a `rootDir` root already owns, is a no-op.
+ * Step 9: when this process runs as root against a `rootDir` some
+ * other uid owns, every path apply (and `createBackup`, `SpacesEngine`, the vault) may have created
+ * is fixed up in one pass, because none of those callers hand back a full path list. A non-root
+ * process, or a `rootDir` root already owns, is a no-op.
  */
 function fixOwnershipIfNeeded(rootDir: string): void {
   const processUid = process.getuid?.()
@@ -189,11 +187,10 @@ interface IdentityWriteResult {
 }
 
 /**
- * Step 4: writes SOUL.md/USER.md, each individually backed up first — only
- * when the plan actually has a non-skip item for that target (decision 8's
- * per-item conflicts already decided whether this run touches them at all).
- * A6: written `0600` — the vault/config/archive convention — rather than
- * left at umask-derived permissions.
+ * Step 4: writes SOUL.md/USER.md, each individually backed up first — only when the plan actually
+ * has a non-skip item for that target (per-item conflicts already decided whether this run touches
+ * them at all). written `0600` — the vault/config/archive convention — rather than left at
+ * umask-derived permissions.
  */
 function writeGlobalIdentityFiles(
   rootDir: string,
@@ -207,12 +204,12 @@ function writeGlobalIdentityFiles(
     const soulPath = join(rootDir, 'SOUL.md')
     backupFile(soulPath, now)
     const adaptedSoul = adaptSoul(snapshot.soul.text, snapshot.kind)
-    // Anti-divergence guarantee (`tasks/plan.md` decision 3, ADR-0010, A7):
+    // Anti-divergence guarantee (ADR-0010):
     // the text written here MUST be byte-identical to `plan.soulPreview` —
     // that is the whole point of the mitigation ("the full adapted text
-    // appears in the preview before anything is written"). A7: unconditional,
+    // appears in the preview before anything is written"). Unconditional,
     // not "check only when present" — if the plan writes SOUL, `soulPreview`
-    // MUST be present and equal, never merely equal-when-present. With A2 the
+    // MUST be present and equal, never merely equal-when-present. Since the
     // plan is always built in-process right above, so an absent preview on a
     // writing plan can only be an internal bug, not a legitimate omission.
     if (plan.soulPreview === undefined || plan.soulPreview !== adaptedSoul) {
@@ -251,12 +248,12 @@ interface SpacePopulationResult {
 }
 
 /**
- * Steps 5-6: reconciles the `Imported` Space by slug (decision 18) — reusing
+ * Steps 5-6: reconciles the `Imported` Space by slug — reusing
  * a non-archived Space already at that slug rather than letting
  * `createSpace`'s own `uniqueSlug` mint a second one — then, only when the
  * plan has facts or Event log work to do, writes the imported memory entries
- * and notes into it, all stamped untrusted (decision 1). `extractMemoryEntries`
- * already redacted every entry (decision 4), so no further redaction is
+ * and notes into it, all stamped untrusted. `extractMemoryEntries`
+ * already redacted every entry, so no further redaction is
  * needed before `writeFact`; `appendEvent` redacts its own `text` again on
  * the way in (spaces-engine.ts), harmless idempotent double coverage for the
  * overflow/notes path.
@@ -281,8 +278,8 @@ function populateImportedSpace(
       spacesEngine.createSpace({
         name: IMPORTED_SPACE_NAME,
         slug: IMPORTED_SPACE_SLUG,
-        // A25: source-neutral — this same Space is reused when the *other*
-        // source is imported later (decision 18), so its instructions must
+        // source-neutral — this same Space is reused when the *other*
+        // source is imported later, so its instructions must
         // never commit to naming just the source of this particular run.
         instructions: importedSpaceInstructions(),
       })
@@ -324,7 +321,7 @@ function populateImportedSpace(
 
 /**
  * Step 7: stores every allowlisted secret in the vault and points routing at
- * it (`tasks/plan.md` decision 12), via the same `storeProviderKey` helper
+ * it, via the same `storeProviderKey` helper
  * `onboarding-step-byok.ts` uses. Only ever called when `plan.options.secrets`
  * is true; `vault` must be defined at that point (the pre-flight check in
  * `applyImportLocked` already refused otherwise) — re-checked here only for
@@ -350,10 +347,10 @@ function importAllowlistedSecrets(
 /**
  * `applyImport`'s body, run only once the exclusive lock is held
  * (`applyImport` acquires and releases it). Ordering below is the spec
- * (`tasks/plan.md` decision 9, amended by A3) — do not rearrange it:
- * recompute the plan (A2) → refuse-if-blocked → backup → SOUL/USER → the
+ * (amended by) — do not rearrange it:
+ * recompute the plan → refuse-if-blocked → backup → SOUL/USER → the
  * `Imported` Space → facts/events → secrets → archive → NOTES → marker →
- * ownership fix LAST. The marker moved before the ownership fix (A3): a
+ * ownership fix LAST. The marker moved before the ownership fix: a
  * root-run import that fixed ownership before writing `import.json` left
  * that marker (and its `.bak`) root-owned, which the next non-root daemon
  * boot could not rewrite.
@@ -365,11 +362,10 @@ async function applyImportLocked(
   const rootDir = deps.rootDir
   const now = deps.now ?? (() => new Date())
 
-  // Step 1 (A2): recompute the plan INSIDE the lock — never trust one built
+  // Step 1: recompute the plan INSIDE the lock — never trust one built
   // outside it. This is what stops two concurrent applies of the same
-  // source from both observing "not previously imported"
-  // (`tasks/plan.md` reconciliation item 2, which claimed this already
-  // happened; it did not). `planLegacyImport` is the exact
+  // source from both observing "not previously imported".
+  // `planLegacyImport` is the exact
   // readTargetState/loadImportState/buildImportPlan composition preview
   // call sites use, so preview and apply can never structurally disagree —
   // only the moment they run (before vs. inside the lock) differs.
@@ -384,7 +380,7 @@ async function applyImportLocked(
   // Step 2: a blocked plan means a conflict `--overwrite` did not (or
   // cannot) clear, or an environmental refusal (no backup key material,
   // source/target overlap, oversize identity file, a bad target root) —
-  // decision 8. Nothing has been written yet.
+  // Nothing has been written yet.
   if (plan.blocked.length > 0) {
     throw new ImportRefusedError(
       `import refused:\n${plan.blocked.map((reason) => `- ${reason}`).join('\n')}`,
@@ -392,7 +388,7 @@ async function applyImportLocked(
     )
   }
 
-  // Pre-flight for secrets (decision 12/13): `--secrets` was requested but
+  // Pre-flight for secrets: `--secrets` was requested but
   // this process has no vault. This check is hoisted BEFORE the backup
   // (rather than only at the literal "step 7" secrets stage) precisely
   // because "refuse before writing anything else" only holds if it runs
@@ -404,7 +400,7 @@ async function applyImportLocked(
     throw new ImportRefusedError(reason, [reason])
   }
 
-  // Step 3: backup. No key material, no backup, no mutation — decision 10.
+  // Step 3: backup. No key material, no backup, no mutation.
   // (A blocked plan above would already have refused here — `buildImportPlan`
   // blocks whenever `backupAvailable` is false — so this check is now only
   // TypeScript narrowing of `deps.keyMaterial` before `createBackup`.)
@@ -440,7 +436,7 @@ async function applyImportLocked(
     ? importAllowlistedSecrets(rootDir, deps.vault, input.secrets.importable)
     : []
 
-  // Step 8: archive + NOTES.md — decision 11. A17: `buildNotesMarkdown` now
+  // Step 8: archive + NOTES.md. `buildNotesMarkdown` now
   // renders the REAL `WriteImportArchiveResult` from the walk that just ran
   // (archived files and every skipped one with its reason), not the plan's
   // pre-apply candidate count — those two disagreeing (a directory counted
@@ -458,11 +454,10 @@ async function applyImportLocked(
     { mode: 0o600 },
   )
 
-  // Step 10: the marker (A3: before the ownership fix, not after — see that
+  // Step 10: the marker (before the ownership fix, not after — see that
   // step's comment). A crash before this point leaves per-item conflicts
   // (SOUL/USER already there, `imported` Space already there) that make the
-  // retry refuse with an actionable message on their own — decision 9,
-  // intended behaviour.
+  // retry refuse with an actionable message on their own: intended behaviour.
   const priorState = loadImportState(rootDir)
   const entry: ImportStateEntry = {
     source: input.snapshot.kind,
@@ -474,7 +469,7 @@ async function applyImportLocked(
   }
   saveImportState(rootDir, { version: 1, imports: [...priorState.imports, entry] })
 
-  // Step 11 (A3): ownership fix LAST, after the marker — a root-run import
+  // Step 11: ownership fix LAST, after the marker — a root-run import
   // that fixed ownership before writing `import.json` left that marker (and
   // its `saveImportState`-created `.bak`) root-owned, since the chown walk
   // above would already have finished before those files existed. Running
@@ -498,13 +493,11 @@ async function applyImportLocked(
 }
 
 /**
- * The importer's write path (`tasks/plan.md` T5): the CLI and the wizard
- * routes call this identically (decision 17 — no logic duplicated between
- * front ends). Everything up to and including the lock acquisition/release
- * is decision 9's "one writer at a time"; `applyImportLocked` is the
- * ordered body the lock protects. Any error — a thrown `ImportRefusedError`
- * or anything else — still releases the lock: the `finally` below runs
- * regardless, so a refusal never leaves a stuck `import.lock` behind.
+ * The importer's write path: the CLI and the wizard routes call this identically (no logic
+ * duplicated between front ends). Everything up to and including the lock acquisition/release is
+ * the "one writer at a time" rule; `applyImportLocked` is the ordered body the lock protects.
+ * Any error — a thrown `ImportRefusedError` or anything else — still releases the lock: the
+ * `finally` below runs regardless, so a refusal never leaves a stuck `import.lock` behind.
  */
 export async function applyImport(
   deps: ApplyImportDeps,

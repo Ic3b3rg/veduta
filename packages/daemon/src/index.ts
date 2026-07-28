@@ -15,7 +15,7 @@ start().catch((err) => {
 
 async function start(): Promise<void> {
   // Every current and future console sink is covered from the very first
-  // line (issue #15 D3, v3): nothing logs before secrets can be redacted.
+  // line (issue #15): nothing logs before secrets can be redacted.
   installConsoleRedaction()
   const dataDirOption = process.env.VEDUTA_DATA_DIR ? { dataDir: process.env.VEDUTA_DATA_DIR } : {}
   const domain = process.env.VEDUTA_PUBLIC_DOMAIN
@@ -48,8 +48,8 @@ async function start(): Promise<void> {
 
   if (auth.status().bootstrapRequired) {
     // `auth.bootstrapCode()` (not the local `bootstrapCode` this process
-    // generated/read from the env) is the effective code (plan v2 decision
-    // 11): a restart after a code expired unconsumed mints and persists a
+    // generated/read from the env) is the effective code: a restart after a
+    // code expired unconsumed mints and persists a
     // fresh one internally, and this accessor is the seam that surfaces it —
     // printing the stale local value here would print a code that no longer
     // works.
@@ -83,10 +83,10 @@ async function start(): Promise<void> {
     ...dataDirOption,
     https: certificate,
     auth: { mode: 'production', store: auth, allowedOrigins: [origin] },
-    // Global egress enforcement (issue #15 D1): only the production/VPS
+    // Global egress enforcement (issue #15): only the production/VPS
     // profile installs the process-wide denying dispatcher.
     egress: { enforce: true },
-    // Onboarding wizard wiring (issue #19 T4): the VPS profile's real
+    // Onboarding wizard wiring (issue #19): the VPS profile's real
     // domain/TLS state, so the wizard's `domain` step reflects what this
     // daemon actually detected rather than the loopback defaults.
     onboarding: { domain, tlsActive: true, env: process.env },

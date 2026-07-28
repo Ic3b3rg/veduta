@@ -28,6 +28,11 @@ single source of truth for coding agents; `CLAUDE.md` just imports it.
 - English only: code, comments, commit messages, issues, docs.
 - Never add `Co-Authored-By` or any AI-signature trailer to commits.
 - Do not edit `pnpm-lock.yaml` by hand; do not commit generated output (`dist/`, coverage).
+- **A comment may only cite something a reader of this repository can open.** Working notes
+  (`tasks/`) are never committed, so a comment citing `tasks/plan.md`, a numbered "decision 7",
+  or a review-round label (`A3`, `B12`, `D10`, `T5`, "this fix group's report") points at
+  nothing. Put durable rationale in an ADR, the `issues/NNN-*.md` spec, `docs/references/`, or
+  the comment itself — then cite that. Enforced by `dead-references.test.ts`.
 
 ## Repo map
 

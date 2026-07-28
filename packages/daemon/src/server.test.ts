@@ -75,9 +75,9 @@ describe('GET /api/spaces', () => {
       surfaceCursor: number
       spaces: { slug: string; surfaces: unknown[] }[]
     }
-    // Boot pre-creates several cursor-bearing Surfaces (D9): the scheduler's
+    // Boot pre-creates several cursor-bearing Surfaces: the scheduler's
     // Automations Surface for every persisted Space (health, and now the
-    // real System Space too — issue #14, D8), the trust layer's allowlist
+    // real System Space too — issue #14), the trust layer's allowlist
     // and audit admin Surfaces in the System Space (4 cursor ticks so far),
     // plus the Heartbeat's boot-time reconciliation (issue #16): two default
     // heartbeat times each arm a managed job on the System Space's
@@ -239,7 +239,7 @@ describe('production auth boundary', () => {
   })
 })
 
-describe('onboarding wizard routes (issue #19 T4)', () => {
+describe('onboarding wizard routes (issue #19)', () => {
   it('serves /setup as the SPA without auth, but requires a session for /api/onboarding in the vps profile', async () => {
     const pwaDistDir = await mkdtemp(join(tmpdir(), 'veduta-pwa-'))
     await writeFile(join(pwaDistDir, 'index.html'), '<div id="root"></div>')
@@ -296,7 +296,7 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
     const { app, store } = buildServer()
     expect(store.llmCallCount()).toBe(0)
     // The scheduler's boot-time Automations Surface create already consumed
-    // a cursor (D9); assert relative to that baseline instead of assuming 0.
+    // a cursor; assert relative to that baseline instead of assuming 0.
     const baseline = store.latestSurfaceCursor()
     const res = await app.inject({
       method: 'POST',
@@ -1114,7 +1114,7 @@ describe('Web Push notifications (issue #18)', () => {
     await flushNotificationAsync()
 
     // Managed escalations must never fabricate an "Agent-armed" push
-    // justification (plan v2 decision 2): they surface as a badge only.
+    // justification: they surface as a badge only.
     expect(transport.calls).toHaveLength(0)
     expect(pushStore.getAttention('spc-health')).toEqual({ count: 1, revision: 1 })
     const notificationEvent = store

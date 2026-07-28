@@ -22,7 +22,7 @@ function parseStageEvents(stdout: string) {
   return lines.map((line) => InstallerStageEventSchema.parse(JSON.parse(line)))
 }
 
-describe('deploy/install.sh preview mode (issue 019 T7)', () => {
+describe('deploy/install.sh preview mode (issue 019)', () => {
   const dirsToClean: string[] = []
 
   afterEach(() => {

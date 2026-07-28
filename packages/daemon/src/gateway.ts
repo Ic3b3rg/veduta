@@ -71,7 +71,7 @@ export class GatewayHub {
     this.disposeAuthListener = options.auth?.onSessionRevoked((event) => {
       this.closeRevokedDevice(event.deviceId)
     })
-    // The one and only Surface-lifecycle broadcaster (D9): every committed
+    // The one and only Surface-lifecycle broadcaster: every committed
     // patch/created/archived event flows through here exactly once, however
     // it was produced (fast path, Agent tool, scheduler projection, mock
     // chat effect) — nothing else in this class calls `pwa.broadcast` with a
@@ -146,14 +146,14 @@ export class GatewayHub {
     this.pwa.broadcast({ type: 'chat.message', message: { role: 'assistant', text } })
   }
 
-  /** Broadcasts a new approval card chip (issue #14, D13) to every connected client. */
+  /** Broadcasts a new approval card chip (issue #14) to every connected client. */
   broadcastApprovalCard(card: ApprovalCard): void {
     this.pwa.broadcast({ type: 'approval.card', card })
   }
 
   /**
-   * Broadcasts a Space's updated attention badge (issue #18, plan v2
-   * decision 12) to every connected client. No queueing for offline
+   * Broadcasts a Space's updated attention badge (issue #18) to every
+   * connected client. No queueing for offline
    * clients, unlike `broadcastSystemNotice`: a reconnecting/late client
    * always gets the authoritative value from the next `/api/spaces`
    * snapshot, and the client applies highest-revision-wins, so a missed

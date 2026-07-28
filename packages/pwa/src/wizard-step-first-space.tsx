@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { WIZARD_STEP_META } from './onboarding-state.ts'
 
 /**
- * First-Space step (`tasks/plan.md` §3-4): name prefilled with the daemon's
+ * First-Space step: name prefilled with the daemon's
  * suggested name; the daemon reconciles by slug, so an existing Space of
  * the same name is reused rather than duplicated (surfaced here so a resume
  * isn't surprising).

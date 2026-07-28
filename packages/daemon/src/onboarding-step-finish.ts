@@ -18,7 +18,7 @@ export interface FinishDeps {
 }
 
 /**
- * `POST /api/onboarding/finish` (`tasks/plan.md` §4): marks the wizard
+ * `POST /api/onboarding/finish` (§4): marks the wizard
  * `completed` and persists `completedAt` FIRST — durable before the process
  * might die — then, only on the VPS profile, schedules the graceful exit so
  * systemd (`Restart=always`) reboots the daemon with the now-current

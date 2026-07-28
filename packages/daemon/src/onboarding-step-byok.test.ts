@@ -151,7 +151,7 @@ describe('applyByok', () => {
     expect(loadOnboardingConfig(dir).steps.byok).toBe('completed')
   })
 
-  it('B2 regression: keep-existing against a key placed in the vault out-of-band still points routing at it', () => {
+  it('keep-existing against a key placed in the vault out-of-band still points routing at it', () => {
     const dir = freshRoot()
     const vault = SecretsVault.open(dir, KEY_MATERIAL)
     // Simulate a key that reached the vault some other way (the vault CLI, an

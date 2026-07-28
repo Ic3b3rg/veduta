@@ -68,7 +68,7 @@ describe('auth state file', () => {
     const dir = await mkdtemp(join(tmpdir(), 'veduta-auth-'))
     const path = join(dir, 'auth.json')
     // Hand-written, deliberately missing the field entirely — simulates an
-    // auth.json from before issue #19 T4 added it.
+    // auth.json from before issue #19 added it.
     await writeFile(
       path,
       JSON.stringify({

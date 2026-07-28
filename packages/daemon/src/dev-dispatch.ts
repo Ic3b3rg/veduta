@@ -5,13 +5,13 @@ import type { SpacesEngine } from './spaces-engine.ts'
 import { effectiveOrigin, gateToolsForOrigins, TurnTaintAccumulator, type Origin } from './taint.ts'
 
 /**
- * Dev-profile chat dispatcher (issue #14, D12) — a deterministic stand-in
+ * Dev-profile chat dispatcher (issue #14) — a deterministic stand-in
  * for the future Agent loop, exactly like `armReminderFromChat`/the mock
  * chat→Surface effect it sits alongside in `server.ts`. It recognizes two
  * fixed command shapes ("send to <addr>: <text>", "transfer <amount> to
  * <addr>") and dispatches straight to the already trust-wrapped outbound
  * tools (`outbound-tools.ts`), building the same live turn-context contract
- * (`ToolContext.taint`/`origins`/`contextHash`, D10/A1/A3) a real runner
+ * (`ToolContext.taint`/`origins`/`contextHash`) a real runner
  * would build for one tool call — so the trust layer's decision matrix
  * (allow / card / deny) is exercised exactly as it would be from a real
  * turn. This module is a placeholder: the real Agent loop replaces it
@@ -48,7 +48,7 @@ export interface DevDispatchOptions {
   spacesEngine: SpacesEngine
   /** The trust-wrapped tool set (`trust.wrapTools(createOutboundTools(...))`) offered to this dev turn. */
   tools: ToolDef[]
-  /** `isTrustWrapped` from `trust-layer.ts`, forwarded to `gateToolsForOrigins` (D5). */
+  /** `isTrustWrapped` from `trust-layer.ts`, forwarded to `gateToolsForOrigins`. */
   isTrustWrapped: (tool: ToolDef) => boolean
   /** Out-of-band reply to the originating client (`GatewayHub.replyToClient`). */
   reply: (clientId: string, text: string) => void

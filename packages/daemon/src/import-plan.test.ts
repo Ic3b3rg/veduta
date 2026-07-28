@@ -217,12 +217,12 @@ describe('buildImportPlan — hard blocks overwrite cannot clear', () => {
     expect(plan.blocked.some((line) => line.includes('overlap'))).toBe(true)
   })
 
-  it('A13: blocks when the target root is "/"', () => {
+  it('blocks when the target root is "/"', () => {
     const plan = buildImportPlan(baseInput({ target: target({ rootDir: '/' }) }))
     expect(plan.blocked.some((line) => line.includes('cannot be "/"'))).toBe(true)
   })
 
-  it('A13: blocks when the target root does not exist or is not a directory', () => {
+  it('blocks when the target root does not exist or is not a directory', () => {
     const plan = buildImportPlan(
       baseInput({ target: target({ rootIsDirectory: false, rootDir: '/does/not/exist' }) }),
     )
@@ -234,11 +234,11 @@ describe('buildImportPlan — hard blocks overwrite cannot clear', () => {
   })
 })
 
-describe('buildImportPlan — A1: staged-path overlap exemption', () => {
+describe('buildImportPlan — staged-path overlap exemption', () => {
   it('does not block when the source is the canonical staged directory inside the target root', () => {
     // The installer stages a legacy install *inside* the daemon's own data
-    // directory by design (`tasks/plan.md` decision 16), so this exact path
-    // is the one overlap that must never refuse. Before A1, every staged
+    // directory by design, so this exact path
+    // is the one overlap that must never refuse. Without the exemption, every staged
     // import on Linux tripped the generic overlap refusal — the existing
     // tests missed it only because macOS `mkdtempSync` returns
     // `/var/folders/…` while `readLegacySource` realpaths to

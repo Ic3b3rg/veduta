@@ -63,7 +63,7 @@ describe('ImportPreviewRequestSchema and ImportApplyRequestSchema', () => {
     )
   })
 
-  it('takes the same shape for preview and apply (option parity, decision 7)', () => {
+  it('takes the same shape for preview and apply (option parity)', () => {
     const body = { source: 'openclaw' as const, overwrite: true, secrets: false }
     expect(ImportPreviewRequestSchema.parse(body)).toEqual(ImportApplyRequestSchema.parse(body))
   })
@@ -108,7 +108,7 @@ describe('ImportItemSchema / ImportPlanSchema', () => {
     expect(ImportPlanSchema.safeParse(withMarker).success).toBe(true)
   })
 
-  it('rejects an alreadyImported.at that is not an ISO datetime (A8)', () => {
+  it('rejects an alreadyImported.at that is not an ISO datetime', () => {
     const withBadMarker = {
       ...validPlan,
       alreadyImported: { source: 'hermes', at: 'last Tuesday' },
@@ -194,7 +194,7 @@ describe('ImportResultSchema', () => {
     ).toBe(true)
   })
 
-  it('rejects a secretsImported entry that is not one of the three provider names (A8)', () => {
+  it('rejects a secretsImported entry that is not one of the three provider names', () => {
     // A z.string() here would happily validate a literal secret value that
     // slipped through; ByokProviderSchema makes that impossible to parse.
     expect(

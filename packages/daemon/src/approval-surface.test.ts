@@ -134,7 +134,7 @@ describe('buildApprovalCardSurface', () => {
     )
     const title = findNode(surface.tree, 'title')
     expect(title?.props?.['text']).not.toContain('<<<evil>>>')
-    // Fix 9a: `Surface.title` must be neutralized exactly like the Title
+    // `Surface.title` must be neutralized exactly like the Title
     // atom's own text — both are derived from the same (possibly
     // untrusted-influenced) `card.title`.
     expect(surface.title).not.toContain('<<<evil>>>')
@@ -508,7 +508,7 @@ describe('ApprovalSurfaceManager (real Store + TrustLayer)', () => {
       }
     })
 
-    it('a click resolves correctly even before start() has run at all (Fix A: no dependency on the in-memory rehydration order)', async () => {
+    it('a click resolves correctly even before start() has run at all (no dependency on the in-memory rehydration order)', async () => {
       const executed: unknown[] = []
       const { surfaceId } = await createCard(
         sendMessageTool((input) => executed.push(input)),
@@ -558,7 +558,7 @@ describe('ApprovalSurfaceManager (real Store + TrustLayer)', () => {
   })
 
   describe('start() — null surface_id repair and impostor rejection (issue #14 review fix)', () => {
-    /** Raw db access: simulates `createCard()` crashing between `insertApprovalRow` and `setSurfaceId` (D7), which no public API can otherwise construct. */
+    /** Raw db access: simulates `createCard()` crashing between `insertApprovalRow` and `setSurfaceId`, which no public API can otherwise construct. */
     interface RawDb {
       prepare(sql: string): { run(...args: unknown[]): unknown; get(...args: unknown[]): unknown }
     }

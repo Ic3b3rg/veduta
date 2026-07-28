@@ -25,7 +25,7 @@ import { promisify } from 'node:util'
 import { openGcm, sealGcm } from './secret-crypto.ts'
 
 /**
- * Encrypted backups (issue #15 D5, docs/SECURITY.md): a point-in-time,
+ * Encrypted backups (issue #15, docs/SECURITY.md): a point-in-time,
  * encrypted-at-rest snapshot of everything under a daemon's `rootDir`.
  *
  * `createBackup` stages every `*.sqlite` store directly under `rootDir`

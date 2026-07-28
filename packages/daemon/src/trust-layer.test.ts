@@ -148,7 +148,7 @@ function createLayer(overrides: Partial<TrustLayerOptions> = {}): TrustLayer {
   return layer
 }
 
-/** Raw db access for tests that must reach past the public API (crash simulation): reaches through the facade's private `store` to its private `db` (Fix 7 split). */
+/** Raw db access for tests that must reach past the public API (crash simulation): reaches through the facade's private `store` to its private `db`. */
 interface RawDb {
   prepare(sql: string): { run(...args: unknown[]): unknown; get(...args: unknown[]): unknown }
 }
@@ -156,7 +156,7 @@ function dbOf(layer: TrustLayer): RawDb {
   return (layer as unknown as { store: { db: RawDb } }).store.db
 }
 
-/** Seeds an allowlist rule directly, past `decide()`, for adversarial "even a planted rule must not help" tests (Fix 7: `upsertAllowlistRule` now lives on `TrustStore`). */
+/** Seeds an allowlist rule directly, past `decide()`, for adversarial "even a planted rule must not help" tests (`upsertAllowlistRule` now lives on `TrustStore`). */
 function seedAllowlistRule(
   layer: TrustLayer,
   toolName: string,
@@ -437,7 +437,7 @@ describe('decision matrix', () => {
     expect(result.content).toMatch(/needs your approval/)
   })
 
-  it('taint added mid-turn (after the taint accumulator was seeded) still forces a card (A1)', async () => {
+  it('taint added mid-turn (after the taint accumulator was seeded) still forces a card', async () => {
     const layer = createLayer()
     const tool = sendMessageTool()
     layer.register(tool, sendMessageMeta)
@@ -456,7 +456,7 @@ describe('decision matrix', () => {
   })
 })
 
-describe('TriggerRef.parent (Fix 8)', () => {
+describe('TriggerRef.parent', () => {
   it('a two-hop trigger chain round-trips through a decision audit row', () => {
     const layer = createLayer()
     const twoHop: TriggerRef = {
@@ -622,10 +622,10 @@ describe('resolve()', () => {
 
 describe('allowlist management', () => {
   // Allowlist upsert idempotency and the schema-level NOT NULL constraint on
-  // `created_from_approval_id` live in trust-store.test.ts (Fix 7):
+  // `created_from_approval_id` live in trust-store.test.ts:
   // `upsertAllowlistRule` and the DDL itself both live on `TrustStore`. The
   // grant/revoke/match mechanics themselves are unit-tested directly against
-  // `TrustAllowlist` in trust-allowlist.test.ts (Fix C); what remains here is
+  // `TrustAllowlist` in trust-allowlist.test.ts; what remains here is
   // `TrustLayer`'s own integration of them into decide()/resolve().
 
   it('revokeAllowlistRule sets revoked_at, audits allowlist.revoked, and the rule stops matching', async () => {
@@ -658,7 +658,7 @@ describe('allowlist management', () => {
     expect(result.content).toMatch(/needs your approval/)
   })
 
-  it('allowlist.created carries the full provenance of the approval that granted it (Fix 5)', async () => {
+  it('allowlist.created carries the full provenance of the approval that granted it', async () => {
     const layer = createLayer()
     const tool = sendMessageTool()
     layer.register(tool, sendMessageMeta)
@@ -683,7 +683,7 @@ describe('allowlist management', () => {
     expect(created?.trigger).toEqual(trigger)
     expect(created?.contextHash).toBe('hash-provenance')
     expect(created?.spaceId).toBe('spc-test')
-    // Fix B: the approved (validated) input, not just the allowlist match
+    // The approved (validated) input, not just the allowlist match
     // params in `detail` — the rule's audit row is exactly as complete as
     // the `approval.decided` row it accompanies.
     expect(created?.input).toEqual({ to: 'alice@example.com', body: 'hi' })
@@ -691,11 +691,11 @@ describe('allowlist management', () => {
 
   // The actor/Space specifics of a revoke's own audit row, and the
   // no-op-on-unknown-id case, are unit-tested directly against
-  // `TrustAllowlist` in trust-allowlist.test.ts (Fix C split) — nothing
+  // `TrustAllowlist` in trust-allowlist.test.ts — nothing
   // about them depends on decide()/resolve(), only on `TrustStore`.
 })
 
-describe('listPending / attachSurfaceId (D7, Fix 3)', () => {
+describe('listPending / attachSurfaceId', () => {
   it('returns a still-pending, non-expired card with a card model matching what createCard() would have built', async () => {
     const layer = createLayer()
     const tool = sendMessageTool()
@@ -785,7 +785,7 @@ describe('listPending / attachSurfaceId (D7, Fix 3)', () => {
 })
 
 describe('hasPendingCardSurface (issue #14 review fix)', () => {
-  /** Directly inserts a pending row with a `null` surface_id — simulates `createCard()` crashing before `setSurfaceId` runs (D7). */
+  /** Directly inserts a pending row with a `null` surface_id — simulates `createCard()` crashing before `setSurfaceId` runs. */
   function insertNullSurfaceRow(layer: TrustLayer, id: string): void {
     const db = dbOf(layer)
     const nowIso = now().toISOString()
@@ -835,7 +835,7 @@ describe('hasPendingCardSurface (issue #14 review fix)', () => {
 
 // The audit log's append-only triggers and its one-outcome-per-ref_id unique
 // index are schema-level guarantees now covered directly against
-// `TrustStore` in trust-store.test.ts (Fix 7).
+// `TrustStore` in trust-store.test.ts.
 
 describe('recovery (start())', () => {
   it('expires an overdue pending approval left over from a previous run', async () => {
@@ -903,7 +903,7 @@ describe('recovery (start())', () => {
     expect(outcome[0]?.outcome).toBe('executed')
   })
 
-  it('recovery dedupes the outcome event when the Space log already carries it but outcome_event_at never committed (Fix 6a crash window)', async () => {
+  it('recovery dedupes the outcome event when the Space log already carries it but outcome_event_at never committed', async () => {
     const loggedEffectIds = new Set<string>()
     const layer1 = createLayer({
       hasOutcomeEvent: (_spaceId, effectId) => loggedEffectIds.has(effectId),
@@ -958,7 +958,7 @@ describe('recovery (start())', () => {
     expect(outcome).toHaveLength(1)
   })
 
-  it('appends the Space outcome event exactly once for a terminal row whose event never landed (Fix 10 crash window)', async () => {
+  it('appends the Space outcome event exactly once for a terminal row whose event never landed', async () => {
     const layer1 = createLayer()
     const db = dbOf(layer1)
     const nowIso = now().toISOString()
@@ -976,7 +976,7 @@ describe('recovery (start())', () => {
       expiresAt,
       nowIso,
     )
-    // Simulates the crash window (Fix 10): the same transaction that set
+    // Simulates the crash window: the same transaction that set
     // status = 'approved' also inserted this action.outcome row
     // (executeAndFinalize's real behavior), but the daemon crashed before
     // appendOutcomeEventIfNeeded ran, so outcome_event_at is still null and

@@ -17,7 +17,7 @@ import type { FastMutationNotice, Store } from './store.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 
 /**
- * The Notification settings Surface (issue #18, plan v2 decision 13):
+ * The Notification settings Surface (issue #18):
  * quiet-hours window, timezone and queued-push count, then one Row per
  * user Space with a budget Select, "sent today" and "degraded today"
  * Stats. Same daemon-owned, persisted System-Space Surface idiom as
@@ -33,7 +33,7 @@ const CAPTION_NODE_ID = 'subtitle'
 const QUEUED_STAT_NODE_ID = 'stat-queued'
 const ROWS_BOX_NODE_ID = 'notif-rows'
 
-/** Offered daily push budgets (plan v2 decision 13). */
+/** Offered daily push budgets. */
 const BUDGET_OPTIONS = ['0', '1', '3', '5', '10'] as const
 
 const BUDGET_STATE_KEY_PREFIX = 'notif-budget:'

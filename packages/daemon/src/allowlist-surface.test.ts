@@ -68,7 +68,7 @@ describe('allowlistSurface', () => {
 
   it('renders the tool name and params via the ListItem label/detail props', () => {
     // `label`/`detail` are the props ListItemAtom (@veduta/catalog atoms.tsx)
-    // actually reads — `title`/`subtitle` render nothing (Fix 1 regression).
+    // actually reads — `title`/`subtitle` render nothing (regression guard).
     const surface = allowlistSurface([rule()], freshness)
     const summary = surface.tree.children?.[2]?.children?.[0]?.children?.[0]
     expect(summary?.type).toBe('ListItem')
@@ -134,7 +134,7 @@ describe('AllowlistSurfaceManager', () => {
 
     trust.rules = [rule(), rule({ id: 2, toolName: 'transfer_funds' })]
     trust.revokeAllowlistRule(999) // any change notifies listeners
-    // Fix 9b: the rebuild is coalesced onto a microtask, not run inline.
+    // The rebuild is coalesced onto a microtask, not run inline.
     await manager.flush()
 
     const surface = store.getSurface(ALLOWLIST_SURFACE_ID)
@@ -142,7 +142,7 @@ describe('AllowlistSurfaceManager', () => {
     expect(list?.children).toHaveLength(2)
   })
 
-  it('coalesces several onChange firings in the same burst into a single rebuild (Fix 9b)', async () => {
+  it('coalesces several onChange firings in the same burst into a single rebuild', async () => {
     const store = new Store()
     ensureSystemSpace(store.spacesEngine)
     const trust = new FakeTrust([rule()])
@@ -182,7 +182,7 @@ describe('AllowlistSurfaceManager', () => {
     })
     // The revoke call is deferred to a microtask so the click's own fast-path
     // patch broadcasts before the rebuild it triggers; the rebuild itself is
-    // further coalesced onto its own microtask (Fix 9b), so both hops must
+    // further coalesced onto its own microtask, so both hops must
     // settle before asserting.
     await Promise.resolve()
     await Promise.resolve()

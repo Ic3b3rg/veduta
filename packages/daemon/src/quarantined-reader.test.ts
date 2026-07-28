@@ -325,7 +325,7 @@ describe('injection corpus', () => {
   // user…") echoes its own body so the corpus loop itself exercises the
   // nested-instruction sanitizer class (issue #015 will inherit this suite).
   //
-  // Entries 5-9 (issue #015 D4) simulate a *compromised* extraction model —
+  // Entries 5-9 (issue #015) simulate a *compromised* extraction model —
   // one that got fooled by the injected content and echoed it (or, for the
   // link/image/base64 vectors, what it induced) straight into a field. The
   // deterministic sanitizer is the backstop that must still catch it:

@@ -133,7 +133,7 @@ export function loadRoutingConfig(rootDir: string): RoutingConfig {
 
 /**
  * Validates `config` against the strict schema, backs up the existing
- * `routing.json` (if any — issue #19 decision 6, routing is a wizard-driven
+ * `routing.json` (if any — issue #19, routing is a wizard-driven
  * config file), then writes the new state atomically. Routing is boot-time
  * wiring (`server.ts`): callers must restart the daemon for a saved config
  * to take effect.
@@ -539,7 +539,7 @@ function parseUsageEntry(line: string): UsageEntry | undefined {
 /**
  * Keeps provider diagnostics out of durable logs: masks common API key
  * shapes, then delegates to the shared redactor (registered secret values
- * + built-in patterns — issue #15 D3), then truncates. Truncation happens
+ * + built-in patterns — issue #15), then truncates. Truncation happens
  * LAST so a partially-cut secret can never survive by falling on the
  * boundary before redaction runs.
  */

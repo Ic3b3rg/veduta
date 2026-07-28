@@ -6,13 +6,13 @@ import type {
 } from '@veduta/protocol'
 
 /**
- * Pure presentation logic for the onboarding wizard (issue 019,
- * `tasks/plan.md` "Design decisions (v2)" §3-4): step metadata/copy, resume
- * (current step + progress indicator), and small read-only helpers over
- * `OnboardingStatus`. No DOM access at module scope, no fetch — the wizard
- * shell (`onboarding-wizard.tsx`, T6) is the only caller that touches the
- * network, following the `home-state.ts` / `notification-onboarding.ts`
- * convention of keeping wizard logic unit-testable without a browser.
+ * Pure presentation logic for the onboarding wizard (issue 019): step
+ * metadata/copy, resume (current step + progress indicator), and small
+ * read-only helpers over `OnboardingStatus`. No DOM access at module scope,
+ * no fetch — the wizard shell (`onboarding-wizard.tsx`) is the only caller
+ * that touches the network, following the `home-state.ts` /
+ * `notification-onboarding.ts` convention of keeping wizard logic
+ * unit-testable without a browser.
  */
 
 export interface OnboardingStepMeta {
@@ -90,8 +90,8 @@ export function visibleSteps(status: OnboardingStatus): OnboardingStepId[] {
 /**
  * The step to show right now. Trusts `status.currentStep` when the daemon
  * supplies one; otherwise falls back to the first `pending` step in
- * `status.steps` order (resume = first incomplete step, `tasks/plan.md` §2).
- * `null` when every step is done (or there are no steps at all).
+ * `status.steps` order (resume = first incomplete step). `null` when every
+ * step is done (or there are no steps at all).
  */
 export function currentStep(status: OnboardingStatus): OnboardingStepId | null {
   if (status.currentStep !== null) return status.currentStep
@@ -115,8 +115,8 @@ export function isStepDone(status: OnboardingStatus, id: OnboardingStepId): bool
 
 /**
  * Whether the BYOK step can offer "keep existing key" for a provider — the
- * keep-existing sentinel (`tasks/plan.md` §4/§7) only makes sense when the
- * vault already has a key stored for it.
+ * keep-existing sentinel only makes sense when the vault already has a key
+ * stored for it.
  */
 export function byokKeepExistingAvailable(
   status: OnboardingStatus,

@@ -193,7 +193,7 @@ input:focus-visible {
   font-weight: 700;
 }
 
-/* Notification bell + iOS guided-install sheet (issue 018, decision 16):
+/* Notification bell + iOS guided-install sheet (issue 018):
    same visual family as .approval-card / .install-button, no new tokens. */
 .notif-bell {
   position: relative;
@@ -246,7 +246,7 @@ input:focus-visible {
   padding: 10px 12px;
   /* Some dead-end messages (issue 020's migration 409s) are multi-line and
      carry an exact shell command -- it must stay copyable and on its own
-     line, never reflowed into one unreadable run (`tasks/plan.md` T8 AC). */
+     line, never reflowed into one unreadable run. */
   white-space: pre-wrap;
 }
 
@@ -514,8 +514,9 @@ input:focus-visible {
 }
 
 /* Onboarding wizard (issue 019): same visual family as .auth-shell/.auth-form
-   (bespoke full-screen app chrome, not a Surface — `tasks/plan.md` §1) and
-   .status-pill/.error — no new custom properties, only the tokens above. */
+   (bespoke full-screen app chrome, not a Surface — see
+   docs/adr/0003-declarative-atoms.md) and .status-pill/.error — no new
+   custom properties, only the tokens above. */
 .wizard-shell {
   display: grid;
   gap: 16px;
@@ -684,9 +685,9 @@ input:focus-visible {
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
 }
 
-/* Migration step's Import/Overwrite/Skip groups (issue 020, `tasks/plan.md`
-   T8): same box as .wizard-tier, a real <h3> heading instead of a <legend>
-   since a group is a <section>, not a <fieldset>. */
+/* Migration step's Import/Overwrite/Skip groups (issue 020): same box as
+   .wizard-tier, a real <h3> heading instead of a <legend> since a group is
+   a <section>, not a <fieldset>. */
 .wizard-import-group {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -703,10 +704,10 @@ input:focus-visible {
   padding: 0 4px;
 }
 
-/* The adapted SOUL.md text inside the migration step's <details> (issue 020,
-   `tasks/plan.md` design decision 3): the one place a wizard step shows a
-   large text block, so it scrolls in its own box instead of stretching the
-   step or forcing a horizontal page scroll. */
+/* The adapted SOUL.md text inside the migration step's <details> (issue 020):
+   the one place a wizard step shows a large text block, so it scrolls in
+   its own box instead of stretching the step or forcing a horizontal page
+   scroll. */
 .wizard-soul-preview {
   background: var(--surface);
   border: 1px solid var(--border);

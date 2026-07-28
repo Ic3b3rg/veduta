@@ -35,7 +35,7 @@ function freshRoot(): string {
 
 const KEY_MATERIAL = Buffer.from('a test migration vault key, long enough for scrypt derivation')
 
-/** The flat staged layout the installer writes (`tasks/plan.md` decision 16): `<root>/import-source/hermes/{SOUL,USER,MEMORY}.md`. */
+/** The flat staged layout the installer writes (`docs/adr/0010-importer-trust-and-refusal.md`): `<root>/import-source/hermes/{SOUL,USER,MEMORY}.md`. */
 function buildStagedHermesFixture(
   rootDir: string,
   overrides: { soul?: string; user?: string; memory?: string } = {},
@@ -189,8 +189,8 @@ describe('previewLegacyImport', () => {
     expect(caught).toBeInstanceOf(OnboardingStepError)
     const error = caught as OnboardingStepError
     expect(error.statusCode).toBe(409)
-    // B1: the script was renamed `import` -> `import-legacy` (pnpm's own
-    // built-in `import` command shadowed the old name entirely). B7: the
+    // The script was renamed `import` -> `import-legacy` (pnpm's own
+    // built-in `import` command shadowed the old name entirely). The
     // dead end now also carries `--home`, pointing at the admin's own
     // resolved home (here, the same `dir` this test pinned via
     // `VEDUTA_LEGACY_HOME`, since nothing was detected to override it) --
@@ -201,12 +201,12 @@ describe('previewLegacyImport', () => {
     )
   })
 
-  it('B3: a resolved candidate that is a file, not a directory, still yields the 409 dead end (never a generic 500)', () => {
+  it('a resolved candidate that is a file, not a directory, still yields the 409 dead end (never a generic 500)', () => {
     const dir = freshRoot()
     const legacyHome = mkdtempSync(join(tmpdir(), 'veduta-legacy-home-'))
     // `.hermes` exists but is a plain file -- `resolveLegacyDir`'s own
     // `existsSync` check alone would have accepted this as "found"; only
-    // `resolveMigrationSourceDir`'s own readability check (B3) rejects it,
+    // `resolveMigrationSourceDir`'s own readability check rejects it,
     // so resolution correctly reports "nothing found" instead of handing a
     // non-directory path to `readLegacySource`, which would throw
     // `ImportSourceMissingError` past `sendStepError`'s specific mappings.
@@ -242,7 +242,7 @@ describe('runLegacyImport', () => {
     expect(existsSync(staged)).toBe(false)
   })
 
-  it('B4: a failure removing the staged copy never undoes an already-completed import', async () => {
+  it('a failure removing the staged copy never undoes an already-completed import', async () => {
     const dir = freshRoot()
     const staged = buildStagedHermesFixture(dir)
     // The removal is injected rather than provoked with a chmod: making the staged
@@ -265,7 +265,7 @@ describe('runLegacyImport', () => {
     })
 
     // The cleanup genuinely ran and genuinely failed (proving this test exercises the
-    // failure it claims to) -- yet the import is still fully recorded, per B4.
+    // failure it claims to) -- yet the import is still fully recorded.
     expect(result).toBeDefined()
     expect(attempted).toBe(true)
     expect(existsSync(staged)).toBe(true)

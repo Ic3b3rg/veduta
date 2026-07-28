@@ -1,6 +1,6 @@
 /**
  * Pure platform-detection + copy for the notification onboarding bell
- * (issue 018, decision 16). No DOM API calls at module scope — callers pass
+ * (issue 018). No DOM API calls at module scope — callers pass
  * in `navigator.userAgent`, `isStandalone()`, and `pushSupported()` so this
  * stays unit-testable without a browser.
  */

@@ -137,14 +137,14 @@ describe('AuditSurfaceManager', () => {
 
     trust.entries = [entry(), entry({ id: 2 })]
     trust.notify()
-    // Fix 9b: the rebuild is coalesced onto a microtask, not run inline.
+    // The rebuild is coalesced onto a microtask, not run inline.
     await manager.flush()
 
     const surface = store.getSurface(AUDIT_SURFACE_ID)
     expect(surface?.tree.children?.[2]?.children).toHaveLength(2)
   })
 
-  it('coalesces several onChange firings in the same burst into a single rebuild (Fix 9b)', async () => {
+  it('coalesces several onChange firings in the same burst into a single rebuild', async () => {
     const store = new Store()
     ensureSystemSpace(store.spacesEngine)
     const trust = new FakeTrust([entry()])

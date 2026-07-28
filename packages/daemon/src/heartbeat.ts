@@ -44,7 +44,7 @@ export type TriageOutput = z.infer<typeof TriageOutputSchema>
 
 /**
  * `justification` is required, non-empty, whenever `action` is `escalate`
- * (issue #18, plan v2 decision 2): the model must state why a good human
+ * (issue #18): the model must state why a good human
  * assistant would interrupt for this — never daemon boilerplate. Absent or
  * empty for `arm-timer`/`ignore`. A `superRefine` (not a discriminated
  * union) keeps the three actions sharing one flat shape, matching this
@@ -74,10 +74,9 @@ export const ReasonOutputSchema = z.object({ decisions: z.array(HeartbeatDecisio
 export type ReasonOutput = z.infer<typeof ReasonOutputSchema>
 
 /**
- * Context threaded through `onEscalation` (issue #18, plan v2 decisions
- * 2-3): the same shape the Scheduler passes, plus the triage-model-supplied
- * `justification`. `automationId` never applies to a Heartbeat concern (it
- * names no Automation of its own), so it is always absent here.
+ * Context threaded through `onEscalation` (issue #18 2-3): the same shape the Scheduler passes,
+ * plus the triage-model-supplied `justification`. `automationId` never applies to a Heartbeat
+ * concern (it names no Automation of its own), so it is always absent here.
  */
 export interface HeartbeatEscalationContext {
   surfaceId?: string
@@ -581,7 +580,7 @@ export class Heartbeat {
         ? 'Heartbeat: a Surface has gone stale with no automated self-heal available — please take a look.'
         : 'Heartbeat: a time-sensitive Surface has no coverage and no automated self-heal available — please take a look.'
     // The same origin this method stamps on its own `heartbeat.escalate`
-    // Space event below (issue #18, plan v2 decision 3) — reused, not
+    // Space event below (issue #18) — reused, not
     // re-derived, so the notification's provenance always matches the log.
     const origin: Origin = 'trusted:system'
     this.onEscalation?.(concern.spaceId, text, {

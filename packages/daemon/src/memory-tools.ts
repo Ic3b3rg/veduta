@@ -112,7 +112,7 @@ function resolveSpaceId(
  * through the same taint-aware renderer as `assembleContext`, so untrusted
  * text pulled up via `read_recent`/`search_log` still arrives origin-marked
  * and inside delimiters — and, since `ToolResult.origins` reports the origin
- * of every event rendered (D10), the runner folds them into the turn's live
+ * of every event rendered, the runner folds them into the turn's live
  * `taint` accumulator too. That closes what used to be a runtime re-gating
  * gap here: a turn that starts trusted but reads an untrusted event through
  * one of these tools is tainted, from that point on, for whatever it does
@@ -124,7 +124,7 @@ function formatEvents(events: SpaceEvent[]): string {
   return events.map(renderEventForContext).join('\n')
 }
 
-/** Every origin of the rendered events (D10), for `ToolResult.origins`. */
+/** Every origin of the rendered events, for `ToolResult.origins`. */
 function eventOrigins(events: SpaceEvent[]): Origin[] {
   return events.map((event) => event.origin)
 }

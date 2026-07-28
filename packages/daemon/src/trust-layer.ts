@@ -32,8 +32,8 @@ import {
  * code-level decision authority for every L1/L2 tool call. `decide()` is the
  * single place that turns a tool call into `allowed | card | denied` — never
  * the prompt. This module is the policy facade: the tool registry,
- * `decide()`, wrapping (D5), the resolve/claim flow (D6/A4), and boot/TTL
- * recovery orchestration (D7/A2). The durable state machine itself
+ * `decide()`, wrapping, the resolve/claim flow, and boot/TTL
+ * recovery orchestration. The durable state machine itself
  * (`trust.sqlite`'s schema, row codecs, and repository operations) lives in
  * `trust-store.ts` (`TrustStore`) — this module owns *what* gets decided and
  * *when* a transaction runs; `TrustStore` owns *how* it is persisted.
@@ -47,7 +47,7 @@ import {
  *
  * Persistence is the single source of truth for provenance: every row that
  * can lead to an effect stores the decision-time taint snapshot, trigger,
- * and context hash (BINDING amendment A1) so a crash, a slow human, or a
+ * and context hash so a crash, a slow human, or a
  * boot recovery all see exactly what the model saw when the call was made.
  */
 
@@ -79,7 +79,7 @@ const DEFAULT_TTL_MS = 30 * 60 * 1000
 const DEFAULT_SWEEP_INTERVAL_MS = 60 * 1000
 
 // ---------------------------------------------------------------------------
-// Wrap marker (D5) — module-private so a hand-built `{...tool, trustWrapped:
+// Wrap marker — module-private so a hand-built `{...tool, trustWrapped:
 // true}` object can never forge admission through `gateToolsForOrigins`.
 // ---------------------------------------------------------------------------
 
@@ -96,7 +96,7 @@ interface RegistryEntry {
 
 export class TrustLayer {
   private readonly store: TrustStore
-  /** Allowlist policy/operations (Fix C) — the claim/resolve/recovery state machine below stays here deliberately (see the module doc comment). */
+  /** Allowlist policy/operations — the claim/resolve/recovery state machine below stays here deliberately (see the module doc comment). */
   private readonly allowlist: TrustAllowlist
   private readonly now: () => Date
   private readonly ttlMs: number
@@ -128,7 +128,7 @@ export class TrustLayer {
     this.onSystemNotice = options.onSystemNotice
   }
 
-  // -- Registry (D2) ---------------------------------------------------
+  // -- Registry ---------------------------------------------------
 
   /**
    * Registers the durable, canonical `ToolDef` for one L1/L2 tool. This is
@@ -171,7 +171,7 @@ export class TrustLayer {
     this.registry.set(tool.name, { tool: tool as ToolDef, meta: meta as ToolMeta<unknown> })
   }
 
-  // -- Wrapping (D5) ----------------------------------------------------
+  // -- Wrapping ----------------------------------------------------
 
   /**
    * Returns `tools` with every registered L1/L2 tool replaced by a wrapped
@@ -213,11 +213,11 @@ export class TrustLayer {
     return { content: `This action was denied: ${reason}.` }
   }
 
-  // -- Decision (D3, A1) -------------------------------------------------
+  // -- Decision -------------------------------------------------
 
   /**
    * The single decision authority (code, not prompt — SECURITY.md §3.2).
-   * Always snapshots `context.taint.origins()` at this moment (A1): that
+   * Always snapshots `context.taint.origins()` at this moment: that
    * snapshot, not any pre-turn chain, is what gets persisted, audited, and
    * checked for allowlist eligibility everywhere downstream. Always appends
    * an `action.decision` audit row before returning — including for
@@ -259,7 +259,7 @@ export class TrustLayer {
     }
 
     const untainted = !hasUntrusted(snapshot)
-    // A1: when the snapshot carries no untrusted origin, `context.origin`
+    // When the snapshot carries no untrusted origin, `context.origin`
     // (fixed at turn start as the most-untrusted of prompt/context/session
     // origins — agent-runner.ts) degenerates to exactly the prompt's own
     // origin. So this doubles as the "prompt-origin trusted:user" check
@@ -345,7 +345,7 @@ export class TrustLayer {
     }
   }
 
-  // -- Allow path (A2: durable execution row, same state machine) -------
+  // -- Allow path (durable execution row, same state machine) -------
 
   private async executeAllowed(
     entry: RegistryEntry,
@@ -387,7 +387,7 @@ export class TrustLayer {
     return finalized.result as ToolResult
   }
 
-  // -- Card path (D4/D8) -------------------------------------------------
+  // -- Card path -------------------------------------------------
 
   private createCard(
     entry: RegistryEntry,
@@ -471,7 +471,7 @@ export class TrustLayer {
 
   /**
    * The `ApprovalCardModel` for one call, given only the decision-time
-   * facts a persisted row itself carries (D4/D7): shared by `createCard()`
+   * facts a persisted row itself carries: shared by `createCard()`
    * (the live decision) and `listPending()` (recomputed on boot for
    * rehydration), so both ever derive `showAllowlistCheckbox` the exact
    * same way. `effectiveOrigin === 'trusted:user'` stands in for the live
@@ -513,11 +513,11 @@ export class TrustLayer {
   }
 
   /**
-   * Every still-pending, not-yet-expired approval (D7): what
+   * Every still-pending, not-yet-expired approval: what
    * `ApprovalSurfaceManager.start()` walks to repair any card Surface that
    * didn't survive a restart (`hasPendingCardSurface` is what makes a
-   * click resolve correctly regardless of whether `start()` has run — see
-   * Fix A). Must be consulted only after `start()`'s own `recoverAtBoot()`
+   * click resolve correctly regardless of whether `start()` has run).
+   * Must be consulted only after `start()`'s own `recoverAtBoot()`
    * — a row whose tool vanished or whose TTL had already passed is expired
    * there first, so this never has to re-decide that; a row whose tool is
    * no longer registered here (a caller that skipped that ordering) is
@@ -546,7 +546,7 @@ export class TrustLayer {
   }
 
   /**
-   * Recovery-only (D7): persists the `surface_id` `ApprovalSurfaceManager
+   * Recovery-only: persists the `surface_id` `ApprovalSurfaceManager
    * .start()` just recreated for a still-pending row whose original
    * `createCard()` crashed between inserting the row and recording one.
    * Guarded by `surface_id is null` so it can never clobber a value that
@@ -559,10 +559,10 @@ export class TrustLayer {
 
   /**
    * The source of truth `ApprovalSurfaceManager.handleFastMutation` checks
-   * before resolving a click (Fix A, boot-rehydration race; narrowed by the
+   * before resolving a click (boot-rehydration race; narrowed by the
    * issue #14 review fix): true only if `approvalId` is still pending AND
    * its row's own `surface_id` is already recorded AND matches `surfaceId`
-   * exactly. A row whose `surface_id` is still `null` (D7: `createCard()`
+   * exactly. A row whose `surface_id` is still `null` (`createCard()`
    * crashed before recording one) never accepts a click — accepting it
    * regardless of `surfaceId` would let a forged canonical-looking Surface
    * (any Surface at `srf-approval-<id>`, daemon-owned or not) drive a
@@ -570,7 +570,7 @@ export class TrustLayer {
    * only becomes clickable once `ApprovalSurfaceManager.start()`'s repair
    * pass recreates the canonical card and calls `attachSurfaceId` — after
    * which this check is a plain equality, independent of whether `start()`
-   * has run (the original Fix A guarantee is preserved for the normal case:
+   * has run (the guarantee is preserved for the normal case:
    * a row whose `surface_id` was already set synchronously by `createCard()`
    * resolves correctly the instant the daemon can reach the store).
    */
@@ -580,10 +580,10 @@ export class TrustLayer {
     return row.surfaceId === surfaceId
   }
 
-  // -- Resolution (D6, A4) -----------------------------------------------
+  // -- Resolution -----------------------------------------------
 
   /**
-   * Called by T6's fast-mutation observer when a human clicks Approve/Reject
+   * Called by the fast-mutation observer when a human clicks Approve/Reject
    * on a card Surface. Exactly-once by construction: everything up to and
    * including the claim transaction is synchronous JS (no `await`), so two
    * concurrent calls cannot interleave before the first reaches its atomic
@@ -678,7 +678,7 @@ export class TrustLayer {
     const finalInput: unknown = validated.data
     const nowIso = this.nowIso()
     const originChain = provenance.originChain
-    // Re-checked against the decision-time snapshot (A1/A4), not recomputed
+    // Re-checked against the decision-time snapshot, not recomputed
     // from any live state: the grant is only as trustworthy as what the
     // model actually saw when the call was made.
     const eligible = !hasUntrusted(originChain) && row.effectiveOrigin === 'trusted:user'
@@ -749,7 +749,7 @@ export class TrustLayer {
     // Otherwise: another resolve already claimed it — exactly-once, no-op.
   }
 
-  // -- Shared execution/finalization (A2) --------------------------------
+  // -- Shared execution/finalization --------------------------------
 
   /**
    * Runs the registered handler and finalizes the durable row in one
@@ -803,8 +803,8 @@ export class TrustLayer {
   }
 
   /**
-   * Idempotent outcome event (A2): appended once, `outcome_event_at` guards
-   * recovery re-runs. `recovering` (Fix 6) additionally guards the window
+   * Idempotent outcome event: appended once, `outcome_event_at` guards
+   * recovery re-runs. `recovering` additionally guards the window
    * between appending this event and persisting `outcome_event_at`: only
    * recovery's own re-finalization of a row it is replaying passes it,
    * since only recovery can revisit a row whose event may already have
@@ -834,7 +834,7 @@ export class TrustLayer {
     this.store.setOutcomeEventAt(effectId, this.nowIso())
   }
 
-  // -- Expiry + recovery (D7, A2) -----------------------------------------
+  // -- Expiry + recovery -----------------------------------------
 
   /**
    * Boot recovery, then arms the periodic sweep. Async because recovery may
@@ -872,7 +872,7 @@ export class TrustLayer {
         this.markIndeterminate(row)
         continue
       }
-      // Executors are idempotent per effectId (documented contract, A2):
+      // Executors are idempotent per effectId (documented contract):
       // crash-before-transport -> runs once now; crash-after-transport ->
       // transport dedupes; crash-before-outcome-persist -> outcome appended now.
       const context = this.rebuildContext(row)
@@ -890,7 +890,7 @@ export class TrustLayer {
   }
 
   /**
-   * Fix 10 (residual gap from Fix 6): every terminal transition (approved,
+   * A residual gap: every terminal transition (approved,
    * rejected, expired, indeterminate) commits its status change and its
    * `action.outcome` audit row in one transaction, but the Space outcome
    * event itself is appended only after that transaction commits — so a
@@ -952,7 +952,7 @@ export class TrustLayer {
     this.notifyChange()
   }
 
-  /** A2: an interrupted `executing` row whose tool vanished — never silently stranded. Recovery-only (see call site). */
+  /** An interrupted `executing` row whose tool vanished — never silently stranded. Recovery-only (see call site). */
   private markIndeterminate(row: ApprovalRow): void {
     const nowIso = this.nowIso()
     let claimed = false
@@ -1003,7 +1003,7 @@ export class TrustLayer {
     }
   }
 
-  // -- Allowlist management (D5/A5) — delegates to TrustAllowlist (Fix C) --
+  // -- Allowlist management — delegates to TrustAllowlist --
 
   listAllowlistRules(): AllowlistRule[] {
     return this.allowlist.list()
@@ -1016,13 +1016,13 @@ export class TrustLayer {
     this.notifyChange()
   }
 
-  // -- Audit surface support (T7) ------------------------------------------
+  // -- Audit surface support ------------------------------------------
 
   auditEntries(limit = 200): AuditEntry[] {
     return this.store.auditEntries(limit)
   }
 
-  /** Simplest refresh mechanism for T7 surfaces: subscribe, re-render on every mutation. */
+  /** Simplest refresh mechanism for trust admin surfaces: subscribe, re-render on every mutation. */
   onChange(listener: () => void): () => void {
     this.changeListeners.add(listener)
     return () => this.changeListeners.delete(listener)

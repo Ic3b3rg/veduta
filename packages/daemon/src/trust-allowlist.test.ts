@@ -14,7 +14,7 @@ import { TrustStore } from './trust-store.ts'
  * no `ApprovalCardPort`, no decide()/resolve() machinery. `trust-layer.test
  * .ts`'s "decision matrix" and "allowlist management" suites cover how
  * `TrustLayer` itself wires into this (the matching gate at decide()-time,
- * the grant trigger on an approved checkbox) — moved here (Fix C) is
+ * the grant trigger on an approved checkbox) — moved here is
  * everything that needed no more than a `TrustStore` to prove.
  */
 
@@ -80,7 +80,7 @@ describe('matchingRuleId', () => {
 })
 
 describe('grant', () => {
-  it('creates the rule and audits allowlist.created with full provenance and the approved input (Fix 5/Fix B)', () => {
+  it('creates the rule and audits allowlist.created with full provenance and the approved input', () => {
     const trigger: TriggerRef = { kind: 'chat', summary: 'user asked to email alice' }
     const id = allowlist.grant(
       grantParams({ trigger, contextHash: 'hash-provenance', originChain: ['trusted:user'] }),
@@ -98,7 +98,7 @@ describe('grant', () => {
     expect(entry?.trigger).toEqual(trigger)
     expect(entry?.contextHash).toBe('hash-provenance')
     expect(entry?.spaceId).toBe('spc-test')
-    // Fix B: the approved final input, not just the match params in `detail`.
+    // Records the approved final input, not just the match params in `detail`.
     expect(entry?.input).toEqual({ to: 'alice@example.com', body: 'hi' })
     expect(entry?.detail).toBe(JSON.stringify({ to: 'alice@example.com' }))
   })

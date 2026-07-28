@@ -30,7 +30,7 @@ export const MOCK_UNSUPPORTED_CLAIM_TEXT =
  * is guaranteed to reject. A corrective retry (detected via
  * `REVIEW_FEEDBACK_MARKER` in `prompt()`) always drops it: the reject→correct→pass
  * dev path exercises a genuinely different, corrected report rather than
- * replaying the same rejected text (issue #17 re-review, Fix 3 dev-fixture
+ * replaying the same rejected text (issue #17 re-review, dev-fixture
  * honesty). Every other goal never includes the claim, so it passes review
  * on the first attempt.
  */
@@ -63,8 +63,8 @@ function mockWorkerReport(flagged: boolean): WorkerReport {
 }
 
 /**
- * Deterministic, zero-network `AgentRunner` for Workers (issue #17, plan v2
- * T6): the dev stand-in until the real Agent loop lands, same spirit as
+ * Deterministic, zero-network `AgentRunner` for Workers (issue #17):
+ * the dev stand-in until the real Agent loop lands, same spirit as
  * `MockAgentRunner`/`mockReaderComplete`. On `prompt()` it appends the user
  * turn to its session, then emits exactly one `turn-end` whose text is a
  * valid `worker-report/v1` report — enough for the `WorkerPool` to exercise
@@ -147,7 +147,7 @@ export function createMockWorkerRunner(
 
 /**
  * Deterministic dev stand-in for the Worker adversarial review's LLM call
- * (issue #17, plan v2 B5/T6, mirrors `mockReaderComplete`): the dev profile
+ * (issue #17, mirrors `mockReaderComplete`): the dev profile
  * has no provider keys by design, so every review reports a passing
  * verdict — enough to demonstrate the "review passed" acceptance criterion
  * without a provider client. The real provider client lands with the Agent
@@ -161,8 +161,8 @@ export const mockWorkerReviewComplete: (
 }
 
 /**
- * Dev fixture for acceptance C end-to-end (issue #17, plan v2; content-driven
- * as of the re-review's Fix 3): a reject-then-pass variant of
+ * Dev fixture for acceptance C end-to-end (issue #17; content-driven
+ * as of the re-review): a reject-then-pass variant of
  * `mockWorkerReviewComplete` keyed on the REPORT DATA embedded in
  * `buildReviewPrompt`'s output, not on a call counter. A submitted draft that
  * still contains `MOCK_UNSUPPORTED_CLAIM_TEXT` (the flagged claim
@@ -171,7 +171,7 @@ export const mockWorkerReviewComplete: (
  * dropped it — the runner's genuinely corrected retry, or any default goal
  * that was never flagged to begin with — passes. This ties the verdict to
  * the actual content under review, so `WorkerPool`'s revision-tracking
- * (Fix 3) sees a real change between the rejected and corrected drafts
+ * sees a real change between the rejected and corrected drafts
  * instead of the same text passed through twice. Dev-only stand-in: the real
  * provider client replaces it outright once the Agent loop lands.
  */

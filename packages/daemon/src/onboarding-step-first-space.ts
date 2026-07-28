@@ -15,7 +15,7 @@ export interface FirstSpaceResult {
 }
 
 /**
- * `POST /api/onboarding/first-space` (`tasks/plan.md` §4/decision 4):
+ * `POST /api/onboarding/first-space` (§4):
  * slugifies `request.name` and reconciles by slug rather than blindly
  * creating — a re-applied request (crash-retried, or resumed after the
  * step's config write never landed) must never mint a second Space. Once

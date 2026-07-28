@@ -86,7 +86,7 @@ describe('MockAgentRunner', () => {
   })
 })
 
-describe('MockAgentRunner with isToolTrustWrapped (D5)', () => {
+describe('MockAgentRunner with isToolTrustWrapped', () => {
   it('admits a wrapped L1 tool even in a tainted turn, but still strips an unwrapped L2 tool', async () => {
     const runner = new MockAgentRunner(new MemorySessionStore(), {
       isToolTrustWrapped: (tool) => tool.name === 'send_email',
@@ -112,7 +112,7 @@ describe('MockAgentRunner with isToolTrustWrapped (D5)', () => {
   })
 })
 
-describe('MockAgentRunner.runTool (D10 taint accumulation)', () => {
+describe('MockAgentRunner.runTool (taint accumulation)', () => {
   it('grows the live taint accumulator from a tool result, visible to a later gating/decision consumer', async () => {
     const store = new MemorySessionStore()
     const runner = new MockAgentRunner(store)
@@ -150,7 +150,7 @@ describe('MockAgentRunner.runTool (D10 taint accumulation)', () => {
   })
 })
 
-describe('MockAgentRunner.contextHash (BINDING amendment A3)', () => {
+describe('MockAgentRunner.contextHash', () => {
   it('is present at turn start, stable across dispatches with an unchanged context, and changes once a tool result grows the session', async () => {
     const store = new MemorySessionStore()
     const runner = new MockAgentRunner(store)
@@ -158,7 +158,7 @@ describe('MockAgentRunner.contextHash (BINDING amendment A3)', () => {
     await runner.prompt('hello', { tools: [readTool] })
 
     // Present at turn start (computed before the user/assistant messages
-    // are even appended, per A3's "and at turn start").
+    // are even appended).
     expect(runner.contextHash).toMatch(/^[0-9a-f]{64}$/)
 
     const noopTool: ToolDef = defineTool({

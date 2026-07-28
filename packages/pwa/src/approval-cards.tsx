@@ -1,13 +1,13 @@
 import type { ApprovalCard } from '@veduta/protocol'
 import { expiresInLabel } from './api.ts'
 
-/** Clears any chip whose card Surface was archived (D9/D13): the decision
+/** Clears any chip whose card Surface was archived: the decision
  * UI lives on that Surface, so once it's gone the notification is stale. */
 export function dismissCardsForSurface(cards: ApprovalCard[], surfaceId: string): ApprovalCard[] {
   return cards.filter((card) => card.surfaceId !== surfaceId)
 }
 
-// The chip is a pure notification (D13): title, level, expiry, Dismiss.
+// The chip is a pure notification: title, level, expiry, Dismiss.
 // The decision (Approve/Reject) lives on the card Surface itself, rendered
 // in Home — there is no Approve affordance here.
 export function ApprovalCards({

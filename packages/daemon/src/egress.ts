@@ -2,7 +2,7 @@ import { Agent, setGlobalDispatcher } from 'undici'
 import type { Dispatcher } from 'undici'
 
 /**
- * Egress allowlist (issue #15 T1, docs/SECURITY.md §3.4): the daemon may
+ * Egress allowlist (issue #15, docs/SECURITY.md §3.4): the daemon may
  * contact only declared hosts (configured LLM providers, active
  * integrations' endpoints, the push service). Everything else is denied at
  * the network level, not the prompt level — a successful prompt injection

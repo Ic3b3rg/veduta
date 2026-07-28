@@ -13,7 +13,7 @@ import {
 } from './trust-layer.ts'
 
 /**
- * The approval card Surface (D4, issue #14): every pending L1/L2 approval is
+ * The approval card Surface (issue #14): every pending L1/L2 approval is
  * rendered as its own Surface in the originating Space, never a chat bubble
  * or free-form HTML (ARCHITECTURE.md §7). This module owns both directions
  * of that Surface: building it (`buildApprovalCardSurface`) and reacting to
@@ -22,7 +22,7 @@ import {
  */
 
 const SUMMARY_MAX_CHARS = 500
-/** Fixed position of the validation-error Caption in every card's tree (D6/A4). */
+/** Fixed position of the validation-error Caption in every card's tree. */
 const ERROR_CAPTION_NODE_ID = 'error'
 const ERROR_CAPTION_PATH = '/children/3'
 
@@ -33,7 +33,7 @@ export function approvalCardSurfaceId(approvalId: string): string {
 }
 
 /**
- * Inverse of `approvalCardSurfaceId` (Fix A, boot-rehydration race): the
+ * Inverse of `approvalCardSurfaceId` (boot-rehydration race): the
  * card id encodes its approvalId deterministically, so a fast-mutation
  * notice can recover "its" approval from the id alone — a cheap string
  * pre-filter, never trusted on its own. The trust store's pending row is
@@ -52,7 +52,7 @@ export function approvalIdFromSurfaceId(surfaceId: string): string | undefined {
  * is delimiter-neutralized (`neutralizeDelimiters`, taint.ts); the summary is
  * additionally truncated, since it is the one field with no natural size
  * bound. Protocol-validated (`SurfaceSchema.parse`) before the caller
- * persists it (D4).
+ * persists it.
  */
 export function buildApprovalCardSurface(
   approval: PendingApproval,
@@ -170,7 +170,7 @@ function toJsonValue(value: unknown): JsonValue {
 // ---------------------------------------------------------------------------
 // ApprovalSurfaceManager — the ApprovalCardPort backing the trust layer, and
 // the fast-mutation observer that turns Approve/Reject clicks into
-// `trust.resolve()` calls (D6).
+// `trust.resolve()` calls.
 // ---------------------------------------------------------------------------
 
 export interface ApprovalSurfaceManagerOptions {
@@ -184,7 +184,7 @@ export interface ApprovalSurfaceManagerOptions {
  * observes `store.onFastMutation` for Approve/Reject/allowlist-checkbox
  * clicks on the cards it created. The trust layer itself is supplied after
  * construction (`setTrust`) — `TrustLayer`'s constructor requires a port, so
- * this manager must exist first; wiring (T9) constructs both then connects
+ * this manager must exist first; wiring constructs both then connects
  * them.
  *
  * Resolution is funneled through a single serialized promise chain (the
@@ -196,8 +196,8 @@ export interface ApprovalSurfaceManagerOptions {
  * click before the first claim commits) queue rather than race: the trust
  * layer's own exactly-once claim makes the second a harmless no-op.
  *
- * There is deliberately no in-memory `surfaceId -> approvalId` map (Fix A,
- * boot-rehydration race): the trust store's persisted `pending_approvals`
+ * There is deliberately no in-memory `surfaceId -> approvalId` map
+ * (boot-rehydration race): the trust store's persisted `pending_approvals`
  * row is the only source of truth `handleFastMutation` consults, so a click
  * on a card resolves correctly the instant the daemon can reach the store —
  * it never depends on `start()` (boot rehydration) having run first. An
@@ -224,7 +224,7 @@ export class ApprovalSurfaceManager implements ApprovalCardPort {
   }
 
   /**
-   * Boot rehydration (issue #14 review fix; narrowed by Fix A): a card
+   * Boot rehydration (issue #14 review fix): a card
    * Surface that survived a daemon restart on disk is already fully
    * clickable — `handleFastMutation` resolves against the trust store
    * directly, not against anything `start()` builds — so this only ever
@@ -258,7 +258,7 @@ export class ApprovalSurfaceManager implements ApprovalCardPort {
   }
 
   /**
-   * Repairs a row whose `surface_id` is still `null` (D7: `createCard()`
+   * Repairs a row whose `surface_id` is still `null` (`createCard()`
    * crashed between inserting the row and recording one). The only
    * legitimate Surface for this approval lives at the deterministic id
    * (`approvalCardSurfaceId`); if something already occupies that id, it
@@ -313,7 +313,7 @@ export class ApprovalSurfaceManager implements ApprovalCardPort {
 
   create(approval: PendingApproval, card: ApprovalCardModel): { surfaceId: string } {
     const surface = buildApprovalCardSurface(approval, card)
-    // Daemon-owned (D4/ADR-0007's structural-defense contract): a
+    // Daemon-owned (ADR-0007's structural-defense contract): a
     // tainted-but-L0 turn must never be able to rewrite this card's
     // `field.*` content or pre-set its `decision.*` state after the human
     // has read it.
@@ -348,11 +348,11 @@ export class ApprovalSurfaceManager implements ApprovalCardPort {
     this.store.archiveSurface(surfaceId, 'job')
   }
 
-  // -- Fast-mutation observer (D6) ---------------------------------------
+  // -- Fast-mutation observer ---------------------------------------
 
   /**
    * Resolves the approvalId from the surfaceId's deterministic shape, then
-   * confirms it against the trust store's own pending row (Fix A): fixes
+   * confirms it against the trust store's own pending row: fixes
    * the boot-rehydration race where a click on a persisted card, arriving
    * before `start()` settles, used to find nothing in an in-memory map and
    * get silently dropped. The store is the only source of truth here — a

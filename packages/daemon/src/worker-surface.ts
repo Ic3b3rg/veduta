@@ -2,7 +2,7 @@ import { SurfaceSchema, type AtomNode, type Surface } from '@veduta/protocol'
 import type { WorkerReport } from './worker-briefing.ts'
 
 /**
- * The per-Worker report Surface (issue #17, plan v2 T2): a Worker's active
+ * The per-Worker report Surface (issue #17): a Worker's active
  * run and its eventual delivery are the SAME Surface, patched in place —
  * `patchTree` cannot change a Surface's title (`store.ts`), so the tree is a
  * FIXED 4-child shape from spawn onward: [Title, status Caption, content Box,

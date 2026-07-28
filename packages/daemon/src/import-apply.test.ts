@@ -30,7 +30,7 @@ import { SpacesEngine } from './spaces-engine.ts'
 const KEY_MATERIAL = Buffer.from('a test vault key, long enough for scrypt derivation')
 
 /**
- * A10: shaped so that NO built-in redaction pattern (`sk-…`/`Bearer …`/
+ * shaped so that NO built-in redaction pattern (`sk-…`/`Bearer …`/
  * `AKIA…`, see `redaction.ts`) matches it — the "no secret anywhere" sweeps
  * below must depend on `import-secrets.ts` actually registering this value
  * via `scanLegacySecrets`, not pass by accident because a built-in shape
@@ -79,10 +79,9 @@ function listAllFiles(root: string): string[] {
 }
 
 /**
- * A realistic `~/.hermes` install (`tasks/plan.md` "Source layouts" table):
- * SOUL.md, a real-shaped USER.md profile, `§`-separated MEMORY.md entries, a
- * dated daily note, a `.env` with two importable provider keys (one of each
- * fixture-secret shape, A10), and archived material (`config.yaml`, `skills/`).
+ * A realistic `~/.hermes` install ("Source layouts" table): SOUL.md, a real-shaped USER.md profile,
+ * `§`-separated MEMORY.md entries, a dated daily note, a `.env` with two importable provider keys
+ * (one of each fixture-secret shape), and archived material (`config.yaml`, `skills/`).
  */
 function buildHermesFixture(): string {
   const dir = freshDir('veduta-hermes-src-')
@@ -137,10 +136,9 @@ function readHermesFixture(sourceDir: string): FixtureRead {
 }
 
 /**
- * Builds the plan the same way a preview call site would (A2:
- * `planLegacyImport` is the exact composition `applyImportLocked` also runs,
- * now inside its lock) — used here only for pre-apply assertions on the
- * plan's shape; `applyImport` itself always recomputes its own.
+ * Builds the plan the same way a preview call site would (`planLegacyImport` is the exact
+ * composition `applyImportLocked` also runs, now inside its lock) — used here only for pre-apply
+ * assertions on the plan's shape; `applyImport` itself always recomputes its own.
  */
 function buildPlanFor(rootDir: string, read: FixtureRead, options: ImportOptions): ImportPlan {
   return planLegacyImport({
@@ -159,7 +157,7 @@ describe('applyImport — AC1 (issue 020): a real ~/.hermes import', () => {
     // A realistic target already went through onboarding (issue #19) before
     // ever running the importer: `spaces/`, default SOUL.md/USER.md already
     // exist. This matters for the backup assertion below — apply's backup
-    // (step 3) runs BEFORE any of apply's own writes (decision 9's ordering),
+    // (step 3) runs BEFORE any of apply's own writes (ordering),
     // so backing up a truly empty, never-initialized rootDir would have
     // nothing for `restoreBackup`'s sanity check to find.
     new SpacesEngine({ rootDir })
@@ -186,7 +184,7 @@ describe('applyImport — AC1 (issue 020): a real ~/.hermes import', () => {
 
     const soulContent = readFileSync(join(rootDir, 'SOUL.md'), 'utf8')
     expect(soulContent).toBe(adaptSoul(read.snapshot.soul!.text, 'hermes'))
-    // Anti-divergence guarantee (`tasks/plan.md` design decision 3): what the
+    // Anti-divergence guarantee: what the
     // plan previewed in `soulPreview` must be byte-identical to what actually
     // landed on disk — the mitigation is worthless if the two can drift.
     expect(result.plan.soulPreview).toBeDefined()
@@ -252,8 +250,8 @@ describe('applyImport — AC2 (issue 020): re-import refusal', () => {
     expect(listRecursive(rootDir)).toEqual(before)
   })
 
-  it('A2: two concurrent-looking applies of the same source cannot both see "not previously imported" — the second always recomputes the plan inside the lock', async () => {
-    // Simulates the race A2 closes: two callers each read the source and
+  it('two concurrent-looking applies of the same source cannot both see "not previously imported" — the second always recomputes the plan inside the lock', async () => {
+    // Simulates the race the in-lock replan closes: two callers each read the source and
     // build their own view of the world (as a preview would) before either
     // one applies. Under the old code (a pre-built plan trusted at apply
     // time) both could believe the source was never imported. Now apply
@@ -312,7 +310,7 @@ describe('applyImport — the lock', () => {
     const read = readHermesFixture(sourceDir)
 
     // No `keyMaterial` in deps: `planLegacyImport` (recomputed inside the
-    // lock, A2) sees `backupAvailable: false` and blocks naturally — no need
+    // lock) sees `backupAvailable: false` and blocks naturally — no need
     // to hand-construct a blocked plan, which is no longer possible since
     // `applyImport` does not accept a pre-built plan at all.
     await expect(
@@ -427,11 +425,11 @@ describe('applyImport — no secret anywhere', () => {
   })
 })
 
-describe('applyImport — A9: a credential-looking value found in .env is also redacted out of MEMORY.md-derived FACTS', () => {
+describe('applyImport — a credential-looking value found in .env is also redacted out of MEMORY.md-derived FACTS', () => {
   it('registers a not-importable bot-token-shaped value and redacts the same string out of FACTS', async () => {
     // A Telegram-bot-token shape: recorded by name in `.env` (never
     // importable — no home for it in `routing.json`), but the SAME string
-    // also appears in MEMORY.md prose, exactly the accident A9 protects
+    // also appears in MEMORY.md prose, exactly the accident registration protects
     // against. Deliberately not `sk-…`/`Bearer …`/`AKIA…`-shaped, so it is
     // only caught if `import-secrets.ts` actually registers it.
     const BOT_TOKEN = '123456789:AAHhermesBotTokenSharedWithMemory'
@@ -559,7 +557,7 @@ describe('applyImport — blocked plan', () => {
     const rootDir = freshDir('veduta-apply-target-')
     const read = readHermesFixture(sourceDir)
     // No keyMaterial in deps: `planLegacyImport` (recomputed inside the
-    // lock, A2) sees `backupAvailable: false` and blocks naturally —
+    // lock) sees `backupAvailable: false` and blocks naturally —
     // confirmed directly against the same helper before asserting the
     // actual refusal below.
     const blockedPreview = planLegacyImport({
@@ -586,14 +584,14 @@ describe('applyImport — blocked plan', () => {
   })
 })
 
-describe('requirePlanItem (A21)', () => {
+describe('requirePlanItem', () => {
   it('returns the item when the target is present', () => {
     const item: ImportItem = fromPartial({ action: 'skip', target: 'SOUL.md', detail: 'x' })
     expect(requirePlanItem([item], 'SOUL.md')).toBe(item)
   })
 
   it('throws — never returns undefined — when no item matches the target', () => {
-    // This is exactly the fail-open bug A21 closes: before this helper
+    // This is exactly the fail-open bug `requirePlanItem` closes: before it
     // existed, `plan.items.find(...)` returning `undefined` for a drifted
     // target string made apply silently skip the write for that slot while
     // still reporting success. A well-formed plan (`buildImportPlan`) always

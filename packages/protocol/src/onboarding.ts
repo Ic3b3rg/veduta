@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 /**
- * The onboarding wizard's step order (`tasks/plan.md` "Design decisions (v2)" §3):
+ * The onboarding wizard's step order:
  * `migration` (only surfaced when a legacy Hermes/OpenClaw install is detected) →
  * `domain` → `byok` → `models` → `first-space` → `integrations` → `finish`.
  * `first-space` precedes `integrations` because every ingestion source requires a
@@ -28,7 +28,7 @@ export const OnboardingStepStatusSchema = z.enum(['pending', 'completed', 'skipp
 
 /**
  * The two deploy profiles from `CONTEXT.md` that gate whether the wizard is
- * required at all (`tasks/plan.md` §5): `loopback` (`pnpm dev`, no
+ * required at all: `loopback` (`pnpm dev`, no
  * `VEDUTA_PUBLIC_DOMAIN`, mock provider) never requires onboarding unless
  * `VEDUTA_ONBOARDING=force` is set for verification; `vps`
  * (`VEDUTA_PUBLIC_DOMAIN` set — ACME TLS, passkeys, enforced egress) requires
@@ -64,7 +64,7 @@ export const InstallerStageSchema = z.object({
  * render the installer's progress bar without reimplementing it"). The final
  * stage snapshot is also written to `<dataDir>/installer-stages.json` so the
  * wizard can render an installer summary even when it starts after the
- * install already finished (`tasks/plan.md` §10). `snake_case` keys
+ * install already finished. `snake_case` keys
  * (`protocol_version`, `needs_user_input`) are deliberate: they match the
  * Hermes wire format this protocol is derived from, not this repo's usual
  * camelCase convention.
@@ -78,7 +78,7 @@ export const InstallerStageEventSchema = z.object({
 /**
  * Result of scanning the invoking admin's home directory for a legacy agent
  * install (`~/.hermes`, `~/.openclaw`) before any escalation side effects
- * (`tasks/plan.md` §10 "legacy-detect" stage). Captured by the installer and
+ * (the installer's `legacy-detect` stage). Captured by the installer and
  * persisted into `onboarding.json` so the daemon — which runs as the
  * `veduta` user under `ProtectHome=yes` and can never see `/home/*` itself —
  * can offer the `migration` step first. `sourceHome` is the detected legacy
@@ -112,7 +112,7 @@ export const OnboardingTiersSchema = z.object({
 export const ByokProviderSchema = z.enum(['anthropic', 'openai', 'openrouter'])
 
 /**
- * `GET /api/onboarding` response (`tasks/plan.md` §4): the single source of
+ * `GET /api/onboarding` response: the single source of
  * truth for resuming the wizard (resume = first incomplete step) and for
  * pre-filling every step's form with current values as defaults (Hermes
  * discipline — never re-ask for a value the daemon already has). Secret
@@ -183,7 +183,7 @@ export const OnboardingStatusSchema = z.object({
  * importer itself is reached separately, via `/api/onboarding/migration/preview`
  * and `/api/onboarding/migration/import` (`onboarding-step-migration.ts`,
  * issue 020), which set `migrationChoice: 'imported'` on success. No fake
- * command is printed for either choice here (`tasks/plan.md` §4).
+ * command is printed for either choice here.
  */
 export const MigrationChoiceRequestSchema = z.object({
   choice: z.enum(['migrate-later', 'manual']),
@@ -201,7 +201,7 @@ export const ByokTestRequestSchema = z.object({
 
 /**
  * `POST /api/onboarding/byok/test` response. The check is a deterministic
- * key check, not an LLM turn (`tasks/plan.md` §7): `valid` (2xx from the
+ * key check, not an LLM turn: `valid` (2xx from the
  * provider's models endpoint), `invalid` (401/403), or `unreachable`
  * (network error, timeout, or any other status).
  */
@@ -289,7 +289,7 @@ export const IntegrationsApplyRequestSchema = z.union([
  * `restarting` tells the PWA to poll `/api/health` instead of navigating
  * immediately. On loopback/Local VPS there is no exit: `restartRequired`
  * is true and the finish screen honestly says the new config takes effect
- * on the next daemon start (`tasks/plan.md` §4).
+ * on the next daemon start.
  */
 export const FinishResponseSchema = z.object({
   restartRequired: z.boolean(),

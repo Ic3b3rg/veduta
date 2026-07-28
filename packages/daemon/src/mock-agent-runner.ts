@@ -27,7 +27,7 @@ const CANNED_REPLY = 'Displayed the requested content.'
 
 export interface MockAgentRunnerOptions {
   /**
-   * Trust-layer wrapping predicate (D5/issue #14), forwarded to
+   * Trust-layer wrapping predicate (issue #14), forwarded to
    * `gateToolsForOrigins` as its third argument: when supplied, L1/L2 tools
    * pass the gate iff wrapped, regardless of taint (the wrapped handler
    * decides at execution time). Omit to keep the pre-trust-layer,
@@ -45,14 +45,14 @@ export interface MockAgentRunnerOptions {
  * message with its origin, gates the offered tools through
  * `gateToolsForOrigins` (exposing the gated list via `lastGatedTools` for
  * assertions), and emits a canned, content-free assistant reply that
- * inherits the untrusted origin per the derivation rule (v3 §B.5) — it
+ * inherits the untrusted origin per the derivation rule — it
  * never echoes anything from inside the prompt, so it cannot itself be a
  * laundering vector.
  *
  * It never dispatches a tool call itself (the canned reply is the only
  * output); `runTool` is a test-support method that simulates the runner
  * invoking one gated tool mid-turn with the live `ToolContext` a real
- * runner would build (D10/A3), so the taint-accumulation and context-hash
+ * runner would build, so the taint-accumulation and context-hash
  * contracts are exercisable without a real model loop.
  */
 export class MockAgentRunner implements AgentRunner {
@@ -68,9 +68,9 @@ export class MockAgentRunner implements AgentRunner {
 
   /** The tools admitted to the most recent `prompt()` call, after the taint gate. */
   lastGatedTools: ToolDef[] = []
-  /** Live per-turn taint accumulator (D10), seeded at the start of the most recent `prompt()` call. */
+  /** Live per-turn taint accumulator, seeded at the start of the most recent `prompt()` call. */
   taint: TurnTaint = new TurnTaintAccumulator([])
-  /** Hash of the model-visible context: recomputed at turn start and before each `runTool` dispatch (A3). */
+  /** Hash of the model-visible context: recomputed at turn start and before each `runTool` dispatch. */
   contextHash = ''
 
   constructor(
@@ -157,7 +157,7 @@ export class MockAgentRunner implements AgentRunner {
   /**
    * Test-support: simulates the runner dispatching one gated tool mid-turn
    * (this class never does so on its own). Builds the live `ToolContext`
-   * (D10/A3) from the current turn's seed `origins`, the shared `taint`
+   * from the current turn's seed `origins`, the shared `taint`
    * accumulator, `spaceId`/`trigger`, and a freshly recomputed
    * `contextHash`; when the tool reports `ToolResult.origins`, folds them
    * into `taint` and persists them on the tool's `SessionMessage`
@@ -200,7 +200,7 @@ export class MockAgentRunner implements AgentRunner {
     return result
   }
 
-  /** A3: the model-visible envelope for the mock runner is its full session message list plus the turn's input. */
+  /** The model-visible envelope for the mock runner is its full session message list plus the turn's input. */
   private async recomputeContextHash(sessionId: string): Promise<void> {
     const messages = (await this.sessionStore.load(sessionId)).messages
     this.contextHash = computeContextHash({ messages, input: this.currentTurnInput })

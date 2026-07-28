@@ -8,8 +8,8 @@ import { canonicalAllowlistParams } from './trust-contracts.ts'
 import { rowProvenance, TrustStore, type NewApprovalRow } from './trust-store.ts'
 
 /**
- * Storage-level tests for the trust layer's durable state machine (Fix 7
- * split): schema DDL constraints, row codecs, and `TrustStore`'s repository
+ * Storage-level tests for the trust layer's durable state machine: schema DDL
+ * constraints, row codecs, and `TrustStore`'s repository
  * operations, exercised directly — no registry, no `ApprovalCardPort`, no
  * decision policy. `trust-layer.test.ts` covers the facade's business
  * behavior (decide/resolve/recovery orchestration) built on top of this.
@@ -101,7 +101,7 @@ describe('pending_approvals: insert + read', () => {
     expect(row?.decisionAt).toBe('2026-07-10T12:00:00.000Z')
   })
 
-  it('round-trips a trigger with a nested parent chain (Fix 8) through input/origin/trigger columns', () => {
+  it('round-trips a trigger with a nested parent chain through input/origin/trigger columns', () => {
     const twoHop: TriggerRef = {
       kind: 'automation',
       id: 'job-1',
@@ -283,7 +283,7 @@ describe('allowlist_rules', () => {
 })
 
 describe('audit_log: insertAudit / auditEntries round trip', () => {
-  it('round-trips every field, including a two-hop trigger chain (Fix 8) through a decision audit row', () => {
+  it('round-trips every field, including a two-hop trigger chain through a decision audit row', () => {
     const twoHop: TriggerRef = {
       kind: 'automation',
       id: 'job-1',
@@ -334,7 +334,7 @@ describe('audit_log: insertAudit / auditEntries round trip', () => {
 })
 
 describe('rowProvenance', () => {
-  it('decodes a row into its decision-time provenance, including a nested trigger.parent (Fix 8)', () => {
+  it('decodes a row into its decision-time provenance, including a nested trigger.parent', () => {
     const twoHop: TriggerRef = {
       kind: 'automation',
       parent: { kind: 'chat' },

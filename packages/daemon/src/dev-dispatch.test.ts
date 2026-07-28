@@ -12,7 +12,7 @@ import { seedSpaces } from './seed.ts'
 import { SpacesEngine } from './spaces-engine.ts'
 
 // Every tempEngine() call creates its own on-disk data dir; tracked here so
-// `afterEach` can remove them instead of leaking one per test run (Fix D).
+// `afterEach` can remove them instead of leaking one per test run.
 const createdRootDirs: string[] = []
 
 async function tempEngine(): Promise<SpacesEngine> {

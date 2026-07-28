@@ -59,7 +59,7 @@ import { signBody } from './webhook-verify.ts'
  * a direct harness that wires the *real* `TrustLayer` + `ApprovalSurfaceManager`
  * + `outbound-tools.ts` + `Store` (no HTTP layer, no test doubles for the
  * trust machinery itself) and builds the `ToolContext` by hand, mirroring
- * `dev-dispatch.ts`'s own construction exactly (D10/A1).
+ * `dev-dispatch.ts`'s own construction exactly.
  */
 
 // ---------------------------------------------------------------------------
@@ -100,7 +100,7 @@ function lastCard(socket: RecordingSocket): ApprovalCard {
 
 // Every `buildServer` test in this file creates its own on-disk data dir
 // (SQLite files, ingestion config); tracked here so `afterEach` can remove
-// them instead of leaking a fresh temp directory per test run (Fix 9d).
+// them instead of leaking a fresh temp directory per test run.
 const createdDataDirs: string[] = []
 
 async function tempDataDir(prefix: string): Promise<string> {
@@ -110,7 +110,7 @@ async function tempDataDir(prefix: string): Promise<string> {
 }
 
 afterEach(() => {
-  // AC1's real-webhook scenario is the only test that sets this (Fix 9d):
+  // AC1's real-webhook scenario is the only test that sets this:
   // clean it up unconditionally so it never leaks into another test's
   // process.env, whether or not this test ran or threw.
   delete process.env['VEDUTA_TRUST_ACCEPTANCE_AC1']
@@ -307,7 +307,7 @@ function buildDirectHarness(): DirectHarness {
     onApprovalCard: (card) => approvalCards.push(card),
     appendOutcomeEvent: (spaceId, payload) => {
       outcomeEvents.push({ spaceId, payload })
-      // Mirrors server.ts's wiring exactly (Fix 4): an outcome is always
+      // Mirrors server.ts's wiring exactly: an outcome is always
       // daemon-produced, never a genuine user event.
       store.spacesEngine.appendEvent(spaceId, {
         type: 'approval.outcome',
@@ -337,7 +337,7 @@ function buildDirectHarness(): DirectHarness {
   }
 }
 
-/** Mirrors dev-dispatch.ts's `runDispatch` context construction exactly (D10/A1/A3). */
+/** Mirrors dev-dispatch.ts's `runDispatch` context construction exactly. */
 function buildTurnContext(
   store: Store,
   spaceId: string,
@@ -408,7 +408,7 @@ describe('AC1(c) — mid-turn taint: a turn that starts trusted still cards once
         harness.store.eventLog(spaceId).filter((e) => e.type === 'outbound.delivery'),
       ).toHaveLength(2)
 
-      // The A1 case: a turn that STARTS trusted (the seed carries no
+      // The case where a turn STARTS trusted (the seed carries no
       // untrusted origin — `context.origin` below proves it), but before the
       // send is attempted, a memory-tool-style read grows the live taint
       // accumulator mid-turn.
@@ -526,7 +526,7 @@ describe('AC2 — an L2 action (bank transfer) stays behind a card even with a m
     // `row.level === 'L1'`). Reach past the front door entirely and insert a
     // matching-shape row directly, to prove even a *planted* row is never
     // consulted for L2 — the level check happens before any allowlist lookup.
-    // `upsertAllowlistRule` now lives on `TrustStore` (Fix 7 split), reached
+    // `upsertAllowlistRule` now lives on `TrustStore`, reached
     // through the facade's private `store` field.
     const backdoor = (
       trust as unknown as {

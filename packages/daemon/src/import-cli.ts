@@ -19,12 +19,12 @@ import { resolveVaultKeyMaterial, SecretsVault } from './secrets-vault.ts'
 
 /**
  * `pnpm --filter @veduta/daemon import-legacy <openclaw|hermes> [--home <dir>] [--root <dir>]
- * [--apply] [--overwrite] [--secrets]` (issue 020, `tasks/plan.md` T6). Follows the
+ * [--apply] [--overwrite] [--secrets]` (issue 020). Follows the
  * injectable `argv`/`env`/`io` shape of `backup-cli.ts`/`vault-cli.ts`, plus two importer-
  * specific seams: `stdinIsTty` (AC3 — a piped or scripted run must never apply) and
- * `serviceActive` (decision 13 — never shells out to `systemctl` inside a test).
+ * `serviceActive` (never shells out to `systemctl` inside a test).
  *
- * Script renamed from `import` to `import-legacy` (B1, this fix group's report):
+ * Script renamed from `import` to `import-legacy`:
  * `pnpm --filter @veduta/daemon import` is silently swallowed by pnpm's own built-in `import`
  * command (which imports a `package-lock.json`), so every dead-end command this module ever
  * printed under the old name was unrunnable exactly as printed.
@@ -32,11 +32,11 @@ import { resolveVaultKeyMaterial, SecretsVault } from './secrets-vault.ts'
  * `run` never mutates anything unless `--apply` is given AND the terminal is interactive
  * AND the plan has no blocked entries: the grouped preview (`import-preview-text.ts`) is
  * always printed first, whatever the flags, so a dry run and an about-to-apply run render
- * identically up to that point (decision 7 — preview and apply share one plan). `main` is
+ * identically up to that point (preview and apply share one plan). `main` is
  * gated behind the file-identity check at the bottom so importing this module never
  * executes it as a side effect.
  *
- * B6: everything from source resolution through apply (steps 1-6 in `run`'s body) runs
+ * everything from source resolution through apply (steps 1-6 in `run`'s body) runs
  * inside one try/catch, so a thrown error from any step — a planning bug, a corrupt
  * `import.json`, a `resolveVaultKeyMaterial` misconfiguration, `ImportSourceMissingError`, or
  * `applyImport`'s own `ImportRefusedError` — still yields a deterministic exit code instead of
@@ -51,12 +51,12 @@ export interface RunContext {
   io?: CliIo
   /** Whether stdin is a TTY (issue 020 AC3). Defaults to `process.stdin.isTTY`. */
   stdinIsTty?: boolean
-  /** How the daemon's service state was determined (decision 13) — see `ServiceState`. */
+  /** How the daemon's service state was determined — see `ServiceState`. */
   serviceActive?: () => ServiceState
 }
 
 /**
- * The outcome of the `systemctl is-active` probe (decision 13, B5). Four states,
+ * The outcome of the `systemctl is-active` probe. Four states,
  * not three, because "we could not ask" and "we asked and the answer was garbled"
  * must lead to different decisions: with no systemd at all there is nothing to
  * race and the import proceeds with a restart reminder, whereas a probe that
@@ -84,7 +84,7 @@ function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
 }
 
 /**
- * `systemctl is-active --quiet veduta` (decision 13, B5). Exit 0 → `active`. Exit 3
+ * `systemctl is-active --quiet veduta`. Exit 0 → `active`. Exit 3
  * (inactive/failed) and 4 (no such unit) are systemd's own documented answers for
  * "not running" → `inactive`. A thrown `ENOENT` means there is no systemd on this
  * host at all (a macOS dev machine, a container) → `no-systemd`. **Every other
@@ -106,12 +106,12 @@ function defaultServiceActive(): ServiceState {
 }
 
 /**
- * Runs one CLI invocation and returns an exit code (never throws for an expected refusal —
- * every thrown error is caught by the single try/catch around steps 1-6, per B6 above).
- * Reading the source and building the plan (steps 1-4) never mutate anything — `planLegacyImport`
- * is the same pure-`fs` `readTargetState`/`loadImportState`/`buildImportPlan` composition
- * `applyImportLocked` itself recomputes inside the lock. Mutation can only happen past the
- * `--apply` + TTY + unblocked gates below, inside `applyImport`'s own lock.
+ * Runs one CLI invocation and returns an exit code (never throws for an expected refusal — every
+ * thrown error is caught by the single try/catch around steps 1-6, per above). Reading the source
+ * and building the plan (steps 1-4) never mutate anything — `planLegacyImport` is the same
+ * pure-`fs` `readTargetState`/`loadImportState`/`buildImportPlan` composition `applyImportLocked`
+ * itself recomputes inside the lock. Mutation can only happen past the `--apply` + TTY + unblocked
+ * gates below, inside `applyImport`'s own lock.
  */
 export async function run(argv: string[], context: RunContext = {}): Promise<number> {
   const env = context.env ?? process.env
@@ -139,7 +139,7 @@ export async function run(argv: string[], context: RunContext = {}): Promise<num
     return 1
   }
 
-  // B6: exactly one positional required. `parseArgs` with `allowPositionals: true` otherwise
+  // exactly one positional required. `parseArgs` with `allowPositionals: true` otherwise
   // silently ignores every positional past the first, which would let
   // `import-legacy hermes some-typo-of-a-flag` quietly run the same as `import-legacy hermes`.
   if (parsed.positionals.length !== 1) {
@@ -173,14 +173,14 @@ export async function run(argv: string[], context: RunContext = {}): Promise<num
     (parsed.values['home'] as string | undefined) ?? env['VEDUTA_LEGACY_HOME'] ?? homedir()
   const stagedDir = join(rootDir, 'import-source', kind)
 
-  // B6: everything below — source resolution, reading, plan-building, and apply — runs
+  // everything below — source resolution, reading, plan-building, and apply — runs
   // inside one try/catch, so a thrown error from any step (a `buildImportPlan`/schema bug, a
   // corrupt `import.json`, `ImportSourceMissingError` from a source that raced out from under
   // us between `resolveLegacyDir` and `readLegacySource`, ...) still yields a deterministic
   // exit code instead of an unhandled rejection reaching `main`'s `.then`. `ImportRefusedError`
   // (thrown only from inside `applyImport`'s lock) is the one exception with its own exit code.
   try {
-    // Step 1: resolve the source directory — staged dir first (decision 16), then the live home.
+    // Step 1: resolve the source directory — staged dir first, then the live home.
     const sourceDir = resolveLegacyDir({ kind, stagedDir, home })
     if (sourceDir === undefined) {
       io.stderr(`no legacy ${sourceLabel(kind)} install found. Searched:`)
@@ -189,7 +189,7 @@ export async function run(argv: string[], context: RunContext = {}): Promise<num
       return 1
     }
 
-    // Step 2: read the snapshot and scan secrets — both pure, hardened reads (decision 6/14).
+    // Step 2: read the snapshot and scan secrets — both pure, hardened reads.
     const snapshot = readLegacySource(sourceDir, kind)
     const secrets = scanLegacySecrets({ kind, dir: sourceDir })
 
@@ -243,8 +243,7 @@ export async function run(argv: string[], context: RunContext = {}): Promise<num
             : 'the veduta service state could not be determined (the systemctl probe failed)'
         io.stdout('')
         io.stdout(
-          `refusing: ${reason}, and --secrets would race its in-memory vault (decision 13). ` +
-            'Stop it first:',
+          `refusing: ${reason}, and --secrets would race its in-memory vault. ` + 'Stop it first:',
         )
         io.stdout('  sudo systemctl stop veduta')
         io.stdout('then re-run this import, and start it again afterwards:')

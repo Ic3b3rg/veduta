@@ -4,7 +4,7 @@ import { SYSTEM_SPACE_ID } from './system-space.ts'
 import type { AllowlistRule } from './trust-layer.ts'
 
 /**
- * The trust admin "Allowlisted actions" Surface (issue #14, D8): every
+ * The trust admin "Allowlisted actions" Surface (issue #14): every
  * active allowlist rule the user granted via an approval card's "from now
  * on approve like this" checkbox, with a per-rule Revoke action. Lives in
  * the (now persisted, `ensureSystemSpace`) System Space alongside the
@@ -15,7 +15,7 @@ import type { AllowlistRule } from './trust-layer.ts'
 export const ALLOWLIST_SURFACE_ID = 'srf-trust-allowlist'
 export const ALLOWLIST_LIST_NODE_ID = 'trust-allowlist-list'
 
-/** The state key a rule's Revoke button mutates on click (D2's per-rule fast action). */
+/** The state key a rule's Revoke button mutates on click (per-rule fast action). */
 export function revokeStateKey(ruleId: number): string {
   return `revoke.${ruleId}`
 }
@@ -180,7 +180,7 @@ export class AllowlistSurfaceManager {
    * `trust.onChange` can fire 2-4x per user action (decision audit, decided
    * audit, allowlist.created, outcome) and each firing would otherwise
    * synchronously rebuild this Surface from scratch. Coalesce every firing
-   * within the same microtask burst into a single rebuild (Fix 9b): a
+   * within the same microtask burst into a single rebuild: a
    * `dirty` flag plus one shared, self-clearing microtask.
    */
   private scheduleRebuild(): void {

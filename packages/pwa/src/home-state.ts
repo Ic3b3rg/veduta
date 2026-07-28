@@ -72,7 +72,7 @@ export function cachedSnapshot(storage: Storage, key: string): SurfaceSnapshot |
   }
 }
 
-// Surface lifecycle stream (D9): the Gateway may broadcast surface.patch /
+// Surface lifecycle stream: the Gateway may broadcast surface.patch /
 // surface.created / surface.archived while a client is still catching up
 // (e.g. right after a reconnect). These pure helpers let App apply an event
 // against the current snapshot and report whether it found its target,
@@ -157,7 +157,7 @@ export function applySurfaceStreamEvent(
   }
 }
 
-// Attention badge (ADR decision 12): the daemon's `space.attention` WS frame
+// Attention badge (ADR): the daemon's `space.attention` WS frame
 // and the `/api/spaces` snapshot can race (e.g. a snapshot refetch triggered
 // by an unrelated Surface event lands after a newer WS frame already bumped
 // the badge). Both merge points below apply REVISION-WINS: a frame only
@@ -206,7 +206,7 @@ export function mergeSpaceAttention(
 
 /**
  * Replays stream events buffered while a snapshot refetch was in flight
- * (D9/R2-M2): events are applied in cursor order and events at or below the
+ * (R2-M2): events are applied in cursor order and events at or below the
  * fresh snapshot's cursor are skipped (the snapshot already reflects them).
  * Events that still can't find their target are returned as `unresolved` so
  * the caller can fall back to its normal error path.

@@ -7,7 +7,7 @@ import { backupFile, writeJsonAtomic } from './config-backup.ts'
  * Onboarding wizard state (issue #19 AC2): `<rootDir>/onboarding.json` is
  * the authoritative, resumable record of the post-pairing setup wizard.
  * The installer may seed this file with a `legacy` detection result before
- * the daemon's first boot (decision 10, installer legacy-detect stage); the
+ * the daemon's first boot (installer legacy-detect stage); the
  * daemon itself never fabricates that field. Every step's `status` is
  * written to this file only AFTER that step's side effects have already
  * happened (vault write, routing/ingestion config write, Space creation):
@@ -83,7 +83,7 @@ export function loadOnboardingConfig(rootDir: string): OnboardingConfig {
 /**
  * Validates `config`, backs up the existing `onboarding.json` (if any), then
  * writes the new state atomically. Callers apply side effects first and
- * call this last (decision 4, "status is always written after side
+ * call this last ("status is always written after side
  * effects").
  */
 export function saveOnboardingConfig(rootDir: string, config: OnboardingConfig): void {

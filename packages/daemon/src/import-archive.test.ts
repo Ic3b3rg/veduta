@@ -103,8 +103,8 @@ describe('writeImportArchive', () => {
     expect(result.archived).toEqual([])
   })
 
-  it('A16: never copies OpenClaw workspace/memory/*.md either — the prefix match, not a bare segment match', () => {
-    // Before A16, `MAPPED_DIR_NAMES` stored the two-segment string
+  it('never copies OpenClaw workspace/memory/*.md either — the prefix match, not a bare segment match', () => {
+    // An earlier version of `MAPPED_DIR_NAMES` stored the two-segment string
     // `join('workspace', 'memory')` in a Set and then tested each path
     // *segment* individually against it, so `'workspace/memory'` never
     // equalled either `'workspace'` or `'memory'` alone — the entry could
@@ -121,7 +121,7 @@ describe('writeImportArchive', () => {
     expect(result.archived).toEqual([])
   })
 
-  it('A11: excludes a file whose name looks credential-like even though it is not on the exact-name denylist', () => {
+  it('excludes a file whose name looks credential-like even though it is not on the exact-name denylist', () => {
     const sourceDir = freshDir('veduta-archive-src-')
     const archiveDir = join(freshDir('veduta-archive-dst-'), 'archive')
     writeFileSync(join(sourceDir, 'credentials.json'), '{"key":"x"}')
@@ -208,7 +208,7 @@ describe('writeImportArchive', () => {
   })
 })
 
-// --- buildNotesMarkdown (A17: merged in from the former `import-notes.test.ts`) ---
+// --- buildNotesMarkdown (merged in from the former `import-notes.test.ts`) ---
 
 function plan(overrides: Partial<ImportPlan> = {}): ImportPlan {
   return ImportPlanSchema.parse({
@@ -273,7 +273,7 @@ describe('buildNotesMarkdown', () => {
     expect(notes).not.toContain(SECRET)
   })
 
-  it('A17: reports the real archive count, not the plan preview count', () => {
+  it('reports the real archive count, not the plan preview count', () => {
     const notes = buildNotesMarkdown({
       plan: plan(),
       rootDir: '/data/veduta',
@@ -284,7 +284,7 @@ describe('buildNotesMarkdown', () => {
     expect(notes).toContain('import-archive/')
   })
 
-  it('A17: lists every skipped archive entry under "Not archived" with its reason', () => {
+  it('lists every skipped archive entry under "Not archived" with its reason', () => {
     const notes = buildNotesMarkdown({
       plan: plan(),
       rootDir: '/data/veduta',

@@ -102,7 +102,7 @@ const REJECT_PATTERNS: { name: string; pattern: RegExp }[] = [
   { name: 'instruction-override', pattern: /\bdisregard\s+(all|previous|prior)\b/i },
   { name: 'system-prompt-probe', pattern: /\bsystem\s+prompt\b/i },
   { name: 'role-forgery', pattern: /^\s*(system|assistant)\s*:/im },
-  // Nested/delegated instructions (plan v3 Blocker B): the email does not
+  // Nested/delegated instructions (Blocker B): the email does not
   // address the Agent directly, it asks the Agent to relay or act on its
   // behalf ("tell the user...", "instruct the agent to..."). A legitimate
   // "Anna asks you to confirm" does not match these patterns; they target
@@ -175,7 +175,7 @@ function capText(value: string, maxBytes = FIELD_CAP_BYTES): string {
 }
 
 function delimitedField(name: string, value: string): string {
-  // Pre-extraction normalization (issue #015 D4): strip Unicode-smuggling
+  // Pre-extraction normalization (issue #015): strip Unicode-smuggling
   // characters from the untrusted field before it ever reaches the model's
   // prompt, not only from what the model hands back. `stripHiddenChars` is
   // deliberately narrower than `normalizeText` here — it must not collapse

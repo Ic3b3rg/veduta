@@ -81,7 +81,7 @@ describe('AC2 — no plaintext secret survives in any durable rootDir artifact',
     try {
       // Plant + register: mirrors how the daemon's secret resolver wraps
       // `compositeSecretResolver` so every successful resolution registers
-      // the value with the shared redactor (issue #15 D2/D3, server.ts's
+      // the value with the shared redactor (issue #15, server.ts's
       // `buildSecretResolver`).
       const composite = compositeSecretResolver(envSecretResolver)
       const resolved = composite.resolve(`secret://env/${envName}`)

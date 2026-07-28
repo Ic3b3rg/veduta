@@ -153,7 +153,7 @@ describe('AgentRunner contract', () => {
   })
 })
 
-describe('computeContextHash (BINDING amendment A3)', () => {
+describe('computeContextHash', () => {
   it('is a sha256 hex digest', () => {
     expect(computeContextHash({ messages: [], input: 'hello' })).toMatch(/^[0-9a-f]{64}$/)
   })

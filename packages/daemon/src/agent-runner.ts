@@ -44,7 +44,7 @@ export type AgentEvent =
 export type AgentEventHandler = (event: AgentEvent) => Promise<void> | void
 
 /**
- * What caused this turn (D10/D12, issue #14): informational provenance for
+ * What caused this turn (issue #14): informational provenance for
  * the audit trail and approval cards. Never itself a trust-decision input —
  * only taint (`ToolContext.taint`) governs gating; a `trigger` just records
  * why the turn happened, for the humans and Surfaces reading the audit log.
@@ -106,7 +106,7 @@ export interface ToolResult {
   details?: unknown
   terminate?: boolean
   /**
-   * Origins of stored content this result derives from (D10, issue #14):
+   * Origins of stored content this result derives from (issue #14):
    * read-side tools (`read_recent`, `search_log`) report the origin of
    * every event/fact they rendered. The runner folds these into the live
    * `ToolContext.taint` accumulator and persists them on the tool's
@@ -127,10 +127,10 @@ export interface ToolContext {
    * (docs/SECURITY.md §3.2).
    */
   origin: Origin
-  /** The origin chain the turn started with — the seed `origin` was derived from, before any mid-turn growth (D10). */
+  /** The origin chain the turn started with — the seed `origin` was derived from, before any mid-turn growth. */
   origins: Origin[]
   /**
-   * Live per-turn taint accumulator (D10/A1): starts seeded with `origins`
+   * Live per-turn taint accumulator: starts seeded with `origins`
    * and grows as tool results report further provenance. Trust decisions
    * (issue #14) must read `taint.origins()` at execution time, never a
    * pre-turn snapshot — a trusted turn that reads untrusted content
@@ -143,7 +143,7 @@ export interface ToolContext {
   trigger?: TriggerRef
   /**
    * sha256 of the canonical model-visible context envelope for the
-   * immediately preceding model inference (BINDING amendment A3): proof of
+   * immediately preceding model inference: proof of
    * exactly what crossed the runner's wrapper boundary before this tool
    * was called. See `computeContextHash`.
    */
@@ -191,7 +191,7 @@ export interface SessionMessage {
   /** Absent means trusted (the pre-taint-tracking default). */
   origin?: Origin
   /**
-   * Full provenance of a tool result (BINDING amendment A1): every origin
+   * Full provenance of a tool result: every origin
    * the tool's `ToolResult` reported, not only the most-untrusted mark
    * kept in `origin`. Absent for messages with no reported origins.
    */
@@ -280,7 +280,7 @@ export const disabledContextPolicy: ContextPolicy = {
 }
 
 /**
- * Canonical envelope hash (BINDING amendment A3, docs/SECURITY.md §5): sha256
+ * Canonical envelope hash (docs/SECURITY.md §5): sha256
  * over a key-sorted JSON encoding of `envelope`, so the hash depends only on
  * the envelope's content, never on incidental object-key insertion order.
  * Runners build `envelope` from exactly what crossed their wrapper boundary

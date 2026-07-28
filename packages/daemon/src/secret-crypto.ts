@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:
 
 /**
  * Shared AES-256-GCM sealed-box primitives for at-rest secrets material
- * (issue #15 D2/D5): the secrets vault (`secrets-vault.ts`) and encrypted
+ * (issue #15): the secrets vault (`secrets-vault.ts`) and encrypted
  * backups (`backup.ts`) both need scrypt key derivation plus an AEAD seal
  * over a header of `{ salt, iv }`, domain-separated by a purpose label so
  * identical key material yields a different key for each purpose.

@@ -43,8 +43,8 @@ export function readSetupCode(): string {
 /**
  * Reads the pairing code like `readSetupCode`, then strips `?code=` from the
  * URL via `history.replaceState` so a refreshed or shared link never carries
- * the bootstrap code again (`tasks/plan.md` "Design decisions (v2)" §11).
- * Other query params and the path are preserved. Guarded so the module stays
+ * the bootstrap code again. Other query params and the path are preserved.
+ * Guarded so the module stays
  * import-safe outside a browser (tests, SSR-style tooling).
  */
 export function consumeSetupCode(): string {

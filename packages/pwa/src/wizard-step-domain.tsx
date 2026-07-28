@@ -2,7 +2,7 @@ import type { OnboardingStatus } from '@veduta/protocol'
 import { WIZARD_STEP_META } from './onboarding-state.ts'
 
 /**
- * Domain step (`tasks/plan.md` §3-4): read-mostly — the domain and TLS state
+ * Domain step: read-mostly — the domain and TLS state
  * were already detected/handled by the installer. Changing the domain later
  * is a systemd drop-in edit, not something this form can do, so the exact
  * commands are shown as help text (Hermes discipline: dead ends print the

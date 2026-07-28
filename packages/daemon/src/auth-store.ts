@@ -62,8 +62,8 @@ export interface SessionRevokedEvent {
 export interface AuthState {
   bootstrapCodeHash?: string
   /**
-   * ISO expiry set the first time `bootstrapCodeHash` is seeded (plan v2
-   * decision 11): 60 minutes from seeding. Optional for backward
+   * ISO expiry set the first time `bootstrapCodeHash` is seeded: 60 minutes
+   * from seeding. Optional for backward
    * compatibility — an `auth.json` written before this field existed loads
    * fine, and its bootstrap code (if any) is treated as never expiring.
    */
@@ -162,8 +162,8 @@ export class AuthStore {
   private randomBytes: (length: number) => Buffer
   private publicOrigin: string
   /**
-   * The plaintext bootstrap code this boot actually knows, if any (plan v2
-   * decision 11) — only `hashSecret(...)` of it is ever persisted, so this
+   * The plaintext bootstrap code this boot actually knows, if any — only
+   * `hashSecret(...)` of it is ever persisted, so this
    * is the one seam `bootstrapCode()` exposes for `index.ts` to print the
    * code that is genuinely valid right now.
    */
@@ -190,7 +190,7 @@ export class AuthStore {
         // hash before — always seeds, with its own fresh 60-minute expiry.
         // Covers both "nothing seeded yet" and "an operator rotated
         // `VEDUTA_BOOTSTRAP_CODE` to a new value while the old one was still
-        // valid" (plan v2 decision 11 + issue #19 fix).
+        // valid" (issue #19 fix).
         this.seedBootstrapCode(envCode!, envHash)
       } else {
         const persistedAbsent = this.state.bootstrapCodeHash === undefined
@@ -222,7 +222,7 @@ export class AuthStore {
 
   /**
    * The plaintext bootstrap code this boot knows is valid right now, if
-   * any (plan v2 decision 11) — `undefined` once a passkey is registered,
+   * any — `undefined` once a passkey is registered,
    * or when this boot neither seeded nor re-confirmed one (a still-valid
    * code minted on an earlier boot whose plaintext this process never saw).
    * `index.ts` prints this instead of blindly printing whatever
@@ -451,7 +451,7 @@ export class AuthStore {
         this.state.bootstrapCodeExpiresAt !== undefined &&
         isPast(this.state.bootstrapCodeExpiresAt, this.now)
       ) {
-        // Dead-end discipline (plan v2 decision 11): the fix is a restart
+        // Dead-end discipline: the fix is a restart
         // (which mints a fresh code, see the constructor) plus the journal
         // line that prints it — never a code the daemon can hand back here.
         throw new AuthStoreError(

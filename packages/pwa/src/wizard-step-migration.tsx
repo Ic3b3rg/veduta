@@ -26,10 +26,10 @@ const GROUP_LABELS: Record<ImportAction, string> = {
 }
 
 /**
- * Migration step (issue 020, `tasks/plan.md` T8): one card per detected
+ * Migration step (issue 020): one card per detected
  * source (`legacy.openclaw`/`legacy.hermes`, either or both can be true),
  * each previewed independently since the wire API takes exactly one source
- * per request (design decision 7). All fetch orchestration lives in the
+ * per request. All fetch orchestration lives in the
  * shell (`onboarding-wizard.tsx`) -- this component only renders `preview`
  * and calls back into the handlers it is given, the same shape as
  * `WizardStepByok`'s `onTest`/`onApply`. "Migrate later" / "configure
@@ -43,7 +43,7 @@ const GROUP_LABELS: Record<ImportAction, string> = {
  * sections (Import/Overwrite/Skip) via the pure `groupImportItems` helper --
  * an empty group renders an explicit "None." rather than disappearing, so a
  * user cannot mistake "nothing to show" for "the group was never computed."
- * `plan.warnings` (design decisions 2/3: the SOUL-adaptation and
+ * `plan.warnings` (the SOUL-adaptation and
  * untrusted-memory notices live here) get their own visibly distinct block,
  * separate from the purely informational `notMigrated` list. When
  * `plan.soulPreview` is present, the mitigation the warning describes is

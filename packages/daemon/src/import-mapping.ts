@@ -6,26 +6,22 @@ import { defaultSoul, untrustedDataBlock } from './spaces-engine.ts'
 import { neutralizeDelimiters } from './taint.ts'
 
 /**
- * The one `Imported` Space every apply reconciles by slug (`tasks/plan.md`
- * decision 18): `createSpace` always runs `uniqueSlug` and would silently
- * produce `imported-2` on a second import, so both the CLI and the wizard
- * must look up this exact slug rather than minting a new one.
+ * The one `Imported` Space every apply reconciles by slug: `createSpace` always runs `uniqueSlug`
+ * and would silently produce `imported-2` on a second import, so both the CLI and the wizard must
+ * look up this exact slug rather than minting a new one.
  */
 export const IMPORTED_SPACE_NAME = 'Imported'
 export const IMPORTED_SPACE_SLUG = 'imported'
 
 /**
- * The plan-item target identifiers every producer and consumer must agree on
- * (A21, `tasks/plan.md` decision 7 — preview and apply must never disagree
- * about what a run does). `import-plan.ts` builds `ImportItem`s keyed by
- * these strings; `import-apply.ts` looks items up by the same strings before
- * deciding what to write; `import-archive.ts`'s `buildNotesMarkdown` renders
- * the archive item by the same string too. Spelling these independently in
- * three files is a fail-open bug waiting to happen: if one drifts,
- * `items.find(...)` returns `undefined` and apply silently writes nothing
- * for that slot while still reporting success — one export, used everywhere,
- * closes that off. `vault` is a function because the vault target embeds a
- * per-secret provider name.
+ * The plan-item target identifiers every producer and consumer must agree on (preview and apply
+ * must never disagree about what a run does). `import-plan.ts` builds `ImportItem`s keyed by these
+ * strings; `import-apply.ts` looks items up by the same strings before deciding what to write;
+ * `import-archive.ts`'s `buildNotesMarkdown` renders the archive item by the same string too.
+ * Spelling these independently in three files is a fail-open bug waiting to happen: if one drifts,
+ * `items.find(...)` returns `undefined` and apply silently writes nothing for that slot while still
+ * reporting success — one export, used everywhere, closes that off. `vault` is a function because
+ * the vault target embeds a per-secret provider name.
  */
 /**
  * The `vault:` discriminator, exported so the one place that has to recognise a
@@ -45,7 +41,7 @@ export const IMPORT_TARGETS = {
 } as const
 
 /**
- * FACTS budget for one import (`tasks/plan.md` T4 AC): a legacy MEMORY.md
+ * FACTS budget for one import (AC): a legacy MEMORY.md
  * can be huge, and FACTS is meant to stay a short, curated document — not a
  * second copy of someone's entire memory dump. Entries beyond this count
  * still land in the Space, just in the Event log instead of FACTS, and the
@@ -53,7 +49,7 @@ export const IMPORT_TARGETS = {
  */
 export const MAX_IMPORTED_FACTS = 100
 
-// --- Target-side reads (conflict detection, tasks/plan.md decision 6) ---
+// --- Target-side reads (conflict detection) ---
 // The other half of this module (below, from `sourceLabel` on) transforms
 // SOURCE text; this half only ever reads the TARGET's existing state, and
 // only with plain `fs` calls (see `readTargetState`'s own doc comment for
@@ -79,18 +75,16 @@ export interface TargetState {
   /** A non-archived Space with slug `imported` already exists. */
   importedSpaceExists: boolean
   /**
-   * `rootDir` exists and is a directory (A13, `tasks/plan.md` decision 14:
-   * "the target must be an existing directory"). `false` for a missing path
-   * or one that exists but is a file/socket/etc — `buildImportPlan` turns
-   * that into a `blocked` entry, since there is nowhere to write a backup or
-   * a Space into.
+   * `rootDir` exists and is a directory ("the target must be an existing directory"). `false` for a
+   * missing path or one that exists but is a file/socket/etc — `buildImportPlan` turns that into a
+   * `blocked` entry, since there is nowhere to write a backup or a Space into.
    */
   rootIsDirectory: boolean
 }
 
 /**
  * Reads the target-side state a plan needs to detect conflicts
- * (`tasks/plan.md` decision 6, issue 020 AC3) — **the single most important
+ * (issue 020 AC3) — **the single most important
  * correctness constraint in this module**. `new SpacesEngine()` would create
  * `spaces/`, `USER.md` and `SOUL.md` on the spot
  * (`spaces-engine.ts`'s `ensureBaseLayout`), which would make a dry-run
@@ -133,8 +127,8 @@ function hasContentBeyondHeading(text: string): boolean {
  * Whether a non-archived `imported` Space already exists, read straight off
  * `SPACE.json` — never via `SpacesEngine.getSpace`, which would require a
  * constructed engine. An *archived* `imported` Space does not count as a
- * conflict: apply (T5) only reconciles by slug against a non-archived Space
- * (`tasks/plan.md` decision 18), so an archived one is, for planning
+ * conflict: apply only reconciles by slug against a non-archived Space
+ *, so an archived one is, for planning
  * purposes, as good as absent. Unparsable JSON is treated conservatively as
  * "exists" rather than risking a silent double-write into unknown state.
  */
@@ -164,7 +158,7 @@ const REBRAND_TERMS = ['openclaw', 'hermes', 'clawdbot', 'moltbot']
 const REBRAND_RE = new RegExp(`\\b(?:${REBRAND_TERMS.join('|')})\\b`, 'gi')
 
 /**
- * Case-preserving rebranding (`tasks/plan.md` decision 5) — the only rewrite
+ * Case-preserving rebranding — the only rewrite
  * ever applied to imported prose. `OpenClaw`/`Hermes`/`clawdbot`/`moltbot`,
  * in any casing, become `Veduta` in the matching casing convention:
  * all-caps stays all-caps, capitalized stays capitalized, otherwise
@@ -180,18 +174,15 @@ function rebrand(text: string): string {
 }
 
 /**
- * Builds a complete `SOUL.md` document from an imported one (`tasks/plan.md`
- * decision 3): SOUL *is* instructions, so unlike USER it cannot be
- * delimited — every other mitigation applies instead. Order is
- * load-bearing: Veduta's invariants (`ABSTENTION_RULE`, `SPACE_GRANULARITY_RULE`,
- * `TIMER_RULE`, reused verbatim, never retyped — the authoritative block is
- * built by calling `defaultSoul()` itself, A18, rather than retyping its
- * heading/intro/rules a second time here, which would let the two silently
- * drift) comes first, a rebranded personality below can never override it;
- * the imported text is then rebranded, has its own delimiter tokens
- * neutralized (so it can never forge an `<<<UNTRUSTED...>>>` block elsewhere
- * in a rendered context), and is redacted last, so a secret pasted into
- * someone's SOUL.md never survives into the written file.
+ * Builds a complete `SOUL.md` document from an imported one: SOUL *is* instructions, so unlike USER
+ * it cannot be delimited — every other mitigation applies instead. Order is load-bearing: Veduta's
+ * invariants (`ABSTENTION_RULE`, `SPACE_GRANULARITY_RULE`, `TIMER_RULE`, reused verbatim, never
+ * retyped — the authoritative block is built by calling `defaultSoul()` itself rather than
+ * retyping its heading/intro/rules a second time here, which would let the two silently drift)
+ * comes first, a rebranded personality below can never override it; the imported text is then
+ * rebranded, has its own delimiter tokens neutralized (so it can never forge an
+ * `<<<UNTRUSTED...>>>` block elsewhere in a rendered context), and is redacted last, so a secret
+ * pasted into someone's SOUL.md never survives into the written file.
  */
 export function adaptSoul(text: string, kind: ImportSourceKind): string {
   const body = defaultRedactor.redactText(neutralizeDelimiters(rebrand(text)))
@@ -207,7 +198,7 @@ ${body}
 
 /**
  * Builds a complete `USER.md` document from an imported profile
- * (`tasks/plan.md` decision 2): `assembleContext` renders `<root>/USER.md`
+ *: `assembleContext` renders `<root>/USER.md`
  * verbatim into every turn, so the imported body is written inside the same
  * delimited envelope (`untrustedDataBlock`, exported from `spaces-engine.ts`
  * for exactly this reuse) used for every other piece of untrusted content —
@@ -224,16 +215,13 @@ ${untrustedDataBlock(sourceLabel(kind), [['profile', body]])}
 }
 
 /**
- * The `INSTRUCTIONS.md` body for the `Imported` Space (`tasks/plan.md`
- * decision 18): a staging area, not a life area — the user sorts its
- * contents into real Spaces with the Agent's help. Its facts and events stay
- * untrusted-marked regardless of this text, but the text says so anyway, so
- * the Agent's own framing of the Space matches the trust layer's.
- *
- * Deliberately source-neutral, naming no single install (A25): this same
- * Space is reconciled by slug across runs (decision 18), so a second import
- * of the *other* source later reuses it — text naming only the first
- * source's label would then describe the Space wrongly forever after.
+ * The `INSTRUCTIONS.md` body for the `Imported` Space: a staging area, not a life area — the user
+ * sorts its contents into real Spaces with the Agent's help. Its facts and events stay
+ * untrusted-marked regardless of this text, but the text says so anyway, so the Agent's own framing
+ * of the Space matches the trust layer's. Deliberately source-neutral, naming no single install:
+ * this same Space is reconciled by slug across runs, so a second import of the *other* source later
+ * reuses it — text naming only the first source's label would then describe the Space wrongly
+ * forever after.
  */
 export function importedSpaceInstructions(): string {
   return `# INSTRUCTIONS
@@ -243,20 +231,19 @@ This Space is a staging area for material imported from a legacy agent install (
 }
 
 // --- Memory entry splitting ---
-// A20: merged in from the former `import-memory.ts`, a 57-line module whose
+// merged in from the former `import-memory.ts`, a 57-line module whose
 // one export's peers (`adaptSoul`, `wrapImportedUser`, `rebrand`) all live here.
 
 const BULLET_LINE_RE = /^[ \t]*[-*][ \t]+(.*)$/
-/** A *top-level* bullet — anchored to column 0 (A5(d)): an indented `[-*]` line is a sub-bullet, not a new entry. */
+/** A *top-level* bullet — anchored to column 0: an indented `[-*]` line is a sub-bullet, not a new entry. */
 const TOP_BULLET_RE = /^[-*][ \t]+(.*)$/
 const HEADING_RE = /^#{1,6}(?:\s|$)/
 /**
- * A `§` that stands alone on its own line — the only shape that counts as
- * Hermes' entry delimiter (A5(a)). An inline `§` (e.g. a bullet mentioning
- * "see §3.2") must never fragment the document: requiring the whole line
- * (only leading/trailing horizontal whitespace allowed either side) is what
- * tells the two cases apart. Used for both detection and splitting, so they
- * can never disagree with each other.
+ * A `§` that stands alone on its own line — the only shape that counts as Hermes' entry delimiter
+ * when it stands alone on its own line. An inline `§` (e.g. a bullet mentioning "see §3.2") must never fragment the document:
+ * requiring the whole line (only leading/trailing horizontal whitespace allowed either side) is
+ * what tells the two cases apart. Used for both detection and splitting, so they can never disagree
+ * with each other.
  */
 const LONE_SECTION_DELIM_RE = /(?:^|\r?\n)[ \t]*§[ \t]*(?:\r?\n|$)/
 
@@ -265,12 +252,11 @@ function hasBulletLine(text: string): boolean {
 }
 
 /**
- * One entry per *top-level* bullet (column 0, A5(d)): an indented `[-*]`
- * line folds into the preceding entry as continuation text, the same as any
- * other non-bullet line — it is a sub-bullet of that entry, not a memory of
- * its own. Any prose before the first top-level bullet is not discarded: it
- * becomes its own leading entry, so a document that opens with a sentence
- * before its first bullet keeps that sentence.
+ * One entry per *top-level* bullet (column 0): an indented `[-*]` line folds into the
+ * preceding entry as continuation text, the same as any other non-bullet line — it is a sub-bullet
+ * of that entry, not a memory of its own. Any prose before the first top-level bullet is not
+ * discarded: it becomes its own leading entry, so a document that opens with a sentence before its
+ * first bullet keeps that sentence.
  */
 function splitBullets(text: string): string[] {
   const entries: string[] = []
@@ -301,7 +287,7 @@ function splitBullets(text: string): string[] {
  * Trims, collapses internal whitespace runs to a single space — the same
  * normalization `facts.ts`'s `curateFact` applies to fact text, so a
  * multiline entry becomes the single-line shape a `FactRecord` expects —
- * and redacts (`tasks/plan.md` decision 4): a memory entry is exactly the
+ * and redacts: a memory entry is exactly the
  * kind of pasted-secret accident this importer must never let through to
  * FACTS or the Event log.
  */
@@ -310,14 +296,12 @@ function normalizeMemoryEntry(entry: string): string {
 }
 
 /**
- * Drops a leading heading line from a raw (pre-normalization) entry, keeping
- * its body (A5(b)): normalizing first (collapsing newlines to spaces) and
- * *then* testing for a heading would make `## Preferences\nlikes tea`
- * collapse into `## Preferences likes tea`, which still matches the heading
- * pattern and would drop the whole entry, body included — silent memory
- * loss. Testing the first line before normalizing tells apart a genuine
- * pure-heading divider (dropped entirely — `undefined`) from a heading
- * immediately followed by real content (heading stripped, body kept).
+ * Drops a leading heading line from a raw (pre-normalization) entry, keeping its body:
+ * normalizing first (collapsing newlines to spaces) and *then* testing for a heading would make `##
+ * Preferences\nlikes tea` collapse into `## Preferences likes tea`, which still matches the heading
+ * pattern and would drop the whole entry, body included — silent memory loss. Testing the first
+ * line before normalizing tells apart a genuine pure-heading divider (dropped entirely —
+ * `undefined`) from a heading immediately followed by real content (heading stripped, body kept).
  */
 function stripLeadingHeading(rawEntry: string): string | undefined {
   const lines = rawEntry.split(/\r?\n/)
@@ -328,16 +312,14 @@ function stripLeadingHeading(rawEntry: string): string | undefined {
 }
 
 /**
- * Splits a legacy `MEMORY.md`/note body into individual memory entries,
- * trying the three real vendor formats in this precedence (`tasks/plan.md`
- * T4, "Source layouts"): Hermes' documented `§` entry delimiter first — only
- * when it stands alone on its own line (A5(a)), entries may be multiline;
- * else markdown bullets (`-`/`*`), one entry per *top-level* bullet, with
- * indented sub-bullets folded into their parent and any pre-bullet prose
- * kept as its own entry (A5(d)); else CRLF-aware blank-line-separated
- * paragraphs (A5(c)). A leading heading line is stripped and its remainder
- * kept; an entry that is nothing but a heading (a stray `## Notes` divider)
- * is dropped entirely (A5(b)). Empty entries are dropped last.
+ * Splits a legacy `MEMORY.md`/note body into individual memory entries, trying the three real
+ * vendor formats in this precedence ("Source layouts"): Hermes' documented `§` entry delimiter
+ * first — only when it stands alone on its own line, entries may be multiline; else
+ * markdown bullets (`-`/`*`), one entry per *top-level* bullet, with indented sub-bullets folded
+ * into their parent and any pre-bullet prose kept as its own entry; else CRLF-aware
+ * blank-line-separated paragraphs. A leading heading line is stripped and its remainder
+ * kept; an entry that is nothing but a heading (a stray `## Notes` divider) is dropped entirely
+ * kept. Empty entries are dropped last.
  */
 export function extractMemoryEntries(text: string): string[] {
   const raw = LONE_SECTION_DELIM_RE.test(text)
