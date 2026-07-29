@@ -4,6 +4,7 @@ import type { ModelRef } from './agent-runner.ts'
 import { automationsSurfaceId } from './automations-surface.ts'
 import { nextCronOccurrence } from './cron.ts'
 import { timeToCron, type HeartbeatConfig } from './heartbeat-config.ts'
+import { reconcileManagedJobs } from './managed-jobs.ts'
 import { SpendingCapError, type ModelRouter } from './model-routing.ts'
 import type { Scheduler } from './scheduler.ts'
 import type { Store } from './store.ts'
@@ -245,61 +246,26 @@ export class Heartbeat {
   /**
    * Reconciles the System-Space Automation(s) that fire the Heartbeat to
    * exactly `config.times`. Call at construction/boot, before
-   * `scheduler.start()`. Converges to the desired cron set: obsolete crons
-   * (dropped from config) are cancelled, duplicate arms on a still-desired
-   * cron are collapsed to one, and a survivor's `enabled` flag is never
-   * touched — a user who switched a job off keeps it off across a restart
-   * or a config change that keeps its time.
+   * `scheduler.start()`. The actual convergence — obsolete crons (dropped
+   * from config) cancelled, duplicate arms on a still-desired cron
+   * collapsed to one, a survivor's `enabled` flag never touched so a user
+   * who switched a job off keeps it off across a restart or a config
+   * change that keeps its time — is `reconcileManagedJobs`'s (issue #21
+   * gave the Heartbeat a second job family, the nightly Reflection, needing
+   * exactly this logic, hence the shared helper). The Heartbeat's own
+   * `config.times` are UTC by construction (`heartbeat-config.ts`), so no
+   * `timezone` is passed here.
    */
   reconcileJobs(): void {
-    const heartbeatJobs = this.scheduler
-      .listAutomations(SYSTEM_SPACE_ID)
-      .filter((automation) => automation.handler === 'heartbeat')
-
-    if (!this.config.enabled) {
-      // Disabled: no armed heartbeat job survives, so the scheduler can
-      // never fire it and no router call ever happens.
-      for (const job of heartbeatJobs) {
-        if (job.status !== 'cancelled') this.scheduler.cancel(job.id, 'trusted:system')
-      }
-      return
-    }
-
-    const desiredTimeByCron = new Map(this.config.times.map((time) => [timeToCron(time), time]))
-    const armedJobs = heartbeatJobs.filter((job) => job.status !== 'cancelled')
-
-    // Cancel every armed job whose cron is no longer desired.
-    for (const job of armedJobs) {
-      if (job.cron === undefined || !desiredTimeByCron.has(job.cron)) {
-        this.scheduler.cancel(job.id, 'trusted:system')
-      }
-    }
-
-    // Among jobs on a still-desired cron, keep exactly one (the first,
-    // i.e. lowest id) survivor and cancel any extras — two live heartbeat
-    // jobs firing the same instant must never coexist.
-    const survivorByCron = new Map<string, boolean>()
-    for (const job of armedJobs) {
-      if (job.cron === undefined || !desiredTimeByCron.has(job.cron)) continue
-      if (survivorByCron.has(job.cron)) {
-        this.scheduler.cancel(job.id, 'trusted:system')
-      } else {
-        survivorByCron.set(job.cron, true)
-      }
-    }
-
-    for (const [cron, time] of desiredTimeByCron) {
-      if (survivorByCron.has(cron)) continue
-      this.scheduler.createManagedJob(
-        {
-          spaceId: SYSTEM_SPACE_ID,
-          cron,
-          description: `Heartbeat sweep at ${time} UTC`,
-          handler: 'heartbeat',
-        },
-        'trusted:system',
-      )
-    }
+    reconcileManagedJobs({
+      scheduler: this.scheduler,
+      spaceId: SYSTEM_SPACE_ID,
+      handler: 'heartbeat',
+      enabled: this.config.enabled,
+      desired: new Map(
+        this.config.times.map((time) => [timeToCron(time), `Heartbeat sweep at ${time} UTC`]),
+      ),
+    })
   }
 
   /** Wires the Scheduler's generic handler registry to `runSweep`. Call before `scheduler.start()`. */

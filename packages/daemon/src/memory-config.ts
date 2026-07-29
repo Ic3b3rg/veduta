@@ -1,0 +1,79 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { z } from 'zod'
+import { TIME_OF_DAY_RE } from './cron.ts'
+import { assertTimeZone } from './timezone.ts'
+
+/**
+ * Memory configuration (issue #21): `<rootDir>/memory.json`.
+ * `SpaceSchema` has no notion of a user timezone today, so this is where
+ * one is established for the whole daemon: it anchors time-aware queries
+ * ("start of June") and the nightly Reflection's firing time
+ * (docs/adr/0006-file-based-memory.md) to the user's own clock rather than
+ * wherever the daemon happens to be deployed. No config file (or an empty
+ * override) means the defaults below apply.
+ */
+export const MemoryConfigSchema = z
+  .object({
+    /** IANA zone name. Every local-time interpretation in memory (Reflection's
+     * firing time, "start of X" query ranges) resolves against this, never
+     * the deployment host's own zone. */
+    timezone: z
+      .string()
+      .default('UTC')
+      .superRefine((zone, context) => {
+        try {
+          assertTimeZone(zone)
+        } catch (error) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: error instanceof Error ? error.message : `invalid time zone "${zone}"`,
+          })
+        }
+      }),
+    reflection: z
+      .object({
+        enabled: z.boolean().default(true),
+        /** HH:MM, interpreted in `timezone` (not UTC) — the nightly sweep that
+         * distills the day's Event log and demotes stale facts to `dormant`. */
+        time: z
+          .string()
+          .default('04:00')
+          .superRefine((time, context) => {
+            if (!TIME_OF_DAY_RE.test(time)) {
+              context.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: `reflection time "${time}" must match HH:MM (00:00-23:59)`,
+              })
+            }
+          }),
+      })
+      .strict()
+      .default({}),
+    budget: z
+      .object({
+        /** UTF-16 code units of the rendered active FACTS projection. Reflection
+         * must bring the active set back under this by demoting the
+         * least-relevant still-valid facts to `dormant`. */
+        low: z.number().int().positive().default(4000),
+      })
+      .strict()
+      .default({}),
+  })
+  .strict()
+
+export type MemoryConfig = z.infer<typeof MemoryConfigSchema>
+
+export function loadMemoryConfig(rootDir: string): MemoryConfig {
+  const path = join(rootDir, 'memory.json')
+  if (!existsSync(path)) return MemoryConfigSchema.parse({})
+  let raw: unknown
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf8'))
+  } catch (error) {
+    throw new Error(
+      `invalid JSON in memory config ${path}: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+  return MemoryConfigSchema.parse(raw)
+}

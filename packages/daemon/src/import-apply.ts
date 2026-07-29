@@ -167,18 +167,22 @@ function emptyFactCounts(): ImportFactCounts {
 }
 
 /**
- * `facts.ts`'s `CuratorOperation` ('add'/'update'/'supersede'/'noop') and
- * `ImportFactCounts`'s field names ('added'/'updated'/'superseded'/'noop')
- * are spelled differently on purpose (one is a verb describing what the
- * Curator just did, the other a noun-count field in the wire schema) — this
- * is the one place that bridges them, so a typo here fails loudly rather
- * than silently indexing a counts object with a key it does not have.
+ * `facts.ts`'s `CuratorOperation` ('add'/'update'/'supersede'/'noop'/'reactivate') and
+ * `ImportFactCounts`'s field names ('added'/'updated'/'superseded'/'noop') are spelled
+ * differently on purpose (one is a verb describing what the Curator just did, the other a
+ * noun-count field in the wire schema) — this is the one place that bridges them, so a typo
+ * here fails loudly rather than silently indexing a counts object with a key it does not
+ * have. `ImportFactCounts` (`@veduta/protocol`) has no bucket of its own for `reactivate`
+ * yet, so a memory entry that restates a dormant fact is counted as `added` here — it is,
+ * after all, a fact that was not in the active set before this import run and is afterwards.
+ * Giving `reactivate` its own reported count is a wire-protocol change, left to a follow-up.
  */
 const FACT_COUNT_FIELD: Record<CuratorOperation, keyof ImportFactCounts> = {
   add: 'added',
   update: 'updated',
   supersede: 'superseded',
   noop: 'noop',
+  reactivate: 'added',
 }
 
 interface IdentityWriteResult {

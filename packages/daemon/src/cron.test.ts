@@ -94,3 +94,86 @@ describe('nextCronOccurrence', () => {
     )
   })
 })
+
+describe('nextCronOccurrence with a timezone (issue #21)', () => {
+  it('interprets the fields as local wall-clock time, not UTC', () => {
+    // Europe/Rome is CEST (UTC+2) in July and CET (UTC+1) in January, so the
+    // same "04:00 local" cron expression lands on a different UTC instant.
+    expect(nextCronOccurrence('0 4 * * *', at('2026-07-01T00:00:00Z'), 'Europe/Rome')).toEqual(
+      at('2026-07-01T02:00:00Z'),
+    )
+    expect(nextCronOccurrence('0 4 * * *', at('2026-01-01T00:00:00Z'), 'Europe/Rome')).toEqual(
+      at('2026-01-01T03:00:00Z'),
+    )
+  })
+
+  it('resolves a spring-forward gap to the transition instant, exactly once', () => {
+    // Europe/Rome jumps 02:00 CET -> 03:00 CEST on 2026-03-29: local 02:00
+    // never occurs that day.
+    const first = nextCronOccurrence('0 2 * * *', at('2026-03-29T00:00:00Z'), 'Europe/Rome')
+    expect(first).toEqual(at('2026-03-29T01:00:00Z'))
+    // The following day's 02:00 is an ordinary, unambiguous occurrence.
+    expect(nextCronOccurrence('0 2 * * *', first, 'Europe/Rome')).toEqual(
+      at('2026-03-30T00:00:00Z'),
+    )
+  })
+
+  it('resolves a fall-back overlap to the earlier instant, exactly once', () => {
+    // Europe/Rome repeats local 02:30 on 2026-10-25 (CEST 02:30, then CET
+    // 02:30 an hour later): only the earlier instant fires.
+    const first = nextCronOccurrence('30 2 * * *', at('2026-10-25T00:00:00Z'), 'Europe/Rome')
+    expect(first).toEqual(at('2026-10-25T00:30:00Z'))
+    // Strictly after the first firing, the next one is the following day's
+    // 02:30 — the repeated 02:30 later on the 25th is never returned again.
+    expect(nextCronOccurrence('30 2 * * *', first, 'Europe/Rome')).toEqual(
+      at('2026-10-26T01:30:00Z'),
+    )
+  })
+
+  it('handles a 30-minute DST shift (Australia/Lord_Howe)', () => {
+    // Lord Howe jumps 01:59 -> 02:30 on 2026-10-04 (standard -> DST): local
+    // 02:00 never occurs.
+    const first = nextCronOccurrence('0 2 * * *', at('2026-10-03T14:00:00Z'), 'Australia/Lord_Howe')
+    expect(first).toEqual(at('2026-10-03T15:30:00Z'))
+    expect(nextCronOccurrence('0 2 * * *', first, 'Australia/Lord_Howe')).toEqual(
+      at('2026-10-04T15:00:00Z'),
+    )
+
+    // Lord Howe repeats local 02:15 on 2026-04-05 (DST -> standard, -30min).
+    const secondFirst = nextCronOccurrence(
+      '15 2 * * *',
+      at('2026-04-04T14:00:00Z'),
+      'Australia/Lord_Howe',
+    )
+    expect(secondFirst).toEqual(at('2026-04-04T15:45:00Z'))
+    expect(nextCronOccurrence('15 2 * * *', secondFirst, 'Australia/Lord_Howe')).toEqual(
+      at('2026-04-05T15:45:00Z'),
+    )
+  })
+
+  it('crosses the date line correctly (Pacific/Kiritimati, UTC+14)', () => {
+    expect(
+      nextCronOccurrence('0 0 * * *', at('2026-07-08T09:00:00Z'), 'Pacific/Kiritimati'),
+    ).toEqual(at('2026-07-08T10:00:00Z'))
+    expect(
+      nextCronOccurrence('0 0 * * *', at('2026-07-08T23:00:00Z'), 'Pacific/Kiritimati'),
+    ).toEqual(at('2026-07-09T10:00:00Z'))
+  })
+
+  it('keeps the day-of-month/day-of-week either-or rule in local calendar days', () => {
+    // 13th (Monday) OR Friday, evaluated against America/New_York's local
+    // calendar, not UTC's.
+    expect(
+      nextCronOccurrence('0 0 13 * 5', at('2026-07-08T22:00:00Z'), 'America/New_York'),
+    ).toEqual(at('2026-07-10T04:00:00Z'))
+    expect(
+      nextCronOccurrence('0 0 13 * 5', at('2026-07-11T22:00:00Z'), 'America/New_York'),
+    ).toEqual(at('2026-07-13T04:00:00Z'))
+  })
+
+  it('throws on an invalid timezone', () => {
+    expect(() => nextCronOccurrence('0 4 * * *', at('2026-07-08T00:00:00Z'), 'Not/AZone')).toThrow(
+      /invalid time zone/,
+    )
+  })
+})

@@ -219,6 +219,25 @@ describe('QuarantinedReader', () => {
     }
   })
 
+  it('preserves the external event occurredAt through quarantine onto the reader.summary event', async () => {
+    setUp()
+    try {
+      const router = testRouter()
+      const reader = new QuarantinedReader({
+        router,
+        store,
+        complete: async () => ({ text: JSON.stringify(validOutput) }),
+      })
+
+      await reader.read(handoff({ event: baseEvent({ occurredAt: '2026-07-08T09:00:00+02:00' }) }))
+
+      const summary = store.eventLog('spc-health').find((event) => event.type === 'reader.summary')
+      expect(summary?.occurredAt).toBe('2026-07-08T07:00:00.000Z')
+    } finally {
+      tearDown()
+    }
+  })
+
   it('rethrows a fetchBody transport failure without appending an event', async () => {
     setUp()
     try {

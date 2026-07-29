@@ -10,7 +10,9 @@ single source of truth for coding agents; `CLAUDE.md` just imports it.
 - Dev: `pnpm dev` → daemon on `http://127.0.0.1:8787` + PWA on `http://localhost:5173` (mock
   LLM provider and seed data — no VPS, domain, or API key required, by design)
 - Test all: `pnpm test` · one package: `pnpm --filter @veduta/daemon test` · one file:
-  `pnpm --filter @veduta/daemon test -- src/server.test.ts`
+  `pnpm --filter @veduta/daemon exec vitest run src/server.test.ts` — use `exec vitest run`, not
+  `test -- <file>`: pnpm forwards the `--` to vitest, which then ignores the path and silently runs
+  the whole suite instead of the file you asked for
 - Before finishing any change, run: `pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build`
 
 ## Hard rules

@@ -79,6 +79,15 @@ export interface Automation {
   handler?: string
   /** The Surface this timer/job covers, if any. */
   targetSurfaceId?: string
+  /**
+   * IANA zone the `cron` field's five fields are local wall-clock time in
+   * (issue #21, e.g. the nightly Reflection job's 04:00 user-local firing
+   * time). Absent means the historical interpretation: `cron` is UTC, like
+   * every other timestamp in the daemon. Only daemon-owned managed jobs
+   * (`createManagedJob`) may set this — `createJob`, the Agent-facing tool,
+   * never does.
+   */
+  timezone?: string
 }
 
 /**
@@ -254,6 +263,8 @@ export class Scheduler {
       description: string
       handler: string
       targetSurfaceId?: string
+      /** Local wall-clock zone for `cron` (issue #21); see `Automation.timezone`. */
+      timezone?: string
     },
     origin?: Origin,
   ): Automation {
@@ -266,7 +277,9 @@ export class Scheduler {
 
     this.requireSpace(input.spaceId)
     parseCron(input.cron)
-    const nextRunAt = nextCronOccurrence(input.cron, this.now()).toISOString()
+    // An invalid timezone surfaces here, from `nextCronOccurrence`'s own
+    // `assertTimeZone` call — no separate validation needed.
+    const nextRunAt = nextCronOccurrence(input.cron, this.now(), input.timezone).toISOString()
 
     const automation = this.insertAutomation({
       kind: 'job',
@@ -276,6 +289,7 @@ export class Scheduler {
       nextRunAt,
       handler,
       ...(input.targetSurfaceId === undefined ? {} : { targetSurfaceId: input.targetSurfaceId }),
+      ...(input.timezone === undefined ? {} : { timezone: input.timezone }),
       ...(origin === undefined ? {} : { origin }),
     })
     this.appendEvent(
@@ -596,9 +610,11 @@ export class Scheduler {
       return
     }
     // Fast-forward past every missed occurrence: catch-up never bursts.
+    // Passing `automation.timezone` through keeps a zoned recurring job
+    // firing at the same local time across a DST boundary (issue #21).
     let nextRunAt: string | null
     try {
-      nextRunAt = nextCronOccurrence(automation.cron, this.now()).toISOString()
+      nextRunAt = nextCronOccurrence(automation.cron, this.now(), automation.timezone).toISOString()
     } catch {
       nextRunAt = null
     }
@@ -779,12 +795,13 @@ export class Scheduler {
     origin?: Origin
     handler?: string
     targetSurfaceId?: string
+    timezone?: string
   }): Automation {
     const result = this.db
       .prepare(
         `insert into automations
-           (kind, space_id, description, enabled, fire_at, cron, condition_json, next_run_at, status, created_at, origin, handler, target_surface_id)
-         values (?, ?, ?, 1, ?, ?, ?, ?, 'armed', ?, ?, ?, ?)`,
+           (kind, space_id, description, enabled, fire_at, cron, condition_json, next_run_at, status, created_at, origin, handler, target_surface_id, timezone)
+         values (?, ?, ?, 1, ?, ?, ?, ?, 'armed', ?, ?, ?, ?, ?)`,
       )
       .run(
         input.kind,
@@ -798,6 +815,7 @@ export class Scheduler {
         input.origin ?? null,
         input.handler ?? null,
         input.targetSurfaceId ?? null,
+        input.timezone ?? null,
       )
     return this.requireAutomation(Number(result.lastInsertRowid))
   }
@@ -853,7 +871,8 @@ export class Scheduler {
         created_at text not null,
         origin text,
         handler text,
-        target_surface_id text
+        target_surface_id text,
+        timezone text
       );
       create index if not exists automations_due
         on automations (status, next_run_at);
@@ -875,6 +894,9 @@ export class Scheduler {
     // a pre-existing database predates them and must keep working.
     this.ensureColumn('automations', 'handler', 'text')
     this.ensureColumn('automations', 'target_surface_id', 'text')
+    // Same defensive migration for `timezone` (issue #21): a pre-existing
+    // database predates zoned managed jobs and must keep working.
+    this.ensureColumn('automations', 'timezone', 'text')
   }
 
   /** Adds `column` to `table` if an existing (pre-migration) database lacks it. */
@@ -890,10 +912,14 @@ export class Scheduler {
 }
 
 function scheduleText(automation: Automation): string {
+  // Unzoned jobs keep the historical label untouched, byte-for-byte: only a
+  // zoned managed job (issue #21) gets the parenthesized zone marker, so
+  // `cron` still reads as UTC by default everywhere it already did.
+  const zoneLabel = automation.timezone ? ` (${automation.timezone})` : ''
   const base =
     automation.kind === 'timer'
       ? `once at ${utcLabel(automation.fireAt)}`
-      : `cron ${automation.cron} — next ${utcLabel(automation.nextRunAt)}`
+      : `cron ${automation.cron}${zoneLabel} — next ${utcLabel(automation.nextRunAt)}`
   const done = automation.status === 'completed' ? ' — done' : ''
   const last = automation.lastOutcome ? ` — last: ${automation.lastOutcome}` : ''
   return `${base}${done}${last}`
@@ -919,6 +945,7 @@ function automationFromRow(row: Record<string, unknown>): Automation {
   const origin = originValue !== undefined && isValidOrigin(originValue) ? originValue : undefined
   const handler = optionalString(row, 'handler')
   const targetSurfaceId = optionalString(row, 'target_surface_id')
+  const timezone = optionalString(row, 'timezone')
   if (status !== 'armed' && status !== 'completed' && status !== 'cancelled') {
     throw new Error(`unexpected automation status: ${status}`)
   }
@@ -939,6 +966,7 @@ function automationFromRow(row: Record<string, unknown>): Automation {
     ...(origin === undefined ? {} : { origin }),
     ...(handler === undefined ? {} : { handler }),
     ...(targetSurfaceId === undefined ? {} : { targetSurfaceId }),
+    ...(timezone === undefined ? {} : { timezone }),
     ...(conditionJson === undefined
       ? {}
       : { condition: ConditionSchema.parse(JSON.parse(conditionJson)) }),

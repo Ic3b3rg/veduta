@@ -59,8 +59,20 @@ _Avoid_: main polling, tick loop
 ### Memory
 
 **FACTS**:
-The curated file of a Space's durable facts, small and always injected into context. Bi-temporal facts: every fact carries its date; superseded ones go into `## Superseded`, never deleted.
+The curated file of a Space's durable facts, small and always injected into context. Bi-temporal facts: every fact carries its date. Three states: **active** (injected), **dormant** (valid and on disk, not injected, retrieved on demand), **superseded** (replaced, in `## Superseded`). Nothing is ever deleted.
 _Avoid_: memory (generic), knowledge base
+
+**Dormant**:
+A FACTS state: a still-valid fact the nightly Reflection moved out of the injected set to keep it under budget. Retrievable, reversible, never deleted — it is not superseded and it is not forgetting.
+_Avoid_: archived fact, expired fact, forgotten
+
+**Hybrid index**:
+The disposable SQLite FTS5 index over a Space's Event log and FACTS. It makes the long tail findable; it never answers. Every hit dereferences the original record, which is re-read from the file. Delete it and one command rebuilds it identically.
+_Avoid_: vector store, knowledge base, cache (it is neither authoritative nor merely a cache)
+
+**Retrieval**:
+The read-side interface over the hybrid index: a query, a time range extracted in the user's timezone, and hits that carry the original record with its origins — growing the turn's live taint when a hit is untrusted.
+_Avoid_: RAG, semantic search, lookup
 
 **Event log**:
 The append-only stream of a Space's events (from the fast path and from turns). Recent portion in context, long tail via hybrid search. It is the provenance: it is never rewritten.
@@ -80,7 +92,7 @@ The user's cross-cutting profile, injected into every context.
 The memory-write step that applies Add/Update/Supersede/Noop, comparing every new fact against the existing ones. Contradictions are resolved at write time, not at read time.
 
 **Reflection**:
-The offline nightly job that distills the Event log, compacts FACTS, and generates insights ("sleep-time compute").
+The offline nightly job (default 04:00 in the user's timezone) that distills the Event log into summaries and 2-3 insights, consolidates FACTS through the Curator without ever falsely superseding, and demotes the least-recently-noted still-valid facts to **dormant** until the injected set is back under budget ("sleep-time compute"). A visible Automation the user can switch off.
 _Avoid_: dreaming (OpenClaw term)
 
 ### Trust and channels

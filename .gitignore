@@ -5,3 +5,6 @@ coverage/
 *.log
 .veduta/
 .serena/
+# Working notes for the issue in flight. AGENTS.md: never committed — which is
+# also why a comment may not cite them.
+tasks/

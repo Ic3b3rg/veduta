@@ -2,8 +2,8 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ImportSourceKind } from '@veduta/protocol'
 import { defaultRedactor } from './redaction.ts'
-import { defaultSoul, untrustedDataBlock } from './spaces-engine.ts'
-import { neutralizeDelimiters } from './taint.ts'
+import { defaultSoul } from './spaces-engine.ts'
+import { neutralizeDelimiters, untrustedDataBlock } from './taint.ts'
 
 /**
  * The one `Imported` Space every apply reconciles by slug: `createSpace` always runs `uniqueSlug`
@@ -200,8 +200,8 @@ ${body}
  * Builds a complete `USER.md` document from an imported profile
  *: `assembleContext` renders `<root>/USER.md`
  * verbatim into every turn, so the imported body is written inside the same
- * delimited envelope (`untrustedDataBlock`, exported from `spaces-engine.ts`
- * for exactly this reuse) used for every other piece of untrusted content —
+ * delimited envelope (`untrustedDataBlock`, exported from `taint.ts` for
+ * exactly this reuse) used for every other piece of untrusted content —
  * deterministic, lossless, and it can no longer read as instructions.
  * Rebranded and redacted the same way as `adaptSoul`; delimiter
  * neutralization happens inside `untrustedDataBlock` itself.

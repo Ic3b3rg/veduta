@@ -6,6 +6,25 @@ Adopted grafts from the literature: bi-temporal facts with `## Superseded` (Zep/
 
 Status: accepted
 
+## Amendment (issue 021): the `dormant` state, and a working set
+
+FACTS has three states, not two: `active | dormant | superseded`. **Dormant** is a valid fact,
+kept on disk, **not injected** into context, and retrieved on demand. It is not superseded —
+nothing replaced it — and it is never deleted, so it is not destructive forgetting.
+
+The model is a working set with demand paging: the injected projection is the hot set, bounded by
+the `low` watermark measured over the **rendered** active text, and the nightly Reflection is the
+compaction pass that brings it back under that bound by demoting the least-recently-noted still-valid
+facts. Files remain the truth; the demoted long tail is reached through the disposable index
+described in [ADR-0011](0011-disposable-hybrid-index.md), which also records why demotion carries no
+recency veto and no floor, and how the Reflection consolidates losslessly without ever falsely
+superseding.
+
+One consequence worth stating here: because FACTS is a read model over an append-only log, the
+guarantee that "every claim, date and origin is preserved" is a property of the **Event log**, not of
+`FactRecord`. A fact carries one date and one origin; the log carries the whole trail, and a
+`fact.evidence` entry keeps that trail growing even when the Curator answers `noop`.
+
 ## Considered Options
 
 - Knowledge graph (Zep/Graphiti-style): rejected — contested gains, high cost, useless below ~150 conversations per Space.

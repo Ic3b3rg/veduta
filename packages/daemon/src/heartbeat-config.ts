@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { TIME_OF_DAY_RE, timeToCron } from './cron.ts'
 
 /**
  * Heartbeat configuration (issue #16): `<rootDir>/heartbeat.json`.
@@ -8,7 +9,10 @@ import { z } from 'zod'
  * file (or an empty override) means the daemon runs the deterministic
  * checklist + a single triage-tier call twice a day, at the given UTC times.
  */
-const TIME_OF_DAY_RE = /^([01]\d|2[0-3]):[0-5]\d$/
+// Re-exported: `heartbeat.ts` and this file's own tests import `timeToCron`
+// from here; the conversion itself now lives in `cron.ts`, next to the
+// `nextCronOccurrence` function it feeds.
+export { timeToCron }
 
 export const HeartbeatConfigSchema = z
   .object({
@@ -60,14 +64,4 @@ export function loadHeartbeatConfig(rootDir: string): HeartbeatConfig {
     )
   }
   return HeartbeatConfigSchema.parse(raw)
-}
-
-/** `'06:30'` => `'30 6 * * *'` — the cron expression the Scheduler arms for a heartbeat time. */
-export function timeToCron(hhmm: string): string {
-  const match = TIME_OF_DAY_RE.exec(hhmm)
-  if (!match) {
-    throw new Error(`invalid time-of-day "${hhmm}": expected HH:MM (00:00-23:59)`)
-  }
-  const [hours, minutes] = hhmm.split(':')
-  return `${Number(minutes)} ${Number(hours)} * * *`
 }

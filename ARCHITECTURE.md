@@ -73,7 +73,7 @@ The agent's main tools: surfaces (`create_surface`, `patch_state`, `patch_tree`)
 
 ### 3.3 Spaces
 
-`spaces/<name>/`: `FACTS.md` (bi-temporal facts, `## Superseded` section), append-only Event log (recent portion in context, long tail via hybrid search with a time-aware index), `INSTRUCTIONS.md`, Surfaces and Automations. Global: `USER.md`, `SOUL.md`. Files are the truth; indexes are rebuildable ([ADR-0006](docs/adr/0006-file-based-memory.md)). Lifecycle: the Agent _proposes_ creation (one-tap confirmation), granularity = life area (goals are Surfaces, not Spaces), archival never deletion. A Space's memory is visible and editable as a Surface ("what I know about you here").
+`spaces/<name>/`: `FACTS.md` (bi-temporal facts in three states — active, `## Dormant`, `## Superseded`), append-only Event log (recent portion in context, long tail via hybrid search with a time-aware index), `INSTRUCTIONS.md`, Surfaces and Automations. Global: `USER.md`, `SOUL.md`. Files are the truth; the SQLite FTS5 index is disposable and rebuildable with one command, and every hit dereferences the original record ([ADR-0006](docs/adr/0006-file-based-memory.md), [ADR-0011](docs/adr/0011-disposable-hybrid-index.md)). The nightly **Reflection** is the offline compaction pass: it distills the day's log, consolidates FACTS through the Curator, and demotes still-valid facts to dormant to keep the injected set bounded — a visible Automation, never a silent cleanup. Lifecycle: the Agent _proposes_ creation (one-tap confirmation), granularity = life area (goals are Surfaces, not Spaces), archival never deletion. A Space's memory is visible and editable as a Surface ("what I know about you here").
 
 ### 3.4 Surface engine
 

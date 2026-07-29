@@ -10,7 +10,7 @@ import {
   WebAuthnOptionsEnvelopeSchema,
 } from '@veduta/protocol'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { appendFileSync, existsSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Fastify from 'fastify'
@@ -34,8 +34,12 @@ import { loadHeartbeatConfig } from './heartbeat-config.ts'
 import { HeartbeatSurfaceManager } from './heartbeat-surface.ts'
 import { Heartbeat } from './heartbeat.ts'
 import { loadIngestionConfig } from './ingestion-config.ts'
+import { loadMemoryConfig } from './memory-config.ts'
+import { MemoryIndex, type MemoryIndexOptions } from './memory-index.ts'
+import { MemoryRetrieval } from './memory-retrieval.ts'
 import { MockAgentRunner } from './mock-agent-runner.ts'
 import { mockReaderComplete } from './mock-provider.ts'
+import { createMockReflectionDistiller } from './mock-reflection-distiller.ts'
 import { createMockWorkerRunner, createMockWorkerReviewComplete } from './mock-worker-runner.ts'
 import {
   ModelRouter,
@@ -51,6 +55,8 @@ import { createMockOutboundTransport, createOutboundTools } from './outbound-too
 import { PushStore } from './push-store.ts'
 import { QuarantinedReader } from './quarantined-reader.ts'
 import { defaultRedactor } from './redaction.ts'
+import { Reflection } from './reflection.ts'
+import { ReflectionSurfaceManager } from './reflection-surface.ts'
 import { Scheduler } from './scheduler.ts'
 import {
   compositeSecretResolver,
@@ -203,6 +209,35 @@ function openVaultAndSecrets(rootDir: string): {
 }
 
 /**
+ * Opens the `MemoryIndex` over `<rootDir>/memory.sqlite`, recovering once
+ * from a file `DatabaseSync` cannot open at all — a corrupt header, a
+ * truncated write, a file restored mid-copy — rather than letting that
+ * failure crash the whole daemon before `reconcile()` even gets a chance to
+ * run. `memory-index.ts`'s own module doc documents deleting the file (plus
+ * its `-wal`/`-shm` companions) and rebuilding as a fully supported recovery
+ * path: this is that path, run automatically, since the Event log and FACTS
+ * on disk were always the only truth this index caches. If the retry itself
+ * still throws (e.g. the directory is not writable), that failure is a real
+ * boot-blocking problem and is left to propagate rather than hidden.
+ */
+function openMemoryIndex(
+  rootDir: string,
+  spacesEngine: MemoryIndexOptions['spacesEngine'],
+  now: () => Date,
+): MemoryIndex {
+  try {
+    return new MemoryIndex({ rootDir, spacesEngine, now })
+  } catch (error) {
+    console.error('memory index open failed; rebuilding from a fresh file', error)
+    for (const suffix of ['', '-wal', '-shm']) {
+      const candidate = join(rootDir, `memory.sqlite${suffix}`)
+      if (existsSync(candidate)) rmSync(candidate)
+    }
+    return new MemoryIndex({ rootDir, spacesEngine, now })
+  }
+}
+
+/**
  * `POST /api/onboarding/finish`'s default graceful-exit hook (VPS profile
  * only, code review fix): after a 500ms grace period (so the HTTP response
  * has time to actually flush to the client), close `app` — draining open
@@ -320,6 +355,45 @@ export function buildServer(options: ServerOptions = {}) {
   // (issue #14): materialize the System Space before anything else so
   // it exists no matter which subsystem writes to it first.
   ensureSystemSpace(store.spacesEngine)
+
+  // File-based memory (issues/021-advanced-memory.md, ADR-0006): the Event
+  // log and FACTS are already the truth on disk; `MemoryIndex` only makes
+  // the long tail of them findable. Constructed early — right after the
+  // Store exists — because it depends on nothing but `SpacesEngine` and the
+  // Reflection further below needs it. `openMemoryIndex` and `reconcile()`
+  // below are both wrapped so a corrupt or unreadable `memory.sqlite` (a
+  // crash mid-write, a stale/corrupted file restored from a backup) can
+  // never take the daemon down — the files are the truth regardless of
+  // whether the index works, so boot continues with fast retrieval simply
+  // unavailable until the next successful reconcile, the same fail-open
+  // shape as the trust layer's own boot recovery below. The index itself
+  // subscribes to `spacesEngine.onMemoryWrite` in its own constructor, so
+  // nothing here has to refresh it again after this point.
+  const memoryConfig = loadMemoryConfig(store.spacesEngine.rootDir)
+  const memoryIndex = openMemoryIndex(store.spacesEngine.rootDir, store.spacesEngine, now)
+  try {
+    memoryIndex.reconcile()
+  } catch (error) {
+    console.error('memory index boot reconciliation failed', error)
+  }
+  const memoryRetrieval = new MemoryRetrieval({
+    index: memoryIndex,
+    spacesEngine: store.spacesEngine,
+    config: memoryConfig,
+    now,
+  })
+  app.addHook('onClose', async () => {
+    memoryIndex.close()
+  })
+  // `memoryRetrieval` has no call site in this file: `createMemoryTools`
+  // (memory-tools.ts) is never constructed here, because there is no real
+  // Agent loop yet to hand a `ToolDef[]` to — `devDispatchHandler` and
+  // `spawnWorkerFromChat` below are chat's own dev stand-ins for that loop,
+  // and neither dispatches tool calls a model chose. `memoryRetrieval` stays
+  // constructed and available here so the real Agent-loop wiring can pass it
+  // straight into `createMemoryTools(engine, { retrieval: memoryRetrieval })`
+  // once that loop lands, with no rework of this module.
+
   const auth = options.auth ?? { mode: 'dev' as const }
   // Onboarding wizard profile (issue #19): mirrors
   // `index.ts`'s own vps/loopback split — a production auth store means the
@@ -657,12 +731,52 @@ export function buildServer(options: ServerOptions = {}) {
   heartbeat.register()
   heartbeat.reconcileJobs()
   heartbeatSurfaces.start()
+
+  // The nightly Reflection (issues/021-advanced-memory.md,
+  // docs/adr/0006-file-based-memory.md): "sleep-time compute" over the
+  // MemoryIndex/config constructed near the top of this function. Mirrors
+  // the Heartbeat immediately above in every way that matters for boot
+  // ordering: `register()` and `reconcileJobs()` both run before
+  // `scheduler.start()` below, so the Scheduler can never fire this
+  // Automation before its handler exists, and a second `buildServer()` call
+  // over the same data dir converges on the same one job instead of
+  // creating a duplicate.
+  const reflection = new Reflection({
+    store,
+    scheduler,
+    index: memoryIndex,
+    config: memoryConfig,
+    // Dev stand-in, same rationale as the Heartbeat's own `complete` stub
+    // above and the mock quarantined reader: no real Agent loop or
+    // provider key is wired yet. Replaced outright once the Agent loop
+    // lands.
+    distiller: createMockReflectionDistiller(),
+    now,
+    // Same shape as the Heartbeat's `onSwept` above, and the same forward
+    // reference to a manager declared just below: the callback body only runs
+    // once a Reflection occurrence fires, long after both are constructed.
+    // Without it the report Surface would keep serving whatever was true at
+    // boot — the Reflection runs overnight, so on a daemon that stays up the
+    // browsable report would never change.
+    onReflected: (spaceId) => reflectionSurfaces.refresh(spaceId),
+  })
+  const reflectionSurfaces = new ReflectionSurfaceManager({
+    store,
+    reflection,
+    low: memoryConfig.budget.low,
+    now,
+  })
+  reflection.register()
+  reflection.reconcileJobs()
+  reflectionSurfaces.start()
+
   notificationSettings.start()
   notificationCenter.start()
   scheduler.start()
   app.addHook('onClose', async () => {
     scheduler.stop()
     heartbeatSurfaces.dispose()
+    reflectionSurfaces.dispose()
   })
 
   // Background Workers (issue #17, ADR-0002, ARCHITECTURE §3.6): ephemeral
@@ -1209,6 +1323,10 @@ export function buildServer(options: ServerOptions = {}) {
     pushStore,
     notificationCenter,
     notificationSettings,
+    memoryIndex,
+    memoryRetrieval,
+    reflection,
+    reflectionSurfaces,
   }
 }
 

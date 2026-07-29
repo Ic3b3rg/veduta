@@ -12,7 +12,8 @@
     "test": "vitest run",
     "vault": "tsx src/vault-cli.ts",
     "backup": "tsx src/backup-cli.ts",
-    "import-legacy": "tsx src/import-cli.ts"
+    "import-legacy": "tsx src/import-cli.ts",
+    "memory-index": "tsx src/memory-index-cli.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.80.3",

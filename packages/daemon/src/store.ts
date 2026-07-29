@@ -9,10 +9,10 @@ import {
   type ActionInvocation,
 } from '@veduta/protocol'
 import type { ToolDef } from './agent-runner.ts'
-import type { FactRecord, FactsDocument } from './facts.ts'
+import type { FactsDocument } from './facts.ts'
 import { seedSpaces } from './seed.ts'
 import type { Origin } from './taint.ts'
-import { SpacesEngine, type SpaceEvent } from './spaces-engine.ts'
+import { SpacesEngine, type FactSearchHit, type SpaceEvent } from './spaces-engine.ts'
 import {
   SurfaceEngine,
   type CreateSurfaceOptions,
@@ -271,7 +271,7 @@ export class Store {
     return this.spacesEngine.readFacts(spaceId)
   }
 
-  searchFacts(spaceId: string, query: string): FactRecord[] {
+  searchFacts(spaceId: string, query: string): FactSearchHit[] {
     return this.spacesEngine.searchFacts(spaceId, query)
   }
 

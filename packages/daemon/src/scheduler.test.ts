@@ -608,6 +608,109 @@ describe('generic job-handler registry (issue #16)', () => {
   })
 })
 
+describe('zoned managed jobs (issue #21)', () => {
+  it('stores a timezone on a managed job and computes a local-time nextRunAt', () => {
+    const scheduler = createScheduler()
+    scheduler.registerHandler('reflect', () => 'reflected')
+    clock = new Date('2026-07-01T00:00:00.000Z')
+
+    const job = scheduler.createManagedJob({
+      spaceId: HEALTH,
+      cron: '0 4 * * *',
+      description: 'Nightly reflection',
+      handler: 'reflect',
+      timezone: 'Europe/Rome',
+    })
+
+    expect(job.timezone).toBe('Europe/Rome')
+    // Europe/Rome is CEST (UTC+2) in July: 04:00 local is 02:00 UTC.
+    expect(job.nextRunAt).toBe('2026-07-01T02:00:00.000Z')
+    expect(scheduler.listAutomations(HEALTH)[0]?.timezone).toBe('Europe/Rome')
+  })
+
+  it('labels a zoned managed job with its zone; an unzoned job keeps the plain UTC label', () => {
+    const scheduler = createScheduler()
+    scheduler.registerHandler('reflect', () => 'reflected')
+
+    scheduler.createJob({ spaceId: HEALTH, cron: '0 8 * * *', briefing: 'Morning briefing' })
+    const job = scheduler.createManagedJob({
+      spaceId: HEALTH,
+      cron: '0 4 * * *',
+      description: 'Nightly reflection',
+      handler: 'reflect',
+      timezone: 'Europe/Rome',
+    })
+
+    const children = store.getSurface(SURFACE)?.tree.children?.[1]?.children
+    const unzoned = children?.find((child) => child.binding === 'job-1')
+    const zoned = children?.find((child) => child.binding === `job-${job.id}`)
+    expect(unzoned?.props?.['schedule']).toBe('cron 0 8 * * * — next 2026-07-09 08:00 UTC')
+    expect(zoned?.props?.['schedule']).toBe(
+      'cron 0 4 * * * (Europe/Rome) — next 2026-07-09 02:00 UTC',
+    )
+  })
+
+  it('advances a recurring managed job across a DST spring-forward, keeping local 04:00', async () => {
+    const scheduler = createScheduler()
+    scheduler.registerHandler('reflect', () => 'reflected')
+    clock = new Date('2026-03-27T00:00:00.000Z')
+
+    const job = scheduler.createManagedJob({
+      spaceId: HEALTH,
+      cron: '0 4 * * *',
+      description: 'Nightly reflection',
+      handler: 'reflect',
+      timezone: 'Europe/Rome',
+    })
+    expect(job.nextRunAt).toBe('2026-03-27T03:00:00.000Z')
+
+    clock = new Date('2026-03-27T03:00:00.000Z')
+    await scheduler.runDue()
+    expect(scheduler.listAutomations(HEALTH)[0]?.nextRunAt).toBe('2026-03-28T03:00:00.000Z')
+
+    clock = new Date('2026-03-28T03:00:00.000Z')
+    await scheduler.runDue()
+    // Europe/Rome springs forward on 2026-03-29 (02:00 CET -> 03:00 CEST):
+    // 04:00 local that day is 02:00 UTC, an hour earlier than the previous
+    // occurrences' UTC instant, yet still 04:00 on the ground in Rome.
+    expect(scheduler.listAutomations(HEALTH)[0]?.nextRunAt).toBe('2026-03-29T02:00:00.000Z')
+
+    clock = new Date('2026-03-29T02:00:00.000Z')
+    await scheduler.runDue()
+    expect(scheduler.listAutomations(HEALTH)[0]?.nextRunAt).toBe('2026-03-30T02:00:00.000Z')
+  })
+
+  it('advances a recurring managed job across a DST fall-back, keeping local 04:00', async () => {
+    const scheduler = createScheduler()
+    scheduler.registerHandler('reflect', () => 'reflected')
+    clock = new Date('2026-10-23T00:00:00.000Z')
+
+    const job = scheduler.createManagedJob({
+      spaceId: HEALTH,
+      cron: '0 4 * * *',
+      description: 'Nightly reflection',
+      handler: 'reflect',
+      timezone: 'Europe/Rome',
+    })
+    expect(job.nextRunAt).toBe('2026-10-23T02:00:00.000Z')
+
+    clock = new Date('2026-10-23T02:00:00.000Z')
+    await scheduler.runDue()
+    expect(scheduler.listAutomations(HEALTH)[0]?.nextRunAt).toBe('2026-10-24T02:00:00.000Z')
+
+    clock = new Date('2026-10-24T02:00:00.000Z')
+    await scheduler.runDue()
+    // Europe/Rome falls back on 2026-10-25 (03:00 CEST -> 02:00 CET): 04:00
+    // local that day is unambiguous, but now 03:00 UTC — an hour later than
+    // the previous occurrences' UTC instant, still 04:00 on the ground.
+    expect(scheduler.listAutomations(HEALTH)[0]?.nextRunAt).toBe('2026-10-25T03:00:00.000Z')
+
+    clock = new Date('2026-10-25T03:00:00.000Z')
+    await scheduler.runDue()
+    expect(scheduler.listAutomations(HEALTH)[0]?.nextRunAt).toBe('2026-10-26T03:00:00.000Z')
+  })
+})
+
 describe('escalation context (issue #18)', () => {
   // The generic handler dispatch never reaches `onEscalation` (a
   // handler-driven occurrence returns straight from `executeOccurrence`),
@@ -769,5 +872,72 @@ describe('schema migration', () => {
       handler: 'noop',
       targetSurfaceId: 'srf-fresh',
     })
+  })
+
+  it('keeps working against a scheduler.sqlite written before the timezone column existed', async () => {
+    // Simulate a database from just before issue #21: every other column
+    // exists, but `timezone` does not yet.
+    const legacyDb = new DatabaseSync(join(rootDir, 'scheduler.sqlite'))
+    legacyDb.exec(`
+      create table automations (
+        id integer primary key autoincrement,
+        kind text not null check (kind in ('timer', 'job')),
+        space_id text not null,
+        description text not null,
+        enabled integer not null default 1,
+        fire_at text,
+        cron text,
+        condition_json text,
+        next_run_at text,
+        status text not null default 'armed'
+          check (status in ('armed', 'completed', 'cancelled')),
+        last_run_at text,
+        last_outcome text,
+        created_at text not null,
+        origin text,
+        handler text,
+        target_surface_id text
+      );
+      create table automation_runs (
+        automation_id integer not null references automations(id),
+        scheduled_for text not null,
+        started_at text not null,
+        outcome text,
+        finished_at text,
+        primary key (automation_id, scheduled_for)
+      );
+      insert into automations
+        (kind, space_id, description, enabled, cron, next_run_at, status, created_at, origin)
+        values ('job', '${HEALTH}', 'Pre-timezone job', 1, '0 8 * * *',
+                '2026-07-09T08:00:00.000Z', 'armed', '2026-07-08T13:00:00.000Z', 'trusted:system');
+    `)
+    legacyDb.close()
+
+    const scheduler = createScheduler()
+    const legacy = scheduler
+      .listAutomations(HEALTH)
+      .find((a) => a.description === 'Pre-timezone job')
+    expect(legacy?.timezone).toBeUndefined()
+
+    // The legacy (unzoned) job keeps advancing after the migration, still
+    // interpreting its cron field as UTC.
+    clock = new Date('2026-07-09T08:00:00.000Z')
+    await scheduler.runDue()
+    expect(
+      scheduler.listAutomations(HEALTH).find((a) => a.description === 'Pre-timezone job'),
+    ).toMatchObject({ nextRunAt: '2026-07-10T08:00:00.000Z' })
+
+    // Fresh writes on the migrated database round-trip the new column.
+    scheduler.registerHandler('reflect', () => 'reflected')
+    const job = scheduler.createManagedJob({
+      spaceId: HEALTH,
+      cron: '0 4 * * *',
+      description: 'Fresh zoned job',
+      handler: 'reflect',
+      timezone: 'Europe/Rome',
+    })
+    expect(scheduler.listAutomations(HEALTH).find((a) => a.id === job.id)?.timezone).toBe(
+      'Europe/Rome',
+    )
   })
 })

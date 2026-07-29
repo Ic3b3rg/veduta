@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,7 +13,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { AuthStore, type PasskeyRelyingParty, type StoredPasskey } from './auth-store.ts'
 import { NOTIFICATION_SETTINGS_SURFACE_ID } from './notification-settings-surface.ts'
 import { NotificationsConfigSchema, saveNotificationsConfig } from './notifications-config.ts'
+import { reflectionSurfaceId } from './reflection-surface.ts'
 import { buildServer } from './server.ts'
+import { SYSTEM_SPACE_ID } from './system-space.ts'
 import type {
   PushPayload,
   PushSendResult,
@@ -84,8 +87,12 @@ describe('GET /api/spaces', () => {
     // Automations Surface (a state patch + a tree patch per job, 4 more
     // ticks), and its own metrics Surface is pre-created (1 more tick), plus
     // the Notification settings Surface (issue #18) pre-created in the
-    // System Space (1 more tick).
-    expect(body.surfaceCursor).toBe(10)
+    // System Space (1 more tick), plus the nightly Reflection's own
+    // boot-time reconciliation (issues/021-advanced-memory.md): its single
+    // configured time arms one more managed job on the same Automations
+    // Surface (2 more ticks), and its per-Space Nightly Reflection Surface is
+    // pre-created for the Health Space (1 more tick).
+    expect(body.surfaceCursor).toBe(13)
     expect(body.spaces.map((s) => s.slug)).toEqual(['health', 'system'])
     for (const surface of body.spaces.flatMap((space) => space.surfaces)) {
       expect(SurfaceSchema.safeParse(surface).success).toBe(true)
@@ -1223,6 +1230,77 @@ describe('Web Push notifications (issue #18)', () => {
         frame.type === 'space.attention',
     )!
     expect(frame).toMatchObject({ spaceId: 'spc-health', count: 1, revision: 1 })
+
+    await app.close()
+  })
+})
+
+describe('memory engines wiring (issues/021-advanced-memory.md)', () => {
+  it('boots with the memory engines wired and /api/health still answers', async () => {
+    const { app } = buildServer()
+    const res = await app.inject({ method: 'GET', url: '/api/health' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ ok: true })
+    await app.close()
+  })
+
+  it('persists memory.sqlite in the data dir, holding rows for the seeded Spaces', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-memory-'))
+    const { app, memoryIndex } = buildServer({ dataDir })
+    await app.inject({ method: 'GET', url: '/api/health' })
+
+    expect(existsSync(join(dataDir, 'memory.sqlite'))).toBe(true)
+    const status = memoryIndex.status()
+    expect(status.records.some((entry) => entry.spaceId === 'spc-health')).toBe(true)
+
+    await app.close()
+  })
+
+  it('reconciles exactly one Nightly Reflection Automation in the System Space, and a second boot over the same data dir does not duplicate it', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-memory-reconcile-'))
+
+    const first = buildServer({ dataDir })
+    const firstReflectionJobs = first.scheduler
+      .listAutomations(SYSTEM_SPACE_ID)
+      .filter((automation) => automation.handler === 'reflection')
+    expect(firstReflectionJobs).toHaveLength(1)
+    expect(firstReflectionJobs[0]?.description).toContain('Nightly Reflection')
+    await first.app.close()
+
+    const second = buildServer({ dataDir })
+    const secondReflectionJobs = second.scheduler
+      .listAutomations(SYSTEM_SPACE_ID)
+      .filter((automation) => automation.handler === 'reflection')
+    expect(secondReflectionJobs).toHaveLength(1)
+    await second.app.close()
+  })
+
+  it('pre-creates a per-Space Nightly Reflection Surface, present in the snapshot', async () => {
+    const { app } = buildServer()
+    const res = await app.inject({ method: 'GET', url: '/api/spaces' })
+    const body = res.json() as {
+      spaces: { slug: string; surfaces: { id: string; title: string }[] }[]
+    }
+    const health = body.spaces.find((space) => space.slug === 'health')
+    expect(
+      health?.surfaces.some(
+        (surface) =>
+          surface.id === reflectionSurfaceId('health') && surface.title === 'Nightly Reflection',
+      ),
+    ).toBe(true)
+    await app.close()
+  })
+
+  it('still boots and answers /api/health when memory.sqlite is unusable', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-memory-broken-'))
+    // Garbage bytes, not a valid SQLite file: `DatabaseSync` fails even
+    // before the daemon's own `reconcile()` call gets a chance to run.
+    await writeFile(join(dataDir, 'memory.sqlite'), 'not a real sqlite file')
+
+    const { app } = buildServer({ dataDir })
+    const res = await app.inject({ method: 'GET', url: '/api/health' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ ok: true })
 
     await app.close()
   })

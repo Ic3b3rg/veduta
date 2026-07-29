@@ -272,6 +272,26 @@ export interface ContextPolicy {
 export interface ContextPolicyContext {
   sessionId: string
   signal?: AbortSignal
+  /**
+   * Pre-compaction session flush (issue #21): a policy that compresses a
+   * session must `await beforeCompact()` at the moment it decides to
+   * compact, and must not compact if the returned promise rejects. It is
+   * invoked at most once per `transform` call — a policy that calls it
+   * more than once gets the same in-flight/settled promise back, not a
+   * second run.
+   *
+   * The hook lives here, on the context the runner passes in, rather than
+   * as a second `willCompact()` predicate on `ContextPolicy` itself,
+   * because two methods that must independently reach the same
+   * compact-or-not conclusion can disagree — a predicate that says "yes"
+   * and a `transform` that then decides "no" (or vice versa) would leave
+   * the flush firing for a compaction that never happens, or compaction
+   * proceeding without ever having flushed. Keeping the decision in the
+   * single place that already makes it (`transform`) removes that
+   * possibility structurally instead of relying on the two staying in
+   * sync.
+   */
+  beforeCompact?: () => Promise<void>
 }
 
 export const disabledContextPolicy: ContextPolicy = {
