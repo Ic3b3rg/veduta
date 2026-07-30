@@ -23,8 +23,16 @@ UI component from the closed catalog (Button, Row, Chart, Checkbox... ~24 ChatKi
 _Avoid_: primitive (ambiguous between atom and template), custom component, HTML
 
 **Template**:
-A composition of Atoms saved in a Space and reused/patched instead of being regenerated from scratch. Emergent, not hardcoded.
+A composition of Atoms saved in a Space and reused/patched instead of being regenerated from scratch. Emergent, not hardcoded. It carries the tree and the names of the state keys it binds, never the data.
 _Avoid_: blueprint, predefined widget
+
+**Pin**:
+The user's "I like this Surface as it is": the Surface's tree is locked. The Agent keeps patching the state; a tree change becomes a Tree proposal. Reversible, and it also saves the composition as a Template.
+_Avoid_: lock (alone), freeze, favourite
+
+**Tree proposal**:
+A tree change the Agent wanted to make to a pinned Surface, held for the user with a preview and an explicit Accept/Reject. Applied only on acceptance, refused if the tree moved meanwhile.
+_Avoid_: pending patch, draft, suggestion
 
 ### Execution
 

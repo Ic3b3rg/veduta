@@ -9,6 +9,7 @@ import {
   SurfaceArchivedEventSchema,
   SurfaceCreatedEventSchema,
   SurfacePatchEventSchema,
+  SurfacePinnedEventSchema,
   SurfaceSchema,
   applySurfacePatch,
   findAtom,
@@ -23,19 +24,67 @@ import {
   type SurfaceArchivedEvent,
   type SurfaceCreatedEvent,
   type SurfacePatchEvent,
+  type SurfacePinnedEvent,
 } from '@veduta/protocol'
 import { z } from 'zod'
-import { defineTool, type ToolDef } from './agent-runner.ts'
+import { defineTool, type ToolContext, type ToolDef } from './agent-runner.ts'
 import type { AppendSpaceEventInput } from './spaces-engine.ts'
-import { requiredNumber, requiredString, withImmediateTransaction } from './sqlite-rows.ts'
-import { toolWriteOrigin, type Origin } from './taint.ts'
+import {
+  optionalString,
+  requiredNumber,
+  requiredString,
+  withImmediateTransaction,
+} from './sqlite-rows.ts'
+import {
+  effectiveOrigin,
+  isValidOrigin,
+  neutralizeDelimiters,
+  toolWriteOrigin,
+  type Origin,
+} from './taint.ts'
 
 type SurfaceWriteActor = Extract<Freshness['updatedBy'], 'agent' | 'user' | 'job'>
+
+/**
+ * Cap on the Surface title rendered into `setPinned`'s `surface.pin` Event
+ * log text (issue 022 review fix): the title can carry attacker-influenced
+ * text (a Surface instantiated from an imported Template), and this event
+ * text — unlike a card preview — has no other size bound of its own.
+ */
+const PIN_EVENT_TITLE_MAX_CHARS = 200
 
 export interface SurfaceMutation {
   surface: Surface
   event: SurfacePatchEvent
   duplicate: boolean
+}
+
+/**
+ * `patchTree`'s result when the target Surface is pinned and the caller did
+ * not pass `bypassPin`: nothing was mutated, a `pending` row was recorded
+ * instead (`issues/022-emergent-templates.md`). Discriminate a `patchTree`
+ * result with `'proposed' in result` rather than a shared field, since
+ * `SurfaceMutation` gains none.
+ */
+export interface TreeProposalRecorded {
+  proposed: true
+  proposalId: number
+  surfaceId: string
+}
+
+export type TreeProposalStatus = 'pending' | 'accepted' | 'rejected'
+
+/** A recorded Tree proposal, as read by `listTreeProposals`/`getTreeProposal`. */
+export interface TreeProposal {
+  id: number
+  surfaceId: string
+  spaceId: string
+  operations: PatchOperation[]
+  expectedTreeVersion: number
+  origin: Origin
+  status: TreeProposalStatus
+  createdAt: string
+  resolvedAt?: string
 }
 
 export interface SurfaceVersion {
@@ -52,6 +101,7 @@ export type SurfaceEngineEvent =
   | { kind: 'patch'; event: SurfacePatchEvent }
   | { kind: 'created'; event: SurfaceCreatedEvent }
   | { kind: 'archived'; event: SurfaceArchivedEvent }
+  | { kind: 'pinned'; event: SurfacePinnedEvent }
 
 export interface QueuedAgentTurn {
   id: string
@@ -104,6 +154,38 @@ export class SurfaceOwnershipError extends Error {
   }
 }
 
+/**
+ * Raised by `setPinned` when the target Surface is daemon-owned (approval
+ * cards, trust admin Surfaces — never user-pinnable, mirroring
+ * `SurfaceSchema.pinnable`) or does not exist. Checked before any write
+ * transaction opens, so a refused pin has no side effects at all.
+ */
+export class SurfaceNotPinnableError extends Error {
+  constructor(readonly surfaceId: string) {
+    super(`Surface ${surfaceId} is daemon-owned or unknown and cannot be pinned`)
+    this.name = 'SurfaceNotPinnableError'
+  }
+}
+
+/**
+ * A Surface's provenance: which Template it was instantiated from (if any),
+ * the Space that Template lives in, and the origin of its tree/state
+ * *content* — distinct from `Freshness`, which tracks who last touched it.
+ * `templateSpaceId` is required whenever `templateId` is present (issue 022
+ * review fix): a Template id is only unique within its own Space
+ * (`templates.ts`'s `templateId` is derived per-Space), so `templateId`
+ * alone cannot say which Template a reused Surface actually came from —
+ * two Spaces can each hold a Template with the same id. `contentOrigin` is
+ * what `enqueueAgentAction` folds into the `agent_path` Event log entry so
+ * an imported Template's text cannot be laundered as something the user
+ * typed (docs/SECURITY.md §3.2).
+ */
+export interface SurfaceProvenance {
+  templateId?: string
+  templateSpaceId?: string
+  contentOrigin: Origin
+}
+
 const CreateSurfaceToolInputSchema = z.object({
   id: z.string().min(1),
   spaceId: z.string().min(1),
@@ -138,6 +220,29 @@ export interface CreateSurfaceOptions {
    * writable by the Agent, as before.
    */
   daemonOwned?: boolean
+  /** The Template this Surface was instantiated from, if any (provenance). */
+  templateId?: string
+  /**
+   * The Space `templateId` lives in (provenance), required whenever
+   * `templateId` is supplied — issue 022 review fix: a Template id is only
+   * unique within its own Space, so `templateId` alone is ambiguous about
+   * which Template a reused Surface came from. See `SurfaceProvenance`.
+   */
+  templateSpaceId?: string
+  /**
+   * The origin of this Surface's tree/state *content*, distinct from who
+   * performed the write (`updatedBy`). Defaults to this call's own `origin`
+   * (falling back to `'trusted:user'` when neither is supplied) — issue 022
+   * review fix: `createSurface` used to default straight to `'trusted:user'`
+   * even when the caller passed an `origin` derived from a tainted turn's
+   * live-taint accumulator (`create_surface`'s tool handler,
+   * `surfaceToolWriteOrigin`), which would launder that turn's own Surface
+   * back in as trusted. A Surface instantiated from an imported Template
+   * still carries that Template's origin here explicitly, so
+   * `enqueueAgentAction` can derive an honest `agent_path` origin later
+   * instead of hardcoding `'trusted:user'` (docs/SECURITY.md §3.2).
+   */
+  contentOrigin?: Origin
 }
 
 /**
@@ -154,6 +259,7 @@ export class SurfaceEngine {
   private readonly hasSpace: (spaceId: string) => boolean
   private readonly appendSpaceEvent: (spaceId: string, input: AppendSpaceEventInput) => unknown
   private readonly surfaceEventObservers = new Set<(event: SurfaceEngineEvent) => void>()
+  private readonly treeProposalObservers = new Set<(proposal: TreeProposal) => void>()
 
   constructor(options: SurfaceEngineOptions) {
     mkdirSync(options.rootDir, { recursive: true })
@@ -215,18 +321,42 @@ export class SurfaceEngine {
     return () => this.surfaceEventObservers.delete(observer)
   }
 
+  /**
+   * Observe every newly recorded Tree proposal exactly once, after its
+   * recording transaction commits (`recordTreeProposal`,
+   * `issues/022-emergent-templates.md`). This is how
+   * `TreeProposalSurfaceManager` learns a proposal was recorded and builds
+   * its preview Surface — the same shape as `onSurfaceEvent`, kept separate
+   * because a Tree proposal is not itself a `SurfaceEngineEvent`.
+   */
+  onTreeProposal(observer: (proposal: TreeProposal) => void): () => void {
+    this.treeProposalObservers.add(observer)
+    return () => this.treeProposalObservers.delete(observer)
+  }
+
   createSurface(
     input: Surface | CreateSurfaceInput,
     updatedBy: SurfaceWriteActor,
     options?: CreateSurfaceOptions,
   ): Surface {
-    const surface = this.surfaceForWrite(input, updatedBy)
-    this.requireKnownSpace(surface.spaceId)
     const daemonOwned = options?.daemonOwned ?? false
+    const surface = this.surfaceForWrite(input, updatedBy, daemonOwned)
+    this.requireKnownSpace(surface.spaceId)
+    // See `CreateSurfaceOptions.contentOrigin`: default to this call's own
+    // write origin, never a flat `'trusted:user'` (issue 022 review fix).
+    const contentOrigin = options?.contentOrigin ?? options?.origin ?? 'trusted:user'
     const event = this.runWrite(() => {
       const existing = this.db.prepare('select id from surfaces where id = ?').get(surface.id)
       if (existing) throw new Error(`Surface already exists: ${surface.id}`)
-      this.insertSurface(surface, 1, 1, false, daemonOwned)
+      this.insertSurface(surface, 1, 1, false, {
+        daemonOwned,
+        treeUpdatedAt: surface.freshness.updatedAt,
+        ...(options?.templateId === undefined ? {} : { templateId: options.templateId }),
+        ...(options?.templateSpaceId === undefined
+          ? {}
+          : { templateSpaceId: options.templateSpaceId }),
+        contentOrigin,
+      })
       this.appendSpaceEvent(surface.spaceId, {
         at: surface.freshness.updatedAt,
         type: 'surface.create',
@@ -238,6 +368,170 @@ export class SurfaceEngine {
     })
     this.notifySurfaceEvent({ kind: 'created', event })
     return surface
+  }
+
+  /**
+   * Locks or unlocks a Surface's tree (`issues/022-emergent-templates.md`),
+   * appending `surface.pin` to the Space's Event log inside the same write
+   * transaction as the column update (ADR-0003: no silent state change).
+   * Refuses a daemon-owned or unknown Surface with `SurfaceNotPinnableError`
+   * before any transaction opens.
+   *
+   * `updatedBy`/`origin` come from the caller (issue 022 review fix): a
+   * hardcoded `updatedBy: 'user'`/`origin: 'trusted:user'` would let a
+   * tool-driven pin forge a genuine user event — `scheduler.ts`'s condition
+   * rule admits only `trusted:user` events, so that could self-satisfy a
+   * pending escalation. The Event log entry's origin is the most-untrusted
+   * of the Surface's own stored content and the caller's origin
+   * (`effectiveOrigin`, taint.ts), never a flat `trusted:user`, and the
+   * title it renders is delimiter-neutralized and truncated exactly as
+   * `approval-surface.ts` does for card text — the title can carry
+   * attacker-influenced text (a Surface instantiated from an imported
+   * Template) and, unlike a card preview, has no other size bound here.
+   */
+  setPinned(
+    surfaceId: string,
+    pinned: boolean,
+    options: { origin: Origin; updatedBy: 'user' | 'agent' | 'job' },
+  ): Surface {
+    this.assertPinnable(surfaceId)
+    const result = this.runWrite(() => {
+      const current = this.getSurface(surfaceId)
+      if (!current) throw new SurfaceNotPinnableError(surfaceId)
+      const stamped = this.stampSurface({ ...current, pinned }, options.updatedBy)
+      this.db
+        .prepare(
+          `update surfaces
+           set pinned = ?, version = version + 1, updated_at = ?, updated_by = ?
+           where id = ? and archived = 0`,
+        )
+        .run(pinned ? 1 : 0, stamped.freshness.updatedAt, stamped.freshness.updatedBy, surfaceId)
+      const storedContentOrigin = this.surfaceProvenance(surfaceId)?.contentOrigin
+      const eventOrigin = effectiveOrigin([storedContentOrigin, options.origin], options.origin)
+      const title = truncate(neutralizeDelimiters(stamped.title), PIN_EVENT_TITLE_MAX_CHARS)
+      this.appendSpaceEvent(stamped.spaceId, {
+        at: stamped.freshness.updatedAt,
+        type: 'surface.pin',
+        text: `${pinned ? 'Pinned' : 'Unpinned'} Surface "${title}"`,
+        origin: eventOrigin,
+        payload: { surfaceId, pinned },
+      })
+      return { surface: stamped, event: this.insertPinnedEvent(stamped, pinned) }
+    })
+    this.notifySurfaceEvent({ kind: 'pinned', event: result.event })
+    return result.surface
+  }
+
+  /**
+   * Active, non-daemon-owned Surfaces whose tree has not changed since
+   * `beforeIso`: the stability query the Template harvest
+   * (`issues/022-emergent-templates.md`) uses to decide which Surfaces are
+   * candidates for a Template. This method only answers "what is stable" —
+   * it does not decide whether to harvest, which stays the caller's policy.
+   */
+  stableSurfaces(beforeIso: string): Surface[] {
+    return this.db
+      .prepare(
+        `select * from surfaces
+         where archived = 0 and daemon_owned = 0 and tree_updated_at <= ?
+         order by id`,
+      )
+      .all(beforeIso)
+      .map(surfaceFromRow)
+  }
+
+  /** The stored provenance for `surfaceId`, or `undefined` if unknown. */
+  surfaceProvenance(surfaceId: string): SurfaceProvenance | undefined {
+    const row = this.db
+      .prepare('select template_id, template_space_id, content_origin from surfaces where id = ?')
+      .get(surfaceId)
+    if (!row) return undefined
+    const templateId = optionalString(row, 'template_id')
+    const templateSpaceId = optionalString(row, 'template_space_id')
+    const storedOrigin = requiredString(row, 'content_origin')
+    return {
+      ...(templateId === undefined ? {} : { templateId }),
+      ...(templateSpaceId === undefined ? {} : { templateSpaceId }),
+      contentOrigin: isValidOrigin(storedOrigin) ? storedOrigin : 'trusted:user',
+    }
+  }
+
+  /**
+   * Tree proposals `patchTree` recorded, optionally filtered by
+   * `surfaceId` and/or `status`. Used by `tree-proposal.ts`'s
+   * `TreeProposalSurfaceManager` to render the preview Surface.
+   */
+  listTreeProposals(options?: { surfaceId?: string; status?: TreeProposalStatus }): TreeProposal[] {
+    const clauses: string[] = []
+    const params: string[] = []
+    if (options?.surfaceId !== undefined) {
+      clauses.push('surface_id = ?')
+      params.push(options.surfaceId)
+    }
+    if (options?.status !== undefined) {
+      clauses.push('status = ?')
+      params.push(options.status)
+    }
+    const where = clauses.length > 0 ? `where ${clauses.join(' and ')}` : ''
+    return this.db
+      .prepare(`select * from tree_proposals ${where} order by id`)
+      .all(...params)
+      .map(treeProposalFromRow)
+  }
+
+  /** The Tree proposal at `id`, or `undefined` if unknown. */
+  getTreeProposal(id: number): TreeProposal | undefined {
+    const row = this.db.prepare('select * from tree_proposals where id = ?').get(id)
+    return row ? treeProposalFromRow(row) : undefined
+  }
+
+  /**
+   * Resolves a `pending` Tree proposal exactly once: a guarded
+   * `update ... where status = 'pending'`, so a doubled Accept/Reject click
+   * can never resolve — let alone apply — the same proposal twice
+   * (`issues/022-emergent-templates.md`). Returns `undefined` when `id` is
+   * unknown or was already resolved; the caller (`tree-proposal.ts`'s
+   * `TreeProposalSurfaceManager`) is responsible for actually applying an
+   * `accepted` proposal via `patchTree`'s `bypassPin`.
+   */
+  resolveTreeProposal(id: number, status: 'accepted' | 'rejected'): TreeProposal | undefined {
+    const resolvedAt = this.nowIso()
+    return this.runWrite(() => {
+      const result = this.db
+        .prepare(
+          `update tree_proposals set status = ?, resolved_at = ? where id = ? and status = 'pending'`,
+        )
+        .run(status, resolvedAt, id)
+      if (Number(result.changes) !== 1) return undefined
+      return this.getTreeProposal(id)
+    })
+  }
+
+  /**
+   * Puts an `accepted` Tree proposal back to `pending` (issue 022 review
+   * fix): `TreeProposalSurfaceManager`'s accept path claims the row
+   * `accepted` before calling `patchTree` — the exactly-once gate — but if
+   * that call throws (e.g. a state patch removed a key the proposed node
+   * binds while `treeVersion` stayed put, so the dry-run re-validation
+   * fails at accept time even though the staleness check passed), the
+   * proposal must not be stuck `accepted` forever with no way to retry. A
+   * guarded `update ... where status = 'accepted'`, mirroring
+   * `resolveTreeProposal`'s own exactly-once discipline: only a proposal
+   * this caller itself just claimed can be reopened, never one a racing
+   * observer already resolved differently. Returns `undefined` when `id` is
+   * unknown or not currently `accepted`.
+   */
+  reopenTreeProposal(id: number): TreeProposal | undefined {
+    return this.runWrite(() => {
+      const result = this.db
+        .prepare(
+          `update tree_proposals set status = 'pending', resolved_at = null
+           where id = ? and status = 'accepted'`,
+        )
+        .run(id)
+      if (Number(result.changes) !== 1) return undefined
+      return this.getTreeProposal(id)
+    })
   }
 
   archiveSurface(surfaceId: string, updatedBy: SurfaceWriteActor, origin?: Origin): Surface {
@@ -280,11 +574,32 @@ export class SurfaceEngine {
     })
   }
 
+  /**
+   * Patches a Surface's Atom tree — unless the target is pinned, in which
+   * case the patch is dry-applied and re-validated (`buildPatchedSurface`,
+   * the same validation `patchSurface` performs on the committed path) and
+   * recorded as a `pending` Tree proposal instead of mutating
+   * (`issues/022-emergent-templates.md`): the pin is a capability on the
+   * Surface, not a property of `updatedBy`, so it applies identically to
+   * `'agent'`, `'user'`, and `'job'` writes. `bypassPin: true` is the one
+   * documented escape hatch (`tree-proposal.ts`'s
+   * `TreeProposalSurfaceManager`, once the human has accepted); it is never
+   * derived from `updatedBy` — every daemon-owned Surface manager already
+   * writes as `'job'` (docs/adr/0012-emergent-templates.md, "The pin is a
+   * capability, not an actor"), so an actor-based bypass would be one
+   * refactor away from silently evaporating. Discriminate the result with
+   * `'proposed' in result`.
+   */
   patchTree(
     surfaceId: string,
     operations: PatchOperation[],
-    options: { expectedTreeVersion: number; updatedBy: SurfaceWriteActor; origin?: Origin },
-  ): SurfaceMutation {
+    options: {
+      expectedTreeVersion: number
+      updatedBy: SurfaceWriteActor
+      origin?: Origin
+      bypassPin?: true
+    },
+  ): SurfaceMutation | TreeProposalRecorded {
     assertPatchTarget(operations, 'tree')
     const version = this.getSurfaceVersion(surfaceId)
     if (!version) throw new Error(`unknown Surface: ${surfaceId}`)
@@ -295,6 +610,18 @@ export class SurfaceEngine {
         version.treeVersion,
       )
     }
+
+    if (options.bypassPin !== true) {
+      const current = this.requireActiveSurface(surfaceId)
+      if (current.pinned) {
+        return this.recordTreeProposal(current, operations, {
+          expectedTreeVersion: options.expectedTreeVersion,
+          updatedBy: options.updatedBy,
+          ...(options.origin === undefined ? {} : { origin: options.origin }),
+        })
+      }
+    }
+
     return this.patchSurface(surfaceId, operations, {
       updatedBy: options.updatedBy,
       eventType: 'surface.patch_tree',
@@ -347,6 +674,14 @@ export class SurfaceEngine {
       ...(invocation.payload ?? {}),
     })
     const at = this.nowIso()
+    // The event's origin is derived from the target Surface's stored
+    // `content_origin`, not hardcoded to `trusted:user`: a Surface
+    // instantiated from an imported (untrusted) Template must not have its
+    // tree's text laundered into the Agent's context as something the user
+    // typed (docs/SECURITY.md §3.2). `effectiveOrigin` keeps the untrusted
+    // mark when the content carries one, and falls back to `trusted:user`
+    // for the ordinary case — a Surface the user really did create.
+    const contentOrigin = this.surfaceProvenance(surface.id)?.contentOrigin
     const id = this.runWrite(() => {
       const result = this.db
         .prepare(
@@ -368,7 +703,7 @@ export class SurfaceEngine {
         at,
         type: 'agent_path',
         text: `${surface.title}: ${invocation.name} requested from Atom "${atom.id}"`,
-        origin: 'trusted:user',
+        origin: effectiveOrigin([contentOrigin], 'trusted:user'),
         payload: { surfaceId: surface.id, atomId: atom.id, actionName: invocation.name, payload },
       })
       return Number(result.lastInsertRowid)
@@ -401,7 +736,7 @@ export class SurfaceEngine {
         egressDomains: [],
         handler: (input, context) => {
           const surface = this.createSurface(input, 'agent', {
-            origin: toolWriteOrigin(context.origin),
+            origin: surfaceToolWriteOrigin(context),
           })
           return { content: `created Surface ${surface.id}`, details: { surface } }
         },
@@ -415,7 +750,7 @@ export class SurfaceEngine {
         handler: (input, context) => {
           const mutation = this.patchState(input.surfaceId, input.operations, {
             updatedBy: 'agent',
-            origin: toolWriteOrigin(context.origin),
+            origin: surfaceToolWriteOrigin(context),
           })
           return { content: `patched state for Surface ${input.surfaceId}`, details: mutation }
         },
@@ -427,12 +762,21 @@ export class SurfaceEngine {
         level: 'L0',
         egressDomains: [],
         handler: (input, context) => {
-          const mutation = this.patchTree(input.surfaceId, input.operations, {
+          const result = this.patchTree(input.surfaceId, input.operations, {
             expectedTreeVersion: input.expectedTreeVersion,
             updatedBy: 'agent',
-            origin: toolWriteOrigin(context.origin),
+            origin: surfaceToolWriteOrigin(context),
           })
-          return { content: `patched tree for Surface ${input.surfaceId}`, details: mutation }
+          // A pinned Surface is not an error: the Agent must be told plainly
+          // that the tree change is a proposal awaiting the user, not retry
+          // or report a failure (issues/022-emergent-templates.md).
+          if ('proposed' in result) {
+            return {
+              content: `tree change proposed for Surface ${input.surfaceId}, awaiting the user`,
+              details: { proposalId: result.proposalId },
+            }
+          }
+          return { content: `patched tree for Surface ${input.surfaceId}`, details: result }
         },
       }),
       defineTool({
@@ -445,7 +789,7 @@ export class SurfaceEngine {
           const surface = this.archiveSurface(
             input.surfaceId,
             'agent',
-            toolWriteOrigin(context.origin),
+            surfaceToolWriteOrigin(context),
           )
           return { content: `archived Surface ${surface.id}`, details: { surface } }
         },
@@ -469,29 +813,164 @@ export class SurfaceEngine {
     this.assertWritableByAgent(surfaceId, options.updatedBy)
     const mutation = this.runWrite(() => {
       const current = this.requireActiveSurface(surfaceId)
-      const patch = PatchSchema.parse({ surfaceId, operations })
-      const patched = this.stampSurface(applySurfacePatch(current, patch), options.updatedBy)
+      const { patch, patched } = this.buildPatchedSurface(
+        current,
+        surfaceId,
+        operations,
+        options.updatedBy,
+      )
       const currentVersion = this.requireVersion(surfaceId)
       const nextVersion = currentVersion.version + 1
       const nextTreeVersion = options.updateTreeVersion
         ? currentVersion.treeVersion + 1
         : currentVersion.treeVersion
 
-      this.updateSurface(patched, nextVersion, nextTreeVersion)
+      const storedContentOrigin = this.surfaceProvenance(surfaceId)?.contentOrigin ?? 'trusted:user'
+
+      // This write's own origin. A `fast_path` tap is always genuinely the
+      // user's own action — no attacker-influenced turn authored *this*
+      // write, `applyFastAction` never takes an `origin` option at all — so
+      // it is never anything but `trusted:user` here, regardless of what the
+      // Surface's own stored content carries (see `eventOrigin` below for
+      // where that distinction actually matters).
+      const writeOrigin: Origin =
+        options.eventType === 'fast_path' ? 'trusted:user' : (options.origin ?? 'trusted:system')
+
+      // `content_origin` accumulates monotonically on *every* patch — state
+      // or tree — not only a tree-changing one (issue 022 review fix: the
+      // tree-only special case missed that an untrusted state patch can
+      // carry attacker text into the Surface state a later `agent_path` turn
+      // hands to the Agent, since `enqueueAgentAction` reads exactly this
+      // column to decide that turn's origin, docs/SECURITY.md §3.2).
+      // `effectiveOrigin` keeps the untrusted mark once either the stored
+      // content or this write carries one, and never launders back to trusted.
+      const nextContentOrigin = effectiveOrigin(
+        [storedContentOrigin, writeOrigin],
+        storedContentOrigin,
+      )
+
+      // The Event log entry's own origin. Every ordinary patch (state or
+      // tree) logs its own write origin, as before. A `fast_path` entry is
+      // the one exception: it is never hardcoded `trusted:user` (issue 022
+      // review fix) — the tap itself is genuinely the user's, but `eventText`
+      // interpolates the Surface's own title and state, which may carry an
+      // untrusted Surface's content, so the logged origin folds in the
+      // Surface's stored `content_origin` instead.
+      const eventOrigin =
+        options.eventType === 'fast_path'
+          ? effectiveOrigin([storedContentOrigin], 'trusted:user')
+          : writeOrigin
+
+      // `tree_updated_at` is the stability clock the Template harvest reads
+      // (`stableSurfaces`, docs/adr/0012-emergent-templates.md): it moves only
+      // on a tree patch, never on a state patch, so `patchState` alone never
+      // resets it.
+      this.updateSurface(
+        patched,
+        nextVersion,
+        nextTreeVersion,
+        options.updateTreeVersion ? patched.freshness.updatedAt : undefined,
+        nextContentOrigin,
+      )
       const event = this.insertPatchEvent(patched, patch)
       if (options.idempotencyKey) this.rememberIdempotencyKey(options.idempotencyKey, event.cursor)
       this.appendSpaceEvent(patched.spaceId, {
         at: patched.freshness.updatedAt,
         type: options.eventType,
         text: options.eventText(patched),
-        origin:
-          options.origin ?? (options.eventType === 'fast_path' ? 'trusted:user' : 'trusted:system'),
+        origin: eventOrigin,
         payload: options.eventPayload ?? { surfaceId, operations: operations.length },
       })
       return { surface: patched, event, duplicate: false }
     })
     this.notifySurfaceEvent({ kind: 'patch', event: mutation.event })
     return mutation
+  }
+
+  /**
+   * Applies `operations` to `current` and re-validates the result against
+   * `SurfaceSchema` (bindings, fast actions, ...) via `stampSurface`,
+   * without persisting anything. Shared by `patchSurface` (the committed
+   * write path, above) and `recordTreeProposal` (the pinned-tree proposal
+   * path, below), so an invalid patch is refused identically on both: a
+   * proposal is never held for a patch the ordinary path would also have
+   * rejected (`issues/022-emergent-templates.md`).
+   */
+  private buildPatchedSurface(
+    current: Surface,
+    surfaceId: string,
+    operations: PatchOperation[],
+    updatedBy: SurfaceWriteActor,
+  ): { patch: z.infer<typeof PatchSchema>; patched: Surface } {
+    const patch = PatchSchema.parse({ surfaceId, operations })
+    const patched = this.stampSurface(applySurfacePatch(current, patch), updatedBy)
+    return { patch, patched }
+  }
+
+  /**
+   * Records a `pending` Tree proposal instead of mutating: called by
+   * `patchTree` only when the target Surface is pinned and the caller has
+   * not passed `bypassPin`. Dry-applies and re-validates the patch first via
+   * `buildPatchedSurface` — an invalid proposed patch throws here, at
+   * proposal time, before anything is recorded, rather than being held for
+   * the human to discover only once accepted (`issues/022-emergent-templates.md`).
+   *
+   * The recorded `origin` (both the row's own column and the
+   * `surface.tree_proposal` Event log entry) folds in the *target's* stored
+   * `content_origin` via `effectiveOrigin`, not only the patching caller's
+   * own origin (issue 022 review fix): a Surface built from an imported
+   * Template is attacker-influenceable even when the patching turn itself is
+   * trusted, and the event text below interpolates that Surface's title. The
+   * title is delimiter-neutralized and truncated exactly as the pin event's
+   * title is (`PIN_EVENT_TITLE_MAX_CHARS`).
+   */
+  private recordTreeProposal(
+    surface: Surface,
+    operations: PatchOperation[],
+    options: { expectedTreeVersion: number; updatedBy: SurfaceWriteActor; origin?: Origin },
+  ): TreeProposalRecorded {
+    this.buildPatchedSurface(surface, surface.id, operations, options.updatedBy)
+
+    const storedContentOrigin = this.surfaceProvenance(surface.id)?.contentOrigin
+    const origin = effectiveOrigin(
+      [storedContentOrigin, options.origin],
+      options.origin ?? 'trusted:system',
+    )
+    const title = truncate(neutralizeDelimiters(surface.title), PIN_EVENT_TITLE_MAX_CHARS)
+    const proposalId = this.runWrite(() => {
+      const createdAt = this.nowIso()
+      const result = this.db
+        .prepare(
+          `insert into tree_proposals
+             (surface_id, space_id, operations_json, expected_tree_version, origin, status, created_at)
+           values (?, ?, ?, ?, ?, 'pending', ?)`,
+        )
+        .run(
+          surface.id,
+          surface.spaceId,
+          JSON.stringify(operations),
+          options.expectedTreeVersion,
+          origin,
+          createdAt,
+        )
+      const id = Number(result.lastInsertRowid)
+      this.appendSpaceEvent(surface.spaceId, {
+        at: createdAt,
+        type: 'surface.tree_proposal',
+        text: `Proposed a tree change for Surface "${title}"`,
+        origin,
+        payload: { surfaceId: surface.id, proposalId: id, operations: operations.length },
+      })
+      return id
+    })
+
+    // Notified after the transaction above has committed — never from
+    // inside it — so `TreeProposalSurfaceManager` only ever observes a
+    // proposal that a concurrent reader could already see.
+    const proposal = this.getTreeProposal(proposalId)
+    if (proposal) this.notifyTreeProposal(proposal)
+
+    return { proposed: true, proposalId, surfaceId: surface.id }
   }
 
   private findIdempotentMutation(idempotencyKey: string): SurfaceMutation | undefined {
@@ -553,12 +1032,30 @@ export class SurfaceEngine {
     return event
   }
 
+  private insertPinnedEvent(surface: Surface, pinned: boolean): SurfacePinnedEvent {
+    const cursor = this.latestSurfaceCursor() + 1
+    const event = SurfacePinnedEventSchema.parse({
+      cursor,
+      at: surface.freshness.updatedAt,
+      spaceId: surface.spaceId,
+      surfaceId: surface.id,
+      pinned,
+      // The bumped freshness (issue 022 review fix): without it, a client
+      // applying this event in place has no way to move its own `updatedAt`/
+      // `updatedBy` off whatever it last observed, and would render a pin as
+      // current while everything else about the Surface still looks stale.
+      freshness: surface.freshness,
+    })
+    this.insertEventRow(cursor, event.at, event.spaceId, surface.id, 'pinned', event)
+    return event
+  }
+
   private insertEventRow(
     cursor: number,
     at: string,
     spaceId: string,
     surfaceId: string,
-    kind: 'patch' | 'created' | 'archived',
+    kind: 'patch' | 'created' | 'archived' | 'pinned',
     event: unknown,
   ): void {
     this.db
@@ -573,6 +1070,26 @@ export class SurfaceEngine {
     for (const observer of this.surfaceEventObservers) observer(event)
   }
 
+  /**
+   * A throwing observer must never escape `patchTree` (issue 022 review
+   * fix): this fires after `recordTreeProposal`'s own transaction has
+   * committed, so by the time an observer runs the proposal is already
+   * durable — a `TreeProposalSurfaceManager.createCard` failure must not
+   * make the `patch_tree` tool report a failure for a proposal that in fact
+   * exists, which would invite the Agent to retry and record a duplicate.
+   * Mirrors `SpacesEngine.notifyMemoryWrite`'s same per-observer `try`/
+   * `catch`, for the same reason.
+   */
+  private notifyTreeProposal(proposal: TreeProposal): void {
+    for (const observer of this.treeProposalObservers) {
+      try {
+        observer(proposal)
+      } catch (error) {
+        console.error('tree proposal observer failed', error)
+      }
+    }
+  }
+
   private rememberIdempotencyKey(key: string, eventCursor: number): void {
     this.db
       .prepare('insert into idempotency_keys (key, event_cursor) values (?, ?)')
@@ -582,6 +1099,7 @@ export class SurfaceEngine {
   private surfaceForWrite(
     input: Surface | CreateSurfaceInput,
     updatedBy: SurfaceWriteActor,
+    daemonOwned: boolean,
   ): Surface {
     return SurfaceSchema.parse({
       ...input,
@@ -589,6 +1107,12 @@ export class SurfaceEngine {
         updatedAt: this.nowIso(),
         updatedBy,
       },
+      // A Surface is never born pinned — only `setPinned`, after creation,
+      // can pin it — and `pinnable` mirrors ownership from the moment the
+      // Surface exists, so the object `createSurface` returns already
+      // matches what `surfaceFromRow` would derive after a reload.
+      pinned: false,
+      pinnable: !daemonOwned,
     })
   }
 
@@ -631,6 +1155,16 @@ export class SurfaceEngine {
     return row !== undefined && requiredNumber(row, 'daemon_owned') === 1
   }
 
+  /**
+   * The refusal check backing `SurfaceNotPinnableError`'s daemon-owned case:
+   * checked before any transaction opens, so a refused pin has no side
+   * effects. The unknown-Surface case is checked inside the write
+   * transaction (`setPinned`), where the row is fetched anyway.
+   */
+  private assertPinnable(surfaceId: string): void {
+    if (this.isDaemonOwned(surfaceId)) throw new SurfaceNotPinnableError(surfaceId)
+  }
+
   private requireVersion(id: string): SurfaceVersion {
     const version = this.getSurfaceVersion(id)
     if (!version) throw new Error(`unknown Surface: ${id}`)
@@ -646,14 +1180,23 @@ export class SurfaceEngine {
     version: number,
     treeVersion: number,
     archived: boolean,
-    daemonOwned = false,
+    options: {
+      daemonOwned?: boolean
+      treeUpdatedAt: string
+      templateId?: string
+      templateSpaceId?: string
+      contentOrigin?: Origin
+    },
   ): void {
+    const daemonOwned = options.daemonOwned ?? false
+    const contentOrigin = options.contentOrigin ?? 'trusted:user'
     this.db
       .prepare(
         `insert into surfaces
            (id, space_id, title, tree_json, state_json, version, tree_version,
-            updated_at, updated_by, archived, daemon_owned)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            updated_at, updated_by, archived, daemon_owned, pinned, tree_updated_at,
+            template_id, template_space_id, content_origin)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         surface.id,
@@ -667,15 +1210,40 @@ export class SurfaceEngine {
         surface.freshness.updatedBy,
         archived ? 1 : 0,
         daemonOwned ? 1 : 0,
+        // A Surface is never born pinned: `pinned` is always inserted as 0
+        // here, independent of whatever `surface.pinned` (already forced to
+        // `false` by `surfaceForWrite`) happens to carry.
+        0,
+        options.treeUpdatedAt,
+        options.templateId ?? null,
+        options.templateSpaceId ?? null,
+        contentOrigin,
       )
   }
 
-  private updateSurface(surface: Surface, version: number, treeVersion: number): void {
+  /**
+   * `treeUpdatedAt` is `undefined` for a state-only patch: that column then
+   * keeps its stored value in SQL (`coalesce`), rather than being read back
+   * first. `contentOrigin` is supplied by `patchSurface` on *every* patch,
+   * state or tree (issue 022 review fix: it used to be `undefined` for a
+   * state-only patch too, which left an untrusted state patch unable to
+   * ever move it) — the `coalesce` still guards the few other callers of
+   * this method (there are none today) that might omit it. The fast path
+   * runs this on every tap, so it stays one statement.
+   */
+  private updateSurface(
+    surface: Surface,
+    version: number,
+    treeVersion: number,
+    treeUpdatedAt?: string,
+    contentOrigin?: Origin,
+  ): void {
     this.db
       .prepare(
         `update surfaces
          set title = ?, tree_json = ?, state_json = ?, version = ?, tree_version = ?,
-             updated_at = ?, updated_by = ?
+             updated_at = ?, updated_by = ?, tree_updated_at = coalesce(?, tree_updated_at),
+             content_origin = coalesce(?, content_origin)
          where id = ? and archived = 0`,
       )
       .run(
@@ -686,6 +1254,8 @@ export class SurfaceEngine {
         treeVersion,
         surface.freshness.updatedAt,
         surface.freshness.updatedBy,
+        treeUpdatedAt ?? null,
+        contentOrigin ?? null,
         surface.id,
       )
   }
@@ -704,7 +1274,12 @@ export class SurfaceEngine {
         updated_at text not null,
         updated_by text not null,
         archived integer not null default 0,
-        daemon_owned integer not null default 0
+        daemon_owned integer not null default 0,
+        pinned integer not null default 0,
+        tree_updated_at text not null default '',
+        template_id text,
+        template_space_id text,
+        content_origin text not null default 'trusted:user'
       );
       create index if not exists surfaces_space_active
         on surfaces (space_id, archived, title);
@@ -734,6 +1309,20 @@ export class SurfaceEngine {
         surface_json text not null,
         atom_json text not null
       );
+
+      create table if not exists tree_proposals (
+        id integer primary key autoincrement,
+        surface_id text not null,
+        space_id text not null,
+        operations_json text not null,
+        expected_tree_version integer not null,
+        origin text not null,
+        status text not null default 'pending',
+        created_at text not null,
+        resolved_at text
+      );
+      create index if not exists tree_proposals_surface_status
+        on tree_proposals (surface_id, status);
     `)
     // Defensive migration: a `surfaces.sqlite` created before `kind` existed
     // must keep working — `create table if not exists` above only applies to
@@ -746,6 +1335,29 @@ export class SurfaceEngine {
     // defaults to Agent-writable (0) — none of them were approval cards or
     // trust admin Surfaces, which did not exist yet either.
     this.ensureColumn('surfaces', 'daemon_owned', 'integer not null default 0')
+    // Defensive migration for issue 022 (Emergent Templates): a
+    // `surfaces.sqlite` created before pin/Template support existed must
+    // keep working. `pinned` defaults to unpinned (0) — nothing was pinned
+    // before pinning existed. `template_id`/`template_space_id`/
+    // `content_origin` default to "no Template" / the ordinary trusted-user
+    // content this predates any untrusted Template import.
+    this.ensureColumn('surfaces', 'pinned', 'integer not null default 0')
+    this.ensureColumn('surfaces', 'tree_updated_at', "text not null default ''")
+    // Backfill, run once right after the column is ensured: a pre-022 row
+    // has no record of when its tree last changed, so leaving it at the
+    // column's `''` default would make it satisfy `tree_updated_at <= X` for
+    // almost any cutoff — instantly "stable" the moment 022 ships, which is
+    // wrong (nobody has actually left it untouched for the stability
+    // window). Backfilling from `updated_at` (state patches bump it too) is
+    // the closest available approximation, and never leaves the column
+    // empty forever (which would make the row permanently ineligible for
+    // `stableSurfaces`, the opposite failure). A fresh database never hits
+    // this: `createSurface`/`insertSurface` always write a real
+    // `tree_updated_at`.
+    this.db.exec(`update surfaces set tree_updated_at = updated_at where tree_updated_at = ''`)
+    this.ensureColumn('surfaces', 'template_id', 'text')
+    this.ensureColumn('surfaces', 'template_space_id', 'text')
+    this.ensureColumn('surfaces', 'content_origin', "text not null default 'trusted:user'")
   }
 
   /** Adds `column` to `table` if an existing (pre-migration) database lacks it. */
@@ -766,7 +1378,7 @@ export class SurfaceEngine {
       for (const surface of surfaces) {
         const parsed = SurfaceSchema.parse(surface)
         this.requireKnownSpace(parsed.spaceId)
-        this.insertSurface(parsed, 1, 1, false)
+        this.insertSurface(parsed, 1, 1, false, { treeUpdatedAt: parsed.freshness.updatedAt })
       }
     })
   }
@@ -780,11 +1392,30 @@ export class SurfaceEngine {
   }
 }
 
+/**
+ * The write origin the four Surface tools (`create_surface`, `patch_state`,
+ * `patch_tree`, `archive_surface`) stamp on what they persist
+ * (docs/SECURITY.md §3.2; the same gap `memory-tools.ts`'s `writeOriginFor`
+ * closes for the memory tools): derived from the turn's **live** taint
+ * accumulator, read at execution time, never from `context.origin` alone —
+ * that field is fixed at turn start. A turn that starts trusted and reads
+ * untrusted content mid-turn (e.g. via `read_recent`) must still write a
+ * tainted origin for whatever Surface mutation it performs next, or the
+ * write launders the taint away.
+ */
+function surfaceToolWriteOrigin(context: ToolContext): Origin {
+  return toolWriteOrigin(effectiveOrigin(context.taint.origins(), context.origin))
+}
+
 function assertPatchTarget(operations: PatchOperation[], target: 'state' | 'tree'): void {
   const wrongTarget = operations.find((operation) => operation.target !== target)
   if (wrongTarget) {
     throw new Error(`${target} patch cannot include ${wrongTarget.target} operation`)
   }
+}
+
+function truncate(value: string, max: number): string {
+  return value.length <= max ? value : `${value.slice(0, max)}…`
 }
 
 function surfaceFromRow(row: Record<string, unknown>): Surface {
@@ -798,6 +1429,10 @@ function surfaceFromRow(row: Record<string, unknown>): Surface {
       updatedAt: requiredString(row, 'updated_at'),
       updatedBy: requiredString(row, 'updated_by'),
     },
+    pinned: requiredNumber(row, 'pinned') === 1,
+    // A daemon-owned Surface (approval cards, admin Surfaces) is never
+    // pinnable: no client should render a toggle the daemon would refuse.
+    pinnable: requiredNumber(row, 'daemon_owned') === 0,
   })
 }
 
@@ -809,7 +1444,30 @@ function surfaceEngineEventFromRow(row: Record<string, unknown>): SurfaceEngineE
     return { kind: 'archived', event: SurfaceArchivedEventSchema.parse(json) }
   }
   if (kind === 'patch') return { kind: 'patch', event: SurfacePatchEventSchema.parse(json) }
+  if (kind === 'pinned') return { kind: 'pinned', event: SurfacePinnedEventSchema.parse(json) }
   throw new Error(`unknown surface_events kind: ${kind}`)
+}
+
+function treeProposalFromRow(row: Record<string, unknown>): TreeProposal {
+  const status = requiredString(row, 'status')
+  if (status !== 'pending' && status !== 'accepted' && status !== 'rejected') {
+    throw new Error(`unknown tree_proposals status: ${status}`)
+  }
+  const storedOrigin = requiredString(row, 'origin')
+  const resolvedAt = optionalString(row, 'resolved_at')
+  return {
+    id: requiredNumber(row, 'id'),
+    surfaceId: requiredString(row, 'surface_id'),
+    spaceId: requiredString(row, 'space_id'),
+    operations: z
+      .array(PatchOperationSchema)
+      .parse(JSON.parse(requiredString(row, 'operations_json'))),
+    expectedTreeVersion: requiredNumber(row, 'expected_tree_version'),
+    origin: isValidOrigin(storedOrigin) ? storedOrigin : 'trusted:system',
+    status,
+    createdAt: requiredString(row, 'created_at'),
+    ...(resolvedAt === undefined ? {} : { resolvedAt }),
+  }
 }
 
 function agentTurnFromRow(row: Record<string, unknown>): QueuedAgentTurn {

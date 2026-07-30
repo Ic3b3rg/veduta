@@ -15,6 +15,7 @@ export function SpaceSection({
   onMoveSurface,
   onPatched,
   onQueueFastAction,
+  onTogglePin,
   onError,
 }: {
   space: SpaceWithSurfaces
@@ -26,6 +27,7 @@ export function SpaceSection({
   onMoveSurface: (space: SpaceWithSurfaces, surfaceId: string, offset: -1 | 1) => void
   onPatched: (surface: Surface) => void
   onQueueFastAction: (action: QueuedFastAction) => void
+  onTogglePin: (surface: Surface, pinned: boolean) => void
   onError: (message: string) => void
 }) {
   const ids = mergeSurfaceOrder(
@@ -65,6 +67,7 @@ export function SpaceSection({
             onMoveDown={() => onMoveSurface(space, surface.id, 1)}
             onPatched={onPatched}
             onQueueFastAction={onQueueFastAction}
+            onTogglePin={(pinned) => onTogglePin(surface, pinned)}
             onError={onError}
           />
         ))}

@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { fromPartial } from '@total-typescript/shoehorn'
 import {
   GatewayServerMessageSchema,
@@ -16,6 +17,7 @@ import { NotificationsConfigSchema, saveNotificationsConfig } from './notificati
 import { reflectionSurfaceId } from './reflection-surface.ts'
 import { buildServer } from './server.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
+import { treeProposalSurfaceId } from './tree-proposal.ts'
 import type {
   PushPayload,
   PushSendResult,
@@ -1306,6 +1308,227 @@ describe('memory engines wiring (issues/021-advanced-memory.md)', () => {
   })
 })
 
+describe('POST /api/surfaces/:id/pin (issues/022-emergent-templates.md)', () => {
+  it('pins a Surface: 200, reflected in GET /api/spaces, and broadcast as surface.pinned', async () => {
+    const { app, store, gateway } = buildServer()
+    const socket = new SchedulerFakeSocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-groceries/pin',
+      payload: { pinned: true },
+    })
+    expect(res.statusCode).toBe(200)
+    expect((res.json() as { surface: Surface }).surface.pinned).toBe(true)
+
+    const snapshot = await app.inject({ method: 'GET', url: '/api/spaces' })
+    const body = snapshot.json() as { spaces: { surfaces: { id: string; pinned: boolean }[] }[] }
+    const groceries = body.spaces
+      .flatMap((space) => space.surfaces)
+      .find((surface) => surface.id === 'srf-groceries')
+    expect(groceries?.pinned).toBe(true)
+
+    expect(
+      socket.sent.some(
+        (frame) =>
+          frame.type === 'surface.pinned' &&
+          frame.event.surfaceId === 'srf-groceries' &&
+          frame.event.pinned === true,
+      ),
+    ).toBe(true)
+  })
+
+  it('unpins a Surface: 200, reverts pinned to false', async () => {
+    const { app } = buildServer()
+    await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-groceries/pin',
+      payload: { pinned: true },
+    })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-groceries/pin',
+      payload: { pinned: false },
+    })
+    expect(res.statusCode).toBe(200)
+    expect((res.json() as { surface: Surface }).surface.pinned).toBe(false)
+  })
+
+  it('returns 404 for an unknown Surface', async () => {
+    const { app } = buildServer()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-nope/pin',
+      payload: { pinned: true },
+    })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('returns 409 for a daemon-owned Surface, distinct from the 404 unknown case', async () => {
+    const { app, store } = buildServer()
+    store.createSurface(templateTestSurface('srf-daemon-owned'), 'job', { daemonOwned: true })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-daemon-owned/pin',
+      payload: { pinned: true },
+    })
+    expect(res.statusCode).toBe(409)
+  })
+
+  it('returns 400 for a malformed body', async () => {
+    const { app } = buildServer()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-groceries/pin',
+      payload: fromPartial({ pinned: 'yes' }),
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('requires an authenticated passkey session in the production profile, like the other /api/surfaces routes', async () => {
+    const { auth, token } = await readyAuthStore()
+    const { app } = buildServer({
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+    })
+
+    const denied = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-groceries/pin',
+      payload: { pinned: true },
+    })
+    expect(denied.statusCode).toBe(401)
+
+    const allowed = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-groceries/pin',
+      payload: { pinned: true },
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(allowed.statusCode).toBe(200)
+  })
+})
+
+describe('tree-proposal wiring (issues/022-emergent-templates.md)', () => {
+  it("a pinned Surface's Agent tree patch reaches the client as a Tree proposal card Surface (surface.created)", async () => {
+    const { app, store, gateway } = buildServer()
+    store.createSurface(templateTestSurface('srf-tree-target'), 'agent')
+    const pin = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-tree-target/pin',
+      payload: { pinned: true },
+    })
+    expect(pin.statusCode).toBe(200)
+
+    const socket = new SchedulerFakeSocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    const version = store.getSurfaceVersion('srf-tree-target')
+    if (!version) throw new Error('expected a Surface version')
+    const result = store.patchTree(
+      'srf-tree-target',
+      [
+        {
+          target: 'tree',
+          op: 'add',
+          path: '/children/1',
+          value: { id: 'added', type: 'Caption', props: { text: 'proposed' } },
+        },
+      ],
+      { expectedTreeVersion: version.treeVersion, updatedBy: 'agent' },
+    )
+    if (!('proposed' in result)) throw new Error('expected a Tree proposal, got a mutation')
+
+    const cardId = treeProposalSurfaceId(result.proposalId)
+    expect(
+      socket.sent.some(
+        (frame) => frame.type === 'surface.created' && frame.event.surface.id === cardId,
+      ),
+    ).toBe(true)
+  })
+})
+
+describe('Emergent Templates: pre-022 data root (issues/022-emergent-templates.md)', () => {
+  it('boots on a surfaces.sqlite without pinned/tree_updated_at/template_id/content_origin, and serves /api/health', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-pre-022-'))
+    // Pre-022 schema, the same shape `surface-engine.test.ts`'s own
+    // "pre-022 database migration" test constructs directly against
+    // `SurfaceEngine`: no `pinned`, `tree_updated_at`, `template_id` or
+    // `content_origin` columns at all.
+    const legacyDb = new DatabaseSync(join(dataDir, 'surfaces.sqlite'))
+    legacyDb.exec(`
+      create table surfaces (
+        id text primary key,
+        space_id text not null,
+        title text not null,
+        tree_json text not null,
+        state_json text not null,
+        version integer not null,
+        tree_version integer not null,
+        updated_at text not null,
+        updated_by text not null,
+        archived integer not null default 0,
+        daemon_owned integer not null default 0
+      );
+      create table surface_events (
+        cursor integer primary key,
+        at text not null,
+        space_id text not null,
+        surface_id text not null,
+        kind text not null default 'patch',
+        event_json text not null
+      );
+      create table idempotency_keys (
+        key text primary key,
+        event_cursor integer not null references surface_events(cursor)
+      );
+      create table agent_turns (
+        id integer primary key autoincrement,
+        at text not null,
+        space_id text not null,
+        surface_id text not null,
+        atom_id text not null,
+        action_name text not null,
+        payload_json text not null,
+        surface_json text not null,
+        atom_json text not null
+      );
+    `)
+    const legacySurface = templateTestSurface('srf-pre-022')
+    legacyDb
+      .prepare(
+        `insert into surfaces
+           (id, space_id, title, tree_json, state_json, version, tree_version,
+            updated_at, updated_by, archived, daemon_owned)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        legacySurface.id,
+        legacySurface.spaceId,
+        legacySurface.title,
+        JSON.stringify(legacySurface.tree),
+        JSON.stringify(legacySurface.state),
+        1,
+        1,
+        '2026-06-01T00:00:00.000Z',
+        'seed',
+        0,
+        0,
+      )
+    legacyDb.close()
+
+    const { app } = buildServer({ dataDir })
+    const res = await app.inject({ method: 'GET', url: '/api/health' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ ok: true })
+    await app.close()
+  })
+})
+
 class NotificationFakeTransport implements PushTransport {
   calls: Array<{ subscription: PushSubscriptionInput; payload: PushPayload }> = []
 
@@ -1424,6 +1647,22 @@ function agentActionSurface(): Surface {
           actions: [{ name: 'regenerate_plan', path: 'agent' }],
         },
       ],
+    },
+    state: {},
+    freshness: { updatedAt: fixedNow().toISOString(), updatedBy: 'seed' },
+  })
+}
+
+/** A minimal, pinnable Surface for the pin route and Tree-proposal tests (issues/022-emergent-templates.md). */
+function templateTestSurface(id: string): Surface {
+  return SurfaceSchema.parse({
+    id,
+    spaceId: 'spc-health',
+    title: 'Template test surface',
+    tree: {
+      id: 'root',
+      type: 'Box',
+      children: [{ id: 'note', type: 'Caption', props: { text: 'hi' } }],
     },
     state: {},
     freshness: { updatedAt: fixedNow().toISOString(), updatedBy: 'seed' },

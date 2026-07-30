@@ -82,7 +82,7 @@ A Surface = **a declarative tree of Atoms + typed state + bindings**. Closed cat
 - **Fast path**: the daemon mutates the state and logs the event to the Event log — zero LLM, native-app latency. _Memory contract_: the Agent always reads the events before reasoning about a Space.
 - **Agent path**: the action goes to the Agent with an honest wait.
 
-Good compositions become **Templates** saved in the Space and reused/patched (visual consistency across regenerations).
+Good compositions become **Templates** saved in the Space and reused/patched (visual consistency across regenerations): a tree that has stopped changing — or that the user **pins** — is captured without its data, matched deterministically on intent and Atom signature, and reused instead of regenerated; regenerating over a match requires a justification. A pinned Surface keeps receiving state patches, while a tree change becomes a **Tree proposal** with a preview the user accepts or rejects ([ADR-0012](docs/adr/0012-emergent-templates.md)).
 
 ### 3.5 Proactivity (4 tiers, by increasing cost)
 

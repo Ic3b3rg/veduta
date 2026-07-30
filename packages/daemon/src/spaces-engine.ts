@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import {
   appendFileSync,
   closeSync,
+  constants as fsConstants,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -9,18 +10,23 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  realpathSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import {
   SpaceSchema,
   SurfaceSchema,
+  SurfaceTemplateIdSchema,
+  SurfaceTemplateSchema,
   type JsonObject,
   type JsonValue,
   type Space,
   type Surface,
+  type SurfaceTemplate,
 } from '@veduta/protocol'
 import {
   curateFact,
@@ -220,6 +226,7 @@ export class SpacesEngine {
     // user never contradicted, which ARCHITECTURE.md §7 forbids.
     this.copyDormantAndSupersededFacts(target.id, sourceFacts.dormant, sourceFacts.superseded)
     this.moveSurfaces(source.id, target.id)
+    this.moveTemplates(source.id, target.id)
     this.archiveSpace(source.id)
     this.appendEvent(target.id, {
       type: 'lifecycle',
@@ -410,6 +417,121 @@ export class SpacesEngine {
     return spaces.flatMap((space) => this.readSurfaces(space))
   }
 
+  /**
+   * Persists a Template to `spaces/<slug>/templates/<id>.json`
+   * (issues/022-emergent-templates.md), mirroring `saveSurface`. A Template
+   * has no `spaceId` field of its own (`packages/protocol/src/template.ts`),
+   * so the owning Space is the first parameter rather than something read
+   * off the object. `id` doubles as the filename, and it is
+   * attacker-reachable through the future importer (docs/adr/0006's "files
+   * are the truth" cuts both ways), so the containment check happens here at
+   * the write, not only inside `SurfaceTemplateIdSchema`'s regex.
+   *
+   * `options.exclusive` switches the write itself from "create or overwrite"
+   * (the ordinary harvest/pin path's intent — `TemplateEngine` always means
+   * to write, whether or not something is already there) to "create, and
+   * fail if something is already there" at the OS level (`writeTemplateFile`).
+   * The importer (`applyTemplateImport`, `template-export.ts`) is the one
+   * caller that needs this: it already re-checks for a collision right
+   * before writing, but that check and this write are still two separate
+   * steps, and a save from anywhere else in the daemon — a concurrent pin or
+   * harvest, never another import, since the import lock only ever excludes
+   * a second import — could land on the exact id in between. Without
+   * exclusivity that write would silently overwrite the concurrent save, and
+   * a later rollback in the same import would then delete a file this
+   * import never actually created, destroying the other write's content
+   * instead of merely leaving its own mess behind.
+   */
+  saveTemplate(
+    spaceId: string,
+    template: SurfaceTemplate,
+    options: { exclusive?: boolean } = {},
+  ): SurfaceTemplate {
+    const parsed = SurfaceTemplateSchema.parse(template)
+    const space = this.requireSpace(spaceId)
+    const path = this.templatePath(space, parsed.id)
+    this.assertTemplateContainment(space, path, parsed.id)
+    // A Space created before Templates existed has no `templates/` directory:
+    // `initializeSpace` only runs at creation, so the first save into an older
+    // Space would otherwise fail with ENOENT.
+    mkdirSync(this.spacePath(space, 'templates'), { recursive: true })
+    writeTemplateFile(path, parsed, options.exclusive ?? false)
+    return parsed
+  }
+
+  /**
+   * The Space's `templates/` directory, created if an older Space never got
+   * one. Exported so the Template importer can put its lock file beside the
+   * Templates without a second copy of the on-disk layout
+   * (docs/adr/0006-file-based-memory.md keeps that knowledge here).
+   */
+  templatesDirPath(spaceId: string): string {
+    const space = this.requireSpace(spaceId)
+    const dir = this.spacePath(space, 'templates')
+    mkdirSync(dir, { recursive: true })
+    return dir
+  }
+
+  /** Where `templateId` lives on disk, for a message or a rollback. Same containment check as `saveTemplate`. */
+  templateFilePath(spaceId: string, templateId: string): string {
+    const space = this.requireSpace(spaceId)
+    const path = this.templatePath(space, templateId)
+    this.assertTemplateContainment(space, path, templateId)
+    return path
+  }
+
+  /**
+   * Removes one Template file. The importer's rollback is the only caller:
+   * a partially written bundle must leave the Space as it was
+   * (issues/022-emergent-templates.md). A missing file is a no-op.
+   */
+  deleteTemplate(spaceId: string, templateId: string): void {
+    const path = this.templateFilePath(spaceId, templateId)
+    if (existsSync(path)) unlinkSync(path)
+  }
+
+  /**
+   * `[]` for a Space created before this change, which has no `templates/`
+   * directory yet. A file that fails to parse as JSON, or as a valid
+   * `SurfaceTemplate`, is skipped with a `console.warn` naming its path
+   * rather than thrown: files are the truth (docs/adr/0006-file-based-memory.md),
+   * but one hand-edited or corrupted Template must not take down every
+   * gated `create_surface` call in the Space, which reads this list.
+   */
+  listTemplates(spaceId: string): SurfaceTemplate[] {
+    const space = this.requireSpace(spaceId)
+    const dir = this.spacePath(space, 'templates')
+    if (!existsSync(dir)) return []
+    return readdirSync(dir)
+      .filter((file) => file.endsWith('.json'))
+      .flatMap((file) => {
+        const path = join(dir, file)
+        let raw: unknown
+        try {
+          raw = JSON.parse(readFileSync(path, 'utf8'))
+        } catch (error) {
+          console.warn(`skipping unreadable Template file ${path}: ${errorText(error)}`)
+          return []
+        }
+        const result = SurfaceTemplateSchema.safeParse(raw)
+        if (!result.success) {
+          console.warn(`skipping invalid Template file ${path}: ${result.error.message}`)
+          return []
+        }
+        return [result.data]
+      })
+      .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+  }
+
+  /** `undefined` when absent. Same containment check as `saveTemplate`. */
+  getTemplate(spaceId: string, templateId: string): SurfaceTemplate | undefined {
+    const space = this.requireSpace(spaceId)
+    const path = this.templatePath(space, templateId)
+    this.assertTemplateContainment(space, path, templateId)
+    if (!existsSync(path)) return undefined
+    return SurfaceTemplateSchema.parse(JSON.parse(readFileSync(path, 'utf8')))
+  }
+
   factsSurface(spaceId: string): Surface {
     const space = this.requireSpace(spaceId)
     const facts = this.readFacts(space.id)
@@ -426,6 +548,10 @@ export class SpacesEngine {
       id: `srf-${space.slug}-facts`,
       spaceId: space.id,
       title: 'What I know about you here',
+      // Regenerated on every read from FACTS.md, never a tree the user
+      // authored, so a pin toggle would be meaningless — the client must not
+      // offer it (issues/022-emergent-templates.md).
+      pinnable: false,
       tree: {
         id: 'root',
         type: 'Box',
@@ -602,6 +728,7 @@ export class SpacesEngine {
     mkdirSync(this.spacePath(parsed), { recursive: true })
     mkdirSync(this.spacePath(parsed, 'log'), { recursive: true })
     mkdirSync(this.spacePath(parsed, 'surfaces'), { recursive: true })
+    mkdirSync(this.spacePath(parsed, 'templates'), { recursive: true })
     this.writeSpace(parsed)
     writeIfMissing(this.factsPath(parsed), formatFactsMarkdown(emptyFactsDocument(), this.today()))
     writeIfMissing(
@@ -662,6 +789,23 @@ export class SpacesEngine {
       const id = uniqueSurfaceId(surface.id, source.slug, usedIds)
       usedIds.add(id)
       this.saveSurface({ ...surface, id, spaceId: target.id })
+    }
+  }
+
+  /**
+   * Carries the source Space's Templates into the target on a merge, the
+   * way `moveSurfaces` carries its Surfaces — de-collided with
+   * `uniqueTemplateId` rather than `uniqueSurfaceId`'s rule, since a
+   * Template id's grammar is shorter (`SurfaceTemplateIdSchema`).
+   */
+  private moveTemplates(sourceSpaceId: string, targetSpaceId: string): void {
+    const source = this.requireSpace(sourceSpaceId)
+    const target = this.requireSpace(targetSpaceId)
+    const usedIds = new Set(this.listTemplates(target.id).map((template) => template.id))
+    for (const template of this.listTemplates(sourceSpaceId)) {
+      const id = uniqueTemplateId(template.id, source.slug, usedIds)
+      usedIds.add(id)
+      this.saveTemplate(target.id, SurfaceTemplateSchema.parse({ ...template, id }))
     }
   }
 
@@ -732,6 +876,47 @@ export class SpacesEngine {
     return this.spacePath(space, 'surfaces', `${surfaceId}.json`)
   }
 
+  private templatePath(space: Space, templateId: string): string {
+    return this.spacePath(space, 'templates', `${templateId}.json`)
+  }
+
+  /**
+   * Refuses a `path` that does not sit directly inside the Space's
+   * `templates/` directory. `templateId` becomes a filename
+   * (`templatePath`), and it is attacker-reachable through the future
+   * importer (issues/022-emergent-templates.md), so this check runs at
+   * every read and write instead of trusting `SurfaceTemplateIdSchema`'s
+   * regex alone to have already ruled out a traversal.
+   *
+   * The `resolve`-based check above is purely lexical and never follows a
+   * symlink; the write (or the importer rollback's `unlink`) that runs
+   * right after this check does, at the OS level. So as defence in depth —
+   * kept second, after the cheap lexical gate — when the directory already
+   * exists this also resolves its *real*, symlink-followed location and
+   * requires it to still be exactly the Space's own real `templates/`
+   * directory: a `templates/` directory (or an entry inside it) swapped for
+   * a symlink pointing elsewhere would pass the lexical check but land the
+   * write, or the rollback delete, somewhere else on disk entirely. A
+   * `templates/` directory that does not exist yet (an older Space's first
+   * Template save) has nothing to be a symlink of, so there is nothing to
+   * check.
+   */
+  private assertTemplateContainment(space: Space, path: string, templateId: string): void {
+    const templatesDir = resolve(this.spacePath(space, 'templates'))
+    const resolvedPath = resolve(path)
+    if (dirname(resolvedPath) !== templatesDir) {
+      throw new Error(`Template id escapes the Space's templates directory: ${templateId}`)
+    }
+
+    if (existsSync(templatesDir)) {
+      const realTemplatesDir = realpathSync(templatesDir)
+      const realSpaceDir = realpathSync(this.spacePath(space))
+      if (realTemplatesDir !== join(realSpaceDir, 'templates')) {
+        throw new Error(`Template id escapes the Space's templates directory: ${templateId}`)
+      }
+    }
+  }
+
   private logPath(space: Space, at: string): string {
     return this.spacePath(space, 'log', `${at.slice(0, 10)}.jsonl`)
   }
@@ -750,6 +935,41 @@ function defaultDataDir(): string {
     return mkdtempSync(join(tmpdir(), 'veduta-spaces-'))
   }
   return join(process.cwd(), '.veduta')
+}
+
+/**
+ * `saveTemplate`'s actual write. `exclusive` picks between a plain
+ * create-or-overwrite (`writeFileSync`, today's behaviour, unchanged for the
+ * harvest/pin path) and an OS-level exclusive create: `O_WRONLY | O_CREAT |
+ * O_EXCL`, so the write itself fails when `path` already exists instead of
+ * silently replacing it, plus `O_NOFOLLOW` where the platform defines the
+ * flag (every POSIX target Veduta ships on; `fs.constants.O_NOFOLLOW` is
+ * `undefined` on Windows, so this degrades to plain `O_EXCL` there rather
+ * than throwing on a missing constant) so a symlink swapped in for the
+ * destination file cannot redirect the write either — the same
+ * defence-in-depth `assertTemplateContainment` already applies to the
+ * directory itself. `openSync` throws (`EEXIST`) rather than returning an
+ * error code, so the caller's own try/catch (`applyTemplateImport`'s write
+ * loop) sees a normal failure to react to.
+ */
+function writeTemplateFile(path: string, template: SurfaceTemplate, exclusive: boolean): void {
+  const json = JSON.stringify(template, null, 2)
+  if (!exclusive) {
+    writeFileSync(path, json)
+    return
+  }
+  const noFollowFlag = typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0
+  const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollowFlag
+  const fd = openSync(path, flags)
+  try {
+    // `writeFileSync` on the descriptor, not a bare `writeSync`: a single
+    // `writeSync` can legally write fewer bytes than it was given, which
+    // would leave a truncated Template on disk under a name the importer has
+    // already claimed. `writeFileSync` loops until every byte lands.
+    writeFileSync(fd, json)
+  } finally {
+    closeSync(fd)
+  }
 }
 
 /**
@@ -778,6 +998,63 @@ function uniqueSurfaceId(surfaceId: string, sourceSlug: string, usedIds: Set<str
   for (let index = 2; ; index += 1) {
     const candidate = `${base}-${index}`
     if (!usedIds.has(candidate)) return candidate
+  }
+}
+
+/**
+ * Total length a Template id may occupy on disk, per
+ * `SurfaceTemplateIdSchema` (`^tpl-[a-z0-9][a-z0-9-]{0,63}$`): the literal
+ * `tpl-` (4 chars) plus 1 required char plus up to 63 more.
+ */
+const TEMPLATE_ID_MAX_LENGTH = 68
+
+/** The shortest string the schema still accepts: `tpl-` plus one character. */
+const TEMPLATE_ID_MIN_LENGTH = 5
+
+/**
+ * Template-specific de-collision (issues/022-emergent-templates.md).
+ * `uniqueSurfaceId`'s plain `${id}-from-<slug>` append can push a Surface id
+ * arbitrarily long, but `SurfaceTemplateIdSchema` caps a Template id at
+ * `TEMPLATE_ID_MAX_LENGTH` characters, so appending the same suffix
+ * unconditionally could produce a candidate the schema then rejects. This
+ * truncates the base id to leave room for the suffix, then re-validates the
+ * candidate against the schema before it is ever used as a filename.
+ *
+ * `budget` is never clamped up to `TEMPLATE_ID_MIN_LENGTH`: an honest
+ * `TEMPLATE_ID_MAX_LENGTH - suffix.length` that has already dropped below the
+ * schema's minimum means no candidate at this suffix length can ever satisfy
+ * the schema, so this throws rather than looping — a clamped budget used to
+ * manufacture a candidate one character too long for
+ * `SurfaceTemplateIdSchema`, which `safeParse` then rejected every time,
+ * spinning the loop forever (reachable: a Space slug near the schema's
+ * length ceiling, merged twice into a target that already holds both the
+ * base id and the first de-collided one — see the matching test in
+ * `spaces-engine.test.ts`).
+ */
+function uniqueTemplateId(templateId: string, sourceSlug: string, usedIds: Set<string>): string {
+  if (!usedIds.has(templateId)) return templateId
+  // Bounds the slug portion of the suffix itself: nothing caps a Space slug's
+  // length, and without this an unusually long slug could shrink `budget`
+  // below `TEMPLATE_ID_MIN_LENGTH` on the very first candidate.
+  const slug = sourceSlug.slice(
+    0,
+    TEMPLATE_ID_MAX_LENGTH - TEMPLATE_ID_MIN_LENGTH - '-from-'.length,
+  )
+  for (let index = 0; ; index += 1) {
+    const suffix = index === 0 ? `-from-${slug}` : `-from-${slug}-${index}`
+    const budget = TEMPLATE_ID_MAX_LENGTH - suffix.length
+    if (budget < TEMPLATE_ID_MIN_LENGTH) {
+      throw new Error(
+        `cannot de-collide Template id "${templateId}" for Space "${sourceSlug}": every ` +
+          `candidate suffix now leaves less than the schema's minimum id length ` +
+          `(${TEMPLATE_ID_MIN_LENGTH}) to work with — this Space holds an unworkable number of ` +
+          'prior collisions for this id; rename or remove one of the colliding Templates first.',
+      )
+    }
+    const candidate = `${templateId.slice(0, budget)}${suffix}`
+    if (!usedIds.has(candidate) && SurfaceTemplateIdSchema.safeParse(candidate).success) {
+      return candidate
+    }
   }
 }
 
@@ -1007,6 +1284,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function readOrEmpty(path: string): string {

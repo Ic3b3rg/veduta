@@ -60,6 +60,20 @@ export const SurfaceArchivedEventSchema = z.object({
   surfaceId: z.string().min(1),
 })
 
+export const SurfacePinnedEventSchema = z.object({
+  cursor: GatewayCursorSchema,
+  at: z.string().datetime(),
+  spaceId: z.string().min(1),
+  surfaceId: z.string().min(1),
+  pinned: z.boolean(),
+  // The bumped freshness `setPinned` persists (issue 022 review fix): without
+  // it, a client applying this event in place had no way to move its own
+  // `updatedAt`/`updatedBy` off whatever it last observed, and rendered a pin
+  // as current while the rest of the Surface still looked stale. Mirrors
+  // `SurfacePatchEventSchema`'s own `freshness` field.
+  freshness: FreshnessSchema,
+})
+
 export const GatewayClientMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('hello'),
@@ -103,6 +117,10 @@ export const GatewayServerMessageSchema = z.discriminatedUnion('type', [
     event: SurfaceArchivedEventSchema,
   }),
   z.object({
+    type: z.literal('surface.pinned'),
+    event: SurfacePinnedEventSchema,
+  }),
+  z.object({
     type: z.literal('chat.message'),
     message: ChatMessageSchema,
   }),
@@ -132,6 +150,7 @@ export type SurfaceSnapshot = z.infer<typeof SurfaceSnapshotSchema>
 export type SurfacePatchEvent = z.infer<typeof SurfacePatchEventSchema>
 export type SurfaceCreatedEvent = z.infer<typeof SurfaceCreatedEventSchema>
 export type SurfaceArchivedEvent = z.infer<typeof SurfaceArchivedEventSchema>
+export type SurfacePinnedEvent = z.infer<typeof SurfacePinnedEventSchema>
 export type PresenceStatus = z.infer<typeof PresenceStatusSchema>
 export type PresenceEntry = z.infer<typeof PresenceEntrySchema>
 export type ApprovalCard = z.infer<typeof ApprovalCardSchema>

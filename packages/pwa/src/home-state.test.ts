@@ -1,4 +1,4 @@
-import { SurfaceSnapshotSchema, type Surface } from '@veduta/protocol'
+import { SurfaceSchema, SurfaceSnapshotSchema, type Surface } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import type { SpaceWithSurfaces } from './api.ts'
 import {
@@ -7,6 +7,7 @@ import {
   applySurfaceArchivedToSpaces,
   applySurfaceCreatedToSpaces,
   applySurfacePatchToSpaces,
+  applySurfacePinnedToSpaces,
   applySurfaceStreamEvent,
   cachedSnapshot,
   mergeSpaceAttention,
@@ -15,18 +16,19 @@ import {
   parseSurfaceDeepLink,
   saveSnapshot,
   surfaceDeepLink,
+  surfaceStreamEventCursor,
   type SurfaceStreamEvent,
 } from './home-state.ts'
 
 function testSurface(id: string, spaceId: string, updatedAt: string): Surface {
-  return {
+  return SurfaceSchema.parse({
     id,
     spaceId,
     title: id,
     tree: { id: 'root', type: 'Box', children: [] },
     state: {},
     freshness: { updatedAt, updatedBy: 'agent' },
-  }
+  })
 }
 
 function testSpace(
@@ -197,6 +199,78 @@ describe('applySurfacePatchToSpaces', () => {
     })
 
     expect(result.applied).toBe(false)
+  })
+})
+
+describe('applySurfacePinnedToSpaces', () => {
+  it('flips pinned on the matching Surface, converges its freshness on the event’s own, and reports the event cursor', () => {
+    const surface = testSurface('srf-meals', 'spc-health', '2026-07-10T12:00:00.000Z')
+    const streamEvent: SurfaceStreamEvent = {
+      type: 'surface.pinned',
+      event: {
+        cursor: 4,
+        at: '2026-07-10T12:05:00.000Z',
+        spaceId: 'spc-health',
+        surfaceId: 'srf-meals',
+        pinned: true,
+        freshness: { updatedAt: '2026-07-10T12:05:00.000Z', updatedBy: 'user' },
+      },
+    }
+    const spaces = [testSpace('spc-health', [surface])]
+
+    const result = applySurfacePinnedToSpaces(spaces, streamEvent.event)
+
+    expect(result.applied).toBe(true)
+    // Both `pinned` and `freshness` converge on the event's own values — a
+    // pin is a change to the Surface, and the daemon already stamps a fresh
+    // `freshness` on it; `tree`/`state` are the only things left untouched.
+    expect(result.spaces[0]?.surfaces[0]).toEqual({
+      ...surface,
+      pinned: true,
+      freshness: { updatedAt: '2026-07-10T12:05:00.000Z', updatedBy: 'user' },
+    })
+    expect(surfaceStreamEventCursor(streamEvent)).toBe(4)
+  })
+
+  it('ignores an event for an unknown surfaceId, leaving the snapshot untouched', () => {
+    const surface = testSurface('srf-meals', 'spc-health', '2026-07-10T12:00:00.000Z')
+    const spaces = [testSpace('spc-health', [surface])]
+
+    const result = applySurfacePinnedToSpaces(spaces, {
+      cursor: 4,
+      at: '2026-07-10T12:05:00.000Z',
+      spaceId: 'spc-health',
+      surfaceId: 'srf-ghost',
+      pinned: true,
+      freshness: { updatedAt: '2026-07-10T12:05:00.000Z', updatedBy: 'user' },
+    })
+
+    expect(result.applied).toBe(false)
+    expect(result.spaces).toEqual(spaces)
+  })
+
+  it('dispatches through applySurfaceStreamEvent like the other stream events', () => {
+    const surface = testSurface('srf-meals', 'spc-health', '2026-07-10T12:00:00.000Z')
+    const spaces = [testSpace('spc-health', [surface])]
+
+    const result = applySurfaceStreamEvent(spaces, {
+      type: 'surface.pinned',
+      event: {
+        cursor: 5,
+        at: '2026-07-10T12:06:00.000Z',
+        spaceId: 'spc-health',
+        surfaceId: 'srf-meals',
+        pinned: true,
+        freshness: { updatedAt: '2026-07-10T12:06:00.000Z', updatedBy: 'user' },
+      },
+    })
+
+    expect(result.applied).toBe(true)
+    expect(result.spaces[0]?.surfaces[0]?.pinned).toBe(true)
+    expect(result.spaces[0]?.surfaces[0]?.freshness).toEqual({
+      updatedAt: '2026-07-10T12:06:00.000Z',
+      updatedBy: 'user',
+    })
   })
 })
 

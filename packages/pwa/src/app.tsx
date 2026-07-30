@@ -9,6 +9,7 @@ import {
   fetchSpaces,
   invokeFastAction,
   markSpaceAttentionSeen,
+  pinSurface,
   type GatewayConnection,
   type SpaceWithSurfaces,
 } from './api.ts'
@@ -115,6 +116,21 @@ export function App() {
       )
     },
     [replaceSpaces],
+  )
+
+  // Pin toggle (issue 022): no optimistic flip -- `SurfaceCard` renders
+  // `surface.pinned` straight from the snapshot, so the toggle keeps
+  // showing the server's last known state until the request resolves
+  // (`replaceSurface`) or a `surface.pinned` stream event arrives. A failed
+  // request never leaves a flipped toggle behind because nothing was
+  // flipped locally in the first place.
+  const togglePin = useCallback(
+    (surface: Surface, pinned: boolean) => {
+      pinSurface(surface.id, pinned, authToken)
+        .then(replaceSurface)
+        .catch((e: Error) => setError(`"${surface.title}" pin failed: ${e.message}`))
+    },
+    [authToken, replaceSurface],
   )
 
   const queueFastAction = useCallback((action: QueuedFastAction) => {
@@ -236,6 +252,9 @@ export function App() {
         },
         onSurfaceArchived(event) {
           handleSurfaceStreamEvent({ type: 'surface.archived', event })
+        },
+        onSurfacePinned(event) {
+          handleSurfaceStreamEvent({ type: 'surface.pinned', event })
         },
         onChatMessage(message) {
           appendChatEntry(message.message)
@@ -579,6 +598,7 @@ export function App() {
               onMoveSurface={moveSurface}
               onPatched={replaceSurface}
               onQueueFastAction={queueFastAction}
+              onTogglePin={togglePin}
               onError={setError}
             />
           ))}
@@ -613,5 +633,7 @@ function surfaceStreamEventErrorMessage(streamEvent: SurfaceStreamEvent): string
       return `Surface created for unknown Space: ${streamEvent.event.spaceId}`
     case 'surface.archived':
       return `archived unknown Surface: ${streamEvent.event.surfaceId}`
+    case 'surface.pinned':
+      return `pin update for unknown Surface: ${streamEvent.event.surfaceId}`
   }
 }

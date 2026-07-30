@@ -6,6 +6,7 @@ import {
   SurfaceArchivedEventSchema,
   SurfaceCreatedEventSchema,
   SurfacePatchEventSchema,
+  SurfacePinnedEventSchema,
 } from './index.ts'
 
 describe('Gateway protocol', () => {
@@ -123,5 +124,52 @@ describe('Gateway protocol', () => {
       type: 'surface.archived',
       event,
     })
+  })
+
+  it('accepts a surface.pinned message for a pin toggle, carrying the bumped freshness (issue 022 review fix)', () => {
+    const event = SurfacePinnedEventSchema.parse({
+      cursor: 4,
+      at: '2026-07-03T10:00:00.000Z',
+      spaceId: 'spc-health',
+      surfaceId: 'srf-groceries',
+      pinned: true,
+      freshness: { updatedAt: '2026-07-03T10:00:00.000Z', updatedBy: 'user' },
+    })
+
+    expect(GatewayServerMessageSchema.parse({ type: 'surface.pinned', event })).toEqual({
+      type: 'surface.pinned',
+      event,
+    })
+    expect(event.freshness).toEqual({ updatedAt: '2026-07-03T10:00:00.000Z', updatedBy: 'user' })
+  })
+
+  it('rejects a surface.pinned message missing pinned', () => {
+    expect(
+      GatewayServerMessageSchema.safeParse({
+        type: 'surface.pinned',
+        event: {
+          cursor: 4,
+          at: '2026-07-03T10:00:00.000Z',
+          spaceId: 'spc-health',
+          surfaceId: 'srf-groceries',
+          freshness: { updatedAt: '2026-07-03T10:00:00.000Z', updatedBy: 'user' },
+        },
+      }).success,
+    ).toBe(false)
+  })
+
+  it('rejects a surface.pinned message missing freshness (issue 022 review fix)', () => {
+    expect(
+      GatewayServerMessageSchema.safeParse({
+        type: 'surface.pinned',
+        event: {
+          cursor: 4,
+          at: '2026-07-03T10:00:00.000Z',
+          spaceId: 'spc-health',
+          surfaceId: 'srf-groceries',
+          pinned: true,
+        },
+      }).success,
+    ).toBe(false)
   })
 })

@@ -49,10 +49,13 @@ export const MAX_WRITTEN_FACT_CHARS = 1000
  * again), `worker.delivered` (whether a Worker's result was already handed
  * over — a forged one makes boot recovery drop a real result), `reader.summary`
  * /`reader.discard` (whether a quarantined event was handled),
- * `approval.outcome`, `outbound.delivery`, and `heartbeat.sweep` (the metrics
- * the Heartbeat Surface shows). A denylist rather than an allowlist because
- * naming its own event types is the point of `append_event`; what must be
- * closed off is the daemon's own namespace.
+ * `approval.outcome`, `outbound.delivery`, `heartbeat.sweep` (the metrics
+ * the Heartbeat Surface shows), and `template.saved`/`template.reused`/
+ * `template.regenerated` (issues/022-emergent-templates.md: the daemon reads
+ * its own Template bookkeeping back — a forged `template.saved` could make a
+ * harvest or a reuse look like it already happened). A denylist rather than
+ * an allowlist because naming its own event types is the point of
+ * `append_event`; what must be closed off is the daemon's own namespace.
  */
 const RESERVED_EVENT_TYPE_PREFIXES = [
   'reflection.',
@@ -66,6 +69,7 @@ const RESERVED_EVENT_TYPE_PREFIXES = [
   'heartbeat.',
   'worker.',
   'import.',
+  'template.',
 ]
 const RESERVED_EVENT_TYPES = ['lifecycle']
 

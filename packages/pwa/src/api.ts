@@ -33,6 +33,7 @@ import {
   type SurfaceArchivedEvent,
   type SurfaceCreatedEvent,
   type SurfacePatchEvent,
+  type SurfacePinnedEvent,
   type SurfaceSnapshot,
 } from '@veduta/protocol'
 import {
@@ -68,6 +69,7 @@ export interface GatewayHandlers {
   onSurfacePatch(event: SurfacePatchEvent): void
   onSurfaceCreated(event: SurfaceCreatedEvent): void
   onSurfaceArchived(event: SurfaceArchivedEvent): void
+  onSurfacePinned(event: SurfacePinnedEvent): void
   onChatMessage(message: Extract<GatewayServerMessage, { type: 'chat.message' }>): void
   onApprovalCard(message: Extract<GatewayServerMessage, { type: 'approval.card' }>): void
   onPresence(message: Extract<GatewayServerMessage, { type: 'presence.update' }>): void
@@ -202,6 +204,22 @@ export async function markSpaceAttentionSeen(
   return SpaceAttentionSeenResponseSchema.parse(await res.json())
 }
 
+const PinSurfaceResponseSchema = z.object({ surface: SurfaceSchema })
+
+/** Toggles a Surface's pin (CONTEXT.md's Pin: "I like this Surface as it
+ * is"). The daemon 404s an unknown Surface and 409s one that isn't
+ * pinnable (daemon-owned, the projected FACTS Surface); both come back
+ * through `errorMessageFromBody` as a readable message rather than a bare
+ * status code. */
+export async function pinSurface(
+  surfaceId: string,
+  pinned: boolean,
+  token?: string,
+): Promise<Surface> {
+  const body = await postJson(`/api/surfaces/${surfaceId}/pin`, { pinned }, token)
+  return PinSurfaceResponseSchema.parse(body).surface
+}
+
 export async function invokeFastAction(
   surfaceId: string,
   nodeId: string,
@@ -312,6 +330,11 @@ export function connectGateway(handlers: GatewayHandlers): GatewayConnection {
 
     if (message.type === 'surface.archived') {
       handlers.onSurfaceArchived(message.event)
+      return
+    }
+
+    if (message.type === 'surface.pinned') {
+      handlers.onSurfacePinned(message.event)
       return
     }
 

@@ -21,6 +21,7 @@ export function SurfaceCard({
   onMoveDown,
   onPatched,
   onQueueFastAction,
+  onTogglePin,
   onError,
 }: {
   surface: Surface
@@ -33,6 +34,7 @@ export function SurfaceCard({
   onMoveDown: () => void
   onPatched: (s: Surface) => void
   onQueueFastAction: (action: QueuedFastAction) => void
+  onTogglePin: (pinned: boolean) => void
   onError: (message: string) => void
 }) {
   const theme = useCatalogTheme()
@@ -111,6 +113,17 @@ export function SurfaceCard({
             Down
           </button>
         </div>
+        {surface.pinnable && (
+          <button
+            type="button"
+            className="surface-pin"
+            onClick={() => onTogglePin(!surface.pinned)}
+            aria-pressed={surface.pinned}
+            aria-label={`${surface.pinned ? 'Pinned' : 'Pin'} ${surface.title}`}
+          >
+            {surface.pinned ? 'Pinned' : 'Pin'}
+          </button>
+        )}
       </div>
       {renderNode(surface.tree, { state: surface.state, dispatch, theme })}
       <div className="freshness">

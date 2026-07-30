@@ -80,6 +80,22 @@ describe('SurfaceSchema', () => {
     const { freshness: _freshness, ...withoutFreshness } = shoppingChecklistWithChart
     expect(SurfaceSchema.safeParse(withoutFreshness).success).toBe(false)
   })
+
+  it('defaults pinned to false and pinnable to true when absent (issue 022)', () => {
+    const parsed = SurfaceSchema.parse(shoppingChecklistWithChart)
+    expect(parsed.pinned).toBe(false)
+    expect(parsed.pinnable).toBe(true)
+  })
+
+  it('keeps explicit pinned/pinnable values', () => {
+    const parsed = SurfaceSchema.parse({
+      ...shoppingChecklistWithChart,
+      pinned: true,
+      pinnable: false,
+    })
+    expect(parsed.pinned).toBe(true)
+    expect(parsed.pinnable).toBe(false)
+  })
 })
 
 describe('ActionSchema', () => {

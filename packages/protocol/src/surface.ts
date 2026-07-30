@@ -20,6 +20,14 @@ export const SurfaceSchema = z
     tree: AtomNodeSchema,
     state: JsonObjectSchema,
     freshness: FreshnessSchema,
+    /** The user locked this Surface's tree; the Agent may still patch state. */
+    pinned: z.boolean().default(false),
+    /**
+     * False for daemon-owned Surfaces (approval cards, admin Surfaces) and the
+     * projected FACTS Surface, so no client renders a pin toggle the daemon
+     * would refuse.
+     */
+    pinnable: z.boolean().default(true),
   })
   .superRefine((surface, ctx) => {
     validateNodeBindings(surface.tree, surface.state, ['tree'], ctx)
@@ -48,35 +56,60 @@ export function formatSurfaceIssues(issues: ZodIssue[]): string[] {
   return issues.map(formatSurfaceIssue)
 }
 
+/**
+ * A key an Atom node reaches into typed state for: either its own `binding`,
+ * or a `path: 'fast'` action's `stateKey`. Shared by `SurfaceSchema` (checked
+ * against `state`'s own keys) and `SurfaceTemplateSchema` in `template.ts`
+ * (checked against the Template's `stateKeys` names) so both validate the
+ * same tree shape without duplicating the traversal.
+ */
+export type NodeBindingRef =
+  | { kind: 'binding'; key: string; path: (string | number)[] }
+  | { kind: 'fastAction'; key: string; actionName: string; path: (string | number)[] }
+
+export function collectNodeBindingRefs(
+  node: AtomNode,
+  path: (string | number)[],
+): NodeBindingRef[] {
+  const refs: NodeBindingRef[] = []
+
+  if (node.binding) {
+    refs.push({ kind: 'binding', key: node.binding, path: [...path, 'binding'] })
+  }
+
+  node.actions?.forEach((action, index) => {
+    if (action.path !== 'fast' || action.stateKey === undefined) return
+    refs.push({
+      kind: 'fastAction',
+      key: action.stateKey,
+      actionName: action.name,
+      path: [...path, 'actions', index, 'stateKey'],
+    })
+  })
+
+  node.children?.forEach((child, index) => {
+    refs.push(...collectNodeBindingRefs(child, [...path, 'children', index]))
+  })
+
+  return refs
+}
+
 function validateNodeBindings(
   node: AtomNode,
   state: JsonObject,
   path: (string | number)[],
   ctx: z.RefinementCtx,
 ): void {
-  if (node.binding && !hasStateKey(state, node.binding)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: [...path, 'binding'],
-      message: `binding "${node.binding}" does not exist in Surface state`,
-    })
+  for (const ref of collectNodeBindingRefs(node, path)) {
+    if (hasStateKey(state, ref.key)) continue
+
+    const message =
+      ref.kind === 'binding'
+        ? `binding "${ref.key}" does not exist in Surface state`
+        : `fast action "${ref.actionName}" targets missing state key "${ref.key}"`
+
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ref.path, message })
   }
-
-  node.actions?.forEach((action, index) => {
-    if (action.path !== 'fast' || action.stateKey === undefined) return
-
-    if (!hasStateKey(state, action.stateKey)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: [...path, 'actions', index, 'stateKey'],
-        message: `fast action "${action.name}" targets missing state key "${action.stateKey}"`,
-      })
-    }
-  })
-
-  node.children?.forEach((child, index) => {
-    validateNodeBindings(child, state, [...path, 'children', index], ctx)
-  })
 }
 
 function hasStateKey(state: JsonObject, key: string): boolean {

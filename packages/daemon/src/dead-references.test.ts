@@ -71,6 +71,13 @@ const DEAD_PATTERNS: DeadPattern[] = [
     pattern: /fix group|reconciliation item \d+/gi,
     fix: 'say what the fix was; the conversation is not readable from the repository',
   },
+  {
+    name: 'a numbered task from a planning document',
+    // `Task 5`, `task 12`: a pointer into the uncommitted working plan, not
+    // anything a reader of this repository can open.
+    pattern: /(?:^|[^\w])task\s+\d+/gi,
+    fix: 'name the file or ADR that does the work instead of a task number',
+  },
 ]
 
 function walk(dir: string, out: string[] = []): string[] {

@@ -340,6 +340,10 @@ describe('write and append schemas bound what an injected turn can persist', () 
       'worker.delivered',
       'heartbeat.sweep',
       'import.memory',
+      // The daemon reads its own Template bookkeeping back too
+      // (issues/022-emergent-templates.md): a forged one could make a
+      // harvest or a reuse look like it already happened.
+      'template.saved',
     ]) {
       expect(appendEvent.schema.safeParse({ text: 'ok', type }).success).toBe(false)
     }

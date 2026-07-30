@@ -1,8 +1,22 @@
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SurfaceSchema, type Surface } from '@veduta/protocol'
+import {
+  SurfaceSchema,
+  SurfaceTemplateIdSchema,
+  SurfaceTemplateSchema,
+  type Surface,
+  type SurfaceTemplate,
+} from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import { factRecordIds, formatFactsMarkdown, type FactsDocument } from './facts.ts'
 import { seedSpaces } from './seed.ts'
@@ -104,6 +118,205 @@ describe('SpacesEngine layout and lifecycle', () => {
     expect(engine.readFacts(target.id).dormant.map((fact) => fact.text)).toContain(
       'I used to track calories',
     )
+  })
+})
+
+describe('SpacesEngine Templates', () => {
+  it('persists a saved Template so it is readable from a fresh SpacesEngine on the same root', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+
+    engine.saveTemplate(space.id, sampleTemplate('tpl-tracker', space.id))
+
+    const reopened = new SpacesEngine({ rootDir, now: fixedNow })
+    expect(reopened.getTemplate(space.id, 'tpl-tracker')?.name).toBe('Tracker')
+    expect(reopened.listTemplates(space.id).map((template) => template.id)).toEqual(['tpl-tracker'])
+  })
+
+  it('lists [] for a Space with no templates/ directory (every Space created before this change)', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+    rmSync(join(rootDir, 'spaces', space.slug, 'templates'), { recursive: true, force: true })
+
+    expect(engine.listTemplates(space.id)).toEqual([])
+  })
+
+  it('saves a Template into a Space that has no templates/ directory yet, and deletes it again', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+    // A Space created before Templates existed: `initializeSpace` never ran
+    // for `templates/`, so the first pin on it used to fail with ENOENT.
+    rmSync(join(rootDir, 'spaces', space.slug, 'templates'), { recursive: true, force: true })
+
+    engine.saveTemplate(space.id, sampleTemplate('tpl-tracker', space.id))
+    expect(engine.getTemplate(space.id, 'tpl-tracker')?.name).toBe('Tracker')
+
+    engine.deleteTemplate(space.id, 'tpl-tracker')
+    expect(engine.getTemplate(space.id, 'tpl-tracker')).toBeUndefined()
+    // A missing file is a no-op, so an importer rollback never throws twice.
+    expect(() => engine.deleteTemplate(space.id, 'tpl-tracker')).not.toThrow()
+  })
+
+  it('saveTemplate without exclusive keeps overwriting, as the ordinary harvest/pin path always intended', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+
+    engine.saveTemplate(space.id, sampleTemplate('tpl-tracker', space.id))
+    const changed = SurfaceTemplateSchema.parse({
+      ...sampleTemplate('tpl-tracker', space.id),
+      name: 'Renamed tracker',
+    })
+
+    expect(() => engine.saveTemplate(space.id, changed)).not.toThrow()
+    expect(engine.getTemplate(space.id, 'tpl-tracker')?.name).toBe('Renamed tracker')
+  })
+
+  it('saveTemplate with exclusive: true refuses to overwrite an existing file, and the original survives untouched', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+
+    engine.saveTemplate(space.id, sampleTemplate('tpl-tracker', space.id))
+    const overwriteAttempt = SurfaceTemplateSchema.parse({
+      ...sampleTemplate('tpl-tracker', space.id),
+      name: 'Should never land',
+    })
+
+    expect(() => engine.saveTemplate(space.id, overwriteAttempt, { exclusive: true })).toThrow(
+      /EEXIST|already exists/i,
+    )
+    expect(engine.getTemplate(space.id, 'tpl-tracker')?.name).toBe('Tracker')
+  })
+
+  it('saveTemplate with exclusive: true still creates a genuinely new Template', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+
+    engine.saveTemplate(space.id, sampleTemplate('tpl-tracker', space.id), { exclusive: true })
+
+    expect(engine.getTemplate(space.id, 'tpl-tracker')?.name).toBe('Tracker')
+  })
+
+  it('refuses a template id crafted to escape the Space directory, proving the engine holds its own guard', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+
+    // `getTemplate` takes a plain string, not something re-validated against
+    // `SurfaceTemplateIdSchema`, so this proves the containment check in
+    // `SpacesEngine` itself fires, independent of the schema's own regex.
+    expect(() => engine.getTemplate(space.id, '../../etc/passwd')).toThrow(
+      /escapes the Space's templates directory/,
+    )
+  })
+
+  it('mergeSpaces carries Templates across and de-collides a clashing id, keeping the result schema-valid and within the length grammar', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const target = engine.createSpace({ name: 'Health' })
+    const source = engine.createSpace({ name: 'a'.repeat(50) })
+
+    // Near the schema's length ceiling already, so a naive
+    // `${id}-from-<slug>` append (as `uniqueSurfaceId` does for Surfaces)
+    // would exceed it; the merge must truncate instead.
+    const longId = `tpl-${'x'.repeat(60)}`
+    engine.saveTemplate(target.id, sampleTemplate(longId, target.id))
+    engine.saveTemplate(source.id, sampleTemplate(longId, source.id))
+
+    engine.mergeSpaces(target.id, source.id)
+
+    const merged = engine.listTemplates(target.id)
+    expect(merged.map((template) => template.id)).toContain(longId)
+    const carried = merged.find((template) => template.id !== longId)
+    expect(carried).toBeDefined()
+    expect(carried?.id.length).toBeLessThanOrEqual(68)
+    expect(SurfaceTemplateIdSchema.safeParse(carried?.id).success).toBe(true)
+    expect(SurfaceTemplateSchema.safeParse(carried).success).toBe(true)
+  })
+
+  it('refuses instead of looping forever when a long Space slug forces a second de-collision attempt', async () => {
+    // Reproduces the bug directly: a Space slug near the schema's length
+    // ceiling, merged into a target that already holds both the base id and
+    // the exact candidate `uniqueTemplateId` would try first for that slug —
+    // forcing the real merge below into the second attempt, where the old
+    // code clamped `budget` up to the schema's minimum instead of refusing,
+    // producing a too-long candidate `safeParse` rejected every time and
+    // looping forever. If this test hangs instead of throwing, the fix
+    // regressed.
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const target = engine.createSpace({ name: 'Health' })
+    const longSlug = 'a'.repeat(56)
+
+    const longId = `tpl-${'x'.repeat(60)}`
+    engine.saveTemplate(target.id, sampleTemplate(longId, target.id))
+    // The exact id `uniqueTemplateId`'s first attempt would produce for
+    // `longSlug`: pre-seeding it is what forces the merge below past index 0.
+    const seeded = `${longId.slice(0, 6)}-from-${longSlug}`
+    engine.saveTemplate(target.id, sampleTemplate(seeded, target.id))
+
+    const source = engine.createSpace({ name: 'Source Space', slug: longSlug })
+    engine.saveTemplate(source.id, sampleTemplate(longId, source.id))
+
+    expect(() => engine.mergeSpaces(target.id, source.id)).toThrow(/cannot de-collide/)
+  })
+
+  it('skips a malformed Template file with a console.warn instead of throwing, so one bad file cannot disable listTemplates', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+    engine.saveTemplate(space.id, sampleTemplate('tpl-good', space.id))
+
+    const templatesDir = join(rootDir, 'spaces', space.slug, 'templates')
+    writeFileSync(join(templatesDir, 'tpl-broken.json'), '{ not valid json')
+    writeFileSync(
+      join(templatesDir, 'tpl-invalid-schema.json'),
+      JSON.stringify({ formatVersion: 1, id: 'tpl-invalid-schema' }),
+    )
+
+    const warnings: unknown[][] = []
+    const originalWarn = console.warn
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args)
+    }
+    try {
+      const templates = engine.listTemplates(space.id)
+      expect(templates.map((template) => template.id)).toEqual(['tpl-good'])
+    } finally {
+      console.warn = originalWarn
+    }
+
+    expect(warnings.some((args) => String(args[0]).includes('tpl-broken.json'))).toBe(true)
+    expect(warnings.some((args) => String(args[0]).includes('tpl-invalid-schema.json'))).toBe(true)
+  })
+
+  it('refuses when the templates directory has been replaced with a symlink pointing elsewhere', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+
+    const templatesDir = join(rootDir, 'spaces', space.slug, 'templates')
+    rmSync(templatesDir, { recursive: true, force: true })
+    const outsideDir = join(rootDir, 'outside-templates')
+    mkdirSync(outsideDir, { recursive: true })
+    symlinkSync(outsideDir, templatesDir)
+
+    expect(() => engine.saveTemplate(space.id, sampleTemplate('tpl-tracker', space.id))).toThrow(
+      /escapes the Space's templates directory/,
+    )
+  })
+
+  it('builds the projected FACTS Surface as pinnable: false, since pinning a regenerated projection is meaningless', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+
+    expect(engine.factsSurface(space.id).pinnable).toBe(false)
   })
 })
 
@@ -603,6 +816,29 @@ function sharedSurface(spaceId: string, title: string): Surface {
     },
     state: {},
     freshness: { updatedAt: '2026-07-01T12:00:00.000Z', updatedBy: 'seed' },
+  })
+}
+
+function sampleTemplate(id: string, sourceSpaceId: string): SurfaceTemplate {
+  return SurfaceTemplateSchema.parse({
+    formatVersion: 1,
+    id,
+    name: 'Tracker',
+    intent: 'tracker for a life area',
+    tree: {
+      id: 'root',
+      type: 'Box',
+      children: [{ id: 'title', type: 'Title', props: { text: 'Tracker' } }],
+    },
+    stateKeys: [],
+    dataProps: [],
+    provenance: {
+      sourceSurfaceId: 'srf-tracker',
+      sourceSpaceId,
+      savedAt: '2026-07-01T12:00:00.000Z',
+      savedBy: 'stability',
+      origin: 'trusted:user',
+    },
   })
 }
 

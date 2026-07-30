@@ -23,8 +23,10 @@ export {
   SurfaceValidationError,
   parseSurface,
   formatSurfaceIssues,
+  collectNodeBindingRefs,
   type Surface,
   type Freshness,
+  type NodeBindingRef,
 } from './surface.ts'
 export { SpaceSchema, type Space } from './space.ts'
 export {
@@ -55,6 +57,7 @@ export {
   SurfacePatchEventSchema,
   SurfaceCreatedEventSchema,
   SurfaceArchivedEventSchema,
+  SurfacePinnedEventSchema,
   PresenceStatusSchema,
   PresenceEntrySchema,
   ApprovalCardSchema,
@@ -66,6 +69,7 @@ export {
   type SurfacePatchEvent,
   type SurfaceCreatedEvent,
   type SurfaceArchivedEvent,
+  type SurfacePinnedEvent,
   type PresenceStatus,
   type PresenceEntry,
   type ApprovalCard,
@@ -162,3 +166,14 @@ export {
   type ImportApplyRequestInput,
   type ImportApplyResponse,
 } from './import.ts'
+// Emergent Templates (issue 022): a saved Surface composition — tree plus the
+// *names* of the state keys it binds, never the typed data — and the portable
+// bundle format used to export/import a Space's Templates (see
+// `docs/adr/0003-declarative-atoms.md`).
+export {
+  SurfaceTemplateIdSchema,
+  SurfaceTemplateSchema,
+  TemplateBundleSchema,
+  type SurfaceTemplate,
+  type TemplateBundle,
+} from './template.ts'

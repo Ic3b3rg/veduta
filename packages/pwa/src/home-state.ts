@@ -4,6 +4,7 @@ import {
   type SurfaceArchivedEvent,
   type SurfaceCreatedEvent,
   type SurfacePatchEvent,
+  type SurfacePinnedEvent,
   type SurfaceSnapshot,
 } from '@veduta/protocol'
 import type { SpaceWithSurfaces } from './api.ts'
@@ -82,6 +83,7 @@ export type SurfaceStreamEvent =
   | { type: 'surface.patch'; event: SurfacePatchEvent }
   | { type: 'surface.created'; event: SurfaceCreatedEvent }
   | { type: 'surface.archived'; event: SurfaceArchivedEvent }
+  | { type: 'surface.pinned'; event: SurfacePinnedEvent }
 
 export interface SurfaceStreamApplyResult {
   spaces: SpaceWithSurfaces[]
@@ -143,6 +145,28 @@ export function applySurfaceArchivedToSpaces(
   return { spaces: next, applied }
 }
 
+/** A `surface.pinned` event flips `pinned` on the matching Surface in place
+ * and applies the event's own `freshness` (a pin is a change to the
+ * Surface, and the daemon already stamps one), leaving `tree`/`state`
+ * untouched. An unknown `surfaceId` is ignored -- `applied` stays false,
+ * same as the other apply-to-spaces helpers, rather than fabricating a
+ * phantom Surface. */
+export function applySurfacePinnedToSpaces(
+  spaces: SpaceWithSurfaces[],
+  event: SurfacePinnedEvent,
+): SurfaceStreamApplyResult {
+  let applied = false
+  const next = spaces.map((space) => ({
+    ...space,
+    surfaces: space.surfaces.map((surface) => {
+      if (surface.id !== event.surfaceId) return surface
+      applied = true
+      return { ...surface, pinned: event.pinned, freshness: event.freshness }
+    }),
+  }))
+  return { spaces: next, applied }
+}
+
 export function applySurfaceStreamEvent(
   spaces: SpaceWithSurfaces[],
   streamEvent: SurfaceStreamEvent,
@@ -154,6 +178,8 @@ export function applySurfaceStreamEvent(
       return applySurfaceCreatedToSpaces(spaces, streamEvent.event)
     case 'surface.archived':
       return applySurfaceArchivedToSpaces(spaces, streamEvent.event)
+    case 'surface.pinned':
+      return applySurfacePinnedToSpaces(spaces, streamEvent.event)
   }
 }
 

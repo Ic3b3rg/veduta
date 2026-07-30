@@ -19,7 +19,11 @@ import {
   type QueuedAgentTurn,
   type SurfaceEngineEvent,
   type SurfaceMutation,
+  type SurfaceProvenance,
   type SurfaceVersion,
+  type TreeProposal,
+  type TreeProposalRecorded,
+  type TreeProposalStatus,
 } from './surface-engine.ts'
 
 export interface StoreOptions {
@@ -140,6 +144,15 @@ export class Store {
     return this.surfaceEngine.onSurfaceEvent(observer)
   }
 
+  /**
+   * Observe every newly recorded Tree proposal exactly once, after it
+   * commits. `TreeProposalSurfaceManager` is the sole subscriber in
+   * production: one central hook, never a manual broadcast.
+   */
+  onTreeProposal(observer: (proposal: TreeProposal) => void): () => void {
+    return this.surfaceEngine.onTreeProposal(observer)
+  }
+
   /** Fast path: mutate one state key, stamp freshness, log the event. No LLM. */
   applyFastAction(
     surfaceId: string,
@@ -218,8 +231,13 @@ export class Store {
   patchTree(
     surfaceId: string,
     operations: PatchOperation[],
-    options: { expectedTreeVersion: number; updatedBy: 'agent' | 'user' | 'job'; origin?: Origin },
-  ): SurfaceMutation {
+    options: {
+      expectedTreeVersion: number
+      updatedBy: 'agent' | 'user' | 'job'
+      origin?: Origin
+      bypassPin?: true
+    },
+  ): SurfaceMutation | TreeProposalRecorded {
     return this.surfaceEngine.patchTree(surfaceId, operations, options)
   }
 
@@ -229,6 +247,51 @@ export class Store {
 
   getSurfaceVersion(surfaceId: string): SurfaceVersion | undefined {
     return this.surfaceEngine.getSurfaceVersion(surfaceId)
+  }
+
+  /**
+   * Locks or unlocks a Surface's tree; refuses a daemon-owned or unknown
+   * Surface. `options.origin`/`options.updatedBy` are the caller's own
+   * (never hardcoded here or in `SurfaceEngine.setPinned`) — see that
+   * method's docstring for why a hardcoded `trusted:user` would forge a
+   * user event.
+   */
+  setPinned(
+    surfaceId: string,
+    pinned: boolean,
+    options: { origin: Origin; updatedBy: 'user' | 'agent' | 'job' },
+  ): Surface {
+    return this.surfaceEngine.setPinned(surfaceId, pinned, options)
+  }
+
+  /** Active, non-daemon-owned Surfaces whose tree has not changed since `beforeIso`. */
+  stableSurfaces(beforeIso: string): Surface[] {
+    return this.surfaceEngine.stableSurfaces(beforeIso)
+  }
+
+  /** The stored Template provenance for `surfaceId`, or `undefined` if unknown. */
+  surfaceProvenance(surfaceId: string): SurfaceProvenance | undefined {
+    return this.surfaceEngine.surfaceProvenance(surfaceId)
+  }
+
+  /** Tree proposals `patchTree` recorded, optionally filtered by Surface and/or status. */
+  listTreeProposals(options?: { surfaceId?: string; status?: TreeProposalStatus }): TreeProposal[] {
+    return this.surfaceEngine.listTreeProposals(options)
+  }
+
+  /** The Tree proposal at `id`, or `undefined` if unknown. */
+  getTreeProposal(id: number): TreeProposal | undefined {
+    return this.surfaceEngine.getTreeProposal(id)
+  }
+
+  /** Resolves a `pending` Tree proposal exactly once; see `SurfaceEngine.resolveTreeProposal`. */
+  resolveTreeProposal(id: number, status: 'accepted' | 'rejected'): TreeProposal | undefined {
+    return this.surfaceEngine.resolveTreeProposal(id, status)
+  }
+
+  /** Puts an `accepted` Tree proposal back to `pending`; see `SurfaceEngine.reopenTreeProposal`. */
+  reopenTreeProposal(id: number): TreeProposal | undefined {
+    return this.surfaceEngine.reopenTreeProposal(id)
   }
 
   /**

@@ -366,6 +366,18 @@ input:focus-visible {
   padding: 5px 8px;
 }
 
+.surface-pin {
+  flex: 0 0 auto;
+  font-size: 12px;
+  min-height: 30px;
+  padding: 5px 8px;
+}
+
+.surface-pin[aria-pressed='true'] {
+  background: var(--accent-soft-bg);
+  border-color: var(--accent-soft);
+}
+
 .freshness {
   color: var(--text-muted);
   font-size: 12px;

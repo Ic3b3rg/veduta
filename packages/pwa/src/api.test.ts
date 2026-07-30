@@ -1,4 +1,4 @@
-import type { ImportPlan, ImportResult, OnboardingStatus } from '@veduta/protocol'
+import type { ImportPlan, ImportResult, OnboardingStatus, Surface } from '@veduta/protocol'
 import { SurfaceSchema } from '@veduta/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -7,6 +7,7 @@ import {
   fastActionIdempotencyKey,
   freshnessLabel,
   optimisticFastSurface,
+  pinSurface,
   previewLegacyImport,
   runLegacyImport,
 } from './api.ts'
@@ -123,6 +124,49 @@ describe('runLegacyImport', () => {
     })
     expect(response.result.backupPath).toBe(body.result.backupPath)
     expect(response.status.completed).toBe(true)
+  })
+})
+
+function buildSurface(overrides: Partial<Surface> = {}): Surface {
+  return SurfaceSchema.parse({
+    id: 'srf-meals',
+    spaceId: 'spc-health',
+    title: 'Meals',
+    tree: { id: 'root', type: 'Box', children: [] },
+    state: {},
+    freshness: { updatedAt: '2026-07-10T12:00:00.000Z', updatedBy: 'agent' },
+    ...overrides,
+  })
+}
+
+describe('pinSurface', () => {
+  it('posts { pinned } to /api/surfaces/:id/pin with the auth header and parses the returned Surface', async () => {
+    const surface = buildSurface({ pinned: true })
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      return new Response(JSON.stringify({ surface }), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await pinSurface('srf-meals', true, 'test-token')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const call = fetchMock.mock.calls[0]
+    if (call === undefined) throw new Error('fetch was not called')
+    const [path, init] = call
+    expect(path).toBe('/api/surfaces/srf-meals/pin')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(init?.body as string)).toEqual({ pinned: true })
+    expect(init?.headers).toMatchObject({ authorization: 'Bearer test-token' })
+    expect(result).toEqual(surface)
+  })
+
+  it('rejects with a readable message on a non-2xx response', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      return new Response(JSON.stringify({ error: 'Surface is not pinnable' }), { status: 409 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(pinSurface('srf-meals', true)).rejects.toThrow('Surface is not pinnable')
   })
 })
 

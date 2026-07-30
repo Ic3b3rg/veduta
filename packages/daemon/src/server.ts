@@ -68,7 +68,10 @@ import { WatchManager } from './watch-renewal.ts'
 import { sendPwaAsset } from './static-assets.ts'
 import { createSpawnWorkerTool } from './spawn-worker-tool.ts'
 import { Store, SurfaceActionError } from './store.ts'
+import { SurfaceNotPinnableError } from './surface-engine.ts'
 import { appendSystemSurface, ensureSystemSpace } from './system-space.ts'
+import { TemplateEngine } from './template-engine.ts'
+import { TreeProposalSurfaceManager } from './tree-proposal.ts'
 import { isTrustWrapped, TrustLayer } from './trust-layer.ts'
 import { usageSurface } from './usage-surface.ts'
 import {
@@ -83,6 +86,10 @@ import { WorkerPool } from './worker.ts'
 // The client sends only node/action/payload: state keys come from declared
 // Atom actions, never from the client (ADR-0003).
 const SurfaceActionBodySchema = ActionInvocationSchema
+
+// `POST /api/surfaces/:surfaceId/pin`'s body (issues/022-emergent-templates.md):
+// pinning is a boolean user intent, nothing else the client can shape.
+const PinSurfaceBodySchema = z.object({ pinned: z.boolean() })
 
 const DeviceNameSchema = z.string().trim().min(1).max(80)
 
@@ -601,6 +608,23 @@ export function buildServer(options: ServerOptions = {}) {
   const auditSurfaces = new AuditSurfaceManager({ store, trust })
   auditSurfaces.start()
 
+  // Emergent Templates (issues/022-emergent-templates.md,
+  // docs/adr/0012-emergent-templates.md): `TemplateEngine` harvests stable
+  // Surfaces into Templates and backs the pin route below;
+  // `TreeProposalSurfaceManager` turns a pinned Surface's Agent tree patch —
+  // which `SurfaceEngine.patchTree` already refuses to apply directly,
+  // returning a Tree proposal instead — into a preview Surface with
+  // Accept/Reject. Both need only `store` and the server's own clock, so
+  // they are constructed here, next to the trust layer's own admin
+  // Surfaces just above. `treeProposals.start()`'s boot recovery (recreating
+  // a missing pending proposal's card at its deterministic id) is deferred
+  // into the same `trust.start()` chain below as `approvalSurfaces.start()`:
+  // nothing here depends on the trust layer, but running every "recreate a
+  // missing daemon-owned Surface" boot pass in the same place keeps them
+  // off the critical path the routes below sit on.
+  const templateEngine = new TemplateEngine({ store, now })
+  const treeProposals = new TreeProposalSurfaceManager({ store })
+
   // Boot recovery: overdue pending rows expire, interrupted
   // `executing` rows re-run through the same effectId. Fire-and-forget,
   // same reasoning as `ingestion.recoverAtBoot()` below — nothing else
@@ -614,6 +638,7 @@ export function buildServer(options: ServerOptions = {}) {
   trust
     .start()
     .then(() => approvalSurfaces.start())
+    .then(() => treeProposals.start())
     .catch((error) => {
       console.error('trust layer boot recovery failed', error)
     })
@@ -622,6 +647,12 @@ export function buildServer(options: ServerOptions = {}) {
     auditSurfaces.dispose()
     approvalSurfaces.dispose()
     trust.dispose()
+    // `treeProposals.dispose()` first, so no new fast-path click can enqueue
+    // more resolution work, then `flush()` awaited so the serialized
+    // resolution chain (tree-proposal.ts) fully settles before the process
+    // exits, rather than leaving a pending promise chain behind.
+    treeProposals.dispose()
+    await treeProposals.flush()
   })
 
   // Dev-profile chat dispatcher: a deterministic stand-in for the
@@ -814,6 +845,22 @@ export function buildServer(options: ServerOptions = {}) {
   // calls the pool directly instead. Once the Agent loop lands, this is the
   // ToolDef it offers to the model alongside whatever else it can call.
   const _spawnWorkerTool = createSpawnWorkerTool(workerPool)
+
+  // The Template-reuse tool seam (issues/022-emergent-templates.md,
+  // docs/adr/0012-emergent-templates.md): `templateTools` (`list_templates`,
+  // `create_surface_from_template`, `pin_surface`) and `gateCreateSurfaceTool`
+  // (the justification gate wrapped around `create_surface` itself) both
+  // live in `template-engine.ts`, already built and tested there against a
+  // `TemplateEngine` — the same honest gap `memoryRetrieval`'s own comment
+  // above documents for this daemon: there is no live Agent loop yet to hand
+  // a `ToolDef[]` to, so neither has a production call site here any more
+  // than `store.surfaceTools()` or `createMemoryTools()` do. What runs live
+  // in this file is `templateEngine` itself, the pin route, the pin event,
+  // and the proposal lifecycle (`treeProposals`) above. Once the real Agent
+  // loop lands, this is where it wires `templateTools(templateEngine, ...)`
+  // and `gateCreateSurfaceTool(createSurfaceTool, templateEngine)` into the
+  // `ToolDef[]` it offers the model, with no rework of this module.
+
   // Dev-profile stand-in for the Agent's spawn_worker decision, same idiom
   // as `armReminderFromChat`/`devDispatchHandler`: "research <topic>" spawns
   // a high-risk Worker (so the adversarial review runs, demonstrating
@@ -1221,6 +1268,50 @@ export function buildServer(options: ServerOptions = {}) {
     } catch (error) {
       if (error instanceof SurfaceActionError) {
         return reply.status(statusForSurfaceActionError(error)).send({ error: error.message })
+      }
+      throw error
+    }
+  })
+
+  // `POST /api/surfaces/:surfaceId/pin` (issues/022-emergent-templates.md):
+  // auth-gated exactly like the `/actions` route above (the shared
+  // `onRequest` hook covers every `/api/*` route not listed in
+  // `isPublicUnauthenticatedPath`). Pinning goes through
+  // `TemplateEngine.pin`, not `store.setPinned` directly, so a pin also
+  // captures the Surface as a Template. Existence is checked before the pin
+  // is attempted so an unknown Surface (404) and a daemon-owned one refusing
+  // the pin (`SurfaceNotPinnableError`, 409) are never conflated —
+  // `SurfaceEngine.setPinned` raises that same error for both cases.
+  // `{ origin: 'trusted:user', updatedBy: 'user' }` is hardcoded, not derived
+  // from taint: reaching this route at all means an authenticated human
+  // session made the request (the shared auth hook above), so this is a
+  // genuine human act, exactly what `pin_surface` (the L0 Agent tool,
+  // `template-engine.ts`) is barred from asserting for itself — that tool
+  // derives its own write origin from the turn's live taint instead, and its
+  // schema only ever allows `pinned: true`.
+  app.post('/api/surfaces/:surfaceId/pin', (request, reply) => {
+    const { surfaceId } = request.params as { surfaceId: string }
+    const parsed = PinSurfaceBodySchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.issues })
+    }
+    if (!store.getSurface(surfaceId)) {
+      return reply.status(404).send({ error: `unknown Surface: ${surfaceId}` })
+    }
+    try {
+      // The pin itself already reached every connected client through the
+      // Gateway's central Surface-event subscription (the `surface.pinned`
+      // message mapped from `kind: 'pinned'`, gateway.ts) — this endpoint
+      // only reports the result to the caller, the same shape as
+      // `/actions` above.
+      const { surface } = templateEngine.pin(surfaceId, parsed.data.pinned, {
+        origin: 'trusted:user',
+        updatedBy: 'user',
+      })
+      return { surface }
+    } catch (error) {
+      if (error instanceof SurfaceNotPinnableError) {
+        return reply.status(409).send({ error: error.message })
       }
       throw error
     }

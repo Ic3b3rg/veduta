@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PatchSchema, applySurfacePatch, type Surface } from './index.ts'
+import { PatchSchema, SurfaceSchema, applySurfacePatch, type Surface } from './index.ts'
 
 describe('PatchSchema', () => {
   it('accepts JSON-Patch-like operations for Surface state and tree nodes', () => {
@@ -35,7 +35,7 @@ describe('PatchSchema', () => {
 })
 
 describe('applySurfacePatch', () => {
-  const surface: Surface = {
+  const surface: Surface = SurfaceSchema.parse({
     id: 'srf-groceries',
     spaceId: 'spc-home',
     title: 'Groceries',
@@ -54,7 +54,7 @@ describe('applySurfacePatch', () => {
     },
     state: { milk: false, 'a/b': 'escaped' },
     freshness: { updatedAt: '2026-07-03T10:00:00.000Z', updatedBy: 'seed' },
-  }
+  })
 
   it('applies state patches with JSON Pointer escaping and validates the result', () => {
     const patched = applySurfacePatch(surface, {
