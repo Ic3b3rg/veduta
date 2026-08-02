@@ -86,6 +86,46 @@ describe('GatewayHub Surface sync', () => {
     expect(accepted.sent.at(-1)).toMatchObject({ type: 'error', error: 'Gateway session revoked' })
   })
 
+  it('closes a socket that sends anything but hello before authenticating', () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store, { auth: new FakeGatewayAuth() })
+
+    const eager = new FakeGatewaySocket()
+    gateway.connect(eager)
+    eager.receive({ type: 'chat.send', text: 'hi' })
+    expect(eager.closed).toBe(true)
+    expect(eager.sent.at(-1)).toMatchObject({
+      type: 'error',
+      error: 'send hello before Gateway messages',
+    })
+
+    const garbage = new FakeGatewaySocket()
+    gateway.connect(garbage)
+    garbage.receiveRaw('not json at all')
+    expect(garbage.closed).toBe(true)
+  })
+
+  it('closes a socket that never sends hello once the deadline elapses', async () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store, { auth: new FakeGatewayAuth(), helloTimeoutMs: 5 })
+
+    const silent = new FakeGatewaySocket()
+    gateway.connect(silent)
+    expect(silent.closed).toBe(false)
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(silent.closed).toBe(true)
+
+    const prompt = new FakeGatewaySocket()
+    gateway.connect(prompt)
+    prompt.receive({
+      type: 'hello',
+      surfaceCursor: store.latestSurfaceCursor(),
+      token: 'vdt_tok-1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    })
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(prompt.closed).toBe(false)
+  })
+
   it('queues an Agent turn for declared agent-path actions without broadcasting a patch', () => {
     const store = new Store()
     store.createSurface(agentActionSurface(), 'agent')
@@ -390,7 +430,10 @@ class FakeGatewaySocket implements GatewaySocket {
   }
 
   receive(frame: GatewayClientMessage): void {
-    const raw = JSON.stringify(frame)
+    this.receiveRaw(JSON.stringify(frame))
+  }
+
+  receiveRaw(raw: string): void {
     for (const handler of this.messageHandlers) handler(raw)
   }
 

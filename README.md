@@ -28,7 +28,10 @@ An open source, self-hosted, **home-first** personal agent: the primary interfac
 6. **File-based memory: files are the truth, indexes are disposable** — [ADR-0006](docs/adr/0006-file-based-memory.md)
 7. **Three trust levels + dual context for external content** — [ADR-0007](docs/adr/0007-trust-levels.md)
 8. **VPS-first, passkeys, BYOK; PWA as the primary client, messengers as thin Bridges** — [ADR-0008](docs/adr/0008-vps-passkey-byok.md)
+9. **A Local VPS profile keeps `pnpm dev` a lightweight loopback profile while still letting core production flows be rehearsed locally** — [ADR-0009](docs/adr/0009-local-vps-profile.md)
 
 ## Status
 
 2026-07-03 — Monorepo scaffold in place ([#1](https://github.com/Ic3b3rg/veduta/issues/1)): `pnpm install && pnpm dev` gives you the Home with seed data and a mock provider, no API keys needed. Next: issue [#2 — Surface protocol](https://github.com/Ic3b3rg/veduta/issues/2).
+
+For a production-like local rehearsal — real passkey login, egress enforcement, persistent config — instead of the lightweight loopback profile, run `pnpm local-vps`; see [deploy/local-vps.md](deploy/local-vps.md).

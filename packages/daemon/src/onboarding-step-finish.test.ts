@@ -79,6 +79,27 @@ describe('applyFinish', () => {
     expect(scheduleExitCalls).toBe(1)
   })
 
+  it('local-vps: completes the step, saves the config, THEN calls scheduleExit, and reports restarting: true (issue 023: the Local VPS runner loop plays the systemd role)', () => {
+    const dir = freshRoot()
+    completeAllPriorSteps(dir)
+    let scheduleExitCalls = 0
+
+    const response = applyFinish({
+      rootDir: dir,
+      profile: 'local-vps',
+      env: { VEDUTA_LEGACY_HOME: dir },
+      scheduleExit: () => {
+        // By the time scheduleExit runs, the config must already be durable.
+        scheduleExitCalls += 1
+        expect(loadOnboardingConfig(dir).steps.finish).toBe('completed')
+      },
+      now: () => new Date('2026-07-24T10:00:00.000Z'),
+    })
+
+    expect(response).toEqual({ restartRequired: true, restarting: true })
+    expect(scheduleExitCalls).toBe(1)
+  })
+
   it('is idempotent: re-applying after completion still completes and updates completedAt', () => {
     const dir = freshRoot()
     completeAllPriorSteps(dir)

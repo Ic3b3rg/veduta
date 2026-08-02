@@ -180,6 +180,29 @@ describe('onboarding wizard flow (loopback)', () => {
     await app.close()
   })
 
+  it('schedules exit on finish on the local-vps profile too (issue 023: the runner loop plays the systemd role)', async () => {
+    const dir = freshRoot()
+    saveOnboardingConfig(dir, {
+      version: 1,
+      steps: {
+        domain: 'completed',
+        byok: 'skipped',
+        models: 'completed',
+        'first-space': 'completed',
+        integrations: 'skipped',
+      },
+    })
+    const scheduleExit = vi.fn()
+    const app = buildApp(baseDeps(dir, { profile: 'local-vps', scheduleExit }))
+
+    const finish = await app.inject({ method: 'POST', url: '/api/onboarding/finish', payload: {} })
+    expect(finish.statusCode).toBe(200)
+    expect(finish.json()).toEqual({ restartRequired: true, restarting: true })
+    expect(scheduleExit).toHaveBeenCalledTimes(1)
+
+    await app.close()
+  })
+
   it('resume: after completing two steps, GET status currentStep is the third', async () => {
     const dir = freshRoot()
     const app = buildApp(baseDeps(dir))

@@ -9,6 +9,7 @@
   "packageManager": "pnpm@10.28.0",
   "scripts": {
     "dev": "pnpm --parallel --filter @veduta/daemon --filter @veduta/pwa run dev",
+    "local-vps": "deploy/local-vps.sh",
     "build": "pnpm -r run build",
     "test": "pnpm -r run test",
     "lint": "eslint .",

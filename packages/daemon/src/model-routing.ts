@@ -132,6 +132,35 @@ export function loadRoutingConfig(rootDir: string): RoutingConfig {
 }
 
 /**
+ * Appends a keyless mock candidate (`reader-mock` for triage, `worker-mock`
+ * for reasoning) to any tier with no candidate whose provider key actually
+ * resolves. Keeps the dev/Local VPS profile without provider keys (by
+ * design) routable — the quarantined reader and Workers both need a model
+ * to route to — while a tier with at least one resolvable key is left
+ * untouched. The mock candidate disappears as soon as a real key resolves;
+ * the real provider client replaces `mockReaderComplete` with the Agent
+ * loop wiring. Returns a new config; never mutates `config`.
+ */
+export function withMockFallback(config: RoutingConfig, secrets: SecretResolver): RoutingConfig {
+  const keyResolves = (entries: { provider: string; modelId: string }[]) =>
+    entries.some((entry) => {
+      const secretRef = config.providerKeys[entry.provider]
+      return secretRef === undefined || secrets.resolve(secretRef) !== undefined
+    })
+  return {
+    ...config,
+    tiers: {
+      triage: keyResolves(config.tiers.triage)
+        ? config.tiers.triage
+        : [...config.tiers.triage, { provider: 'mock', modelId: 'reader-mock' }],
+      reasoning: keyResolves(config.tiers.reasoning)
+        ? config.tiers.reasoning
+        : [...config.tiers.reasoning, { provider: 'mock', modelId: 'worker-mock' }],
+    },
+  }
+}
+
+/**
  * Validates `config` against the strict schema, backs up the existing
  * `routing.json` (if any — issue #19, routing is a wizard-driven
  * config file), then writes the new state atomically. Routing is boot-time

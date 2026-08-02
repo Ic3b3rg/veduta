@@ -36,6 +36,14 @@ _Avoid_: pending patch, draft, suggestion
 
 ### Execution
 
+**Loopback profile**:
+The lightweight development profile (`pnpm dev`): loopback-only, no authentication, mock provider, seed data. It exists to iterate on code, not to rehearse the product.
+_Avoid_: dev mode, Local VPS profile (a different thing), test mode
+
+**VPS profile**:
+The v1 deployment profile: the daemon on a VPS with a public IP, automatic HTTPS/ACME, passkey auth, systemd supervision.
+_Avoid_: production mode, prod
+
 **Local VPS profile**:
 A local execution profile that exercises the same product flows as the VPS profile where possible: authentication, BYOK, persistent configuration, Gateway, PWA, Spaces, Surfaces, and real or mock model providers. User-visible flow parity is the invariant; local orchestration may differ, including Docker Compose. It replaces external VPS-only dependencies with explicit local substitutes.
 _Avoid_: dev mode, staging (unless it is a remote shared environment), production mode

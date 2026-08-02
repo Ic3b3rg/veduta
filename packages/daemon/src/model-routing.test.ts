@@ -13,8 +13,10 @@ import {
   loadRoutingConfig,
   saveRoutingConfig,
   tierForRequest,
+  withMockFallback,
   type RouterEvent,
   type RoutingConfig,
+  type SecretResolver,
 } from './model-routing.ts'
 
 const testConfig: RoutingConfig = {
@@ -141,6 +143,52 @@ describe('routing config', () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'veduta-routing-'))
     writeFileSync(join(rootDir, 'routing.json'), '{not json')
     expect(() => loadRoutingConfig(rootDir)).toThrow(/routing config .*routing\.json/)
+  })
+})
+
+describe('withMockFallback', () => {
+  const noKeysResolve: SecretResolver = { resolve: () => undefined }
+
+  it('appends the keyless mock candidate to both tiers when no key resolves, without mutating the input', () => {
+    const config = defaultRoutingConfig()
+    const original = structuredClone(config)
+
+    const withFallback = withMockFallback(config, noKeysResolve)
+
+    expect(withFallback.tiers.triage.at(-1)).toEqual({ provider: 'mock', modelId: 'reader-mock' })
+    expect(withFallback.tiers.reasoning.at(-1)).toEqual({
+      provider: 'mock',
+      modelId: 'worker-mock',
+    })
+    expect(config).toEqual(original)
+  })
+
+  it('leaves a tier untouched once one of its providers has a resolvable key', () => {
+    const config = defaultRoutingConfig()
+    const onlyAnthropicResolves: SecretResolver = {
+      resolve: (ref) => (ref === config.providerKeys['anthropic'] ? 'sk-real-key' : undefined),
+    }
+
+    const withFallback = withMockFallback(config, onlyAnthropicResolves)
+
+    expect(withFallback.tiers.triage).toEqual(config.tiers.triage)
+    expect(withFallback.tiers.reasoning).toEqual(config.tiers.reasoning)
+  })
+
+  it('treats a keyless provider entry (no providerKeys entry) as already available', () => {
+    const config: RoutingConfig = {
+      tiers: {
+        triage: [{ provider: 'local', modelId: 'triage-local' }],
+        reasoning: [{ provider: 'local', modelId: 'reasoning-local' }],
+      },
+      providerKeys: {},
+      dailyCapUsd: { triage: 1, reasoning: 5 },
+    }
+
+    const withFallback = withMockFallback(config, noKeysResolve)
+
+    expect(withFallback.tiers.triage).toEqual(config.tiers.triage)
+    expect(withFallback.tiers.reasoning).toEqual(config.tiers.reasoning)
   })
 })
 

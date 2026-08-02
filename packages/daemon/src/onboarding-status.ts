@@ -144,7 +144,7 @@ export function visibleOnboardingStepIds(legacy: LegacyDetection): OnboardingSte
 
 export interface OnboardingStatusDeps {
   rootDir: string
-  profile: 'loopback' | 'vps'
+  profile: 'loopback' | 'local-vps' | 'vps'
   domain: string | null
   tlsActive: boolean
   vault?: SecretsVault
@@ -192,8 +192,14 @@ export function buildOnboardingStatus(deps: OnboardingStatusDeps): OnboardingSta
   const completed = (config.steps.finish ?? 'pending') === 'completed'
   const currentStep =
     steps.find((step) => step.status !== 'completed' && step.status !== 'skipped')?.id ?? null
+  // 'vps' and 'local-vps' both run real passkey auth (issue 023) and so both
+  // require the wizard the same way; they differ only in supervisor and
+  // copy, not in whether onboarding is required.
   const required =
-    !completed && (deps.profile === 'vps' || deps.env['VEDUTA_ONBOARDING'] === 'force')
+    !completed &&
+    (deps.profile === 'vps' ||
+      deps.profile === 'local-vps' ||
+      deps.env['VEDUTA_ONBOARDING'] === 'force')
 
   const installer = readInstallerSummary(deps.rootDir)
 

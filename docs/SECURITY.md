@@ -55,7 +55,11 @@ API keys and OAuth tokens live in an **encrypted secrets vault** (key derived at
 
 - Automatic TLS (ACME); HSTS; no port other than 443 exposed.
 - **Passkey/WebAuthn only** (no passwords), device pairing via QR with an expiring one-time code; scoped, per-device revocable session tokens; a "linked devices" surface with revocation.
-- Per-message authenticated WebSocket, origin check for the PWA.
+- Per-connection authenticated WebSocket: the upgrade itself is exempt from the per-request
+  Bearer check (a browser cannot attach an Authorization header to a WebSocket handshake) and
+  is gated instead by the origin check at the route plus the session token the first `hello`
+  frame must carry; an invalid token gets an error frame and a disconnect, and a revoked
+  session closes the live socket.
 - PWA client storage: the session token and the cached Home snapshot live in `localStorage`, readable by any script that achieves XSS. Accepted for a self-hosted single-user app because Surfaces are declarative (no generated HTML, no third-party scripts); revisit if the PWA ever embeds external content.
 - Atomic, encrypted, restorable backups (Hermes pattern: SQLite safe-copy, pruning).
 - Signed updates; the installer verifies checksums.

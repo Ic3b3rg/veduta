@@ -161,10 +161,13 @@ export function OnboardingWizard({
         await pollForRestart()
         return
       }
-      // Loopback/Local VPS: config takes effect on the next daemon start, so
-      // there is nothing to wait for. Only enter Home immediately when there
-      // is no restart pending at all — when one is pending the finish step
-      // shows an explicit "Enter Home" confirmation instead (below).
+      // Loopback: config takes effect on the next daemon start, so there is
+      // nothing to wait for. Local VPS (issue 023) behaves like the vps
+      // case above instead — its runner loop restarts the daemon
+      // automatically, so `response.restarting` is already true there and
+      // this branch is never reached. Only enter Home immediately when
+      // there is no restart pending at all — when one is pending the finish
+      // step shows an explicit "Enter Home" confirmation instead (below).
       if (!response.restartRequired) onCompleted()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'failed to finish onboarding')
@@ -297,6 +300,7 @@ export function OnboardingWizard({
         )}
         {active === 'finish' && (
           <WizardStepFinish
+            profile={status.profile}
             busy={busy}
             error={error}
             submitted={finishState.submitted}

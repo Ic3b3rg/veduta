@@ -4,6 +4,15 @@ dist/
 coverage/
 *.log
 .veduta/
+# Local VPS profile's default data/auth dir (issue 023,
+# docs/adr/0009-local-vps-profile.md) normally lives under the user's home,
+# but a custom run pointed at the repo must never commit auth/state either.
+.veduta-local-vps/
+# @veduta/e2e's Playwright output (issue 023): traces/screenshots from a
+# failed run and the HTML report, neither ever committed.
+packages/e2e/test-results/
+packages/e2e/playwright-report/
+packages/e2e/blob-report/
 .serena/
 # Working notes for the issue in flight. AGENTS.md: never committed — which is
 # also why a comment may not cite them.

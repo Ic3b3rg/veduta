@@ -35,8 +35,8 @@ RestartSec=5
 
 # --- Configuration -----------------------------------------------------------------------
 # See packages/daemon/src/index.ts for exactly how each of these is consumed. Setting
-# VEDUTA_PUBLIC_DOMAIN is what switches the daemon from the loopback Local VPS profile into
-# the VPS profile (ACME-issued TLS, passkey/WebAuthn auth, binds 0.0.0.0).
+# VEDUTA_PUBLIC_DOMAIN is what switches the daemon from the loopback profile into the VPS
+# profile (ACME-issued TLS, passkey/WebAuthn auth, binds 0.0.0.0).
 Environment=VEDUTA_PUBLIC_DOMAIN=example.com
 Environment=VEDUTA_ACME_EMAIL=admin@example.com
 Environment=VEDUTA_ACME_DIR=/var/lib/veduta/acme

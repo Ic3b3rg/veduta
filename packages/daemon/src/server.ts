@@ -45,6 +45,7 @@ import {
   ModelRouter,
   envSecretResolver,
   loadRoutingConfig,
+  withMockFallback,
   type SecretResolver,
 } from './model-routing.ts'
 import { NotificationCenter } from './notification-center.ts'
@@ -120,9 +121,9 @@ export interface ServerOptions {
   now?: () => Date
   /**
    * Egress allowlist (issue #15, docs/SECURITY.md §3.4). `enforce` installs
-   * the policy as the process-wide dispatcher — only the production/VPS
-   * profile sets this (`index.ts`); the mock/Local VPS profile and the test
-   * suite must never get a global denying dispatcher by default.
+   * the policy as the process-wide dispatcher — only the production/VPS and
+   * Local VPS profiles set this (`index.ts`); the loopback (mock) profile
+   * and the test suite must never get a global denying dispatcher by default.
    */
   egress?: { enforce?: boolean; extraAllow?: readonly string[] }
   /**
@@ -133,15 +134,29 @@ export interface ServerOptions {
    */
   pushTransport?: PushTransport
   /**
+   * The execution profile this daemon is running under (issue 023,
+   * `docs/adr/0009-local-vps-profile.md`), identifying which onboarding
+   * copy/behavior to show — `loopback` (dev, no auth), `local-vps` (real
+   * passkey auth over `http://localhost`, supervised by the Local VPS
+   * runner script), or `vps` (real deployment, `VEDUTA_PUBLIC_DOMAIN` set,
+   * supervised by systemd). Defaults to today's derivation from `auth.mode`
+   * (`auth.mode === 'production' ? 'vps' : 'loopback'`) so every existing
+   * caller keeps its current behavior; only a caller that explicitly knows
+   * it is the Local VPS profile (`index.ts`'s `startLocalVps` boot branch)
+   * needs to set this.
+   */
+  profile?: 'loopback' | 'local-vps' | 'vps'
+  /**
    * Onboarding wizard wiring (issue #19). `domain`/`tlsActive` are the
    * domain/TLS state the wizard's `domain` step confirms — the wizard never
    * accepts a domain value, it only reflects what this profile already
    * detected (`index.ts` knows `VEDUTA_PUBLIC_DOMAIN`; loopback has none).
    * `scheduleExit` is `POST /api/onboarding/finish`'s graceful-exit hook,
-   * fired only on the VPS profile so systemd (`Restart=always`) reboots the
-   * daemon with the new boot-time-immutable routing/vault/ingestion config;
-   * injectable so tests can assert it fires (or doesn't) without actually
-   * killing the process. `env` feeds `buildOnboardingStatus`'s
+   * fired on the VPS and Local VPS profiles so their supervisor (systemd on
+   * the VPS, the Local VPS runner loop, issue 023) restarts the daemon with
+   * the new boot-time-immutable routing/vault/ingestion config; injectable
+   * so tests can assert it fires (or doesn't) without actually killing the
+   * process. `env` feeds `buildOnboardingStatus`'s
    * `VEDUTA_LEGACY_HOME`/`VEDUTA_ONBOARDING=force` reads. All four default
    * to the loopback profile's shape: no domain, no TLS, `process.env`, and a
    * real (unref'd, so it never keeps the event loop alive by itself) exit
@@ -153,6 +168,18 @@ export interface ServerOptions {
     scheduleExit?: () => void
     env?: NodeJS.ProcessEnv
   }
+  /**
+   * Enables the deterministic chat→Surface demo (issue #14): a stand-in for
+   * the not-yet-landed Agent loop that parses a couple of fixed command
+   * shapes straight to the trust-wrapped outbound tools. Defaults to on for
+   * the loopback profile and off for production auth, since a real
+   * deployment should wait for the real Agent loop rather than see the
+   * demo's canned replies. The Local VPS profile (issue 023,
+   * docs/adr/0009-local-vps-profile.md) passes `true` together with
+   * production auth so the core chat flow still works behind real passkeys
+   * while the Agent loop is still being built.
+   */
+  mockChatEffects?: boolean
 }
 
 export type ServerAuthOptions =
@@ -175,8 +202,9 @@ const defaultPwaDistDir = fileURLToPath(new URL('../../pwa/dist/', import.meta.u
  * resolver AND the onboarding BYOK/integrations routes write through;
  * opening a second `SecretsVault` over the same file would race on the
  * write-tmp-then-rename lock. With no key material at all, `vault` is
- * `undefined` and the resolver falls back to `secret://env/...` alone
- * (mock/Local VPS profile unaffected — neither exists there). Every
+ * `undefined` and the resolver falls back to `secret://env/...` alone —
+ * the loopback profile's default shape, since it never sets a vault
+ * keyfile. Every
  * successful resolution registers the value with `defaultRedactor` so it
  * never survives into a durable sink or console output (issue #15).
  * Also returns the raw `keyMaterial` it resolved (issue 020): the
@@ -245,11 +273,12 @@ function openMemoryIndex(
 }
 
 /**
- * `POST /api/onboarding/finish`'s default graceful-exit hook (VPS profile
- * only, code review fix): after a 500ms grace period (so the HTTP response
- * has time to actually flush to the client), close `app` — draining open
- * connections, stopping the scheduler/gateway — THEN exit, instead of
- * killing the process out from under any in-flight work. A ~3s unref'd
+ * `POST /api/onboarding/finish`'s default graceful-exit hook (fired on the
+ * VPS and Local VPS profiles, whose supervisors — systemd, the Local VPS
+ * runner loop — restart the daemon): after a 500ms grace period (so the
+ * HTTP response has time to actually flush to the client), close `app` —
+ * draining open connections, stopping the scheduler/gateway — THEN exit,
+ * instead of killing the process out from under any in-flight work. A ~3s unref'd
  * fallback force-exits regardless, in case `app.close()` itself hangs (e.g.
  * a socket that never drains): systemd (`Restart=always`) must still get
  * its restart even if graceful shutdown gets stuck. Both timers are
@@ -295,8 +324,9 @@ export function assembleEgressPolicy(input: {
   allowLoopback?: boolean
 }): EgressPolicy {
   // Fail closed by default, matching `EgressPolicy`'s own default: the VPS
-  // profile — which must NOT trust loopback specially — never sets this,
-  // and only the mock/Local VPS profile's `buildServer` call site opts in.
+  // and Local VPS profiles — both of which must NOT trust loopback specially
+  // — never set this; only the loopback profile's `buildServer` call site
+  // (and the test suite) opts in.
   const policy = new EgressPolicy({ allowLoopback: input.allowLoopback ?? false })
   for (const provider of input.providers) {
     const host = PROVIDER_HOSTS[provider]
@@ -402,10 +432,19 @@ export function buildServer(options: ServerOptions = {}) {
   // once that loop lands, with no rework of this module.
 
   const auth = options.auth ?? { mode: 'dev' as const }
-  // Onboarding wizard profile (issue #19): mirrors
-  // `index.ts`'s own vps/loopback split — a production auth store means the
-  // VPS profile, everything else (dev auth, tests) is loopback.
-  const profile: 'loopback' | 'vps' = auth.mode === 'production' ? 'vps' : 'loopback'
+  // Onboarding wizard profile (issue #19; widened to a third value by issue
+  // 023): `options.profile` wins when a caller sets it explicitly (the
+  // Local VPS boot branch does); otherwise this mirrors the historical
+  // vps/loopback derivation — a production auth store means the VPS
+  // profile, everything else (dev auth, tests) is loopback.
+  const profile: 'loopback' | 'local-vps' | 'vps' =
+    options.profile ?? (auth.mode === 'production' ? 'vps' : 'loopback')
+  if (profile !== 'loopback' && auth.mode !== 'production') {
+    // Fail loudly instead of composing an incoherent server: the vps and
+    // local-vps profiles require the onboarding wizard, which is meaningless
+    // behind the loopback profile's unauthenticated boot.
+    throw new Error(`profile "${profile}" requires production auth`)
+  }
   const onboardingOptions = options.onboarding ?? {}
   // Dev-profile stand-in for the Agent's arm_timer decision (scheduler is
   // assigned right after the gateway; chat frames only arrive once both exist).
@@ -442,29 +481,35 @@ export function buildServer(options: ServerOptions = {}) {
   // (constructed further down); chat frames can only arrive after
   // buildServer returns, so the binding is always in place by then.
   let spawnWorkerFromChat: (event: NormalizedChannelEvent) => void = () => {}
-  const gateway = new GatewayHub(
-    store,
-    auth.mode === 'production'
+  // Independent of `auth.mode`: the Local VPS profile (issue 023,
+  // docs/adr/0009-local-vps-profile.md) needs production auth AND the mock
+  // chat demo at the same time, so `options.mockChatEffects` can override
+  // the profile-based default rather than being implied by it.
+  const mockChatEffects = options.mockChatEffects ?? auth.mode !== 'production'
+  const gateway = new GatewayHub(store, {
+    onFullTextRequest,
+    ...(auth.mode === 'production'
       ? {
           auth: {
-            verifySession: (token) => auth.store.verifySession(token),
-            onSessionRevoked: (listener) =>
+            verifySession: (token: string | undefined) => auth.store.verifySession(token),
+            onSessionRevoked: (listener: (event: { deviceId: string }) => void) =>
               auth.store.onSessionRevoked((event) => listener({ deviceId: event.deviceId })),
           },
-          onFullTextRequest,
         }
-      : // Only the dev profile gets the deterministic chat→Surface demo; a
-        // production deployment waits for the real Agent loop.
-        {
-          mockChatEffects: true,
-          onDevChatEffect: (event) => {
+      : {}),
+    // Only when mock chat effects are enabled does the demo dispatcher wire
+    // up; a production deployment without it waits for the real Agent loop.
+    ...(mockChatEffects
+      ? {
+          mockChatEffects: true as const,
+          onDevChatEffect: (event: NormalizedChannelEvent) => {
             armReminderFromChat(event)
             devDispatchHandler(event)
             spawnWorkerFromChat(event)
           },
-          onFullTextRequest,
-        },
-  )
+        }
+      : {}),
+  })
 
   // Web Push notifications (issue #18): the
   // daemon's one choke point for surfacing anything to the user outside a
@@ -672,35 +717,7 @@ export function buildServer(options: ServerOptions = {}) {
   // shuts proactivity off; the user hears about it in chat. Live spend
   // recording (turn-end costUsd -> recordSpend) lands with the real Agent
   // loop wiring — chat still answers via the mock provider.
-  const routingConfig = loadRoutingConfig(store.spacesEngine.rootDir)
-  const triageKeyResolves = routingConfig.tiers.triage.some((entry) => {
-    const secretRef = routingConfig.providerKeys[entry.provider]
-    return secretRef === undefined || secrets.resolve(secretRef) !== undefined
-  })
-  if (!triageKeyResolves) {
-    // Dev profile without provider keys (by design): keep one keyless mock
-    // candidate so the quarantined reader still has a triage model to route
-    // to. It disappears as soon as a real key resolves; the real provider
-    // client replaces `mockReaderComplete` with the Agent loop wiring.
-    routingConfig.tiers.triage = [
-      ...routingConfig.tiers.triage,
-      { provider: 'mock', modelId: 'reader-mock' },
-    ]
-  }
-  // Symmetric with `triageKeyResolves` above (issue #17): Workers
-  // and their review both route to the reasoning tier, and `router.execute`
-  // throws `NoAvailableModelError` with no reasoning candidate at all. Keep
-  // one keyless mock candidate there too until a real key resolves.
-  const reasoningKeyResolves = routingConfig.tiers.reasoning.some((entry) => {
-    const secretRef = routingConfig.providerKeys[entry.provider]
-    return secretRef === undefined || secrets.resolve(secretRef) !== undefined
-  })
-  if (!reasoningKeyResolves) {
-    routingConfig.tiers.reasoning = [
-      ...routingConfig.tiers.reasoning,
-      { provider: 'mock', modelId: 'worker-mock' },
-    ]
-  }
+  const routingConfig = withMockFallback(loadRoutingConfig(store.spacesEngine.rootDir), secrets)
   const router = new ModelRouter({
     rootDir: store.spacesEngine.rootDir,
     config: routingConfig,
@@ -1375,9 +1392,10 @@ export function buildServer(options: ServerOptions = {}) {
   // registered outbound tool's declared `egressDomains`, and any
   // operator-supplied extra hosts. Denials are logged (redacted) to a
   // durable JSONL file and to console regardless of profile; only the
-  // production/VPS profile turns on enforcement (`options.egress?.enforce`,
-  // set by `index.ts`) — the mock/Local VPS profile and the test suite must
-  // never inherit a global denying dispatcher by default.
+  // production/VPS and Local VPS profiles turn on enforcement
+  // (`options.egress?.enforce`, set by `index.ts`) — the loopback (mock)
+  // profile and the test suite must never inherit a global denying
+  // dispatcher by default.
   const egress = assembleEgressPolicy({
     rootDir: store.spacesEngine.rootDir,
     providers: Object.keys(routingConfig.providerKeys),
@@ -1386,8 +1404,8 @@ export function buildServer(options: ServerOptions = {}) {
       : {}),
     toolDomains: outboundTools.flatMap(({ tool }) => tool.egressDomains),
     ...(options.egress?.extraAllow === undefined ? {} : { extraAllow: options.egress.extraAllow }),
-    // The mock/Local VPS profile and the test suite talk to loopback
-    // constantly; the VPS profile must not trust it specially.
+    // The loopback (mock) profile and the test suite talk to loopback
+    // constantly; the VPS and Local VPS profiles must not trust it specially.
     allowLoopback: auth.mode !== 'production',
   })
   egress.onDenial((denial) => {
@@ -1440,6 +1458,13 @@ function isPublicUnauthenticatedPath(url: string): boolean {
     path === '/manifest.webmanifest' ||
     path === '/service-worker.js' ||
     path.startsWith('/.well-known/acme-challenge/') ||
+    // The Gateway WebSocket authenticates per connection, not per request
+    // (docs/SECURITY.md §6): a browser's WebSocket handshake cannot carry an
+    // Authorization header, so the Bearer hook would 401 every upgrade before
+    // the Gateway's own checks ever ran. The upgrade is exempted here and the
+    // connection is gated instead by the origin check at the route and the
+    // session token the first `hello` frame must carry (gateway.ts).
+    path === '/ws/gateway' ||
     // Ingestion authenticates by per-source signature/token, not passkey.
     path.startsWith('/api/ingest/') ||
     path === '/api/auth/status' ||

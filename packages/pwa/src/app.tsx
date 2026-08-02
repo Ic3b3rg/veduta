@@ -537,7 +537,7 @@ export function App() {
       <header className="topbar">
         <div>
           <h1>Veduta</h1>
-          <p>{authMode === 'production' ? 'Passkey session' : 'Local VPS profile'}</p>
+          <p>{authMode === 'production' ? 'Passkey session' : 'Loopback profile'}</p>
         </div>
         <div className="topbar-actions" aria-live="polite">
           <span className={gatewayOnline ? 'status-pill online' : 'status-pill'}>

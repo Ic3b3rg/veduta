@@ -110,6 +110,21 @@ describe('buildOnboardingStatus: required matrix', () => {
     expect(status.completed).toBe(true)
   })
 
+  it('local-vps profile, incomplete wizard -> required (issue 023: same production auth as vps)', () => {
+    const dir = freshRoot()
+    const status = buildOnboardingStatus(baseDeps(dir, { profile: 'local-vps' }))
+    expect(status.required).toBe(true)
+    expect(status.completed).toBe(false)
+  })
+
+  it('local-vps profile, completed wizard -> not required', () => {
+    const dir = freshRoot()
+    saveOnboardingConfig(dir, { version: 1, steps: { finish: 'completed' } })
+    const status = buildOnboardingStatus(baseDeps(dir, { profile: 'local-vps' }))
+    expect(status.required).toBe(false)
+    expect(status.completed).toBe(true)
+  })
+
   it('loopback profile, incomplete wizard, no force -> not required', () => {
     const dir = freshRoot()
     const status = buildOnboardingStatus(baseDeps(dir, { profile: 'loopback' }))

@@ -12,9 +12,12 @@ import {
 } from '@veduta/protocol'
 import { describe, expect, it, vi } from 'vitest'
 import { AuthStore, type PasskeyRelyingParty, type StoredPasskey } from './auth-store.ts'
+import { loadRoutingConfig } from './model-routing.ts'
 import { NOTIFICATION_SETTINGS_SURFACE_ID } from './notification-settings-surface.ts'
 import { NotificationsConfigSchema, saveNotificationsConfig } from './notifications-config.ts'
+import { applyByok } from './onboarding-step-byok.ts'
 import { reflectionSurfaceId } from './reflection-surface.ts'
+import { SecretsVault } from './secrets-vault.ts'
 import { buildServer } from './server.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { treeProposalSurfaceId } from './tree-proposal.ts'
@@ -157,6 +160,19 @@ describe('production auth boundary', () => {
     ])
   })
 
+  it('lets the Gateway WebSocket upgrade past the Bearer hook (per-connection auth instead)', async () => {
+    // A browser cannot attach an Authorization header to a WebSocket
+    // handshake; the session is checked on the `hello` frame instead
+    // (gateway.ts). The Bearer hook 401ing the upgrade would make chat
+    // unreachable behind production auth.
+    const { auth } = await readyAuthStore()
+    const { app } = buildServer({
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+    })
+    const response = await app.inject({ method: 'GET', url: '/ws/gateway' })
+    expect(response.statusCode).not.toBe(401)
+  })
+
   it('runs the passkey registration ceremony through public auth endpoints', async () => {
     const auth = new AuthStore({
       mode: 'production',
@@ -246,6 +262,103 @@ describe('production auth boundary', () => {
     expect(devices.statusCode).toBe(200)
     expect(devices.json()).toMatchObject({ devices: [{ name: 'Silvio iPhone' }] })
   })
+
+  it('runs the mock chat->Surface demo behind a real passkey session when the Local VPS profile opts in (issue 023)', async () => {
+    const { auth, token } = await readyAuthStore()
+    const { gateway, store } = buildServer({
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+      mockChatEffects: true,
+    })
+
+    expect(chatSendProducesMealsPatch(gateway, store, token)).toBe(true)
+  })
+
+  it('keeps chat.send from producing the mock demo patch when mockChatEffects is left at its default', async () => {
+    const { auth, token } = await readyAuthStore()
+    const { gateway, store } = buildServer({
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+    })
+
+    expect(chatSendProducesMealsPatch(gateway, store, token)).toBe(false)
+  })
+})
+
+describe('AC4: switching mock -> real provider is configuration only (issue 023)', () => {
+  it('a fresh Local VPS root with no provider key anywhere routes both tiers through the keyless mock candidate, and chat->Surface still works', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-ac4-mock-'))
+    const { auth, token } = await readyAuthStore()
+    const { gateway, store, router } = buildServer({
+      dataDir,
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+      profile: 'local-vps',
+      mockChatEffects: true,
+    })
+
+    // Interrogate the daemon's own ModelRouter directly, rather than
+    // re-deriving a routing config the same way `buildServer` does: a
+    // fresh Local VPS root has no `routing.json` overrides and no vault, so
+    // both tiers route through their keyless mock candidate
+    // (`model-routing.ts`'s `withMockFallback`).
+    expect(router.route({ purpose: 'chat-turn', origin: 'user' }).provider).toBe('mock')
+    expect(router.route({ purpose: 'classification', origin: 'user' }).provider).toBe('mock')
+
+    expect(chatSendProducesMealsPatch(gateway, store, token)).toBe(true)
+  })
+
+  it('storing a real anthropic key in the vault (BYOK apply) drops the mock candidate from both tiers on the next boot, with the chat->Surface flow unchanged', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-ac4-real-'))
+    const keyMaterial = Buffer.from('a test key material, long enough for scrypt')
+    process.env['VEDUTA_VAULT_KEY'] = keyMaterial.toString('utf8')
+    try {
+      // Drive the BYOK apply path directly (`onboarding-step-byok.ts`'s
+      // `applyByok`) rather than through `POST /api/onboarding/byok`:
+      // `buildServer`'s `ServerOptions` has no `fetchImpl` seam for the
+      // onboarding routes it wires up (only `registerOnboardingRoutes`
+      // called directly, as `onboarding-routes.test.ts` does, accepts one),
+      // and `applyByok` itself never calls `fetchImpl` — only the separate
+      // `/byok/test` key check does — so this reaches the exact production
+      // code path with no network involved.
+      const vault = SecretsVault.open(dataDir, keyMaterial)
+      applyByok(
+        { rootDir: dataDir, vault },
+        { provider: 'anthropic', key: 'sk-real-anthropic-key' },
+      )
+
+      const routingAfterApply = loadRoutingConfig(dataDir)
+      expect(routingAfterApply.providerKeys['anthropic']).toBe('secret://vault/anthropic')
+
+      // Simulate the post-finish reboot (ADR-0009, docs/adr/0009-local-vps-profile.md):
+      // a NEW server built over the SAME root picks up the persisted
+      // `routing.json` and vault through the same `buildServer` call — no
+      // flow change, only configuration on disk changed underneath it.
+      const { auth, token } = await readyAuthStore()
+      const { gateway, store, router } = buildServer({
+        dataDir,
+        auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+        profile: 'local-vps',
+        mockChatEffects: true,
+      })
+
+      // Interrogate the NEW server's own ModelRouter directly: it opened
+      // the same vault this test just wrote the anthropic key into
+      // (`openVaultAndSecrets` in `server.ts`), so both tiers now pick the
+      // real provider, with no mock candidate left in the running config.
+      expect(router.route({ purpose: 'chat-turn', origin: 'user' })).toEqual({
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-5',
+        tier: 'reasoning',
+      })
+      expect(router.route({ purpose: 'classification', origin: 'user' })).toEqual({
+        provider: 'anthropic',
+        modelId: 'claude-haiku-4-5',
+        tier: 'triage',
+      })
+
+      expect(chatSendProducesMealsPatch(gateway, store, token)).toBe(true)
+    } finally {
+      delete process.env['VEDUTA_VAULT_KEY']
+    }
+  })
 })
 
 describe('onboarding wizard routes (issue #19)', () => {
@@ -288,6 +401,25 @@ describe('onboarding wizard routes (issue #19)', () => {
     const res = await app.inject({ method: 'GET', url: '/api/onboarding' })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toMatchObject({ profile: 'loopback', required: false })
+    await app.close()
+  })
+
+  it('reports the local-vps profile when options.profile overrides the auth-derived default (issue 023)', async () => {
+    const { auth, token } = await readyAuthStore()
+    const { app } = buildServer({
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+      profile: 'local-vps',
+    })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/onboarding',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(res.statusCode).toBe(200)
+    // Same production auth as the vps profile, so onboarding is required
+    // just like it.
+    expect(res.json()).toMatchObject({ profile: 'local-vps', required: true })
     await app.close()
   })
 })
@@ -1558,6 +1690,27 @@ class SchedulerFakeSocket {
   receive(frame: unknown): void {
     this.handlers.get('message')?.(JSON.stringify(frame))
   }
+}
+
+/**
+ * Drives the mock chat->Surface demo (a "I ate a pizza" chat.send) over a
+ * fresh Gateway connection and reports whether it produced the meals
+ * Surface patch — the AC4 tests (issue 023) assert this both stays true
+ * across a mock->real provider switch and stays false when the demo is off.
+ */
+function chatSendProducesMealsPatch(
+  gateway: ReturnType<typeof buildServer>['gateway'],
+  store: ReturnType<typeof buildServer>['store'],
+  token: string,
+): boolean {
+  const socket = new SchedulerFakeSocket()
+  gateway.connect(socket)
+  socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor(), token })
+  socket.receive({ type: 'chat.send', text: 'I ate a pizza', spaceId: 'spc-health' })
+
+  return socket.sent.some(
+    (frame) => frame.type === 'surface.patch' && frame.event.patch.surfaceId === 'srf-meals',
+  )
 }
 
 class ServerFakePasskeys implements PasskeyRelyingParty {

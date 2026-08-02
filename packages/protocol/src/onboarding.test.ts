@@ -4,6 +4,7 @@ import {
   CalendarIntegrationRequestSchema,
   InstallerStageEventSchema,
   IntegrationsApplyRequestSchema,
+  OnboardingProfileSchema,
   OnboardingStepIdSchema,
   OnboardingStatusSchema,
 } from './onboarding.ts'
@@ -25,6 +26,18 @@ describe('OnboardingStepIdSchema', () => {
 
   it('rejects an unknown step id', () => {
     expect(OnboardingStepIdSchema.safeParse('legacy-detect').success).toBe(false)
+  })
+})
+
+describe('OnboardingProfileSchema', () => {
+  it('accepts every documented profile, including local-vps (issue 023)', () => {
+    for (const profile of ['loopback', 'local-vps', 'vps']) {
+      expect(OnboardingProfileSchema.safeParse(profile).success).toBe(true)
+    }
+  })
+
+  it('rejects an unknown profile', () => {
+    expect(OnboardingProfileSchema.safeParse('production').success).toBe(false)
   })
 })
 
@@ -89,6 +102,11 @@ describe('OnboardingStatusSchema', () => {
     expect(
       OnboardingStatusSchema.safeParse({ ...validStatus, currentStep: 'legacy-detect' }).success,
     ).toBe(false)
+  })
+
+  it('accepts profile: local-vps (issue 023)', () => {
+    const withLocalVps = { ...validStatus, profile: 'local-vps' as const }
+    expect(OnboardingStatusSchema.safeParse(withLocalVps).success).toBe(true)
   })
 
   it('accepts non-secret resume defaults for gmail and calendar', () => {

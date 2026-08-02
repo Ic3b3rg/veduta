@@ -4,9 +4,10 @@ This directory has the artifacts to run the Veduta daemon (the Gateway) as a har
 `systemd` service on a VPS with a public IP -- the v1 deployment target described in
 [docs/adr/0008-vps-passkey-byok.md](../docs/adr/0008-vps-passkey-byok.md). If you want to
 rehearse this flow locally first (passkey login, BYOK or mock routing, persistent config,
-restarts) without touching a real VPS, use the **Local VPS profile** described in
-[docs/adr/0009-local-vps-profile.md](../docs/adr/0009-local-vps-profile.md) instead -- this
-guide is specifically about the real VPS profile.
+restarts) without touching a real VPS, run `pnpm local-vps` -- the **Local VPS profile**
+described in [docs/adr/0009-local-vps-profile.md](../docs/adr/0009-local-vps-profile.md) and,
+operationally, in [deploy/local-vps.md](local-vps.md) -- instead of this guide, which is
+specifically about the real VPS profile.
 
 Hardening rationale (why each directive exists) is in
 [docs/SECURITY.md](../docs/SECURITY.md), particularly §6 "Daemon attack surface".

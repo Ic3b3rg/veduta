@@ -65,6 +65,12 @@ export class GatewayHub {
        * never the underlying error detail.
        */
       onFullTextRequest?: (queueId: number) => Promise<string>
+      /**
+       * How long a fresh socket may stay open without a successful `hello`
+       * before it is closed (docs/SECURITY.md §6 pre-auth guard). Default
+       * 10s; tests shrink it to drive the deadline deterministically.
+       */
+      helloTimeoutMs?: number
     } = {},
   ) {
     this.pwa.onMessage((event) => this.handleChannelMessage(event))
@@ -88,10 +94,23 @@ export class GatewayHub {
       socket.send(JSON.stringify(GatewayServerMessageSchema.parse(frame)))
     }
 
+    // Pre-auth guard (docs/SECURITY.md §6): the WebSocket upgrade is exempt
+    // from the per-request Bearer check, so an unauthenticated socket must
+    // not be allowed to linger — it either authenticates with a valid
+    // `hello` within the deadline or gets closed. Unref'd so a held-open
+    // test socket never keeps the process alive.
+    const helloDeadline = setTimeout(() => {
+      if (!clientId) socket.close?.()
+    }, this.options.helloTimeoutMs ?? 10_000)
+    helloDeadline.unref?.()
+
     socket.on('message', (raw) => {
       const frame = parseClientFrame(raw)
       if (!frame) {
         send({ type: 'error', error: 'invalid Gateway frame' })
+        // A client that has not authenticated yet gets no second chance to
+        // hold the socket open with garbage frames.
+        if (!clientId) socket.close?.()
         return
       }
 
@@ -102,6 +121,7 @@ export class GatewayHub {
           socket.close?.()
           return
         }
+        clearTimeout(helloDeadline)
         if (clientId) this.disconnectClient(clientId)
         clientId = frame.clientId ?? this.allocateClientId()
         this.connectClient(clientId, send, socket, authSession?.device.id)
@@ -119,6 +139,8 @@ export class GatewayHub {
 
       if (!clientId) {
         send({ type: 'error', error: 'send hello before Gateway messages' })
+        // Same pre-auth rule as above: no unauthenticated lingering.
+        socket.close?.()
         return
       }
 
@@ -126,6 +148,9 @@ export class GatewayHub {
     })
 
     socket.on('close', () => {
+      // Whatever ended this socket (deadline, rejection, client hangup),
+      // its pre-auth timer must not linger for the full deadline window.
+      clearTimeout(helloDeadline)
       if (!clientId) return
       this.disconnectClient(clientId)
       this.broadcastPresence()

@@ -42,13 +42,13 @@ import type { SpacesEngine } from './spaces-engine.ts'
  * `/api/onboarding/*` up to the step modules. The vault is opened once by
  * `buildServer` and threaded through here rather than reopened —
  * two `SecretsVault` instances writing the same file would race.
- * `scheduleExit` is `applyFinish`'s injectable graceful-exit hook (VPS
- * profile only); `fetchImpl` lets tests stub the BYOK key check without a
- * real network call.
+ * `scheduleExit` is `applyFinish`'s injectable graceful-exit hook (VPS and
+ * Local VPS profiles only); `fetchImpl` lets tests stub the BYOK key check
+ * without a real network call.
  */
 export interface OnboardingRoutesDeps {
   rootDir: string
-  profile: 'loopback' | 'vps'
+  profile: 'loopback' | 'local-vps' | 'vps'
   domain: string | null
   tlsActive: boolean
   vault: SecretsVault | undefined

@@ -8,7 +8,7 @@ import {
 
 export interface FinishDeps {
   rootDir: string
-  profile: 'loopback' | 'vps'
+  profile: 'loopback' | 'local-vps' | 'vps'
   /** Injectable so tests can assert it fires without actually killing the process. */
   scheduleExit: () => void
   /** Feeds the same legacy-visibility resolution `buildOnboardingStatus` uses, so the completion gate below checks exactly the steps the wizard actually showed. */
@@ -20,14 +20,15 @@ export interface FinishDeps {
 /**
  * `POST /api/onboarding/finish` (§4): marks the wizard
  * `completed` and persists `completedAt` FIRST — durable before the process
- * might die — then, only on the VPS profile, schedules the graceful exit so
- * systemd (`Restart=always`) reboots the daemon with the now-current
- * boot-time-immutable routing/vault/ingestion config. Loopback/Local VPS
- * never exit: the response still carries `restartRequired: true` so the
- * wizard can honestly say the new config takes effect on the next daemon
- * start. Idempotent: re-applying after completion just re-saves the same
- * `completed` status (with a fresh `completedAt`) and, on the VPS profile,
- * schedules the exit again.
+ * might die — then, only on the VPS and Local VPS profiles, schedules the
+ * graceful exit so the profile's supervisor (systemd on the VPS, the Local
+ * VPS runner loop, issue 023) restarts the daemon with the now-current
+ * boot-time-immutable routing/vault/ingestion config. Loopback never exits:
+ * the response still carries `restartRequired: true` so the wizard can
+ * honestly say the new config takes effect on the next daemon start.
+ * Idempotent: re-applying after completion just re-saves the same
+ * `completed` status (with a fresh `completedAt`) and, on the VPS/Local VPS
+ * profiles, schedules the exit again.
  *
  * Completion gate (code review fix): finishing before every OTHER visible
  * step (`onboarding-status.ts`'s own migration-visibility rule, reused so
@@ -61,7 +62,7 @@ export function applyFinish(deps: FinishDeps): FinishResponse {
     completedAt: now().toISOString(),
   })
 
-  if (deps.profile === 'vps') {
+  if (deps.profile === 'vps' || deps.profile === 'local-vps') {
     deps.scheduleExit()
     return { restartRequired: true, restarting: true }
   }

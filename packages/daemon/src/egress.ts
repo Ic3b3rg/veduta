@@ -84,9 +84,9 @@ export class EgressPolicy {
   /**
    * Case-insensitive membership check. When `allowLoopback` is set,
    * `localhost` / `127.0.0.1` / `::1` are always allowed regardless of the
-   * declared list — the `pnpm dev` Local VPS profile and tests talk to
-   * loopback constantly, and the VPS profile (which must NOT trust
-   * loopback specially) simply never sets the option.
+   * declared list — the `pnpm dev` loopback profile and tests talk to
+   * loopback constantly, and the VPS and Local VPS profiles (which must NOT
+   * trust loopback specially) simply never set the option.
    */
   isAllowed(hostname: string): boolean {
     const host = normalizeHost(hostname)

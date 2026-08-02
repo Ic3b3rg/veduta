@@ -27,16 +27,19 @@ export const OnboardingStepIdSchema = z.enum([
 export const OnboardingStepStatusSchema = z.enum(['pending', 'completed', 'skipped'])
 
 /**
- * The two deploy profiles from `CONTEXT.md` that gate whether the wizard is
- * required at all: `loopback` (`pnpm dev`, no
- * `VEDUTA_PUBLIC_DOMAIN`, mock provider) never requires onboarding unless
- * `VEDUTA_ONBOARDING=force` is set for verification; `vps`
+ * The three execution profiles from `CONTEXT.md` that gate whether the
+ * wizard is required at all, and which copy it shows: `loopback` (`pnpm
+ * dev`, no `VEDUTA_PUBLIC_DOMAIN`, mock provider) never requires onboarding
+ * unless `VEDUTA_ONBOARDING=force` is set for verification; `vps`
  * (`VEDUTA_PUBLIC_DOMAIN` set — ACME TLS, passkeys, enforced egress) requires
- * it until `onboarding.json` is marked completed. "Local VPS" rehearsals
- * (ADR-0009) still report as `vps` here — the distinction is deployment
- * topology, not onboarding behavior.
+ * it until `onboarding.json` is marked completed; `local-vps`
+ * (`docs/adr/0009-local-vps-profile.md`, issue 023) is the same real-passkey
+ * production auth as `vps` but served over `http://localhost` and supervised
+ * by a local runner script instead of systemd — it requires onboarding for
+ * the same reason `vps` does, but the wizard's domain/finish copy must not
+ * claim a systemd unit, `journalctl`, or a public domain exist.
  */
-export const OnboardingProfileSchema = z.enum(['loopback', 'vps'])
+export const OnboardingProfileSchema = z.enum(['loopback', 'local-vps', 'vps'])
 
 /**
  * Status of one installer stage, mirrored from the Hermes-style JSON stage
@@ -283,11 +286,12 @@ export const IntegrationsApplyRequestSchema = z.union([
 ])
 
 /**
- * `POST /api/onboarding/finish` response. On the VPS profile the daemon
- * exits gracefully ~500ms later so systemd (`Restart=always`) reboots it
+ * `POST /api/onboarding/finish` response. On the VPS and Local VPS profiles
+ * the daemon exits gracefully ~500ms later so the profile's supervisor
+ * (systemd on the VPS, the Local VPS runner loop, issue 023) restarts it
  * with the new boot-time-immutable routing/vault/ingestion config —
  * `restarting` tells the PWA to poll `/api/health` instead of navigating
- * immediately. On loopback/Local VPS there is no exit: `restartRequired`
+ * immediately. On loopback there is no exit: `restartRequired`
  * is true and the finish screen honestly says the new config takes effect
  * on the next daemon start.
  */
