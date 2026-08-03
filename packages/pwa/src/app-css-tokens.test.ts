@@ -1,0 +1,188 @@
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+import { catalogCssText, catalogTokens } from '@veduta/catalog'
+
+// Drift gate for issue 024 (issues/024-shell-tokens-from-catalog.md): the
+// shell shares colors with the catalog design system only through the
+// derived --catalog-* variables injected by main.tsx. Reading the built
+// stylesheet and static entry files from disk (rather than importing
+// modules) is deliberate: it verifies exactly what ships, including the
+// two files that cannot reference CSS custom properties at all.
+
+// Comments are stripped before any parsing so a commented-out declaration
+// can never satisfy a guard as if it were live CSS.
+const appCss = readFileSync(new URL('./app.css', import.meta.url), 'utf8').replace(
+  /\/\*[\s\S]*?\*\//g,
+  '',
+)
+const indexHtml = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
+const manifest = JSON.parse(
+  readFileSync(new URL('../public/manifest.webmanifest', import.meta.url), 'utf8'),
+) as { theme_color: string; background_color: string }
+
+// -- small pure helpers ----------------------------------------------------
+
+function extractBlock(css: string, pattern: RegExp): string {
+  const match = css.match(pattern)
+  if (!match || !match[1]) {
+    throw new Error(`Block not found for pattern ${pattern.toString()}`)
+  }
+  return match[1]
+}
+
+const baseBlock = extractBlock(appCss, /:root\s*{([^}]*)}/)
+const darkBlock = extractBlock(
+  appCss,
+  /@media \(prefers-color-scheme: dark\)\s*{\s*:root\s*{([^}]*)}/,
+)
+
+// Anchored on the full custom-property name (not preceded or followed by a
+// word/hyphen char) so `--text` never also matches `--text-muted` or
+// `--text-soft`, and matching is independent of where in a line the
+// declaration sits.
+function propertyPattern(property: string): string {
+  return `(?<![\\w-])${property}(?![\\w-])`
+}
+
+function declarationValue(block: string, property: string): string | undefined {
+  const pattern = new RegExp(`${propertyPattern(property)}\\s*:\\s*([^;]+);`)
+  return block.match(pattern)?.[1]?.trim()
+}
+
+function declarationCount(css: string, property: string): number {
+  const pattern = new RegExp(`${propertyPattern(property)}\\s*:`, 'g')
+  return css.match(pattern)?.length ?? 0
+}
+
+function metaThemeColor(html: string, media: string): string {
+  const escapedMedia = media.replace(/[()]/g, '\\$&')
+  const pattern = new RegExp(`<meta name="theme-color" media="${escapedMedia}" content="([^"]+)"`)
+  const match = html.match(pattern)
+  if (!match || !match[1]) {
+    throw new Error(`theme-color meta not found for media ${media}`)
+  }
+  return match[1]
+}
+
+// -- guard 1: cascade safety -----------------------------------------------
+
+describe('derived aliases are declared once, in the base block, at the expected value', () => {
+  const aliases: Array<[string, string]> = [
+    ['--text', 'var(--catalog-color-text)'],
+    ['--text-muted', 'var(--catalog-color-text-muted)'],
+    ['--surface', 'var(--catalog-color-surface-raised)'],
+    ['--border', 'var(--catalog-color-border)'],
+    ['--accent', 'var(--catalog-color-accent)'],
+    ['--accent-text', 'var(--catalog-color-accent-text)'],
+    ['--focus', 'var(--catalog-color-focus)'],
+    ['--chat-dock-bg', 'color-mix(in srgb, var(--catalog-color-surface) 96%, transparent)'],
+  ]
+
+  for (const [name, expected] of aliases) {
+    it(`${name} resolves to ${expected} and is absent from the dark block`, () => {
+      expect(declarationCount(appCss, name)).toBe(1)
+      expect(declarationValue(baseBlock, name)).toBe(expected)
+      expect(declarationValue(darkBlock, name)).toBeUndefined()
+    })
+  }
+
+  it('base :root font-family is the catalog font family', () => {
+    expect(declarationValue(baseBlock, 'font-family')).toBe('var(--catalog-font-family)')
+  })
+})
+
+// -- guard 1b: referenced catalog variables exist -----------------------------
+
+describe('every --catalog-* variable referenced by app.css is one the catalog declares', () => {
+  // Guard 1 pins the literal text of app.css, so renaming a token in
+  // catalogTokens (name drift, not value drift) would leave these var()
+  // references dangling -- resolving to nothing at runtime -- while the
+  // stylesheet text stays unchanged. Cross-checking the references against
+  // the generated stylesheet closes that hole.
+  it('finds every referenced variable declared in catalogCssText()', () => {
+    const referenced = [...new Set(appCss.match(/--catalog-[a-z0-9-]+/g) ?? [])]
+    const generated = catalogCssText()
+    expect(referenced.length).toBeGreaterThan(0)
+    const dangling = referenced.filter((name) => !generated.includes(`${name}:`))
+    expect(dangling).toEqual([])
+  })
+
+  it('never declares a --catalog-* variable itself, which would override the catalog', () => {
+    expect(appCss).not.toMatch(/--catalog-[a-z0-9-]+\s*:/)
+  })
+})
+
+// -- guard 2: dark status references pinned ---------------------------------
+
+describe('dark status text aliases reference the raw catalog status tokens', () => {
+  const darkStatusAliases: Array<[string, string]> = [
+    ['--success-text', 'var(--catalog-color-success)'],
+    ['--warning-text', 'var(--catalog-color-warning)'],
+    ['--danger-text', 'var(--catalog-color-danger)'],
+  ]
+
+  for (const [name, expected] of darkStatusAliases) {
+    it(`${name} in the dark block is ${expected}`, () => {
+      expect(declarationValue(darkBlock, name)).toBe(expected)
+    })
+  }
+})
+
+// -- guard 3: duplication scanner (secondary guard) -------------------------
+
+describe('no hand-authored hex literal duplicates a catalog color', () => {
+  // app.css only ever hand-authors hex and rgba(...) literals, plus the
+  // derived color-mix() alias asserted above -- so hex equality against
+  // catalogTokens is a sufficient literal check here. Hex is normalized to
+  // opaque 6-digit form (#abc expands, alpha digits drop) so a shorthand or
+  // alpha variant of a catalog color cannot slip through. The primary drift
+  // gate is the exact alias assertions in guards 1, 1b, and 2 above; this
+  // scanner only catches a stray hand-authored literal that happens to
+  // match a catalog color.
+  function normalizeHex(hex: string): string {
+    const digits = hex.slice(1).toLowerCase()
+    const expanded =
+      digits.length <= 4 ? [...digits].map((digit) => digit + digit).join('') : digits
+    return `#${expanded.slice(0, 6)}`
+  }
+
+  const hexInAppCss = new Set((appCss.match(/#[0-9a-fA-F]{3,8}\b/g) ?? []).map(normalizeHex))
+
+  const catalogHexValues = new Set(
+    (['light', 'dark'] as const).flatMap((theme) =>
+      Object.values(catalogTokens[theme].color).map((value) => value.toLowerCase()),
+    ),
+  )
+
+  it('has no overlap between app.css hex literals and catalogTokens colors', () => {
+    const overlap = [...hexInAppCss].filter((hex) => catalogHexValues.has(hex))
+    expect(overlap).toEqual([])
+  })
+})
+
+// -- guard 4: static metadata guard ------------------------------------------
+
+describe('static metadata pins the same colors as the catalog and app.css', () => {
+  // index.html and manifest.webmanifest are static files parsed before any
+  // stylesheet runs, so they cannot reference CSS custom properties -- exact
+  // literal equality against catalogTokens / app.css is asserted instead.
+  it('index.html light theme-color matches catalogTokens.light.color.accent', () => {
+    expect(metaThemeColor(indexHtml, '(prefers-color-scheme: light)')).toBe(
+      catalogTokens.light.color.accent,
+    )
+  })
+
+  it('index.html dark theme-color matches app.css dark --page-bg', () => {
+    const pageBgDark = declarationValue(darkBlock, '--page-bg')
+    expect(metaThemeColor(indexHtml, '(prefers-color-scheme: dark)')).toBe(pageBgDark)
+  })
+
+  it('manifest theme_color matches catalogTokens.light.color.accent', () => {
+    expect(manifest.theme_color).toBe(catalogTokens.light.color.accent)
+  })
+
+  it('manifest background_color matches app.css base --page-bg', () => {
+    const pageBgBase = declarationValue(baseBlock, '--page-bg')
+    expect(manifest.background_color).toBe(pageBgBase)
+  })
+})
