@@ -227,6 +227,16 @@ export interface CreateBackupOptions {
   outDir: string
   keyMaterial: Buffer
   now?: () => Date
+  /**
+   * Parent directory for the private staging dir, in place of the system
+   * tmp dir (`node:os` `tmpdir()`). The self-update transaction
+   * (`docs/adr/0013-signed-self-update.md`, `issues/043-self-update.md`)
+   * passes its own `updates/tmp/` here so the disk-space guardrail's
+   * per-filesystem accounting stays truthful — staging under a surprise
+   * tmpfs would make that math lie about which filesystem actually needs
+   * the headroom.
+   */
+  workDir?: string
 }
 
 /** Builds an encrypted, point-in-time backup of `rootDir` under `outDir`. Returns the written file's absolute path. */
@@ -240,10 +250,13 @@ export async function createBackup(options: CreateBackupOptions): Promise<string
   // Unencrypted intermediate material (the staged file tree and the plain
   // tar) stays inside a single private directory (`mkdtemp` creates it 0700,
   // so it is never world-readable) and is removed in `finally` on both
-  // success and failure. It lives under the system tmp dir — deliberately
-  // NOT under `rootDir`/`outDir`, so a staging tree can never be recursively
-  // copied into its own backup.
-  const workDir = mkdtempSync(join(tmpdir(), 'veduta-backup-'))
+  // success and failure. It lives under the system tmp dir by default —
+  // deliberately NOT under `rootDir`/`outDir`, so a staging tree can never
+  // be recursively copied into its own backup — or under the caller's own
+  // `workDir` when one is given.
+  const workDirParent = options.workDir ?? tmpdir()
+  mkdirSync(workDirParent, { recursive: true })
+  const workDir = mkdtempSync(join(workDirParent, 'veduta-backup-'))
   const stagingDir = join(workDir, 'staging')
   const tarPath = join(workDir, 'archive.tar')
   try {
@@ -267,6 +280,8 @@ export interface RestoreBackupOptions {
   file: string
   targetRootDir: string
   keyMaterial: Buffer
+  /** Parent directory for the private staging dir, in place of the system tmp dir — see `CreateBackupOptions.workDir`. */
+  workDir?: string
 }
 
 /**
@@ -291,7 +306,9 @@ export async function restoreBackup(options: RestoreBackupOptions): Promise<void
 
   // The decrypted tar is plaintext daemon state — stage it in a private
   // directory (`mkdtemp` creates it 0700) and remove it in `finally`.
-  const workDir = mkdtempSync(join(tmpdir(), 'veduta-restore-'))
+  const workDirParent = options.workDir ?? tmpdir()
+  mkdirSync(workDirParent, { recursive: true })
+  const workDir = mkdtempSync(join(workDirParent, 'veduta-restore-'))
   const tarPath = join(workDir, 'archive.tar')
   try {
     writeFileSync(tarPath, tarBuffer, { mode: 0o600 })

@@ -382,3 +382,60 @@ hardened, roughly in the 1-4 range once every directive above is in place) with 
 intentional (see the comment in `veduta.service`): Node's V8 JIT requires W^X-violating
 pages, so this one directive is not set, and its absence should not be treated as a
 regression to fix.
+
+## Updates
+
+Once installed, a Veduta instance updates itself with no SSH session and no re-run of this
+installer -- the full design is [docs/adr/0013-signed-self-update.md](../docs/adr/0013-signed-self-update.md)
+(especially its "Amendments" section, authoritative for the on-disk layout below); the
+maintainer-facing release ceremony that produces what gets offered is
+[RELEASING.md](../RELEASING.md).
+
+### How it works, operationally
+
+A daily, switchable Automation ("Check for updates") polls the signed update feed. A new
+release surfaces as a badge on Home and an update Surface (current version, available version,
+release notes, and whether this update migrates your data). One tap on Apply:
+
+1. The daemon writes an update marker (the verified offer, frozen at apply time) and exits with
+   a dedicated code.
+2. The supervisor wrapper's transaction runs: download -> verify the signed chain
+   (root -> signing key -> release metadata) -> back up the data root (the existing
+   `createBackup`, tagged pre-update) -> forward-only migrations, if the release's `dataVersion`
+   moved -> flip the `current` symlink -> start the new release's daemon -> a deep health check
+   (every store opens, Spaces list, a full surface-event replay -- not just "the process is
+   alive").
+3. If every step passes, the wrapper prunes old releases/backups and updates itself last.
+4. If any step fails, the wrapper **automatically rolls back**: the symlink flips back, the
+   pre-update backup is restored, the failed release's log is preserved on disk, the previous
+   version restarts, and the Update Surface reports what happened -- no operator input, no data
+   loss, because the daemon is down for the entire window and cannot have accepted new data that
+   the restore would then discard.
+
+Retention: `current` plus the two previous releases; the three most recent pre-update backups,
+kept in their own directory so this never touches or competes with the operator's own daily
+backup schedule (§4 above). Both are pruned only after a successful update, never speculatively.
+
+### Where things live
+
+| Path                                                  | Purpose                                                                                                    |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `/var/lib/veduta/updates/releases/vX.Y.Z/`            | One unpacked, verified release tree per version                                                            |
+| `/var/lib/veduta/updates/releases/current`            | Symlink to the release currently serving -- flipping it is the "install" step                              |
+| `/var/lib/veduta/updates/runtimes/node-v<ver>-linux/` | Shared, SHA-verified Node runtimes a release's `RUNTIME` file points at                                    |
+| `/var/lib/veduta/updates/bin/veduta-run`              | The supervisor wrapper -- the unit's `ExecStart`, self-updates last                                        |
+| `/var/lib/veduta/updates/state/`                      | The transaction journal, terminal results, and `state/logs/<version>.log` for a failed release (see below) |
+| `/var/lib/veduta/updates/backups/`                    | Pre-update backups only -- separate from the operator's scheduled backups                                  |
+| `/etc/veduta/update.json`                             | Root-owned trust anchors: `{feedUrl, rootPublicKey}`, written only by the installer                        |
+
+`/etc/veduta/update.json` is root-owned deliberately: the daemon runs as the unprivileged
+`veduta` account (§1 above) and therefore necessarily owns the code it updates, the same
+posture Syncthing and Tailscale ship with -- but it must never be able to repoint its own
+update channel or swap the root of trust. A fork gets its own update channel with zero source
+patches via the installer's `--update-feed`/`--update-root-key` flags (upstream defaults point
+at this project's own feed and root key).
+
+A release that fails its health check leaves its supervised daemon's output behind at
+`/var/lib/veduta/updates/state/logs/<version>.log` -- preserved across the rollback, specifically
+so "what actually went wrong" survives long enough to read, in the same spirit as the
+append-only audit log described in [docs/SECURITY.md](../docs/SECURITY.md) §5.

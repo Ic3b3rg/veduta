@@ -62,7 +62,13 @@ API keys and OAuth tokens live in an **encrypted secrets vault** (key derived at
   session closes the live socket.
 - PWA client storage: the session token and the cached Home snapshot live in `localStorage`, readable by any script that achieves XSS. Accepted for a self-hosted single-user app because Surfaces are declarative (no generated HTML, no third-party scripts); revisit if the PWA ever embeds external content.
 - Atomic, encrypted, restorable backups (Hermes pattern: SQLite safe-copy, pruning).
-- Signed updates; the installer verifies checksums.
+- Signed self-update: releases are verified through a two-tier minisign chain (an offline root
+  key certifies a signing key; the signing key signs each release's metadata) checked entirely
+  by the updater itself before anything is downloaded or installed, per
+  [docs/adr/0013-signed-self-update.md](adr/0013-signed-self-update.md) — closing the debt this
+  bullet used to track, deferred since issue #19. The installer's own pinned Node.js download
+  is separately SHA-256-verified against `SHASUMS256.txt` before extraction (unrelated to, and
+  unaffected by, the release-signing chain above).
 
 ## 7. Continuous verification
 

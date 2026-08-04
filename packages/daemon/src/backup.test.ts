@@ -38,6 +38,11 @@ function freshDir(prefix: string): string {
   return dir
 }
 
+function restoreEnvVar(name: 'TMPDIR' | 'TMP' | 'TEMP', value: string | undefined): void {
+  if (value === undefined) delete process.env[name]
+  else process.env[name] = value
+}
+
 /** A minimal but real Surface, matching `surface-engine.test.ts`'s fixture shape. */
 function testSurface(id: string, spaceId: string): ReturnType<typeof SurfaceSchema.parse> {
   return SurfaceSchema.parse({
@@ -199,6 +204,53 @@ describe('createBackup / restoreBackup', () => {
     const raw = readFileSync(backupPath)
     expect(raw.includes(Buffer.from(PLANTED_SECRET, 'utf8'))).toBe(false)
     expect(raw.toString('latin1')).not.toContain(PLANTED_SECRET)
+  })
+
+  it('stages under a caller-supplied workDir instead of the system tmp dir', async () => {
+    const rootDir = freshDir('veduta-backup-root-')
+    const outDir = freshDir('veduta-backup-out-')
+    buildPopulatedRoot(rootDir)
+    const workDir = freshDir('veduta-backup-custom-workdir-')
+
+    // Deterministic proof that `workDir` is actually used, rather than
+    // diffing the real system tmp dir (shared with every other test file
+    // running concurrently — a directory can legitimately appear there from
+    // unrelated work at any moment, which made an earlier version of this
+    // test flaky). Instead, `TMPDIR` is pointed at a path with a *file* as
+    // an ancestor component: `os.tmpdir()` reads the env var fresh on every
+    // call, so if `createBackup`/`restoreBackup` ever fell back to it
+    // despite `workDir` being given, `mkdirSync`/`mkdtempSync` would throw
+    // ENOTDIR immediately. Success below is only possible if `workDir` was
+    // used instead.
+    const priorTmpdirEnv = {
+      TMPDIR: process.env.TMPDIR,
+      TMP: process.env.TMP,
+      TEMP: process.env.TEMP,
+    }
+    const notADirectory = join(freshDir('veduta-backup-not-a-dir-'), 'this-is-a-file')
+    writeFileSync(notADirectory, 'not a directory')
+    const poisonedTmpdir = join(notADirectory, 'nested')
+    // `freshDir` itself calls `tmpdir()` too, so the restore target must be
+    // created before the poison takes effect below.
+    const targetRootDir = join(freshDir('veduta-backup-restore-'), 'restored')
+    process.env.TMPDIR = poisonedTmpdir
+    process.env.TMP = poisonedTmpdir
+    process.env.TEMP = poisonedTmpdir
+    try {
+      const backupPath = await createBackup({ rootDir, outDir, keyMaterial: KEY_MATERIAL, workDir })
+      await restoreBackup({ file: backupPath, targetRootDir, keyMaterial: KEY_MATERIAL, workDir })
+      expect(() => new Store({ rootDir: targetRootDir })).not.toThrow()
+      expect(existsSync(join(targetRootDir, 'spaces'))).toBe(true)
+    } finally {
+      restoreEnvVar('TMPDIR', priorTmpdirEnv.TMPDIR)
+      restoreEnvVar('TMP', priorTmpdirEnv.TMP)
+      restoreEnvVar('TEMP', priorTmpdirEnv.TEMP)
+    }
+
+    // The workDir itself is left behind (its own staging subdir is cleaned
+    // up on success) — it must exist for the assertions above to have
+    // exercised anything.
+    expect(existsSync(workDir)).toBe(true)
   })
 
   it('safely copies a *.sqlite store while a connection to it is open (live-daemon case)', async () => {

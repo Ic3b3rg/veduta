@@ -133,6 +133,25 @@ spends real provider credit:
 
 Record the outcome (date, provider, model) in the issue or deployment notes when performed.
 
+## Self-update
+
+The Local VPS profile exercises the same update machinery described in
+[deploy/README.md](README.md)'s "Updates" section and
+[docs/adr/0013-signed-self-update.md](../docs/adr/0013-signed-self-update.md) -- the supervisor
+wrapper, the recoverable transaction, automatic rollback -- against a **local fake feed**
+instead of the real GitHub-hosted one: a throwaway root/signing minisign keypair and a
+`stable.json` served from `127.0.0.1`, so the whole chain (root -> signing key -> release
+metadata) verifies exactly the way it would in production, without ever touching the real
+update feed or a real signing key. This is what
+[`packages/e2e/tests/self-update.spec.ts`](../packages/e2e/tests/self-update.spec.ts) drives.
+
+Update pinning (the equivalent of `/etc/veduta/update.json` on a real VPS) has to be written
+into the profile's base directory for any of this to be reachable at all -- with no update
+home and no pinning present, the profile boots with the update system disabled, the same as the
+loopback `pnpm dev` profile. That is the deliberate default for a plain `pnpm local-vps` run;
+the e2e harness is what sets up the fake feed and pinning to exercise the update path
+end-to-end.
+
 ## Living scope
 
 [`packages/e2e/tests/local-vps.spec.ts`](../packages/e2e/tests/local-vps.spec.ts) (run via
