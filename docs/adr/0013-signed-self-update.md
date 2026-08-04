@@ -93,3 +93,43 @@ Status: accepted (issue #43 is the implementation)
 - **Single signing key**: rejected after the "what if I lose the laptop" analysis — recovery
   would require every instance to re-trust manually; the two-tier ceremony costs ten minutes
   once.
+
+## Amendments (issue #43 implementation)
+
+Three deltas surfaced while implementing this ADR against the real repository and survived an
+adversarial design review; the original decisions' goals are unchanged.
+
+1. **The artifact is a runnable tree, not an emitted `dist`.** `veduta-vX.Y.Z-linux.tar.gz`
+   contains the checkout at the tag (sources and configs), the prebuilt PWA `dist`, and the fully
+   resolved `node_modules`; the daemon runs from it via `tsx`, exactly as the installer-deployed
+   VPS profile runs today. Emitting JS is blocked by the repo's own compiler posture
+   (`verbatimModuleSyntax` + in-repo `.ts`-extension imports + `noEmit`), and what decision 2
+   actually buys — download + verify + untar + symlink flip in seconds, with the npm registry out
+   of the trust path at update time — holds for a runnable tree just as well. Portability across
+   the two supported server architectures is handled at release-build time with pnpm
+   `supportedArchitectures` (`os: [linux]`, `cpu: [x64, arm64]`), so one artifact carries both
+   native binary sets and the platform is part of the signed artifact name.
+2. **Verification is minisign-compatible TypeScript, not `minisign -V` subprocess calls.** The
+   transaction executor is TypeScript (that is what makes every acceptance criterion testable on
+   any dev machine, with no `apt`/`brew` runtime dependency), so the verifier is a small
+   `node:crypto` implementation (Ed25519 + BLAKE2b-512, minisign's prehashed `ED` format) proven
+   against **committed golden fixtures generated with the real minisign CLI**. The formats stay
+   fully minisign-interoperable and the maintainer ceremony in `RELEASING.md` keeps using the
+   real minisign binary. What gets signed is stronger than the original wording: the signing key
+   signs the canonical `release.json` bytes — version, artifact name, SHA-256, artifact/unpacked
+   sizes and entry count, required `dataVersion`, required Node version and its download sizes —
+   with the artifact name in the trusted comment. That closes the unsigned-manifest downgrade
+   hole (a feed cannot re-advertise an old artifact under a fabricated version), and the updater
+   independently refuses non-monotonic version/dataVersion offers regardless of feed contents.
+3. **Layout lives in `/var/lib/veduta/updates/`; the trust anchors are root-owned.** The unit
+   runs everything as `veduta` (decision 5: no new privileges, one unit), so the service user
+   necessarily owns the code it updates — the same posture as Syncthing and Tailscale, stated
+   here honestly: a daemon-RCE attacker can already persist as the `veduta` account, and the
+   sandbox still confines them to it. The update layout (`releases/` with the `current` symlink
+   inside it, `runtimes/`, `bin/veduta-run`, `state/`, `backups/`) therefore sits under the
+   already-writable `/var/lib/veduta`, outside the root-owned git checkout (which installer
+   reruns `git clean`). What a compromised daemon must **not** be able to do is repoint the
+   update channel: the feed URL + root public key pinning lives in root-owned
+   `/etc/veduta/update.json`, written only by the installer (fork-overridable via installer
+   flags). The wrapper self-updates last, atomically (temp + fsync + rename), only after the new
+   release has passed the full health check.
