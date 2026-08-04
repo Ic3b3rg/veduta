@@ -6,6 +6,7 @@ import {
   type Surface,
 } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
+import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import { GatewayHub, type GatewayAuth, type GatewaySocket } from './gateway.ts'
 import { Store } from './store.ts'
 
@@ -155,9 +156,12 @@ describe('GatewayHub Surface sync', () => {
     ).toHaveLength(0)
   })
 
-  it('patches the relevant Health Surface when mock chat logs a meal', () => {
+  it('invokes onChatTurn with the normalized event, spaceId threaded, for an ordinary chat.send', () => {
     const store = new Store({ now: fixedNow })
-    const gateway = new GatewayHub(store, { mockChatEffects: true })
+    const received: NormalizedChannelEvent[] = []
+    const gateway = new GatewayHub(store, {
+      onChatTurn: (event) => received.push(event),
+    })
     const socket = new FakeGatewaySocket()
     gateway.connect(socket)
     socket.receive({
@@ -168,30 +172,15 @@ describe('GatewayHub Surface sync', () => {
 
     socket.receive({ type: 'chat.send', text: 'I ate a pizza', spaceId: 'spc-health' })
 
-    expect(store.getSurface('srf-meals')?.state).toMatchObject({
-      lastMeal: 'a pizza',
-      mealCount: 1,
-    })
-    expect(socket.lastSurfacePatch()?.event.patch).toMatchObject({
-      surfaceId: 'srf-meals',
-      operations: [
-        {
-          target: 'state',
-          op: 'replace',
-          path: '/meals',
-          value: [expect.objectContaining({ meal: 'a pizza' })],
-        },
-        { target: 'state', op: 'replace', path: '/lastMeal', value: 'a pizza' },
-        { target: 'state', op: 'replace', path: '/mealCount', value: 1 },
-      ],
-    })
-    expect(socket.sent.at(-1)).toMatchObject({
-      type: 'chat.message',
-      message: { role: 'assistant' },
-    })
+    expect(received).toMatchObject([
+      { clientId: 'pwa-health', text: 'I ate a pizza', spaceId: 'spc-health' },
+    ])
+    // The Gateway itself no longer mutates Surfaces from chat (issue #37):
+    // that is entirely the Agent loop's job now, once `onChatTurn` runs it.
+    expect(socket.surfacePatches()).toHaveLength(0)
   })
 
-  it('never mutates Surfaces from chat unless mock effects are enabled', () => {
+  it('replies with an honest not-configured chat.message when onChatTurn is not wired up', () => {
     const store = new Store({ now: fixedNow })
     const gateway = new GatewayHub(store)
     const socket = new FakeGatewaySocket()
@@ -206,7 +195,163 @@ describe('GatewayHub Surface sync', () => {
 
     expect(store.getSurface('srf-meals')?.state['mealCount']).toBe(0)
     expect(socket.surfacePatches()).toHaveLength(0)
-    expect(socket.sent.at(-1)).toMatchObject({ type: 'chat.message' })
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'chat.message',
+      message: { role: 'assistant', text: expect.stringContaining('not configured') },
+    })
+  })
+
+  it('sendToClient delivers a valid frame to the right client and no-ops for an unknown client', () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store)
+    const first = new FakeGatewaySocket()
+    const second = new FakeGatewaySocket()
+    gateway.connect(first)
+    gateway.connect(second)
+    first.receive({
+      type: 'hello',
+      clientId: 'pwa-1',
+      surfaceCursor: store.latestSurfaceCursor(),
+    })
+    second.receive({
+      type: 'hello',
+      clientId: 'pwa-2',
+      surfaceCursor: store.latestSurfaceCursor(),
+    })
+
+    gateway.sendToClient('pwa-1', {
+      type: 'chat.message',
+      message: { role: 'assistant', text: 'hi' },
+    })
+
+    expect(first.sent.at(-1)).toMatchObject({
+      type: 'chat.message',
+      message: { role: 'assistant', text: 'hi' },
+    })
+    expect(second.sent.at(-1)).not.toMatchObject({ message: { text: 'hi' } })
+
+    // A disconnected/unknown client is a silent no-op: a streamed turn may
+    // outlive its socket.
+    expect(() =>
+      gateway.sendToClient('pwa-gone', {
+        type: 'chat.message',
+        message: { role: 'assistant', text: 'hi' },
+      }),
+    ).not.toThrow()
+  })
+
+  it('re-binds a returning clientId to its new socket so a mid-turn closing frame reaches the reconnected client', () => {
+    // The chat loop (chat-loop.ts's runTurn) captures `event.clientId` once
+    // at turn-start and reuses it for every later `sendToClient` call
+    // (turn-delta/turn-end/turn-error) -- issue 037's ghost-turn fix
+    // depends on the daemon re-binding that same clientId to whatever
+    // socket now owns it, rather than requiring the chat loop to track a
+    // changing clientId mid-turn.
+    const store = new Store()
+    const received: NormalizedChannelEvent[] = []
+    const gateway = new GatewayHub(store, {
+      onChatTurn: (event) => received.push(event),
+    })
+
+    const first = new FakeGatewaySocket()
+    gateway.connect(first)
+    first.receive({
+      type: 'hello',
+      clientId: 'pwa-health',
+      surfaceCursor: store.latestSurfaceCursor(),
+    })
+    first.receive({ type: 'chat.send', text: 'I ate a pizza', spaceId: 'spc-health' })
+    expect(received.at(-1)?.clientId).toBe('pwa-health')
+
+    // The socket drops mid-turn -- before the chat loop's closing frame for
+    // this send would have been produced.
+    first.close()
+
+    const second = new FakeGatewaySocket()
+    gateway.connect(second)
+    second.receive({
+      type: 'hello',
+      clientId: 'pwa-health',
+      surfaceCursor: store.latestSurfaceCursor(),
+    })
+
+    gateway.sendToClient('pwa-health', {
+      type: 'chat.turn-end',
+      turnId: 'turn-1',
+      spaceId: 'spc-health',
+      message: { role: 'assistant', text: 'Logged the pizza.' },
+    })
+
+    expect(second.sent.at(-1)).toMatchObject({
+      type: 'chat.turn-end',
+      message: { text: 'Logged the pizza.' },
+    })
+    expect(first.sent.some((frame) => frame.type === 'chat.turn-end')).toBe(false)
+  })
+
+  it('does not let a stale close for the OLD socket delete the binding once a new socket has already rebound the same clientId (issue #37 fix)', () => {
+    // Same ghost-turn scenario as above, but the race runs the other way:
+    // the new socket reconnects and rebinds `pwa-health` FIRST, and only
+    // afterward does the old socket's underlying connection actually notice
+    // it is gone and fire `close`. Without the stale-close guard, that late
+    // `close` would delete the binding `connectClient` just re-pointed at
+    // the new socket, so a subsequent `sendToClient` would silently no-op
+    // instead of reaching the reconnected client.
+    const store = new Store()
+    const gateway = new GatewayHub(store)
+
+    const first = new FakeGatewaySocket()
+    gateway.connect(first)
+    first.receive({
+      type: 'hello',
+      clientId: 'pwa-health',
+      surfaceCursor: store.latestSurfaceCursor(),
+    })
+
+    const second = new FakeGatewaySocket()
+    gateway.connect(second)
+    second.receive({
+      type: 'hello',
+      clientId: 'pwa-health',
+      surfaceCursor: store.latestSurfaceCursor(),
+    })
+
+    // Only now does the OLD socket's close event arrive -- after the new
+    // socket already owns the binding.
+    first.close()
+
+    gateway.sendToClient('pwa-health', {
+      type: 'chat.message',
+      message: { role: 'assistant', text: 'still reachable' },
+    })
+
+    expect(second.sent.at(-1)).toMatchObject({
+      type: 'chat.message',
+      message: { text: 'still reachable' },
+    })
+  })
+
+  it('allocates non-sequential, UUID-shaped clientIds for connections with no clientId of their own', () => {
+    // A predictable/sequential id would let a returning `clientId` from one
+    // tab collide with (and steal) another tab's binding; `randomUUID`-backed
+    // ids close that off (issue #37 fix).
+    const store = new Store()
+    const gateway = new GatewayHub(store)
+
+    const first = new FakeGatewaySocket()
+    gateway.connect(first)
+    first.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    const second = new FakeGatewaySocket()
+    gateway.connect(second)
+    second.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    const firstId = first.sent.find((frame) => frame.type === 'hello')?.clientId
+    const secondId = second.sent.find((frame) => frame.type === 'hello')?.clientId
+
+    expect(firstId).toMatch(/^pwa-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    expect(secondId).toMatch(/^pwa-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    expect(firstId).not.toBe(secondId)
   })
 
   it('produces exactly one surface.patch broadcast per fast action, from the central subscription alone', () => {

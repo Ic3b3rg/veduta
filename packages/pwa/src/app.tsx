@@ -17,6 +17,12 @@ import { AuthGate } from './auth-gate.tsx'
 import { OnboardingWizard } from './onboarding-wizard.tsx'
 import { ChatBar } from './chat-bar.tsx'
 import {
+  applyTurnFrame,
+  interruptTurns,
+  type ChatTurnFrame,
+  type StreamingTurn,
+} from './chat-turn-state.ts'
+import {
   applyBufferedSurfaceStreamEvents,
   applySpaceAttention,
   applySurfaceStreamEvent,
@@ -80,9 +86,17 @@ export function App() {
     () => parseSurfaceDeepLink(location.pathname)?.surfaceId,
   )
   const [focusChatToken, setFocusChatToken] = useState(0)
+  const [streamingTurns, setStreamingTurns] = useState<Map<string, StreamingTurn>>(new Map())
   const gatewayRef = useRef<GatewayConnection | null>(null)
   const spacesRef = useRef<SpaceWithSurfaces[]>(cachedHome?.spaces ?? [])
   const surfaceCursorRef = useRef(cachedHome?.surfaceCursor ?? 0)
+  const streamingTurnsRef = useRef<Map<string, StreamingTurn>>(new Map())
+  // Last clientId this tab was assigned by the Gateway (issue 037), sent
+  // back on the next reconnect hello so the daemon re-binds the same
+  // session to the new socket instead of allocating a fresh id -- see
+  // `applyIncomingTurnFrame`/`onClose` below for why a stale clientId would
+  // otherwise strand a turn's closing frame.
+  const clientIdRef = useRef<string | undefined>(undefined)
 
   const replaceSpaces = useCallback(
     (next: SpaceWithSurfaces[], cursor = surfaceCursorRef.current) => {
@@ -97,6 +111,24 @@ export function App() {
   const appendChatEntry = useCallback((entry: ChatMessage) => {
     setChatEntries((prev) => [...prev, entry].slice(-CHAT_HISTORY_LIMIT))
   }, [])
+
+  // Streamed Agent turns (issue 037: PWA-side streaming): `chat.turn-start`/`-delta` only
+  // ever touch `streamingTurns` (never localStorage-backed `chatEntries`,
+  // one persist per closed turn); `chat.turn-end`/`-error` remove the turn
+  // from the map and append its final text (or a readable error) as a single
+  // `appendChatEntry` call. `streamingTurnsRef` mirrors `spacesRef`'s
+  // pattern above: the map is read fresh here rather than closing over
+  // `streamingTurns` state, since these Gateway handlers are wired once in
+  // the connection effect below.
+  const applyIncomingTurnFrame = useCallback(
+    (frame: ChatTurnFrame) => {
+      const result = applyTurnFrame(streamingTurnsRef.current, frame)
+      streamingTurnsRef.current = result.turns
+      setStreamingTurns(result.turns)
+      if (result.completed) appendChatEntry(result.completed)
+    },
+    [appendChatEntry],
+  )
 
   // localStorage writes live in effects so setState updaters stay pure.
   useEffect(() => persistChatHistory(chatEntries), [chatEntries])
@@ -228,11 +260,27 @@ export function App() {
       reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
     }
 
+    // The Gateway socket closing mid-turn (issue 037) must not leave a ghost
+    // "streaming" entry behind forever, nor silently drop whatever text had
+    // already arrived: every in-flight turn is converted to a persisted
+    // chat entry via `interruptTurns` (dropped silently if it never
+    // accumulated any text) and the streaming map is cleared, before
+    // `scheduleReconnect` takes over.
+    const onGatewayClose = () => {
+      const completed = interruptTurns(streamingTurnsRef.current)
+      streamingTurnsRef.current = new Map()
+      setStreamingTurns(new Map())
+      for (const entry of completed) appendChatEntry(entry)
+      scheduleReconnect()
+    }
+
     const startGateway = () => {
       gatewayRef.current = connectGateway({
         token: authToken,
+        clientId: clientIdRef.current,
         surfaceCursor: surfaceCursorRef.current,
-        onHello() {
+        onHello(_cursor, clientId) {
+          clientIdRef.current = clientId
           reconnectDelay = 1000
           setGatewayOnline(true)
           setError(null)
@@ -259,6 +307,10 @@ export function App() {
         onChatMessage(message) {
           appendChatEntry(message.message)
         },
+        onChatTurnStart: applyIncomingTurnFrame,
+        onChatTurnDelta: applyIncomingTurnFrame,
+        onChatTurnEnd: applyIncomingTurnFrame,
+        onChatTurnError: applyIncomingTurnFrame,
         onApprovalCard(message) {
           setApprovalCards((prev) =>
             prev.some((card) => card.id === message.card.id) ? prev : [...prev, message.card],
@@ -271,7 +323,7 @@ export function App() {
           replaceSpaces(applySpaceAttention(spacesRef.current, message))
         },
         onError: setError,
-        onClose: scheduleReconnect,
+        onClose: onGatewayClose,
       })
     }
 
@@ -312,7 +364,14 @@ export function App() {
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
       gatewayRef.current?.close()
     }
-  }, [handleSurfaceStreamEvent, appendChatEntry, authToken, replaceSpaces, refetchAndReplay])
+  }, [
+    handleSurfaceStreamEvent,
+    appendChatEntry,
+    applyIncomingTurnFrame,
+    authToken,
+    replaceSpaces,
+    refetchAndReplay,
+  ])
 
   // Onboarding wizard gate (issue 019): fetched once
   // authenticated (or immediately in loopback, where no token is required).
@@ -607,6 +666,10 @@ export function App() {
 
       <ChatBar
         entries={chatEntries}
+        streamingEntries={Array.from(streamingTurns.values(), (turn) => ({
+          turnId: turn.turnId,
+          text: turn.text,
+        }))}
         approvalCards={approvalCards}
         focusedSpace={focusedSpace}
         focusToken={focusChatToken}

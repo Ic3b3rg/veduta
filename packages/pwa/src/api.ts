@@ -64,13 +64,27 @@ export interface GatewayConnection {
 
 export interface GatewayHandlers {
   token?: string | undefined
+  /**
+   * The clientId this same tab was assigned by a previous `hello` (issue
+   * 037), if any. Sent back on the reconnect `hello` so the daemon's
+   * `GatewayHub` re-binds the same session to the new socket instead of
+   * allocating a fresh id -- otherwise a turn started before the drop keeps
+   * addressing its `chat.turn-end` to a clientId nothing is listening on
+   * anymore (`GatewayHub.sendToClient` silently no-ops for an unknown
+   * client). Omitted on the very first connection of a tab.
+   */
+  clientId?: string | undefined
   surfaceCursor: number
-  onHello(cursor: number): void
+  onHello(cursor: number, clientId: string): void
   onSurfacePatch(event: SurfacePatchEvent): void
   onSurfaceCreated(event: SurfaceCreatedEvent): void
   onSurfaceArchived(event: SurfaceArchivedEvent): void
   onSurfacePinned(event: SurfacePinnedEvent): void
   onChatMessage(message: Extract<GatewayServerMessage, { type: 'chat.message' }>): void
+  onChatTurnStart(message: Extract<GatewayServerMessage, { type: 'chat.turn-start' }>): void
+  onChatTurnDelta(message: Extract<GatewayServerMessage, { type: 'chat.turn-delta' }>): void
+  onChatTurnEnd(message: Extract<GatewayServerMessage, { type: 'chat.turn-end' }>): void
+  onChatTurnError(message: Extract<GatewayServerMessage, { type: 'chat.turn-error' }>): void
   onApprovalCard(message: Extract<GatewayServerMessage, { type: 'approval.card' }>): void
   onPresence(message: Extract<GatewayServerMessage, { type: 'presence.update' }>): void
   onSpaceAttention(message: Extract<GatewayServerMessage, { type: 'space.attention' }>): void
@@ -305,6 +319,7 @@ export function connectGateway(handlers: GatewayHandlers): GatewayConnection {
         type: 'hello',
         surfaceCursor: handlers.surfaceCursor,
         token: handlers.token,
+        ...(handlers.clientId ? { clientId: handlers.clientId } : {}),
       }),
     )
   }
@@ -314,7 +329,7 @@ export function connectGateway(handlers: GatewayHandlers): GatewayConnection {
     if (!message) return
 
     if (message.type === 'hello') {
-      handlers.onHello(message.surfaceCursor)
+      handlers.onHello(message.surfaceCursor, message.clientId)
       return
     }
 
@@ -340,6 +355,26 @@ export function connectGateway(handlers: GatewayHandlers): GatewayConnection {
 
     if (message.type === 'chat.message') {
       handlers.onChatMessage(message)
+      return
+    }
+
+    if (message.type === 'chat.turn-start') {
+      handlers.onChatTurnStart(message)
+      return
+    }
+
+    if (message.type === 'chat.turn-delta') {
+      handlers.onChatTurnDelta(message)
+      return
+    }
+
+    if (message.type === 'chat.turn-end') {
+      handlers.onChatTurnEnd(message)
+      return
+    }
+
+    if (message.type === 'chat.turn-error') {
+      handlers.onChatTurnError(message)
       return
     }
 

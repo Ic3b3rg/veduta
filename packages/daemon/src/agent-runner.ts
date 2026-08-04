@@ -38,6 +38,12 @@ export type AgentEvent =
       costUsd?: number
       /** Provider-reported total token count when available; absent means unreported, not zero. */
       tokensUsed?: number
+      /**
+       * The final taint snapshot of the turn (docs/SECURITY.md §3.2), so
+       * callers can attribute the assistant turn's provenance. Optional
+       * because simpler runners (`MockAgentRunner`) don't track taint.
+       */
+      origins?: Origin[]
     }
   | { type: 'error'; message: string }
 
@@ -68,6 +74,13 @@ export interface AgentPromptOptions {
   model?: ModelRef
   tools?: ToolDef[]
   contextPolicy?: ContextPolicy
+  /**
+   * Overrides the runner's constructor-level system prompt for this turn
+   * only — the chat loop assembles Space context per turn (issue #37)
+   * rather than fixing a single system prompt for the runner's lifetime.
+   * Falls back to the constructor-level prompt when omitted.
+   */
+  systemPrompt?: string
   /**
    * True when this prompt retries a turn that just failed (model
    * failover): if the failed attempt already appended the user message

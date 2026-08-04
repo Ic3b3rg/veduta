@@ -349,4 +349,9 @@ export class Store {
   assembleSpaceContext(spaceId: string): string {
     return this.spacesEngine.assembleContext(spaceId)
   }
+
+  /** The global identity documents (SOUL/USER), for the global chat's system prompt (issue #37). */
+  readGlobalDocs(): { soul: string; user: string } {
+    return this.spacesEngine.readGlobalDocs()
+  }
 }

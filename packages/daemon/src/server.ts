@@ -21,9 +21,9 @@ import { ProgressiveAuthLockout } from './auth-rate-limit.ts'
 import { AuditSurfaceManager } from './audit-surface.ts'
 import { AuthStoreError, type AuthStore } from './auth-store.ts'
 import type { NormalizedChannelEvent } from './channel-adapter.ts'
-import { reminderFromChat } from './chat.ts'
+import { chatToolRegistry as buildChatToolRegistry } from './chat-tool-registry.ts'
+import { createChatLoop } from './chat-loop.ts'
 import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
-import { createDevDispatch } from './dev-dispatch.ts'
 import { EgressPolicy, installEgressEnforcement } from './egress.ts'
 import { EventIngestion, type FetchStage } from './event-ingestion.ts'
 import type { ExternalEvent } from './external-event.ts'
@@ -38,6 +38,7 @@ import { loadMemoryConfig } from './memory-config.ts'
 import { MemoryIndex, type MemoryIndexOptions } from './memory-index.ts'
 import { MemoryRetrieval } from './memory-retrieval.ts'
 import { MockAgentRunner } from './mock-agent-runner.ts'
+import { createMockChatResponder } from './mock-chat-model.ts'
 import { mockReaderComplete } from './mock-provider.ts'
 import { createMockReflectionDistiller } from './mock-reflection-distiller.ts'
 import { createMockWorkerRunner, createMockWorkerReviewComplete } from './mock-worker-runner.ts'
@@ -53,6 +54,8 @@ import { NotificationSettingsSurfaceManager } from './notification-settings-surf
 import { loadNotificationsConfig } from './notifications-config.ts'
 import { registerOnboardingRoutes } from './onboarding-routes.ts'
 import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
+import { PiJsonlSessionStore } from './pi-agent-runner.ts'
+import { createProviderBridge } from './pi-provider-bridge.ts'
 import { PushStore } from './push-store.ts'
 import { QuarantinedReader } from './quarantined-reader.ts'
 import { defaultRedactor } from './redaction.ts'
@@ -81,7 +84,6 @@ import {
   WebPushTransport,
   type PushTransport,
 } from './web-push-transport.ts'
-import { truncateGoalLabel, WorkerBriefingSchema } from './worker-briefing.ts'
 import { WorkerPool } from './worker.ts'
 
 // The client sends only node/action/payload: state keys come from declared
@@ -168,18 +170,6 @@ export interface ServerOptions {
     scheduleExit?: () => void
     env?: NodeJS.ProcessEnv
   }
-  /**
-   * Enables the deterministic chat→Surface demo (issue #14): a stand-in for
-   * the not-yet-landed Agent loop that parses a couple of fixed command
-   * shapes straight to the trust-wrapped outbound tools. Defaults to on for
-   * the loopback profile and off for production auth, since a real
-   * deployment should wait for the real Agent loop rather than see the
-   * demo's canned replies. The Local VPS profile (issue 023,
-   * docs/adr/0009-local-vps-profile.md) passes `true` together with
-   * production auth so the core chat flow still works behind real passkeys
-   * while the Agent loop is still being built.
-   */
-  mockChatEffects?: boolean
 }
 
 export type ServerAuthOptions =
@@ -422,14 +412,9 @@ export function buildServer(options: ServerOptions = {}) {
   app.addHook('onClose', async () => {
     memoryIndex.close()
   })
-  // `memoryRetrieval` has no call site in this file: `createMemoryTools`
-  // (memory-tools.ts) is never constructed here, because there is no real
-  // Agent loop yet to hand a `ToolDef[]` to — `devDispatchHandler` and
-  // `spawnWorkerFromChat` below are chat's own dev stand-ins for that loop,
-  // and neither dispatches tool calls a model chose. `memoryRetrieval` stays
-  // constructed and available here so the real Agent-loop wiring can pass it
-  // straight into `createMemoryTools(engine, { retrieval: memoryRetrieval })`
-  // once that loop lands, with no rework of this module.
+  // `memoryRetrieval` feeds the chat tool registry below
+  // (`chat-tool-registry.ts`'s `chatToolRegistry`): it is what offers
+  // `search_memory` to a live turn.
 
   const auth = options.auth ?? { mode: 'dev' as const }
   // Onboarding wizard profile (issue #19; widened to a third value by issue
@@ -446,24 +431,6 @@ export function buildServer(options: ServerOptions = {}) {
     throw new Error(`profile "${profile}" requires production auth`)
   }
   const onboardingOptions = options.onboarding ?? {}
-  // Dev-profile stand-in for the Agent's arm_timer decision (scheduler is
-  // assigned right after the gateway; chat frames only arrive once both exist).
-  const armReminderFromChat = (event: NormalizedChannelEvent) => {
-    const reminder = reminderFromChat(event.text, now())
-    if (!reminder) return
-    const spaceId = event.spaceId ?? 'spc-health'
-    if (!store.getSpace(spaceId)) return
-    try {
-      scheduler.armTimer({
-        spaceId,
-        when: reminder.fireAtIso,
-        condition: { kind: 'event-logged', textIncludes: reminder.conditionNeedle },
-        action: reminder.action,
-      })
-    } catch {
-      // A malformed demo reminder must never take the chat socket down.
-    }
-  }
   // Late binding: the Gateway exists before event ingestion (which owns the
   // queue the full-text flow reads from), so the handler is assigned further
   // down, once the ingestion pipeline is constructed. Chat frames can only
@@ -471,41 +438,26 @@ export function buildServer(options: ServerOptions = {}) {
   let fullTextHandler: (queueId: number) => Promise<string> = () =>
     Promise.reject(new Error('full-text flow not ready'))
   const onFullTextRequest = (queueId: number) => fullTextHandler(queueId)
-  // Late binding, same reasoning as `fullTextHandler`: the dev dispatcher
-  // (issue #14) needs `gateway.replyToClient`, so it can only be built
-  // once the Gateway exists; chat frames can only arrive after buildServer
-  // returns, so the binding is always in place by then.
-  let devDispatchHandler: (event: NormalizedChannelEvent) => void = () => {}
-  // Late binding, same reasoning: the `research <topic>` dev stand-in
-  // (issue #17) needs the WorkerPool, which needs `router`
-  // (constructed further down); chat frames can only arrive after
-  // buildServer returns, so the binding is always in place by then.
-  let spawnWorkerFromChat: (event: NormalizedChannelEvent) => void = () => {}
-  // Independent of `auth.mode`: the Local VPS profile (issue 023,
-  // docs/adr/0009-local-vps-profile.md) needs production auth AND the mock
-  // chat demo at the same time, so `options.mockChatEffects` can override
-  // the profile-based default rather than being implied by it.
-  const mockChatEffects = options.mockChatEffects ?? auth.mode !== 'production'
+  // Late binding, same reasoning as `fullTextHandler`: the real chat loop
+  // (`createChatLoop`, chat-loop.ts) needs the ModelRouter, the provider
+  // bridge, the session store, and the full tool registry — all constructed
+  // further down — so it is assigned once they all exist. Chat frames can
+  // only arrive after buildServer returns, so the binding is always in place
+  // by then. Unconditional: every profile routes chat through this one
+  // handler, with no parallel stand-in path — a profile without a provider
+  // key gets deterministic behavior through the mock routing candidate
+  // (`model-routing.ts`'s `withMockFallback`), never through a second
+  // handler (issue #37).
+  let chatTurnHandler: (event: NormalizedChannelEvent) => void = () => {}
   const gateway = new GatewayHub(store, {
     onFullTextRequest,
+    onChatTurn: (event) => chatTurnHandler(event),
     ...(auth.mode === 'production'
       ? {
           auth: {
             verifySession: (token: string | undefined) => auth.store.verifySession(token),
             onSessionRevoked: (listener: (event: { deviceId: string }) => void) =>
               auth.store.onSessionRevoked((event) => listener({ deviceId: event.deviceId })),
-          },
-        }
-      : {}),
-    // Only when mock chat effects are enabled does the demo dispatcher wire
-    // up; a production deployment without it waits for the real Agent loop.
-    ...(mockChatEffects
-      ? {
-          mockChatEffects: true as const,
-          onDevChatEffect: (event: NormalizedChannelEvent) => {
-            armReminderFromChat(event)
-            devDispatchHandler(event)
-            spawnWorkerFromChat(event)
           },
         }
       : {}),
@@ -700,23 +652,11 @@ export function buildServer(options: ServerOptions = {}) {
     await treeProposals.flush()
   })
 
-  // Dev-profile chat dispatcher: a deterministic stand-in for the
-  // future Agent loop, parsing two fixed command shapes straight to the
-  // trust-wrapped outbound tools above. Real Agent loop wiring replaces
-  // this handler outright.
-  devDispatchHandler = createDevDispatch({
-    spacesEngine: store.spacesEngine,
-    tools: wrappedOutboundTools,
-    isTrustWrapped,
-    reply: (clientId, text) => gateway.replyToClient(clientId, text),
-    now,
-  })
-
   // Model routing (issue #10): per-tier config from <dataDir>/routing.json,
   // spend persisted under <dataDir>/usage/. Past a daily cap the router
   // shuts proactivity off; the user hears about it in chat. Live spend
-  // recording (turn-end costUsd -> recordSpend) lands with the real Agent
-  // loop wiring — chat still answers via the mock provider.
+  // recording (turn-end costUsd -> recordSpend) is the chat loop's own job
+  // (chat-loop.ts's `runTurn`), constructed below.
   const routingConfig = withMockFallback(loadRoutingConfig(store.spacesEngine.rootDir), secrets)
   const router = new ModelRouter({
     rootDir: store.spacesEngine.rootDir,
@@ -729,6 +669,27 @@ export function buildServer(options: ServerOptions = {}) {
           `$${event.capUsd.toFixed(2)}). Proactivity is paused until tomorrow; chat stays available.`,
       )
     },
+  })
+
+  // The provider bridge (issue #37, ADR-0004 amendment): maps a routed
+  // `ModelRef` plus its resolved key onto pi-ai's provider clients for every
+  // real turn, and onto the deterministic mock model
+  // (`createMockChatResponder`) for the keyless routing candidate
+  // `withMockFallback` appends above — the same loopback behavior the
+  // pre-issue-37 chat stand-ins produced, now returned as tool calls the
+  // gated registry below actually executes.
+  const bridge = createProviderBridge({
+    config: routingConfig,
+    secrets,
+    mockResponder: createMockChatResponder({ store, now }),
+  })
+  // One JSONL session per Space plus one for the global chat (chat-loop.ts's
+  // `sessionIdFor`), persisted under `<rootDir>/sessions` — `backup.ts` already
+  // lists `sessions` among the plain-file-tree entries a backup copies
+  // alongside the `*.sqlite` stores.
+  const chatSessionStore = new PiJsonlSessionStore({
+    cwd: store.spacesEngine.rootDir,
+    sessionsRoot: join(store.spacesEngine.rootDir, 'sessions'),
   })
 
   // The Heartbeat (issue #16, ADR-0005): the daemon's own proactivity loop,
@@ -856,53 +817,59 @@ export function buildServer(options: ServerOptions = {}) {
     workerPool.dispose()
   })
 
-  // `spawn_worker` (issue #17): built here so it exists and type-checks
-  // against the pool it wraps. Not yet dispatched by a model — there is no
-  // real Agent loop yet — so the dev `research <topic>` chat stand-in below
-  // calls the pool directly instead. Once the Agent loop lands, this is the
-  // ToolDef it offers to the model alongside whatever else it can call.
-  const _spawnWorkerTool = createSpawnWorkerTool(workerPool)
+  // `spawn_worker` (issue #17, issue #37): the Agent's own entry point for
+  // starting a Worker, offered to every Space chat turn by
+  // `chatToolRegistry` below.
+  const spawnWorkerTool = createSpawnWorkerTool(workerPool)
 
-  // The Template-reuse tool seam (issues/022-emergent-templates.md,
-  // docs/adr/0012-emergent-templates.md): `templateTools` (`list_templates`,
-  // `create_surface_from_template`, `pin_surface`) and `gateCreateSurfaceTool`
-  // (the justification gate wrapped around `create_surface` itself) both
-  // live in `template-engine.ts`, already built and tested there against a
-  // `TemplateEngine` — the same honest gap `memoryRetrieval`'s own comment
-  // above documents for this daemon: there is no live Agent loop yet to hand
-  // a `ToolDef[]` to, so neither has a production call site here any more
-  // than `store.surfaceTools()` or `createMemoryTools()` do. What runs live
-  // in this file is `templateEngine` itself, the pin route, the pin event,
-  // and the proposal lifecycle (`treeProposals`) above. Once the real Agent
-  // loop lands, this is where it wires `templateTools(templateEngine, ...)`
-  // and `gateCreateSurfaceTool(createSurfaceTool, templateEngine)` into the
-  // `ToolDef[]` it offers the model, with no rework of this module.
+  // The chat tool registry (issue #37, exact set per `chat-tool-registry.ts`'s
+  // doc comment): built through the shared builder so this daemon's real
+  // registry and `tool-parameters.test.ts`'s registry-shape assertions can
+  // never drift apart.
+  const chatToolRegistry = buildChatToolRegistry({
+    store,
+    wrappedOutboundTools,
+    memoryRetrieval,
+    templateEngine,
+    scheduler,
+    spawnWorkerTool,
+  })
 
-  // Dev-profile stand-in for the Agent's spawn_worker decision, same idiom
-  // as `armReminderFromChat`/`devDispatchHandler`: "research <topic>" spawns
-  // a high-risk Worker (so the adversarial review runs, demonstrating
-  // acceptance criterion A's "review passed" badge) straight into the
-  // triggering Space.
-  spawnWorkerFromChat = (event) => {
-    const match = /^research\s+(.+)$/i.exec(event.text.trim())
-    if (!match) return
-    const topic = match[1]!.trim()
-    if (!topic) return
-    const spaceId = event.spaceId ?? 'spc-health'
-    if (!store.getSpace(spaceId)) return
-    try {
-      const briefing = WorkerBriefingSchema.parse({
-        goal: topic,
-        tokenBudget: 100_000,
-        maxIterations: 6,
-        tier: 'reasoning',
-        highRisk: true,
-      })
-      workerPool.spawn({ briefing, spaceId, goalLabel: truncateGoalLabel(topic) })
-    } catch {
-      // A malformed demo research command must never take the chat socket down.
-    }
+  // The real chat loop (issue #37): every chat entry point — the global
+  // chat and every Space — routes through here, which threads the turn
+  // through `ModelRouter.execute` (so BYOK failover, daily caps, and call
+  // logging apply exactly as they do to every other model call), streams
+  // the reply back frame by frame (`chat.turn-start`/`-delta`/`-end`/
+  // `-error`), and appends the turn to the Space's Event log (ADR-0003).
+  // Bound onto `chatTurnHandler` unconditionally: a profile with no
+  // provider key still gets deterministic loopback behavior, through the
+  // mock routing candidate this same loop calls into — never a second,
+  // parallel handler.
+  const chatLoop = createChatLoop({
+    store,
+    router,
+    sessionStore: chatSessionStore,
+    bridge,
+    isTrustWrapped,
+    toolsFor: chatToolRegistry,
+    send: (clientId, frame) => gateway.sendToClient(clientId, frame),
+  })
+  chatTurnHandler = (event) => {
+    void chatLoop.handleChatMessage(event)
   }
+  // Graceful shutdown (issue #37 fix): every `onClose` hook above this one
+  // (memory index, push store, trust layer/Tree proposals, scheduler/
+  // Heartbeat/Reflection, WorkerPool) was registered earlier in this
+  // function, and Fastify runs `onClose` hooks in reverse registration
+  // order — so this one runs FIRST, before any of those start tearing down.
+  // A live chat turn's tools reach every one of them (the scheduler's own
+  // tools, `spawn_worker` against the WorkerPool, the trust-wrapped outbound
+  // tools, `search_memory` against the memory index), so `chatLoop.stop()`
+  // must finish — every runner aborted, every session's serialization chain
+  // settled — before any of their own shutdown can safely start.
+  app.addHook('onClose', async () => {
+    await chatLoop.stop()
+  })
 
   const pwaDistDir = options.pwaDistDir ?? defaultPwaDistDir
   const lockout = new ProgressiveAuthLockout()

@@ -405,6 +405,21 @@ export class SpacesEngine {
     return [...origins]
   }
 
+  /**
+   * The two global identity documents (`SOUL.md`, `USER.md`), as
+   * `assembleContext` reads them for a Space turn. Global chat (issue #37)
+   * has no Space to assemble a full context for, so this is its read seam —
+   * kept here rather than letting a caller reconstruct `globalPath`'s file
+   * layout for itself, the same reasoning `listLogFiles`/`readLogLine`
+   * already follow for the Event log.
+   */
+  readGlobalDocs(): { soul: string; user: string } {
+    return {
+      soul: readOrEmpty(this.globalPath('SOUL.md')),
+      user: readOrEmpty(this.globalPath('USER.md')),
+    }
+  }
+
   saveSurface(surface: Surface): Surface {
     const parsed = SurfaceSchema.parse(surface)
     const space = this.requireSpace(parsed.spaceId)

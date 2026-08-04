@@ -72,6 +72,17 @@ const DEAD_PATTERNS: DeadPattern[] = [
     fix: 'say what the fix was; the conversation is not readable from the repository',
   },
   {
+    name: 'a lowercase review-round fix number (e.g. "fix 2")',
+    // The capitalized `Fix\s+\d` form above only catches `Fix 7`; comments
+    // have shipped citing the same kind of review-round label in lowercase
+    // ("issue #37 fix 2"), which that pattern does not match. Case-insensitive
+    // and scoped to a standalone `fix` (a non-word boundary on both sides, so
+    // `prefix 2`/`suffix 2`/`postfix 2` do not match) followed directly by a
+    // one-or-two-digit number.
+    pattern: /(?:^|[^\w])fix\s+\d{1,2}[a-z]?\b/gi,
+    fix: 'say what the fix was, not which numbered fix in a review round found it',
+  },
+  {
     name: 'a numbered task from a planning document',
     // `Task 5`, `task 12`: a pointer into the uncommitted working plan, not
     // anything a reader of this repository can open.

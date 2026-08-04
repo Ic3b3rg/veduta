@@ -80,15 +80,13 @@ rm -rf ~/.veduta-local-vps   # or your --base-dir
 | TLS / certificates                       | ACME-issued (Let's Encrypt)  | none -- the browser's `localhost` secure context substitutes |
 | Public domain                            | `VEDUTA_PUBLIC_DOMAIN`       | none -- `http://localhost:<port>`                            |
 | Process supervision                      | `systemd` (`Restart=always`) | `deploy/local-vps.sh`'s restart-on-exit-0 loop               |
-| Agent loop                               | not landed -- waits for it   | deterministic chat->Surface stand-in                         |
+| Agent loop                               | identical                    | identical                                                    |
 
-The last row is more subtle than the others: the chat _reply_ stand-in (the mock model
-candidates) is identical in every profile, including a real VPS. The deterministic chat->Surface
-demo (`applyMockChatSurfaceEffect`, `packages/daemon/src/gateway.ts`) is not -- it is enabled on
-the loopback profile and Local VPS (`mockChatEffects: true`, `packages/daemon/src/index.ts`), but
-disabled on the VPS profile, which instead waits for the real Agent loop to land. Local VPS
-simulates the chat->Surface flow more than production does today, precisely so the rest of this
-profile's real auth/egress/routing wiring can be rehearsed before the real Agent loop exists.
+The last row used to be the odd one out: before the real Agent loop wiring (issue #37) landed,
+Local VPS ran a deterministic chat->Surface demo that the VPS profile did not. That is gone --
+every profile now routes every chat turn through `ModelRouter.execute`, landing on a real
+provider wherever BYOK resolves a key and on the same deterministic mock candidate everywhere
+else (loopback, Local VPS, and a keyless VPS alike).
 
 ## The `localhost` caveat
 
@@ -117,6 +115,23 @@ when the wizard path is not an option.
 Either path points `routing.json`'s `providerKeys[name]` at `secret://vault/<name>`. With no key
 configured for a tier, the router falls back to the keyless mock candidates (`withMockFallback`
 in `packages/daemon/src/model-routing.ts`) so triage/reasoning stay routable regardless.
+
+### BYOK smoke check (issue #37 AC7)
+
+The manual acceptance check for the real Agent loop — deliberately not CI-gated because it
+spends real provider credit:
+
+1. Boot the profile and add a real provider key through the wizard's BYOK step (or the vault
+   CLI above), so `routing.json`'s reasoning tier resolves that provider.
+2. Open a Space and send any chat message from the browser.
+3. Expect: a streamed reply renders token by token (the in-progress entry with the pulsing
+   cursor), the final text lands in the chat log, the Space's Event log
+   (`GET /api/spaces/<id>/events`) shows the `type: 'turn'` user and assistant entries, and
+   `data/usage/<today>.jsonl` records the spend against the reasoning tier.
+4. Remove the key (or switch back to mock) and confirm the same flow still answers
+   deterministically — that is the mock candidate, not a parallel code path.
+
+Record the outcome (date, provider, model) in the issue or deployment notes when performed.
 
 ## Living scope
 

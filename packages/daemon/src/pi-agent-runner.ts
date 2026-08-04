@@ -7,6 +7,7 @@ import {
   type AgentTool,
   type JsonlSessionMetadata,
   type SessionTreeEntry,
+  type StreamFn,
 } from '@earendil-works/pi-agent-core'
 import { NodeExecutionEnv } from '@earendil-works/pi-agent-core/node'
 import {
@@ -30,6 +31,7 @@ import {
   type ToolResult,
   type TriggerRef,
 } from './agent-runner.ts'
+import { NonRetryableModelError } from './model-routing.ts'
 import {
   effectiveOrigin,
   gateToolsForOrigins,
@@ -41,7 +43,10 @@ import {
 } from './taint.ts'
 
 type PiInitialState = NonNullable<AgentOptions['initialState']>
-type PiModel = NonNullable<PiInitialState['model']>
+/** pi's model shape, named here so the provider bridge (issue #37) can refer to it without importing pi-agent-core's internals directly. */
+export type PiModel = NonNullable<PiInitialState['model']>
+/** pi's stream-function shape; the provider bridge supplies the mock/test stream path through `PiAgentRunnerOptions.streamFn`. */
+export type PiStreamFn = StreamFn
 export type PiToolParameters = AgentTool['parameters']
 
 const VEDUTA_MODEL_CHANGE = 'veduta:model-change'
@@ -106,6 +111,37 @@ function isOriginMarker(entry: RawSessionEntry): entry is OriginMarkerEntry {
   return 'kind' in entry && entry.kind === 'origin-marker'
 }
 
+/**
+ * Rejects a `prompt()` call whose turn pi resolved as a provider error (see
+ * `TurnFailedError` below). `status`, when present, is the HTTP status
+ * `turnFailureStatus` recovered from pi's error text.
+ */
+export class TurnFailedError extends Error {
+  readonly status?: number
+
+  constructor(message: string, options: { status?: number } = {}) {
+    super(message)
+    this.name = 'TurnFailedError'
+    if (options.status !== undefined) this.status = options.status
+  }
+}
+
+const HTTP_STATUS_PATTERN = /\bHTTP (\d{3})\b/
+
+/**
+ * Recovers the HTTP status pi's error text encodes, if any. pi converts
+ * every provider failure into a resolved error turn carrying only text
+ * (`Agent.runWithLifecycle` catches stream rejections), so the status the
+ * ModelRouter's `defaultIsRetryable`/`statusOf` needs
+ * (packages/daemon/src/model-routing.ts) survives only if re-parsed here;
+ * providers whose messages carry no status stay retryable, the safe
+ * default when `statusOf` finds no `status` property at all.
+ */
+export function turnFailureStatus(message: string): number | undefined {
+  const match = HTTP_STATUS_PATTERN.exec(message)
+  return match?.[1] === undefined ? undefined : Number(match[1])
+}
+
 const EMPTY_USAGE = {
   input: 0,
   output: 0,
@@ -130,6 +166,20 @@ export interface PiAgentRunnerOptions {
    * taint-only gating (issue #13).
    */
   isToolTrustWrapped?: (tool: ToolDef) => boolean
+  /**
+   * Resolves the API key for a model call just before pi issues it (pi's
+   * `agent-loop.js` reads `config.getApiKey(config.model.provider)` per
+   * call, not once up front). This is the BYOK vault route (docs/SECURITY.md
+   * §4: keys stay out of LLM context) — the provider bridge (issue #37)
+   * supplies a `SecretResolver`-backed implementation here.
+   */
+  getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined
+  /**
+   * Overrides pi's model-call transport. The provider bridge (issue #37)
+   * supplies the mock/test stream path through this; when omitted, pi falls
+   * back to its compat `streamSimple`.
+   */
+  streamFn?: PiStreamFn
 }
 
 export class PiAgentRunner implements AgentRunner {
@@ -141,6 +191,9 @@ export class PiAgentRunner implements AgentRunner {
   private readonly defaultContextPolicy: ContextPolicy
   private readonly toolParameters: Record<string, PiToolParameters>
   private readonly isToolTrustWrapped: ((tool: ToolDef) => boolean) | undefined
+  private readonly getApiKey:
+    ((provider: string) => Promise<string | undefined> | string | undefined) | undefined
+  private readonly streamFn: PiStreamFn | undefined
   private sessionId: string | undefined = undefined
   private currentModel: ModelRef | undefined = undefined
   private agent: Agent | undefined = undefined
@@ -156,6 +209,13 @@ export class PiAgentRunner implements AgentRunner {
   private currentTaint: TurnTaint = new TurnTaintAccumulator([])
   /** The current turn's raw input, part of the context-hash envelope. */
   private currentTurnInput = ''
+  /**
+   * The current turn's effective system prompt (`AgentPromptOptions.systemPrompt`
+   * when supplied, else the constructor-level `systemPrompt`), threaded
+   * live into `toPiContextTransform` so the context hash covers exactly
+   * what crossed the wrapper boundary for this turn.
+   */
+  private currentSystemPrompt: string | undefined = undefined
   private currentSpaceId: string | undefined = undefined
   private currentTrigger: TriggerRef | undefined = undefined
   /**
@@ -166,6 +226,16 @@ export class PiAgentRunner implements AgentRunner {
   private currentContextHash = ''
   /** Origins a tool's `ToolResult` reported, keyed by toolCallId, consumed once by `persistPiMessage` when that tool message is stored. */
   private readonly pendingToolOrigins = new Map<string, Origin[]>()
+  /**
+   * Whether a tool executed during the current `prompt()` attempt, reset at
+   * its top and set in `handlePiEvent`'s `tool_execution_start` mapping.
+   * Once a tool has run, this attempt's failure paths must reject with
+   * `NonRetryableModelError` instead of the retryable `TurnFailedError`
+   * (issue #37): a turn that already produced tool side effects must fail to
+   * the user rather than fail over — replaying it could re-execute an
+   * outbound action. Resumable mid-turn failover is future work.
+   */
+  private toolExecutedThisTurn = false
 
   constructor(options: PiAgentRunnerOptions) {
     this.sessionStore = options.sessionStore
@@ -175,6 +245,8 @@ export class PiAgentRunner implements AgentRunner {
     this.defaultContextPolicy = options.contextPolicy ?? disabledContextPolicy
     this.toolParameters = options.toolParameters ?? {}
     this.isToolTrustWrapped = options.isToolTrustWrapped
+    this.getApiKey = options.getApiKey
+    this.streamFn = options.streamFn
   }
 
   async start(sessionId: string): Promise<void> {
@@ -190,6 +262,7 @@ export class PiAgentRunner implements AgentRunner {
 
   async prompt(input: string, options: AgentPromptOptions = {}): Promise<void> {
     const sessionId = this.requireSessionId()
+    this.toolExecutedThisTurn = false
     const model = options.model ?? this.currentModel ?? this.defaultModel
     if (!model)
       throw new Error('AgentRunner.prompt requires a model before issue 010 model routing')
@@ -237,11 +310,31 @@ export class PiAgentRunner implements AgentRunner {
     const tools = this.toPiTools(gatedTools)
     const contextPolicy = options.contextPolicy ?? this.defaultContextPolicy
     if (!this.agent) {
-      this.agent = this.createAgent(branch, model, tools, contextPolicy)
+      // Retry-safe contract (issue #37): when `userMessageAppended` is true,
+      // the branch already carries this turn's persisted user message, yet
+      // pi's `Agent.prompt(input)` always pushes `input` as a new message
+      // onto whatever `initialState.messages` seeded the agent with (see
+      // `agent.js`'s `prompt()`/`normalizePromptInput`) — so seeding from
+      // the branch as-is would make the same user turn appear twice in the
+      // context the model sees. Strip only the trailing persisted copy
+      // before it seeds `createAgent`, without mutating what the session
+      // store returned.
+      this.agent = this.createAgent(
+        {
+          ...branch,
+          messages: branchMessagesForPrompt(branch.messages, input, userMessageAppended),
+        },
+        model,
+        tools,
+        contextPolicy,
+      )
     }
 
     this.agent.state.model = this.resolveModel(model)
     this.agent.state.tools = tools
+    const effectiveSystemPrompt = options.systemPrompt ?? this.systemPrompt
+    this.agent.state.systemPrompt = effectiveSystemPrompt ?? ''
+    this.currentSystemPrompt = effectiveSystemPrompt
     // A transform wrapper is always installed, identity included, so
     // every model invocation has a hook to recompute `currentContextHash`
     // from exactly what crossed the wrapper boundary.
@@ -267,6 +360,13 @@ export class PiAgentRunner implements AgentRunner {
       // retry rebuilds the agent from the session store instead.
       this.agent = undefined
       await this.events.emit({ type: 'error', message: errorMessage(error) })
+      // A tool already executed during this attempt: this turn must fail to
+      // the user rather than fail over (issue #37; see `toolExecutedThisTurn`
+      // doc comment above) — a retried turn's `branchMessagesForPrompt` strip
+      // is a no-op once the branch ends with tool messages, so failing over
+      // here risks re-appending the user message into the model-visible
+      // context and silently re-executing an already-executed side effect.
+      if (this.toolExecutedThisTurn) throw new NonRetryableModelError(errorMessage(error))
       throw error
     }
 
@@ -277,7 +377,11 @@ export class PiAgentRunner implements AgentRunner {
       const message = this.turnError
       this.turnError = undefined
       this.agent = undefined
-      throw new Error(message)
+      // Same reasoning as the catch block above: a tool already ran this
+      // attempt, so this failure must not fail over.
+      if (this.toolExecutedThisTurn) throw new NonRetryableModelError(message)
+      const status = turnFailureStatus(message)
+      throw new TurnFailedError(message, status === undefined ? {} : { status })
     }
 
     this.failedTurns.delete(sessionId)
@@ -311,6 +415,14 @@ export class PiAgentRunner implements AgentRunner {
       // only hook available for recomputing `currentContextHash` on every
       // model invocation.
       transformContext: this.toPiContextTransform(contextPolicy),
+      // pi executes batched tool calls in parallel by default; the trust
+      // layer's `decide()` snapshots live turn taint at execution time
+      // (docs/SECURITY.md §3.2), so a batched untrusted read plus an
+      // allowlisted L1 action could race the snapshot — sequential
+      // execution makes taint from call N visible to call N+1.
+      toolExecution: 'sequential',
+      ...(this.getApiKey ? { getApiKey: this.getApiKey } : {}),
+      ...(this.streamFn ? { streamFn: this.streamFn } : {}),
     }
 
     const agent = new Agent(agentOptions)
@@ -358,7 +470,7 @@ export class PiAgentRunner implements AgentRunner {
       const options: PiContextTransformOptions = {
         policy,
         sessionId,
-        systemPrompt: this.systemPrompt,
+        systemPrompt: this.currentSystemPrompt,
         input: this.currentTurnInput,
         fallbackModel: this.currentModel ?? this.defaultModel,
         ...(signal ? { signal } : {}),
@@ -388,6 +500,7 @@ export class PiAgentRunner implements AgentRunner {
         await this.persistPiMessage(event.message)
         return
       case 'tool_execution_start':
+        this.toolExecutedThisTurn = true
         await this.events.emit({
           type: 'tool-start',
           toolCallId: event.toolCallId,
@@ -419,6 +532,7 @@ export class PiAgentRunner implements AgentRunner {
           text: piMessageText(event.message),
           ...(costUsd === undefined ? {} : { costUsd }),
           ...(tokensUsed === undefined ? {} : { tokensUsed }),
+          origins: this.currentTaint?.origins() ?? [],
         })
         return
       }
@@ -457,6 +571,30 @@ export class PiAgentRunner implements AgentRunner {
     if (!this.sessionId) throw new Error('AgentRunner.start must be called before prompt')
     return this.sessionId
   }
+}
+
+/**
+ * Pure half of the retry-safe seeding fix (issue #37): when
+ * `userMessageAppended` is true, the branch loaded from the session store
+ * already contains this turn's persisted user message, but pi's
+ * `Agent.prompt(input)` always pushes `input` as a new message onto
+ * whatever `initialState.messages` seeded the agent with — so seeding an
+ * agent from the branch unchanged would make the same user turn appear
+ * twice in the context the model sees. Strips only a trailing message that
+ * is `role: 'user'` with `content === input`; leaves everything else
+ * (a non-matching trailing message, a trailing assistant/tool message, an
+ * empty branch) untouched, and is a no-op whenever `userMessageAppended`
+ * is false. Exported so this is testable without a live pi `Agent`.
+ */
+export function branchMessagesForPrompt(
+  messages: SessionMessage[],
+  input: string,
+  userMessageAppended: boolean,
+): SessionMessage[] {
+  if (!userMessageAppended) return messages
+  const last = messages.at(-1)
+  if (!last || last.role !== 'user' || last.content !== input) return messages
+  return messages.slice(0, -1)
 }
 
 export interface PiJsonlSessionStoreOptions {

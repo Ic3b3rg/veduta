@@ -74,6 +74,40 @@ export const SurfacePinnedEventSchema = z.object({
   freshness: FreshnessSchema,
 })
 
+// Turn-lifecycle frames for the streamed Agent chat turn (issue #37): a turn
+// opens with `chat.turn-start`, streams its answer as zero or more
+// `chat.turn-delta` fragments, then closes with exactly one of
+// `chat.turn-end` (the complete final message) or `chat.turn-error`.
+// `chat.message` remains for system notices, which are never streamed. Every
+// frame carries `spaceId` so a client can scope a delta to its Space without
+// keeping start-frame side state.
+export const ChatTurnStartMessageSchema = z.object({
+  type: z.literal('chat.turn-start'),
+  turnId: z.string().min(1),
+  spaceId: z.string().optional(),
+})
+
+export const ChatTurnDeltaMessageSchema = z.object({
+  type: z.literal('chat.turn-delta'),
+  turnId: z.string().min(1),
+  spaceId: z.string().optional(),
+  text: z.string(),
+})
+
+export const ChatTurnEndMessageSchema = z.object({
+  type: z.literal('chat.turn-end'),
+  turnId: z.string().min(1),
+  spaceId: z.string().optional(),
+  message: ChatMessageSchema,
+})
+
+export const ChatTurnErrorMessageSchema = z.object({
+  type: z.literal('chat.turn-error'),
+  turnId: z.string().min(1),
+  spaceId: z.string().optional(),
+  error: z.string(),
+})
+
 export const GatewayClientMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('hello'),
@@ -124,6 +158,10 @@ export const GatewayServerMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('chat.message'),
     message: ChatMessageSchema,
   }),
+  ChatTurnStartMessageSchema,
+  ChatTurnDeltaMessageSchema,
+  ChatTurnEndMessageSchema,
+  ChatTurnErrorMessageSchema,
   z.object({
     type: z.literal('approval.card'),
     card: ApprovalCardSchema,
@@ -151,6 +189,10 @@ export type SurfacePatchEvent = z.infer<typeof SurfacePatchEventSchema>
 export type SurfaceCreatedEvent = z.infer<typeof SurfaceCreatedEventSchema>
 export type SurfaceArchivedEvent = z.infer<typeof SurfaceArchivedEventSchema>
 export type SurfacePinnedEvent = z.infer<typeof SurfacePinnedEventSchema>
+export type ChatTurnStartMessage = z.infer<typeof ChatTurnStartMessageSchema>
+export type ChatTurnDeltaMessage = z.infer<typeof ChatTurnDeltaMessageSchema>
+export type ChatTurnEndMessage = z.infer<typeof ChatTurnEndMessageSchema>
+export type ChatTurnErrorMessage = z.infer<typeof ChatTurnErrorMessageSchema>
 export type PresenceStatus = z.infer<typeof PresenceStatusSchema>
 export type PresenceEntry = z.infer<typeof PresenceEntrySchema>
 export type ApprovalCard = z.infer<typeof ApprovalCardSchema>

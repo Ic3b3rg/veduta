@@ -7,13 +7,17 @@ import {
   disabledContextPolicy,
   type ContextPolicy,
   type SessionEntry,
+  type SessionMessage,
 } from './agent-runner.ts'
 import {
   applyOriginEntries,
+  branchMessagesForPrompt,
   originEntryData,
   piMessageTokens,
   toPiAgentTool,
   transformPiContext,
+  turnFailureStatus,
+  TurnFailedError,
   type OriginMarkerEntry,
   type PiContextTransformOptions,
   type PiToolParameters,
@@ -165,11 +169,15 @@ function piMessage(content: string, timestamp: number): AgentMessage {
   return fromPartial<AgentMessage>({ role: 'user', content, timestamp })
 }
 
-function transformOptions(policy: ContextPolicy, input: string): PiContextTransformOptions {
+function transformOptions(
+  policy: ContextPolicy,
+  input: string,
+  systemPrompt?: string,
+): PiContextTransformOptions {
   return {
     policy,
     sessionId: 'session-1',
-    systemPrompt: undefined,
+    systemPrompt,
     input,
     fallbackModel: undefined,
   }
@@ -226,6 +234,69 @@ describe('transformPiContext', () => {
     // the raw pi messages) makes the two equal.
     expect(hashes[0]).toBe(hashes[1])
   })
+
+  it('hashes the effective per-turn system prompt, not just messages and input', async () => {
+    const hashes: string[] = []
+    const messages = [piMessage('hello', 1)]
+
+    await transformPiContext(
+      messages,
+      transformOptions(disabledContextPolicy, 'hello', 'You are a helpful assistant.'),
+      (hash) => hashes.push(hash),
+    )
+    await transformPiContext(
+      messages,
+      transformOptions(disabledContextPolicy, 'hello', 'You are a pirate.'),
+      (hash) => hashes.push(hash),
+    )
+
+    // Same messages, same input, different system prompt: the audited
+    // envelope must match what the model actually saw for this turn
+    // (docs/SECURITY.md §5, trust-layer.ts `contextHash`), so the two
+    // system prompts must not collapse to the same hash.
+    expect(hashes[0]).not.toBe(hashes[1])
+  })
+})
+
+describe('branchMessagesForPrompt', () => {
+  function message(role: SessionMessage['role'], content: string): SessionMessage {
+    return { role, content, at: '2026-07-09T00:00:00.000Z' }
+  }
+
+  it('strips a trailing user message matching the retried input', () => {
+    const messages = [
+      message('user', 'hello'),
+      message('assistant', 'hi'),
+      message('user', 'retry me'),
+    ]
+    const result = branchMessagesForPrompt(messages, 'retry me', true)
+    expect(result).toEqual([message('user', 'hello'), message('assistant', 'hi')])
+  })
+
+  it('leaves the branch untouched when the trailing message does not match the input', () => {
+    const messages = [message('user', 'hello'), message('user', 'something else')]
+    const result = branchMessagesForPrompt(messages, 'retry me', true)
+    expect(result).toEqual(messages)
+  })
+
+  it('leaves the branch untouched when the trailing message is not a user message', () => {
+    const messages = [message('user', 'retry me'), message('assistant', 'reply')]
+    const result = branchMessagesForPrompt(messages, 'retry me', true)
+    expect(result).toEqual(messages)
+  })
+
+  it('is a no-op when this is not a retry', () => {
+    const messages = [message('user', 'hello'), message('user', 'retry me')]
+    const result = branchMessagesForPrompt(messages, 'retry me', false)
+    expect(result).toEqual(messages)
+  })
+
+  it('does not mutate the array it was given', () => {
+    const messages = [message('user', 'hello'), message('user', 'retry me')]
+    const original = [...messages]
+    branchMessagesForPrompt(messages, 'retry me', true)
+    expect(messages).toEqual(original)
+  })
 })
 
 /**
@@ -247,6 +318,41 @@ describe('piMessageTokens', () => {
 
   it('is undefined (unreported, not zero) when the message carries no usage', () => {
     expect(piMessageTokens(piMessage('done', 1))).toBeUndefined()
+  })
+})
+
+/**
+ * `turnFailureStatus` recovers the HTTP status the routing layer needs
+ * (`ModelRouter`'s `defaultIsRetryable`/`statusOf`, model-routing.ts) from
+ * the plain-text error pi's `turn_end`/`message_end` path hands `prompt()` —
+ * exercised directly since constructing a `PiAgentRunner` to reach a real
+ * turn failure needs a live pi `Agent` (see the module doc comment above).
+ */
+describe('turnFailureStatus', () => {
+  it('parses the status out of a message reporting HTTP 400', () => {
+    expect(turnFailureStatus('provider request failed: HTTP 400 Bad Request')).toBe(400)
+  })
+
+  it('parses the status out of a message reporting HTTP 500', () => {
+    expect(turnFailureStatus('provider request failed: HTTP 500 Internal Server Error')).toBe(500)
+  })
+
+  it('is undefined when the message carries no HTTP status', () => {
+    expect(turnFailureStatus('network error: connection reset')).toBeUndefined()
+  })
+})
+
+describe('TurnFailedError', () => {
+  it('carries the parsed status when constructed with one', () => {
+    const error = new TurnFailedError('HTTP 400 Bad Request', { status: 400 })
+    expect(error.status).toBe(400)
+    expect(error.message).toBe('HTTP 400 Bad Request')
+    expect(error).toBeInstanceOf(Error)
+  })
+
+  it('leaves status undefined when constructed without one', () => {
+    const error = new TurnFailedError('network error: connection reset')
+    expect(error.status).toBeUndefined()
   })
 })
 

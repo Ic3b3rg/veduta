@@ -5,6 +5,7 @@ import { ApprovalCards } from './approval-cards.tsx'
 
 export function ChatBar({
   entries,
+  streamingEntries,
   approvalCards,
   focusedSpace,
   focusToken,
@@ -12,6 +13,10 @@ export function ChatBar({
   onSend,
 }: {
   entries: ChatMessage[]
+  /** In-flight `chat.turn-*` turns, keyed by turnId (issue 037). Always
+   * rendered after `entries` -- a turn only lands in `entries` once
+   * `chat.turn-end`/`chat.turn-error` closes it. */
+  streamingEntries: { turnId: string; text: string }[]
   approvalCards: ApprovalCard[]
   focusedSpace: SpaceWithSurfaces | undefined
   focusToken: number
@@ -41,6 +46,15 @@ export function ChatBar({
           <div key={`${entry.role}-${index}`} className={`chat-entry ${entry.role}`}>
             <strong>{entry.role === 'user' ? 'you' : 'veduta'}</strong>
             <span>{entry.text}</span>
+          </div>
+        ))}
+        {streamingEntries.map((turn) => (
+          <div key={`streaming-${turn.turnId}`} className="chat-entry assistant streaming">
+            <strong>veduta</strong>
+            <span>
+              {turn.text}
+              <span className="chat-streaming-cursor" data-testid="chat-streaming-cursor" />
+            </span>
           </div>
         ))}
       </div>

@@ -120,7 +120,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(page.getByRole('button', { name: 'Focus Groceries' })).toBeVisible()
     })
 
-    await test.step('global chat: "I ate a pizza" patches the Meals Surface (AC2)', async () => {
+    await test.step('focus the Health Space, then "I ate a pizza" patches the Meals Surface (AC2)', async () => {
       // The Gateway WebSocket connects asynchronously after Home's initial
       // render (app.tsx's `connectGateway`); sending chat before it opens
       // gets silently queued for a later retry instead of reaching the
@@ -132,21 +132,54 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       // from that static hint).
       await expect(page.locator('.status-pill.online')).toHaveText('Live')
 
+      // Focus the Health Space first (the space-rail button, app.tsx's
+      // `focusSpace`): under the real Agent loop (issue #37) a chat message
+      // sent with no focused Space is a GLOBAL turn, which is deliberately
+      // scoped to conversation only and gets no tools at all
+      // (chat-loop.ts's `GLOBAL_CHAT_PREAMBLE`/`toolsFor`) -- the meal-
+      // logging demo needs a Space turn, whose gated tool registry includes
+      // `patch_state`, to have anything to patch the Surface with.
+      await page
+        .getByRole('complementary', { name: 'Spaces' })
+        .getByRole('button', { name: 'Health' })
+        .click()
+
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta' })
       await chatInput.fill('I ate a pizza')
       await page.getByRole('button', { name: 'Send' }).click()
 
       await expectMealLogged(page)
 
-      // Event log coverage (ADR-0003): the chat->Surface demo's own state
-      // patch (`applyMockChatSurfaceEffect`, gateway.ts, via
-      // `SurfaceEngine.patchState`) logs a generic `surface.patch_state`
-      // entry naming the Surface it patched -- it does not echo the meal
-      // text itself into the Event log (only the Surface state carries
-      // "pizza"), so "about the meal" here means "about the Meals Surface a
-      // chat turn just patched".
+      // The reply itself must reach the chat log, not only the Surface it
+      // patched (issue #37, chat-loop.ts's `chat.turn-end`): the mock chat
+      // model's deterministic reply for a logged meal starts with
+      // "Logged: a pizza." (mock-chat-model.ts's `respondToUserText`), and
+      // it must show up exactly once in the rendered chat log, as the
+      // assistant's own entry. Not asserted here: the transient streaming
+      // affordance (the cursor rendered on an in-flight `chat.turn-delta`) --
+      // the mock's stream completes in a handful of milliseconds, so there
+      // is no reliable window in which to observe it in this real-browser
+      // journey; the manual `pnpm dev` + browser check covers that visually.
+      await expect(
+        page.locator('.chat-entry.assistant').filter({ hasText: /Logged: a pizza/ }),
+      ).toHaveCount(1)
+
+      // Event log coverage (ADR-0003): the chat turn's own `patch_state` tool
+      // call (the mock chat model, gated through the trust-wrapped tool
+      // registry, via `SurfaceEngine.patchState`) logs a generic
+      // `surface.patch_state` entry naming the Surface it patched -- it does
+      // not echo the meal text itself into the Event log (only the Surface
+      // state carries "pizza"), so "about the meal" here means "about the
+      // Meals Surface a chat turn just patched".
       const events = await fetchSpaceEvents(page, stack!.origin)
       expect(events.some(isMealPatchEvent)).toBe(true)
+      // The chat turn itself also lands in the Space's Event log as a
+      // `type: 'turn'` user entry (issue #37, chat-loop.ts's `runTurn`,
+      // ADR-0003: the Agent must find user interactions before reasoning
+      // about a Space) -- not just the tool call it went on to make.
+      expect(events.some((event) => event.type === 'turn' && event.text === 'I ate a pizza')).toBe(
+        true,
+      )
     })
 
     await test.step('fast path: toggling a Groceries checkbox changes state with no error', async () => {

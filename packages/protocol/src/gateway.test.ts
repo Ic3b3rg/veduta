@@ -172,4 +172,99 @@ describe('Gateway protocol', () => {
       }).success,
     ).toBe(false)
   })
+
+  it('accepts the streamed chat turn-lifecycle frames (issue 037)', () => {
+    expect(
+      GatewayServerMessageSchema.parse({
+        type: 'chat.turn-start',
+        turnId: 'trn-1',
+        spaceId: 'spc-health',
+      }),
+    ).toEqual({
+      type: 'chat.turn-start',
+      turnId: 'trn-1',
+      spaceId: 'spc-health',
+    })
+
+    expect(
+      GatewayServerMessageSchema.parse({
+        type: 'chat.turn-delta',
+        turnId: 'trn-1',
+        spaceId: 'spc-health',
+        text: '',
+      }),
+    ).toEqual({
+      type: 'chat.turn-delta',
+      turnId: 'trn-1',
+      spaceId: 'spc-health',
+      text: '',
+    })
+
+    expect(
+      GatewayServerMessageSchema.parse({
+        type: 'chat.turn-end',
+        turnId: 'trn-1',
+        spaceId: 'spc-health',
+        message: { role: 'assistant', text: 'Logged the pizza.' },
+      }),
+    ).toEqual({
+      type: 'chat.turn-end',
+      turnId: 'trn-1',
+      spaceId: 'spc-health',
+      message: { role: 'assistant', text: 'Logged the pizza.' },
+    })
+
+    expect(
+      GatewayServerMessageSchema.parse({
+        type: 'chat.turn-error',
+        turnId: 'trn-1',
+        spaceId: 'spc-health',
+        error: 'provider unavailable',
+      }),
+    ).toEqual({
+      type: 'chat.turn-error',
+      turnId: 'trn-1',
+      spaceId: 'spc-health',
+      error: 'provider unavailable',
+    })
+  })
+
+  it('accepts turn-lifecycle frames without spaceId (global chat has no Space)', () => {
+    expect(
+      GatewayServerMessageSchema.safeParse({
+        type: 'chat.turn-start',
+        turnId: 'trn-1',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('rejects a chat.turn-delta missing turnId', () => {
+    expect(
+      GatewayServerMessageSchema.safeParse({
+        type: 'chat.turn-delta',
+        spaceId: 'spc-health',
+        text: 'partial',
+      }).success,
+    ).toBe(false)
+  })
+
+  it('rejects a chat.turn-end with an invalid message', () => {
+    expect(
+      GatewayServerMessageSchema.safeParse({
+        type: 'chat.turn-end',
+        turnId: 'trn-1',
+        spaceId: 'spc-health',
+        message: { role: 'narrator', text: 'not a valid role' },
+      }).success,
+    ).toBe(false)
+
+    expect(
+      GatewayServerMessageSchema.safeParse({
+        type: 'chat.turn-end',
+        turnId: 'trn-1',
+        spaceId: 'spc-health',
+        message: { role: 'assistant' },
+      }).success,
+    ).toBe(false)
+  })
 })

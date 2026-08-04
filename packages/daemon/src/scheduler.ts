@@ -551,9 +551,19 @@ export class Scheduler {
 
     if (condition.kind === 'event-logged') {
       const needle = condition.textIncludes.toLowerCase()
-      const windowStart = new Date(
+      const lookbackStart = new Date(
         new Date(scheduledFor).getTime() - condition.withinHours * 60 * 60 * 1000,
       ).toISOString()
+      // Never look further back than when the Automation itself was armed
+      // (issue #37): a chat turn is logged to the Space Event log the
+      // instant it arrives (ADR-0003), so the very request that arms a
+      // reminder — "remind me to log my weight by 9pm" — already contains
+      // the condition's own needle. Without this floor, that request would
+      // immediately satisfy its own condition and the reminder would never
+      // escalate. `withinHours`'s lookback still applies for anything
+      // armed further in the past.
+      const windowStart =
+        automation.createdAt > lookbackStart ? automation.createdAt : lookbackStart
       const windowEnd = this.nowIso()
       // Only user-originated events can satisfy a condition: untrusted
       // content must never suppress an escalation (SECURITY.md), and
@@ -563,6 +573,7 @@ export class Scheduler {
         .eventLogSince(automation.spaceId, windowStart)
         .some(
           (event) =>
+            event.at > automation.createdAt &&
             event.at <= windowEnd &&
             event.origin === 'trusted:user' &&
             !event.type.startsWith('automation.') &&

@@ -72,10 +72,6 @@ async function startLocalVps(
     // production-like auth, so it gets the same denying dispatcher the vps
     // profile does.
     egress: { enforce: true },
-    // The Agent loop isn't landed yet (issue 023,
-    // docs/adr/0009-local-vps-profile.md): the mock chat demo keeps the
-    // core chat->Surface flow working behind real passkeys in the meantime.
-    mockChatEffects: true,
     profile: 'local-vps',
     onboarding: { domain: 'localhost', tlsActive: false, env: process.env },
   })

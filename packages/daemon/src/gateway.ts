@@ -1,13 +1,12 @@
+import { randomUUID } from 'node:crypto'
 import {
   GatewayClientMessageSchema,
   GatewayServerMessageSchema,
   type ApprovalCard,
-  type ChatMessage,
   type GatewayClientMessage,
   type GatewayServerMessage,
   type PresenceEntry,
 } from '@veduta/protocol'
-import { handleChatText, mealPatchFromChat } from './chat.ts'
 import { PwaChannelAdapter, type NormalizedChannelEvent } from './channel-adapter.ts'
 import type { SurfaceEngineEvent } from './surface-engine.ts'
 import { SurfaceActionError, type Store } from './store.ts'
@@ -26,9 +25,9 @@ export interface GatewayAuth {
 
 /**
  * "show/read [me] the full text [of] [event|queue] #<id>" — recognized
- * before the mock chat path so the real full-text flow (SECURITY.md §3.3)
- * can answer it once wired; falls through to the ordinary chat reply when
- * `onFullTextRequest` is not configured.
+ * before the ordinary chat turn is dispatched, so the real full-text flow
+ * (SECURITY.md §3.3) can answer it once wired; falls through to the Agent
+ * loop's chat turn when `onFullTextRequest` is not configured.
  */
 const FULL_TEXT_REQUEST_RE =
   /^(?:show|read)(?:\s+me)?\s+the\s+full\s+text(?:\s+of)?\s*(?:event|queue)?\s*#?(\d+)$/i
@@ -36,7 +35,6 @@ const FULL_TEXT_REQUEST_RE =
 interface GatewayClientSession {
   clientId: string
   deviceId?: string
-  history: ChatMessage[]
   presence: PresenceEntry
   send: (frame: GatewayServerMessage) => void
   socket: GatewaySocket
@@ -45,7 +43,6 @@ interface GatewayClientSession {
 export class GatewayHub {
   private pwa = new PwaChannelAdapter()
   private clients = new Map<string, GatewayClientSession>()
-  private nextClientId = 1
   private disposeAuthListener: (() => void) | undefined
   private disposeSurfaceEventListener: () => void
   private pendingSystemNotices: string[] = []
@@ -54,9 +51,14 @@ export class GatewayHub {
     private readonly store: Store,
     private readonly options: {
       auth?: GatewayAuth
-      mockChatEffects?: boolean
-      /** Extra dev-profile chat effect (e.g. the scheduler's "remind me…" demo). */
-      onDevChatEffect?: (event: NormalizedChannelEvent) => void
+      /**
+       * The real Agent loop's chat turn (issue #37): late-bound — server.ts
+       * assigns this after the Gateway is constructed, once the chat loop
+       * exists. Not configured is a boot-order bug, surfaced honestly to the
+       * requesting client (a `chat.message` frame saying so) rather than
+       * silently dropped.
+       */
+      onChatTurn?: (event: NormalizedChannelEvent) => void
       /**
        * Answers a recognized "show me the full text of event #N" request
        * (docs/SECURITY.md §3.3): runs the dedicated, gated turn
@@ -79,9 +81,9 @@ export class GatewayHub {
     })
     // The one and only Surface-lifecycle broadcaster: every committed
     // patch/created/archived event flows through here exactly once, however
-    // it was produced (fast path, Agent tool, scheduler projection, mock
-    // chat effect) — nothing else in this class calls `pwa.broadcast` with a
-    // surface.* frame.
+    // it was produced (fast path, Agent tool, scheduler projection) —
+    // nothing else in this class calls `pwa.broadcast` with a surface.*
+    // frame.
     this.disposeSurfaceEventListener = this.store.onSurfaceEvent((event) => {
       this.pwa.broadcast(surfaceEventFrame(event))
     })
@@ -152,6 +154,17 @@ export class GatewayHub {
       // its pre-auth timer must not linger for the full deadline window.
       clearTimeout(helloDeadline)
       if (!clientId) return
+      // Stale-close guard (issue #37 fix): a reconnect (`hello` carrying a
+      // returning `clientId`) already rebound this id to a NEW socket via
+      // `connectClient` before this OLD socket's own `close` fires — the two
+      // events race, and a slow disconnect notification for the old socket
+      // must never win. Only tear down the binding this socket itself still
+      // owns; if `clientId` now points at a different socket, this close
+      // event is stale and must be a no-op.
+      if (this.clients.get(clientId)?.socket !== socket) {
+        clientId = null
+        return
+      }
       this.disconnectClient(clientId)
       this.broadcastPresence()
       clientId = null
@@ -189,13 +202,15 @@ export class GatewayHub {
   }
 
   /**
-   * Out-of-band reply to one specific client (issue #14's dev dispatcher):
-   * `onDevChatEffect` itself is a fire-and-forget void callback with no
-   * reply channel of its own — this is that channel, mirroring the same
-   * `pwa.sendShort` every ordinary chat reply already uses.
+   * Delivers one Gateway frame to a specific client — the chat loop's
+   * channel for a turn's lifecycle frames (start / text delta / end /
+   * error, issues/037-agent-loop-chat.md). Looks the client up and calls its
+   * own `send`, which zod-parses every outgoing frame exactly like every
+   * other path out of this class. Silently no-ops when the client has
+   * disconnected: a streamed turn may outlive its socket.
    */
-  replyToClient(clientId: string, text: string): void {
-    this.pwa.sendShort(clientId, text)
+  sendToClient(clientId: string, frame: GatewayServerMessage): void {
+    this.clients.get(clientId)?.send(frame)
   }
 
   private handleClientFrame(
@@ -260,7 +275,6 @@ export class GatewayHub {
     presence.lastSeenAt = now
     const session: GatewayClientSession = {
       clientId,
-      history: existing?.history ?? [],
       presence,
       send,
       socket,
@@ -287,12 +301,14 @@ export class GatewayHub {
       return
     }
 
-    const reply = handleChatText(event.text, session.history)
-    if (this.options.mockChatEffects) {
-      this.applyMockChatSurfaceEffect(event)
-      this.options.onDevChatEffect?.(event)
+    if (!this.options.onChatTurn) {
+      // A boot-order bug surfaced honestly, not silence (AGENTS.md): the
+      // Gateway exists before server.ts finishes wiring the chat loop, but
+      // by the time a client can send `chat.send` the hook must be bound.
+      this.pwa.sendShort(event.clientId, 'The Agent loop is not configured on this daemon yet.')
+      return
     }
-    this.pwa.sendShort(event.clientId, reply.text)
+    this.options.onChatTurn(event)
   }
 
   private handleFullTextRequest(queueId: number, clientId: string): void {
@@ -304,24 +320,6 @@ export class GatewayHub {
       (reply) => this.pwa.sendShort(clientId, reply),
       () => this.pwa.sendShort(clientId, `Full text for queue #${queueId} is not available.`),
     )
-  }
-
-  // Dev-profile stand-in for the Agent loop: proves the chat→Surface patch
-  // flow end-to-end without an API key. The store's patchState appends the
-  // resulting surface.patch_state to the Space Event log, but the user's chat
-  // turn itself is not ingested yet — that lands with the real Agent loop,
-  // which replaces this method.
-  private applyMockChatSurfaceEffect(event: NormalizedChannelEvent): void {
-    const surface = this.store.getSurface('srf-meals')
-    if (!surface) return
-    if (event.spaceId !== undefined && event.spaceId !== surface.spaceId) return
-
-    const operations = mealPatchFromChat(event.text, surface.state, new Date(event.receivedAt))
-    if (!operations) return
-
-    // The commit reaches every client through the central Surface-event
-    // subscription; no manual broadcast here.
-    this.store.patchState(surface.id, operations, { updatedBy: 'agent' })
   }
 
   private broadcastPresence(): void {
@@ -342,10 +340,20 @@ export class GatewayHub {
     return [...this.clients.values()].map((client) => client.presence)
   }
 
+  /**
+   * A fresh clientId for a socket that sent no `clientId` of its own in its
+   * `hello` (a first-ever connection, never a reconnect). Random, not
+   * sequential (issue #37 fix): a returning `clientId` rebinds whatever
+   * socket currently owns it (`connectClient` below), so a guessable/
+   * sequential id would let one tab steal another tab's binding — a mid-turn
+   * frame meant for tab A's socket would instead reach whichever socket last
+   * claimed `pwa-N`. In production mode `hello` is already token-gated
+   * (`GatewayAuth.verifySession` above), so a rebind can only ever happen
+   * within the one authenticated user's own sockets; this is defense in
+   * depth for the single-user, multi-tab case, not a second auth boundary.
+   */
   private allocateClientId(): string {
-    const clientId = `pwa-${this.nextClientId}`
-    this.nextClientId += 1
-    return clientId
+    return `pwa-${randomUUID()}`
   }
 }
 

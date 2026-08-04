@@ -29,8 +29,7 @@ import { signBody } from './webhook-verify.ts'
 /**
  * Issue #14 acceptance criteria, proved verbatim (not a re-test of the unit
  * behavior already covered by trust-layer.test.ts / approval-surface.test.ts
- * / allowlist-surface.test.ts / audit-surface.test.ts / outbound-tools.test.ts
- * / dev-dispatch.test.ts):
+ * / allowlist-surface.test.ts / audit-surface.test.ts / outbound-tools.test.ts):
  *
  *   AC1 — "Reply to my wife that I'm on my way" (direct request, active
  *         allowlist) sends without a card; the same action triggered by an
@@ -44,22 +43,23 @@ import { signBody } from './webhook-verify.ts'
  * reader), following server.test.ts's setup style. AC1(b)'s "email trigger"
  * is proved via the real ingestion → quarantined reader pipeline: an actual
  * signed webhook is delivered, the real `QuarantinedReader` appends the
- * `reader.summary` event, and the untrusted mark reaches the next chat
- * dispatch through the same `contextOrigins()` call `dev-dispatch.ts` itself
- * uses — nothing here hand-builds the taint. This was chosen over hand-
- * seeding a `ToolContext` because it exercises the real webhook, reader, and
- * dev-dispatch wiring together, the strongest proof available without a real
- * Agent loop (issue #14 is scaffolded on `dev-dispatch.ts`, a documented
- * placeholder — see server.ts's wiring comments).
+ * `reader.summary` event, and the untrusted mark reaches the next chat turn
+ * through the same `contextOrigins()` call the real Agent loop's chat turn
+ * (chat-loop.ts) uses — nothing here hand-builds the taint. This was chosen
+ * over hand-seeding a `ToolContext` because it exercises the real webhook,
+ * reader, and chat wiring together, the strongest proof available (issue #14
+ * was originally scaffolded on a dev-only chat dispatcher, since replaced by
+ * the real Agent loop, issue #37).
  *
- * AC1(c) (mid-turn taint) cannot be produced through `dev-dispatch.ts`: it
- * builds one fresh `ToolContext` per chat command and calls the tool
- * immediately, so there is no seam to grow the taint accumulator "mid-turn"
- * from the outside. That scenario, and the injection-corpus pass below, use
- * a direct harness that wires the *real* `TrustLayer` + `ApprovalSurfaceManager`
- * + `outbound-tools.ts` + `Store` (no HTTP layer, no test doubles for the
- * trust machinery itself) and builds the `ToolContext` by hand, mirroring
- * `dev-dispatch.ts`'s own construction exactly.
+ * AC1(c) (mid-turn taint) cannot be produced through a single chat turn: the
+ * real Agent loop builds one `ToolContext` per tool call within a turn from
+ * its live taint accumulator, so there is no seam to grow the taint
+ * accumulator "mid-turn" from the outside. That scenario, and the
+ * injection-corpus pass below, use a direct harness that wires the *real*
+ * `TrustLayer` + `ApprovalSurfaceManager` + `outbound-tools.ts` + `Store`
+ * (no HTTP layer, no test doubles for the trust machinery itself) and builds
+ * the `ToolContext` by hand, mirroring `pi-agent-runner.ts`'s
+ * `buildToolContext` exactly.
  */
 
 // ---------------------------------------------------------------------------
@@ -238,7 +238,7 @@ describe('AC1 — direct request + active allowlist executes without a card; the
         .eventLog('spc-health')
         .some((e) => e.type === 'reader.summary' && e.origin === 'untrusted:mail'),
     ).toBe(true)
-    // The exact function dev-dispatch.ts uses to seed a turn's origins.
+    // The exact function the chat loop uses to seed a turn's origins.
     expect(store.spacesEngine.contextOrigins('spc-health')).toContain('untrusted:mail')
 
     // --- Same tool, same recipient, the allowlist rule is still active —
@@ -283,7 +283,8 @@ describe('AC1 — direct request + active allowlist executes without a card; the
 // ---------------------------------------------------------------------------
 // AC1(c) — mid-turn taint, and the injection corpus below, use a direct
 // harness: the real TrustLayer + ApprovalSurfaceManager + outbound-tools.ts +
-// Store, `ToolContext` built by hand exactly like dev-dispatch.ts does.
+// Store, `ToolContext` built by hand exactly like `pi-agent-runner.ts`'s
+// `buildToolContext` does.
 // ---------------------------------------------------------------------------
 
 interface DirectHarness {
@@ -337,7 +338,7 @@ function buildDirectHarness(): DirectHarness {
   }
 }
 
-/** Mirrors dev-dispatch.ts's `runDispatch` context construction exactly. */
+/** Mirrors `pi-agent-runner.ts`'s `buildToolContext` construction exactly. */
 function buildTurnContext(
   store: Store,
   spaceId: string,

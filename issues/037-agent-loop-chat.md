@@ -31,8 +31,8 @@ changes follow the repo's plan-mode rule.
 
 Scope note: this is part I of the Agent loop wiring. Proactive completions are issue 038,
 Workers and the full-text flow are issue 039, the queued Surface Agent-path consumer is
-issue 040. This issue delivers the part after which *talking to your own agent with your own
-key* is possible.
+issue 040. This issue delivers the part after which _talking to your own agent with your own
+key_ is possible.
 
 ## Goal
 
@@ -57,7 +57,11 @@ deterministic behavior through the mock routing candidate, never through a paral
   produces (SOUL/USER/Space docs, FACTS, recent Event log — `spaces-engine.ts`), with
   `contextOrigins` from `SpacesEngine.contextOrigins`, `origin: 'trusted:user'`, trigger
   `{ kind: 'chat' }`. Define the global chat's context and tool scope explicitly (no Space
-  log; L0/L1 tools only until a Space is chosen).
+  log; no tools until a Space is chosen — narrowed from "L0/L1 tools only" during
+  implementation because every tool in the v1 registry is Space-scoped in practice: even an
+  allowlisted L1 outbound action would execute without a Space Event trail, and
+  `list_templates` requires an active Space. The global chat converses and directs Space work
+  to a Space).
 - **Tool registry** (exact, no duplicates): trust-wrapped outbound tools,
   `store.surfaceTools()` with `gateCreateSurfaceTool` **replacing** the raw
   `create_surface`, `createMemoryTools()`, `templateTools(...)`, scheduler tools

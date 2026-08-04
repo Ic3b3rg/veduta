@@ -263,35 +263,32 @@ describe('production auth boundary', () => {
     expect(devices.json()).toMatchObject({ devices: [{ name: 'Silvio iPhone' }] })
   })
 
-  it('runs the mock chat->Surface demo behind a real passkey session when the Local VPS profile opts in (issue 023)', async () => {
-    const { auth, token } = await readyAuthStore()
-    const { gateway, store } = buildServer({
-      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
-      mockChatEffects: true,
-    })
-
-    expect(chatSendProducesMealsPatch(gateway, store, token)).toBe(true)
-  })
-
-  it('keeps chat.send from producing the mock demo patch when mockChatEffects is left at its default', async () => {
+  it('drives a meal-logging chat message through the real chat loop (mock candidate) and patches srf-meals, even under production auth with no provider key configured', async () => {
     const { auth, token } = await readyAuthStore()
     const { gateway, store } = buildServer({
       auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
     })
 
-    expect(chatSendProducesMealsPatch(gateway, store, token)).toBe(false)
+    expect(await chatSendProducesMealsPatch(gateway, store, token)).toBe(true)
+
+    // ADR-0003: the Agent must find user interactions before reasoning about
+    // a Space, so the turn itself — the user's message and the assistant's
+    // reply — lands in the Space's own Event log, not only the Surface patch.
+    const turnEvents = store.eventLog('spc-health').filter((event) => event.type === 'turn')
+    expect(turnEvents).toHaveLength(2)
+    expect(turnEvents[0]).toMatchObject({ text: 'I ate a pizza', payload: { role: 'user' } })
+    expect(turnEvents[1]).toMatchObject({ payload: { role: 'assistant' } })
   })
 })
 
 describe('AC4: switching mock -> real provider is configuration only (issue 023)', () => {
-  it('a fresh Local VPS root with no provider key anywhere routes both tiers through the keyless mock candidate, and chat->Surface still works', async () => {
+  it('a fresh Local VPS root with no provider key anywhere routes both tiers through the keyless mock candidate', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'veduta-ac4-mock-'))
     const { auth, token } = await readyAuthStore()
     const { gateway, store, router } = buildServer({
       dataDir,
       auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
       profile: 'local-vps',
-      mockChatEffects: true,
     })
 
     // Interrogate the daemon's own ModelRouter directly, rather than
@@ -302,10 +299,13 @@ describe('AC4: switching mock -> real provider is configuration only (issue 023)
     expect(router.route({ purpose: 'chat-turn', origin: 'user' }).provider).toBe('mock')
     expect(router.route({ purpose: 'classification', origin: 'user' }).provider).toBe('mock')
 
-    expect(chatSendProducesMealsPatch(gateway, store, token)).toBe(true)
+    // The real chat loop (issue #37) reaches the same loopback behavior
+    // through the mock routing candidate: a meal-logging chat message still
+    // patches srf-meals with no provider key configured anywhere.
+    expect(await chatSendProducesMealsPatch(gateway, store, token)).toBe(true)
   })
 
-  it('storing a real anthropic key in the vault (BYOK apply) drops the mock candidate from both tiers on the next boot, with the chat->Surface flow unchanged', async () => {
+  it('storing a real anthropic key in the vault (BYOK apply) drops the mock candidate from both tiers on the next boot', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'veduta-ac4-real-'))
     const keyMaterial = Buffer.from('a test key material, long enough for scrypt')
     process.env['VEDUTA_VAULT_KEY'] = keyMaterial.toString('utf8')
@@ -331,18 +331,23 @@ describe('AC4: switching mock -> real provider is configuration only (issue 023)
       // a NEW server built over the SAME root picks up the persisted
       // `routing.json` and vault through the same `buildServer` call — no
       // flow change, only configuration on disk changed underneath it.
-      const { auth, token } = await readyAuthStore()
-      const { gateway, store, router } = buildServer({
+      const { auth } = await readyAuthStore()
+      const { router } = buildServer({
         dataDir,
         auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
         profile: 'local-vps',
-        mockChatEffects: true,
       })
 
       // Interrogate the NEW server's own ModelRouter directly: it opened
       // the same vault this test just wrote the anthropic key into
       // (`openVaultAndSecrets` in `server.ts`), so both tiers now pick the
       // real provider, with no mock candidate left in the running config.
+      // Not re-driven through a live chat turn here (unlike the fresh-root
+      // case above): with a real provider selected, the chat loop's provider
+      // bridge would issue an actual `api.anthropic.com` call against this
+      // fixture's fake key, which this configuration-only assertion does not
+      // need — loopback parity through the mock candidate is already covered
+      // above and by `chat-loop.test.ts`'s fake-provider suite.
       expect(router.route({ purpose: 'chat-turn', origin: 'user' })).toEqual({
         provider: 'anthropic',
         modelId: 'claude-sonnet-5',
@@ -353,11 +358,28 @@ describe('AC4: switching mock -> real provider is configuration only (issue 023)
         modelId: 'claude-haiku-4-5',
         tier: 'triage',
       })
-
-      expect(chatSendProducesMealsPatch(gateway, store, token)).toBe(true)
     } finally {
       delete process.env['VEDUTA_VAULT_KEY']
     }
+  })
+})
+
+describe('chat loop wiring (issue #37)', () => {
+  it('every chat entry point routes through ModelRouter.execute', async () => {
+    const { gateway, store, router } = buildServer()
+    const executeSpy = vi.spyOn(router, 'execute')
+
+    const socket = new SchedulerFakeSocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+    socket.receive({ type: 'chat.send', text: 'hello there', spaceId: 'spc-health' })
+
+    await waitForTurnSettled(socket)
+
+    expect(executeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ purpose: 'chat-turn', origin: 'user' }),
+      expect.any(Function),
+    )
   })
 })
 
@@ -540,7 +562,7 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
 })
 
 describe('scheduler wiring (issue #11)', () => {
-  it('pre-creates the Automations Surface, arms a timer from dev chat and escalates on fire', async () => {
+  it('pre-creates the Automations Surface, arms a timer through the real chat loop (mock candidate) and escalates on fire', async () => {
     let clock = new Date('2026-07-08T08:00:00.000Z')
     clock.setHours(13, 0, 0, 0) // parser and clock work in daemon-local time
     const { app, gateway, scheduler, store } = buildServer({
@@ -561,6 +583,10 @@ describe('scheduler wiring (issue #11)', () => {
       text: 'Remind me to log my weight by 9pm',
       spaceId: 'spc-health',
     })
+    // The mock model's `arm_timer` tool call (mock-chat-model.ts) arms the
+    // timer asynchronously, through the real chat loop's turn — wait for the
+    // turn to settle rather than a fixed sleep (issue #37).
+    await waitForTurnSettled(socket)
 
     const automations = scheduler.listAutomations('spc-health')
     expect(automations).toHaveLength(1)
@@ -592,7 +618,7 @@ describe('scheduler wiring (issue #11)', () => {
 })
 
 describe('worker wiring (issue #17)', () => {
-  it('spawns a Worker from dev chat and delivers a reviewed report into the Space', async () => {
+  it('spawns a Worker through the real chat loop (mock candidate) and delivers a reviewed report into the Space', async () => {
     const { app, gateway, store, workerPool } = buildServer()
 
     const socket = new SchedulerFakeSocket()
@@ -604,8 +630,12 @@ describe('worker wiring (issue #17)', () => {
       spaceId: 'spc-health',
     })
 
-    // The active Surface appears synchronously: `spawn()` never awaits the
-    // run, so chat stays responsive while the Worker investigates.
+    // The mock model's `spawn_worker` tool call (mock-chat-model.ts) reaches
+    // the pool asynchronously, through the real chat loop's turn — wait for
+    // the turn to settle rather than a fixed sleep (issue #37). `spawn()`
+    // itself never awaits the run, so the active Surface is already there by
+    // the time the turn's own frames finish.
+    await waitForTurnSettled(socket)
     const activeSurface = store
       .listSurfaces()
       .find((surface) => surface.id.startsWith('srf-worker-') && surface.spaceId === 'spc-health')
@@ -869,7 +899,7 @@ describe('trust layer wiring (issue #14)', () => {
     await app.close()
   })
 
-  it('cards a dev-chat "send to" request, then approving it executes the send and audits the trail', async () => {
+  it('cards a "send to" chat request through the real chat loop (mock candidate), then approving it executes the send and audits the trail', async () => {
     const { app, gateway, store, trust } = buildServer()
     const socket = new SchedulerFakeSocket()
     gateway.connect(socket)
@@ -924,7 +954,7 @@ describe('trust layer wiring (issue #14)', () => {
     await app.close()
   })
 
-  it('always cards transfer_funds (L2), even after a send_message allowlist rule exists', async () => {
+  it('always cards transfer_funds (L2) through the real chat loop, even after a send_message allowlist rule exists', async () => {
     const { app, gateway, store } = buildServer()
     const socket = new SchedulerFakeSocket()
     gateway.connect(socket)
@@ -1693,20 +1723,42 @@ class SchedulerFakeSocket {
 }
 
 /**
- * Drives the mock chat->Surface demo (a "I ate a pizza" chat.send) over a
- * fresh Gateway connection and reports whether it produced the meals
- * Surface patch — the AC4 tests (issue 023) assert this both stays true
- * across a mock->real provider switch and stays false when the demo is off.
+ * Waits until `socket` has received the turn's closing frame — exactly one
+ * of `chat.turn-end`/`chat.turn-error` (chat-loop.ts's `runTurn`) — since the
+ * real chat loop (issue #37) answers a `chat.send` asynchronously: a fixed
+ * sleep would be racy, so this polls the frames the fake socket already
+ * recorded instead.
  */
-function chatSendProducesMealsPatch(
+async function waitForTurnSettled(socket: SchedulerFakeSocket): Promise<void> {
+  await vi.waitFor(() => {
+    expect(
+      socket.sent.some(
+        (frame) => frame.type === 'chat.turn-end' || frame.type === 'chat.turn-error',
+      ),
+    ).toBe(true)
+  })
+}
+
+/**
+ * Drives an "I ate a pizza" chat.send through the real chat loop (issue
+ * #37) over a fresh Gateway connection and reports whether it produced the
+ * meals Surface patch: the mock routing candidate's `createMockChatResponder`
+ * (mock-chat-model.ts) answers a meal-logging message with a `patch_state`
+ * tool call, reproducing the pre-issue-37 chat demo's observable behavior
+ * through the real loop instead of a parallel handler. The AC4 tests (issue
+ * 023) assert this stays true across a mock->real provider switch.
+ */
+async function chatSendProducesMealsPatch(
   gateway: ReturnType<typeof buildServer>['gateway'],
   store: ReturnType<typeof buildServer>['store'],
   token: string,
-): boolean {
+): Promise<boolean> {
   const socket = new SchedulerFakeSocket()
   gateway.connect(socket)
   socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor(), token })
   socket.receive({ type: 'chat.send', text: 'I ate a pizza', spaceId: 'spc-health' })
+
+  await waitForTurnSettled(socket)
 
   return socket.sent.some(
     (frame) => frame.type === 'surface.patch' && frame.event.patch.surfaceId === 'srf-meals',

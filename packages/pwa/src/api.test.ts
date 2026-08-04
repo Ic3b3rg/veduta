@@ -1,7 +1,9 @@
 import type { ImportPlan, ImportResult, OnboardingStatus, Surface } from '@veduta/protocol'
 import { SurfaceSchema } from '@veduta/protocol'
+import { fromPartial } from '@total-typescript/shoehorn'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  connectGateway,
   errorMessageFromBody,
   expiresInLabel,
   fastActionIdempotencyKey,
@@ -10,6 +12,7 @@ import {
   pinSurface,
   previewLegacyImport,
   runLegacyImport,
+  type GatewayHandlers,
 } from './api.ts'
 
 afterEach(() => {
@@ -369,5 +372,157 @@ describe('optimisticFastSurface', () => {
       updatedAt: '2026-07-03T10:00:01.000Z',
       updatedBy: 'user',
     })
+  })
+})
+
+// connectGateway's onmessage dispatch (issue 037: PWA-side streaming): a minimal fake socket
+// stands in for the browser WebSocket so `ws.onmessage` can be triggered by
+// hand with a raw Gateway frame, the same way a real server push would land.
+function fakeWebSocket() {
+  return {
+    onopen: null as (() => void) | null,
+    onmessage: null as ((event: { data: string }) => void) | null,
+    onclose: null as (() => void) | null,
+    readyState: 1,
+    send: vi.fn(),
+    close: vi.fn(),
+  }
+}
+
+function connectWithFakeSocket(handlerOverrides: Partial<GatewayHandlers>) {
+  const socket = fakeWebSocket()
+  vi.stubGlobal('location', { protocol: 'http:', host: 'localhost:5173' })
+  vi.stubGlobal(
+    'WebSocket',
+    vi.fn(() => socket),
+  )
+
+  const handlers = fromPartial<GatewayHandlers>({
+    surfaceCursor: 0,
+    onHello: vi.fn(),
+    onSurfacePatch: vi.fn(),
+    onSurfaceCreated: vi.fn(),
+    onSurfaceArchived: vi.fn(),
+    onSurfacePinned: vi.fn(),
+    onChatMessage: vi.fn(),
+    onChatTurnStart: vi.fn(),
+    onChatTurnDelta: vi.fn(),
+    onChatTurnEnd: vi.fn(),
+    onChatTurnError: vi.fn(),
+    onApprovalCard: vi.fn(),
+    onPresence: vi.fn(),
+    onSpaceAttention: vi.fn(),
+    onError: vi.fn(),
+    onClose: vi.fn(),
+    ...handlerOverrides,
+  })
+
+  connectGateway(handlers)
+  return { socket, handlers }
+}
+
+function deliver(socket: ReturnType<typeof fakeWebSocket>, frame: unknown): void {
+  socket.onmessage?.({ data: JSON.stringify(frame) })
+}
+
+describe('connectGateway chat.turn-* dispatch', () => {
+  it('dispatches chat.turn-start to onChatTurnStart', () => {
+    const onChatTurnStart = vi.fn()
+    const { socket } = connectWithFakeSocket({ onChatTurnStart })
+
+    const frame = { type: 'chat.turn-start', turnId: 'turn-1', spaceId: 'spc-home' }
+    deliver(socket, frame)
+
+    expect(onChatTurnStart).toHaveBeenCalledWith(frame)
+  })
+
+  it('dispatches chat.turn-delta to onChatTurnDelta', () => {
+    const onChatTurnDelta = vi.fn()
+    const { socket } = connectWithFakeSocket({ onChatTurnDelta })
+
+    const frame = { type: 'chat.turn-delta', turnId: 'turn-1', spaceId: 'spc-home', text: 'Hel' }
+    deliver(socket, frame)
+
+    expect(onChatTurnDelta).toHaveBeenCalledWith(frame)
+  })
+
+  it('dispatches chat.turn-end to onChatTurnEnd, message intact', () => {
+    const onChatTurnEnd = vi.fn()
+    const { socket } = connectWithFakeSocket({ onChatTurnEnd })
+
+    const frame = {
+      type: 'chat.turn-end',
+      turnId: 'turn-1',
+      spaceId: 'spc-home',
+      message: { role: 'assistant', text: 'the complete final answer' },
+    }
+    deliver(socket, frame)
+
+    expect(onChatTurnEnd).toHaveBeenCalledWith(frame)
+  })
+
+  it('dispatches chat.turn-error to onChatTurnError', () => {
+    const onChatTurnError = vi.fn()
+    const { socket } = connectWithFakeSocket({ onChatTurnError })
+
+    const frame = { type: 'chat.turn-error', turnId: 'turn-1', spaceId: 'spc-home', error: 'boom' }
+    deliver(socket, frame)
+
+    expect(onChatTurnError).toHaveBeenCalledWith(frame)
+  })
+
+  it('still dispatches chat.message to onChatMessage, unaffected by the new frame types', () => {
+    const onChatMessage = vi.fn()
+    const { socket } = connectWithFakeSocket({ onChatMessage })
+
+    const frame = { type: 'chat.message', message: { role: 'assistant', text: 'a system notice' } }
+    deliver(socket, frame)
+
+    expect(onChatMessage).toHaveBeenCalledWith(frame)
+  })
+
+  it('drops a frame that fails schema validation without calling any handler', () => {
+    const onChatTurnDelta = vi.fn()
+    const onError = vi.fn()
+    const { socket } = connectWithFakeSocket({ onChatTurnDelta, onError })
+
+    // Missing required `turnId`.
+    deliver(socket, { type: 'chat.turn-delta', spaceId: 'spc-home', text: 'x' })
+
+    expect(onChatTurnDelta).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+  })
+})
+
+// hello clientId round-trip (issue 037): a reconnect must carry the
+// clientId assigned by the previous connection so the daemon's GatewayHub
+// re-binds the same session to the new socket instead of allocating a
+// fresh one -- otherwise a turn's closing frame keeps addressing a
+// clientId nothing is listening on anymore.
+describe('connectGateway hello clientId', () => {
+  it('omits clientId from the hello frame on a first connection', () => {
+    const { socket } = connectWithFakeSocket({})
+    socket.onopen?.()
+
+    const sent = JSON.parse(socket.send.mock.calls[0]?.[0] as string) as Record<string, unknown>
+    expect(sent).toMatchObject({ type: 'hello', surfaceCursor: 0 })
+    expect(sent).not.toHaveProperty('clientId')
+  })
+
+  it('sends the last-known clientId on the hello frame when the caller has one', () => {
+    const { socket } = connectWithFakeSocket({ clientId: 'pwa-7' })
+    socket.onopen?.()
+
+    const sent = JSON.parse(socket.send.mock.calls[0]?.[0] as string) as Record<string, unknown>
+    expect(sent).toMatchObject({ type: 'hello', clientId: 'pwa-7' })
+  })
+
+  it('passes the server-assigned clientId from the hello reply to onHello', () => {
+    const onHello = vi.fn()
+    const { socket } = connectWithFakeSocket({ onHello })
+
+    deliver(socket, { type: 'hello', clientId: 'pwa-9', surfaceCursor: 3, replayed: 0 })
+
+    expect(onHello).toHaveBeenCalledWith(3, 'pwa-9')
   })
 })

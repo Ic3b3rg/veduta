@@ -38,7 +38,7 @@ export interface MockAgentRunnerOptions {
 
 /**
  * Deterministic, zero-network `AgentRunner` (mock-first dev, same spirit as
- * `mockReply` and the scheduler's stub judge — dev works with no VPS,
+ * the mock chat model and the scheduler's stub judge — dev works with no VPS,
  * domain, or provider key, by design). It honors the taint half of the
  * `AgentRunner` contract well enough to exercise the full-text flow and
  * chat wiring end-to-end without a real provider: it appends the user

@@ -114,8 +114,9 @@ async function importEntry(
 // Direct trust-layer harness — mirrors `trust-acceptance.test.ts`'s
 // `buildDirectHarness`/`buildTurnContext` exactly (real `TrustLayer` +
 // `ApprovalSurfaceManager` + `outbound-tools.ts` + `Store`, `ToolContext`
-// built by hand like `dev-dispatch.ts` does), pointed at the already-
-// populated import target `rootDir` instead of a fresh one.
+// built by hand like `pi-agent-runner.ts`'s `buildToolContext` does),
+// pointed at the already-populated import target `rootDir` instead of a
+// fresh one.
 // ---------------------------------------------------------------------------
 
 interface DirectHarness {
@@ -158,7 +159,7 @@ function buildDirectHarness(rootDir: string): DirectHarness {
   }
 }
 
-/** Mirrors `trust-acceptance.test.ts`'s `buildTurnContext` / `dev-dispatch.ts`'s context construction exactly. */
+/** Mirrors `trust-acceptance.test.ts`'s `buildTurnContext` / `pi-agent-runner.ts`'s `buildToolContext` construction exactly. */
 function buildTurnContext(store: Store, spaceId: string, summary: string): ToolContext {
   const seed: Origin[] = ['trusted:user', ...store.spacesEngine.contextOrigins(spaceId)]
   return {
@@ -198,7 +199,7 @@ describe('import injection corpus × trust gating (issue 020, seeds docs/SECURIT
 
         // 2. `gateToolsForOrigins` over the imported Space's `contextOrigins`
         // strips every L1/L2 tool that is not trust-wrapped: the exact call
-        // shape `dev-dispatch.ts`/`pi-agent-runner.ts` use
+        // shape `pi-agent-runner.ts` uses
         // (`gateToolsForOrigins(tools, seed, isWrapped)`), here with no
         // `isWrapped` predicate — the pre-trust-layer regime, where an
         // untrusted origin strips L1/L2 outright.
