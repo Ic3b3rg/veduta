@@ -2,3 +2,4 @@ dist
 coverage
 pnpm-lock.yaml
 tasks
+packages/daemon/src/update/fixtures/minisign

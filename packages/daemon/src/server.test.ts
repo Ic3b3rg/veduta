@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -21,6 +21,8 @@ import { SecretsVault } from './secrets-vault.ts'
 import { buildServer } from './server.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { treeProposalSurfaceId } from './tree-proposal.ts'
+import { CURRENT_DATA_VERSION } from './update/data-version.ts'
+import { VEDUTA_VERSION } from './version.ts'
 import type {
   PushPayload,
   PushSendResult,
@@ -1404,7 +1406,11 @@ describe('memory engines wiring (issues/021-advanced-memory.md)', () => {
     const { app } = buildServer()
     const res = await app.inject({ method: 'GET', url: '/api/health' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ ok: true })
+    expect(res.json()).toEqual({
+      ok: true,
+      version: VEDUTA_VERSION,
+      dataVersion: CURRENT_DATA_VERSION,
+    })
     await app.close()
   })
 
@@ -1464,7 +1470,11 @@ describe('memory engines wiring (issues/021-advanced-memory.md)', () => {
     const { app } = buildServer({ dataDir })
     const res = await app.inject({ method: 'GET', url: '/api/health' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ ok: true })
+    expect(res.json()).toEqual({
+      ok: true,
+      version: VEDUTA_VERSION,
+      dataVersion: CURRENT_DATA_VERSION,
+    })
 
     await app.close()
   })
@@ -1686,7 +1696,42 @@ describe('Emergent Templates: pre-022 data root (issues/022-emergent-templates.m
     const { app } = buildServer({ dataDir })
     const res = await app.inject({ method: 'GET', url: '/api/health' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ ok: true })
+    expect(res.json()).toEqual({
+      ok: true,
+      version: VEDUTA_VERSION,
+      dataVersion: CURRENT_DATA_VERSION,
+    })
+    await app.close()
+  })
+})
+
+describe('dataVersion boot gate (issues/043-self-update.md, docs/adr/0013-signed-self-update.md)', () => {
+  it('refuses to boot when data-version.json does not match CURRENT_DATA_VERSION', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-dataversion-refuse-'))
+    await writeFile(join(dataDir, 'data-version.json'), JSON.stringify({ dataVersion: 999 }))
+
+    expect(() => buildServer({ dataDir })).toThrow(
+      new RegExp(`dataVersion 999.*expects ${CURRENT_DATA_VERSION}`, 's'),
+    )
+  })
+
+  it('stamps a fresh, empty data root at CURRENT_DATA_VERSION and reports it from /api/health', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-dataversion-fresh-'))
+
+    const { app } = buildServer({ dataDir })
+    const res = await app.inject({ method: 'GET', url: '/api/health' })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({
+      ok: true,
+      version: VEDUTA_VERSION,
+      dataVersion: CURRENT_DATA_VERSION,
+    })
+    expect(existsSync(join(dataDir, 'data-version.json'))).toBe(true)
+    expect(JSON.parse(await readFile(join(dataDir, 'data-version.json'), 'utf8'))).toEqual({
+      dataVersion: CURRENT_DATA_VERSION,
+    })
+
     await app.close()
   })
 })

@@ -1,0 +1,3 @@
+{"at":"2026-08-01T09:00:00.000Z","spaceId":"spc-current","type":"note.captured","text":"Bought milk","origin":"trusted:user","occurredAt":"2026-08-01T09:00:00.000Z","payload":{"amount":3.5}}
+{"at":"2026-01-01T09:00:00.000Z","spaceId":"spc-legacy","type":"note.captured","text":"Legacy entry, no occurredAt or payload","origin":"trusted:user"}
+not even json {{{

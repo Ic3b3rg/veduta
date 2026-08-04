@@ -1,0 +1,14 @@
+{
+  "cursor": 2,
+  "at": "2026-01-06T09:00:00.000Z",
+  "spaceId": "spc-legacy",
+  "surfaceId": "srf-legacy",
+  "kind": "pinned",
+  "event": {
+    "cursor": 2,
+    "at": "2026-01-06T09:00:00.000Z",
+    "spaceId": "spc-legacy",
+    "surfaceId": "srf-legacy",
+    "pinned": true
+  }
+}

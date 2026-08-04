@@ -1,0 +1,13 @@
+{
+  "cursor": 6,
+  "at": "2026-08-01T09:15:00.000Z",
+  "spaceId": "spc-current",
+  "surfaceId": "srf-created",
+  "kind": "archived",
+  "event": {
+    "cursor": 6,
+    "at": "2026-08-01T09:15:00.000Z",
+    "spaceId": "spc-current",
+    "surfaceId": "srf-created"
+  }
+}

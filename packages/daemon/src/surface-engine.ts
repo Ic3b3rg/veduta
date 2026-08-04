@@ -1443,9 +1443,43 @@ function surfaceEngineEventFromRow(row: Record<string, unknown>): SurfaceEngineE
   if (kind === 'archived') {
     return { kind: 'archived', event: SurfaceArchivedEventSchema.parse(json) }
   }
-  if (kind === 'patch') return { kind: 'patch', event: SurfacePatchEventSchema.parse(json) }
-  if (kind === 'pinned') return { kind: 'pinned', event: SurfacePinnedEventSchema.parse(json) }
+  if (kind === 'patch') {
+    return { kind: 'patch', event: SurfacePatchEventSchema.parse(withFreshnessFallback(json)) }
+  }
+  if (kind === 'pinned') {
+    return { kind: 'pinned', event: SurfacePinnedEventSchema.parse(withFreshnessFallback(json)) }
+  }
   throw new Error(`unknown surface_events kind: ${kind}`)
+}
+
+/**
+ * A `surface_events` row's `event_json` for kind `patch`/`pinned` written
+ * before `freshness` was stamped on every write met a strict schema parse on
+ * the very next Gateway hello replay and killed the boot with the data
+ * otherwise intact — the 2026-08-04 incident recorded in
+ * `issues/043-self-update.md` and in `docs/adr/0013-signed-self-update.md`'s
+ * two-data-regimes rationale for tolerant append-only readers.
+ * `SurfacePatchEventSchema`/`SurfacePinnedEventSchema`
+ * themselves stay strict (the Gateway wire contract must keep rejecting a
+ * frame without `freshness`) — this is the sqlite row reader's own
+ * tolerance, applied only to rows that predate the field, never a schema
+ * change. Only the *missing* shape is tolerated: a row whose `freshness` is
+ * present but malformed still fails the parse below, unchanged.
+ * `updatedAt` is recovered from the event's own `at`, which both schemas
+ * have required since they were introduced, so the synthesized freshness is
+ * never older than the event itself; a payload whose `at` does not parse as
+ * an ISO instant falls back to the epoch sentinel (the schema parse of `at`
+ * then fails on its own merits, independent of this fallback).
+ * `updatedBy: 'system'` marks the value as daemon-synthesized, never a real
+ * actor, so a caller can distinguish it from genuine legacy metadata.
+ */
+function withFreshnessFallback(json: unknown): unknown {
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) return json
+  if ('freshness' in json) return json
+  const at = (json as Record<string, unknown>)['at']
+  const updatedAt =
+    typeof at === 'string' && !Number.isNaN(Date.parse(at)) ? at : '1970-01-01T00:00:00.000Z'
+  return { ...json, freshness: { updatedAt, updatedBy: 'system' } }
 }
 
 function treeProposalFromRow(row: Record<string, unknown>): TreeProposal {

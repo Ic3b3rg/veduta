@@ -1,0 +1,16 @@
+{
+  "cursor": 1,
+  "at": "2026-01-05T09:00:00.000Z",
+  "spaceId": "spc-legacy",
+  "surfaceId": "srf-legacy",
+  "kind": "patch",
+  "event": {
+    "cursor": 1,
+    "at": "2026-01-05T09:00:00.000Z",
+    "spaceId": "spc-legacy",
+    "patch": {
+      "surfaceId": "srf-legacy",
+      "operations": [{ "target": "state", "op": "replace", "path": "/count", "value": 3 }]
+    }
+  }
+}

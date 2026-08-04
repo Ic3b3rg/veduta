@@ -185,3 +185,26 @@ export {
   type SurfaceTemplate,
   type TemplateBundle,
 } from './template.ts'
+// Signed self-update (issue #43, `docs/adr/0013-signed-self-update.md`): the
+// gated feed manifest, the root-owned pinning file, the apply-time marker,
+// the transaction's terminal result, and post-hoc progress reporting.
+export {
+  ReleaseMetadataSchema,
+  SigningKeyCertSchema,
+  UpdateManifestSchema,
+  UpdatePinningSchema,
+  UpdateMarkerSchema,
+  UpdateResultSchema,
+  UpdateStageStatusSchema,
+  UpdateStageSchema,
+  UpdateProgressSchema,
+  type ReleaseMetadata,
+  type SigningKeyCert,
+  type UpdateManifest,
+  type UpdatePinning,
+  type UpdateMarker,
+  type UpdateResult,
+  type UpdateStageStatus,
+  type UpdateStage,
+  type UpdateProgress,
+} from './update.ts'

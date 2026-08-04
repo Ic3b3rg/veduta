@@ -1,0 +1,15 @@
+{
+  "cursor": 4,
+  "at": "2026-08-01T09:05:00.000Z",
+  "spaceId": "spc-current",
+  "surfaceId": "srf-current",
+  "kind": "pinned",
+  "event": {
+    "cursor": 4,
+    "at": "2026-08-01T09:05:00.000Z",
+    "spaceId": "spc-current",
+    "surfaceId": "srf-current",
+    "pinned": true,
+    "freshness": { "updatedAt": "2026-08-01T09:05:00.000Z", "updatedBy": "user" }
+  }
+}

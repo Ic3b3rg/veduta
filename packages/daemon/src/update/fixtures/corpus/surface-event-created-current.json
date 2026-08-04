@@ -1,0 +1,28 @@
+{
+  "cursor": 5,
+  "at": "2026-08-01T09:10:00.000Z",
+  "spaceId": "spc-current",
+  "surfaceId": "srf-created",
+  "kind": "created",
+  "event": {
+    "cursor": 5,
+    "at": "2026-08-01T09:10:00.000Z",
+    "spaceId": "spc-current",
+    "surface": {
+      "id": "srf-created",
+      "spaceId": "spc-current",
+      "title": "Corpus-created Surface",
+      "tree": {
+        "id": "root",
+        "type": "Box",
+        "children": [
+          { "id": "count", "type": "Stat", "binding": "count", "props": { "label": "Count" } }
+        ]
+      },
+      "state": { "count": 0 },
+      "freshness": { "updatedAt": "2026-08-01T09:10:00.000Z", "updatedBy": "user" },
+      "pinned": false,
+      "pinnable": true
+    }
+  }
+}

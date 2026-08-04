@@ -10,7 +10,8 @@ import {
   WebAuthnOptionsEnvelopeSchema,
 } from '@veduta/protocol'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { appendFileSync, existsSync, readFileSync, rmSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Fastify from 'fastify'
@@ -77,7 +78,9 @@ import { appendSystemSurface, ensureSystemSpace } from './system-space.ts'
 import { TemplateEngine } from './template-engine.ts'
 import { TreeProposalSurfaceManager } from './tree-proposal.ts'
 import { isTrustWrapped, TrustLayer } from './trust-layer.ts'
+import { ensureDataVersion } from './update/data-version.ts'
 import { usageSurface } from './usage-surface.ts'
+import { VEDUTA_VERSION } from './version.ts'
 import {
   ensureVapidKeys,
   isAllowedPushEndpoint,
@@ -182,6 +185,24 @@ export type ServerAuthOptions =
     }
 
 const defaultPwaDistDir = fileURLToPath(new URL('../../pwa/dist/', import.meta.url))
+
+/**
+ * The default `<rootDir>` when `options.dataDir` is not given, mirroring
+ * `SpacesEngine`'s own default (`spaces-engine.ts`'s `defaultDataDir`): a
+ * fresh mkdtemp under vitest/`NODE_ENV=test`, `<cwd>/.veduta` otherwise.
+ * `buildServer` resolves this once and passes it explicitly to both
+ * `ensureDataVersion` and `Store`, rather than letting `Store` fall back to
+ * its own default internally — that default mints a brand-new temp
+ * directory on every call, so calling it twice (once here, once inside
+ * `Store`) would gate one directory and construct the Store in another.
+ */
+function resolveDataDir(dataDir: string | undefined): string {
+  if (dataDir !== undefined) return dataDir
+  if (process.env['VITEST'] || process.env['NODE_ENV'] === 'test') {
+    return mkdtempSync(join(tmpdir(), 'veduta-daemon-'))
+  }
+  return join(process.cwd(), '.veduta')
+}
 
 /**
  * Opens the vault once and derives the whole daemon's `secret://` resolver
@@ -364,9 +385,20 @@ export function buildServer(options: ServerOptions = {}) {
     ...(options.https ? { https: options.https } : {}),
   })
   const now = options.now ?? (() => new Date())
+  // Resolved once, here — before the dataVersion gate and before `Store`
+  // exists — so both agree on the same directory. Mirrors `SpacesEngine`'s
+  // own default (`spaces-engine.ts`'s `defaultDataDir`): calling that
+  // mkdtemp logic a second time would hand `Store` a different throwaway
+  // temp dir than the one just gated.
+  const dataDir = resolveDataDir(options.dataDir)
+  // The dataVersion boot gate (issue #43, `docs/adr/0013-signed-self-update.md`):
+  // must run before any store opens a single file. A throw here propagates
+  // out of `buildServer` — `index.ts`'s top-level `start().catch` prints it
+  // and exits 1, never a partially-booted daemon.
+  const dataVersionGate = ensureDataVersion(dataDir)
   const store = new Store({
     now,
-    ...(options.dataDir === undefined ? {} : { rootDir: options.dataDir }),
+    rootDir: dataDir,
   })
   // The secrets resolver for the whole daemon (issue #15): the vault
   // when configured and openable, `secret://env/...` alone otherwise, with
@@ -1024,7 +1056,11 @@ export function buildServer(options: ServerOptions = {}) {
     return reply.status(401).send({ error: 'passkey session required' })
   })
 
-  app.get('/api/health', () => ({ ok: true }))
+  app.get('/api/health', () => ({
+    ok: true,
+    version: VEDUTA_VERSION,
+    dataVersion: dataVersionGate.dataVersion,
+  }))
 
   app.get('/api/auth/status', () => {
     return AuthStatusSchema.parse(
