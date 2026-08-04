@@ -7,17 +7,53 @@ import { resolveProfile, type ResolvedProfile } from './profile.ts'
 import { installConsoleRedaction } from './redaction.ts'
 import { buildServer } from './server.ts'
 import { AcmeCertificateManager, AcmeChallengeStore, createHttp01RequestHandler } from './tls.ts'
+import { runSelfCheck } from './update/self-check.ts'
 import { SimpleWebAuthnRelyingParty } from './webauthn.ts'
 
-start().catch((err) => {
+main().catch((err) => {
   console.error(err)
   process.exit(1)
 })
 
-async function start(): Promise<void> {
+async function main(): Promise<void> {
   // Every current and future console sink is covered from the very first
-  // line (issue #15): nothing logs before secrets can be redacted.
+  // line (issue #15): nothing logs before secrets can be redacted, in
+  // either mode this process can run in.
   installConsoleRedaction()
+
+  if (process.argv.includes('--self-check') || process.env['VEDUTA_SELF_CHECK'] === '1') {
+    await runSelfCheckMode()
+    return
+  }
+
+  await start()
+}
+
+/**
+ * Stage 1 of the update wrapper's health check (`docs/adr/0013-signed-self-update.md`'s
+ * self-update amendments, `issues/043-self-update.md` AC3): a hermetic,
+ * read-only inspection of an already-migrated data root, run as its own
+ * process invocation rather than as a flag `start()` interprets — the
+ * wrapper needs an exit code from a process that never calls `buildServer`
+ * at all, not a daemon that happens to also validate itself before serving.
+ */
+async function runSelfCheckMode(): Promise<void> {
+  const rootDir = process.env['VEDUTA_DATA_DIR']
+  if (!rootDir) {
+    console.error('--self-check requires VEDUTA_DATA_DIR to be set')
+    process.exit(2)
+    return
+  }
+
+  const report = await runSelfCheck({ rootDir })
+  for (const check of report.checks) {
+    console.error(`self-check ${check.name}: ${check.ok ? 'ok' : 'FAIL'} ${check.detail}`)
+  }
+  console.error(`self-check: ${report.ok ? 'ok' : 'failed'}`)
+  process.exit(report.ok ? 0 : 1)
+}
+
+async function start(): Promise<void> {
   const dataDirOption = process.env.VEDUTA_DATA_DIR ? { dataDir: process.env.VEDUTA_DATA_DIR } : {}
   const resolved = resolveProfile(process.env)
 

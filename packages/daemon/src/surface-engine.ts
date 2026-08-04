@@ -1436,7 +1436,14 @@ function surfaceFromRow(row: Record<string, unknown>): Surface {
   })
 }
 
-function surfaceEngineEventFromRow(row: Record<string, unknown>): SurfaceEngineEvent {
+/**
+ * Exported for `update/self-check.ts`'s stage-1 hermetic replay
+ * (`docs/adr/0013-signed-self-update.md`'s self-update amendments): reusing
+ * this exact row-level parser is what keeps the health check's tolerant
+ * replay logic from drifting out of sync with the one `surfaceEventsAfter`
+ * uses on every real boot.
+ */
+export function surfaceEngineEventFromRow(row: Record<string, unknown>): SurfaceEngineEvent {
   const kind = requiredString(row, 'kind')
   const json = JSON.parse(requiredString(row, 'event_json'))
   if (kind === 'created') return { kind: 'created', event: SurfaceCreatedEventSchema.parse(json) }
