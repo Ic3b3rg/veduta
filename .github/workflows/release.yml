@@ -253,6 +253,12 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
+          # `actions/checkout` leaves the tag as a ref pointing straight at the commit unless the
+          # annotated tag *object* is fetched too, and `%(contents)` on such a ref returns the
+          # COMMIT message instead of the tag message -- which is what shipped as v0.0.1's notes.
+          # Fetching the tag ref explicitly brings the annotated object along; a lightweight tag
+          # still falls back to the commit subject, which is the best available text.
+          git fetch --force --no-tags origin "refs/tags/$TAG:refs/tags/$TAG"
           notes=$(git for-each-ref --format='%(contents)' "refs/tags/$TAG")
           {
             echo 'text<<VEDUTA_NOTES_EOF'
