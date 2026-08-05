@@ -115,8 +115,16 @@ export function availableSlotNode(view: UpdateSurfaceView): AtomNode {
   return { id: AVAILABLE_SLOT_NODE_ID, type: 'Box', children }
 }
 
-/** `applied` -> success (green), `rolled-back`/`refused` -> danger (red); every other status has no outcome badge to show. */
-function outcomeTone(status: UpdateSurfaceStatus): 'success' | 'danger' | undefined {
+/**
+ * `applied` -> success (green), `rolled-back`/`refused` -> danger (red);
+ * every other status has no outcome badge to show. Exported so
+ * `update-manager.ts` can ask the same question before deciding whether to
+ * overwrite `outcomeDetail`: a transient check failure must never clobber the
+ * Badge recording a prior apply's real terminal outcome (issues/043-self-update.md's
+ * review follow-up — a green `applied` Badge must never end up displaying a
+ * feed-fetch error's text instead of its own outcome).
+ */
+export function outcomeTone(status: UpdateSurfaceStatus): 'success' | 'danger' | undefined {
   if (status === 'applied') return 'success'
   if (status === 'rolled-back' || status === 'refused') return 'danger'
   return undefined

@@ -26,9 +26,10 @@ import { timeToCron } from './cron.ts'
 import { reconcileManagedJobs } from './managed-jobs.ts'
 import type { NotificationInput } from './notification-center.ts'
 import type { Scheduler } from './scheduler.ts'
+import type { SpaceEvent } from './spaces-engine.ts'
 import type { FastMutationNotice, Store } from './store.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
-import { untrustedOrigin } from './taint.ts'
+import { untrustedOrigin, type Origin } from './taint.ts'
 import { checkMonotonic, verifyReleaseChain } from './update/minisign.ts'
 import { readDataVersion } from './update/data-version.ts'
 import { resolveUpdateHome, type UpdateHome } from './update/update-transaction.ts'
@@ -37,6 +38,7 @@ import {
   buttonsRowNode,
   currentStatNode,
   outcomeSlotNode,
+  outcomeTone,
   UPDATE_APPLY_STATE_KEY,
   UPDATE_CHECK_STATE_KEY,
   UPDATE_SURFACE_ID,
@@ -345,6 +347,7 @@ export class UpdateManager {
         signingKeyRootSigText: manifest.signingKey.rootSig,
         rootPublicKeyText: this.pinning.rootPublicKey,
         expectedArtifactName: metadata.artifactName,
+        expectedSigningKeyId: manifest.signingKey.keyId,
       })
 
       const nowIso = this.now().toISOString()
@@ -397,26 +400,44 @@ export class UpdateManager {
       return `update-available:${metadata.version}`
     } catch (error) {
       const reason = messageOf(error)
+      // Every failure caught here can embed feed-controlled bytes — a
+      // hostile artifact name or trusted comment surfacing inside
+      // `verifyReleaseChain`'s message, a zod path/value out of a malformed
+      // manifest, and so on (`docs/adr/0013-signed-self-update.md`: ALL
+      // feed-derived text stays `untrusted:update-feed`, not only release
+      // notes). The Event's own text is a short, fixed, daemon-authored
+      // summary; `reason` — the only part that can carry those bytes — goes
+      // into the payload instead, and the whole event is still marked
+      // untrusted, since a downstream reader trusts by the event's origin,
+      // not by which of its fields happens to hold the tainted text.
+      const origin = untrustedOrigin('update-feed')
       this.store.spacesEngine.appendEvent(SYSTEM_SPACE_ID, {
         type: 'update.check',
-        text: `check failed: ${reason}`,
-        origin: 'trusted:system',
-        payload: { source },
+        text: 'update check failed',
+        origin,
+        payload: { source, reason },
       })
+      const nowIso = this.now().toISOString()
       // Status intentionally stays whatever it already was (idle, or a
       // still-standing earlier offer) — a transient check failure (the feed
       // being briefly unreachable, say) must never overwrite a real offer
       // or fabricate a `refused` outcome that belongs to an apply attempt,
-      // not a discovery check. `outcomeDetail` is recorded regardless, but
-      // only renders as a Badge when `status` is itself a terminal apply
-      // outcome (`updateSurfaceContentOrigin`'s sibling, `outcomeTone` in
-      // `update-surface.ts`), so this is inert for the common case.
-      this.currentView = {
-        ...this.currentView,
-        outcomeDetail: reason,
-        lastCheckedAt: this.now().toISOString(),
+      // not a discovery check. `outcomeDetail` only overwrites when `status`
+      // is not itself already a terminal apply outcome (`outcomeTone`,
+      // `update-surface.ts`) — otherwise a background check failure would
+      // clobber the text under a still-showing `applied`/`rolled-back`/
+      // `refused` Badge, contradicting its own tone (issue #43 review
+      // follow-up). When it does overwrite, the Surface refresh is forced to
+      // the same untrusted origin as the Event, for the same reason: the
+      // content now includes feed/error-derived text even though the current
+      // rendering never shows it outside a terminal status.
+      if (outcomeTone(this.currentView.status) === undefined) {
+        this.currentView = { ...this.currentView, outcomeDetail: reason, lastCheckedAt: nowIso }
+        this.refreshSurface(origin)
+      } else {
+        this.currentView = { ...this.currentView, lastCheckedAt: nowIso }
+        this.refreshSurface()
       }
-      this.refreshSurface()
       return `check-failed:${reason}`
     }
   }
@@ -428,8 +449,29 @@ export class UpdateManager {
    * restart, appends the user's own apply event, patches the Surface to
    * `updating`, and exits with the dedicated code
    * (`docs/adr/0013-signed-self-update.md`).
+   *
+   * Refuses outright — before touching the network or writing anything —
+   * while an update transaction is already live on disk: an active journal
+   * (`state/update-state.json`) means the wrapper is mid-transaction (the
+   * stage-2 window, or a transaction stuck resuming/failing repeatedly), and
+   * an unswept `state/result.json` means the previous transaction's outcome
+   * has not yet been durably ingested and archived. Writing a second marker
+   * on top of either is exactly the wedge `issues/043-self-update.md`'s Goal
+   * rules out (issue #43 review follow-up): `update-cli run` would be left
+   * juggling two competing pieces of state, forever re-resuming the stale
+   * journal while a fresh marker sits unconsumed, with no SSH-free way out.
    */
   async applyUpdate(): Promise<void> {
+    if (existsSync(journalFilePath(this.home)) || existsSync(resultFilePath(this.home))) {
+      this.currentView = {
+        ...this.currentView,
+        status: 'refused',
+        outcomeDetail: 'an update is already in progress',
+      }
+      this.refreshSurface()
+      return
+    }
+
     await this.runCheck('manual')
     if (!this.verifiedOffer) return
     const { manifest, metadata } = this.verifiedOffer
@@ -481,10 +523,15 @@ export class UpdateManager {
    * so a feed-derived offer's notes can never default to a trusted origin
    * (`update-surface.ts`'s `updateSurfaceContentOrigin`, the same discipline
    * `template-engine.ts`'s `instantiate` and `scheduler.ts`'s
-   * `refreshSurface` apply to their own Surface writes).
+   * `refreshSurface` apply to their own Surface writes). `forcedOrigin`
+   * overrides the usual `available`-derived computation for the one caller
+   * whose content can carry feed/error-derived text even with no offer on
+   * display — a failed check's `outcomeDetail` (`runCheck`'s catch block,
+   * `docs/adr/0013-signed-self-update.md`: ALL feed-derived text stays
+   * untrusted, not only release notes).
    */
-  private refreshSurface(): void {
-    const origin = updateSurfaceContentOrigin(this.currentView.available)
+  private refreshSurface(forcedOrigin?: Origin): void {
+    const origin = forcedOrigin ?? updateSurfaceContentOrigin(this.currentView.available)
     const existing = this.store.getSurface(UPDATE_SURFACE_ID)
 
     if (!existing) {
@@ -517,14 +564,26 @@ export class UpdateManager {
   // ---------------------------------------------------------------------
 
   /**
-   * Ingests `state/result.json`: appends the `update.outcome` event exactly
-   * once per result id (deduped against the last two days of the System
-   * Space's own Event log, the same bounded read `Heartbeat.metrics()`
-   * uses), fsyncs the day's Event-log file, writes the durable ack, notifies
-   * a badge, and patches the Surface to the terminal outcome — all only on
-   * the first, non-duplicate ingestion; a repeat call (a second boot before
-   * the wrapper archives the result, or a second poll tick racing the first)
-   * only re-ensures the ack file exists. `result.json` itself is never
+   * Ingests `state/result.json`, in a strict, crash-safe order (issue #43
+   * review follow-up): (1) append the `update.outcome` event exactly once
+   * per result id (deduped against the last two days of the System Space's
+   * own Event log, the same bounded read `Heartbeat.metrics()` uses) — (2)
+   * fsync the day's Event-log file — (3) notify a badge and patch the
+   * Surface to the terminal outcome — (4) only then create and fsync the
+   * durable ack file. Every step but the last is allowed to fail loudly
+   * (logged, never thrown past this method — an unhandled rejection here
+   * would be worse than a retried boot): a failure at (1) or (2) leaves no
+   * ack behind and `result.json` untouched, so the next boot retries the
+   * whole thing from scratch, never telling the wrapper an outcome is
+   * durably recorded when it might not be.
+   *
+   * The dedupe check (the event already exists) skips straight to (3): a
+   * deduped result whose ack is missing is exactly the crash case this
+   * ordering exists for — the earlier attempt got the event durably
+   * appended but died before patching the Surface/notifying or before the
+   * ack landed, so this call must still (re-)ensure the Surface/badge state
+   * exists before acking. Once the ack itself is already on disk, ingestion
+   * is fully done and this returns immediately: `result.json` is never
    * deleted or moved here — the updater/wrapper alone retires it, once this
    * ack is durably in place (`update/update-transaction.ts`'s
    * `sweepAckedResult`).
@@ -538,29 +597,45 @@ export class UpdateManager {
       return
     }
 
+    if (existsSync(ackFilePath(this.home, result.id))) return
+
     const cutoff = new Date(this.now().getTime() - 2 * 24 * 60 * 60 * 1000).toISOString()
-    const alreadyIngested = this.store
+    const alreadyHasEvent = this.store
       .eventLogSince(SYSTEM_SPACE_ID, cutoff)
       .some((event) => event.type === 'update.outcome' && event.payload?.['resultId'] === result.id)
 
-    if (alreadyIngested) {
-      this.writeAckFile(result.id)
-      return
-    }
+    if (!alreadyHasEvent) {
+      let event: SpaceEvent
+      try {
+        event = this.store.spacesEngine.appendEvent(SYSTEM_SPACE_ID, {
+          type: 'update.outcome',
+          text: `Update to ${result.toVersion}: ${result.outcome}`,
+          origin: 'trusted:system',
+          payload: {
+            resultId: result.id,
+            outcome: result.outcome,
+            reason: result.reason,
+            ...(result.failedStage === undefined ? {} : { failedStage: result.failedStage }),
+          },
+        })
+      } catch (error) {
+        console.error(
+          'update-manager: failed to append the update.outcome event; result.json left in place for the next boot to retry',
+          error,
+        )
+        return
+      }
 
-    const event = this.store.spacesEngine.appendEvent(SYSTEM_SPACE_ID, {
-      type: 'update.outcome',
-      text: `Update to ${result.toVersion}: ${result.outcome}`,
-      origin: 'trusted:system',
-      payload: {
-        resultId: result.id,
-        outcome: result.outcome,
-        reason: result.reason,
-        ...(result.failedStage === undefined ? {} : { failedStage: result.failedStage }),
-      },
-    })
-    this.fsyncDayLog(event.at)
-    this.writeAckFile(result.id)
+      try {
+        this.fsyncDayLog(event.at)
+      } catch (error) {
+        console.error(
+          'update-manager: failed to fsync the day log before acking; result.json left in place for the next boot to retry',
+          error,
+        )
+        return
+      }
+    }
 
     this.notifications.notify({
       level: 'badge',
@@ -575,6 +650,15 @@ export class UpdateManager {
       lastCheckedAt: this.now().toISOString(),
     }
     this.refreshSurface()
+
+    try {
+      this.writeAckFile(result.id)
+    } catch (error) {
+      console.error(
+        'update-manager: failed to write the durable ack file; will retry on the next boot',
+        error,
+      )
+    }
   }
 
   /** Atomic-create (never overwrites) + fsync file and directory — the durable acknowledgment `sweepAckedResult` waits for before retiring `result.json`. */
@@ -607,28 +691,35 @@ export class UpdateManager {
   /**
    * Fsyncs the System Space's day-log file the outcome event was just
    * appended to: `SpacesEngine.appendEvent` writes with a plain
-   * `appendFileSync`, which is not itself durable, and the ack file below
-   * must never become visible while the event it acknowledges is still
-   * only page-cache-resident. Reconstructs the path via the public
+   * `appendFileSync`, which is not itself durable, and the ack file must
+   * never become visible while the event it acknowledges is still only
+   * page-cache-resident. Reconstructs the path via the public
    * `spacesEngine.rootDir` + the Space's own `slug` — the same `spaces/
    * <slug>/log/<YYYY-MM-DD>.jsonl` convention `SpacesEngine.logPath`
    * (private) uses internally, documented for external readers by
    * `memory-index.ts`'s `EVENT_REF_RE`.
+   *
+   * Throws rather than swallowing (issue #43 review follow-up): a missing
+   * System Space or a failed fsync both mean the just-appended event's
+   * durability cannot be confirmed, and `ingestResult` must treat either the
+   * same way — no ack, `result.json` left for the next boot to retry —
+   * rather than one path silently proceeding to ack an event that was never
+   * actually synced to disk.
    */
   private fsyncDayLog(atIso: string): void {
     const space = this.store.getSpace(SYSTEM_SPACE_ID)
-    if (!space) return
+    if (!space) {
+      throw new Error(
+        'update-manager: System Space not found; cannot fsync the day log before acking',
+      )
+    }
     const day = atIso.slice(0, 10)
     const path = join(this.store.spacesEngine.rootDir, 'spaces', space.slug, 'log', `${day}.jsonl`)
+    const fd = openSync(path, 'r')
     try {
-      const fd = openSync(path, 'r')
-      try {
-        fsyncSync(fd)
-      } finally {
-        closeSync(fd)
-      }
-    } catch (error) {
-      console.error('update-manager: failed to fsync the day log before acking', error)
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
     }
   }
 }

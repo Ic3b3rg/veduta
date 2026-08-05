@@ -15,7 +15,7 @@ import { Scheduler } from './scheduler.ts'
 import { Store } from './store.ts'
 import { ensureSystemSpace, SYSTEM_SPACE_ID } from './system-space.ts'
 import { untrustedOrigin } from './taint.ts'
-import { generateKeypair, sign, type GeneratedKeypair } from './update/minisign.ts'
+import { generateKeypair, publicKeyIdText, sign, type GeneratedKeypair } from './update/minisign.ts'
 import { resolveUpdateHome } from './update/update-transaction.ts'
 import { UpdateManager, type UpdateManagerConfig } from './update-manager.ts'
 import { UPDATE_SURFACE_ID } from './update-surface.ts'
@@ -76,8 +76,22 @@ let notifications: { level: string; spaceId: string; text: string; origin?: stri
 let scheduleExitCalls: number
 let manager: UpdateManager
 
-/** Rebuilds `feedBody` with a fresh signing key certified by the fixture's fixed `root` keypair — the root (and therefore the pinning file already on disk) never changes within a test. */
-function serveRelease(release: ReleaseMetadata, options?: { corruptReleaseSig?: boolean }): void {
+/**
+ * Rebuilds `feedBody` with a fresh signing key certified by the fixture's
+ * fixed `root` keypair — the root (and therefore the pinning file already on
+ * disk) never changes within a test. `keyId` is the real minisign-convention
+ * text derived from the signing key itself (`publicKeyIdText`), not an
+ * arbitrary label: `UpdateManager.runCheck` verifies it against the
+ * certified key's actual id, so a mismatched manifest `keyId` must be
+ * produceable by `options.keyId` for the refusal test to exercise anything
+ * real. `trustedComment` overrides what the release signature is actually
+ * signed for, independent of `release.artifactName` — used to simulate a
+ * feed claiming a hostile name/comment the daemon never asked for.
+ */
+function serveRelease(
+  release: ReleaseMetadata,
+  options?: { corruptReleaseSig?: boolean; trustedComment?: string; keyId?: string },
+): void {
   const signing = generateKeypair()
   const signingCertText = sign({
     contentBytes: Buffer.from(signing.publicKeyText, 'utf8'),
@@ -88,14 +102,18 @@ function serveRelease(release: ReleaseMetadata, options?: { corruptReleaseSig?: 
   let releaseSigText = sign({
     contentBytes: releaseBytes,
     secretKey: signing.secretKey,
-    trustedComment: release.artifactName,
+    trustedComment: options?.trustedComment ?? release.artifactName,
   })
   if (options?.corruptReleaseSig) releaseSigText = tamperBase64Line(releaseSigText, 1)
   feedBody = JSON.stringify({
     schemaVersion: 1,
     release: releaseBytes.toString('base64'),
     releaseSig: releaseSigText,
-    signingKey: { pub: signing.publicKeyText, rootSig: signingCertText, keyId: 'test-key' },
+    signingKey: {
+      pub: signing.publicKeyText,
+      rootSig: signingCertText,
+      keyId: options?.keyId ?? publicKeyIdText(signing.publicKeyText),
+    },
     artifactUrl: 'http://127.0.0.1:1/artifact.tar.gz',
   })
 }
@@ -227,13 +245,90 @@ describe('UpdateManager.runCheck', () => {
 
     const events = store.eventLog(SYSTEM_SPACE_ID)
     const failure = events.find((event) => event.type === 'update.check')
-    expect(failure?.text).toMatch(/^check failed:/)
-    expect(failure?.origin).toBe('trusted:system')
+    // The Event's own text is a fixed, daemon-authored summary — never the
+    // raw error message, which can embed feed-controlled bytes.
+    expect(failure?.text).toBe('update check failed')
+    expect(failure?.origin).toBe(untrustedOrigin('update-feed'))
+    expect(typeof failure?.payload?.['reason']).toBe('string')
     expect(events.some((event) => event.type === 'update.available')).toBe(false)
 
     const surface = store.getSurface(UPDATE_SURFACE_ID)
     expect(findNode(surface!.tree, 'update-apply-button')).toBeUndefined()
     expect(notifications).toHaveLength(0)
+  })
+
+  it('a hostile artifact name/trusted comment in a failed check is recorded under an untrusted origin, in the Event and the Surface alike', async () => {
+    manager.register()
+    // No offer has ever been shown on this Surface yet, so its persisted
+    // content_origin starts trusted (`ensureSurface`'s first `refreshSurface`)
+    // — this is the case the fix must cover: no `available` to fall back on
+    // for `updateSurfaceContentOrigin` to mark untrusted on its own.
+    expect(store.surfaceProvenance(UPDATE_SURFACE_ID)?.contentOrigin).toBe('trusted:system')
+
+    const hostileComment = "'; DROP TABLE releases; -- <script>alert(1)</script>"
+    serveRelease(defaultRelease({ version: '1.1.0' }), { trustedComment: hostileComment })
+
+    const outcome = await manager.runCheck('manual')
+    expect(outcome).toMatch(/^check-failed:/)
+
+    const failure = store.eventLog(SYSTEM_SPACE_ID).find((event) => event.type === 'update.check')
+    expect(failure?.origin).toBe(untrustedOrigin('update-feed'))
+    expect(failure?.text).toBe('update check failed')
+    expect(String(failure?.payload?.['reason'])).toContain(hostileComment)
+
+    expect(store.surfaceProvenance(UPDATE_SURFACE_ID)?.contentOrigin).toBe(
+      untrustedOrigin('update-feed'),
+    )
+  })
+
+  it('a manifest whose declared signingKey.keyId does not match the certified key is refused at check time', async () => {
+    manager.register()
+    serveRelease(defaultRelease({ version: '1.1.0' }), { keyId: 'DEADBEEFDEADBEEF' })
+
+    const outcome = await manager.runCheck('manual')
+    expect(outcome).toMatch(/^check-failed:/)
+
+    const events = store.eventLog(SYSTEM_SPACE_ID)
+    const failure = events.find((event) => event.type === 'update.check')
+    expect(String(failure?.payload?.['reason'])).toMatch(/signing key id mismatch/)
+    expect(events.some((event) => event.type === 'update.available')).toBe(false)
+
+    const surface = store.getSurface(UPDATE_SURFACE_ID)
+    expect(findNode(surface!.tree, 'update-apply-button')).toBeUndefined()
+  })
+
+  it('a check failure while a prior apply Badge is showing leaves the Badge tone and text untouched', async () => {
+    manager.register()
+
+    // Simulate an already-terminal 'applied' outcome on the Surface, the
+    // same shape `ingestResult` leaves behind.
+    const home = resolveUpdateHome(updateHomeDir)
+    mkdirSync(home.stateDir, { recursive: true })
+    const result: UpdateResult = {
+      id: 'result-applied',
+      outcome: 'success',
+      fromVersion: '1.0.0',
+      toVersion: '1.0.0',
+      reason: '',
+      finishedAt: now().toISOString(),
+    }
+    writeFileSync(join(home.stateDir, 'result.json'), JSON.stringify(result))
+    manager.start()
+    await vi.waitFor(() => {
+      const surface = store.getSurface(UPDATE_SURFACE_ID)
+      expect(findNode(surface!.tree, 'update-outcome-badge')?.props?.['text']).toBe(
+        'Updated to 1.0.0',
+      )
+    })
+
+    serveRelease(defaultRelease({ version: '1.1.0' }), { corruptReleaseSig: true })
+    const outcome = await manager.runCheck('manual')
+    expect(outcome).toMatch(/^check-failed:/)
+
+    const surface = store.getSurface(UPDATE_SURFACE_ID)
+    const badge = findNode(surface!.tree, 'update-outcome-badge')
+    expect(badge?.props?.['text']).toBe('Updated to 1.0.0')
+    expect(badge?.props?.['tone']).toBe('success')
   })
 })
 
@@ -274,6 +369,52 @@ describe('UpdateManager.applyUpdate', () => {
     const home = resolveUpdateHome(updateHomeDir)
     expect(existsSync(join(home.stateDir, 'marker.json'))).toBe(false)
     expect(scheduleExitCalls).toBe(0)
+  })
+
+  it('refuses outright, honestly, while an update journal is already active — never writing a second marker on top of it', async () => {
+    manager.register()
+    serveRelease(defaultRelease({ version: '1.1.0' }))
+
+    const home = resolveUpdateHome(updateHomeDir)
+    mkdirSync(home.stateDir, { recursive: true })
+    writeFileSync(join(home.stateDir, 'update-state.json'), JSON.stringify({ phase: 'migrating' }))
+
+    await manager.applyUpdate()
+
+    expect(existsSync(join(home.stateDir, 'marker.json'))).toBe(false)
+    expect(scheduleExitCalls).toBe(0)
+
+    const surface = store.getSurface(UPDATE_SURFACE_ID)
+    const badge = findNode(surface!.tree, 'update-outcome-badge')
+    expect(badge?.props?.['text']).toBe('an update is already in progress')
+    expect(badge?.props?.['tone']).toBe('danger')
+  })
+
+  it('refuses outright, honestly, while a result is unswept — never writing a second marker on top of it', async () => {
+    manager.register()
+    serveRelease(defaultRelease({ version: '1.1.0' }))
+
+    const home = resolveUpdateHome(updateHomeDir)
+    mkdirSync(home.stateDir, { recursive: true })
+    const result: UpdateResult = {
+      id: 'result-unswept',
+      outcome: 'success',
+      fromVersion: '0.9.0',
+      toVersion: '1.0.0',
+      reason: '',
+      finishedAt: now().toISOString(),
+    }
+    writeFileSync(join(home.stateDir, 'result.json'), JSON.stringify(result))
+
+    await manager.applyUpdate()
+
+    expect(existsSync(join(home.stateDir, 'marker.json'))).toBe(false)
+    expect(scheduleExitCalls).toBe(0)
+
+    const surface = store.getSurface(UPDATE_SURFACE_ID)
+    const badge = findNode(surface!.tree, 'update-outcome-badge')
+    expect(badge?.props?.['text']).toBe('an update is already in progress')
+    expect(badge?.props?.['tone']).toBe('danger')
   })
 })
 
@@ -361,6 +502,99 @@ describe('UpdateManager boot-time result ingestion', () => {
     const surface = store.getSurface(UPDATE_SURFACE_ID)
     expect(findNode(surface!.tree, 'update-outcome-badge')?.props?.['tone']).toBe('danger')
 
+    booted.dispose()
+  })
+
+  it('a day-log fsync failure leaves the ack unwritten and result.json untouched, for the next boot to retry', async () => {
+    const home = resolveUpdateHome(updateHomeDir)
+    mkdirSync(home.stateDir, { recursive: true })
+    const result: UpdateResult = {
+      id: 'result-fsync-fail',
+      outcome: 'success',
+      fromVersion: '1.0.0',
+      toVersion: '1.1.0',
+      reason: '',
+      finishedAt: now().toISOString(),
+    }
+    const resultFile = join(home.stateDir, 'result.json')
+    writeFileSync(resultFile, JSON.stringify(result))
+
+    const booted = buildManager({ installedVersion: '1.1.0' })
+    booted.register()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(
+      booted as unknown as { fsyncDayLog: (atIso: string) => void },
+      'fsyncDayLog',
+    ).mockImplementation(() => {
+      throw new Error('simulated day-log fsync failure')
+    })
+
+    await (booted as unknown as { ingestResult: (path: string) => Promise<void> }).ingestResult(
+      resultFile,
+    )
+
+    // No ack, ever — the fix's core guarantee: a failure between the event
+    // append and the fsync must not tell the wrapper the outcome is durably
+    // recorded when it might not be.
+    expect(existsSync(join(home.stateDir, `result-acked-${result.id}`))).toBe(false)
+    expect(existsSync(resultFile)).toBe(true)
+    expect(notifications.some((notification) => notification.level === 'badge')).toBe(false)
+
+    errorSpy.mockRestore()
+    booted.dispose()
+  })
+
+  it('a crash between the event append and the ack (simulated by a throwing ack write) is recovered by a second ingestion: exactly one event, Surface/badge completed, ack written', async () => {
+    const home = resolveUpdateHome(updateHomeDir)
+    mkdirSync(home.stateDir, { recursive: true })
+    const result: UpdateResult = {
+      id: 'result-crash-after-event',
+      outcome: 'success',
+      fromVersion: '1.0.0',
+      toVersion: '1.1.0',
+      reason: '',
+      finishedAt: now().toISOString(),
+    }
+    const resultFile = join(home.stateDir, 'result.json')
+    writeFileSync(resultFile, JSON.stringify(result))
+
+    const booted = buildManager({ installedVersion: '1.1.0' })
+    booted.register()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const ingest = (
+      booted as unknown as { ingestResult: (path: string) => Promise<void> }
+    ).ingestResult.bind(booted)
+    vi.spyOn(
+      booted as unknown as { writeAckFile: (id: string) => void },
+      'writeAckFile',
+    ).mockImplementationOnce(() => {
+      throw new Error('simulated crash before the ack file was durably written')
+    })
+
+    await ingest(resultFile)
+
+    // First attempt: the event was appended and the Surface/badge were
+    // patched — only the (simulated) crash on the ack write was withheld.
+    expect(existsSync(join(home.stateDir, `result-acked-${result.id}`))).toBe(false)
+    expect(
+      store.eventLog(SYSTEM_SPACE_ID).filter((event) => event.type === 'update.outcome'),
+    ).toHaveLength(1)
+    expect(notifications.filter((notification) => notification.level === 'badge')).toHaveLength(1)
+
+    // Second attempt: the event already exists (the dedupe path), so it is
+    // never appended twice — but the ack is still missing, so this call must
+    // (re-)ensure the Surface/badge exist before finally acking.
+    await ingest(resultFile)
+
+    expect(existsSync(join(home.stateDir, `result-acked-${result.id}`))).toBe(true)
+    expect(
+      store.eventLog(SYSTEM_SPACE_ID).filter((event) => event.type === 'update.outcome'),
+    ).toHaveLength(1)
+
+    const surface = store.getSurface(UPDATE_SURFACE_ID)
+    expect(findNode(surface!.tree, 'update-outcome-badge')?.props?.['tone']).toBe('success')
+
+    errorSpy.mockRestore()
     booted.dispose()
   })
 })
