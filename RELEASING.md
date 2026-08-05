@@ -20,6 +20,31 @@ the real `minisign` CLI.
 - `openssl` (for `deploy/release.sh`'s base64 handling — present on virtually every machine
   already).
 
+## (0) Optional: rehearse the whole path with throwaway keys
+
+Before minting the real root key — the one every installation will pin forever — you can
+exercise the entire update path against a live instance with disposable keys and a loopback
+feed:
+
+```sh
+pnpm --filter @veduta/daemon exec tsx ../../scripts/rehearse-update.ts \
+  --base-dir ~/.veduta-local-vps --version 0.0.1
+```
+
+It stages a release from the current checkout, signs it with a fresh throwaway two-tier chain,
+writes the pinning file, and serves the feed on `127.0.0.1` until you stop it. Restart the
+daemon so it picks up the pinning file, then drive "Check now" → "Apply update" from the Home.
+The verification chain, the transaction, the backup, the health check and the rollback are the
+same code a real release goes through; only the trust anchor and the feed host are disposable.
+
+Run it on the machine that hosts the daemon: the updater refuses non-HTTPS feeds from anything
+but loopback, which is exactly what makes a local rehearsal feed acceptable and a remote plain
+HTTP feed impossible.
+
+Throw the staging directory away afterwards (`rm -rf <base-dir>/rehearsal`), and remember that
+the pinning file it wrote points at a key you are about to discard — replace or delete it before
+the instance is expected to accept real releases.
+
 ## (a) One-time: the key ceremony
 
 Do this once, before the first signed release ever exists.
