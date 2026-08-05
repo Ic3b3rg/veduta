@@ -26,7 +26,8 @@
 #                                can legitimately be empty, and update-cli needs this value to
 #                                record a real executor rather than leaving that field empty.
 #   VEDUTA_UPDATE_READY_TIMEOUT Seconds to wait for a new release to print its ready line before
-#                                rolling back. Default: 90.
+#                                rolling back. Default: 600 -- see the constant's own comment for
+#                                why generous is the right direction here.
 #   Everything else (PORT, VEDUTA_PUBLIC_DOMAIN, VEDUTA_ACME_EMAIL, ...) passes straight through
 #   to the daemon child, unmodified -- this script never filters or rewrites the environment.
 #
@@ -48,7 +49,16 @@
 set -euo pipefail
 
 LEGACY_ROOT="${VEDUTA_LEGACY_ROOT:-/opt/veduta}"
-READY_TIMEOUT="${VEDUTA_UPDATE_READY_TIMEOUT:-90}"
+# How long stage 2 waits for a NEW release to print its ready line before rolling it back.
+# Deliberately generous, because the two failure modes are not symmetric. A release that starts
+# and then DIES is caught within about a second by the done-marker check inside the wait loop
+# below -- it never waits this out. This budget therefore bounds only the release that starts and
+# hangs: the rare case. What it costs when it fires is downtime before the automatic rollback
+# begins; what a tight budget costs is rolling back a perfectly good release merely because the
+# host was slow, which is the likelier accident on the small VPS this project targets -- observed
+# for real on a loaded 2-core CI runner, where a healthy release needed longer than 90s to boot
+# and was reverted for it. Overridable with VEDUTA_UPDATE_READY_TIMEOUT.
+READY_TIMEOUT="${VEDUTA_UPDATE_READY_TIMEOUT:-600}"
 
 # Resolves releases/current to its RESOLVED target directory (never the literal symlink path
 # itself -- see the header comment): a plain `readlink` is enough because the symlink's target is
