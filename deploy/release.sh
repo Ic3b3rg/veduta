@@ -10,7 +10,7 @@
 #   deploy/release.sh sign <release.json> --key <signing.key>
 #   deploy/release.sh promote <release.json> <release.json.minisig> \
 #     --signing-pub <signing.pub> --signing-pub-sig <signing.pub.minisig> \
-#     --out feed/stable.json --artifact-url <url> [--key-id <id>]
+#     --out feed/stable.json [--artifact-url <url>] [--key-id <id>]
 #   deploy/release.sh verify <stable.json> --root-pub <root.pub>
 #
 # `stable.json`'s shape matches `UpdateManifestSchema` in packages/protocol/src/update.ts
@@ -18,6 +18,13 @@
 # re-serialized -- decoding and re-encoding the object would change key order/whitespace and
 # break signature verification the moment a byte differs), `releaseSig`/`signingKey.pub`/
 # `signingKey.rootSig` are the verbatim text of the corresponding minisign files.
+#
+# `--artifact-url` is required only for releases whose signed metadata has no `artifactUrl`
+# (issue #46, ReleaseMetadataSchema in packages/protocol/src/update.ts -- the field is optional
+# there so releases signed before it existed still parse). When the signed release.json DOES
+# carry an `artifactUrl`, that value wins: `--artifact-url` becomes optional, and if given must
+# match the signed one exactly, or promotion fails rather than silently advertising a download
+# target the signature does not cover.
 #
 # No jq, no python3: like deploy/install.sh's own escape_json_string, JSON is hand-assembled
 # with printf/awk/sed. The only multi-line values this script ever embeds into JSON are
@@ -55,11 +62,38 @@ require_tool() {
 # Extracts the string value of a top-level (or single-nested) JSON field from a file this
 # script itself wrote in the fixed one-field-per-line layout below (`printf '  "name": "%s"'`
 # per line) -- not a general JSON parser. Field names in this schema are unique across the
-# whole document, so a single anchored grep is enough.
+# whole document, so a single anchored grep is enough. The match is anchored to the start of
+# the line (only leading whitespace before the quoted name) rather than a bare substring
+# search: an unanchored grep against a `release.json` that is not this script's own 2-space
+# pretty-print -- anything compact, e.g. minified to one line -- can match the *whole
+# document* as "the line", and if the trailing sed then fails to isolate a value it prints
+# that unchanged input right back out, silently handing the caller an entire JSON blob as if
+# it were a field's value. Prints failure (empty output, non-zero return) instead whenever
+# the anchored match is missing OR the sed substitution did not actually fire -- detected by
+# comparing the "extracted" value against the whole matched line, since a real string value
+# can never equal a line that still carries the field's own name, colon and quoting.
+json_get_field_or_fail() {
+  local file="$1" name="$2" line value
+  line=$(grep -m1 "^[[:space:]]*\"$name\":" "$file") || return 1
+  value=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*"'"$name"'":[[:space:]]*"(.*)",?[[:space:]]*$/\1/')
+  [ "$value" != "$line" ] || return 1
+  printf '%s' "$value"
+}
+
 json_get_field() {
-  local file="$1" name="$2" line
-  line=$(grep -m1 "\"$name\":" "$file") || error "field '$name' not found in $file"
-  printf '%s' "$line" | sed -E 's/^[[:space:]]*"'"$name"'":[[:space:]]*"(.*)",?[[:space:]]*$/\1/'
+  local file="$1" name="$2"
+  json_get_field_or_fail "$file" "$name" || error "field '$name' not found (or not in the expected one-field-per-line layout) in $file"
+}
+
+# Like json_get_field, but prints the empty string instead of failing when the field is absent
+# -- for fields ReleaseMetadataSchema (packages/protocol/src/update.ts) marks `.optional()`,
+# whose absence is expected in metadata signed before the field existed. Shares
+# json_get_field_or_fail's anchoring and malformed-match detection, so a compact document
+# fails the same way here as it does for json_get_field -- silently returning "absent" would
+# be just as wrong as silently returning a JSON blob.
+json_get_optional_field() {
+  local file="$1" name="$2"
+  json_get_field_or_fail "$file" "$name" || true
 }
 
 # Escapes a file's bytes into a JSON string body (no surrounding quotes): backslash and double
@@ -104,6 +138,17 @@ extract_key_id() {
   printf '%s' "${line##*key }"
 }
 
+# Pulls the authority (host, plus port when present) out of a URL via plain parameter
+# expansion -- no jq, no python3: strip the scheme up to "://", then keep everything up to
+# the first remaining "/". Used only to call the host out on its own line for a human to
+# actually look at (see cmd_sign): the full artifactUrl is printed too, but the host is
+# the part a maintainer signing a CI-computed URL needs to notice if it is wrong.
+url_host() {
+  local url="$1" rest
+  rest="${url#*://}"
+  printf '%s' "${rest%%/*}"
+}
+
 usage() {
   cat >&2 <<'EOF'
 Veduta release ceremony (see RELEASING.md for the full walkthrough)
@@ -112,7 +157,7 @@ Usage:
   deploy/release.sh sign <release.json> --key <signing.key>
   deploy/release.sh promote <release.json> <release.json.minisig>
       --signing-pub <signing.pub> --signing-pub-sig <signing.pub.minisig>
-      --out <stable.json> --artifact-url <url> [--key-id <id>]
+      --out <stable.json> [--artifact-url <url>] [--key-id <id>]
   deploy/release.sh verify <stable.json> --root-pub <root.pub>
   deploy/release.sh --help
 
@@ -126,6 +171,10 @@ sign uses the release's own artifactName field (packages/protocol/src/update.ts,
 promote  Assembles feed/stable.json (schema: UpdateManifestSchema) from a signed release.json,
          its .minisig, and the signing key's root-signed certificate. Run only after a release
          has soaked -- promotion is what makes it visible to the update feed.
+         --artifact-url is required only for releases whose signed metadata has no
+         `artifactUrl` (issue #46). When the signed release.json carries one, that value is
+         what goes into the manifest, --artifact-url is optional, and passing a conflicting
+         value is an error rather than a silent override.
 
 verify   Re-verifies the full trust chain (root -> signing key -> release metadata) of an
          already-promoted stable.json against a root public key, with the real minisign CLI,
@@ -158,13 +207,30 @@ cmd_sign() {
   artifact_name=$(json_get_field "$release_json" artifactName)
   [ -n "$artifact_name" ] || error "sign: could not read artifactName from $release_json"
 
+  # CI computes artifactUrl (issue #46, ReleaseMetadataSchema in packages/protocol/src/update.ts)
+  # from the repository, the tag and the asset name, and it becomes authoritative the moment
+  # this signature exists (promote prefers it over any --artifact-url, verify cross-checks
+  # against it) -- so the maintainer signing it must actually see it first, not just the
+  # trusted comment. The host is called out on its own line because it is the part worth a
+  # human's attention: the ADR keeps the signing key out of CI precisely so repository write
+  # access is not release-signing access, which blind-signing a CI-computed download host
+  # would quietly undo.
+  local artifact_url
+  artifact_url=$(json_get_optional_field "$release_json" artifactUrl)
+  if [ -n "$artifact_url" ]; then
+    printf 'about to sign artifactUrl: %s\n' "$artifact_url" >&2
+    printf '  host: %s\n' "$(url_host "$artifact_url")" >&2
+  else
+    printf 'about to sign: release metadata has no artifactUrl (signed before issue #46 added the field)\n' >&2
+  fi
+
   minisign -S -s "$key_path" -m "$release_json" -t "$artifact_name"
 
   printf 'signed %s -> %s.minisig (trusted comment: %s)\n' "$release_json" "$release_json" "$artifact_name" >&2
   printf 'next: upload %s.minisig as a release asset alongside %s, then run:\n' "$release_json" "$release_json" >&2
   printf '  deploy/release.sh promote %s %s.minisig \\\n' "$release_json" "$release_json" >&2
   printf '    --signing-pub <signing.pub> --signing-pub-sig <signing.pub.minisig> \\\n' >&2
-  printf '    --out feed/stable.json --artifact-url <release asset URL>\n' >&2
+  printf '    --out feed/stable.json [--artifact-url <release asset URL>]\n' >&2
 }
 
 # --- promote --------------------------------------------------------------------------------
@@ -205,7 +271,6 @@ cmd_promote() {
   [ -n "$signing_pub" ] || error "promote: --signing-pub is required"
   [ -n "$signing_pub_sig" ] || error "promote: --signing-pub-sig is required"
   [ -n "$out" ] || error "promote: --out is required"
-  [ -n "$artifact_url" ] || error "promote: --artifact-url is required"
   require_file "$release_json"
   require_file "$release_sig"
   require_file "$signing_pub"
@@ -216,6 +281,23 @@ cmd_promote() {
     key_id=$(extract_key_id "$signing_pub")
   fi
   [ -n "$key_id" ] || error "promote: could not determine a key id -- pass --key-id explicitly"
+
+  # artifactUrl (issue #46, ReleaseMetadataSchema in packages/protocol/src/update.ts) is signed
+  # into the release metadata itself whenever the release that produced it was built to carry
+  # one. When it is present, it -- not the flag -- is the value that goes into the manifest: a
+  # maintainer passing --artifact-url anyway must match it exactly, since a mismatch would mean
+  # promoting to a download target the signature does not cover. Only a release signed before
+  # this field existed (no signed artifactUrl at all) still needs --artifact-url supplied here.
+  local artifact_url_signed
+  artifact_url_signed=$(json_get_optional_field "$release_json" artifactUrl)
+  if [ -n "$artifact_url_signed" ]; then
+    if [ -n "$artifact_url" ] && [ "$artifact_url" != "$artifact_url_signed" ]; then
+      error "promote: --artifact-url '$artifact_url' does not match the signed artifactUrl '$artifact_url_signed' in $release_json"
+    fi
+    artifact_url="$artifact_url_signed"
+  else
+    [ -n "$artifact_url" ] || error "promote: --artifact-url is required (release metadata has no signed artifactUrl)"
+  fi
 
   local release_b64 release_sig_text pub_text pub_sig_text
   release_b64=$(openssl base64 -A -in "$release_json")
@@ -313,6 +395,25 @@ cmd_verify() {
   esac
   minisign -V -p "$tmp/signing.pub" -m "$tmp/release.json" -x "$tmp/release.json.minisig" >/dev/null
   printf 'OK: release metadata verified against signing key\n' >&2
+
+  # Step 3: when the release metadata carries a signed artifactUrl (issue #46,
+  # ReleaseMetadataSchema in packages/protocol/src/update.ts), it must equal the manifest's own
+  # artifactUrl field exactly. This is the one inconsistency the chain verification above
+  # cannot catch: a hand-edited feed/stable.json, or a merge that resolved the field wrong,
+  # still verifies signature-wise, but every installed instance would then refuse the release
+  # at apply time with "manifest artifactUrl does not match the signed artifactUrl" -- an
+  # outage found from user reports instead of at this last gate before the feed is committed.
+  # A release signed before the field existed carries none, and is verified exactly as before.
+  local artifact_url_signed
+  artifact_url_signed=$(json_get_optional_field "$tmp/release.json" artifactUrl)
+  if [ -n "$artifact_url_signed" ]; then
+    local artifact_url_manifest
+    artifact_url_manifest=$(json_get_field "$stable_json" artifactUrl)
+    if [ "$artifact_url_signed" != "$artifact_url_manifest" ]; then
+      error "manifest artifactUrl '$artifact_url_manifest' does not match the signed artifactUrl '$artifact_url_signed'"
+    fi
+    printf 'OK: manifest artifactUrl matches the signed artifactUrl\n' >&2
+  fi
 
   printf 'OK: full chain verified (root -> signing key -> release "%s")\n' "$artifact_name" >&2
 }

@@ -133,3 +133,149 @@ adversarial design review; the original decisions' goals are unchanged.
    `/etc/veduta/update.json`, written only by the installer (fork-overridable via installer
    flags). The wrapper self-updates last, atomically (temp + fsync + rename), only after the new
    release has passed the full health check.
+
+## Amendments (issue #46 implementation)
+
+Testing decision 7 (the artifact download) against a real, published GitHub release rather than
+a synthetic fixture broke it outright: nothing ever came down. What follows came out of tracing why
+and fixing it; none of it changes what issue #43 built, only where the trust boundary around the
+artifact fetch actually sits.
+
+1. **GitHub releases were unfetchable, full stop, and the ADR's own pin was the cause.**
+   `stageRelease` passed the pinned _feed_ host as the artifact download's allowed host, and the
+   fetch transport refused any redirect that changed host. Driving the production fetch code at
+   the real published v0.0.1 asset produced exactly this:
+
+   ```
+   REFUSED: refusing a cross-host redirect: github.com -> release-assets.githubusercontent.com
+   ```
+
+   GitHub's release-asset redirect lands on a `release-assets.githubusercontent.com` URL whose
+   query string carries a short-lived signed credential (`sig=`, `jwt=`). No release hosted the
+   way decision 2 describes — "CI builds `veduta-vX.Y.Z.tar.gz`" attached to a GitHub release —
+   could ever have been installed by decision 5's wrapper as written. The gap was invisible until
+   something actually dialed `github.com` for real.
+
+2. **The fix: `artifactUrl` joins the signed release metadata, and the host pin lifts only when
+   it is present.** `ReleaseMetadataSchema` (`packages/protocol/src/update.ts`) gains an optional
+   `artifactUrl`. Optional so a release signed before the field existed still parses — but the
+   updater does not simply fall back and forget when it is absent; the two behaviors are mutually
+   exclusive and the absent case is exactly the pre-issue-#46 behavior, unchanged:
+
+   | Signed `artifactUrl`    | URL fetched                    | Host pin                         | Cross-host redirects       |
+   | ----------------------- | ------------------------------ | -------------------------------- | -------------------------- |
+   | present                 | the signed one                 | none                             | allowed, https only        |
+   | absent (legacy release) | the manifest's, via the marker | the feed host, exactly as before | refused, exactly as before |
+
+   Nothing is relaxed for a release that cannot prove where its bytes live. The reasoning for why
+   this is safe rather than a hole reopened under a different name: `artifactUrl` was previously
+   only present in `UpdateManifestSchema` (the feed) and `UpdateMarkerSchema` — both **unsigned**.
+   The original host pin was therefore never a defense against a compromised _signing key_ — a
+   signing-key holder already controls the bytes the URL points at, so following that URL across
+   hosts grants them nothing they lack. It was the only thing standing between a **feed-level**
+   attacker (one who can edit `stable.json` but does not hold the signing key) and a fetch target
+   of their choosing: replay a genuinely-signed _newer_ release's metadata with a substituted
+   `artifactUrl`, and the chain still verifies, monotonicity still passes, the Update Surface
+   still offers it, and Apply issues a GET at whatever the attacker put in the manifest — from a
+   machine inside a home network. A hash mismatch, discovered only after that GET has already
+   fired, cannot un-issue the request. Moving the URL inside the signed bytes closes exactly that
+   gap: the party who chooses the fetch target is now the same party who already chooses the
+   bytes at that target, for every release built with this field.
+
+   That mismatch is refused twice, in two different processes, on purpose: visibly at check time
+   by the daemon (`update-manager.ts`'s `runCheck`, the same failed-check path a bad signature
+   takes, regardless of whether the offered version is newer), and again as a fail-safe by the
+   process that actually dials the URL (`update-transaction.ts`'s `stageRelease`) — because that
+   transaction, not the daemon, is what a marker written by a since-patched or misbehaving daemon
+   would otherwise steer unchecked.
+
+3. **What genuinely bounds the residual risk is TLS, not the signature.** Every hop in the fetch
+   — the initial URL and every redirect — must be https, and an https-to-http downgrade across a
+   redirect is refused (`fetch-policy.ts`'s `resolveRedirect`). A redirect target can therefore
+   only be a host that presented a certificate a browser-grade trust store accepts. That is what
+   actually stops the attacker the pin was informally imagined to stop: nobody positioned on the
+   home LAN, and nobody who can only steer the household's DNS resolver, can redirect this fetch
+   anywhere at all — TLS termination, not host allowlisting, is doing that work. Against a
+   signing-key holder, the relaxation does add one real capability: an arbitrary-https-target GET
+   issued from inside the home network, at a URL the signing key chose. Stated plainly rather
+   than minimized: that GET is invisible next to the arbitrary code execution the same key already
+   buys by signing whatever bytes it likes into the next release. Pretending the relaxation adds
+   meaningful risk on top of that would be theatre.
+
+4. **The feed fetch went the other way, and that was worse.** The _unsigned_ entry point —
+   `stable.json` itself — was the loose one: WHATWG `fetch`'s default `redirect: 'follow'` silently
+   follows a cross-host hop, and nothing checked for https at all (`UpdatePinningSchema` only
+   requires a well-formed URL, so a plain `http://` feed URL parsed and would have been used as
+   given). The posture was inverted: the hash-verified artifact fetch was strict about hosts and
+   the unsigned feed fetch was not. `fetchCapped` (`update-manager.ts`) now shares
+   `fetch-policy.ts`'s rules with the artifact transport: https-or-loopback, `redirect: 'manual'`
+   with every hop resolved through the same `resolveRedirect`, same-host hops only (the feed URL
+   itself is the pin — it comes from root-owned `update.json`, so there is no separate `pinnedHost`
+   parameter here, just "stay on this host"), and one abort budget shared across the whole
+   redirect chain rather than one per hop.
+
+5. **Timeouts, which the artifact transport had none of, and a budget shared across a whole
+   transaction.** The artifact fetch (`update-ports.ts`) had no connect, idle, or total deadline of
+   any kind, and drained a 3xx response body with no size cap while deciding whether to follow it.
+   Since the daemon is down for the entire update window (this ADR's core premise), a server that
+   accepts the connection and then stalls was not a slow download — it was an outage with no
+   timeout to end it. There is now an idle timeout (`DEFAULT_IDLE_TIMEOUT_MS`, 60 s: no bytes for
+   that long is a dead transfer on any link that can carry a multi-ten-megabyte artifact) and a
+   single total deadline (`FETCH_BUDGET_MS`, 30 minutes) **shared by every download one
+   transaction makes** — the artifact, the Node runtime tarball, and its `SHASUMS256.txt` all draw
+   down the same budget (`remainingFetchBudgetMs`) rather than each buying its own 30 minutes,
+   which would let one slow or hostile host hold an instance offline for the sum of all three.
+   Deliberately not done alongside this: no `timeout` was placed around the updater invocation in
+   `deploy/veduta-run`. A supervisor hard-killing a migrating updater is survivable — the journal
+   makes it resumable, per decision 4 — but which timeout value makes that trade well is its own
+   question, not a drive-by alongside a fetch-policy fix; the shared download budget already
+   removes the specific stall that motivated raising it.
+
+6. **A journal-derivation hardening the review of this change surfaced, unrelated to the artifact
+   URL itself but caught while reading the same code.** The transaction journal stores the
+   release metadata twice: `marker.release` holds the exact bytes the signing key signed, and a
+   separate `release` field held a parse of them that nothing re-checked once written. The
+   transaction now re-derives `release` from `marker.release` and re-runs `verifyReleaseChain`
+   every time execution reaches this point, under a guard widened from "only on a fresh start" to
+   "on every run that still has staging ahead of it" — so a resume at the `downloaded` or
+   `verified` phase, which still re-downloads the artifact, re-verifies the signature chain too.
+   Before this, such a resume re-downloaded with no signature check at all _in that run_ — it
+   trusted the parse a previous, already-verified run had left behind, which is safe only as long
+   as nothing on disk between runs can change that field. Only reachable by whoever can already
+   write to the update home, i.e. the `veduta` service account this ADR's Amendment 3 already
+   concedes a daemon-RCE attacker can persist as. That matters for a specific sentence:
+   `docs/SECURITY.md` §6 summarizes this whole mechanism as releases "checked entirely by the
+   updater itself before anything is downloaded or installed." That sentence is not about hashing
+   bytes that do not yet exist — it means the offer's signature chain is verified before the
+   artifact download begins, in every run of the transaction, including a resumed one. Before this
+   amendment it was not quite true for the resumed-at-`downloaded`/`verified` case above; it is
+   true now, and this amendment is what makes it true rather than merely asserted.
+
+7. **Alternatives rejected.** An explicit `artifactHost` field in the pinning file, checked
+   instead of the full URL: rejected outright, because it does not solve the actual problem —
+   `github.com` and `release-assets.githubusercontent.com` are different registrable domains, so
+   pinning either one still refuses the other and GitHub-hosted releases remain unfetchable, which
+   is the whole defect this amendment exists to fix. Self-hosting artifacts on the feed host, so
+   the existing feed-host pin covers the artifact too: rejected as a tax on wherever the feed is
+   served from — roughly 63 MB per release, forever, on infrastructure that exists to serve a few
+   kilobytes of JSON — and it abandons GitHub Releases' natural home for the build-provenance
+   attestation (`actions/attest-build-provenance`, `RELEASING.md` §(e)) for no security benefit,
+   since the artifact's integrity already rests on the signed hash, not on its host. A
+   `basename(artifactUrl) === artifactName` check as a lighter-weight substitute for signing the
+   full URL: rejected as decorative once the URL is inside the signed bytes — an attacker who
+   cannot forge the signature already cannot substitute a URL at all, signed or not, so a basename
+   check adds a comparison with nothing left for it to catch.
+
+8. **v0.0.1 does not become installable by this change alone.** Its already-signed metadata
+   predates the `artifactUrl` field, so a fixed instance offered v0.0.1 still holds it to the
+   feed-host pin and still refuses the real GitHub asset — exactly the legacy row of the table in
+   Amendment 2, working as designed. `feed/stable.json` is deliberately not committed. A working
+   one-tap install of a real GitHub-hosted release needs a v0.0.2 cut after this amendment lands,
+   whose CI-built `release.json` carries the signed URL from the start. What this amendment does
+   have in hand without that cut: the production fetch path (`fetchChecked`,
+   `resolveRedirect`, `assertFetchableUrl`) driven directly at the real published v0.0.1 asset,
+   following the real GitHub → `release-assets.githubusercontent.com` redirect end to end, with
+   the downloaded bytes' sha256 matching the release's signed value; and the rehearsal harness
+   (`scripts/rehearse-update.ts`, `RELEASING.md` §0) performing a real one-tap install across a
+   redirect between two loopback hosts, exercising the cross-host hop itself rather than only a
+   same-host download.

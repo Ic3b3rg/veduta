@@ -272,13 +272,20 @@ jobs:
       # (packages/protocol/src/update.ts) field-for-field, including `nodeSha256` -- the
       # updater verifies the downloaded Node runtime tarball against this signed hash directly,
       # rather than trusting the `SHASUMS256.txt` fetched from the same dist host it just
-      # downloaded the tarball from. Deliberately UNSIGNED: CI never holds the signing key
-      # (docs/adr/0013-signed-self-update.md, "Considered options" -- "CI-held signing key:
-      # rejected").
+      # downloaded the tarball from -- and `artifactUrl`, signed so that the update feed
+      # (`feed/stable.json`, unsigned) can never pick the updater's download target itself;
+      # only whoever holds the signing key can. The URL is knowable before signing because a
+      # GitHub release asset's public download URL is fully determined by the tag and the
+      # asset's file name, both already fixed at this point in the job:
+      # `https://github.com/<owner>/<repo>/releases/download/<tag>/<artifactName>`.
+      # Deliberately UNSIGNED here (the whole file, `artifactUrl` included): CI never holds
+      # the signing key (docs/adr/0013-signed-self-update.md, "Considered options" -- "CI-held
+      # signing key: rejected").
       - name: Write unsigned release.json
         env:
           VERSION: ${{ steps.version.outputs.version }}
           ARTIFACT_NAME: ${{ steps.assemble.outputs.artifact-name }}
+          ARTIFACT_URL: https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/${{ steps.assemble.outputs.artifact-name }}
           SHA256: ${{ steps.assemble.outputs.sha256 }}
           ARTIFACT_SIZE: ${{ steps.assemble.outputs.artifact-size }}
           UNPACKED_SIZE: ${{ steps.counts.outputs.unpacked-size }}
@@ -296,6 +303,7 @@ jobs:
             const release = {
               version: process.env.VERSION,
               artifactName: process.env.ARTIFACT_NAME,
+              artifactUrl: process.env.ARTIFACT_URL,
               sha256: process.env.SHA256,
               artifactSize: Number(process.env.ARTIFACT_SIZE),
               unpackedSize: Number(process.env.UNPACKED_SIZE),

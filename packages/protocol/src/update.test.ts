@@ -39,6 +39,21 @@ describe('ReleaseMetadataSchema', () => {
     expect(parsed.notes).toBe('Fixes the widget.')
   })
 
+  it('accepts a valid artifactUrl', () => {
+    const parsed = ReleaseMetadataSchema.parse({
+      ...validRelease,
+      artifactUrl: 'https://updates.veduta.example/releases/v1.2.3/veduta-v1.2.3-linux.tar.gz',
+    })
+    expect(parsed.artifactUrl).toBe(
+      'https://updates.veduta.example/releases/v1.2.3/veduta-v1.2.3-linux.tar.gz',
+    )
+  })
+
+  it('accepts a release with artifactUrl absent (the legacy shape)', () => {
+    const parsed = ReleaseMetadataSchema.parse(validRelease)
+    expect(parsed.artifactUrl).toBeUndefined()
+  })
+
   it.each([
     ['non-semver version', { ...validRelease, version: 'v1.2.3' }],
     ['too-short sha256', { ...validRelease, sha256: 'a'.repeat(63) }],
@@ -48,6 +63,7 @@ describe('ReleaseMetadataSchema', () => {
     ['fractional entryCount', { ...validRelease, entryCount: 1.5 }],
     ['dataVersion below 1', { ...validRelease, dataVersion: 0 }],
     ['missing nodeVersion', { ...validRelease, nodeVersion: '' }],
+    ['non-URL artifactUrl', { ...validRelease, artifactUrl: 'not-a-url' }],
   ])('rejects %s', (_label, input) => {
     expect(ReleaseMetadataSchema.safeParse(input).success).toBe(false)
   })

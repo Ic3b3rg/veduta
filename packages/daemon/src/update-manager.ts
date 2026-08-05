@@ -31,6 +31,7 @@ import { untrustedOrigin, type Origin } from './taint.ts'
 import { writeJsonAtomic } from './update/update-atomic.ts'
 import { checkMonotonic, verifyReleaseChain } from './update/minisign.ts'
 import { readDataVersion } from './update/data-version.ts'
+import { assertFetchableUrl, describeUrl, resolveRedirect } from './update/fetch-policy.ts'
 import {
   resolveUpdateHome,
   sweepAckedResult,
@@ -125,7 +126,21 @@ function notifiedFilePath(home: UpdateHome, id: string): string {
   return join(home.stateDir, `result-notified-${id}`)
 }
 
-/** Reads the response body up to `maxBytes`, aborting past the cap — never buffers an unbounded feed response. */
+/**
+ * Reads the response body up to `maxBytes`, aborting past the cap — never
+ * buffers an unbounded feed response. This is the *unsigned* entry point
+ * (issue #46, `docs/adr/0013-signed-self-update.md`): nothing about the feed
+ * is covered by a signature until after this call returns and
+ * `verifyReleaseChain` runs, so it is the one fetch in the update path that
+ * must stay host-strict rather than the hash-verified artifact download
+ * (`update/update-ports.ts`), which is deliberately allowed to hop across
+ * hosts. `redirect: 'manual'` keeps the platform from silently following a
+ * host-changing hop on our behalf; every 3xx is instead resolved through
+ * `fetch-policy.ts`'s `resolveRedirect` with `allowCrossHostRedirects: false`,
+ * the same pinned-host discipline as the initial URL. One `AbortController`/timer
+ * is created once and reused for every hop, so a chain of slow redirects
+ * cannot each buy the fetch a fresh deadline.
+ */
 async function fetchCapped(
   fetchImpl: typeof fetch,
   url: string,
@@ -135,32 +150,77 @@ async function fetchCapped(
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetchImpl(url, { signal: controller.signal })
-    if (!response.ok) {
-      throw new Error(`update feed fetch failed: HTTP ${response.status} from ${url}`)
-    }
-    if (!response.body) {
-      const bytes = Buffer.from(await response.arrayBuffer())
-      if (bytes.length > maxBytes) {
-        throw new Error(`update feed response from ${url} exceeded ${maxBytes} bytes`)
-      }
-      return bytes
-    }
-    const reader = response.body.getReader()
-    const chunks: Buffer[] = []
-    let total = 0
+    let current = new URL(url)
+    // The feed URL itself *is* the pin — it comes from the root-owned
+    // pinning file (`update.json`), not from anything the feed could
+    // influence — so no `pinnedHost` here; `resolveRedirect` below is what
+    // then holds every subsequent hop to this same host.
+    assertFetchableUrl(current, { what: 'update feed' })
+
+    let depth = 0
     for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (!value) continue
-      total += value.length
-      if (total > maxBytes) {
-        await reader.cancel()
-        throw new Error(`update feed response from ${url} exceeded ${maxBytes} bytes`)
+      const response = await fetchImpl(current.href, {
+        signal: controller.signal,
+        redirect: 'manual',
+      })
+
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location')
+        // Never left dangling: a 3xx body this code has already decided not
+        // to read is, left open, an unbounded read with no `maxBytes`
+        // applied to it.
+        if (response.body) await response.body.cancel().catch(() => {})
+        if (location === null) {
+          throw new Error(
+            `update feed redirect from ${describeUrl(current)} carried no Location header`,
+          )
+        }
+        current = resolveRedirect({
+          current,
+          location,
+          depth,
+          allowCrossHostRedirects: false,
+        })
+        depth += 1
+        continue
       }
-      chunks.push(Buffer.from(value))
+
+      if (!response.ok) {
+        // Same reasoning as the 3xx cancel above: a response body this code
+        // has already decided not to read is, left open, an unbounded read
+        // with no `maxBytes` applied to it.
+        if (response.body) await response.body.cancel().catch(() => {})
+        throw new Error(
+          `update feed fetch failed: HTTP ${response.status} from ${describeUrl(current)}`,
+        )
+      }
+      if (!response.body) {
+        const bytes = Buffer.from(await response.arrayBuffer())
+        if (bytes.length > maxBytes) {
+          throw new Error(
+            `update feed response from ${describeUrl(current)} exceeded ${maxBytes} bytes`,
+          )
+        }
+        return bytes
+      }
+      const reader = response.body.getReader()
+      const chunks: Buffer[] = []
+      let total = 0
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (!value) continue
+        total += value.length
+        if (total > maxBytes) {
+          await reader.cancel()
+          throw new Error(
+            `update feed response from ${describeUrl(current)} exceeded ${maxBytes} bytes`,
+          )
+        }
+        chunks.push(Buffer.from(value))
+      }
+      return Buffer.concat(chunks)
     }
-    return Buffer.concat(chunks)
   } finally {
     clearTimeout(timer)
   }
@@ -336,6 +396,26 @@ export class UpdateManager {
         expectedArtifactName: metadata.artifactName,
         expectedSigningKeyId: manifest.signingKey.keyId,
       })
+
+      // The manifest's own `artifactUrl` (`UpdateManifestSchema`) is
+      // unsigned; only the one embedded in the signed release metadata
+      // (`ReleaseMetadataSchema`) is covered by `verifyReleaseChain` above.
+      // A feed that replays a genuinely-signed release while substituting
+      // its own manifest `artifactUrl` would otherwise pass every check
+      // above and have `applyUpdate` copy that unsigned URL straight into
+      // the marker (`packages/protocol/src/update.ts`'s `artifactUrl` doc
+      // comment). Checked here, the same failed-check path a bad signature
+      // takes, regardless of whether the version turns out to be newer —
+      // `update/update-transaction.ts` re-checks this same condition
+      // independently at apply time as a fail-safe (issue #46), so both
+      // refusing the same feed is by design, not duplication.
+      if (metadata.artifactUrl !== undefined && metadata.artifactUrl !== manifest.artifactUrl) {
+        throw new Error(
+          `manifest artifactUrl does not match the signed artifactUrl: ${describeUrl(
+            new URL(manifest.artifactUrl),
+          )} != ${describeUrl(new URL(metadata.artifactUrl))}`,
+        )
+      }
 
       const nowIso = this.now().toISOString()
       const isNewer = compareVersions(metadata.version, this.installedVersion) > 0

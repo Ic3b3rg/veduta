@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ReleaseMetadata } from '@veduta/protocol'
-import { fetchChecked, type Ports } from './update-ports.ts'
+import { fetchChecked, remainingFetchBudgetMs, type Ports } from './update-ports.ts'
 
 /**
  * Ensures the Node runtime a release needs is present (issue #43,
@@ -18,6 +18,8 @@ export interface EnsureRuntimeDeps {
   home: { runtimesDir: string; tmpDir: string }
   ports: Ports
   env: NodeJS.ProcessEnv
+  /** Absolute `Date.now()`-scale deadline shared with every other download the calling transaction makes — see `update-transaction.ts`'s `Ctx.fetchDeadlineAt`. The runtime tarball and its `SHASUMS256.txt` draw from the same budget as the artifact, never their own. */
+  fetchDeadlineAt: number
   log: (line: string) => void
 }
 
@@ -79,20 +81,18 @@ export async function ensureRuntime(
   const tarUrl = `${distBase}/v${version}/${tarName}`
   const shasumsUrl = `${distBase}/v${version}/SHASUMS256.txt`
 
-  const tarBytes = await fetchChecked(
-    deps.ports,
-    tarUrl,
-    distHost,
-    release.nodeTarSize,
-    'node runtime tarball',
-  )
-  const shasumsBytes = await fetchChecked(
-    deps.ports,
-    shasumsUrl,
-    distHost,
-    5_000_000,
-    'node SHASUMS256.txt',
-  )
+  const tarBytes = await fetchChecked(deps.ports, tarUrl, {
+    what: 'node runtime tarball',
+    maxBytes: release.nodeTarSize,
+    pinnedHost: distHost,
+    totalTimeoutMs: remainingFetchBudgetMs(deps),
+  })
+  const shasumsBytes = await fetchChecked(deps.ports, shasumsUrl, {
+    what: 'node SHASUMS256.txt',
+    maxBytes: 5_000_000,
+    pinnedHost: distHost,
+    totalTimeoutMs: remainingFetchBudgetMs(deps),
+  })
   const shasumsHash = findShasumLine(shasumsBytes.toString('utf8'), tarName)
   const actualSha = createHash('sha256').update(tarBytes).digest('hex')
 

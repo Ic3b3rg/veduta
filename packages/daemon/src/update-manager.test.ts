@@ -75,6 +75,20 @@ let root: GeneratedKeypair
 let notifications: { level: string; spaceId: string; text: string; origin?: string }[]
 let scheduleExitCalls: number
 let manager: UpdateManager
+let port: number
+
+/**
+ * Overrides the fixture server's response to the exact `/stable.json` path
+ * for the rest of the current test (issue #46's redirect tests) — it is only
+ * ever cleared by `beforeEach`, never after a single request. `undefined`
+ * (the default) is today's plain 200 + `feedBody` for every path, which every
+ * pre-existing test still gets since none of them ever set this. A redirect
+ * target (any path other than `/stable.json`, e.g. the "same host" redirect
+ * test's destination) always falls through to that same plain 200 +
+ * `feedBody` response regardless of this override, so a followed same-host
+ * redirect verifies exactly like an unredirected fetch.
+ */
+let feedOverride: { status: number; headers?: Record<string, string> } | undefined
 
 /**
  * Rebuilds `feedBody` with a fresh signing key certified by the fixture's
@@ -152,12 +166,18 @@ beforeEach(async () => {
   ensureSystemSpace(store.spacesEngine)
   scheduler = new Scheduler({ rootDir, store, now })
 
-  server = createServer((_request, response) => {
+  feedOverride = undefined
+  server = createServer((request, response) => {
+    if (feedOverride && request.url === '/stable.json') {
+      response.writeHead(feedOverride.status, feedOverride.headers ?? {})
+      response.end()
+      return
+    }
     response.writeHead(200, { 'content-type': 'application/json' })
     response.end(feedBody)
   })
   await new Promise<void>((resolvePromise) => server.listen(0, '127.0.0.1', () => resolvePromise()))
-  const port = (server.address() as AddressInfo).port
+  port = (server.address() as AddressInfo).port
 
   root = generateKeypair()
   const pinning: UpdatePinning = {
@@ -361,6 +381,103 @@ describe('UpdateManager.runCheck', () => {
     expect(badge?.props?.['text']).toBe('Updated to 1.0.0')
     expect(badge?.props?.['tone']).toBe('success')
   })
+
+  // The pinning file's `rootPublicKey` never has to be *this* fixture's own
+  // `root` for these — the feed is refused before it is ever fetched or
+  // parsed.
+  it('a feed URL on plain http at a non-loopback host fails the check with a clear reason (issue #46)', async () => {
+    const badPinningPath = join(rootDir, 'update-bad-host.json')
+    writeFileSync(
+      badPinningPath,
+      JSON.stringify({
+        feedUrl: 'http://example.com/stable.json',
+        rootPublicKey: root.publicKeyText,
+      }),
+    )
+    const badManager = buildManager({ pinningPath: badPinningPath })
+
+    const outcome = await badManager.runCheck('manual')
+    expect(outcome).toMatch(/^check-failed:/)
+
+    const failure = store.eventLog(SYSTEM_SPACE_ID).find((event) => event.type === 'update.check')
+    expect(String(failure?.payload?.['reason'])).toMatch(
+      /refusing a non-https URL from a non-loopback host/,
+    )
+
+    badManager.dispose()
+  })
+
+  it('a feed that answers 302 to a different host fails the check (issue #46)', async () => {
+    manager.register()
+    // `::1` and `127.0.0.1` are both loopback (so the redirect target itself
+    // passes `assertFetchableUrl`) but normalize to different hostnames, so
+    // this exercises the cross-host refusal specifically, not the
+    // https-or-loopback one — `resolveRedirect` throws before ever dialing
+    // the (nothing-listening-there) target.
+    feedOverride = { status: 302, headers: { location: `http://[::1]:${port}/stable.json` } }
+
+    const outcome = await manager.runCheck('manual')
+    expect(outcome).toMatch(/^check-failed:/)
+
+    const failure = store.eventLog(SYSTEM_SPACE_ID).find((event) => event.type === 'update.check')
+    expect(String(failure?.payload?.['reason'])).toMatch(/refusing a cross-host redirect/)
+    expect(store.eventLog(SYSTEM_SPACE_ID).some((event) => event.type === 'update.available')).toBe(
+      false,
+    )
+  })
+
+  it('a feed that answers 302 to the same host is followed and verifies (issue #46)', async () => {
+    manager.register()
+    serveRelease(defaultRelease({ version: '1.1.0' }))
+    feedOverride = { status: 302, headers: { location: '/stable-redirected.json' } }
+
+    const outcome = await manager.runCheck('manual')
+    expect(outcome).toBe('update-available:1.1.0')
+
+    const surface = store.getSurface(UPDATE_SURFACE_ID)
+    expect(findNode(surface!.tree, 'update-apply-button')).toBeDefined()
+  })
+
+  // No dedicated test for `http://127.0.0.1:…` feed URLs themselves: every
+  // test in this file already fetches the fixture server over plain
+  // loopback http via `pinning.feedUrl` (`beforeEach` above), so that path
+  // is already exercised throughout, including the two redirect tests just
+  // above and `applyUpdate`'s rehearsal-style flows below.
+
+  it('a manifest whose artifactUrl differs from the signed artifactUrl is refused and offers nothing (issue #46)', async () => {
+    manager.register()
+    // `serveRelease` always writes the *manifest's* own artifactUrl as the
+    // fixed `http://127.0.0.1:1/artifact.tar.gz` (unsigned); giving the
+    // *signed* release metadata a different one reproduces a feed that
+    // replays a genuinely-signed release while substituting its own
+    // unsigned redirect target.
+    serveRelease(
+      defaultRelease({
+        version: '1.1.0',
+        artifactUrl: 'http://127.0.0.1:1/substituted-artifact.tar.gz',
+      }),
+    )
+
+    const outcome = await manager.runCheck('manual')
+    expect(outcome).toMatch(/^check-failed:/)
+
+    const events = store.eventLog(SYSTEM_SPACE_ID)
+    const failure = events.find((event) => event.type === 'update.check')
+    expect(String(failure?.payload?.['reason'])).toMatch(
+      /manifest artifactUrl does not match the signed artifactUrl/,
+    )
+    expect(events.some((event) => event.type === 'update.available')).toBe(false)
+
+    const surface = store.getSurface(UPDATE_SURFACE_ID)
+    expect(findNode(surface!.tree, 'update-apply-button')).toBeUndefined()
+  })
+
+  // No dedicated test for a release *without* a signed artifactUrl: every
+  // other test in this describe block already builds its release via
+  // `defaultRelease()`, which leaves `artifactUrl` unset, and several of
+  // them (e.g. "discovers a newer, verified offer" above) assert the offer
+  // still appears — the legacy, unsigned-artifactUrl shape is already
+  // exercised throughout, not just here.
 })
 
 describe('UpdateManager.applyUpdate', () => {

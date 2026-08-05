@@ -10,6 +10,19 @@
  * install, before a real root key exists. It exercises the same code the real
  * updater runs; only the trust anchor and the feed host are disposable.
  *
+ * The signed `artifactUrl` (issue #46) names a path on the feed's own
+ * loopback host (`127.0.0.1`) — matching GitHub's own release-asset shape,
+ * where the URL a release names is a `github.com` path — and the feed
+ * server answers that path with a real HTTP 302 whose `Location` points at
+ * a second loopback host (`::1`) that actually serves the bytes. A real
+ * one-tap install through this rehearsal therefore exercises both halves of
+ * the fix end to end: the pin lift (the signed URL, not the feed host,
+ * decides where the download may follow) and the cross-host redirect hop
+ * itself, not a same-host download standing in for one. On a machine with
+ * no IPv6 loopback, it falls back to serving the artifact directly from the
+ * feed host with no redirect at all, and says so on stderr; the rehearsal
+ * still runs, it just can't demonstrate the redirect hop.
+ *
  * What it deliberately does NOT do: generate, read, or touch a production root
  * key. The keys minted here live in the staging directory and are meant to be
  * thrown away.
@@ -107,6 +120,57 @@ function buildArtifact(stagingRoot: string, version: string): string {
   return artifactPath
 }
 
+/** The feed always binds here — unchanged from before issue #46, and the host the pinning file still pins. */
+const FEED_HOST = '127.0.0.1'
+/** The artifact binds here when IPv6 loopback is available, deliberately a different host than the feed (issue #46). */
+const ARTIFACT_HOST = '::1'
+
+/** `http://host:port`, adding IPv6 bracket notation when the host needs it. */
+function formatOrigin(host: string, port: number): string {
+  return `http://${host.includes(':') ? `[${host}]` : host}:${port}`
+}
+
+/**
+ * Starts the artifact-only server on `ARTIFACT_HOST`, letting the kernel
+ * assign a free port. Returns its port, or `undefined` if that host has no
+ * loopback interface — a real condition on machines without IPv6 configured
+ * at all — in which case it prints why on stderr and lets the caller fall
+ * back to serving the artifact from the feed's own host and server.
+ */
+async function tryStartArtifactServer(
+  artifactName: string,
+  artifactBytes: Buffer,
+): Promise<{ server: ReturnType<typeof createServer>; port: number } | undefined> {
+  const server = createServer((request, response) => {
+    if (request.url === `/${artifactName}`) {
+      response.writeHead(200, { 'content-type': 'application/gzip' })
+      response.end(artifactBytes)
+      return
+    }
+    response.writeHead(404)
+    response.end()
+  })
+  try {
+    await new Promise<void>((done, reject) => {
+      server.once('error', reject)
+      server.listen(0, ARTIFACT_HOST, () => done())
+    })
+  } catch (error) {
+    server.close()
+    console.error(
+      `rehearse-update: no loopback interface on ${ARTIFACT_HOST} ` +
+        `(${error instanceof Error ? error.message : String(error)}); serving the artifact from ` +
+        'the feed host instead — this run cannot exercise the cross-host redirect fix (issue #46)',
+    )
+    return undefined
+  }
+  const address = server.address()
+  if (address === null || typeof address === 'string') {
+    throw new Error('rehearse-update: artifact server started without an assigned port')
+  }
+  return { server, port: address.port }
+}
+
 function nodeModulesDirs(): string[] {
   const dirs: string[] = []
   if (existsSync(join(REPO_ROOT, 'node_modules'))) dirs.push('node_modules')
@@ -147,9 +211,27 @@ async function main(): Promise<void> {
     recursive: true,
   })
 
+  // Started before the release metadata is assembled, so its (possibly IPv6)
+  // origin is known before the feed's own redirect route needs it below.
+  const artifactAttempt = await tryStartArtifactServer(artifactName, artifactBytes)
+  const feedOrigin = formatOrigin(FEED_HOST, port)
+  // Where the bytes actually come from: the artifact-only server's own
+  // origin when it bound, or the feed's own origin in the no-IPv6 fallback
+  // (in which case this equals feedOrigin and the redirect route below never
+  // fires — the feed server's own fallback branch serves the bytes instead).
+  const artifactOrigin = artifactAttempt
+    ? formatOrigin(ARTIFACT_HOST, artifactAttempt.port)
+    : feedOrigin
+  // The signed URL always names a path on the FEED origin, never the artifact
+  // origin directly — that is what makes the feed server's 302 below a real
+  // cross-host redirect hop rather than a same-host download that merely
+  // looks like one (issue #46).
+  const artifactUrl = `${feedOrigin}/${artifactName}`
+
   const release = {
     version,
     artifactName,
+    artifactUrl,
     sha256: createHash('sha256').update(artifactBytes).digest('hex'),
     artifactSize: artifactBytes.length,
     unpackedSize: unpackedBytes,
@@ -178,7 +260,8 @@ async function main(): Promise<void> {
     trustedComment: artifactName,
   })
 
-  const origin = `http://127.0.0.1:${port}`
+  // `manifest.artifactUrl` must equal the URL just signed into `release` —
+  // the updater refuses a marker whose URL disagrees with the signed one.
   const manifest = {
     schemaVersion: 1 as const,
     release: releaseBytes.toString('base64'),
@@ -188,23 +271,34 @@ async function main(): Promise<void> {
       rootSig: signingCert,
       keyId: publicKeyIdText(signing.publicKeyText),
     },
-    artifactUrl: `${origin}/${artifactName}`,
+    artifactUrl,
   }
 
   const pinningPath = join(baseDir, 'update.json')
   writeFileSync(
     pinningPath,
-    `${JSON.stringify({ feedUrl: `${origin}/stable.json`, rootPublicKey: root.publicKeyText }, null, 2)}\n`,
+    `${JSON.stringify({ feedUrl: `${feedOrigin}/stable.json`, rootPublicKey: root.publicKeyText }, null, 2)}\n`,
   )
 
   const manifestBody = Buffer.from(JSON.stringify(manifest), 'utf8')
-  const server = createServer((request, response) => {
+  const feedServer = createServer((request, response) => {
     if (request.url === '/stable.json') {
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(manifestBody)
       return
     }
     if (request.url === `/${artifactName}`) {
+      if (artifactAttempt !== undefined) {
+        // The cross-host redirect hop itself (issue #46): the signed URL is
+        // this feed-origin path, and this 302 is what actually sends the
+        // download to the artifact-only server's different loopback host —
+        // reproducing GitHub's own release-asset shape.
+        response.writeHead(302, { location: `${artifactOrigin}/${artifactName}` })
+        response.end()
+        return
+      }
+      // No-IPv6 fallback: the feed serves the bytes itself, same host, no
+      // redirect — this run cannot demonstrate the redirect hop.
       response.writeHead(200, { 'content-type': 'application/gzip' })
       response.end(artifactBytes)
       return
@@ -212,13 +306,19 @@ async function main(): Promise<void> {
     response.writeHead(404)
     response.end()
   })
-  await new Promise<void>((done) => server.listen(port, '127.0.0.1', () => done()))
+  await new Promise<void>((done) => feedServer.listen(port, FEED_HOST, () => done()))
 
   console.error('')
   console.error('  rehearsal feed ready')
-  console.error(`    feed          ${origin}/stable.json`)
+  console.error(`    feed          ${feedOrigin}/stable.json`)
+  console.error(`    artifact url  ${artifactUrl}  (signed, issue #46)`)
   console.error(
-    `    artifact      ${(artifactBytes.length / 1_048_576).toFixed(1)} MiB, ${entries} entries`,
+    artifactAttempt
+      ? `    redirect      302 from the feed -> ${artifactOrigin}/${artifactName} (cross-host)`
+      : '    redirect      none — no IPv6 loopback here, the feed serves the bytes itself',
+  )
+  console.error(
+    `    size          ${(artifactBytes.length / 1_048_576).toFixed(1)} MiB, ${entries} entries`,
   )
   console.error(`    version       ${version}  (dataVersion ${release.dataVersion})`)
   console.error(`    pinning       ${pinningPath}`)

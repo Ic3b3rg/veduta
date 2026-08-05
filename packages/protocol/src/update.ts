@@ -18,10 +18,33 @@ import { z } from 'zod'
  * mirror or CDN defeats — sizes alone cannot catch a substituted tarball. It is
  * optional so a manifest produced before the field existed still parses; the
  * updater then falls back to the weaker same-host checksum and says so.
+ *
+ * `artifactUrl` (issue #46) is signed for the same reason `nodeSha256` is:
+ * without it, the download target is chosen by whoever controls the feed
+ * (`stable.json`, `UpdateManifestSchema`) or the apply-time marker
+ * (`UpdateMarkerSchema`) — both unsigned — not by whoever holds the signing
+ * key. A feed attacker who cannot forge a signature can still replay a
+ * genuinely-signed newer release's bytes while substituting their own
+ * `artifactUrl`: the chain verifies, monotonicity passes, the Update Surface
+ * offers the release, and Apply issues a GET at a target the attacker picked
+ * — a target on a machine inside a home network. A later hash mismatch
+ * cannot un-issue that request. Putting the URL inside the signed bytes
+ * means the fetch target is chosen by the same party that already chooses
+ * the bytes, so following it across hosts grants no new capability. Optional,
+ * again so older releases still parse — but the consumer does not simply fall
+ * back and forget: the updater keeps the pre-existing feed-host pin and
+ * refuses cross-host redirects whenever the signed URL is absent, so an
+ * unsigned `artifactUrl` never buys the relaxed behaviour. `https` is
+ * deliberately not enforced here — local rehearsal feeds and the test
+ * fixtures build signed metadata with loopback `http://127.0.0.1:…` URLs —
+ * the https-or-loopback rule is enforced at fetch time
+ * (`packages/daemon/src/update/fetch-policy.ts`), where the loopback
+ * exception can be expressed.
  */
 export const ReleaseMetadataSchema = z.object({
   version: z.string().regex(/^\d+\.\d+\.\d+$/, 'version must be an x.y.z triple'),
   artifactName: z.string().min(1),
+  artifactUrl: z.string().url().optional(),
   sha256: z.string().regex(/^[0-9a-f]{64}$/, 'sha256 must be 64 lowercase hex characters'),
   artifactSize: z.number().int().positive(),
   unpackedSize: z.number().int().positive(),

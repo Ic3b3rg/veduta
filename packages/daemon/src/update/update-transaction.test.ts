@@ -30,6 +30,7 @@ import {
   sweepAckedResult,
   type ExecFileOptions,
   type ExecFileResult,
+  type FetchBytesOptions,
   type Ports,
   type UpdateHome,
   type UpdateTransactionOptions,
@@ -234,6 +235,10 @@ interface Fixture {
   ports: Ports
   installedVersion: string
   installedDataVersion: number
+  /** Every URL `ports.fetchBytes` was actually called with, in order. `requestedFetchOptions` below carries the options for those same calls, index-for-index, so a test can assert the redirect policy the transaction chose (issue #46) and not merely which URL it asked for. */
+  requestedUrls: string[]
+  /** The `FetchBytesOptions` `ports.fetchBytes` was actually called with, in order — see `requestedUrls`. Without this, a test could only observe *which URL* was requested, never whether the redirect posture (`allowCrossHostRedirects`) that URL was fetched under was the one `stageRelease` was supposed to compute. */
+  requestedFetchOptions: FetchBytesOptions[]
 }
 
 const FEED_HOST_URL = 'http://127.0.0.1:1'
@@ -329,8 +334,12 @@ async function buildFixture(
     const execBehavior = defaultExecBehavior()
     const logLines: string[] = []
     const statfsResult = { bavail: 100_000_000, bsize: 4096 }
+    const requestedUrls: string[] = []
+    const requestedFetchOptions: FetchBytesOptions[] = []
     const ports: Ports = {
-      fetchBytes: async (url) => {
+      fetchBytes: async (url, opts) => {
+        requestedUrls.push(url)
+        requestedFetchOptions.push(opts)
         const route = routes.get(url)
         if (route === undefined)
           throw new Error(`test fixture: no fake route registered for ${url}`)
@@ -359,6 +368,8 @@ async function buildFixture(
       ports,
       installedVersion: '0.0.1',
       installedDataVersion: 1,
+      requestedUrls,
+      requestedFetchOptions,
     }
   }
 
@@ -366,8 +377,12 @@ async function buildFixture(
   const execBehavior = defaultExecBehavior()
   const logLines: string[] = []
   const statfsResult = { bavail: 100_000_000, bsize: 4096 }
+  const requestedUrls: string[] = []
+  const requestedFetchOptions: FetchBytesOptions[] = []
   const ports: Ports = {
-    fetchBytes: async (url) => {
+    fetchBytes: async (url, opts) => {
+      requestedUrls.push(url)
+      requestedFetchOptions.push(opts)
       const route = routes.get(url)
       if (route === undefined) throw new Error(`test fixture: no fake route registered for ${url}`)
       return route
@@ -396,6 +411,62 @@ async function buildFixture(
     ports,
     installedVersion: '0.0.1',
     installedDataVersion: 1,
+    requestedUrls,
+    requestedFetchOptions,
+  }
+}
+
+/**
+ * Rebuilds `fixture` around a signed `release.artifactUrl` (issue #46): the
+ * chain has to be regenerated because `artifactUrl` is part of the signed
+ * release bytes, so `pinning.rootPublicKey` moves with it exactly like the
+ * node-runtime rebuild above does. The marker's own `artifactUrl` is set to
+ * agree with the signed one — a test that wants the mismatch case mutates it
+ * afterward. Returns the requested-URL log (and the `FetchBytesOptions` each
+ * call was made with, index-for-index) alongside the fixture so a test can
+ * assert exactly which URL (if any) `fetchBytes` was actually called with —
+ * and under which redirect posture — without a second fixture harness.
+ */
+function withSignedArtifactUrl(
+  fixture: Fixture,
+  artifactUrl: string,
+): { fixture: Fixture; requestedUrls: string[]; requestedFetchOptions: FetchBytesOptions[] } {
+  const release: ReleaseMetadata = { ...fixture.release, artifactUrl }
+  const chain = buildChain(release)
+  const marker = markerFrom(chain, artifactUrl)
+  const feedArtifactUrl = `${FEED_HOST_URL}/artifact/${fixture.release.artifactName}`
+  const artifactBytes = fixture.routes.get(feedArtifactUrl)?.bytes
+  if (artifactBytes === undefined) {
+    throw new Error('test setup: expected the feed artifact route to exist')
+  }
+  const routes = new Map(fixture.routes)
+  routes.set(artifactUrl, { status: 200, bytes: artifactBytes })
+  const requestedUrls: string[] = []
+  const requestedFetchOptions: FetchBytesOptions[] = []
+  const ports: Ports = {
+    ...fixture.ports,
+    fetchBytes: async (url, opts) => {
+      requestedUrls.push(url)
+      requestedFetchOptions.push(opts)
+      const route = routes.get(url)
+      if (route === undefined) throw new Error(`test fixture: no fake route registered for ${url}`)
+      return route
+    },
+  }
+  return {
+    fixture: {
+      ...fixture,
+      release,
+      chain,
+      marker,
+      pinning: { feedUrl: fixture.pinning.feedUrl, rootPublicKey: chain.rootPublicKeyText },
+      routes,
+      ports,
+      requestedUrls,
+      requestedFetchOptions,
+    },
+    requestedUrls,
+    requestedFetchOptions,
   }
 }
 
@@ -460,6 +531,16 @@ describe('runUpdateTransaction — happy path', () => {
     // The runtime was downloaded and verified.
     const runtimeDir = join(fixture.home.runtimesDir, `node-v${NODE_VERSION}-linux-${ARCH}`)
     expect(existsSync(join(runtimeDir, 'bin', 'node'))).toBe(true)
+
+    // The release artifact itself (the first fetch this transaction makes)
+    // is the legacy, no-signed-artifactUrl case: it must be downloaded
+    // without lifting the cross-host redirect restriction, and pinned to the
+    // feed's own host — never the lifted, unpinned posture a signed
+    // artifactUrl gets (issue #46).
+    expect(fixture.requestedFetchOptions[0]?.allowCrossHostRedirects).toBeFalsy()
+    expect(new URL(fixture.requestedUrls[0] ?? '').hostname).toBe(
+      new URL(fixture.pinning.feedUrl).hostname,
+    )
 
     // The pre-update backup exists.
     const backups = readdirSync(fixture.home.backupsDir)
@@ -585,19 +666,111 @@ describe('runUpdateTransaction — AC2-shape refusals (zero mutation)', () => {
     assertZeroMutation(fixture, seedBefore)
   })
 
-  it('refuses a renamed/substituted artifact (downloaded bytes do not hash to the signed sha256)', async () => {
+  it('refuses a renamed/substituted artifact (downloaded bytes do not hash to the signed sha256), including via a signed cross-host artifactUrl (issue #46)', async () => {
     const fixture = await buildFixture({ needsRuntime: false })
-    const seedBefore = seedFileContent(fixture.dataRootDir)
-    const artifactUrl = `${FEED_HOST_URL}/artifact/${fixture.release.artifactName}`
-    fixture.routes.set(artifactUrl, {
+    // Exercised over a signed, cross-host artifactUrl rather than the plain
+    // feed-host one: the hash check has to hold regardless of which host —
+    // or which pinning rule — served the bytes.
+    const crossHostUrl = `http://[::1]:1/artifact/${fixture.release.artifactName}`
+    const { fixture: signedFixture, requestedUrls } = withSignedArtifactUrl(fixture, crossHostUrl)
+    const seedBefore = seedFileContent(signedFixture.dataRootDir)
+    signedFixture.routes.set(crossHostUrl, {
       status: 200,
       bytes: Buffer.from('not the real artifact bytes'),
     })
-    const outcome = await runUpdateTransaction(optionsFrom(fixture))
+
+    const outcome = await runUpdateTransaction(optionsFrom(signedFixture))
     expect(outcome.status).toBe('terminal')
     if (outcome.status !== 'terminal') throw new Error('unreachable')
     expect(outcome.result.outcome).toBe('refused')
     expect(outcome.result.reason).toMatch(/sha256 mismatch/)
+    expect(requestedUrls).toEqual([crossHostUrl])
+    assertZeroMutation(signedFixture, seedBefore)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// issue #46 — signed artifactUrl lifts the feed-host pin; without one it stays
+// ---------------------------------------------------------------------------
+
+describe('runUpdateTransaction — issue #46 signed artifactUrl cross-host download', () => {
+  it('follows a signed artifactUrl across hosts (not the feed host) and completes the transaction', async () => {
+    const fixture = await buildFixture({ needsRuntime: false })
+    const crossHostUrl = `http://[::1]:1/artifact/${fixture.release.artifactName}`
+    const {
+      fixture: signedFixture,
+      requestedUrls,
+      requestedFetchOptions,
+    } = withSignedArtifactUrl(fixture, crossHostUrl)
+
+    const outcome = await runUpdateTransaction(optionsFrom(signedFixture))
+    expect(outcome.status).toBe('awaiting-stage-2')
+
+    // The signed URL — not the feed's — is the one actually requested.
+    expect(requestedUrls).toEqual([crossHostUrl])
+    // This is the wiring issue #46 is actually about: a signed artifactUrl
+    // must lift the cross-host redirect restriction for this download, not
+    // merely point the initial request at a different host.
+    expect(requestedFetchOptions[0]?.allowCrossHostRedirects).toBe(true)
+
+    const result = await finalizeUpdate(optionsFrom(signedFixture))
+    expect(result.outcome).toBe('success')
+  })
+
+  it("refuses when the signed artifactUrl disagrees with the marker's own artifactUrl; no route is ever requested", async () => {
+    const fixture = await buildFixture({ dataVersion: 1, includeTsx: false, needsRuntime: false })
+    const signedUrl = `http://[::1]:1/artifact/${fixture.release.artifactName}`
+    const { fixture: signedFixture, requestedUrls } = withSignedArtifactUrl(fixture, signedUrl)
+    const seedBefore = seedFileContent(signedFixture.dataRootDir)
+    const mismatchedMarker: UpdateMarker = {
+      ...signedFixture.marker,
+      artifactUrl: `${signedUrl}-different`,
+    }
+
+    const outcome = await runUpdateTransaction(
+      optionsFrom({ ...signedFixture, marker: mismatchedMarker }),
+    )
+    expect(outcome.status).toBe('terminal')
+    if (outcome.status !== 'terminal') throw new Error('unreachable')
+    expect(outcome.result.outcome).toBe('refused')
+    expect(outcome.result.reason).toMatch(
+      /marker artifactUrl does not match the signed artifactUrl/,
+    )
+    expect(requestedUrls).toEqual([])
+    assertZeroMutation(signedFixture, seedBefore)
+  })
+
+  it('refuses a signed artifactUrl that is plain http on a non-loopback host', async () => {
+    const fixture = await buildFixture({ dataVersion: 1, includeTsx: false, needsRuntime: false })
+    const insecureUrl = `http://example.com/artifact/${fixture.release.artifactName}`
+    const { fixture: signedFixture, requestedUrls } = withSignedArtifactUrl(fixture, insecureUrl)
+    const seedBefore = seedFileContent(signedFixture.dataRootDir)
+
+    const outcome = await runUpdateTransaction(optionsFrom(signedFixture))
+    expect(outcome.status).toBe('terminal')
+    if (outcome.status !== 'terminal') throw new Error('unreachable')
+    expect(outcome.result.outcome).toBe('refused')
+    expect(outcome.result.reason).toMatch(/refusing a non-https URL/)
+    expect(requestedUrls).toEqual([])
+    assertZeroMutation(signedFixture, seedBefore)
+  })
+
+  it('refuses a legacy release (no signed artifactUrl) whose marker URL is off the feed host — the old pin still applies', async () => {
+    const fixture = await buildFixture({ dataVersion: 1, includeTsx: false, needsRuntime: false })
+    const seedBefore = seedFileContent(fixture.dataRootDir)
+    // release.artifactUrl is left unset by buildFixture — this is the legacy
+    // (unsigned-URL) shape. Only the marker's own (unsigned) artifactUrl
+    // moves off the feed host.
+    const offHostMarker: UpdateMarker = {
+      ...fixture.marker,
+      artifactUrl: `http://[::1]:1/artifact/${fixture.release.artifactName}`,
+    }
+
+    const outcome = await runUpdateTransaction(optionsFrom({ ...fixture, marker: offHostMarker }))
+    expect(outcome.status).toBe('terminal')
+    if (outcome.status !== 'terminal') throw new Error('unreachable')
+    expect(outcome.result.outcome).toBe('refused')
+    expect(outcome.result.reason).toMatch(/does not match the pinned host/)
     assertZeroMutation(fixture, seedBefore)
   })
 })

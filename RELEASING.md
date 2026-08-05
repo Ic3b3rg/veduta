@@ -37,6 +37,12 @@ daemon so it picks up the pinning file, then drive "Check now" → "Apply update
 The verification chain, the transaction, the backup, the health check and the rollback are the
 same code a real release goes through; only the trust anchor and the feed host are disposable.
 
+The artifact itself is served from a _second_ loopback host behind a redirect from the feed
+host, not downloaded directly from where the feed lives: the rehearsal exercises the same
+cross-host hop a real release's GitHub redirect goes through (issue #46,
+[docs/adr/0013-signed-self-update.md](docs/adr/0013-signed-self-update.md)'s Amendments), not
+just a same-host download that a real install would never see.
+
 Run it on the machine that hosts the daemon: the updater refuses non-HTTPS feeds from anything
 but loopback, which is exactly what makes a local rehearsal feed acceptable and a remote plain
 HTTP feed impossible.
@@ -126,7 +132,12 @@ Do this once, before the first signed release ever exists.
    known, deliberate simplification — revisit (e.g. per-arch fields) once `linux-arm64` hosts
    are a real deployment target rather than a theoretical one.
 
-3. **Download `release.json` from the draft release** and sign it with the signing key:
+3. **Download `release.json` from the draft release.** Before signing, check its `version`,
+   `artifactName`, `sha256`, and now also its `artifactUrl` against the draft release's real
+   asset. CI computes that URL, so anything with repository write access can propose a download
+   target; the signing key, not CI, is what blesses it.
+   `deploy/release.sh sign` prints the URL and its host for exactly this check before it runs
+   `minisign -S`:
 
    ```sh
    deploy/release.sh sign release.json --key signing.key
@@ -153,13 +164,19 @@ Do this once, before the first signed release ever exists.
    ```sh
    deploy/release.sh promote release.json release.json.minisig \
      --signing-pub signing.pub --signing-pub-sig signing.pub.minisig \
-     --out feed/stable.json \
-     --artifact-url https://github.com/Ic3b3rg/veduta/releases/download/v1.2.3/veduta-v1.2.3-linux.tar.gz
+     --out feed/stable.json
    ```
 
-   This composes `feed/stable.json` (schema: `UpdateManifestSchema`,
-   `packages/protocol/src/update.ts`) from the exact signed bytes — never re-serialized, so
-   `releaseSig` verifies against the identical bytes that were signed.
+   `promote` now **verifies** the signed `artifactUrl` rather than trusting anything passed on
+   the command line: for a release signed with the field present (issue #46,
+   [docs/adr/0013-signed-self-update.md](docs/adr/0013-signed-self-update.md)'s Amendments), it
+   reads that URL straight out of the signed metadata, and `--artifact-url` is optional — pass it
+   only to cross-check, in which case a value that disagrees with the signed one is a hard error,
+   never a silent override. It stays required for a release signed before the field existed (a
+   legacy `release.json` with no `artifactUrl` inside it). This composes `feed/stable.json`
+   (schema: `UpdateManifestSchema`, `packages/protocol/src/update.ts`) from the exact signed
+   bytes — never re-serialized, so `releaseSig` verifies against the identical bytes that were
+   signed.
 
 7. **Pre-flight the result**, then commit it:
 
@@ -211,12 +228,21 @@ exercise; it spends real infrastructure and cannot run inside CI:
    present.
 3. Promote the new release into `feed/stable.json` as in (b)6-7, and push the commit (or, for
    a local rehearsal, point the instance's pinning at a locally-served copy of the feed).
-4. Wait for (or manually trigger) the daily "Check for updates" Automation; confirm the Update
+4. **Before waiting on the Automation**, fetch the artifact URL from `feed/stable.json` from a
+   host other than your workstation and confirm the bytes hash to the release's signed `sha256`.
+   This is the step whose absence let issue #46 ship: a feed whose artifact nothing could actually
+   download verified perfectly against the root key.
+
+   ```sh
+   ssh <other-host> 'curl -fsSL "$1" | sha256sum' _ "$(jq -r '.artifactUrl' feed/stable.json)"
+   ```
+
+5. Wait for (or manually trigger) the daily "Check for updates" Automation; confirm the Update
    Surface offers the new version.
-5. Tap Apply. Confirm: the new version serves afterward, the pre-update Spaces/Events/facts are
+6. Tap Apply. Confirm: the new version serves afterward, the pre-update Spaces/Events/facts are
    all still present, a pre-update backup exists under `/var/lib/veduta/updates/backups/`, and
    the Space's Event log records an `update.outcome` event.
-6. Record the outcome (date, versions, host) in the release's notes or the project's
+7. Record the outcome (date, versions, host) in the release's notes or the project's
    deployment log.
 
 ## (e) Verifying provenance

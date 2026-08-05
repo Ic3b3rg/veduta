@@ -4,6 +4,7 @@ import * as http from 'node:http'
 import * as https from 'node:https'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { assertFetchableUrl, describeUrl, resolveRedirect } from './fetch-policy.ts'
 
 /**
  * The update transaction's injected ports (issue #43,
@@ -13,10 +14,38 @@ import { promisify } from 'node:util'
  * of it, are testable in isolation from the transaction's own state machine.
  * `defaultPorts()` is the production wiring; tests inject their own `Ports`
  * with fake routes instead.
+ *
+ * The https/loopback and redirect *rules* live in `fetch-policy.ts` (issue
+ * #46) — this module owns the transport that enforces them: the redirect
+ * loop, the depth counter, and now the deadlines below.
  */
 
 export interface FetchBytesOptions {
   maxBytes: number
+  /**
+   * Whether a redirect may land on a different host than the URL just
+   * fetched. Per-call, not a fixed property of this port: the release
+   * artifact is unpinned and may hop across hosts (GitHub's release-asset
+   * redirect to `release-assets.githubusercontent.com` — issue #46), because
+   * its integrity rests on a signed sha256 the caller checks independently;
+   * the Node runtime tarball and `SHASUMS256.txt` stay same-host. Defaults
+   * to `false` — the safer choice when a caller forgets to set it.
+   */
+  allowCrossHostRedirects?: boolean | undefined
+  /**
+   * Overrides `DEFAULT_IDLE_TIMEOUT_MS` for this call. No production caller
+   * sets this — it exists so a test can force a fast, deterministic idle
+   * timeout instead of waiting out the real one.
+   */
+  idleTimeoutMs?: number | undefined
+  /**
+   * Overrides `FETCH_BUDGET_MS` for this call. Set in production by
+   * `update-transaction.ts` and `update-runtime.ts` via
+   * `remainingFetchBudgetMs`, so every download in one update transaction
+   * shares a single deadline instead of each buying its own
+   * `FETCH_BUDGET_MS`.
+   */
+  totalTimeoutMs?: number | undefined
 }
 
 export interface FetchBytesResult {
@@ -48,11 +77,17 @@ export interface StatfsResult {
  */
 export interface Ports {
   /**
-   * Fetches `url` in full, capped at `maxBytes`. Production implementations
-   * are expected to follow only same-host redirects, to a bounded depth —
-   * the caller (`update-transaction.ts`) separately enforces
-   * https-only-except-loopback and pinned-host matching on the *initial* URL
-   * before ever calling this.
+   * Fetches `url` in full, capped at `maxBytes`, enforcing an idle timeout
+   * and a total deadline (see `DEFAULT_IDLE_TIMEOUT_MS` /
+   * `FETCH_BUDGET_MS` below). Redirects are followed to a bounded
+   * depth (`fetch-policy.ts`'s `MAX_REDIRECT_DEPTH`), through
+   * `resolveRedirect`, which enforces https-or-loopback and no
+   * https-to-http downgrade on every hop and — unless
+   * `opts.allowCrossHostRedirects` — the same host as the previous hop. The
+   * caller (`fetchChecked` below) separately enforces
+   * https-only-except-loopback and pinned-host matching on the *initial*
+   * URL before ever calling this; the redirect policy for hops after that
+   * is this call's own choice, made per download via `opts`.
    */
   fetchBytes(url: string, opts: FetchBytesOptions): Promise<FetchBytesResult>
   execFile(cmd: string, args: string[], opts?: ExecFileOptions): Promise<ExecFileResult>
@@ -67,10 +102,10 @@ export interface Ports {
 
 const execFileAsync = promisify(execFile)
 
-/** Production `Ports`: real network fetch (https-only except loopback, manual same-host redirects, depth-capped), real `execFile`, real `statfs`/disk-usage walk. */
+/** Production `Ports`: real network fetch (https-only except loopback, manual same-host-by-default redirects, depth-capped, deadline-bound), real `execFile`, real `statfs`/disk-usage walk. */
 export function defaultPorts(): Ports {
   return {
-    fetchBytes: (url, opts) => fetchOnce(url, opts.maxBytes, 0),
+    fetchBytes: (url, opts) => fetchTop(url, opts),
     execFile: async (cmd, args, opts) => {
       try {
         const { stdout, stderr } = await execFileAsync(cmd, args, {
@@ -97,60 +132,176 @@ export function defaultPorts(): Ports {
   }
 }
 
-const MAX_REDIRECT_DEPTH = 3
+/** No bytes for a minute is a dead transfer on any link that can carry a 60+ MB artifact. */
+const DEFAULT_IDLE_TIMEOUT_MS = 60_000
 
-function fetchOnce(urlText: string, maxBytes: number, depth: number): Promise<FetchBytesResult> {
+/**
+ * How long downloading may take in total: generous for a slow home uplink,
+ * finite for a server that stalls on purpose. It is both this module's
+ * per-call default and the whole budget an update transaction gets for *all*
+ * its downloads together — the transaction stamps a deadline from it once and
+ * then passes what remains to each call (`remainingFetchBudgetMs`), because
+ * the daemon is down for that entire window
+ * (`docs/adr/0013-signed-self-update.md`) and three independent budgets would
+ * let a slow host hold an instance offline for their sum.
+ */
+export const FETCH_BUDGET_MS = 30 * 60_000
+
+/** What is left of a shared download budget, floored at 1 ms so an exhausted budget still fails with the deadline error rather than a `setTimeout` with a negative delay. */
+export function remainingFetchBudgetMs(deps: {
+  fetchDeadlineAt: number
+  ports: Pick<Ports, 'now'>
+}): number {
+  return Math.max(1, deps.fetchDeadlineAt - deps.ports.now().getTime())
+}
+
+interface FetchOnceOptions {
+  maxBytes: number
+  allowCrossHostRedirects: boolean
+  idleTimeoutMs: number
+  /** Absolute `Date.now()`-scale deadline for the *whole* redirect chain — computed once by `fetchTop` and threaded down through every recursive hop unchanged, so a chain of redirects cannot each buy themselves a fresh `totalTimeoutMs`. */
+  deadline: number
+  depth: number
+}
+
+/** Entry point: resolves defaults, computes the one absolute deadline for this download's entire redirect chain, and starts the recursion at depth 0. */
+function fetchTop(urlText: string, opts: FetchBytesOptions): Promise<FetchBytesResult> {
+  const idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
+  const totalTimeoutMs = opts.totalTimeoutMs ?? FETCH_BUDGET_MS
+  return fetchOnce(urlText, {
+    maxBytes: opts.maxBytes,
+    allowCrossHostRedirects: opts.allowCrossHostRedirects ?? false,
+    idleTimeoutMs,
+    deadline: Date.now() + totalTimeoutMs,
+    depth: 0,
+  })
+}
+
+function fetchOnce(urlText: string, opts: FetchOnceOptions): Promise<FetchBytesResult> {
   return new Promise((resolvePromise, reject) => {
     let url: URL
     try {
       url = new URL(urlText)
     } catch (cause) {
-      reject(new Error(`malformed URL: ${urlText}: ${messageOf(cause)}`))
+      // The URL itself is deliberately not echoed: this is the one message here
+      // that cannot route through `describeUrl` (there is no parsed URL to
+      // describe), and an unparseable string could still carry a redirect
+      // target's `sig=`/`jwt=` query into a durable log.
+      reject(new Error(`malformed URL passed to the update fetch: ${messageOf(cause)}`))
       return
     }
+
+    const remainingMs = opts.deadline - Date.now()
+    if (remainingMs <= 0) {
+      reject(new Error(`exceeded the total download deadline fetching ${describeUrl(url)}`))
+      return
+    }
+
     const mod = url.protocol === 'http:' ? http : https
+    let settled = false
+
     const req = mod.get(url, (res) => {
       const status = res.statusCode ?? 0
       const location = res.headers.location
-      if (status >= 300 && status < 400 && location !== undefined) {
-        res.resume()
-        if (depth >= MAX_REDIRECT_DEPTH) {
-          reject(new Error(`too many redirects fetching ${urlText}`))
-          return
-        }
-        let redirectUrl: URL
-        try {
-          redirectUrl = new URL(location, url)
-        } catch (cause) {
-          reject(new Error(`malformed redirect Location fetching ${urlText}: ${messageOf(cause)}`))
-          return
-        }
-        if (redirectUrl.hostname !== url.hostname) {
-          reject(
-            new Error(`refusing a cross-host redirect: ${url.hostname} -> ${redirectUrl.hostname}`),
+
+      if (status >= 300 && status < 400) {
+        // Destroyed, not resumed: a redirect body this code never intends
+        // to read is, under `res.resume()`, an unbounded read with no
+        // `maxBytes` applied to it — a server can keep it open forever
+        // (issue #46).
+        res.destroy()
+        if (location === undefined) {
+          settle(() =>
+            reject(
+              new Error(
+                `HTTP ${status} redirect from ${describeUrl(url)} carried no Location header`,
+              ),
+            ),
           )
           return
         }
-        resolvePromise(fetchOnce(redirectUrl.href, maxBytes, depth + 1))
+        let target: URL
+        try {
+          target = resolveRedirect({
+            current: url,
+            location,
+            depth: opts.depth,
+            allowCrossHostRedirects: opts.allowCrossHostRedirects,
+          })
+        } catch (cause) {
+          settle(() => reject(cause instanceof Error ? cause : new Error(String(cause))))
+          return
+        }
+        settle(() => {
+          resolvePromise(fetchOnce(target.href, { ...opts, depth: opts.depth + 1 }))
+        })
         return
       }
+
       const chunks: Buffer[] = []
       let total = 0
       res.on('data', (chunk: Buffer) => {
         total += chunk.length
-        if (total > maxBytes) {
-          req.destroy()
-          reject(
-            new Error(`response for ${urlText} exceeded the maximum allowed ${maxBytes} bytes`),
-          )
+        if (total > opts.maxBytes) {
+          settle(() => {
+            req.destroy()
+            reject(
+              new Error(
+                `response for ${describeUrl(url)} exceeded the maximum allowed ${opts.maxBytes} bytes`,
+              ),
+            )
+          })
           return
         }
         chunks.push(chunk)
       })
-      res.on('end', () => resolvePromise({ status, bytes: Buffer.concat(chunks) }))
-      res.on('error', reject)
+      res.on('end', () => {
+        settle(() => resolvePromise({ status, bytes: Buffer.concat(chunks) }))
+      })
+      res.on('error', (err) => {
+        settle(() => reject(err))
+      })
     })
-    req.on('error', reject)
+
+    // The total deadline for the whole chain, not just this hop: the timer
+    // fires after `remainingMs`, the budget left over from `opts.deadline`
+    // computed once in `fetchTop` — never the full `totalTimeoutMs` again,
+    // or a chain of quick redirects could restart the clock indefinitely.
+    const totalTimer = setTimeout(() => {
+      settle(() => {
+        req.destroy()
+        reject(new Error(`exceeded the total download deadline fetching ${describeUrl(url)}`))
+      })
+    }, remainingMs)
+
+    // Settling more than once cannot happen: every exit path (success, the
+    // size cap, an error, a redirect, either timeout) funnels through this,
+    // which clears the deadline timer so no timer outlives the promise and
+    // no test leaks a handle. It deliberately does NOT strip `req`'s own
+    // 'error' listener (below): destroying a request after we have already
+    // settled still raises a "socket hang up" moments later, and that
+    // listener is what turns it into a harmless no-op settle() instead of
+    // an uncaught exception.
+    function settle(fn: () => void): void {
+      if (settled) return
+      settled = true
+      clearTimeout(totalTimer)
+      fn()
+    }
+
+    // No socket activity for `idleTimeoutMs` is a dead transfer — distinct
+    // from the total deadline above, which bounds the whole chain even if
+    // bytes keep trickling in one at a time forever.
+    req.setTimeout(opts.idleTimeoutMs, () => {
+      settle(() => {
+        req.destroy()
+        reject(new Error(`idle timeout waiting for ${describeUrl(url)}`))
+      })
+    })
+
+    req.on('error', (err) => {
+      settle(() => reject(err))
+    })
   })
 }
 
@@ -184,40 +335,38 @@ function walkDiskUsage(rootPath: string): number {
   return total
 }
 
-// ---------------------------------------------------------------------------
-// Network/host discipline — shared by every download this module does (the
-// release artifact in `stageRelease`, the Node runtime + SHASUMS256.txt in
-// `ensureRuntime`).
-// ---------------------------------------------------------------------------
-
-function assertHttpsOrLoopback(url: URL): void {
-  if (url.protocol === 'https:') return
-  if (url.protocol === 'http:' && (url.hostname === '127.0.0.1' || url.hostname === '::1')) return
-  throw new Error(`refusing a non-https URL from a non-loopback host: ${url.href}`)
-}
-
-function assertSameHost(url: URL, allowedHost: string, what: string): void {
-  if (url.hostname !== allowedHost) {
-    throw new Error(
-      `${what} host '${url.hostname}' does not match the pinned host '${allowedHost}'`,
-    )
-  }
-}
-
-/** Fetches `urlText` via `ports.fetchBytes`, first asserting it is https (or loopback-http, for tests/local fixtures) and that its host matches `allowedHost` — the pinned-host discipline every download in this module goes through before a single byte is requested. */
+/**
+ * Fetches `urlText` via `ports.fetchBytes`, first asserting it is https (or
+ * loopback-http, for tests/local fixtures) and, when `opts.pinnedHost` is
+ * given, that its host matches. That pinning discipline covers only the
+ * *initial* URL — it is deliberately not one fixed policy for every caller:
+ * the Node runtime tarball and `SHASUMS256.txt` stay pinned to the dist
+ * host and same-host across redirects, while the release artifact is
+ * unpinned and may redirect across hosts (`opts.allowCrossHostRedirects`),
+ * because its integrity rests on a signed sha256 verified by the caller,
+ * not on where the bytes came from.
+ */
 export async function fetchChecked(
   ports: Ports,
   urlText: string,
-  allowedHost: string,
-  maxBytes: number,
-  what: string,
+  opts: {
+    what: string
+    maxBytes: number
+    pinnedHost?: string | undefined
+    allowCrossHostRedirects?: boolean | undefined
+    /** What is left of the caller's own budget — an update transaction passes `remainingFetchBudgetMs(ctx)` so all of its downloads share one deadline rather than each arming `FETCH_BUDGET_MS` afresh. */
+    totalTimeoutMs?: number | undefined
+  },
 ): Promise<Buffer> {
   const url = new URL(urlText)
-  assertHttpsOrLoopback(url)
-  assertSameHost(url, allowedHost, what)
-  const result = await ports.fetchBytes(urlText, { maxBytes })
+  assertFetchableUrl(url, { what: opts.what, pinnedHost: opts.pinnedHost })
+  const result = await ports.fetchBytes(urlText, {
+    maxBytes: opts.maxBytes,
+    allowCrossHostRedirects: opts.allowCrossHostRedirects,
+    totalTimeoutMs: opts.totalTimeoutMs,
+  })
   if (result.status !== 200) {
-    throw new Error(`${what} fetch failed: HTTP ${result.status} from ${urlText}`)
+    throw new Error(`${opts.what} fetch failed: HTTP ${result.status} from ${describeUrl(url)}`)
   }
   return result.bytes
 }

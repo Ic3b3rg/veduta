@@ -27,11 +27,12 @@ import type {
 import { z } from 'zod'
 import { createBackup, restoreBackup } from '../backup.ts'
 import { checkMonotonic, verifyReleaseChain } from './minisign.ts'
+import { describeUrl } from './fetch-policy.ts'
 import { extractVerifiedArchive } from './tar-reader.ts'
 import { isoForFilename, writeJsonAtomic, writeJsonAtomicBestEffort } from './update-atomic.ts'
 import { checkDiskGuardrail } from './update-guardrail.ts'
 import { runSuccessHousekeeping } from './update-housekeeping.ts'
-import { fetchChecked } from './update-ports.ts'
+import { FETCH_BUDGET_MS, fetchChecked, remainingFetchBudgetMs } from './update-ports.ts'
 import type { Ports } from './update-ports.ts'
 import { computeRuntimeDirName, ensureRuntime } from './update-runtime.ts'
 
@@ -189,7 +190,11 @@ const JournalSchema = z.object({
     release: z.string(),
     releaseSig: z.string(),
     signingKey: z.object({ pub: z.string(), rootSig: z.string(), keyId: z.string() }),
-    artifactUrl: z.string(),
+    // `.url()`, matching `UpdateMarkerSchema` (`packages/protocol/src/update.ts`):
+    // a journal value that is not a URL would otherwise turn the signed-URL
+    // mismatch refusal in `stageRelease` into a bare `Invalid URL` TypeError,
+    // losing the reason the operator needs.
+    artifactUrl: z.string().url(),
   }),
   startedAt: z.string(),
   releaseDir: z.string().optional(),
@@ -417,6 +422,15 @@ interface Ctx {
   keyMaterial: Buffer
   ports: Ports
   env: NodeJS.ProcessEnv
+  /**
+   * Absolute `Date.now()`-scale deadline shared by every download this
+   * transaction makes — the artifact, and the Node runtime tarball plus its
+   * `SHASUMS256.txt`. One budget for the whole transaction rather than one per
+   * download: the daemon is down for this entire window
+   * (`docs/adr/0013-signed-self-update.md`), so three independent budgets
+   * would let a slow or hostile host hold the instance offline for their sum.
+   */
+  fetchDeadlineAt: number
   log: (line: string) => void
 }
 
@@ -430,6 +444,7 @@ function contextFrom(options: ResumeOptions, log: (line: string) => void): Ctx {
     keyMaterial: options.keyMaterial,
     ports: options.ports,
     env: options.env ?? process.env,
+    fetchDeadlineAt: options.ports.now().getTime() + FETCH_BUDGET_MS,
     log,
   }
 }
@@ -476,16 +491,40 @@ async function stageRelease(
   journal: Journal,
 ): Promise<{ releaseDir: string; runtimeDirName: string }> {
   const { release, marker } = journal
-  const feedHost = new URL(ctx.pinning.feedUrl).hostname
+
+  // The host pin lifts only for a signed `artifactUrl` (issue #46,
+  // `docs/adr/0013-signed-self-update.md`): that URL was chosen by the
+  // signing-key holder — the same party that already chooses the artifact's
+  // bytes — so following it across hosts (GitHub's release-asset redirect to
+  // `release-assets.githubusercontent.com`, for instance) grants no
+  // capability a signing-key holder lacks. Integrity rests on the signed
+  // `sha256`/`artifactSize` checked immediately below plus the extraction
+  // containment preflight, never on where the bytes came from. Without a
+  // signed URL the target comes from the unsigned feed instead, so the
+  // pre-existing feed-host pin stays exactly as it was — it is then the only
+  // thing constraining where this process connects.
+  const signedUrl = release.artifactUrl
+  if (signedUrl !== undefined && signedUrl !== marker.artifactUrl) {
+    // Same refusal the daemon already makes when it first reads the feed
+    // (`update-manager.ts`), repeated here as the fail-safe: this process,
+    // not the daemon, is the one that dials the URL.
+    throw new Error(
+      `marker artifactUrl does not match the signed artifactUrl: ${describeUrl(
+        new URL(marker.artifactUrl),
+      )} != ${describeUrl(new URL(signedUrl))}`,
+    )
+  }
+  const artifactUrl = signedUrl ?? marker.artifactUrl
+  const pinnedHost = signedUrl === undefined ? new URL(ctx.pinning.feedUrl).hostname : undefined
 
   markProgress(ctx, 'download', 'running')
-  const artifactBytes = await fetchChecked(
-    ctx.ports,
-    marker.artifactUrl,
-    feedHost,
-    release.artifactSize,
-    'release artifact',
-  )
+  const artifactBytes = await fetchChecked(ctx.ports, artifactUrl, {
+    what: 'release artifact',
+    maxBytes: release.artifactSize,
+    pinnedHost,
+    allowCrossHostRedirects: signedUrl !== undefined,
+    totalTimeoutMs: remainingFetchBudgetMs(ctx),
+  })
   markProgress(ctx, 'download', 'done')
   writeJournal(ctx.home, { ...journal, phase: 'downloaded' })
   ctx.log(`artifact downloaded (${artifactBytes.length} bytes)`)
@@ -830,16 +869,30 @@ async function terminateRolledBack(
 async function runFromJournal(ctx: Ctx, initialJournal: Journal): Promise<TransactionOutcome> {
   let journal = initialJournal
   try {
-    if (phaseIndex(journal.phase) <= phaseIndex('started')) {
+    // The journal carries the release metadata twice: `marker.release` holds the
+    // exact bytes the signing key signed, and `release` is a parsed copy kept for
+    // convenience. Only the first is covered by a signature, so every run that
+    // still has stage work ahead of it re-derives the parsed copy from those
+    // bytes after verifying them — the update home is veduta-writable
+    // (`docs/adr/0013-signed-self-update.md`), so a journal edited on disk must
+    // not be able to steer the download target, the expected hash, or the
+    // required data version. Deliberately gated on `staged` rather than
+    // `started`: a resume at `downloaded` or `verified` still runs `stageRelease`.
+    if (phaseIndex(journal.phase) < phaseIndex('staged')) {
+      const releaseBytes = Buffer.from(journal.marker.release, 'base64')
+      const signedRelease = ReleaseMetadataSchema.parse(JSON.parse(releaseBytes.toString('utf8')))
       verifyReleaseChain({
-        releaseBytes: Buffer.from(journal.marker.release, 'base64'),
+        releaseBytes,
         releaseSigText: journal.marker.releaseSig,
         signingKeyText: journal.marker.signingKey.pub,
         signingKeyRootSigText: journal.marker.signingKey.rootSig,
         rootPublicKeyText: ctx.pinning.rootPublicKey,
-        expectedArtifactName: journal.release.artifactName,
+        expectedArtifactName: signedRelease.artifactName,
         expectedSigningKeyId: journal.marker.signingKey.keyId,
       })
+      journal = { ...journal, release: signedRelease }
+    }
+    if (phaseIndex(journal.phase) <= phaseIndex('started')) {
       checkMonotonic({
         offeredVersion: journal.release.version,
         installedVersion: ctx.installedVersion,
