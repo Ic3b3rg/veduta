@@ -76,7 +76,10 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
   let good2ReleaseBytes: Buffer
   let good2ReleaseSig: string
 
-  test.beforeAll(async (_fixtures, testInfo) => {
+  // Playwright requires the first parameter of a hook to be a destructuring
+  // pattern even when no fixture is used, so one fixture is destructured and
+  // deliberately ignored rather than writing an empty pattern.
+  test.beforeAll(async ({ browserName: _browserName }, testInfo) => {
     testInfo.setTimeout(5 * 60_000)
     artifactWorkDir = await mkdtemp(join(tmpdir(), 'veduta-e2e-selfupdate-artifact-'))
 
