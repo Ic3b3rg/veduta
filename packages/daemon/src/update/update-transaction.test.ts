@@ -824,6 +824,55 @@ describe('runUpdateTransaction / resumeUpdateTransaction — AC4 phase-boundary 
 })
 
 // ---------------------------------------------------------------------------
+// First update — no releases/current symlink exists yet
+// ---------------------------------------------------------------------------
+
+describe('runUpdateTransaction — first update (no releases/current yet)', () => {
+  it('journals a non-empty executor path from legacyRoot, never the candidate release, when there is no prior release to record', async () => {
+    const fixture = await buildFixture({ dataVersion: 2 })
+    rmSync(fixture.home.currentSymlink, { force: true, recursive: true })
+    const legacyRoot = freshDir('veduta-legacy-checkout-')
+
+    const outcome = await runUpdateTransaction({ ...optionsFrom(fixture), legacyRoot })
+    expect(outcome.status).toBe('awaiting-stage-2')
+
+    const journal = JSON.parse(
+      readFileSync(join(fixture.home.stateDir, 'update-state.json'), 'utf8'),
+    ) as { executorRelease: string; hadPriorRelease: boolean }
+    expect(journal.executorRelease.length).toBeGreaterThan(0)
+    expect(journal.executorRelease).toBe(legacyRoot)
+    expect(journal.executorRelease).not.toBe(join(fixture.home.releasesDir, 'v1.2.3'))
+    expect(journal.hadPriorRelease).toBe(false)
+  })
+
+  it('refuses to journal an empty executor path when no legacyRoot is provided', async () => {
+    const fixture = await buildFixture({ dataVersion: 2 })
+    rmSync(fixture.home.currentSymlink, { force: true, recursive: true })
+
+    await expect(runUpdateTransaction(optionsFrom(fixture))).rejects.toThrow(/legacyRoot/)
+    expect(journalExists(fixture.home)).toBe(false)
+  })
+
+  it('rollback on a first update removes releases/current entirely (never leaves it pointing at the failed candidate), data restored', async () => {
+    const fixture = await buildFixture({ dataVersion: 2 })
+    rmSync(fixture.home.currentSymlink, { force: true, recursive: true })
+    const legacyRoot = freshDir('veduta-legacy-checkout-')
+    fixture.execBehavior.selfCheckCode = 1
+    fixture.execBehavior.selfCheckStderr = 'self-check: forced failure (first-update rollback test)'
+    const seedBefore = seedFileContent(fixture.dataRootDir)
+
+    const outcome = await runUpdateTransaction({ ...optionsFrom(fixture), legacyRoot })
+    expect(outcome.status).toBe('terminal')
+    if (outcome.status !== 'terminal') throw new Error('unreachable')
+    expect(outcome.result.outcome).toBe('rolled-back')
+
+    expect(existsSync(fixture.home.currentSymlink)).toBe(false)
+    expect(seedFileContent(fixture.dataRootDir)).toBe(seedBefore)
+    expect(journalExists(fixture.home)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // rollbackUpdate — external caller path (the wrapper's own stage-2 failing)
 // ---------------------------------------------------------------------------
 

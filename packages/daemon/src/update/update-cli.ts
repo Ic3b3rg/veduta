@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { UpdateMarkerSchema, UpdatePinningSchema } from '@veduta/protocol'
 import type { UpdateMarker, UpdatePinning } from '@veduta/protocol'
 import { resolveVaultKeyMaterial } from '../secrets-vault.ts'
-import { VEDUTA_VERSION } from '../version.ts'
+import { resolveInstalledVersion } from '../version.ts'
 import { readDataVersion } from './data-version.ts'
 import {
   defaultPorts,
@@ -73,19 +73,15 @@ function readKeyMaterial(env: NodeJS.ProcessEnv): Buffer {
 }
 
 /**
- * `VEDUTA_INSTALLED_VERSION` overrides the literal `VEDUTA_VERSION` import
- * (`docs/adr/0013-signed-self-update.md`'s "Amendments" section): a real
- * release build stamps a parseable `x.y.z` into `version.ts` itself, so
- * production never sets this env var and the fallback below is what always
- * runs. Only the e2e harness (`packages/e2e/tests/update-fixture.ts`), which
- * drives this CLI straight out of the checked-out tree where `VEDUTA_VERSION`
- * stays the dev placeholder `'0.0.0-dev'` (not parseable by
- * `checkMonotonic`/`compareVersions`), needs a parseable stand-in to run a
- * real transaction at all.
+ * Where the code that is running right now lives when there is no
+ * `releases/current` yet — the git checkout `deploy/install.sh` deploys, which
+ * on a first-ever update is the only place the *old* release exists. The
+ * transaction records it as the journal's executor so a crash after the symlink
+ * flip still recovers using the previous code rather than the candidate it is
+ * installing (`docs/adr/0013-signed-self-update.md`). `deploy/veduta-run`
+ * exports it on every invocation; the default matches the installer's layout.
  */
-function resolveInstalledVersion(env: NodeJS.ProcessEnv): string {
-  return env['VEDUTA_INSTALLED_VERSION'] || VEDUTA_VERSION
-}
+const DEFAULT_LEGACY_ROOT = '/opt/veduta'
 
 function buildResumeOptions(
   home: UpdateHome,
@@ -100,6 +96,7 @@ function buildResumeOptions(
     installedVersion: resolveInstalledVersion(env),
     installedDataVersion: readDataVersion(dataRootDir) ?? 0,
     keyMaterial: readKeyMaterial(env),
+    legacyRoot: env['VEDUTA_LEGACY_ROOT'] || DEFAULT_LEGACY_ROOT,
     ports,
     env,
   }

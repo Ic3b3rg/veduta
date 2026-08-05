@@ -24,7 +24,7 @@ import { treeProposalSurfaceId } from './tree-proposal.ts'
 import { CURRENT_DATA_VERSION } from './update/data-version.ts'
 import { generateKeypair } from './update/minisign.ts'
 import { UPDATE_SURFACE_ID } from './update-surface.ts'
-import { VEDUTA_VERSION } from './version.ts'
+import { resolveInstalledVersion } from './version.ts'
 import type {
   PushPayload,
   PushSendResult,
@@ -1410,7 +1410,7 @@ describe('memory engines wiring (issues/021-advanced-memory.md)', () => {
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({
       ok: true,
-      version: VEDUTA_VERSION,
+      version: resolveInstalledVersion(),
       dataVersion: CURRENT_DATA_VERSION,
     })
     await app.close()
@@ -1474,7 +1474,7 @@ describe('memory engines wiring (issues/021-advanced-memory.md)', () => {
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({
       ok: true,
-      version: VEDUTA_VERSION,
+      version: resolveInstalledVersion(),
       dataVersion: CURRENT_DATA_VERSION,
     })
 
@@ -1700,7 +1700,7 @@ describe('Emergent Templates: pre-022 data root (issues/022-emergent-templates.m
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({
       ok: true,
-      version: VEDUTA_VERSION,
+      version: resolveInstalledVersion(),
       dataVersion: CURRENT_DATA_VERSION,
     })
     await app.close()
@@ -1726,7 +1726,7 @@ describe('dataVersion boot gate (issues/043-self-update.md, docs/adr/0013-signed
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({
       ok: true,
-      version: VEDUTA_VERSION,
+      version: resolveInstalledVersion(),
       dataVersion: CURRENT_DATA_VERSION,
     })
     expect(existsSync(join(dataDir, 'data-version.json'))).toBe(true)

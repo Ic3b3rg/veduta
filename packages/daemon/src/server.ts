@@ -82,7 +82,7 @@ import { isTrustWrapped, TrustLayer } from './trust-layer.ts'
 import { ensureDataVersion } from './update/data-version.ts'
 import { UpdateManager } from './update-manager.ts'
 import { usageSurface } from './usage-surface.ts'
-import { VEDUTA_VERSION } from './version.ts'
+import { resolveInstalledVersion } from './version.ts'
 import {
   ensureVapidKeys,
   isAllowedPushEndpoint,
@@ -823,6 +823,13 @@ export function buildServer(options: ServerOptions = {}) {
   reflection.reconcileJobs()
   reflectionSurfaces.start()
 
+  // The version this daemon reports and reasons about, resolved once so those
+  // can never disagree: `/api/health` publishes it and the self-update feed
+  // check compares against it. See `resolveInstalledVersion` (version.ts) for
+  // why a stamped release always wins and an unstamped checkout becomes
+  // `0.0.0`.
+  const installedVersion = resolveInstalledVersion()
+
   // Signed self-update (issue #43, docs/adr/0013-signed-self-update.md):
   // wired only when both `VEDUTA_UPDATE_HOME` and `VEDUTA_UPDATE_PINNING`
   // are set AND the pinning file parses (`UpdatePiningSchema` — root-owned
@@ -834,14 +841,6 @@ export function buildServer(options: ServerOptions = {}) {
   // Heartbeat/Reflection above.
   const updateHomeEnv = process.env['VEDUTA_UPDATE_HOME']
   const updatePinningEnv = process.env['VEDUTA_UPDATE_PINNING']
-  // `VEDUTA_INSTALLED_VERSION` overrides `UpdateManagerConfig.installedVersion`'s own
-  // `VEDUTA_VERSION` default (docs/adr/0013-signed-self-update.md's "Amendments" section):
-  // production never sets this — a release build stamps a real `x.y.z` into `version.ts` itself,
-  // so the default is always parseable there. Only the e2e harness (`packages/e2e/tests/
-  // update-fixture.ts`), which runs straight out of this checked-out tree where `VEDUTA_VERSION`
-  // stays the literal `'0.0.0-dev'` placeholder, needs a parseable stand-in to exercise
-  // `compareVersions`/`checkMonotonic` at all.
-  const installedVersionEnv = process.env['VEDUTA_INSTALLED_VERSION']
   let updateManager: UpdateManager | undefined
   let updateFeedHost: string | undefined
   if (updateHomeEnv && updatePinningEnv) {
@@ -862,7 +861,7 @@ export function buildServer(options: ServerOptions = {}) {
           // task) tells the two apart by exit code alone.
           scheduleExit: defaultScheduleExit(app, UPDATE_REQUESTED_EXIT_CODE),
           now,
-          ...(installedVersionEnv ? { installedVersion: installedVersionEnv } : {}),
+          installedVersion,
         },
       })
       updateManager.register()
@@ -1128,7 +1127,7 @@ export function buildServer(options: ServerOptions = {}) {
 
   app.get('/api/health', () => ({
     ok: true,
-    version: VEDUTA_VERSION,
+    version: installedVersion,
     dataVersion: dataVersionGate.dataVersion,
   }))
 

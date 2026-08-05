@@ -416,6 +416,77 @@ describe('UpdateManager.applyUpdate', () => {
     expect(badge?.props?.['text']).toBe('an update is already in progress')
     expect(badge?.props?.['tone']).toBe('danger')
   })
+
+  it('sweeps a fully-acked previous result before applying, so a second update is never permanently blocked', async () => {
+    manager.register()
+    const home = resolveUpdateHome(updateHomeDir)
+    mkdirSync(home.stateDir, { recursive: true })
+    const priorResult: UpdateResult = {
+      id: 'result-acked-prior',
+      outcome: 'success',
+      fromVersion: '0.9.0',
+      toVersion: '1.0.0',
+      reason: '',
+      finishedAt: now().toISOString(),
+    }
+    writeFileSync(join(home.stateDir, 'result.json'), JSON.stringify(priorResult))
+    writeFileSync(join(home.stateDir, `result-acked-${priorResult.id}`), '')
+
+    serveRelease(defaultRelease({ version: '1.1.0' }))
+    await manager.applyUpdate()
+
+    // The acked result is archived, not left behind to block this (or any
+    // future) apply forever.
+    expect(existsSync(join(home.stateDir, 'result.json'))).toBe(false)
+    expect(existsSync(join(home.stateDir, `result-acked-${priorResult.id}`))).toBe(false)
+
+    expect(existsSync(join(home.stateDir, 'marker.json'))).toBe(true)
+    expect(scheduleExitCalls).toBe(1)
+  })
+
+  it('two consecutive updates in a row succeed at the manager level: apply, boot-ingest+ack, apply again', async () => {
+    manager.register()
+    serveRelease(defaultRelease({ version: '1.1.0' }))
+    await manager.applyUpdate()
+
+    const home = resolveUpdateHome(updateHomeDir)
+    expect(existsSync(join(home.stateDir, 'marker.json'))).toBe(true)
+    expect(scheduleExitCalls).toBe(1)
+
+    // Simulate the wrapper's transaction consuming the marker and completing
+    // successfully, then the (now new-version) daemon booting and finding
+    // `result.json` — the same handoff `update-transaction.ts`/`update-cli.ts`
+    // perform for real.
+    rmSync(join(home.stateDir, 'marker.json'), { force: true })
+    const firstResult: UpdateResult = {
+      id: 'result-first-update',
+      outcome: 'success',
+      fromVersion: '1.0.0',
+      toVersion: '1.1.0',
+      reason: '',
+      finishedAt: now().toISOString(),
+    }
+    writeFileSync(join(home.stateDir, 'result.json'), JSON.stringify(firstResult))
+
+    const booted = buildManager({ installedVersion: '1.1.0' })
+    booted.register()
+    booted.start()
+    await vi.waitFor(() => {
+      expect(existsSync(join(home.stateDir, `result-acked-${firstResult.id}`))).toBe(true)
+    })
+
+    // A second update, offered to the now-running (post-first-update) daemon,
+    // must not be permanently blocked by the first update's own (now fully
+    // acked) result.
+    serveRelease(defaultRelease({ version: '1.2.0' }))
+    await booted.applyUpdate()
+
+    expect(existsSync(join(home.stateDir, 'result.json'))).toBe(false)
+    expect(existsSync(join(home.stateDir, 'marker.json'))).toBe(true)
+    expect(scheduleExitCalls).toBe(2)
+
+    booted.dispose()
+  })
 })
 
 describe('UpdateManager boot-time result ingestion', () => {
@@ -590,11 +661,55 @@ describe('UpdateManager boot-time result ingestion', () => {
     expect(
       store.eventLog(SYSTEM_SPACE_ID).filter((event) => event.type === 'update.outcome'),
     ).toHaveLength(1)
+    // The notify-dedupe fix's core guarantee: two ingest attempts for the
+    // same result id never produce more than one notification, even though
+    // the second attempt still re-ensures the Surface/badge state.
+    expect(notifications.filter((notification) => notification.level === 'badge')).toHaveLength(1)
 
     const surface = store.getSurface(UPDATE_SURFACE_ID)
     expect(findNode(surface!.tree, 'update-outcome-badge')?.props?.['tone']).toBe('success')
 
     errorSpy.mockRestore()
+    booted.dispose()
+  })
+
+  it('an ingested rolled-back result whose reason carries hostile feed/candidate-derived text is recorded and rendered under an untrusted origin', async () => {
+    const home = resolveUpdateHome(updateHomeDir)
+    mkdirSync(home.stateDir, { recursive: true })
+    const hostileReason =
+      "stage-1 self-check failed: '; DROP TABLE releases; -- <script>alert(1)</script>"
+    const result: UpdateResult = {
+      id: 'result-hostile-reason',
+      outcome: 'rolled-back',
+      fromVersion: '1.0.0',
+      toVersion: '1.1.0',
+      reason: hostileReason,
+      finishedAt: now().toISOString(),
+      failedStage: 'health',
+    }
+    writeFileSync(join(home.stateDir, 'result.json'), JSON.stringify(result))
+
+    const booted = buildManager({ installedVersion: '1.1.0' })
+    booted.register()
+    booted.start()
+
+    await vi.waitFor(() => {
+      expect(existsSync(join(home.stateDir, `result-acked-${result.id}`))).toBe(true)
+    })
+
+    const event = store
+      .eventLog(SYSTEM_SPACE_ID)
+      .find((candidate) => candidate.type === 'update.outcome')
+    expect(event?.origin).toBe(untrustedOrigin('update-feed'))
+    // The Event's own text stays a fixed, daemon-authored summary — never
+    // the raw reason, which can embed feed/candidate-controlled bytes.
+    expect(event?.text).toBe('Update to 1.1.0: rolled-back')
+    expect(event?.payload?.['reason']).toBe(hostileReason)
+
+    expect(store.surfaceProvenance(UPDATE_SURFACE_ID)?.contentOrigin).toBe(
+      untrustedOrigin('update-feed'),
+    )
+
     booted.dispose()
   })
 })

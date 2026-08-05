@@ -20,6 +20,11 @@
 #                                update-cli (pre-update backup/restore) and the daemon.
 #   VEDUTA_LEGACY_ROOT          The pre-issue-43 checkout to run when releases/current does not
 #                                exist yet. Default: /opt/veduta (deploy/install.sh's checkout).
+#                                Also passed through, resolved to its default when unset, to every
+#                                update-cli invocation below: on a first-ever update there is no
+#                                releases/current yet, so the transaction journal's executorRelease
+#                                can legitimately be empty, and update-cli needs this value to
+#                                record a real executor rather than leaving that field empty.
 #   VEDUTA_UPDATE_READY_TIMEOUT Seconds to wait for a new release to print its ready line before
 #                                rolling back. Default: 90.
 #   Everything else (PORT, VEDUTA_PUBLIC_DOMAIN, VEDUTA_ACME_EMAIL, ...) passes straight through
@@ -92,17 +97,46 @@ journal_executor_release() {
   return 1
 }
 
+# True when a transaction journal is currently on disk -- independent of whether its
+# executorRelease field happens to be populated (see executor_release_dir below, which needs to
+# tell "no journal at all" apart from "a journal exists but recorded no executor").
+journal_exists() {
+  [ -n "${VEDUTA_UPDATE_HOME:-}" ] && [ -f "${VEDUTA_UPDATE_HOME:-}/state/update-state.json" ]
+}
+
+# True when there is update work for this wrapper to react to before it can safely start any
+# daemon: either a fresh update request (state/marker.json, written by the daemon's update Surface
+# "Apply" action) or an in-progress transaction journal. Used to decide, when the executor
+# update-cli cannot be invoked at all, whether that is harmless (nothing pending, supervise the
+# daemon as-is) or must block startup (see the run-mode dispatch below).
+update_work_pending() {
+  [ -n "${VEDUTA_UPDATE_HOME:-}" ] &&
+    { [ -f "${VEDUTA_UPDATE_HOME:-}/state/marker.json" ] || journal_exists; }
+}
+
 # The release to run update-cli FROM (the executor, step (a) in the header comment): while a
 # transaction's journal exists, its recorded executorRelease is authoritative -- the release a
 # crash left mid-transaction must always recover using the OLD release's updater, never whatever
 # releases/current happens to point at (which, mid-transaction, can already be the untrusted
-# candidate -- FINDING 1 in the issue #43 review). Falls back to the resolved current symlink (or
-# LEGACY_ROOT) only when there is no journal, or its executorRelease does not resolve to a real
-# directory (e.g. that release has since been pruned).
+# candidate the transaction is trying to install). Falls back to the resolved current symlink (or
+# LEGACY_ROOT) only when there is no journal at all, or its executorRelease does not resolve to a
+# real directory (e.g. that release has since been pruned).
 executor_release_dir() {
   local value
   if value=$(journal_executor_release) && [ -d "$value" ]; then
     printf '%s' "$value"
+    return 0
+  fi
+  if journal_exists; then
+    # The journal exists but its executorRelease is empty: a transaction that started before
+    # any releases/current symlink ever existed (the very first update on this instance,
+    # docs/adr/0013-signed-self-update.md's "Amendments" section). The live symlink must never be
+    # consulted as a substitute here -- mid-transaction it can already point at the untrusted
+    # candidate release the transaction itself is trying to install, which is exactly the
+    # untrusted-new-code-drives-its-own-recovery failure this wrapper exists to avoid. The legacy
+    # checkout is the only release that could possibly have started a transaction with no
+    # executorRelease recorded, so it is the only safe fallback in this branch.
+    printf '%s' "$LEGACY_ROOT"
     return 0
   fi
   current_release_dir
@@ -141,16 +175,17 @@ while true; do
 
   # Step (b): run update-cli from the executor release -- never the new one. A nonzero exit, or
   # an outcome line this wrapper cannot parse, means recovery itself FAILED -- not "nothing to
-  # do" -- so it must never be folded into outcome=none (FINDING 2 in the issue #43 review):
-  # doing so would fall through to starting a daemon (old or new) against a data root that may
-  # be half-migrated or half-restored, the one invariant the ADR forbids. On that failure this
+  # do" -- so it must never be folded into outcome=none: doing so would fall through to starting
+  # a daemon (old or new) against a data root that may be half-migrated or half-restored, the
+  # one invariant docs/adr/0013-signed-self-update.md's decision 4 forbids. On that failure this
   # script prints an operator-facing reason and exits nonzero instead, so systemd surfaces the
   # failure and (Restart=always) retries the recovery, which is idempotent by design.
   if [ -n "${VEDUTA_UPDATE_HOME:-}" ] && [ -d "$VEDUTA_UPDATE_HOME" ]; then
     cli_tsx="$executor_dir/packages/daemon/node_modules/.bin/tsx"
     if [ -x "$cli_tsx" ]; then
       cli_status=0
-      cli_out=$("$cli_tsx" "$executor_dir/packages/daemon/src/update/update-cli.ts" run) || cli_status=$?
+      cli_out=$(VEDUTA_LEGACY_ROOT="$LEGACY_ROOT" "$cli_tsx" \
+        "$executor_dir/packages/daemon/src/update/update-cli.ts" run) || cli_status=$?
       if [ "$cli_status" -ne 0 ]; then
         printf 'veduta-run: update-cli run FAILED (exit %s) -- recovery did not complete; refusing to start any daemon against a data root that may be half-migrated or half-restored\n' \
           "$cli_status" >&2
@@ -165,6 +200,20 @@ while true; do
         exit 1
       fi
       printf 'veduta-run: update-cli reported: %s\n' "$outcome" >&2
+    elif update_work_pending; then
+      # The executor release's own tsx shim is missing or not executable (e.g. a pruned release,
+      # or a broken node_modules), but update work is genuinely pending -- a marker or an active
+      # transaction journal is sitting under VEDUTA_UPDATE_HOME. That is "cannot run recovery",
+      # not "nothing to do": starting any daemon here would serve against a data root the ADR
+      # says must never be served with a pending transaction (docs/adr/0013-signed-self-update.md
+      # decision 4, issues/043-self-update.md). Refuse to start, loudly, and let systemd retry.
+      printf 'veduta-run: update work is pending under %s but the executor update-cli at %s is missing or not executable -- refusing to start any daemon while a marker/journal is unresolved\n' \
+        "$VEDUTA_UPDATE_HOME" "$cli_tsx" >&2
+      printf 'veduta-run: fix the executor release (e.g. restore its node_modules), then systemd will retry (Restart=always); recovery is idempotent\n' >&2
+      exit 1
+    else
+      printf 'veduta-run: executor update-cli at %s is missing or not executable, but no update work is pending -- supervising the daemon directly\n' \
+        "$cli_tsx" >&2
     fi
   fi
 
@@ -189,10 +238,9 @@ while true; do
     # The log file ACCUMULATES across attempts of the same version (this transaction's own
     # narration lines plus every prior stage-2 tee) -- a crash-and-resume of the same version
     # therefore already has a previous run's ready line sitting in it. Capturing the byte size
-    # here, BEFORE the child is spawned, and searching only bytes written after that offset
-    # (FINDING 3 in the issue #43 review) is what keeps this readiness check honest: without it,
-    # the wrapper would declare ready at t=0 from a stale line and finalize before the new daemon
-    # has even bound a socket.
+    # here, BEFORE the child is spawned, and searching only bytes written after that offset is
+    # what keeps this readiness check honest: without it, the wrapper would declare ready at t=0
+    # from a stale line and finalize before the new daemon has even bound a socket.
     log_offset=0
     if [ -f "$log_file" ]; then
       log_offset=$(wc -c <"$log_file" | tr -d '[:space:]')
@@ -203,14 +251,20 @@ while true; do
     # own job-control bookkeeping catches up, which is observably not instantaneous (it can lag a
     # full second or more) -- so a child that prints its ready line and dies immediately after can
     # race a `kill -0`-based check into reporting "alive" regardless of check ordering. Liveness
-    # here is instead tracked with a marker file this subshell creates itself the instant the
-    # daemon's OWN process has actually returned -- a plain filesystem existence check with no
-    # reap-timing ambiguity at all. The subshell's own final `exit` forwards the daemon's real
-    # exit status, so Step (e) below (which inspects `wait "$CHILD_PID"`) sees exactly what it
-    # always did; `kill -TERM "-$CHILD_PID"` still reaches the daemon too, since it inherits this
-    # backgrounded subshell's job-control process group.
+    # here is instead tracked with a marker file this subshell writes the instant the daemon's OWN
+    # process has actually returned -- a plain filesystem existence check with no reap-timing
+    # ambiguity at all. `set +e` inside the subshell is deliberate: it inherits the parent
+    # script's `set -euo pipefail`, and without disabling errexit here, a nonzero daemon exit
+    # would terminate the subshell immediately at the failing command -- before it ever reached
+    # the lines below that write $done_marker -- so a candidate that printed its ready line and
+    # then crashed would leave no exit signal behind at all, and the readiness loop below would
+    # have no way to tell "still starting" from "already dead". Writing the marker, with the
+    # child's real exit status as its content, must happen unconditionally in every exit path.
+    # `kill -TERM "-$CHILD_PID"` still reaches the daemon, since it inherits this backgrounded
+    # subshell's job-control process group.
     done_marker=$(mktemp -u)
     (
+      set +e
       if [ "$node_bin" = "node" ]; then
         "$daemon_tsx" "$entry" \
           > >(tee -a "$log_file") \
@@ -224,22 +278,31 @@ while true; do
           2> >(tee -a "$log_file" >&2)
       fi
       daemon_status=$?
-      : >"$done_marker"
+      printf '%s' "$daemon_status" >"$done_marker"
       exit "$daemon_status"
     ) &
     CHILD_PID=$!
 
     ready=false
+    exit_status=""
     waited=0
     while [ "$waited" -lt "$READY_TIMEOUT" ]; do
-      # Liveness is checked BEFORE the ready-line grep (FINDING 3): a child that printed ready
-      # and then died must never be read as ready just because the line is sitting in the log --
-      # a dead child during this window always means rollback, never finalize.
-      if [ -f "$done_marker" ]; then
-        break
-      fi
       if tail -c "+$((log_offset + 1))" "$log_file" 2>/dev/null | grep -q '^veduta daemon'; then
         ready=true
+      fi
+      # The marker check runs LAST, after the ready-line scan, and always overrides it: whatever
+      # the log already contains, a child that has exited (recorded here by reading the exit
+      # status this subshell wrote into $done_marker, unconditionally, in every exit path above)
+      # must never be read as ready. Checking this right before the loop can break -- rather than
+      # first, as a separate pass -- is what keeps a ready line printed moments before death from
+      # racing this decision: a dead process can never pass the health check, no matter what it
+      # managed to print before dying.
+      if [ -f "$done_marker" ]; then
+        exit_status=$(cat "$done_marker" 2>/dev/null || printf 'unknown')
+        ready=false
+        break
+      fi
+      if [ "$ready" = "true" ]; then
         break
       fi
       sleep 1
@@ -247,9 +310,14 @@ while true; do
     done
     rm -f "$done_marker"
 
+    if [ "$ready" != "true" ] && [ -n "$exit_status" ]; then
+      printf 'veduta-run: release %s exited on its own (status %s) during the readiness window\n' \
+        "$version" "$exit_status" >&2
+    fi
+
     if [ "$ready" = "true" ]; then
       printf 'veduta-run: release %s became ready -- finalizing\n' "$version" >&2
-      if ! "$executor_dir/packages/daemon/node_modules/.bin/tsx" \
+      if ! VEDUTA_LEGACY_ROOT="$LEGACY_ROOT" "$executor_dir/packages/daemon/node_modules/.bin/tsx" \
         "$executor_dir/packages/daemon/src/update/update-cli.ts" finalize --version "$version"; then
         printf 'veduta-run: update-cli finalize reported an error -- the new release keeps serving regardless\n' >&2
       fi
@@ -259,11 +327,11 @@ while true; do
       kill -TERM "-$CHILD_PID" 2>/dev/null || true
       wait "$CHILD_PID" 2>/dev/null || true
       CHILD_PID=""
-      # A failed rollback invocation must never be swallowed (FINDING 2): the data root and/or
+      # A failed rollback invocation must never be swallowed: the data root and/or
       # releases/current may be left in an inconsistent, half-reverted state, so this script
       # refuses to start any daemon rather than silently `continue`ing into another loop
       # iteration that might start one anyway.
-      if ! "$executor_dir/packages/daemon/node_modules/.bin/tsx" \
+      if ! VEDUTA_LEGACY_ROOT="$LEGACY_ROOT" "$executor_dir/packages/daemon/node_modules/.bin/tsx" \
         "$executor_dir/packages/daemon/src/update/update-cli.ts" rollback \
         --reason "release $version did not become ready within ${READY_TIMEOUT}s"; then
         printf 'veduta-run: update-cli rollback FAILED -- the data root and/or releases/current may be left in an inconsistent state; refusing to start any daemon\n' >&2

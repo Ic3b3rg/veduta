@@ -6,8 +6,6 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  renameSync,
-  writeSync,
 } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -30,9 +28,14 @@ import type { SpaceEvent } from './spaces-engine.ts'
 import type { FastMutationNotice, Store } from './store.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { untrustedOrigin, type Origin } from './taint.ts'
+import { writeJsonAtomic } from './update/update-atomic.ts'
 import { checkMonotonic, verifyReleaseChain } from './update/minisign.ts'
 import { readDataVersion } from './update/data-version.ts'
-import { resolveUpdateHome, type UpdateHome } from './update/update-transaction.ts'
+import {
+  resolveUpdateHome,
+  sweepAckedResult,
+  type UpdateHome,
+} from './update/update-transaction.ts'
 import {
   availableSlotNode,
   buttonsRowNode,
@@ -117,25 +120,9 @@ function ackFilePath(home: UpdateHome, id: string): string {
   return join(home.stateDir, `result-acked-${id}`)
 }
 
-/** Same tmp+fsync+rename+dir-fsync idiom as `update-transaction.ts`'s `writeJsonAtomic` — the daemon's own write into the update home (the marker), so a crash never leaves a half-written file for the wrapper to read. */
-function writeJsonAtomic(dir: string, filename: string, data: unknown): void {
-  mkdirSync(dir, { recursive: true })
-  const path = join(dir, filename)
-  const tmpPath = `${path}.tmp`
-  const fd = openSync(tmpPath, 'w', 0o600)
-  try {
-    writeSync(fd, `${JSON.stringify(data, null, 2)}\n`)
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
-  renameSync(tmpPath, path)
-  const dirFd = openSync(dir, fsConstants.O_RDONLY)
-  try {
-    fsyncSync(dirFd)
-  } finally {
-    closeSync(dirFd)
-  }
+/** The notify-dedupe marker (issue #43 review follow-up) — see `ingestResult`/`markNotified`. */
+function notifiedFilePath(home: UpdateHome, id: string): string {
+  return join(home.stateDir, `result-notified-${id}`)
 }
 
 /** Reads the response body up to `maxBytes`, aborting past the cap — never buffers an unbounded feed response. */
@@ -460,8 +447,23 @@ export class UpdateManager {
    * rules out (issue #43 review follow-up): `update-cli run` would be left
    * juggling two competing pieces of state, forever re-resuming the stale
    * journal while a fresh marker sits unconsumed, with no SSH-free way out.
+   *
+   * Sweeps a fully-acked previous result first (`update-transaction.ts`'s
+   * `sweepAckedResult`, the same one `update-cli.ts`'s `run` mode calls):
+   * an ACKed result has fully served its purpose — its `update.outcome`
+   * Event is durable, the badge/Surface already reflect it, and
+   * `state/result-acked-<id>` proves the ack — so leaving it in place would
+   * mean every installation can only ever self-update once, then needs an
+   * external restart to clear it (issue #43 review follow-up: nothing else
+   * ever retires a result outside of `update-cli.ts` starting a *new*
+   * transaction, which this refusal would otherwise prevent from ever
+   * happening again). An active journal or an unacked result are still
+   * refused exactly as before — `sweepAckedResult` itself never touches
+   * either.
    */
   async applyUpdate(): Promise<void> {
+    sweepAckedResult(this.home)
+
     if (existsSync(journalFilePath(this.home)) || existsSync(resultFilePath(this.home))) {
       this.currentView = {
         ...this.currentView,
@@ -483,7 +485,7 @@ export class UpdateManager {
       signingKey: manifest.signingKey,
       artifactUrl: manifest.artifactUrl,
     })
-    writeJsonAtomic(this.home.stateDir, 'marker.json', marker)
+    writeJsonAtomic(join(this.home.stateDir, 'marker.json'), marker)
 
     this.store.spacesEngine.appendEvent(SYSTEM_SPACE_ID, {
       type: 'update.apply',
@@ -587,6 +589,17 @@ export class UpdateManager {
    * deleted or moved here — the updater/wrapper alone retires it, once this
    * ack is durably in place (`update/update-transaction.ts`'s
    * `sweepAckedResult`).
+   *
+   * `result.reason` can embed feed-controlled artifact URLs (a refused
+   * download/verify) or candidate-release output (a failed self-check's
+   * stderr) — the same "ALL feed-derived text stays untrusted" rule
+   * `runCheck`'s catch block applies (`docs/adr/0013-signed-self-update.md`).
+   * The `update.outcome` Event's `text` and the Badge's fixed tone are both
+   * daemon-authored and safe; `reason` is the only field that can carry
+   * those bytes, so the whole Event (and the Surface refresh, whose
+   * `outcomeDetail` renders that same `reason`) is marked
+   * `untrusted:update-feed` whenever `reason` is non-empty, and stays
+   * `trusted:system` only for the empty-reason success case.
    */
   private async ingestResult(resultPath: string): Promise<void> {
     let result: UpdateResult
@@ -599,6 +612,9 @@ export class UpdateManager {
 
     if (existsSync(ackFilePath(this.home, result.id))) return
 
+    const origin: Origin =
+      result.reason.length > 0 ? untrustedOrigin('update-feed') : 'trusted:system'
+
     const cutoff = new Date(this.now().getTime() - 2 * 24 * 60 * 60 * 1000).toISOString()
     const alreadyHasEvent = this.store
       .eventLogSince(SYSTEM_SPACE_ID, cutoff)
@@ -610,7 +626,7 @@ export class UpdateManager {
         event = this.store.spacesEngine.appendEvent(SYSTEM_SPACE_ID, {
           type: 'update.outcome',
           text: `Update to ${result.toVersion}: ${result.outcome}`,
-          origin: 'trusted:system',
+          origin,
           payload: {
             resultId: result.id,
             outcome: result.outcome,
@@ -637,11 +653,27 @@ export class UpdateManager {
       }
     }
 
-    this.notifications.notify({
-      level: 'badge',
-      spaceId: SYSTEM_SPACE_ID,
-      text: `Update to ${result.toVersion}: ${result.outcome}`,
-    })
+    // Idempotent on the same result id (issue #43 review follow-up): a
+    // retry after a failed ack write below must re-ensure the Surface/badge
+    // reflect the outcome without ever notifying twice — unlike the Surface
+    // patch (a plain idempotent overwrite), `notifications.notify` creates
+    // its own Event and attention increment each time it is called.
+    const notifiedPath = notifiedFilePath(this.home, result.id)
+    if (!existsSync(notifiedPath)) {
+      this.notifications.notify({
+        level: 'badge',
+        spaceId: SYSTEM_SPACE_ID,
+        text: `Update to ${result.toVersion}: ${result.outcome}`,
+      })
+      try {
+        this.markNotified(result.id)
+      } catch (error) {
+        console.error(
+          'update-manager: failed to write the notified marker; a retry before the ack lands could notify again',
+          error,
+        )
+      }
+    }
 
     this.currentView = {
       currentVersion: this.installedVersion,
@@ -649,7 +681,7 @@ export class UpdateManager {
       outcomeDetail: outcomeDetail(result),
       lastCheckedAt: this.now().toISOString(),
     }
-    this.refreshSurface()
+    this.refreshSurface(origin)
 
     try {
       this.writeAckFile(result.id)
@@ -658,6 +690,25 @@ export class UpdateManager {
         'update-manager: failed to write the durable ack file; will retry on the next boot',
         error,
       )
+    }
+  }
+
+  /** Same atomic-create (never overwrites) + fsync idiom as `writeAckFile`, one file per result id — dedupes `notifications.notify` across `ingestResult` retries for the same result. Not part of the ack contract itself (`sweepAckedResult` only waits on `result-acked-<id>`); cleaned up alongside it there once the result is archived. */
+  private markNotified(id: string): void {
+    const path = notifiedFilePath(this.home, id)
+    if (existsSync(path)) return
+    mkdirSync(this.home.stateDir, { recursive: true })
+    let fd: number
+    try {
+      fd = openSync(path, 'wx', 0o600)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return
+      throw error
+    }
+    try {
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
     }
   }
 

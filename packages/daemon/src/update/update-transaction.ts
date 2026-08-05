@@ -150,8 +150,31 @@ const JournalSchema = z.object({
   phase: z.enum(PHASE_ORDER),
   toVersion: z.string().min(1),
   fromVersion: z.string().min(1),
-  /** Absolute path of the release currently running this transaction — where `deploy/veduta-run` execs `update-cli.ts` from if it needs to resume, never the new release. */
+  /**
+   * Absolute path of the release currently running this transaction — where
+   * `deploy/veduta-run` execs `update-cli.ts` from if it needs to resume,
+   * never the new release. Never empty: when `releases/current` does not
+   * exist yet (the very first update), this is the legacy checkout path
+   * (`UpdateTransactionOptions.legacyRoot`) instead — a real, resumable
+   * executor location, not the empty string a missing symlink used to
+   * produce (issue #43 review follow-up). See `hadPriorRelease` for what
+   * this path actually means to rollback.
+   */
   executorRelease: z.string(),
+  /**
+   * Whether `releases/current` already pointed at a previous release when
+   * this transaction started (issue #43 review follow-up). `true` means
+   * `executorRelease` above is a real `releases/vX.Y.Z` directory and
+   * rollback's flip-back substate restores `current` to point at it; `false`
+   * means this is a first update with no prior release at all —
+   * `executorRelease` is only the legacy checkout for crash-recovery
+   * logging, and rollback must instead remove the `current` symlink
+   * entirely, falling back to the legacy checkout the same way the system
+   * ran before this transaction started. Defaults to `true` for any journal
+   * written before this field existed, preserving the old always-flip-back
+   * behavior for a journal that already recorded a real `executorRelease`.
+   */
+  hadPriorRelease: z.boolean().default(true),
   release: ReleaseMetadataSchema,
   /**
    * The verbatim marker this transaction was started from — kept in the
@@ -365,6 +388,21 @@ export interface UpdateTransactionOptions {
   keyMaterial: Buffer
   ports: Ports
   env?: NodeJS.ProcessEnv
+  /**
+   * Absolute path of the legacy (pre-`releases/`) checkout — the code the
+   * installer originally deployed, and what still serves as `current`'s
+   * de facto executor until the very first successful update ever creates
+   * `releases/current` (`docs/adr/0013-signed-self-update.md`'s Amendments,
+   * layout note 3). Required only when `runUpdateTransaction` finds no
+   * `releases/current` symlink yet: without it, there would be nothing safe
+   * to journal as `executorRelease` for a first update, and a crash after
+   * the symlink flip would have nowhere trustworthy to resume from except
+   * the very candidate release being installed — exactly what this option
+   * exists to rule out (issue #43 review follow-up). Ignored once
+   * `releases/current` already exists. `update-cli.ts` is expected to pass
+   * this from an environment variable such as `VEDUTA_LEGACY_ROOT`.
+   */
+  legacyRoot?: string
 }
 
 /** Shared by `resumeUpdateTransaction`, `finalizeUpdate`, and `rollbackUpdate` — none of them need `marker`, since a live journal already carries its own copy once a transaction has started. */
@@ -665,12 +703,29 @@ async function performRollback(ctx: Ctx, journalIn: Journal): Promise<Journal> {
       ...journal,
       rollback: { substate: 'flipped-back', failedDataDir },
     })
-    if (
-      (journal.phase === 'switched' || journal.phase === 'serving-check') &&
-      journal.executorRelease !== ''
-    ) {
-      flipCurrent(ctx.home, journal.executorRelease)
-      ctx.log(`rollback: current flipped back to ${journal.executorRelease}`)
+    if (journal.phase === 'switched' || journal.phase === 'serving-check') {
+      if (journal.hadPriorRelease && journal.executorRelease !== '') {
+        flipCurrent(ctx.home, journal.executorRelease)
+        ctx.log(`rollback: current flipped back to ${journal.executorRelease}`)
+      } else if (existsSync(ctx.home.currentSymlink)) {
+        // A first update has no previous release to flip back to —
+        // `executorRelease` only holds the legacy checkout, which is never
+        // a valid `releases/vX.Y.Z` target for `current` (issue #43 review
+        // follow-up). Removing the symlink outright, rather than leaving it
+        // pointing at the just-failed candidate release, is what makes the
+        // wrapper fall back to running the legacy checkout again — the
+        // same place the system served from before this transaction
+        // started. Idempotent: a re-entry after the symlink is already gone
+        // is a no-op. `recursive: true` only satisfies `rmSync`'s own
+        // type-check on a symlink whose target is a directory (otherwise it
+        // throws "Path is a directory") — it never actually recurses into
+        // the target: only the symlink itself is unlinked, the release
+        // directory it pointed at is untouched.
+        rmSync(ctx.home.currentSymlink, { force: true, recursive: true })
+        ctx.log(
+          'rollback: no prior release to flip back to (first update); current symlink removed',
+        )
+      }
     }
   }
 
@@ -940,13 +995,22 @@ export async function runUpdateTransaction(
   const release = releaseParsed.data
 
   const now = options.ports.now()
-  const executorRelease = existsSync(home.currentSymlink) ? realpathSync(home.currentSymlink) : ''
+  const hadPriorRelease = existsSync(home.currentSymlink)
+  const executorRelease = hadPriorRelease ? realpathSync(home.currentSymlink) : options.legacyRoot
+  if (executorRelease === undefined || executorRelease.length === 0) {
+    throw new Error(
+      'runUpdateTransaction: releases/current does not exist yet (this is the first update) and ' +
+        'no legacyRoot was provided; the caller (update-cli.ts) must pass the legacy checkout ' +
+        'path so crash recovery never treats the candidate release as its own executor',
+    )
+  }
 
   let journal: Journal = {
     phase: 'started',
     toVersion: release.version,
     fromVersion: options.installedVersion,
     executorRelease,
+    hadPriorRelease,
     release,
     marker: options.marker,
     startedAt: now.toISOString(),
@@ -1111,5 +1175,10 @@ export function sweepAckedResult(home: UpdateHome): boolean {
   const ts = isoForFilename(new Date())
   renameSync(rPath, join(home.historyDir, `${ts}-${result.toVersion}-result.json`))
   renameSync(ackPath, join(home.historyDir, `${ts}-${result.toVersion}-result-acked-${result.id}`))
+  // `update-manager.ts`'s own notify-dedupe marker (issue #43 review
+  // follow-up) has no forensic value once the result it guarded is itself
+  // archived — left behind, it would accumulate in `state/` forever.
+  const notifiedPath = join(home.stateDir, `result-notified-${result.id}`)
+  if (existsSync(notifiedPath)) rmSync(notifiedPath, { force: true })
   return true
 }

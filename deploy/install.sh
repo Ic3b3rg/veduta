@@ -52,6 +52,10 @@ readonly DEFAULT_DATA_DIR="/var/lib/veduta/.veduta"
 # "Amendments" section): upstream defaults so a fork gets its own update channel with zero
 # source patches, by pinning its own --update-feed/--update-root-key at install time instead.
 readonly DEFAULT_UPDATE_FEED="https://raw.githubusercontent.com/Ic3b3rg/veduta/main/feed/stable.json"
+# Root-owned trust anchors, written only by write_update_pinning below. A single named constant
+# (instead of the path repeated as a literal in write_update_pinning, systemd_unit_stage's
+# override.conf, and print_update_pinning_notice) keeps those three call sites from drifting.
+readonly UPDATE_PINNING_PATH=/etc/veduta/update.json
 
 # --- Stage table (parallel indexed arrays -- no associative arrays, for bash 3.2) ---------
 
@@ -501,7 +505,7 @@ EOF
   printf '  vault keyfile:   /etc/veduta/vault.key (created only if absent, never rotated)\n' >&2
   printf '  update home:     /var/lib/veduta/updates/{releases,runtimes,bin,state,backups,tmp} (veduta:veduta 0700)\n' >&2
   if [ -n "$UPDATE_ROOT_KEY" ]; then
-    printf '  update pinning:  /etc/veduta/update.json (root:root 0644) -- feed %s\n' "$UPDATE_FEED" >&2
+    printf '  update pinning:  %s (root:root 0644) -- feed %s\n' "$UPDATE_PINNING_PATH" "$UPDATE_FEED" >&2
   else
     printf '  update pinning:  skipped (no --update-root-key given) -- signed self-update stays unconfigured\n' >&2
   fi
@@ -853,23 +857,31 @@ deps_stage() {
 }
 
 # Root-owned trust anchors for the signed self-update feed (issue #43,
-# docs/adr/0013-signed-self-update.md's "Amendments" section): written ONLY when
-# --update-root-key was given -- the upstream root key does not exist yet, so an install without
-# one simply leaves signed updates unconfigured. deploy/veduta-run's update-cli tolerates a
-# missing /etc/veduta/update.json for as long as there is nothing to update.
+# docs/adr/0013-signed-self-update.md's "Amendments" section): (re)written only when
+# --update-root-key was given this run. A fresh install with no key simply leaves signed updates
+# unconfigured (deploy/veduta-run's update-cli tolerates a missing $UPDATE_PINNING_PATH for as
+# long as there is nothing to update); a RERUN with no key against a host that already has
+# pinning from a previous run leaves that existing file untouched instead -- self-update stays
+# configured against it, which is a different, non-inert outcome (see
+# print_update_pinning_notice).
 write_update_pinning() {
-  local pinning_path=/etc/veduta/update.json content tmp
+  local content tmp
   if [ -z "$UPDATE_ROOT_KEY" ]; then
-    printf 'update pinning skipped (no --update-root-key)\n' >&2
+    if [ -e "$UPDATE_PINNING_PATH" ]; then
+      printf 'update pinning left untouched at %s (no --update-root-key given this run)\n' \
+        "$UPDATE_PINNING_PATH" >&2
+    else
+      printf 'update pinning skipped (no --update-root-key)\n' >&2
+    fi
     return 0
   fi
   content="{\"feedUrl\":\"$(escape_json_multiline "$UPDATE_FEED")\",\"rootPublicKey\":\"$(escape_json_multiline "$UPDATE_ROOT_KEY")\"}"
-  tmp="$pinning_path.tmp.$$"
+  tmp="$UPDATE_PINNING_PATH.tmp.$$"
   printf '%s' "$content" | run_quiet tee "$tmp"
   run chown root:root "$tmp"
   run chmod 0644 "$tmp"
-  run mv "$tmp" "$pinning_path"
-  printf 'wrote update pinning to %s (feed: %s)\n' "$pinning_path" "$UPDATE_FEED" >&2
+  run mv "$tmp" "$UPDATE_PINNING_PATH"
+  printf 'wrote update pinning to %s (feed: %s)\n' "$UPDATE_PINNING_PATH" "$UPDATE_FEED" >&2
 }
 
 user_layout_stage() {
@@ -1042,7 +1054,7 @@ systemd_unit_stage() {
     # releases/current does not exist yet (a fresh install that has never been through an
     # update) -- deploy/veduta-run's own header documents this same env contract.
     printf 'Environment=VEDUTA_UPDATE_HOME=/var/lib/veduta/updates\n'
-    printf 'Environment=VEDUTA_UPDATE_PINNING=/etc/veduta/update.json\n'
+    printf 'Environment=VEDUTA_UPDATE_PINNING=%s\n' "$UPDATE_PINNING_PATH"
     printf 'Environment=VEDUTA_LEGACY_ROOT=/opt/veduta\n'
     printf 'Restart=always\n'
     printf 'ExecStart=\n'
@@ -1238,18 +1250,35 @@ run_apply() {
 }
 
 # Printed last, deliberately -- not buried mid-stage next to write_update_pinning's own one-line
-# log message (issue #43 review, finding 4): no upstream root key exists yet to default to (a
-# fabricated placeholder would pin trust to a key nobody holds, worse than leaving it
-# unconfigured), so a plain install with no --update-root-key silently has self-update disabled
-# unless this notice is loud and impossible to miss at the very end of the run.
+# log message: no upstream root key exists yet to default to (a fabricated placeholder would pin
+# trust to a key nobody holds, worse than leaving it unconfigured), so a plain install with no
+# --update-root-key silently has self-update disabled unless this notice is loud and impossible
+# to miss at the very end of the run. A RERUN with no --update-root-key against a host that
+# already has pinning from a previous run is a different, non-inert case (write_update_pinning
+# leaves the existing file untouched above) -- the two are told apart here by checking whether
+# $UPDATE_PINNING_PATH actually exists, not by $UPDATE_ROOT_KEY alone, so a preserved pinning is
+# never misreported as disabled.
 print_update_pinning_notice() {
   if [ -n "$UPDATE_ROOT_KEY" ]; then
+    return 0
+  fi
+  if [ -e "$UPDATE_PINNING_PATH" ]; then
+    printf '\n================================================================\n' >&2
+    printf 'NOTICE: signed self-update pinning already configured -- left untouched\n' >&2
+    printf '================================================================\n' >&2
+    printf 'No --update-root-key was given on this run, so %s\n' "$UPDATE_PINNING_PATH" >&2
+    printf 'was not rewritten. A previous run already pinned a feed and root key there, so\n' >&2
+    printf 'self-update remains configured against it -- this is not the inert case, nothing\n' >&2
+    printf 'was disabled. Pass --update-root-key only if you want to change the pinned feed\n' >&2
+    printf 'or key:\n' >&2
+    printf '  %s --update-root-key @/path/to/root.pub\n' "$RERUN_CMD" >&2
+    printf '================================================================\n' >&2
     return 0
   fi
   printf '\n================================================================\n' >&2
   printf 'NOTICE: signed self-update is INERT on this install\n' >&2
   printf '================================================================\n' >&2
-  printf 'No --update-root-key was given, so /etc/veduta/update.json was not written: this\n' >&2
+  printf 'No --update-root-key was given, so %s was not written: this\n' "$UPDATE_PINNING_PATH" >&2
   printf 'instance has no trust anchor to verify a release against and will never apply a\n' >&2
   printf 'signed update until one is pinned. This is deliberate, not an oversight -- there is\n' >&2
   printf 'no fabricated placeholder key here; see RELEASING.md for how the upstream key is\n' >&2

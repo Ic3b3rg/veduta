@@ -1,9 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { compareVersions, VEDUTA_VERSION } from './version.ts'
+import { compareVersions, resolveInstalledVersion, VEDUTA_VERSION } from './version.ts'
 
 describe('VEDUTA_VERSION', () => {
   it('is the dev placeholder the release build stamps over', () => {
     expect(VEDUTA_VERSION).toBe('0.0.0-dev')
+  })
+})
+
+describe('resolveInstalledVersion', () => {
+  it('resolves an unstamped build to the comparable 0.0.0 baseline, so the first release is discoverable', () => {
+    expect(resolveInstalledVersion({})).toBe('0.0.0')
+    expect(compareVersions('0.0.1', resolveInstalledVersion({}))).toBe(1)
+  })
+
+  it('lets the override stand in for the baseline', () => {
+    expect(resolveInstalledVersion({ VEDUTA_INSTALLED_VERSION: '1.2.3' })).toBe('1.2.3')
+  })
+
+  it('ignores an override that is not an x.y.z triple', () => {
+    expect(resolveInstalledVersion({ VEDUTA_INSTALLED_VERSION: 'nonsense' })).toBe('0.0.0')
+    expect(resolveInstalledVersion({ VEDUTA_INSTALLED_VERSION: '' })).toBe('0.0.0')
   })
 })
 
