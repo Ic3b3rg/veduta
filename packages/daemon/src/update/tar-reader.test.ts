@@ -313,6 +313,60 @@ describe('newline in an entry name (PAX "path" override): no text-parsing ambigu
   })
 })
 
+// --- PAX size override vs. raw header size disagreement -----------------------
+
+describe('readTarEntries / preflightArchive: PAX size override disagreement', () => {
+  it('rejects a PAX "size" override that disagrees with the raw header size field', async () => {
+    const rawEntries = [
+      paxHeaderEntry([paxRecord('size', '50')]),
+      fileEntry('small.txt', 'x'.repeat(10)), // header.size = 10, disagrees with the PAX override
+    ]
+    const archivePath = writeArchive(rawEntries)
+    await expect(preflightArchive(archivePath, GENEROUS_POLICY)).rejects.toThrow(/disagrees/)
+  })
+
+  it('accepts a PAX "size" override that matches the raw header size field', async () => {
+    const rawEntries = [
+      paxHeaderEntry([paxRecord('size', '10')]),
+      fileEntry('small.txt', 'x'.repeat(10)),
+    ]
+    const archivePath = writeArchive(rawEntries)
+    const result = await preflightArchive(archivePath, GENEROUS_POLICY)
+    expect(result.entries).toBe(1)
+    expect(result.unpackedBytes).toBe(10)
+  })
+
+  it('refuses the hidden-traversal-after-fake-EOF construction, and materializes nothing', async () => {
+    // A file entry declares a raw header size of 0 but a PAX size override of
+    // 1024 (two blocks). If a reader skipped the entry's payload using the
+    // raw header size (0, the bug this test guards against), it would treat
+    // the next two 512-byte blocks of that "hidden" payload as a two-zero-block
+    // tar terminator and stop there -- never reaching the malicious traversal
+    // entry that a real `tar` extractor, honoring the PAX size, would read
+    // immediately after skipping the full 1024-byte payload.
+    const hiddenPayload = Buffer.alloc(1024) // two all-zero blocks
+    const fakeZeroSizeFile = Buffer.concat([
+      buildTarHeader({ name: 'placeholder.bin', typeflag: '0', size: 0 }),
+      hiddenPayload,
+    ])
+    const rawEntries = [
+      paxHeaderEntry([paxRecord('size', '1024')]),
+      fakeZeroSizeFile,
+      fileEntry('../../etc/passwd', 'pwned'),
+    ]
+    const archivePath = writeArchive(rawEntries)
+
+    await expect(preflightArchive(archivePath, GENEROUS_POLICY)).rejects.toThrow(/disagrees/)
+
+    const outDir = freshDir('tar-reader-hidden-traversal-')
+    const destDir = join(outDir, 'dest')
+    await expect(
+      extractVerifiedArchive({ filePath: archivePath, destDir, policy: GENEROUS_POLICY }),
+    ).rejects.toThrow(/disagrees/)
+    expect(existsSync(destDir)).toBe(false)
+  })
+})
+
 // --- PAX global header rejection ----------------------------------------------
 
 describe('readTarEntries: PAX global header', () => {

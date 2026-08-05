@@ -25,6 +25,16 @@
 #   Everything else (PORT, VEDUTA_PUBLIC_DOMAIN, VEDUTA_ACME_EMAIL, ...) passes straight through
 #   to the daemon child, unmodified -- this script never filters or rewrites the environment.
 #
+# releases/current is a symlink (`update-transaction.ts`'s `flipCurrent`) whose target is always
+# an absolute path -- never relative -- so a single, plain `readlink` (no `-f`, no recursion) is
+# enough to resolve it portably on both GNU and BSD/macOS readlink. The release directory to run
+# update-cli *from* (the executor) is never simply "whatever releases/current resolves to right
+# now": while a transaction is active, `state/update-state.json`'s `executorRelease` field is the
+# authoritative record of which release started the transaction (`update-transaction.ts`'s
+# `Journal` type) -- reading the live symlink instead would, after a crash mid-transaction, run
+# the update-cli from the release the transaction is trying to install, which is exactly the
+# untrusted-new-code-drives-its-own-recovery failure this wrapper exists to avoid.
+#
 # This script never mutates the update home itself -- update-cli owns every filesystem change
 # there; this script only decides which release to run and reads stdout/a log file for outcomes
 # and readiness. Must stay parseable by bash 3.2 (macOS's system bash) and shellcheck-clean, the
@@ -35,14 +45,67 @@ set -euo pipefail
 LEGACY_ROOT="${VEDUTA_LEGACY_ROOT:-/opt/veduta}"
 READY_TIMEOUT="${VEDUTA_UPDATE_READY_TIMEOUT:-90}"
 
-# Step (a): the release update-cli itself must run from -- the currently serving release, or the
-# legacy checkout on a fresh/never-updated install. Never the release a transaction is staging.
+# Resolves releases/current to its RESOLVED target directory (never the literal symlink path
+# itself -- see the header comment): a plain `readlink` is enough because the symlink's target is
+# always written as an absolute path. Prints nothing and returns nonzero when there is no update
+# home, no symlink, or the target no longer exists on disk.
+resolve_current_symlink() {
+  local link="${VEDUTA_UPDATE_HOME:-}/releases/current" target
+  if [ -z "${VEDUTA_UPDATE_HOME:-}" ] || [ ! -L "$link" ]; then
+    return 1
+  fi
+  target=$(readlink "$link")
+  if [ -n "$target" ] && [ -d "$target" ]; then
+    printf '%s' "$target"
+    return 0
+  fi
+  return 1
+}
+
+# Step (a)/re-resolution target: the currently serving release directory (resolved, not the
+# literal "current" path), or the legacy checkout on a fresh/never-updated install.
 current_release_dir() {
-  if [ -n "${VEDUTA_UPDATE_HOME:-}" ] && [ -L "$VEDUTA_UPDATE_HOME/releases/current" ]; then
-    printf '%s' "$VEDUTA_UPDATE_HOME/releases/current"
+  local target
+  if target=$(resolve_current_symlink); then
+    printf '%s' "$target"
   else
     printf '%s' "$LEGACY_ROOT"
   fi
+}
+
+# Reads `executorRelease` out of $VEDUTA_UPDATE_HOME/state/update-state.json without a jq
+# dependency (the same grep/sed convention deploy/install.sh already uses for its own JSON
+# field reads, e.g. the packageManager version). The field can legitimately be an empty string
+# (a first-ever update, started before any release/current symlink existed) -- that is treated as
+# "not found" so the caller falls through to resolve_current_symlink/LEGACY_ROOT instead.
+journal_executor_release() {
+  local journal="${VEDUTA_UPDATE_HOME:-}/state/update-state.json" value
+  if [ -z "${VEDUTA_UPDATE_HOME:-}" ] || [ ! -f "$journal" ]; then
+    return 1
+  fi
+  value=$(grep -o '"executorRelease"[[:space:]]*:[[:space:]]*"[^"]*"' "$journal" |
+    head -n1 | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/')
+  if [ -n "$value" ]; then
+    printf '%s' "$value"
+    return 0
+  fi
+  return 1
+}
+
+# The release to run update-cli FROM (the executor, step (a) in the header comment): while a
+# transaction's journal exists, its recorded executorRelease is authoritative -- the release a
+# crash left mid-transaction must always recover using the OLD release's updater, never whatever
+# releases/current happens to point at (which, mid-transaction, can already be the untrusted
+# candidate -- FINDING 1 in the issue #43 review). Falls back to the resolved current symlink (or
+# LEGACY_ROOT) only when there is no journal, or its executorRelease does not resolve to a real
+# directory (e.g. that release has since been pruned).
+executor_release_dir() {
+  local value
+  if value=$(journal_executor_release) && [ -d "$value" ]; then
+    printf '%s' "$value"
+    return 0
+  fi
+  current_release_dir
 }
 
 resolve_node_bin() {
@@ -73,21 +136,33 @@ trap 'on_signal INT' INT
 trap 'on_signal TERM' TERM
 
 while true; do
-  executor_dir=$(current_release_dir)
+  executor_dir=$(executor_release_dir)
   outcome="none"
 
-  # Step (b): run update-cli from the executor release -- never the new one.
+  # Step (b): run update-cli from the executor release -- never the new one. A nonzero exit, or
+  # an outcome line this wrapper cannot parse, means recovery itself FAILED -- not "nothing to
+  # do" -- so it must never be folded into outcome=none (FINDING 2 in the issue #43 review):
+  # doing so would fall through to starting a daemon (old or new) against a data root that may
+  # be half-migrated or half-restored, the one invariant the ADR forbids. On that failure this
+  # script prints an operator-facing reason and exits nonzero instead, so systemd surfaces the
+  # failure and (Restart=always) retries the recovery, which is idempotent by design.
   if [ -n "${VEDUTA_UPDATE_HOME:-}" ] && [ -d "$VEDUTA_UPDATE_HOME" ]; then
     cli_tsx="$executor_dir/packages/daemon/node_modules/.bin/tsx"
     if [ -x "$cli_tsx" ]; then
-      cli_out=$("$cli_tsx" "$executor_dir/packages/daemon/src/update/update-cli.ts" run) || {
-        printf 'veduta-run: update-cli run exited nonzero -- keeping the currently serving release\n' >&2
-        cli_out=""
-      }
+      cli_status=0
+      cli_out=$("$cli_tsx" "$executor_dir/packages/daemon/src/update/update-cli.ts" run) || cli_status=$?
+      if [ "$cli_status" -ne 0 ]; then
+        printf 'veduta-run: update-cli run FAILED (exit %s) -- recovery did not complete; refusing to start any daemon against a data root that may be half-migrated or half-restored\n' \
+          "$cli_status" >&2
+        printf 'veduta-run: systemd will retry (Restart=always); the recovery is idempotent and safe to retry\n' >&2
+        exit 1
+      fi
       if [ "${cli_out#update-cli: }" != "$cli_out" ]; then
         outcome="${cli_out#update-cli: }"
       else
-        printf 'veduta-run: update-cli printed no outcome line -- treating as none\n' >&2
+        printf 'veduta-run: update-cli exited 0 but printed no parseable outcome line -- treating this as a recovery failure, not "none"\n' >&2
+        printf 'veduta-run: systemd will retry (Restart=always); the recovery is idempotent and safe to retry\n' >&2
+        exit 1
       fi
       printf 'veduta-run: update-cli reported: %s\n' "$outcome" >&2
     fi
@@ -111,33 +186,66 @@ while true; do
     printf 'veduta-run: starting release %s under stage-2 supervision (log: %s)\n' \
       "$version" "$log_file" >&2
 
-    if [ "$node_bin" = "node" ]; then
-      "$daemon_tsx" "$entry" \
-        > >(tee -a "$log_file") \
-        2> >(tee -a "$log_file" >&2) &
-    else
-      # pnpm's .bin/tsx shim is a `/bin/sh` script that itself execs a `node` it finds on PATH
-      # (falling back to its own directory first) -- so pinning the runtime means prepending its
-      # bin directory to PATH for this one invocation, not passing $node_bin as argv[0].
-      PATH="$(dirname "$node_bin"):$PATH" "$daemon_tsx" "$entry" \
-        > >(tee -a "$log_file") \
-        2> >(tee -a "$log_file" >&2) &
+    # The log file ACCUMULATES across attempts of the same version (this transaction's own
+    # narration lines plus every prior stage-2 tee) -- a crash-and-resume of the same version
+    # therefore already has a previous run's ready line sitting in it. Capturing the byte size
+    # here, BEFORE the child is spawned, and searching only bytes written after that offset
+    # (FINDING 3 in the issue #43 review) is what keeps this readiness check honest: without it,
+    # the wrapper would declare ready at t=0 from a stale line and finalize before the new daemon
+    # has even bound a socket.
+    log_offset=0
+    if [ -f "$log_file" ]; then
+      log_offset=$(wc -c <"$log_file" | tr -d '[:space:]')
     fi
+
+    # A plain `kill -0 "$CHILD_PID"` cannot reliably distinguish "still serving" from "already
+    # exited but not yet reaped": a zombie still answers signal 0 successfully until this shell's
+    # own job-control bookkeeping catches up, which is observably not instantaneous (it can lag a
+    # full second or more) -- so a child that prints its ready line and dies immediately after can
+    # race a `kill -0`-based check into reporting "alive" regardless of check ordering. Liveness
+    # here is instead tracked with a marker file this subshell creates itself the instant the
+    # daemon's OWN process has actually returned -- a plain filesystem existence check with no
+    # reap-timing ambiguity at all. The subshell's own final `exit` forwards the daemon's real
+    # exit status, so Step (e) below (which inspects `wait "$CHILD_PID"`) sees exactly what it
+    # always did; `kill -TERM "-$CHILD_PID"` still reaches the daemon too, since it inherits this
+    # backgrounded subshell's job-control process group.
+    done_marker=$(mktemp -u)
+    (
+      if [ "$node_bin" = "node" ]; then
+        "$daemon_tsx" "$entry" \
+          > >(tee -a "$log_file") \
+          2> >(tee -a "$log_file" >&2)
+      else
+        # pnpm's .bin/tsx shim is a `/bin/sh` script that itself execs a `node` it finds on PATH
+        # (falling back to its own directory first) -- so pinning the runtime means prepending its
+        # bin directory to PATH for this one invocation, not passing $node_bin as argv[0].
+        PATH="$(dirname "$node_bin"):$PATH" "$daemon_tsx" "$entry" \
+          > >(tee -a "$log_file") \
+          2> >(tee -a "$log_file" >&2)
+      fi
+      daemon_status=$?
+      : >"$done_marker"
+      exit "$daemon_status"
+    ) &
     CHILD_PID=$!
 
     ready=false
     waited=0
     while [ "$waited" -lt "$READY_TIMEOUT" ]; do
-      if grep -q '^veduta daemon' "$log_file" 2>/dev/null; then
-        ready=true
+      # Liveness is checked BEFORE the ready-line grep (FINDING 3): a child that printed ready
+      # and then died must never be read as ready just because the line is sitting in the log --
+      # a dead child during this window always means rollback, never finalize.
+      if [ -f "$done_marker" ]; then
         break
       fi
-      if ! kill -0 "$CHILD_PID" 2>/dev/null; then
+      if tail -c "+$((log_offset + 1))" "$log_file" 2>/dev/null | grep -q '^veduta daemon'; then
+        ready=true
         break
       fi
       sleep 1
       waited=$((waited + 1))
     done
+    rm -f "$done_marker"
 
     if [ "$ready" = "true" ]; then
       printf 'veduta-run: release %s became ready -- finalizing\n' "$version" >&2
@@ -151,9 +259,17 @@ while true; do
       kill -TERM "-$CHILD_PID" 2>/dev/null || true
       wait "$CHILD_PID" 2>/dev/null || true
       CHILD_PID=""
-      "$executor_dir/packages/daemon/node_modules/.bin/tsx" \
+      # A failed rollback invocation must never be swallowed (FINDING 2): the data root and/or
+      # releases/current may be left in an inconsistent, half-reverted state, so this script
+      # refuses to start any daemon rather than silently `continue`ing into another loop
+      # iteration that might start one anyway.
+      if ! "$executor_dir/packages/daemon/node_modules/.bin/tsx" \
         "$executor_dir/packages/daemon/src/update/update-cli.ts" rollback \
-        --reason "release $version did not become ready within ${READY_TIMEOUT}s" || true
+        --reason "release $version did not become ready within ${READY_TIMEOUT}s"; then
+        printf 'veduta-run: update-cli rollback FAILED -- the data root and/or releases/current may be left in an inconsistent state; refusing to start any daemon\n' >&2
+        printf 'veduta-run: systemd will retry (Restart=always); the recovery is idempotent and safe to retry\n' >&2
+        exit 1
+      fi
       continue
     fi
   else

@@ -16,7 +16,7 @@ import type { ReleaseMetadata, UpdateMarker, UpdatePinning } from '@veduta/proto
 import type * as VersionModule from '../version.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createBackup } from '../backup.ts'
-import { generateKeypair, sign } from './minisign.ts'
+import { generateKeypair, publicKeyIdText, sign } from './minisign.ts'
 import { main } from './update-cli.ts'
 import {
   ensureUpdateHomeLayout,
@@ -151,7 +151,7 @@ function markerFrom(chain: Chain, artifactUrl: string): UpdateMarker {
     signingKey: {
       pub: chain.signingPublicKeyText,
       rootSig: chain.signingCertText,
-      keyId: 'test-key',
+      keyId: publicKeyIdText(chain.signingPublicKeyText),
     },
     artifactUrl,
   }

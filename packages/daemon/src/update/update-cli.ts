@@ -72,6 +72,21 @@ function readKeyMaterial(env: NodeJS.ProcessEnv): Buffer {
   return keyMaterial
 }
 
+/**
+ * `VEDUTA_INSTALLED_VERSION` overrides the literal `VEDUTA_VERSION` import
+ * (`docs/adr/0013-signed-self-update.md`'s "Amendments" section): a real
+ * release build stamps a parseable `x.y.z` into `version.ts` itself, so
+ * production never sets this env var and the fallback below is what always
+ * runs. Only the e2e harness (`packages/e2e/tests/update-fixture.ts`), which
+ * drives this CLI straight out of the checked-out tree where `VEDUTA_VERSION`
+ * stays the dev placeholder `'0.0.0-dev'` (not parseable by
+ * `checkMonotonic`/`compareVersions`), needs a parseable stand-in to run a
+ * real transaction at all.
+ */
+function resolveInstalledVersion(env: NodeJS.ProcessEnv): string {
+  return env['VEDUTA_INSTALLED_VERSION'] || VEDUTA_VERSION
+}
+
 function buildResumeOptions(
   home: UpdateHome,
   dataRootDir: string,
@@ -82,7 +97,7 @@ function buildResumeOptions(
     home,
     dataRootDir,
     pinning: readPinning(env['VEDUTA_UPDATE_PINNING']),
-    installedVersion: VEDUTA_VERSION,
+    installedVersion: resolveInstalledVersion(env),
     installedDataVersion: readDataVersion(dataRootDir) ?? 0,
     keyMaterial: readKeyMaterial(env),
     ports,

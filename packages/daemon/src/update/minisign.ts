@@ -7,6 +7,7 @@ import {
   verify as edVerify,
 } from 'node:crypto'
 import type { KeyObject } from 'node:crypto'
+import { compareVersions } from '../version.ts'
 
 /**
  * minisign-compatible signature verification (docs/adr/0013-signed-self-update.md, Amendments): the
@@ -181,6 +182,22 @@ export interface VerifyReleaseChainInput {
   signingKeyRootSigText: string
   rootPublicKeyText: string
   expectedArtifactName: string
+  /**
+   * The manifest's `signingKey.keyId` (`packages/protocol/src/update.ts`,
+   * `SigningKeyCertSchema`) — minisign's own key-id text convention: hex of
+   * the wire-format key id bytes in reverse order (`deploy/release.sh`'s
+   * `extract_key_id` pulls this straight out of a real minisign pubkey
+   * file's "untrusted comment: minisign public key <HEX>" line, which
+   * minisign itself renders byte-reversed relative to the little-endian
+   * `key_id` field it embeds — this module's own fixtures confirm the
+   * reversal: `signing.pub`'s file bytes decode to `dd2a...1c3b`, and its
+   * comment reads `3B1C...2ADD`). When given, checked against the key id
+   * actually embedded in `signingKeyText`, so a feed cannot advertise a
+   * certified key under any id it likes; that field would otherwise carry
+   * no enforceable meaning. Optional so existing callers keep compiling —
+   * every caller should pass it once available.
+   */
+  expectedSigningKeyId?: string
 }
 
 /**
@@ -193,6 +210,19 @@ export interface VerifyReleaseChainInput {
  * Throws a plain, distinct-per-cause `Error`; callers should not need to
  * inspect anything beyond the message.
  */
+/**
+ * The key id of a minisign public key in minisign's own text convention:
+ * uppercase hex of the embedded `key_id` bytes in reverse order, exactly as
+ * `minisign -G` renders it in the "untrusted comment: minisign public key
+ * <HEX>" line and as `deploy/release.sh`'s `extract_key_id` reads it back out.
+ * This is the form a manifest's `signingKey.keyId` carries
+ * (`packages/protocol/src/update.ts`), so anything that builds or checks that
+ * field goes through here rather than re-deriving the reversal.
+ */
+export function publicKeyIdText(publicKeyText: string): string {
+  return Buffer.from(parsePublicKey(publicKeyText).keyId).reverse().toString('hex').toUpperCase()
+}
+
 export function verifyReleaseChain(input: VerifyReleaseChainInput): void {
   let certComment: string
   try {
@@ -208,6 +238,16 @@ export function verifyReleaseChain(input: VerifyReleaseChainInput): void {
     throw new Error(
       `signing key certificate not rooted: expected trusted comment '${SIGNING_KEY_CERT_TRUSTED_COMMENT}', got '${certComment}'`,
     )
+  }
+
+  if (input.expectedSigningKeyId !== undefined) {
+    const actualKeyId = publicKeyIdText(input.signingKeyText)
+    const expectedKeyId = input.expectedSigningKeyId.toUpperCase()
+    if (actualKeyId !== expectedKeyId) {
+      throw new Error(
+        `signing key id mismatch: manifest advertised '${input.expectedSigningKeyId}', the certified key's actual id is '${actualKeyId}'`,
+      )
+    }
   }
 
   let releaseComment: string
@@ -240,6 +280,24 @@ export interface CheckMonotonicInput {
 }
 
 /**
+ * A stricter gate than `compareVersions` (../version.ts) applies on its own:
+ * exactly `v?<digits>.<digits>.<digits>`, no sign, no empty component, no
+ * exponent or other numeric-string trivia `Number()` would tolerate. Applied
+ * before every `checkMonotonic` comparison rather than trusting
+ * `compareVersions` to reject the same inputs — `compareVersions`'s contract
+ * is to compare feed version tags, and its tolerance is free to widen for
+ * that purpose (e.g. for the in-tree dev placeholder) without silently
+ * loosening this security gate too.
+ */
+const STRICT_VERSION_TRIPLE = /^v?\d+\.\d+\.\d+$/
+
+function assertStrictVersionTriple(version: string): void {
+  if (!STRICT_VERSION_TRIPLE.test(version)) {
+    throw new Error(`malformed version string: ${version}`)
+  }
+}
+
+/**
  * Enforces the updater's independent monotonicity rule (docs/adr/0013-signed-self-update.md,
  * Amendments), regardless of what a compromised or stale feed offers: the offered
  * version must be strictly greater than the installed version, and the
@@ -248,9 +306,9 @@ export interface CheckMonotonicInput {
  * migrated store). Throws a plain `Error` naming the violated rule.
  */
 export function checkMonotonic(input: CheckMonotonicInput): void {
-  const offered = parseVersionTriple(input.offeredVersion)
-  const installed = parseVersionTriple(input.installedVersion)
-  if (compareVersionTriples(offered, installed) <= 0) {
+  assertStrictVersionTriple(input.offeredVersion)
+  assertStrictVersionTriple(input.installedVersion)
+  if (compareVersions(input.offeredVersion, input.installedVersion) <= 0) {
     throw new Error(
       `offered version ${input.offeredVersion} is not newer than installed version ${input.installedVersion}`,
     )
@@ -260,27 +318,6 @@ export function checkMonotonic(input: CheckMonotonicInput): void {
       `offered dataVersion ${input.offeredDataVersion} is older than installed dataVersion ${input.installedDataVersion}`,
     )
   }
-}
-
-type VersionTriple = readonly [number, number, number]
-
-function parseVersionTriple(version: string): VersionTriple {
-  const stripped = version.startsWith('v') ? version.slice(1) : version
-  const parts = stripped.split('.')
-  if (parts.length !== 3) throw new Error(`malformed version string: ${version}`)
-  const triple = parts.map((part) => {
-    if (!/^\d+$/.test(part)) throw new Error(`malformed version string: ${version}`)
-    return Number.parseInt(part, 10)
-  })
-  return [triple[0] ?? 0, triple[1] ?? 0, triple[2] ?? 0]
-}
-
-function compareVersionTriples(a: VersionTriple, b: VersionTriple): number {
-  for (let i = 0; i < 3; i += 1) {
-    const diff = (a[i] ?? 0) - (b[i] ?? 0)
-    if (diff !== 0) return diff
-  }
-  return 0
 }
 
 // --- Test-only helpers below this line -------------------------------------
@@ -307,7 +344,14 @@ export function generateKeypair(): GeneratedKeypair {
   const keyId = randomBytes(8)
   const rawPublicKey = rawEd25519PublicKey(publicKey)
   const encoded = Buffer.concat([Buffer.from(PUBLIC_KEY_ALGORITHM, 'latin1'), keyId, rawPublicKey])
-  const untrustedComment = `untrusted comment: minisign public key ${keyId.toString('hex').toUpperCase()}`
+  // Real minisign renders the key id in its untrusted comment byte-reversed
+  // relative to the little-endian bytes it embeds in the file (see
+  // `verifyReleaseChain`'s `expectedSigningKeyId` doc comment above) —
+  // matched here even though this comment line is cosmetic and never parsed
+  // by `parsePublicKey`, so a generated fixture's displayed id means what a
+  // real minisign-generated one would.
+  const displayKeyId = Buffer.from(keyId).reverse().toString('hex').toUpperCase()
+  const untrustedComment = `untrusted comment: minisign public key ${displayKeyId}`
   const publicKeyText = `${untrustedComment}\n${encoded.toString('base64')}\n`
   return { publicKeyText, secretKey: { privateKey, keyId } }
 }

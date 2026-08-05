@@ -834,6 +834,14 @@ export function buildServer(options: ServerOptions = {}) {
   // Heartbeat/Reflection above.
   const updateHomeEnv = process.env['VEDUTA_UPDATE_HOME']
   const updatePinningEnv = process.env['VEDUTA_UPDATE_PINNING']
+  // `VEDUTA_INSTALLED_VERSION` overrides `UpdateManagerConfig.installedVersion`'s own
+  // `VEDUTA_VERSION` default (docs/adr/0013-signed-self-update.md's "Amendments" section):
+  // production never sets this — a release build stamps a real `x.y.z` into `version.ts` itself,
+  // so the default is always parseable there. Only the e2e harness (`packages/e2e/tests/
+  // update-fixture.ts`), which runs straight out of this checked-out tree where `VEDUTA_VERSION`
+  // stays the literal `'0.0.0-dev'` placeholder, needs a parseable stand-in to exercise
+  // `compareVersions`/`checkMonotonic` at all.
+  const installedVersionEnv = process.env['VEDUTA_INSTALLED_VERSION']
   let updateManager: UpdateManager | undefined
   let updateFeedHost: string | undefined
   if (updateHomeEnv && updatePinningEnv) {
@@ -854,6 +862,7 @@ export function buildServer(options: ServerOptions = {}) {
           // task) tells the two apart by exit code alone.
           scheduleExit: defaultScheduleExit(app, UPDATE_REQUESTED_EXIT_CODE),
           now,
+          ...(installedVersionEnv ? { installedVersion: installedVersionEnv } : {}),
         },
       })
       updateManager.register()

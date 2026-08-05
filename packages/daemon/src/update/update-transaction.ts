@@ -1,29 +1,20 @@
-import { execFile } from 'node:child_process'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import {
-  chmodSync,
   closeSync,
   constants as fsConstants,
-  copyFileSync,
   existsSync,
   fsyncSync,
   mkdirSync,
   openSync,
   readFileSync,
-  readdirSync,
   realpathSync,
   renameSync,
   rmSync,
-  statSync,
-  statfsSync,
   symlinkSync,
   writeFileSync,
   writeSync,
 } from 'node:fs'
-import * as http from 'node:http'
-import * as https from 'node:https'
-import { basename, dirname, join, resolve } from 'node:path'
-import { promisify } from 'node:util'
+import { join, resolve } from 'node:path'
 import { ReleaseMetadataSchema, UpdateProgressSchema, UpdateResultSchema } from '@veduta/protocol'
 import type {
   ReleaseMetadata,
@@ -34,28 +25,52 @@ import type {
   UpdateStageStatus,
 } from '@veduta/protocol'
 import { z } from 'zod'
-import { createBackup, pruneBackups, restoreBackup } from '../backup.ts'
-import { compareVersions } from '../version.ts'
+import { createBackup, restoreBackup } from '../backup.ts'
 import { checkMonotonic, verifyReleaseChain } from './minisign.ts'
 import { extractVerifiedArchive } from './tar-reader.ts'
+import { isoForFilename, writeJsonAtomic, writeJsonAtomicBestEffort } from './update-atomic.ts'
+import { checkDiskGuardrail } from './update-guardrail.ts'
+import { runSuccessHousekeeping } from './update-housekeeping.ts'
+import { fetchChecked } from './update-ports.ts'
+import type { Ports } from './update-ports.ts'
+import { computeRuntimeDirName, ensureRuntime } from './update-runtime.ts'
 
 /**
  * The recoverable update transaction (issue #43,
  * `docs/adr/0013-signed-self-update.md` and its "Amendments" section): the
- * on-disk state machine a later CLI/wrapper task drives to take a verified
- * release from "offered" to "serving", with a journaled rollback path so a
- * crash at any point is resumed or reverted on the next start rather than
- * ever leaving old code running against migrated data.
+ * on-disk state machine `deploy/veduta-run` (via `update-cli.ts`) drives to
+ * take a verified release from "offered" to "serving", with a journaled
+ * rollback path so a crash at any point is resumed or reverted on the next
+ * start rather than ever leaving old code running against migrated data.
  *
- * Scope: this module owns the transaction itself — verify, disk guardrail,
- * download, stage, backup, migrate, flip, and stage-1 (hermetic) health —
- * plus the uniform terminal-publication sequence (`result.json`, success
- * housekeeping, journal archive) shared by every outcome. Stage 2 (starting
- * the real daemon and waiting for it to actually serve) is the wrapper's
- * job, built in a later task; this module exposes `finalizeUpdate` and
- * `rollbackUpdate` for that wrapper to call once it has made its own
- * judgment about stage 2.
+ * Scope: this module owns the transaction itself — the journal/rollback
+ * state machine, verify, download, stage, backup, migrate, flip, and stage-1
+ * (hermetic) health — plus the uniform terminal-publication sequence
+ * (`result.json`, success housekeeping, journal archive) shared by every
+ * outcome. Everything else it leans on is a separate, independently testable
+ * module: `update-ports.ts` (injected network/exec/disk ports plus the
+ * shared host/https fetch discipline), `update-runtime.ts` (ensuring and
+ * verifying the Node runtime, AC6), `update-guardrail.ts` (the free-disk
+ * check, AC8), `update-atomic.ts` (the one durable tmp-then-rename write
+ * primitive), and `update-housekeeping.ts` (success-only pruning and the
+ * wrapper self-update). Stage 2 (starting the real daemon and waiting for it
+ * to actually serve) is `deploy/veduta-run`'s job: this module exposes
+ * `finalizeUpdate` and `rollbackUpdate` for it to call once it has made its
+ * own judgment about stage 2.
  */
+
+// Re-exported so `update-cli.ts` and every test keep a single import surface
+// for the whole update system, unaffected by which file actually implements
+// the injected ports.
+export { defaultPorts } from './update-ports.ts'
+export type {
+  ExecFileOptions,
+  ExecFileResult,
+  FetchBytesOptions,
+  FetchBytesResult,
+  Ports,
+  StatfsResult,
+} from './update-ports.ts'
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -110,178 +125,6 @@ export function ensureUpdateHomeLayout(home: UpdateHome): void {
 }
 
 // ---------------------------------------------------------------------------
-// Ports (dependency injection)
-// ---------------------------------------------------------------------------
-
-export interface FetchBytesOptions {
-  maxBytes: number
-}
-
-export interface FetchBytesResult {
-  status: number
-  bytes: Buffer
-}
-
-export interface ExecFileOptions {
-  cwd?: string
-  env?: NodeJS.ProcessEnv
-}
-
-export interface ExecFileResult {
-  code: number
-  stdout: string
-  stderr: string
-}
-
-export interface StatfsResult {
-  bavail: number
-  bsize: number
-}
-
-/**
- * Everything the transaction needs from the outside world, injected so unit
- * tests never touch a real network, a real disk-space check, or a real
- * subprocess for the new release's own migrate/self-check entry points.
- * `defaultPorts()` below is the production wiring.
- */
-export interface Ports {
-  /**
-   * Fetches `url` in full, capped at `maxBytes`. Production implementations
-   * are expected to follow only same-host redirects, to a bounded depth —
-   * the caller (this module) separately enforces https-only-except-loopback
-   * and pinned-host matching on the *initial* URL before ever calling this.
-   */
-  fetchBytes(url: string, opts: FetchBytesOptions): Promise<FetchBytesResult>
-  execFile(cmd: string, args: string[], opts?: ExecFileOptions): Promise<ExecFileResult>
-  /** Wraps `node:fs` `statfsSync` — free-space accounting for the disk guardrail. */
-  statfs(path: string): StatfsResult
-  /** A `du -sk`-equivalent recursive size of `path`, in bytes. */
-  diskUsage(path: string): Promise<number>
-  now(): Date
-  /** Appends `line` to whatever sink the caller wants (production: also `state/logs/<version>.log`, teed by this module itself; tests: typically a capture array). */
-  log(line: string): void
-}
-
-const execFileAsync = promisify(execFile)
-
-/** Production `Ports`: real network fetch (https-only except loopback, manual same-host redirects, depth-capped), real `execFile`, real `statfs`/disk-usage walk. */
-export function defaultPorts(): Ports {
-  return {
-    fetchBytes: (url, opts) => fetchOnce(url, opts.maxBytes, 0),
-    execFile: async (cmd, args, opts) => {
-      try {
-        const { stdout, stderr } = await execFileAsync(cmd, args, {
-          ...(opts?.cwd !== undefined ? { cwd: opts.cwd } : {}),
-          ...(opts?.env !== undefined ? { env: opts.env } : {}),
-          maxBuffer: 64 * 1024 * 1024,
-        })
-        return { code: 0, stdout, stderr }
-      } catch (error) {
-        const e = error as { code?: unknown; stdout?: string; stderr?: string; message: string }
-        const code = typeof e.code === 'number' ? e.code : 1
-        return { code, stdout: e.stdout ?? '', stderr: e.stderr ?? e.message }
-      }
-    },
-    statfs: (path) => {
-      const s = statfsSync(path)
-      return { bavail: s.bavail, bsize: s.bsize }
-    },
-    diskUsage: (path) => Promise.resolve(walkDiskUsage(path)),
-    now: () => new Date(),
-    log: (line) => {
-      process.stderr.write(`${line}\n`)
-    },
-  }
-}
-
-const MAX_REDIRECT_DEPTH = 3
-
-function fetchOnce(urlText: string, maxBytes: number, depth: number): Promise<FetchBytesResult> {
-  return new Promise((resolvePromise, reject) => {
-    let url: URL
-    try {
-      url = new URL(urlText)
-    } catch (cause) {
-      reject(new Error(`malformed URL: ${urlText}: ${messageOf(cause)}`))
-      return
-    }
-    const mod = url.protocol === 'http:' ? http : https
-    const req = mod.get(url, (res) => {
-      const status = res.statusCode ?? 0
-      const location = res.headers.location
-      if (status >= 300 && status < 400 && location !== undefined) {
-        res.resume()
-        if (depth >= MAX_REDIRECT_DEPTH) {
-          reject(new Error(`too many redirects fetching ${urlText}`))
-          return
-        }
-        let redirectUrl: URL
-        try {
-          redirectUrl = new URL(location, url)
-        } catch (cause) {
-          reject(new Error(`malformed redirect Location fetching ${urlText}: ${messageOf(cause)}`))
-          return
-        }
-        if (redirectUrl.hostname !== url.hostname) {
-          reject(
-            new Error(`refusing a cross-host redirect: ${url.hostname} -> ${redirectUrl.hostname}`),
-          )
-          return
-        }
-        resolvePromise(fetchOnce(redirectUrl.href, maxBytes, depth + 1))
-        return
-      }
-      const chunks: Buffer[] = []
-      let total = 0
-      res.on('data', (chunk: Buffer) => {
-        total += chunk.length
-        if (total > maxBytes) {
-          req.destroy()
-          reject(
-            new Error(`response for ${urlText} exceeded the maximum allowed ${maxBytes} bytes`),
-          )
-          return
-        }
-        chunks.push(chunk)
-      })
-      res.on('end', () => resolvePromise({ status, bytes: Buffer.concat(chunks) }))
-      res.on('error', reject)
-    })
-    req.on('error', reject)
-  })
-}
-
-function walkDiskUsage(rootPath: string): number {
-  let total = 0
-  const stack = [rootPath]
-  while (stack.length > 0) {
-    const current = stack.pop()
-    if (current === undefined) continue
-    let entries
-    try {
-      entries = readdirSync(current, { withFileTypes: true })
-    } catch {
-      continue
-    }
-    for (const entry of entries) {
-      const full = join(current, entry.name)
-      if (entry.isSymbolicLink()) continue
-      if (entry.isDirectory()) {
-        stack.push(full)
-        continue
-      }
-      try {
-        total += statSync(full).size
-      } catch {
-        // A file disappearing mid-walk (a concurrent writer) is tolerated —
-        // this is an approximation for the disk guardrail, not an audit.
-      }
-    }
-  }
-  return total
-}
-
-// ---------------------------------------------------------------------------
 // Journal
 // ---------------------------------------------------------------------------
 
@@ -299,14 +142,15 @@ const PHASE_ORDER = [
 
 export type Phase = (typeof PHASE_ORDER)[number]
 
-const RollbackSubstateSchema = z.enum(['data-moved-aside', 'restored', 'flipped-back', 'done'])
+const ROLLBACK_SUBSTATE_ORDER = ['data-moved-aside', 'restored', 'flipped-back', 'done'] as const
+const RollbackSubstateSchema = z.enum(ROLLBACK_SUBSTATE_ORDER)
 export type RollbackSubstate = z.infer<typeof RollbackSubstateSchema>
 
 const JournalSchema = z.object({
   phase: z.enum(PHASE_ORDER),
   toVersion: z.string().min(1),
   fromVersion: z.string().min(1),
-  /** Absolute path of the release currently running this transaction — where the wrapper (a later task) must exec the updater CLI from if it needs to resume, never the new release. */
+  /** Absolute path of the release currently running this transaction — where `deploy/veduta-run` execs `update-cli.ts` from if it needs to resume, never the new release. */
   executorRelease: z.string(),
   release: ReleaseMetadataSchema,
   /**
@@ -337,6 +181,10 @@ type Journal = z.infer<typeof JournalSchema>
 
 function phaseIndex(phase: Phase): number {
   return PHASE_ORDER.indexOf(phase)
+}
+
+function rollbackSubstateIndex(substate: RollbackSubstate): number {
+  return ROLLBACK_SUBSTATE_ORDER.indexOf(substate)
 }
 
 function journalPath(home: UpdateHome): string {
@@ -372,51 +220,15 @@ function archiveJournal(home: UpdateHome, toVersion: string, now: Date): void {
   renameSync(path, dest)
 }
 
-/** Consumes `state/marker.json` if present, as part of writing the transaction's first (`started`) journal entry — so no crash or retry can ever re-read the same marker twice. The marker file itself is written by a later CLI task; this module tolerates its absence (the marker's content is already handed in as `options.marker`). */
+function markerPath(home: UpdateHome): string {
+  return join(home.stateDir, 'marker.json')
+}
+
+/** Consumes `state/marker.json` if present — so no crash or retry can ever re-read the same marker twice. The marker file itself is written by the daemon's update Surface "Apply" action (`update-manager.ts`); this module tolerates its absence, since the marker's content is already handed in as `options.marker` regardless (a caller that already parsed it, or a test fixture, never has to write one to disk at all). */
 function consumeMarkerFileIfPresent(home: UpdateHome, now: Date): void {
-  const markerPath = join(home.stateDir, 'marker.json')
-  if (!existsSync(markerPath)) return
-  renameSync(markerPath, join(home.stateDir, `.marker-consumed-${isoForFilename(now)}.json`))
-}
-
-// ---------------------------------------------------------------------------
-// Atomic JSON writes (tmp + fsync + rename + directory fsync)
-// ---------------------------------------------------------------------------
-
-function writeJsonAtomic(path: string, data: unknown): void {
-  const dir = dirname(path)
-  mkdirSync(dir, { recursive: true })
-  const tmpPath = join(dir, `.${basename(path)}.tmp-${randomBytes(6).toString('hex')}`)
-  const fd = openSync(tmpPath, 'w', 0o600)
-  try {
-    writeSync(fd, `${JSON.stringify(data, null, 2)}\n`)
-    fsyncSync(fd)
-  } catch (error) {
-    closeSync(fd)
-    rmSync(tmpPath, { force: true })
-    throw error
-  }
-  closeSync(fd)
-  renameSync(tmpPath, path)
-  const dirFd = openSync(dir, fsConstants.O_RDONLY)
-  try {
-    fsyncSync(dirFd)
-  } finally {
-    closeSync(dirFd)
-  }
-}
-
-function writeJsonAtomicBestEffort(path: string, data: unknown): void {
-  try {
-    writeJsonAtomic(path, data)
-  } catch {
-    // progress.json is post-hoc reporting only (`docs/adr/0013-signed-self-update.md`) — a failure here must never fail the transaction itself.
-  }
-}
-
-/** Filesystem-safe ISO timestamp: colons become dashes, uniformly, so lexical order still matches chronological order (mirrors `backup.ts`'s `isoForFilename`). */
-function isoForFilename(date: Date): string {
-  return date.toISOString().replace(/:/g, '-')
+  const path = markerPath(home)
+  if (!existsSync(path)) return
+  renameSync(path, join(home.stateDir, `.marker-consumed-${isoForFilename(now)}.json`))
 }
 
 function messageOf(cause: unknown): string {
@@ -481,12 +293,7 @@ function progressPath(home: UpdateHome): string {
   return join(home.stateDir, 'progress.json')
 }
 
-function readOrInitProgress(home: UpdateHome): UpdateProgress {
-  const path = progressPath(home)
-  if (existsSync(path)) {
-    const parsed = UpdateProgressSchema.safeParse(JSON.parse(readFileSync(path, 'utf8')))
-    if (parsed.success) return parsed.data
-  }
+function freshProgress(): UpdateProgress {
   return {
     protocol_version: 1,
     stages: Object.keys(PROGRESS_STAGE_TITLES).map((id) => ({
@@ -495,6 +302,20 @@ function readOrInitProgress(home: UpdateHome): UpdateProgress {
       status: 'pending',
     })),
   }
+}
+
+/** Overwrites `progress.json` with every stage reset to `pending` (issue #43 review follow-up): called once, at the very start of a brand-new transaction — never on resume — so a new run never inherits a previous run's terminal stage statuses (all `done`) and reports an early failure honestly instead of appearing to have gotten further than it did. */
+function resetProgress(home: UpdateHome): void {
+  writeJsonAtomicBestEffort(progressPath(home), freshProgress())
+}
+
+function readOrInitProgress(home: UpdateHome): UpdateProgress {
+  const path = progressPath(home)
+  if (existsSync(path)) {
+    const parsed = UpdateProgressSchema.safeParse(JSON.parse(readFileSync(path, 'utf8')))
+    if (parsed.success) return parsed.data
+  }
+  return freshProgress()
 }
 
 function markProgress(ctx: Ctx, id: string, status: UpdateStageStatus): void {
@@ -527,41 +348,6 @@ function makeLogger(home: UpdateHome, version: string, ports: Ports): (line: str
     }
     ports.log(line)
   }
-}
-
-// ---------------------------------------------------------------------------
-// Network/host discipline
-// ---------------------------------------------------------------------------
-
-function assertHttpsOrLoopback(url: URL): void {
-  if (url.protocol === 'https:') return
-  if (url.protocol === 'http:' && (url.hostname === '127.0.0.1' || url.hostname === '::1')) return
-  throw new Error(`refusing a non-https URL from a non-loopback host: ${url.href}`)
-}
-
-function assertSameHost(url: URL, allowedHost: string, what: string): void {
-  if (url.hostname !== allowedHost) {
-    throw new Error(
-      `${what} host '${url.hostname}' does not match the pinned host '${allowedHost}'`,
-    )
-  }
-}
-
-async function fetchChecked(
-  ports: Ports,
-  urlText: string,
-  allowedHost: string,
-  maxBytes: number,
-  what: string,
-): Promise<Buffer> {
-  const url = new URL(urlText)
-  assertHttpsOrLoopback(url)
-  assertSameHost(url, allowedHost, what)
-  const result = await ports.fetchBytes(urlText, { maxBytes })
-  if (result.status !== 200) {
-    throw new Error(`${what} fetch failed: HTTP ${result.status} from ${urlText}`)
-  }
-  return result.bytes
 }
 
 // ---------------------------------------------------------------------------
@@ -616,178 +402,36 @@ export type TransactionOutcome =
 export type ResumeOutcome = TransactionOutcome | { status: 'nothing-to-resume' }
 
 // ---------------------------------------------------------------------------
-// Runtime (Node) ensure — AC6
-// ---------------------------------------------------------------------------
-
-function normalizeNodeVersion(version: string): string {
-  return version.startsWith('v') ? version.slice(1) : version
-}
-
-function computeRuntimeDirName(release: ReleaseMetadata): string {
-  return `node-v${normalizeNodeVersion(release.nodeVersion)}-linux-${process.arch}`
-}
-
-function findShasumLine(shasumsText: string, fileName: string): string {
-  for (const line of shasumsText.split('\n')) {
-    const trimmed = line.trim()
-    if (trimmed.length === 0) continue
-    const parts = trimmed.split(/\s+/)
-    const hash = parts[0]
-    const name = parts[1]
-    if (name === fileName && hash !== undefined) return hash
-  }
-  throw new Error(`no SHASUMS256 entry found for ${fileName}`)
-}
-
-/**
- * Ensures `runtimes/node-v<version>-linux-<arch>` exists, downloading and
- * SHA-256-verifying it against the dist host's `SHASUMS256.txt` when it does
- * not (`issues/043-self-update.md` AC6). A hash mismatch throws before
- * anything is extracted or renamed into place — nothing is materialized for
- * a tampered tarball.
- */
-async function ensureRuntime(
-  ctx: Ctx,
-  release: ReleaseMetadata,
-): Promise<{ runtimeDirName: string }> {
-  const runtimeDirName = computeRuntimeDirName(release)
-  const runtimeDir = join(ctx.home.runtimesDir, runtimeDirName)
-  if (existsSync(runtimeDir)) return { runtimeDirName }
-
-  const version = normalizeNodeVersion(release.nodeVersion)
-  const distBase = (ctx.env['VEDUTA_NODE_DIST_URL'] ?? 'https://nodejs.org/dist').replace(
-    /\/+$/,
-    '',
-  )
-  const distHost = new URL(distBase).hostname
-  const tarName = `node-v${version}-linux-${process.arch}.tar.gz`
-  const tarUrl = `${distBase}/v${version}/${tarName}`
-  const shasumsUrl = `${distBase}/v${version}/SHASUMS256.txt`
-
-  const tarBytes = await fetchChecked(
-    ctx.ports,
-    tarUrl,
-    distHost,
-    release.nodeTarSize,
-    'node runtime tarball',
-  )
-  const shasumsBytes = await fetchChecked(
-    ctx.ports,
-    shasumsUrl,
-    distHost,
-    5_000_000,
-    'node SHASUMS256.txt',
-  )
-  const expectedSha = findShasumLine(shasumsBytes.toString('utf8'), tarName)
-  const actualSha = createHash('sha256').update(tarBytes).digest('hex')
-  if (actualSha !== expectedSha) {
-    throw new Error(
-      `node runtime tarball sha256 mismatch for ${tarName}: expected ${expectedSha}, got ${actualSha}`,
-    )
-  }
-  if (tarBytes.length !== release.nodeTarSize) {
-    throw new Error(
-      `node runtime tarball size mismatch for ${tarName}: expected ${release.nodeTarSize}, got ${tarBytes.length}`,
-    )
-  }
-
-  const tmpTarPath = join(ctx.home.tmpDir, `node-${randomBytes(6).toString('hex')}.tar.gz`)
-  const stagingDir = join(ctx.home.tmpDir, `node-staging-${randomBytes(6).toString('hex')}`)
-  writeFileSync(tmpTarPath, tarBytes)
-  mkdirSync(stagingDir, { recursive: true, mode: 0o700 })
-  try {
-    const result = await ctx.ports.execFile('tar', ['-xzf', tmpTarPath, '-C', stagingDir])
-    if (result.code !== 0) {
-      throw new Error(
-        `extracting the node runtime tarball failed: ${result.stderr || result.stdout}`,
-      )
-    }
-    const innerDir = join(stagingDir, tarName.replace(/\.tar\.gz$/, ''))
-    if (!existsSync(innerDir)) {
-      throw new Error(
-        `node runtime tarball did not contain the expected top-level directory: ${innerDir}`,
-      )
-    }
-    renameSync(innerDir, runtimeDir)
-  } finally {
-    rmSync(stagingDir, { recursive: true, force: true })
-    rmSync(tmpTarPath, { force: true })
-  }
-  return { runtimeDirName }
-}
-
-// ---------------------------------------------------------------------------
-// Disk guardrail — AC8
-// ---------------------------------------------------------------------------
-
-interface DiskReservation {
-  label: string
-  fsPath: string
-  bytes: number
-}
-
-/**
- * Sizes come from the signed release metadata (never a live measurement of
- * the untrusted download) plus a measured size of the live data root
- * (`issues/043-self-update.md` AC8). Reservations are grouped by filesystem
- * (`stat().dev`) before being checked against `statfs` free space, so two
- * reservations that happen to land on the same disk are not double-counted
- * as if they had independent headroom.
- */
-async function checkDiskGuardrail(
-  ctx: Ctx,
-  release: ReleaseMetadata,
-  needsRuntime: boolean,
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  const dataRootBytes = await ctx.ports.diskUsage(ctx.dataRootDir)
-  const reservations: DiskReservation[] = [
-    {
-      label: 'download + extraction' + (needsRuntime ? ' + node runtime' : ''),
-      fsPath: ctx.home.root,
-      bytes:
-        release.artifactSize +
-        release.unpackedSize +
-        (needsRuntime ? release.nodeTarSize + release.nodeUnpackedSize : 0),
-    },
-    { label: 'backup staging', fsPath: ctx.home.tmpDir, bytes: dataRootBytes * 2 },
-    { label: 'backup file', fsPath: ctx.home.backupsDir, bytes: dataRootBytes },
-    {
-      label: 'restore headroom',
-      fsPath: dirname(resolve(ctx.dataRootDir)),
-      bytes: dataRootBytes,
-    },
-  ]
-
-  const groups = new Map<number, { fsPath: string; bytes: number; labels: string[] }>()
-  for (const reservation of reservations) {
-    const dev = statSync(reservation.fsPath).dev
-    const existing = groups.get(dev) ?? { fsPath: reservation.fsPath, bytes: 0, labels: [] }
-    existing.bytes += reservation.bytes
-    existing.labels.push(reservation.label)
-    groups.set(dev, existing)
-  }
-
-  const shortfalls: string[] = []
-  for (const group of groups.values()) {
-    const { bavail, bsize } = ctx.ports.statfs(group.fsPath)
-    const freeBytes = bavail * bsize
-    const neededBytes = Math.ceil(group.bytes * 1.2)
-    if (neededBytes > freeBytes) {
-      shortfalls.push(
-        `${group.fsPath}: needs ~${neededBytes} bytes (${group.labels.join(', ')}), only ${freeBytes} bytes free`,
-      )
-    }
-  }
-
-  if (shortfalls.length > 0) {
-    return { ok: false, message: `insufficient disk space:\n${shortfalls.join('\n')}` }
-  }
-  return { ok: true }
-}
-
-// ---------------------------------------------------------------------------
 // Stage: download + verify + extract the release artifact
 // ---------------------------------------------------------------------------
+
+/**
+ * Clears a leftover `releases/vX.Y.Z` directory before extraction (issue #43
+ * review follow-up): `extractVerifiedArchive` refuses an existing `destDir`
+ * by design (`tar-reader.ts`'s TOCTOU guard — correct, since a symlink or
+ * file could otherwise race into the destination between preflight and
+ * extraction), but that means a leftover directory from a crash between
+ * extraction and the `staged` journal write, or from a rolled-back release
+ * whose tree is deliberately kept for forensics
+ * (`docs/adr/0013-signed-self-update.md`), would wedge every future retry of
+ * that exact version forever — exactly the SSH-required failure mode
+ * `issues/043-self-update.md`'s Goal rules out. Refuses to clear the
+ * directory if it is the resolved target of `releases/current`: that would
+ * mean deleting the release actually running right now, which should never
+ * happen given `checkMonotonic`'s guard, but is cheap to assert defensively.
+ */
+function clearStaleReleaseDir(home: UpdateHome, releaseDir: string): void {
+  if (!existsSync(releaseDir)) return
+  const currentTarget = existsSync(home.currentSymlink)
+    ? realpathSync(home.currentSymlink)
+    : undefined
+  if (currentTarget !== undefined && resolve(releaseDir) === currentTarget) {
+    throw new Error(
+      `refusing to clear release directory ${releaseDir}: it is the currently running release`,
+    )
+  }
+  rmSync(releaseDir, { recursive: true, force: true })
+}
 
 async function stageRelease(
   ctx: Ctx,
@@ -832,6 +476,7 @@ async function stageRelease(
   const releaseDir = join(ctx.home.releasesDir, `v${release.version}`)
   try {
     markProgress(ctx, 'stage', 'running')
+    clearStaleReleaseDir(ctx.home, releaseDir)
     await extractVerifiedArchive({
       filePath: tmpTarPath,
       destDir: releaseDir,
@@ -950,131 +595,87 @@ async function runSelfCheckStep(
 // ---------------------------------------------------------------------------
 
 /**
- * Each step below is idempotent via a filesystem-existence check, not solely
- * via the recorded substate — so a retry after a crash mid-rollback redoes
- * only the work that is actually still needed, regardless of exactly which
- * substate the journal last recorded (`docs/adr/0013-signed-self-update.md`).
- * The failed release's own tree and log are never touched here: they are
- * kept on disk for forensics, per the same source.
+ * Each step below is genuinely idempotent (issue #43 review follow-up): it
+ * is skipped outright once the *persisted* substate this call started with
+ * (`priorSubstateIndex`, fixed at entry — never the locally-mutated
+ * `journal`) already recorded it as done, and otherwise guarded by a
+ * filesystem-existence check for the crash-mid-step case. Skipping by
+ * substate (not only by existence) matters specifically for the
+ * move-aside step: once `restored` (or later) has been recorded, `dataRoot`
+ * exists again holding the *restored* backup, not the original failed data —
+ * re-running move-aside purely off `existsSync(dataRoot)` would attempt to
+ * rename that restored data onto the already-populated `failedDataDir` from
+ * the earlier attempt and fail with `ENOTEMPTY`. The failed release's own
+ * tree and log are never touched here: they are kept on disk for forensics,
+ * per the same source (`docs/adr/0013-signed-self-update.md`).
  */
 async function performRollback(ctx: Ctx, journalIn: Journal): Promise<Journal> {
   let journal = journalIn
   const dataRoot = resolve(ctx.dataRootDir)
+  const priorSubstateIndex =
+    journal.rollback !== undefined ? rollbackSubstateIndex(journal.rollback.substate) : -1
 
   let failedDataDir = journal.rollback?.failedDataDir
   if (failedDataDir === undefined) {
     failedDataDir = `${dataRoot}.failed-${journal.toVersion}-${isoForFilename(ctx.ports.now())}`
   }
-  journal = writeJournal(ctx.home, {
-    ...journal,
-    rollback: { substate: 'data-moved-aside', failedDataDir },
-  })
-  if (existsSync(dataRoot)) {
-    renameSync(dataRoot, failedDataDir)
-  }
-  ctx.log(`rollback: data root moved aside to ${failedDataDir}`)
 
-  journal = writeJournal(ctx.home, {
-    ...journal,
-    rollback: { substate: 'restored', failedDataDir },
-  })
-  const restoreTmp = `${dataRoot}.restore-tmp`
-  if (!existsSync(dataRoot)) {
-    if (journal.backupFile === undefined) {
-      throw new Error('rollback: no backup file recorded in the journal to restore from')
+  if (priorSubstateIndex < rollbackSubstateIndex('restored')) {
+    journal = writeJournal(ctx.home, {
+      ...journal,
+      rollback: { substate: 'data-moved-aside', failedDataDir },
+    })
+    if (existsSync(dataRoot)) {
+      renameSync(dataRoot, failedDataDir)
     }
-    if (!existsSync(restoreTmp)) {
+    ctx.log(`rollback: data root moved aside to ${failedDataDir}`)
+  }
+
+  if (priorSubstateIndex < rollbackSubstateIndex('flipped-back')) {
+    journal = writeJournal(ctx.home, {
+      ...journal,
+      rollback: { substate: 'restored', failedDataDir },
+    })
+    const restoreTmp = `${dataRoot}.restore-tmp`
+    if (!existsSync(dataRoot)) {
+      if (journal.backupFile === undefined) {
+        throw new Error('rollback: no backup file recorded in the journal to restore from')
+      }
+      // restoreBackup extracts incrementally (backup.ts) — a crash
+      // mid-extraction can leave restoreTmp partially populated. Always
+      // clear it before restoring: restoring from the backup file is
+      // idempotent and cheap, and a partial restoreTmp must never be
+      // renamed into place as if it were complete (that would silently
+      // install a truncated data root while this transaction still reports
+      // 'rolled-back').
+      rmSync(restoreTmp, { recursive: true, force: true })
       await restoreBackup({
         file: journal.backupFile,
         targetRootDir: restoreTmp,
         keyMaterial: ctx.keyMaterial,
         workDir: ctx.home.tmpDir,
       })
+      renameSync(restoreTmp, dataRoot)
     }
-    renameSync(restoreTmp, dataRoot)
+    ctx.log('rollback: pre-update backup restored')
   }
-  ctx.log('rollback: pre-update backup restored')
 
-  journal = writeJournal(ctx.home, {
-    ...journal,
-    rollback: { substate: 'flipped-back', failedDataDir },
-  })
-  if (
-    (journal.phase === 'switched' || journal.phase === 'serving-check') &&
-    journal.executorRelease !== ''
-  ) {
-    flipCurrent(ctx.home, journal.executorRelease)
-    ctx.log(`rollback: current flipped back to ${journal.executorRelease}`)
+  if (priorSubstateIndex < rollbackSubstateIndex('done')) {
+    journal = writeJournal(ctx.home, {
+      ...journal,
+      rollback: { substate: 'flipped-back', failedDataDir },
+    })
+    if (
+      (journal.phase === 'switched' || journal.phase === 'serving-check') &&
+      journal.executorRelease !== ''
+    ) {
+      flipCurrent(ctx.home, journal.executorRelease)
+      ctx.log(`rollback: current flipped back to ${journal.executorRelease}`)
+    }
   }
 
   journal = writeJournal(ctx.home, { ...journal, rollback: { substate: 'done', failedDataDir } })
   return journal
-}
-
-// ---------------------------------------------------------------------------
-// Success housekeeping (idempotent, success outcome only)
-// ---------------------------------------------------------------------------
-
-function pruneReleases(home: UpdateHome, keep = 3): void {
-  if (!existsSync(home.releasesDir)) return
-  const names = readdirSync(home.releasesDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith('v'))
-    .map((entry) => entry.name)
-  const sorted = [...names].sort((a, b) => compareVersions(a.slice(1), b.slice(1)))
-  const toDelete = sorted.slice(0, Math.max(0, sorted.length - keep))
-  for (const name of toDelete) {
-    rmSync(join(home.releasesDir, name), { recursive: true, force: true })
-  }
-}
-
-function pruneOrphanedRuntimes(home: UpdateHome): void {
-  if (!existsSync(home.runtimesDir)) return
-  const referenced = new Set<string>()
-  if (existsSync(home.releasesDir)) {
-    for (const entry of readdirSync(home.releasesDir, { withFileTypes: true })) {
-      if (!entry.isDirectory() || !entry.name.startsWith('v')) continue
-      const runtimeFile = join(home.releasesDir, entry.name, 'RUNTIME')
-      if (existsSync(runtimeFile)) referenced.add(readFileSync(runtimeFile, 'utf8').trim())
-    }
-  }
-  for (const entry of readdirSync(home.runtimesDir, { withFileTypes: true })) {
-    if (entry.isDirectory() && !referenced.has(entry.name)) {
-      rmSync(join(home.runtimesDir, entry.name), { recursive: true, force: true })
-    }
-  }
-}
-
-/** Copies `deploy/veduta-run` from the new release into `bin/veduta-run`, atomically, last (`docs/adr/0013-signed-self-update.md`). Skips silently when the source does not exist yet — it ships in a later task. */
-function selfUpdateWrapper(home: UpdateHome, newReleaseDir: string): void {
-  const source = join(newReleaseDir, 'deploy', 'veduta-run')
-  if (!existsSync(source)) return
-  mkdirSync(home.binDir, { recursive: true })
-  const tmpPath = join(home.binDir, '.veduta-run.tmp')
-  const destPath = join(home.binDir, 'veduta-run')
-  copyFileSync(source, tmpPath)
-  chmodSync(tmpPath, 0o755)
-  const fd = openSync(tmpPath, 'r')
-  try {
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
-  renameSync(tmpPath, destPath)
-  const dirFd = openSync(home.binDir, fsConstants.O_RDONLY)
-  try {
-    fsyncSync(dirFd)
-  } finally {
-    closeSync(dirFd)
-  }
-}
-
-function runSuccessHousekeeping(home: UpdateHome, newReleaseDir: string): void {
-  pruneReleases(home)
-  // The updater's own pre-update backups directory, never the operator's
-  // daily-backup directory (`docs/adr/0013-signed-self-update.md`).
-  pruneBackups({ outDir: home.backupsDir, keep: 3 })
-  pruneOrphanedRuntimes(home)
-  selfUpdateWrapper(home, newReleaseDir)
 }
 
 // ---------------------------------------------------------------------------
@@ -1182,6 +783,7 @@ async function runFromJournal(ctx: Ctx, initialJournal: Journal): Promise<Transa
         signingKeyRootSigText: journal.marker.signingKey.rootSig,
         rootPublicKeyText: ctx.pinning.rootPublicKey,
         expectedArtifactName: journal.release.artifactName,
+        expectedSigningKeyId: journal.marker.signingKey.keyId,
       })
       checkMonotonic({
         offeredVersion: journal.release.version,
@@ -1292,8 +894,14 @@ async function runFromJournal(ctx: Ctx, initialJournal: Journal): Promise<Transa
 
 /**
  * Starts a brand-new update transaction from a freshly verified marker.
- * Throws if a journal is already active — the caller (the wrapper/CLI, a
- * later task) is expected to call `resumeUpdateTransaction` in that case.
+ * Throws if a journal is already active with no matching leftover marker
+ * file — the caller (`deploy/veduta-run`, via `update-cli.ts`) is expected to
+ * call `resumeUpdateTransaction` in that case. When a journal AND a leftover
+ * `state/marker.json` are both found, the journal wins (issue #43 review
+ * follow-up): that combination means a previous run wrote the durable
+ * journal and then crashed before consuming the marker file (see the ordering
+ * note below), so this call degrades into a resume of the already-started
+ * transaction rather than throwing.
  */
 export async function runUpdateTransaction(
   options: UpdateTransactionOptions,
@@ -1302,9 +910,20 @@ export async function runUpdateTransaction(
   ensureUpdateHomeLayout(home)
   const env = options.env ?? process.env
   if (existsSync(journalPath(home))) {
-    throw new Error(
-      'runUpdateTransaction: an update journal is already active; call resumeUpdateTransaction instead',
-    )
+    if (!existsSync(markerPath(home))) {
+      throw new Error(
+        'runUpdateTransaction: an update journal is already active; call resumeUpdateTransaction instead',
+      )
+    }
+    consumeMarkerFileIfPresent(home, options.ports.now())
+    const resumed = await resumeUpdateTransaction(options)
+    if (resumed.status === 'nothing-to-resume') {
+      // Unreachable: the journal existed a few lines above, and only this
+      // process retires it. Surfacing it as an error beats returning a status
+      // the caller's type does not admit.
+      throw new Error('runUpdateTransaction: the active update journal vanished mid-resume')
+    }
+    return resumed
   }
 
   const releaseBytes = Buffer.from(options.marker.release, 'base64')
@@ -1322,7 +941,6 @@ export async function runUpdateTransaction(
 
   const now = options.ports.now()
   const executorRelease = existsSync(home.currentSymlink) ? realpathSync(home.currentSymlink) : ''
-  consumeMarkerFileIfPresent(home, now)
 
   let journal: Journal = {
     phase: 'started',
@@ -1333,7 +951,16 @@ export async function runUpdateTransaction(
     marker: options.marker,
     startedAt: now.toISOString(),
   }
+  // Reset progress and write the journal BEFORE consuming state/marker.json
+  // (issue #43 review follow-up): the journal write is fsynced and is the
+  // durable record of "this transaction has started" — consuming (renaming
+  // away) the marker only after that write means a crash in between leaves
+  // both the journal and the marker on disk, a well-defined state the branch
+  // above resolves by letting the journal win, rather than leaving neither
+  // an actionable marker nor a journal/result on disk.
+  resetProgress(home)
   journal = writeJournal(home, journal)
+  consumeMarkerFileIfPresent(home, now)
   const log = makeLogger(home, release.version, options.ports)
   log(`update transaction started: ${options.installedVersion} -> ${release.version}`)
   maybeTestStop('started', env)
@@ -1346,10 +973,12 @@ export async function runUpdateTransaction(
  * Re-enters an in-progress transaction after a restart, following the
  * crash/resume rules exactly (`docs/adr/0013-signed-self-update.md`):
  * a result already published but not yet archived only redoes the
- * (idempotent) archive step, never the transaction itself; `backup-done`/
- * `migrating` always roll back (a half-migrated data root is never
- * blind-resumed); every other phase continues forward from where the
- * journal says it left off.
+ * (idempotent) archive step, never the transaction itself; a crash
+ * mid-rollback always continues (never abandons) the rollback, never
+ * marching forward through the phase machine; `backup-done`/`migrating`
+ * with no rollback yet under way always roll back (a half-migrated data root
+ * is never blind-resumed); every other phase continues forward from where
+ * the journal says it left off.
  */
 export async function resumeUpdateTransaction(options: ResumeOptions): Promise<ResumeOutcome> {
   const { home } = options
@@ -1372,6 +1001,26 @@ export async function resumeUpdateTransaction(options: ResumeOptions): Promise<R
     return { status: 'terminal', result }
   }
 
+  // A crash mid-rollback must always resume (never abandon) the rollback
+  // itself — marching forward through the phase machine instead (issue #43
+  // review follow-up) could re-run the health check against a moved-aside or
+  // freshly-restored data root and silently discard the earlier rollback
+  // decision. `performRollback` is idempotent from any of its substates, so
+  // this always converges on the same 'rolled-back' terminal a fresh
+  // rollback from this journal would have reached.
+  if (journal.rollback !== undefined) {
+    const rolledJournal = await performRollback(ctx, journal)
+    const result = await publishResult({
+      ctx,
+      journal: rolledJournal,
+      outcome: 'rolled-back',
+      reason: 'resumed after an interrupted rollback; rollback completed',
+      failedStage: journal.phase,
+      newReleaseDir: undefined,
+    })
+    return { status: 'terminal', result }
+  }
+
   if (journal.phase === 'backup-done' || journal.phase === 'migrating') {
     return terminateRolledBack(
       ctx,
@@ -1385,10 +1034,10 @@ export async function resumeUpdateTransaction(options: ResumeOptions): Promise<R
 }
 
 /**
- * Called by the wrapper/CLI (a later task) once its own stage-2 check
- * (starting the real daemon and confirming it actually serves) has passed.
- * Publishes the `success` terminal result and runs the success-only
- * housekeeping (prune, wrapper self-update, journal archive).
+ * Called by `deploy/veduta-run` (via `update-cli.ts`'s `finalize` mode) once
+ * its own stage-2 check (starting the real daemon and confirming it actually
+ * serves) has passed. Publishes the `success` terminal result and runs the
+ * success-only housekeeping (prune, wrapper self-update, journal archive).
  */
 export async function finalizeUpdate(options: ResumeOptions): Promise<UpdateResult> {
   const { home } = options
@@ -1410,10 +1059,10 @@ export async function finalizeUpdate(options: ResumeOptions): Promise<UpdateResu
 }
 
 /**
- * Called by the wrapper/CLI (a later task) when its own stage-2 check
- * fails, or by this module internally when stage-1 (or an earlier,
- * data-mutating phase) fails. Runs the full rollback sequence and
- * publishes the `rolled-back` terminal result.
+ * Called by `deploy/veduta-run` (via `update-cli.ts`'s `rollback` mode) when
+ * its own stage-2 check fails, or by this module internally when stage-1 (or
+ * an earlier, data-mutating phase) fails. Runs the full rollback sequence
+ * and publishes the `rolled-back` terminal result.
  */
 export async function rollbackUpdate(
   options: ResumeOptions,
@@ -1440,10 +1089,12 @@ export async function rollbackUpdate(
 /**
  * Archives `result.json` (and its ack marker) to `state/history/` once the
  * daemon has durably acknowledged ingesting the outcome
- * (`docs/adr/0013-signed-self-update.md`; the daemon-side ack contract
- * itself lands in a later task). Only acts when no journal is active — an
- * in-progress transaction owns `result.json` housekeeping itself via
- * `publishResult`/`resumeUpdateTransaction`.
+ * (`docs/adr/0013-signed-self-update.md`): the ack contract itself —
+ * appending the `update.outcome` System Space event, then durably creating
+ * the `result-acked-<id>` marker file this function waits for — is
+ * `update-manager.ts`'s `UpdateManager`. Only acts when no journal is
+ * active — an in-progress transaction owns `result.json` housekeeping itself
+ * via `publishResult`/`resumeUpdateTransaction`.
  */
 export function sweepAckedResult(home: UpdateHome): boolean {
   const rPath = resultPath(home)

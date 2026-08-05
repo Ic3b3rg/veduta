@@ -11,6 +11,13 @@ import { z } from 'zod'
  * artifact so a runtime jump is preflightable before any download starts,
  * and `notes` carries the release's user-facing description into the Update
  * Surface.
+ *
+ * `nodeSha256` anchors the runtime to this signed metadata. Without it the
+ * runtime's integrity would rest only on the `SHASUMS256.txt` fetched from the
+ * same host over the same channel as the download itself, which a compromised
+ * mirror or CDN defeats — sizes alone cannot catch a substituted tarball. It is
+ * optional so a manifest produced before the field existed still parses; the
+ * updater then falls back to the weaker same-host checksum and says so.
  */
 export const ReleaseMetadataSchema = z.object({
   version: z.string().regex(/^\d+\.\d+\.\d+$/, 'version must be an x.y.z triple'),
@@ -23,6 +30,10 @@ export const ReleaseMetadataSchema = z.object({
   nodeVersion: z.string().min(1),
   nodeTarSize: z.number().int().positive(),
   nodeUnpackedSize: z.number().int().positive(),
+  nodeSha256: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/, 'nodeSha256 must be 64 lowercase hex characters')
+    .optional(),
   notes: z.string().default(''),
 })
 

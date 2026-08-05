@@ -237,6 +237,9 @@ parse_args() {
         shift 2
         ;;
       --update-root-key)
+        # Raw key text or `@/path/to/file` (resolved by resolve_update_root_key, called once
+        # arg parsing is done -- so compute_rerun_cmd below still sees the short `@file` form
+        # instead of embedding the (possibly multi-line) key text itself into a rerun hint).
         UPDATE_ROOT_KEY="${2:-}"
         shift 2
         ;;
@@ -275,9 +278,13 @@ Options:
   --ref <tag|sha>     Git ref to check out (default: main, resolved to a commit SHA)
   --data-dir <path>   Daemon data directory (default: $DEFAULT_DATA_DIR)
   --update-feed <url> Signed self-update feed URL (default: $DEFAULT_UPDATE_FEED)
-  --update-root-key <key>
-                      Minisign root public key text pinning the update feed above. Omit to
-                      leave signed updates unconfigured (no /etc/veduta/update.json is written).
+  --update-root-key <key|@file>
+                      Minisign root public key pinning the update feed above -- either the key
+                      text itself, or @/path/to/file to read it from a file. Omit to leave
+                      signed updates unconfigured (no /etc/veduta/update.json is written); this
+                      installer never fabricates a placeholder key. See the "signed self-update"
+                      notice this script prints at the end of a run without one, and
+                      RELEASING.md for how the upstream key is published.
   --apply             Run unattended (requires --domain and --email when no tty is attached)
   --preview           Force preview mode: print the stage plan, make no changes, exit 0
   --help              Show this help
@@ -394,6 +401,30 @@ compute_rerun_cmd() {
   else
     printf 'curl -fsSL %s | sudo bash -s --%s' "$INSTALL_URL" "$flags"
   fi
+}
+
+# --- --update-root-key `@file` support ----------------------------------------------------
+#
+# A minisign public key is two lines of text, awkward to paste as a literal shell argument
+# (`--update-root-key "$(cat veduta-root.pub)"` is what the flag has always accepted, and still
+# does) -- `@/path/to/root.pub` is a second, friendlier form that reads the file itself. Resolved
+# once, right after compute_rerun_cmd has already captured the short `@file` form for its own
+# rerun hint -- so a rerun suggestion never has to embed the (possibly multi-line) key text.
+resolve_update_root_key() {
+  case "$UPDATE_ROOT_KEY" in
+    @*)
+      local key_file="${UPDATE_ROOT_KEY#@}"
+      if [ ! -r "$key_file" ]; then
+        printf 'error: --update-root-key @%s: file not found or not readable\n' "$key_file" >&2
+        exit 1
+      fi
+      UPDATE_ROOT_KEY=$(cat "$key_file")
+      if [ -z "$UPDATE_ROOT_KEY" ]; then
+        printf 'error: --update-root-key @%s: file is empty\n' "$key_file" >&2
+        exit 1
+      fi
+      ;;
+  esac
 }
 
 # --- Mode determination ---------------------------------------------------------------------
@@ -1203,6 +1234,30 @@ run_apply() {
 
   printf '\nresolved commit: %s\n' "$RESOLVED_SHA" >&2
   printf 'done -- veduta is running at https://%s\n' "$DOMAIN" >&2
+  print_update_pinning_notice
+}
+
+# Printed last, deliberately -- not buried mid-stage next to write_update_pinning's own one-line
+# log message (issue #43 review, finding 4): no upstream root key exists yet to default to (a
+# fabricated placeholder would pin trust to a key nobody holds, worse than leaving it
+# unconfigured), so a plain install with no --update-root-key silently has self-update disabled
+# unless this notice is loud and impossible to miss at the very end of the run.
+print_update_pinning_notice() {
+  if [ -n "$UPDATE_ROOT_KEY" ]; then
+    return 0
+  fi
+  printf '\n================================================================\n' >&2
+  printf 'NOTICE: signed self-update is INERT on this install\n' >&2
+  printf '================================================================\n' >&2
+  printf 'No --update-root-key was given, so /etc/veduta/update.json was not written: this\n' >&2
+  printf 'instance has no trust anchor to verify a release against and will never apply a\n' >&2
+  printf 'signed update until one is pinned. This is deliberate, not an oversight -- there is\n' >&2
+  printf 'no fabricated placeholder key here; see RELEASING.md for how the upstream key is\n' >&2
+  printf 'published once it exists.\n' >&2
+  printf '\n' >&2
+  printf 'Once a root key is available, pin it with:\n' >&2
+  printf '  %s --update-root-key @/path/to/root.pub\n' "$RERUN_CMD" >&2
+  printf '================================================================\n' >&2
 }
 
 # --- Entry point -------------------------------------------------------------------------
@@ -1215,6 +1270,7 @@ main() {
   fi
   validate_data_dir
   RERUN_CMD=$(compute_rerun_cmd)
+  resolve_update_root_key
   determine_mode
   if [ "$PREVIEW_MODE" = "true" ]; then
     run_preview

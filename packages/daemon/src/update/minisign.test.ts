@@ -223,6 +223,48 @@ describe('verifyReleaseChain — golden fixtures', () => {
     ).not.toThrow()
   })
 
+  it("accepts when expectedSigningKeyId matches the certified key's actual id", () => {
+    expect(() =>
+      verifyReleaseChain({
+        releaseBytes: readFixtureBytes('release.json'),
+        releaseSigText: readFixture('release.json.minisig'),
+        signingKeyText: readFixture('signing.pub'),
+        signingKeyRootSigText: readFixture('signing.pub.minisig'),
+        rootPublicKeyText: readFixture('root.pub'),
+        expectedArtifactName: ARTIFACT_NAME,
+        expectedSigningKeyId: '3B1CB45459832ADD',
+      }),
+    ).not.toThrow()
+  })
+
+  it('accepts expectedSigningKeyId case-insensitively', () => {
+    expect(() =>
+      verifyReleaseChain({
+        releaseBytes: readFixtureBytes('release.json'),
+        releaseSigText: readFixture('release.json.minisig'),
+        signingKeyText: readFixture('signing.pub'),
+        signingKeyRootSigText: readFixture('signing.pub.minisig'),
+        rootPublicKeyText: readFixture('root.pub'),
+        expectedArtifactName: ARTIFACT_NAME,
+        expectedSigningKeyId: '3b1cb45459832add',
+      }),
+    ).not.toThrow()
+  })
+
+  it("refuses a manifest that advertises a signingKey.keyId different from the certified key's actual id", () => {
+    expect(() =>
+      verifyReleaseChain({
+        releaseBytes: readFixtureBytes('release.json'),
+        releaseSigText: readFixture('release.json.minisig'),
+        signingKeyText: readFixture('signing.pub'),
+        signingKeyRootSigText: readFixture('signing.pub.minisig'),
+        rootPublicKeyText: readFixture('root.pub'),
+        expectedArtifactName: ARTIFACT_NAME,
+        expectedSigningKeyId: 'DEADBEEFDEADBEEF',
+      }),
+    ).toThrow(/signing key id mismatch/)
+  })
+
   it('refuses a downgrade re-advertisement (old signed release offered again)', () => {
     // The chain itself has no notion of "newer" — that is checkMonotonic's
     // job (tested below). A validly-signed old release still verifies here;
@@ -331,5 +373,46 @@ describe('checkMonotonic', () => {
         installedDataVersion: 1,
       }),
     ).toThrow(/dataVersion/)
+  })
+
+  it('refuses a version string with a negative component (stricter than a bare numeric parse)', () => {
+    expect(() =>
+      checkMonotonic({
+        offeredVersion: '-1.0.0',
+        installedVersion: '1.0.0',
+        offeredDataVersion: 1,
+        installedDataVersion: 1,
+      }),
+    ).toThrow(/malformed version string/)
+  })
+
+  it('refuses a version string with an empty component (stricter than a bare numeric parse)', () => {
+    expect(() =>
+      checkMonotonic({
+        offeredVersion: '1..0',
+        installedVersion: '1.0.0',
+        offeredDataVersion: 1,
+        installedDataVersion: 1,
+      }),
+    ).toThrow(/malformed version string/)
+  })
+
+  it('refuses the in-tree dev placeholder as either side of the comparison', () => {
+    expect(() =>
+      checkMonotonic({
+        offeredVersion: '0.0.0-dev',
+        installedVersion: '1.0.0',
+        offeredDataVersion: 1,
+        installedDataVersion: 1,
+      }),
+    ).toThrow(/malformed version string/)
+    expect(() =>
+      checkMonotonic({
+        offeredVersion: '2.0.0',
+        installedVersion: '0.0.0-dev',
+        offeredDataVersion: 1,
+        installedDataVersion: 1,
+      }),
+    ).toThrow(/malformed version string/)
   })
 })

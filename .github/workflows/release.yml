@@ -76,7 +76,7 @@ jobs:
             packages/daemon/src/version.ts
           grep -q "VEDUTA_VERSION = '${VERSION}'" packages/daemon/src/version.ts
 
-      # dataVersion is read from the daemon's own migrations module rather than hand-copied
+      # dataVersion is read from the daemon's own data-version module rather than hand-copied
       # into this workflow, so the two can never drift: whatever CURRENT_DATA_VERSION the
       # tagged commit actually ships with is what gets signed into release.json.
       - name: Read current dataVersion
@@ -84,7 +84,7 @@ jobs:
         run: |
           set -euo pipefail
           data_version=$(pnpm --filter @veduta/daemon exec tsx -e "
-            import { CURRENT_DATA_VERSION } from './src/update/migrations.ts'
+            import { CURRENT_DATA_VERSION } from './src/update/data-version.ts'
             process.stdout.write(String(CURRENT_DATA_VERSION))
           ")
           if ! [[ "$data_version" =~ ^[0-9]+$ ]]; then
@@ -93,16 +93,29 @@ jobs:
           fi
           echo "value=$data_version" >>"$GITHUB_OUTPUT"
 
-      # Node runtime measurement: the release manifest signs nodeTarSize/nodeUnpackedSize
-      # (packages/protocol/src/update.ts, ReleaseMetadataSchema) so the updater's disk
-      # guardrail (docs/adr/0013-signed-self-update.md, Amendments) can reserve space for a
-      # runtime jump *before* downloading anything. A documented multiplier estimate was
+      # Node runtime measurement: the release manifest signs nodeTarSize/nodeSha256/
+      # nodeUnpackedSize (packages/protocol/src/update.ts, ReleaseMetadataSchema) so the
+      # updater's disk guardrail (docs/adr/0013-signed-self-update.md, Amendments) can reserve
+      # space for a runtime jump *before* downloading anything, and so `ensureRuntime`
+      # (packages/daemon/src/update/update-transaction.ts) can verify the runtime it downloads
+      # byte-for-byte against these signed fields. A documented multiplier estimate was
       # rejected during design -- this step actually downloads the pinned Node build (once per
-      # release, not per install) and measures both numbers directly. Linux x64 is used as the
-      # reference figure for both fields: the schema carries one number, not one per CPU
-      # architecture, and x64/arm64 Node tarballs are close enough in size that the updater's
-      # own disk-guardrail margin over signed size fields comfortably absorbs the difference
-      # -- a deliberate simplification, not an oversight; revisit if that margin ever tightens.
+      # release, not per install) and measures it directly.
+      #
+      # This MUST be the exact artifact `ensureRuntime` fetches: `node-v<version>-linux-<arch>
+      # .tar.gz` -- the `.tar.gz`, never the `.tar.xz` (a different file, with a different size
+      # and hash, that the updater never touches).
+      #
+      # Arch: `ReleaseMetadataSchema` carries one set of runtime fields, not one per CPU
+      # architecture, while `ensureRuntime` requests `linux-${process.arch}` on whatever host
+      # is actually running the update. This step measures `linux-x64` -- the architecture of
+      # this reference platform (`ubuntu-latest`) -- as a deliberate simplification: an
+      # instance updating from a `linux-arm64` host would ask the Node dist server for a
+      # differently-sized, differently-hashed `linux-arm64` tarball that these signed fields do
+      # not describe, and `ensureRuntime`'s exact size/sha256 checks would then refuse it
+      # outright rather than merely running a wider disk-guardrail margin. Documented here and
+      # in RELEASING.md; revisit (e.g. per-arch fields) once arm64 hosts are a real deployment
+      # target rather than a theoretical one.
       - name: Measure Node runtime tarball
         id: node-runtime
         run: |
@@ -111,16 +124,18 @@ jobs:
           base="node-v${node_version}-linux-x64"
           dist="https://nodejs.org/dist/v${node_version}"
           work=$(mktemp -d)
-          curl -fsSL -o "$work/$base.tar.xz" "$dist/$base.tar.xz"
+          curl -fsSL -o "$work/$base.tar.gz" "$dist/$base.tar.gz"
           curl -fsSL -o "$work/SHASUMS256.txt" "$dist/SHASUMS256.txt"
-          (cd "$work" && grep " ${base}.tar.xz\$" SHASUMS256.txt | sha256sum -c -)
-          tar_size=$(stat -c%s "$work/$base.tar.xz")
+          (cd "$work" && grep " ${base}.tar.gz\$" SHASUMS256.txt | sha256sum -c -)
+          tar_size=$(stat -c%s "$work/$base.tar.gz")
+          sha256=$(sha256sum "$work/$base.tar.gz" | cut -d' ' -f1)
           mkdir "$work/extracted"
-          tar -xJf "$work/$base.tar.xz" -C "$work/extracted"
+          tar -xzf "$work/$base.tar.gz" -C "$work/extracted"
           unpacked_size=$(du -sb "$work/extracted" | cut -f1)
           rm -rf "$work"
           echo "node-version=$node_version" >>"$GITHUB_OUTPUT"
           echo "tar-size=$tar_size" >>"$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >>"$GITHUB_OUTPUT"
           echo "unpacked-size=$unpacked_size" >>"$GITHUB_OUTPUT"
 
       # --- Artifact assembly -------------------------------------------------------------
@@ -174,24 +189,61 @@ jobs:
             find . \( -path '*/node_modules' -o -path '*/node_modules/*' \) -not -path './.git/*'
           } | sort -u >file-list.txt
 
-          entry_count=$(wc -l <file-list.txt | tr -d '[:space:]')
-
-          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+          # --no-recursion: file-list.txt above already expands every directory to its full
+          # set of descendants (both `find` invocations walk recursively and `-mindepth 1`/the
+          # `-o` clause list every entry, not just top-level directories). Without
+          # --no-recursion, `tar -T` additionally auto-recurses into every directory entry it
+          # is given, re-adding each of its descendants a second time -- inflating the actual
+          # archive's entry count and total bytes silently past whatever gets signed below.
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner --no-recursion \
             -czf "$ARTIFACT_NAME" -T file-list.txt
 
           artifact_size=$(stat -c%s "$ARTIFACT_NAME")
           sha256=$(sha256sum "$ARTIFACT_NAME" | cut -d' ' -f1)
-          # Cumulative unpacked size: du over the exact same file list, via a NUL-delimited
-          # --files0-from so it works regardless of how many entries there are (no ARG_MAX
-          # limit, unlike passing the list as argv). This over-counts by directory-entry
-          # overhead relative to file content bytes alone -- acceptable, even desirable, for a
-          # disk-guardrail reservation figure, since the updater already applies its own margin
-          # on top of every signed size field.
-          unpacked_size=$(tr '\n' '\0' <file-list.txt | du -cb --files0-from=- | tail -1 | awk '{print $1}')
 
           echo "artifact-name=$ARTIFACT_NAME" >>"$GITHUB_OUTPUT"
           echo "artifact-size=$artifact_size" >>"$GITHUB_OUTPUT"
           echo "sha256=$sha256" >>"$GITHUB_OUTPUT"
+
+      # entryCount/unpackedSize are derived from the BUILT ARCHIVE ITSELF, using the exact
+      # counting rule the updater's own preflight applies (`preflightArchive`,
+      # packages/daemon/src/update/tar-reader.ts) -- not a bash approximation (`wc -l`/`du`)
+      # that could silently drift from it. `preflightArchive` counts one entry per yielded tar
+      # entry (files, dirs, symlinks, hardlinks -- PAX/GNU-long-name header records are never
+      # yielded as entries of their own) and sums bytes only for `file`-type entries, so this
+      # is the only way to guarantee the signed numbers can never reject the very artifact they
+      # describe. The policy passed here is deliberately unbounded: this step measures, it does
+      # not gate -- a real bound is enforced for real by the updater at install time, against
+      # these derived numbers.
+      - name: Derive entryCount/unpackedSize from the built artifact
+        id: counts
+        env:
+          ARTIFACT_PATH: ${{ github.workspace }}/${{ steps.assemble.outputs.artifact-name }}
+        run: |
+          set -euo pipefail
+          result=$(pnpm --filter @veduta/daemon exec tsx -e "
+            import { preflightArchive } from './src/update/tar-reader.ts'
+            preflightArchive(process.env.ARTIFACT_PATH ?? '', {
+              maxEntries: Number.MAX_SAFE_INTEGER,
+              maxUnpackedBytes: Number.MAX_SAFE_INTEGER,
+            }).then((result) => {
+              process.stdout.write(JSON.stringify(result))
+            }).catch((error) => {
+              console.error(error)
+              process.exit(1)
+            })
+          ")
+          echo "preflightArchive result: $result"
+          entry_count=$(node -e "process.stdout.write(String(JSON.parse(process.argv[1]).entries))" "$result")
+          unpacked_size=$(node -e "process.stdout.write(String(JSON.parse(process.argv[1]).unpackedBytes))" "$result")
+          if ! [[ "$entry_count" =~ ^[0-9]+$ ]]; then
+            echo "error: could not derive a numeric entryCount (got '$entry_count')" >&2
+            exit 1
+          fi
+          if ! [[ "$unpacked_size" =~ ^[0-9]+$ ]]; then
+            echo "error: could not derive a numeric unpackedSize (got '$unpacked_size')" >&2
+            exit 1
+          fi
           echo "entry-count=$entry_count" >>"$GITHUB_OUTPUT"
           echo "unpacked-size=$unpacked_size" >>"$GITHUB_OUTPUT"
 
@@ -211,20 +263,24 @@ jobs:
       # release.json -- the canonical bytes the maintainer's `deploy/release.sh sign` step
       # signs next. Built with Node's JSON.stringify (correct escaping for the free-text
       # `notes` field) rather than hand-assembled, and matches ReleaseMetadataSchema
-      # (packages/protocol/src/update.ts) field-for-field. Deliberately UNSIGNED: CI never
-      # holds the signing key (docs/adr/0013-signed-self-update.md, "Considered options" --
-      # "CI-held signing key: rejected").
+      # (packages/protocol/src/update.ts) field-for-field, including `nodeSha256` -- the
+      # updater verifies the downloaded Node runtime tarball against this signed hash directly,
+      # rather than trusting the `SHASUMS256.txt` fetched from the same dist host it just
+      # downloaded the tarball from. Deliberately UNSIGNED: CI never holds the signing key
+      # (docs/adr/0013-signed-self-update.md, "Considered options" -- "CI-held signing key:
+      # rejected").
       - name: Write unsigned release.json
         env:
           VERSION: ${{ steps.version.outputs.version }}
           ARTIFACT_NAME: ${{ steps.assemble.outputs.artifact-name }}
           SHA256: ${{ steps.assemble.outputs.sha256 }}
           ARTIFACT_SIZE: ${{ steps.assemble.outputs.artifact-size }}
-          UNPACKED_SIZE: ${{ steps.assemble.outputs.unpacked-size }}
-          ENTRY_COUNT: ${{ steps.assemble.outputs.entry-count }}
+          UNPACKED_SIZE: ${{ steps.counts.outputs.unpacked-size }}
+          ENTRY_COUNT: ${{ steps.counts.outputs.entry-count }}
           DATA_VERSION: ${{ steps.data-version.outputs.value }}
           NODE_VERSION: ${{ steps.node-runtime.outputs.node-version }}
           NODE_TAR_SIZE: ${{ steps.node-runtime.outputs.tar-size }}
+          NODE_SHA256: ${{ steps.node-runtime.outputs.sha256 }}
           NODE_UNPACKED_SIZE: ${{ steps.node-runtime.outputs.unpacked-size }}
           NOTES: ${{ steps.notes.outputs.text }}
         run: |
@@ -241,6 +297,7 @@ jobs:
               dataVersion: Number(process.env.DATA_VERSION),
               nodeVersion: process.env.NODE_VERSION,
               nodeTarSize: Number(process.env.NODE_TAR_SIZE),
+              nodeSha256: process.env.NODE_SHA256,
               nodeUnpackedSize: Number(process.env.NODE_UNPACKED_SIZE),
               notes: process.env.NOTES ?? '',
             }

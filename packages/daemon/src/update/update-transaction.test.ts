@@ -17,7 +17,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { ReleaseMetadata, UpdateMarker, UpdatePinning } from '@veduta/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
-import { generateKeypair, sign } from './minisign.ts'
+import { generateKeypair, publicKeyIdText, sign } from './minisign.ts'
 import { preflightArchive } from './tar-reader.ts'
 import {
   UpdateTransactionStoppedError,
@@ -161,7 +161,7 @@ function markerFrom(chain: Chain, artifactUrl: string): UpdateMarker {
     signingKey: {
       pub: chain.signingPublicKeyText,
       rootSig: chain.signingCertText,
-      keyId: 'test-key',
+      keyId: publicKeyIdText(chain.signingPublicKeyText),
     },
     artifactUrl,
   }

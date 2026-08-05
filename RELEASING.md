@@ -42,6 +42,14 @@ Do this once, before the first signed release ever exists.
    (`/etc/veduta/update.json`, per the ADR's Amendments §3); it is the one thing that can never
    be silently swapped without re-running the installer.
 
+   Until this step has happened once, `deploy/install.sh` has no root key to default to — an
+   ordinary install runs with signed self-update unconfigured (`--update-root-key` was never
+   given) and the installer says so plainly at the end of its run, rather than shipping a
+   fabricated placeholder key that nobody actually holds. Once `root.pub` is committed, bake its
+   contents into `deploy/install.sh` as the default for `--update-root-key` (mirroring
+   `DEFAULT_UPDATE_FEED`'s existing pattern) so an ordinary install is protected out of the box,
+   the same way a fork stays protected by pinning its own key via the same flag.
+
 3. **Generate the signing keypair**, on any machine, and store its secret key (`signing.key`)
    in a password manager — this key is used routinely (every release), so it needs to be
    reachable, unlike the root key:
@@ -82,6 +90,16 @@ Do this once, before the first signed release ever exists.
    (`actions/attest-build-provenance`), and opens a **draft** GitHub release with both files
    attached. Nothing is signed yet, and nothing is publicly reachable through the update feed
    yet — a draft release is invisible to `stable.json` readers by construction.
+
+   `release.json`'s `nodeTarSize`/`nodeSha256`/`nodeUnpackedSize` fields describe the
+   `linux-x64` Node runtime tarball specifically: the CI runner (`ubuntu-latest`) is `x64`, and
+   `ReleaseMetadataSchema` carries one set of runtime fields, not one per CPU architecture. An
+   instance self-updating from a `linux-arm64` host requests a differently-sized,
+   differently-hashed `linux-arm64` Node tarball that these signed fields do not describe, and
+   the updater's exact size/sha256 check on the runtime (`ensureRuntime`,
+   `packages/daemon/src/update/update-transaction.ts`) would refuse it outright. This is a
+   known, deliberate simplification — revisit (e.g. per-arch fields) once `linux-arm64` hosts
+   are a real deployment target rather than a theoretical one.
 
 3. **Download `release.json` from the draft release** and sign it with the signing key:
 

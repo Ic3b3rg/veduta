@@ -256,6 +256,21 @@ export async function* readTarEntries(
     const name = pendingName ?? header.name
     const linkName = pendingLinkName ?? header.linkName
     const size = pendingSize ?? header.size
+
+    // A PAX "size" override must agree with the raw header's size field. The
+    // two only ever legitimately diverge for a file at or beyond the ~8GB
+    // octal-field ceiling, which this reader already refuses outright (GNU
+    // base-256 size encoding, above). Any other divergence means the header
+    // and the PAX record disagree about how many bytes of payload follow —
+    // exactly the gap a crafted archive can use to desynchronize this
+    // preflight from what the system `tar` extractor does with the same
+    // bytes, so it is refused rather than resolved one way or the other.
+    if (pendingSize !== undefined && pendingSize !== header.size) {
+      throw new Error(
+        `tar entry '${name}' has a header size (${header.size}) that disagrees with its PAX size override (${pendingSize}); refusing the archive`,
+      )
+    }
+
     pendingName = undefined
     pendingLinkName = undefined
     pendingSize = undefined
@@ -265,7 +280,15 @@ export async function* readTarEntries(
       linkName.length > 0 ? { name, type, size, linkName } : { name, type, size }
     yield entry
 
-    await reader.skipExact(paddedSize)
+    // Skip using the effective (post-PAX-override) size, not `paddedSize`
+    // (computed above from the raw header field): those two are provably
+    // equal on every path that reaches here, since a disagreement between
+    // them was just refused, but computing the skip from `size` directly
+    // keeps this reader's notion of "how much payload follows" tied to the
+    // same value it just yielded, rather than to a header field that PAX
+    // overrides are meant to supersede.
+    const effectivePaddedSize = Math.ceil(size / HEADER_SIZE) * HEADER_SIZE
+    await reader.skipExact(effectivePaddedSize)
   }
 }
 

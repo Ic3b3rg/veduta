@@ -35,16 +35,18 @@ curl -fsSL https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.
 
 ### Flags
 
-| Flag               | Default                                    | Meaning                                                                                                         |
-| ------------------ | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `--domain <d>`     | (prompted)                                 | Public domain (A/AAAA -> this VPS)                                                                              |
-| `--email <e>`      | (prompted)                                 | ACME contact email                                                                                              |
-| `--repo <url>`     | `https://github.com/Ic3b3rg/veduta.git`    | Repository to clone                                                                                             |
-| `--ref <tag\|sha>` | `main` (resolved to a concrete commit SHA) | Git ref to check out                                                                                            |
-| `--data-dir <p>`   | `/var/lib/veduta/.veduta`                  | Daemon data directory (`VEDUTA_DATA_DIR`) -- must be strictly under `/var/lib`, `/srv`, `/opt`, or `/var/local` |
-| `--apply`          | off                                        | Run unattended (needs `--domain`/`--email` when no tty is attached)                                             |
-| `--preview`        | off                                        | Force preview mode, even with a tty attached                                                                    |
-| `--help`           | --                                         | Print usage                                                                                                     |
+| Flag                             | Default                                    | Meaning                                                                                                                   |
+| -------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `--domain <d>`                   | (prompted)                                 | Public domain (A/AAAA -> this VPS)                                                                                        |
+| `--email <e>`                    | (prompted)                                 | ACME contact email                                                                                                        |
+| `--repo <url>`                   | `https://github.com/Ic3b3rg/veduta.git`    | Repository to clone                                                                                                       |
+| `--ref <tag\|sha>`               | `main` (resolved to a concrete commit SHA) | Git ref to check out                                                                                                      |
+| `--data-dir <p>`                 | `/var/lib/veduta/.veduta`                  | Daemon data directory (`VEDUTA_DATA_DIR`) -- must be strictly under `/var/lib`, `/srv`, `/opt`, or `/var/local`           |
+| `--update-feed <url>`            | this project's `feed/stable.json`          | Signed self-update feed URL -- see "Updates" below                                                                        |
+| `--update-root-key <key\|@file>` | (none)                                     | Minisign root public key pinning the feed above (raw text or `@/path/to/file`) -- omitted by default; see "Updates" below |
+| `--apply`                        | off                                        | Run unattended (needs `--domain`/`--email` when no tty is attached)                                                       |
+| `--preview`                      | off                                        | Force preview mode, even with a tty attached                                                                              |
+| `--help`                         | --                                         | Print usage                                                                                                               |
 
 ### Reruns are pinned
 
@@ -432,8 +434,15 @@ backup schedule (§4 above). Both are pruned only after a successful update, nev
 `veduta` account (§1 above) and therefore necessarily owns the code it updates, the same
 posture Syncthing and Tailscale ship with -- but it must never be able to repoint its own
 update channel or swap the root of trust. A fork gets its own update channel with zero source
-patches via the installer's `--update-feed`/`--update-root-key` flags (upstream defaults point
-at this project's own feed and root key).
+patches via the installer's `--update-feed`/`--update-root-key` flags. The feed URL defaults to
+this project's own `feed/stable.json`; the root key has **no default** -- no upstream root key
+has been published yet (that is the one-time ceremony in
+[RELEASING.md](../RELEASING.md) §(a), which this issue's implementation does not itself run).
+An install with no `--update-root-key` writes no `/etc/veduta/update.json` at all and prints a
+clearly marked notice at the end of the run saying so, with the exact rerun command
+(`--update-root-key @/path/to/root.pub`, `@file` reads the key from a file) that pins it once a
+key exists. This is a deliberate honesty choice: a fabricated placeholder key would pin trust to
+a key nobody holds, which is worse than leaving self-update unconfigured.
 
 A release that fails its health check leaves its supervised daemon's output behind at
 `/var/lib/veduta/updates/state/logs/<version>.log` -- preserved across the rollback, specifically

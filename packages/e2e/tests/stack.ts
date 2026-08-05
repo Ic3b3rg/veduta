@@ -58,6 +58,21 @@ export interface StartStackOptions {
   baseDir?: string
   /** Reuses a fixed (still-empty) legacy-detection home instead of a fresh temp dir. */
   legacyHome?: string
+  /**
+   * Extra environment variables applied AFTER the isolation `delete`s below --
+   * never affects `local-vps.spec.ts`'s own journey, since it never passes
+   * this option. The signed self-update e2e (issue #43,
+   * `docs/adr/0013-signed-self-update.md`) uses this to inject the
+   * harness-only test knobs (`VEDUTA_UPDATE_TEST_KNOBS` and friends,
+   * `packages/daemon/src/update/update-transaction.ts`/`self-check.ts`) and
+   * `VEDUTA_INSTALLED_VERSION` (`server.ts`/`update-cli.ts`) into the runner's
+   * own process env, which `deploy/local-vps.sh`'s `exec env ...` and
+   * `deploy/veduta-run`'s plain subprocess spawns both pass straight through
+   * unmodified -- `VEDUTA_UPDATE_HOME`/`VEDUTA_UPDATE_PINNING` themselves need
+   * no entry here, since `local-vps.sh` already always points them at
+   * `<base-dir>/updates` and `<base-dir>/update.json` unconditionally.
+   */
+  extraEnv?: Record<string, string>
 }
 
 /**
@@ -113,6 +128,7 @@ export async function startLocalVpsStack(options: StartStackOptions = {}): Promi
   delete env['VEDUTA_AUTH_STATE']
   delete env['PORT']
   env['VEDUTA_LEGACY_HOME'] = legacyHome
+  Object.assign(env, options.extraEnv)
 
   const child = spawn(RUNNER_SCRIPT, ['--port', String(port), '--base-dir', baseDir], {
     cwd: REPO_ROOT,
