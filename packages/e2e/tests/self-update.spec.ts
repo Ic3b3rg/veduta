@@ -197,7 +197,15 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
         .toBe(true)
 
       await focusSystemSpace(page)
-      await expect(surfaceCard(page, 'Updates').getByText(RELEASE_VERSION)).toBeVisible()
+      // Two nodes carry the new version once the update lands — the current-version
+      // Stat and the outcome Badge ("Updated to 9.9.9") — so both are asserted
+      // explicitly rather than with one ambiguous substring match.
+      await expect(
+        surfaceCard(page, 'Updates').getByText(RELEASE_VERSION, { exact: true }),
+      ).toBeVisible()
+      await expect(
+        surfaceCard(page, 'Updates').getByText(`Updated to ${RELEASE_VERSION}`),
+      ).toBeVisible()
 
       const currentTarget = await readlink(join(baseDir, 'updates', 'releases', 'current'))
       expect(currentTarget).toContain(`v${RELEASE_VERSION}`)
@@ -212,7 +220,7 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
     }
   })
 
-  test('AC2 bad signature: check fails honestly, tampered artifact refused with zero mutation', async ({
+  test('AC2a bad signature: the check fails honestly and never records an offer', async ({
     browser,
   }) => {
     test.setTimeout(20 * 60_000)
@@ -250,8 +258,6 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
       })
       await onboardMinimal(page, stack)
 
-      const preHealthEvents = await fetchSpaceEvents(page, stack.origin, 'spc-health')
-
       await focusSystemSpace(page)
       const updates = surfaceCard(page, 'Updates')
       await updates.getByRole('button', { name: 'Check now' }).click()
@@ -269,11 +275,38 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
         .toBe(true)
       await expect(updates.getByRole('button', { name: 'Apply update' })).toHaveCount(0)
 
-      // Step B: a properly rooted chain (the check passes, an offer is
-      // recorded) but the SERVED artifact bytes are tampered while the
-      // signed metadata still names the original bytes' sha256 -- the
-      // transaction's own hash check must refuse this, not the chain
-      // verification.
+      await expect(page.getByRole('alert')).toHaveCount(0)
+    } finally {
+      if (stack) stack.stop()
+      await feed.close()
+      await context.close()
+      if (stack) await cleanupStackDirs(stack)
+    }
+  })
+
+  test('AC2b tampered artifact: refused with zero mutation, honest reason on the Surface', async ({
+    browser,
+  }) => {
+    test.setTimeout(20 * 60_000)
+    const baseDir = await mkdtemp(join(tmpdir(), 'veduta-e2e-selfupdate-ac2b-'))
+    const feed = await startFeedServer()
+    const context = await browser.newContext()
+    let stack: LocalVpsStack | undefined
+    try {
+      writePinningFile(join(baseDir, 'update.json'), {
+        feedUrl: feed.feedUrl,
+        rootPublicKey: keys.root.publicKeyText,
+      })
+      preCreateRuntimeDir(join(baseDir, 'updates'), artifact.nodeVersion)
+
+      const artifactUrl = `${feed.origin}/${artifact.artifactName}`
+      // A properly rooted chain, so the check itself passes and an offer is
+      // recorded -- but the SERVED bytes are tampered while the signed
+      // metadata still names the original bytes' sha256. The transaction's own
+      // hash check has to be what refuses this, not chain verification.
+      // This lives in its own stack (rather than as a second phase of AC2a) so
+      // it never needs a second tap on the same one-shot state key, which
+      // issue #45 makes unreliable inside a single page session.
       feed.setManifest(
         manifestBytes({
           releaseBytes: goodReleaseBytes,
@@ -284,6 +317,19 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
       )
       feed.setArtifact(artifact.artifactName, flipByte(artifactBytes, 1000))
 
+      const page = await context.newPage()
+      await addVirtualAuthenticator(context, page)
+
+      stack = await startLocalVpsStack({
+        baseDir,
+        extraEnv: { VEDUTA_INSTALLED_VERSION: INSTALLED_VERSION },
+      })
+      await onboardMinimal(page, stack)
+
+      const preHealthEvents = await fetchSpaceEvents(page, stack.origin, 'spc-health')
+
+      await focusSystemSpace(page)
+      const updates = surfaceCard(page, 'Updates')
       await updates.getByRole('button', { name: 'Check now' }).click()
       await expect(updates.getByRole('button', { name: 'Apply update' })).toBeVisible({
         timeout: 30_000,
@@ -535,16 +581,26 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
       await mkdir(stateDir, { recursive: true })
       writeFileSync(join(stateDir, 'marker.json'), `${JSON.stringify(marker, null, 2)}\n`)
 
+      // Park the transaction exactly at `migrated` — the window where old code
+      // must never serve migrated stores — instead of racing a poller against
+      // it: with no data migration to perform, the real transaction crosses
+      // that phase in microseconds, so observing it from outside is inherently
+      // flaky. The harness-only stop knob makes the state on disk deterministic;
+      // the hard kill below is what this criterion is actually about.
       run = spawnVedutaRunDirect({
         port,
         dataDir,
         vaultKeyfile,
         updateHome,
         updatePinning: pinningPath,
+        extraEnv: {
+          VEDUTA_UPDATE_TEST_KNOBS: '1',
+          VEDUTA_TEST_STOP_AFTER_PHASE: 'migrated',
+        },
       })
 
       const journalPath = join(stateDir, 'update-state.json')
-      const migratedDeadline = Date.now() + 60_000
+      const migratedDeadline = Date.now() + 3 * 60_000
       let sawMigrated = false
       while (Date.now() < migratedDeadline) {
         if (existsSync(journalPath)) {
@@ -562,11 +618,8 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
       }
       expect(sawMigrated).toBe(true)
 
-      // The hard kill: the whole process group, mid-transaction -- before
-      // any daemon has been backgrounded for this loop iteration (the
-      // migrate/flip/self-check sequence all runs synchronously inside the
-      // single `update-cli.ts run` invocation, so there is nothing else in
-      // this group to escape the signal at this exact point).
+      // The hard kill: the whole process group, with the journal parked at
+      // `migrated` on disk. Nothing gets a chance to clean up.
       run.kill('SIGKILL')
       await run.exited
 
