@@ -48,6 +48,10 @@ set -Eeuo pipefail
 readonly INSTALL_URL="https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.sh"
 readonly DEFAULT_REPO="https://github.com/Ic3b3rg/veduta.git"
 readonly DEFAULT_DATA_DIR="/var/lib/veduta/.veduta"
+# The signed self-update feed (issue #43, docs/adr/0013-signed-self-update.md and its
+# "Amendments" section): upstream defaults so a fork gets its own update channel with zero
+# source patches, by pinning its own --update-feed/--update-root-key at install time instead.
+readonly DEFAULT_UPDATE_FEED="https://raw.githubusercontent.com/Ic3b3rg/veduta/main/feed/stable.json"
 
 # --- Stage table (parallel indexed arrays -- no associative arrays, for bash 3.2) ---------
 
@@ -73,6 +77,8 @@ REF=""
 DOMAIN=""
 EMAIL=""
 DATA_DIR="$DEFAULT_DATA_DIR"
+UPDATE_FEED="$DEFAULT_UPDATE_FEED"
+UPDATE_ROOT_KEY=""
 EXPLICIT_APPLY=false
 EXPLICIT_PREVIEW=false
 SHOW_HELP=false
@@ -191,6 +197,16 @@ escape_json_string() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
+# Same escaping as escape_json_string, plus folding any literal newline in $1 into a JSON \n
+# escape -- a minisign public key file is two lines (docs/adr/0013-signed-self-update.md's
+# "Amendments" section), and the expected calling convention for --update-root-key is
+# `--update-root-key "$(cat veduta-root.pub)"`, which hands this function a real embedded
+# newline that plain JSON string syntax cannot contain unescaped. The join is done with awk,
+# not a GNU-sed-only `:a;N;$!ba` hold-space loop, so this also works under BSD sed (macOS).
+escape_json_multiline() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk 'NR>1{printf "\\n"} {printf "%s", $0}'
+}
+
 # --- Argument parsing -----------------------------------------------------------------------
 
 parse_args() {
@@ -214,6 +230,14 @@ parse_args() {
         ;;
       --data-dir)
         DATA_DIR="${2:-}"
+        shift 2
+        ;;
+      --update-feed)
+        UPDATE_FEED="${2:-}"
+        shift 2
+        ;;
+      --update-root-key)
+        UPDATE_ROOT_KEY="${2:-}"
         shift 2
         ;;
       --apply)
@@ -250,6 +274,10 @@ Options:
   --repo <git url>    Repository to clone (default: $DEFAULT_REPO)
   --ref <tag|sha>     Git ref to check out (default: main, resolved to a commit SHA)
   --data-dir <path>   Daemon data directory (default: $DEFAULT_DATA_DIR)
+  --update-feed <url> Signed self-update feed URL (default: $DEFAULT_UPDATE_FEED)
+  --update-root-key <key>
+                      Minisign root public key text pinning the update feed above. Omit to
+                      leave signed updates unconfigured (no /etc/veduta/update.json is written).
   --apply             Run unattended (requires --domain and --email when no tty is attached)
   --preview           Force preview mode: print the stage plan, make no changes, exit 0
   --help              Show this help
@@ -345,6 +373,12 @@ compute_rerun_cmd() {
   if [ "$DATA_DIR" != "$DEFAULT_DATA_DIR" ]; then
     flags="$flags --data-dir $DATA_DIR"
   fi
+  if [ "$UPDATE_FEED" != "$DEFAULT_UPDATE_FEED" ]; then
+    flags="$flags --update-feed $UPDATE_FEED"
+  fi
+  if [ -n "$UPDATE_ROOT_KEY" ]; then
+    flags="$flags --update-root-key $UPDATE_ROOT_KEY"
+  fi
   if [ -n "$DOMAIN" ]; then
     flags="$flags --domain $DOMAIN"
   fi
@@ -434,11 +468,18 @@ EOF
   printf '  ref:             %s\n' "${REF:-main (resolved to a commit SHA, or the pinned existing checkout on a rerun)}" >&2
   printf '  data directory:  %s (veduta:veduta 0700)\n' "$DATA_DIR" >&2
   printf '  vault keyfile:   /etc/veduta/vault.key (created only if absent, never rotated)\n' >&2
+  printf '  update home:     /var/lib/veduta/updates/{releases,runtimes,bin,state,backups,tmp} (veduta:veduta 0700)\n' >&2
+  if [ -n "$UPDATE_ROOT_KEY" ]; then
+    printf '  update pinning:  /etc/veduta/update.json (root:root 0644) -- feed %s\n' "$UPDATE_FEED" >&2
+  else
+    printf '  update pinning:  skipped (no --update-root-key given) -- signed self-update stays unconfigured\n' >&2
+  fi
   printf '  systemd unit:    /etc/systemd/system/veduta.service + veduta.service.d/{override,bootstrap}.conf\n' >&2
+  printf '  supervisor:      /var/lib/veduta/updates/bin/veduta-run (veduta:veduta 0755), ExecStart wraps through it\n' >&2
   printf '  node version:    %s\n' "$(preview_node_version_note)" >&2
   printf '  pnpm version:    %s\n' "$(preview_pnpm_version_note)" >&2
   printf '\n' >&2
-  printf 'flags: --domain --email --repo --ref --data-dir --apply --preview --help\n' >&2
+  printf 'flags: --domain --email --repo --ref --data-dir --update-feed --update-root-key --apply --preview --help\n' >&2
   printf 'stage protocol: one JSON line per stage transition on stdout (schema: @veduta/protocol InstallerStageEventSchema)\n' >&2
 }
 
@@ -780,6 +821,26 @@ deps_stage() {
   run apt-get install -y git curl ca-certificates qrencode xz-utils
 }
 
+# Root-owned trust anchors for the signed self-update feed (issue #43,
+# docs/adr/0013-signed-self-update.md's "Amendments" section): written ONLY when
+# --update-root-key was given -- the upstream root key does not exist yet, so an install without
+# one simply leaves signed updates unconfigured. deploy/veduta-run's update-cli tolerates a
+# missing /etc/veduta/update.json for as long as there is nothing to update.
+write_update_pinning() {
+  local pinning_path=/etc/veduta/update.json content tmp
+  if [ -z "$UPDATE_ROOT_KEY" ]; then
+    printf 'update pinning skipped (no --update-root-key)\n' >&2
+    return 0
+  fi
+  content="{\"feedUrl\":\"$(escape_json_multiline "$UPDATE_FEED")\",\"rootPublicKey\":\"$(escape_json_multiline "$UPDATE_ROOT_KEY")\"}"
+  tmp="$pinning_path.tmp.$$"
+  printf '%s' "$content" | run_quiet tee "$tmp"
+  run chown root:root "$tmp"
+  run chmod 0644 "$tmp"
+  run mv "$tmp" "$pinning_path"
+  printf 'wrote update pinning to %s (feed: %s)\n' "$pinning_path" "$UPDATE_FEED" >&2
+}
+
 user_layout_stage() {
   # Exactly deploy/README.md §1, made idempotent for reruns.
   if ! getent group veduta >/dev/null 2>&1; then
@@ -792,6 +853,15 @@ user_layout_stage() {
   run install -d -o veduta -g veduta -m 0700 /var/lib/veduta
   run install -d -o veduta -g veduta -m 0700 "$DATA_DIR"
   run install -d -o root -g root -m 0755 /etc/veduta
+
+  # The self-update home (issue #43, docs/adr/0013-signed-self-update.md's "Amendments"
+  # section): veduta-owned, inside the existing ReadWritePaths, outside the root-owned git
+  # checkout so a rerun's `git clean -fdx` (checkout_stage) never touches it.
+  local update_subdir
+  for update_subdir in releases runtimes bin state backups tmp; do
+    run install -d -o veduta -g veduta -m 0700 "/var/lib/veduta/updates/$update_subdir"
+  done
+  write_update_pinning
 
   persist_legacy_seed
   stage_legacy_memory
@@ -871,8 +941,9 @@ build_stage() {
 
   # tsx is a devDependency of @veduta/daemon (not of the workspace root), so pnpm's hoisting
   # puts its bin at packages/daemon/node_modules/.bin/tsx, NOT the top-level node_modules/.bin
-  # -- the systemd-unit stage's ExecStart depends on this exact path. Fail loudly here, before
-  # systemctl ever gets a unit that would just crash-loop.
+  # -- deploy/veduta-run's legacy-checkout fallback (VEDUTA_LEGACY_ROOT, until a first update
+  # ever runs) depends on this exact path. Fail loudly here, before systemctl ever gets a unit
+  # that would just crash-loop.
   tsx_bin=/opt/veduta/packages/daemon/node_modules/.bin/tsx
   if [ ! -x "$tsx_bin" ]; then
     printf 'error: tsx binary not found at %s after build -- check that @veduta/daemon devDependencies installed correctly\n' "$tsx_bin" >&2
@@ -912,6 +983,17 @@ systemd_unit_stage() {
   if [ -f "$override_conf" ]; then
     run cp "$override_conf" "$override_conf.bak-$ts"
   fi
+
+  # The supervisor wrapper (issue #43, docs/adr/0013-signed-self-update.md's "Amendments"
+  # section): veduta-owned, inside /var/lib/veduta/updates (created by user_layout_stage), so a
+  # broken release can never break its own rescuer. Copied fresh on every apply run -- the same
+  # copy `veduta-run`'s own success path later overwrites atomically once an update has actually
+  # run, so a rerun of this installer simply re-syncs it to whatever /opt/veduta now carries.
+  local wrapper_dst=/var/lib/veduta/updates/bin/veduta-run
+  run cp /opt/veduta/deploy/veduta-run "$wrapper_dst"
+  run chown veduta:veduta "$wrapper_dst"
+  run chmod 0755 "$wrapper_dst"
+
   {
     printf '[Service]\n'
     printf 'Environment=VEDUTA_PUBLIC_DOMAIN=%s\n' "$DOMAIN"
@@ -924,9 +1006,16 @@ systemd_unit_stage() {
       printf 'Environment=VEDUTA_DATA_DIR=%s\n' "$DATA_DIR"
       printf 'ReadWritePaths=%s\n' "$(dirname "$DATA_DIR")"
     fi
+    # Self-update wiring (issue #43): the wrapper needs to know where the update home lives,
+    # where the root-owned trust anchors are pinned, and where to fall back to when
+    # releases/current does not exist yet (a fresh install that has never been through an
+    # update) -- deploy/veduta-run's own header documents this same env contract.
+    printf 'Environment=VEDUTA_UPDATE_HOME=/var/lib/veduta/updates\n'
+    printf 'Environment=VEDUTA_UPDATE_PINNING=/etc/veduta/update.json\n'
+    printf 'Environment=VEDUTA_LEGACY_ROOT=/opt/veduta\n'
     printf 'Restart=always\n'
     printf 'ExecStart=\n'
-    printf 'ExecStart=/usr/local/bin/node /opt/veduta/packages/daemon/node_modules/.bin/tsx /opt/veduta/packages/daemon/src/index.ts\n'
+    printf 'ExecStart=%s\n' "$wrapper_dst"
   } | run_quiet tee "$override_conf"
   run chmod 0644 "$override_conf"
 

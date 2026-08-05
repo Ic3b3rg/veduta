@@ -22,6 +22,8 @@ import { buildServer } from './server.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { treeProposalSurfaceId } from './tree-proposal.ts'
 import { CURRENT_DATA_VERSION } from './update/data-version.ts'
+import { generateKeypair } from './update/minisign.ts'
+import { UPDATE_SURFACE_ID } from './update-surface.ts'
 import { VEDUTA_VERSION } from './version.ts'
 import type {
   PushPayload,
@@ -1733,6 +1735,62 @@ describe('dataVersion boot gate (issues/043-self-update.md, docs/adr/0013-signed
     })
 
     await app.close()
+  })
+})
+
+describe('self-update wiring (issue #43, docs/adr/0013-signed-self-update.md)', () => {
+  it('wires nothing when VEDUTA_UPDATE_HOME/VEDUTA_UPDATE_PINNING are unset — no Update Surface, no check-updates job', async () => {
+    delete process.env['VEDUTA_UPDATE_HOME']
+    delete process.env['VEDUTA_UPDATE_PINNING']
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-update-disabled-'))
+
+    const { app, store, scheduler } = buildServer({ dataDir })
+
+    expect(store.getSurface(UPDATE_SURFACE_ID)).toBeUndefined()
+    expect(
+      scheduler
+        .listAutomations(SYSTEM_SPACE_ID)
+        .some((automation) => automation.handler === 'check-updates'),
+    ).toBe(false)
+
+    await app.close()
+  })
+
+  it('constructs UpdateManager, pre-creates the Update Surface, and registers the daily check-updates job when both envs are set and the pinning file parses', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-update-enabled-'))
+    const updateHome = await mkdtemp(join(tmpdir(), 'veduta-update-home-'))
+    const pinningPath = join(updateHome, 'update.json')
+    const root = generateKeypair()
+    await writeFile(
+      pinningPath,
+      JSON.stringify({
+        feedUrl: 'http://127.0.0.1:1/stable.json',
+        rootPublicKey: root.publicKeyText,
+      }),
+    )
+    process.env['VEDUTA_UPDATE_HOME'] = updateHome
+    process.env['VEDUTA_UPDATE_PINNING'] = pinningPath
+
+    try {
+      const { app, store, scheduler, egress } = buildServer({ dataDir })
+
+      expect(store.getSurface(UPDATE_SURFACE_ID)).toBeDefined()
+      const jobs = scheduler
+        .listAutomations(SYSTEM_SPACE_ID)
+        .filter((automation) => automation.handler === 'check-updates')
+      expect(jobs).toHaveLength(1)
+      expect(jobs[0]?.status).toBe('armed')
+
+      // The pinned feed host joined the egress allowlist (issue #15) as a
+      // declared host, not merely tolerated through the dev profile's own
+      // `allowLoopback` flag.
+      expect(egress.allowedHosts()).toContain('127.0.0.1')
+
+      await app.close()
+    } finally {
+      delete process.env['VEDUTA_UPDATE_HOME']
+      delete process.env['VEDUTA_UPDATE_PINNING']
+    }
   })
 })
 

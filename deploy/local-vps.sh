@@ -168,66 +168,33 @@ ensure_vault_keyfile
 printf 'building the PWA...\n' >&2
 pnpm --filter @veduta/pwa build 1>&2
 
-# --- Supervision loop ------------------------------------------------------------------------
+# --- Hand off to the shared supervisor (issue #43, docs/adr/0013-signed-self-update.md) ------
 #
-# `set -m` gives each backgrounded daemon its own process group, so a signal sent to the negated
-# pid below reaches the daemon process and anything it spawned (tsx/node), not just the top-level
-# pnpm process -- the same guarantee systemd's cgroup-scoped kill gives the VPS profile.
-
-set -m
-
-CHILD_PID=""
-
-on_signal() {
-  local sig="$1"
-  printf 'received %s -- stopping the daemon\n' "$sig" >&2
-  if [ -n "$CHILD_PID" ]; then
-    kill -TERM "-$CHILD_PID" 2>/dev/null || true
-    wait "$CHILD_PID" 2>/dev/null || true
-  fi
-  exit 0
-}
-
-trap 'on_signal INT' INT
-trap 'on_signal TERM' TERM
+# `deploy/veduta-run` now owns the restart loop this script used to run inline: the process
+# group + signal forwarding + exit-code handling (`set -m`, INT/TERM trap, exit 0 restarts, exit
+# 75 re-checks for an update, anything else propagates) is exactly the idiom this script used to
+# implement itself, plus the update/rollback dance when VEDUTA_UPDATE_HOME has a transaction in
+# flight. `VEDUTA_LEGACY_ROOT="$REPO_ROOT"` is this profile's "release": there is no
+# releases/current symlink under `$BASE_DIR/updates` until a first update actually runs, so
+# veduta-run falls back to running straight out of this checkout, exactly as before.
+#
+# `exec` replaces this process outright, so everything from here on is veduta-run's own
+# stdout/stderr, unmodified -- which is what packages/e2e/tests/stack.ts's ready-line/setup-URL
+# regexes rely on. `env -u`/passthrough rules are unchanged from what this script always did (see
+# the comment that used to sit above the old inline loop): VEDUTA_AUTH_STATE/VEDUTA_VAULT_KEY are
+# cleared before the profile env is applied so a stray value from the caller's shell can never
+# silently break the --base-dir isolation this script exists to provide; VEDUTA_BOOTSTRAP_CODE
+# and VEDUTA_PUBLIC_DOMAIN are left untouched (deliberate operator input, and the daemon itself
+# refuses VEDUTA_PROFILE=local-vps together with a public domain -- packages/daemon/src/profile.ts).
 
 printf 'starting daemon on http://localhost:%s (VEDUTA_DATA_DIR=%s)\n' "$PORT" "$DATA_DIR" >&2
 
-while true; do
-  # `env -u` clears a stray VEDUTA_AUTH_STATE/VEDUTA_VAULT_KEY the caller's
-  # shell might already have set, before the profile env below is applied --
-  # otherwise either would silently break the --base-dir isolation this
-  # script exists to provide (auth state written outside $BASE_DIR, or the
-  # vault opened with foreign key material instead of $VAULT_KEYFILE).
-  # VEDUTA_BOOTSTRAP_CODE is passed through untouched: it is deliberate
-  # operator input (a fixed bootstrap code for a scripted first boot), not
-  # runner state to isolate. VEDUTA_PUBLIC_DOMAIN needs no unset either --
-  # the daemon itself refuses VEDUTA_PROFILE=local-vps together with a public
-  # domain (packages/daemon/src/profile.ts).
-  env -u VEDUTA_AUTH_STATE -u VEDUTA_VAULT_KEY \
-    VEDUTA_PROFILE=local-vps \
-    VEDUTA_DATA_DIR="$DATA_DIR" \
-    VEDUTA_VAULT_KEYFILE="$VAULT_KEYFILE" \
-    PORT="$PORT" \
-    pnpm --filter @veduta/daemon exec tsx src/index.ts &
-  CHILD_PID=$!
-
-  if wait "$CHILD_PID"; then
-    status=0
-  else
-    status=$?
-  fi
-  CHILD_PID=""
-
-  if [ "$status" -eq 0 ]; then
-    printf 'daemon exited cleanly (onboarding finish); restarting\n' >&2
-    # Brief pause between restarts (systemd's RestartSec analogue): a bug
-    # that produces repeated clean exits must not become a hot loop.
-    sleep 1
-    continue
-  fi
-
-  printf 'daemon exited with status %s\n' "$status" >&2
-  printf 'rerun: deploy/local-vps.sh --port %s --base-dir %s\n' "$PORT" "$BASE_DIR" >&2
-  exit "$status"
-done
+exec env -u VEDUTA_AUTH_STATE -u VEDUTA_VAULT_KEY \
+  VEDUTA_PROFILE=local-vps \
+  VEDUTA_DATA_DIR="$DATA_DIR" \
+  VEDUTA_VAULT_KEYFILE="$VAULT_KEYFILE" \
+  PORT="$PORT" \
+  VEDUTA_UPDATE_HOME="$BASE_DIR/updates" \
+  VEDUTA_UPDATE_PINNING="$BASE_DIR/update.json" \
+  VEDUTA_LEGACY_ROOT="$REPO_ROOT" \
+  "$REPO_ROOT/deploy/veduta-run"

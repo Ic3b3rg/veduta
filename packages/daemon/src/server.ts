@@ -7,6 +7,7 @@ import {
   OneTimeCodeSchema,
   PairingCodeSchema,
   PushSubscriptionSchema,
+  UpdatePinningSchema,
   WebAuthnOptionsEnvelopeSchema,
 } from '@veduta/protocol'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
@@ -79,6 +80,7 @@ import { TemplateEngine } from './template-engine.ts'
 import { TreeProposalSurfaceManager } from './tree-proposal.ts'
 import { isTrustWrapped, TrustLayer } from './trust-layer.ts'
 import { ensureDataVersion } from './update/data-version.ts'
+import { UpdateManager } from './update-manager.ts'
 import { usageSurface } from './usage-surface.ts'
 import { VEDUTA_VERSION } from './version.ts'
 import {
@@ -294,17 +296,27 @@ function openMemoryIndex(
  * a socket that never drains): systemd (`Restart=always`) must still get
  * its restart even if graceful shutdown gets stuck. Both timers are
  * unref'd so neither keeps the event loop alive by itself.
+ *
+ * `exitCode` defaults to `0` (the onboarding wizard's own finish — a plain
+ * restart) but `UpdateManager.applyUpdate` (issue #43,
+ * `docs/adr/0013-signed-self-update.md`) wires a `75` variant instead: the
+ * dedicated code the supervisor wrapper (`deploy/veduta-run`, a later task)
+ * watches for to know a restart means "run the update transaction", not
+ * "just come back up".
  */
-function defaultScheduleExit(app: FastifyInstance): () => void {
+function defaultScheduleExit(app: FastifyInstance, exitCode = 0): () => void {
   return () => {
     const graceTimer = setTimeout(() => {
-      void app.close().finally(() => process.exit(0))
+      void app.close().finally(() => process.exit(exitCode))
     }, 500)
     graceTimer.unref()
-    const forceExitTimer = setTimeout(() => process.exit(0), 3_500)
+    const forceExitTimer = setTimeout(() => process.exit(exitCode), 3_500)
     forceExitTimer.unref()
   }
 }
+
+/** The dedicated exit code `applyUpdate` requests a restart with (issue #43, `docs/adr/0013-signed-self-update.md`) — distinct from `0` (the onboarding wizard's own plain restart) so the wrapper can tell the two apart. */
+const UPDATE_REQUESTED_EXIT_CODE = 75
 
 /** Known egress hosts per LLM provider (issue #15). Providers outside this map have no fetch-based transport this daemon can enforce yet. */
 const PROVIDER_HOSTS: Record<string, string> = {
@@ -811,6 +823,54 @@ export function buildServer(options: ServerOptions = {}) {
   reflection.reconcileJobs()
   reflectionSurfaces.start()
 
+  // Signed self-update (issue #43, docs/adr/0013-signed-self-update.md):
+  // wired only when both `VEDUTA_UPDATE_HOME` and `VEDUTA_UPDATE_PINNING`
+  // are set AND the pinning file parses (`UpdatePiningSchema` — root-owned
+  // trust anchors, `/etc/veduta/update.json` on a real install). Any other
+  // profile (loopback dev, the test suite, a VPS/Local VPS instance that
+  // hasn't opted in) gets zero behavior change: no `UpdateManager`, no
+  // Update Surface, no daily "Check for updates" Automation. Registered and
+  // started before `scheduler.start()`, the same ordering rule as the
+  // Heartbeat/Reflection above.
+  const updateHomeEnv = process.env['VEDUTA_UPDATE_HOME']
+  const updatePinningEnv = process.env['VEDUTA_UPDATE_PINNING']
+  let updateManager: UpdateManager | undefined
+  let updateFeedHost: string | undefined
+  if (updateHomeEnv && updatePinningEnv) {
+    try {
+      const pinning = UpdatePinningSchema.parse(JSON.parse(readFileSync(updatePinningEnv, 'utf8')))
+      updateFeedHost = new URL(pinning.feedUrl).hostname
+      updateManager = new UpdateManager({
+        store,
+        scheduler,
+        notifications: notificationCenter,
+        config: {
+          updateHome: updateHomeEnv,
+          pinningPath: updatePinningEnv,
+          dataRootDir: store.spacesEngine.rootDir,
+          // A dedicated exit code (75), distinct from the onboarding
+          // wizard's own plain restart (`defaultScheduleExit`'s default
+          // `0`) — the supervisor wrapper (`deploy/veduta-run`, a later
+          // task) tells the two apart by exit code alone.
+          scheduleExit: defaultScheduleExit(app, UPDATE_REQUESTED_EXIT_CODE),
+          now,
+        },
+      })
+      updateManager.register()
+      updateManager.start()
+    } catch (error) {
+      // A present-but-unparseable pinning file is a misconfiguration, not a
+      // boot-blocking failure: self-update stays unwired, exactly as if the
+      // env vars were absent, and the reason is logged for the operator.
+      console.error(
+        `self-update: ${updatePinningEnv} does not parse as UpdatePinningSchema; self-update is not wired`,
+        error,
+      )
+      updateManager = undefined
+      updateFeedHost = undefined
+    }
+  }
+
   notificationSettings.start()
   notificationCenter.start()
   scheduler.start()
@@ -818,6 +878,7 @@ export function buildServer(options: ServerOptions = {}) {
     scheduler.stop()
     heartbeatSurfaces.dispose()
     reflectionSurfaces.dispose()
+    updateManager?.dispose()
   })
 
   // Background Workers (issue #17, ADR-0002, ARCHITECTURE §3.6): ephemeral
@@ -1399,6 +1460,13 @@ export function buildServer(options: ServerOptions = {}) {
   // (`options.egress?.enforce`, set by `index.ts`) — the loopback (mock)
   // profile and the test suite must never inherit a global denying
   // dispatcher by default.
+  // The update feed host (issue #43) joins the allowlist the same way any
+  // other tool's declared domains do, only when self-update is actually
+  // wired above — an unconfigured daemon never gains a new allowed host.
+  const extraAllowHosts = [
+    ...(options.egress?.extraAllow ?? []),
+    ...(updateFeedHost ? [updateFeedHost] : []),
+  ]
   const egress = assembleEgressPolicy({
     rootDir: store.spacesEngine.rootDir,
     providers: Object.keys(routingConfig.providerKeys),
@@ -1406,7 +1474,7 @@ export function buildServer(options: ServerOptions = {}) {
       ? { googleHosts: ['oauth2.googleapis.com', 'www.googleapis.com'] }
       : {}),
     toolDomains: outboundTools.flatMap(({ tool }) => tool.egressDomains),
-    ...(options.egress?.extraAllow === undefined ? {} : { extraAllow: options.egress.extraAllow }),
+    ...(extraAllowHosts.length > 0 ? { extraAllow: extraAllowHosts } : {}),
     // The loopback (mock) profile and the test suite talk to loopback
     // constantly; the VPS and Local VPS profiles must not trust it specially.
     allowLoopback: auth.mode !== 'production',

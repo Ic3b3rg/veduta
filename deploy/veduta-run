@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# deploy/veduta-run -- the systemd ExecStart / local supervisor for the Veduta daemon (issue #43,
+# docs/adr/0013-signed-self-update.md and its "Amendments" section). Drives one step of the
+# signed self-update transaction via update-cli, then supervises the daemon itself as a child
+# process -- the same restart idiom deploy/local-vps.sh already used (process group, signal
+# forwarding, restart on exit 0), generalized here to also react to the daemon's own update
+# request (exit code 75) and to a real stage-2 health check (a genuinely serving child) before a
+# new release is trusted and the old one's wrapper self-update runs.
+#
+# Env contract:
+#   VEDUTA_UPDATE_HOME          Update home (releases/, runtimes/, bin/, state/, backups/).
+#                                Unset or missing -> the update system is disabled: this script
+#                                just supervises the legacy checkout, forever.
+#   VEDUTA_UPDATE_PINNING       Path to update.json (feedUrl + rootPublicKey). Passed through to
+#                                update-cli untouched; tolerated missing as long as there is
+#                                nothing to update.
+#   VEDUTA_DATA_DIR             The daemon's data root. Required by update-cli whenever
+#                                VEDUTA_UPDATE_HOME is set; always passed through to the daemon.
+#   VEDUTA_VAULT_KEYFILE        Path to the secrets vault keyfile. Passed through to both
+#                                update-cli (pre-update backup/restore) and the daemon.
+#   VEDUTA_LEGACY_ROOT          The pre-issue-43 checkout to run when releases/current does not
+#                                exist yet. Default: /opt/veduta (deploy/install.sh's checkout).
+#   VEDUTA_UPDATE_READY_TIMEOUT Seconds to wait for a new release to print its ready line before
+#                                rolling back. Default: 90.
+#   Everything else (PORT, VEDUTA_PUBLIC_DOMAIN, VEDUTA_ACME_EMAIL, ...) passes straight through
+#   to the daemon child, unmodified -- this script never filters or rewrites the environment.
+#
+# This script never mutates the update home itself -- update-cli owns every filesystem change
+# there; this script only decides which release to run and reads stdout/a log file for outcomes
+# and readiness. Must stay parseable by bash 3.2 (macOS's system bash) and shellcheck-clean, the
+# same constraint deploy/install.sh documents.
+
+set -euo pipefail
+
+LEGACY_ROOT="${VEDUTA_LEGACY_ROOT:-/opt/veduta}"
+READY_TIMEOUT="${VEDUTA_UPDATE_READY_TIMEOUT:-90}"
+
+# Step (a): the release update-cli itself must run from -- the currently serving release, or the
+# legacy checkout on a fresh/never-updated install. Never the release a transaction is staging.
+current_release_dir() {
+  if [ -n "${VEDUTA_UPDATE_HOME:-}" ] && [ -L "$VEDUTA_UPDATE_HOME/releases/current" ]; then
+    printf '%s' "$VEDUTA_UPDATE_HOME/releases/current"
+  else
+    printf '%s' "$LEGACY_ROOT"
+  fi
+}
+
+resolve_node_bin() {
+  local release_dir="$1" runtime_name node_bin
+  if [ -n "${VEDUTA_UPDATE_HOME:-}" ] && [ -f "$release_dir/RUNTIME" ]; then
+    runtime_name=$(tr -d '[:space:]' <"$release_dir/RUNTIME")
+    node_bin="$VEDUTA_UPDATE_HOME/runtimes/$runtime_name/bin/node"
+    if [ -x "$node_bin" ]; then
+      printf '%s' "$node_bin"
+      return 0
+    fi
+  fi
+  printf 'node'
+}
+
+set -m
+CHILD_PID=""
+
+on_signal() {
+  printf 'veduta-run: received %s -- stopping the daemon\n' "$1" >&2
+  if [ -n "$CHILD_PID" ]; then
+    kill -TERM "-$CHILD_PID" 2>/dev/null || true
+    wait "$CHILD_PID" 2>/dev/null || true
+  fi
+  exit 0
+}
+trap 'on_signal INT' INT
+trap 'on_signal TERM' TERM
+
+while true; do
+  executor_dir=$(current_release_dir)
+  outcome="none"
+
+  # Step (b): run update-cli from the executor release -- never the new one.
+  if [ -n "${VEDUTA_UPDATE_HOME:-}" ] && [ -d "$VEDUTA_UPDATE_HOME" ]; then
+    cli_tsx="$executor_dir/packages/daemon/node_modules/.bin/tsx"
+    if [ -x "$cli_tsx" ]; then
+      cli_out=$("$cli_tsx" "$executor_dir/packages/daemon/src/update/update-cli.ts" run) || {
+        printf 'veduta-run: update-cli run exited nonzero -- keeping the currently serving release\n' >&2
+        cli_out=""
+      }
+      if [ "${cli_out#update-cli: }" != "$cli_out" ]; then
+        outcome="${cli_out#update-cli: }"
+      else
+        printf 'veduta-run: update-cli printed no outcome line -- treating as none\n' >&2
+      fi
+      printf 'veduta-run: update-cli reported: %s\n' "$outcome" >&2
+    fi
+  fi
+
+  # Re-resolve after update-cli: a successful transaction just flipped releases/current.
+  release_dir=$(current_release_dir)
+  node_bin=$(resolve_node_bin "$release_dir")
+  daemon_tsx="$release_dir/packages/daemon/node_modules/.bin/tsx"
+  entry="$release_dir/packages/daemon/src/index.ts"
+
+  if [ "$outcome" = "awaiting-stage-2" ]; then
+    # Step (c)+(d): the candidate release's own daemon is stage 2 of the health check -- start
+    # it, tee its output into the transaction's log, and watch for the ready line within the
+    # window. Process substitution keeps both streams flowing to our own stdout/stderr
+    # untouched (packages/e2e/tests/stack.ts's regexes) while also appending them to the log.
+    version="${release_dir##*/}"
+    version="${version#v}"
+    log_file="$VEDUTA_UPDATE_HOME/state/logs/${version}.log"
+    mkdir -p "$(dirname "$log_file")"
+    printf 'veduta-run: starting release %s under stage-2 supervision (log: %s)\n' \
+      "$version" "$log_file" >&2
+
+    if [ "$node_bin" = "node" ]; then
+      "$daemon_tsx" "$entry" \
+        > >(tee -a "$log_file") \
+        2> >(tee -a "$log_file" >&2) &
+    else
+      # pnpm's .bin/tsx shim is a `/bin/sh` script that itself execs a `node` it finds on PATH
+      # (falling back to its own directory first) -- so pinning the runtime means prepending its
+      # bin directory to PATH for this one invocation, not passing $node_bin as argv[0].
+      PATH="$(dirname "$node_bin"):$PATH" "$daemon_tsx" "$entry" \
+        > >(tee -a "$log_file") \
+        2> >(tee -a "$log_file" >&2) &
+    fi
+    CHILD_PID=$!
+
+    ready=false
+    waited=0
+    while [ "$waited" -lt "$READY_TIMEOUT" ]; do
+      if grep -q '^veduta daemon' "$log_file" 2>/dev/null; then
+        ready=true
+        break
+      fi
+      if ! kill -0 "$CHILD_PID" 2>/dev/null; then
+        break
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+
+    if [ "$ready" = "true" ]; then
+      printf 'veduta-run: release %s became ready -- finalizing\n' "$version" >&2
+      if ! "$executor_dir/packages/daemon/node_modules/.bin/tsx" \
+        "$executor_dir/packages/daemon/src/update/update-cli.ts" finalize --version "$version"; then
+        printf 'veduta-run: update-cli finalize reported an error -- the new release keeps serving regardless\n' >&2
+      fi
+    else
+      printf 'veduta-run: release %s did not become ready within %ss -- rolling back\n' \
+        "$version" "$READY_TIMEOUT" >&2
+      kill -TERM "-$CHILD_PID" 2>/dev/null || true
+      wait "$CHILD_PID" 2>/dev/null || true
+      CHILD_PID=""
+      "$executor_dir/packages/daemon/node_modules/.bin/tsx" \
+        "$executor_dir/packages/daemon/src/update/update-cli.ts" rollback \
+        --reason "release $version did not become ready within ${READY_TIMEOUT}s" || true
+      continue
+    fi
+  else
+    # The common case (no update in flight): identical to the old local-vps.sh idiom -- no
+    # piping, full stdio passthrough. Same PATH-prepend rationale as the stage-2 branch above.
+    if [ "$node_bin" = "node" ]; then
+      "$daemon_tsx" "$entry" &
+    else
+      PATH="$(dirname "$node_bin"):$PATH" "$daemon_tsx" "$entry" &
+    fi
+    CHILD_PID=$!
+  fi
+
+  # Step (e): shared exit-code handling for both the simple path and a finalized stage-2 child.
+  if wait "$CHILD_PID"; then
+    status=0
+  else
+    status=$?
+  fi
+  CHILD_PID=""
+
+  if [ "$status" -eq 75 ]; then
+    printf 'veduta-run: daemon requested an update (exit 75) -- checking for one\n' >&2
+    continue
+  fi
+  if [ "$status" -eq 0 ]; then
+    printf 'veduta-run: daemon exited cleanly (onboarding finish) -- restarting\n' >&2
+    sleep 1
+    continue
+  fi
+
+  printf 'veduta-run: daemon exited with status %s\n' "$status" >&2
+  exit "$status"
+done

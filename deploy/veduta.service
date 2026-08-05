@@ -19,15 +19,28 @@ User=veduta
 Group=veduta
 WorkingDirectory=/var/lib/veduta
 
-# Entry point of the built daemon. This path assumes packages/daemon has been built into
-# plain JS at /opt/veduta/packages/daemon/dist/index.js -- ADJUST TO YOUR ACTUAL BUILD
-# OUTPUT. At the time of writing, `pnpm --filter @veduta/daemon build` runs `tsc -p
-# tsconfig.json` and packages/tsconfig.base.json sets `noEmit: true`, so plain `pnpm build`
-# alone is a type-check only and does NOT produce this file; you need an emitting build step
-# (a bundler, or `tsc` with `outDir`/`noEmit: false`) before this ExecStart will work as
-# written. If you deploy by running the daemon from source instead, point ExecStart at your
-# `node`/`tsx` invocation of packages/daemon/src/index.ts and keep everything else below
-# unchanged.
+# Entry point of the built daemon, for a MANUAL deploy (deploy/README.md §3) that never runs
+# deploy/install.sh. This path assumes packages/daemon has been built into plain JS at
+# /opt/veduta/packages/daemon/dist/index.js -- ADJUST TO YOUR ACTUAL BUILD OUTPUT. At the time
+# of writing, `pnpm --filter @veduta/daemon build` runs `tsc -p tsconfig.json` and
+# packages/tsconfig.base.json sets `noEmit: true`, so plain `pnpm build` alone is a type-check
+# only and does NOT produce this file; you need an emitting build step (a bundler, or `tsc`
+# with `outDir`/`noEmit: false`) before this ExecStart will work as written. If you deploy by
+# running the daemon from source instead, point ExecStart at your `node`/`tsx` invocation of
+# packages/daemon/src/index.ts and keep everything else below unchanged.
+#
+# An installer-managed instance (deploy/install.sh) never actually runs this literal
+# ExecStart: the installer's systemd-unit stage installs a
+# /etc/systemd/system/veduta.service.d/override.conf drop-in that clears and replaces it with
+# the self-update supervisor wrapper (issue #43, docs/adr/0013-signed-self-update.md and its
+# "Amendments" section) -- /var/lib/veduta/updates/bin/veduta-run, plus
+# Environment=VEDUTA_UPDATE_HOME/VEDUTA_UPDATE_PINNING/VEDUTA_LEGACY_ROOT so the wrapper knows
+# where the update home lives, where the root-owned trust anchors are pinned, and where this
+# very checkout is when releases/current does not exist yet. The wrapper drives one step of
+# the update transaction, then starts this same daemon entry point as its own supervised child
+# (restarting it on request -- see the wrapper's own header comment) -- so everything below
+# (hardening, environment, ports) still applies unchanged either way; only what actually
+# invokes `node`/`tsx` differs.
 ExecStart=/usr/bin/node /opt/veduta/packages/daemon/dist/index.js
 
 Restart=on-failure
