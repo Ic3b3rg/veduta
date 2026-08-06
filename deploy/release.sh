@@ -99,6 +99,16 @@ json_get_optional_field() {
 # Escapes a file's bytes into a JSON string body (no surrounding quotes): backslash and double
 # quote get their standard JSON escapes, real newlines become the two characters \n. Mirrors
 # deploy/install.sh's escape_json_string, extended to multiple lines.
+#
+# The file's own trailing newline is encoded too, so the JSON carries the file's bytes VERBATIM.
+# That is not cosmetic. `signingKey.pub` is not merely transported by the manifest -- it is the
+# content the root signature covers, and minisign signed the file including its trailing newline.
+# This script could once drop that byte and re-add it on the way out, because it was the only
+# reader; the daemon (packages/daemon/src/update/minisign.ts, verifyReleaseChain) is the other
+# reader, it verifies the manifest's text exactly as given, and it cannot know to append a byte
+# nobody told it about. A feed missing that newline verifies fine with the minisign CLI here and
+# is refused by every installed instance -- which is precisely what happened to the first two
+# promoted feeds (issue #46).
 json_escape_file() {
   awk '
     BEGIN { first = 1 }
@@ -110,19 +120,22 @@ json_escape_file() {
       first = 0
     }
   ' "$1"
+  # `$(tail -c1)` strips a real trailing newline, so an empty result means the file ended with
+  # one -- every minisign-written file does.
+  [ -n "$(tail -c1 "$1")" ] || printf '\\n'
 }
 
-# Reverses json_escape_file: turns a JSON string body (with literal backslash-n /
-# backslash-quote sequences) back into a real multi-line file, terminated by exactly one
-# trailing newline -- every minisign-produced file (pubkey or .minisig) ends that way, and
-# minisign verifies exact bytes, so json_escape_file deliberately does not encode a trailing
-# newline itself (there is always exactly one to add back). Refuses, rather than guesses, if a
-# raw backslash survives the known substitutions -- that would mean the original text had an
-# escaped backslash, which never happens for minisign key/signature files (base64 plus a
-# handful of fixed English words) and this script does not attempt to handle.
+# Reverses json_escape_file exactly: the bytes written here are the bytes that were escaped,
+# trailing newline included, because json_escape_file now encodes that newline rather than
+# leaving it to be re-added on the way out. Adding one here instead would make this script's
+# round trip agree with itself while disagreeing with every installed instance, which reads the
+# same JSON and appends nothing. Refuses, rather than guesses, if a raw backslash survives the
+# known substitutions -- that would mean the original text had an escaped backslash, which never
+# happens for minisign key/signature files (base64 plus a handful of fixed English words) and
+# this script does not attempt to handle.
 json_unescape_to_file() {
   local escaped="$1" out="$2"
-  printf '%s\n' "$escaped" | sed 's/\\n/\n/g; s/\\"/"/g' >"$out"
+  printf '%s' "$escaped" | sed 's/\\n/\n/g; s/\\"/"/g' >"$out"
   # shellcheck disable=SC1003 # a literal single backslash is exactly what this checks for
   if grep -qF '\' "$out"; then
     error "embedded minisign text at $out contains an escaped backslash this script does not handle"

@@ -279,3 +279,19 @@ artifact fetch actually sits.
    (`scripts/rehearse-update.ts`, `RELEASING.md` §0) performing a real one-tap install across a
    redirect between two loopback hosts, exercising the cross-host hop itself rather than only a
    same-host download.
+
+9. **The two halves of the chain disagreed about which bytes the root signature covers, and only
+   a real promotion could show it.** `deploy/release.sh` embeds the signing key's public key file
+   into `stable.json` as a JSON string. Its escaper dropped the file's trailing newline and its
+   unescaper added one back — a matched pair, correct as long as the script was the only reader.
+   It is not: `verifyReleaseChain` (`packages/daemon/src/update/minisign.ts`) verifies the
+   manifest's text exactly as given, and cannot know to append a byte nobody told it about.
+   `minisign` had signed the file including that newline. So `deploy/release.sh verify` reported
+   `OK: full chain verified` — it writes the text back to a file, restoring the byte — while every
+   installed instance would have refused the same feed with `bad content signature`. Both halves
+   were tested; nothing tested the seam, so both passed while disagreeing. The manifest now carries
+   the file's bytes verbatim, and `release-ceremony.test.ts` runs the real ceremony script and
+   hands what it wrote to the real verifier, so the two can no longer drift apart silently. Worth
+   generalizing: for any signature, the transport must preserve the signed bytes exactly, and the
+   test that proves it has to cross the producer/consumer boundary — testing each side against its
+   own idea of the bytes is what let this reach a published release.
