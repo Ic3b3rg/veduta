@@ -16,6 +16,8 @@ import {
 import { AuthGate } from './auth-gate.tsx'
 import { OnboardingWizard } from './onboarding-wizard.tsx'
 import { ChatBar } from './chat-bar.tsx'
+import { ChatModelSelects } from './chat-model-selects.tsx'
+import { SettingsModelConnections } from './settings-model-connections.tsx'
 import {
   applyTurnFrame,
   interruptTurns,
@@ -37,6 +39,7 @@ import {
 } from './home-state.ts'
 import { InstallButton } from './install-button.tsx'
 import { NotificationBell } from './notification-bell.tsx'
+import { homeBlockedByStatusFailure } from './onboarding-state.ts'
 import {
   AUTH_TOKEN_KEY,
   CHAT_HISTORY_LIMIT,
@@ -87,6 +90,13 @@ export function App() {
   )
   const [focusChatToken, setFocusChatToken] = useState(0)
   const [streamingTurns, setStreamingTurns] = useState<Map<string, StreamingTurn>>(new Map())
+  // Which full-page view is showing (issue #47): a minimal view switch, not
+  // a router -- Home is the only view with the topbar/space-rail/chat shell,
+  // and `model-connections` is a standalone screen reached from
+  // `ChatModelSelects`'s "Model connections" button and left via its own
+  // Back button.
+  const [view, setView] = useState<'home' | 'model-connections'>('home')
+  const [onboardingRetryToken, setOnboardingRetryToken] = useState(0)
   const gatewayRef = useRef<GatewayConnection | null>(null)
   const spacesRef = useRef<SpaceWithSurfaces[]>(cachedHome?.spaces ?? [])
   const surfaceCursorRef = useRef(cachedHome?.surfaceCursor ?? 0)
@@ -377,9 +387,14 @@ export function App() {
   // authenticated (or immediately in loopback, where no token is required).
   // `onboardingLoad` starts (and is reset to) 'loading' so the render below
   // shows a neutral wait state instead of flashing Home before this resolves.
-  // A failed fetch fails open to Home — a broken onboarding endpoint must
-  // never brick access to the user's data (deliberate availability choice) —
-  // so any error here is logged, not surfaced as a blocking error banner.
+  // A failed fetch fails OPEN to Home on Loopback dev, where a broken
+  // onboarding endpoint must never brick access to the user's data
+  // (deliberate availability choice) -- but fails CLOSED on production
+  // (issue #47, ADR-0014 amendment, `homeBlockedByStatusFailure`): a status
+  // the PWA cannot read might be hiding a required wizard there, so the
+  // render below shows a blocking status-unavailable screen instead of Home.
+  // `onboardingRetryToken` gives that screen's Retry button a way to re-run
+  // this effect without touching `authMode`/`authToken`.
   useEffect(() => {
     if (authMode === undefined) return
     if (authMode === 'production' && !authToken) return
@@ -391,12 +406,12 @@ export function App() {
         setOnboardingStatus(status)
         setOnboardingLoad('ready')
       } catch (e) {
-        console.warn('failed to fetch onboarding status, failing open to Home:', e)
+        console.warn('failed to fetch onboarding status:', e)
         setOnboardingLoad('error')
       }
     }
     void load()
-  }, [authMode, authToken])
+  }, [authMode, authToken, onboardingRetryToken])
 
   useEffect(() => {
     if (!gatewayOnline || queuedChat.length === 0) return
@@ -573,6 +588,35 @@ export function App() {
     )
   }
 
+  // Fail-closed gate (issue #47, ADR-0014 amendment): a production install
+  // whose onboarding-status fetch failed must not fall through to Home --
+  // `onboardingStatus` is still whatever it was before (usually `null`), so
+  // without this branch the wizard-required check below would see no
+  // required step and render Home on a status the PWA never actually read.
+  // The Loopback fail-open above is unaffected: `homeBlockedByStatusFailure`
+  // always returns false for `authMode === 'dev'`.
+  if (
+    homeBlockedByStatusFailure({
+      authMode,
+      hasToken: Boolean(authToken),
+      onboardingLoad,
+    })
+  ) {
+    return (
+      <main className="wizard-shell">
+        <div className="wizard-card">
+          <p role="alert">
+            Veduta could not read its setup status, so Home is not being shown. Check the daemon and
+            try again.
+          </p>
+          <button type="button" onClick={() => setOnboardingRetryToken((value) => value + 1)}>
+            Retry
+          </button>
+        </div>
+      </main>
+    )
+  }
+
   if (onboardingStatus?.required && !onboardingStatus.completed) {
     return (
       <OnboardingWizard
@@ -591,6 +635,10 @@ export function App() {
     )
   }
 
+  if (view === 'model-connections') {
+    return <SettingsModelConnections token={authToken} onBack={() => setView('home')} />
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -603,6 +651,7 @@ export function App() {
             {gatewayOnline ? 'Live' : 'Offline-ready'}
           </span>
           {queuedCount > 0 && <span className="status-pill pending">{queuedCount} queued</span>}
+          <ChatModelSelects token={authToken} onManage={() => setView('model-connections')} />
           <NotificationBell token={authToken} />
           {showInstallGuide && (
             <InstallButton

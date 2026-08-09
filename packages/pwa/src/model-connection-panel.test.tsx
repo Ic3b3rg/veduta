@@ -82,15 +82,7 @@ const noop = {
 
 describe('ModelConnectionPanel', () => {
   it('renders the Claude method as unavailable with its exact reason and no login button', () => {
-    render(
-      <ModelConnectionPanel
-        snapshot={baseSnapshot()}
-        profile="loopback"
-        busy={false}
-        error={null}
-        {...noop}
-      />,
-    )
+    render(<ModelConnectionPanel snapshot={baseSnapshot()} busy={false} error={null} {...noop} />)
 
     expect(
       screen.getByText('Claude subscription connections are not offered by this build yet.'),
@@ -121,7 +113,6 @@ describe('ModelConnectionPanel', () => {
     render(
       <ModelConnectionPanel
         snapshot={baseSnapshot({ methods: [chatgptCodexMethod], connections: [waiting] })}
-        profile="loopback"
         busy={false}
         error={null}
         now={() => new Date('2026-08-09T00:00:00.000Z')}
@@ -169,7 +160,6 @@ describe('ModelConnectionPanel', () => {
           connections: [connectionA, connectionB],
           selection: { connectionId: connectionA.id, modelId: 'claude-model-a' },
         })}
-        profile="loopback"
         busy={false}
         error={null}
         {...noop}
@@ -197,7 +187,6 @@ describe('ModelConnectionPanel', () => {
     render(
       <ModelConnectionPanel
         snapshot={baseSnapshot({ methods: [chatgptCodexMethod], connections: [codexConnection] })}
-        profile="loopback"
         busy={false}
         error={null}
         {...noop}
@@ -211,11 +200,10 @@ describe('ModelConnectionPanel', () => {
     ).toBeDefined()
   })
 
-  it('the development mock checkbox renders only on local-vps', () => {
+  it('the development mock checkbox renders only when the snapshot reports mockControlAvailable', () => {
     const { rerender } = render(
       <ModelConnectionPanel
-        snapshot={baseSnapshot()}
-        profile="vps"
+        snapshot={baseSnapshot({ mockControlAvailable: false })}
         busy={false}
         error={null}
         {...noop}
@@ -225,8 +213,7 @@ describe('ModelConnectionPanel', () => {
 
     rerender(
       <ModelConnectionPanel
-        snapshot={baseSnapshot()}
-        profile="local-vps"
+        snapshot={baseSnapshot({ mockControlAvailable: true })}
         busy={false}
         error={null}
         {...noop}
@@ -258,7 +245,6 @@ describe('ModelConnectionPanel', () => {
           connections: [connection],
           selection: { connectionId: connection.id, modelId: 'claude-good' },
         })}
-        profile="loopback"
         busy={false}
         error={null}
         {...noop}
@@ -275,7 +261,6 @@ describe('ModelConnectionPanel', () => {
     render(
       <ModelConnectionPanel
         snapshot={baseSnapshot()}
-        profile="loopback"
         busy={false}
         error="something went wrong"
         {...noop}
@@ -291,7 +276,6 @@ describe('ModelConnectionPanel', () => {
     render(
       <ModelConnectionPanel
         snapshot={baseSnapshot()}
-        profile="loopback"
         busy={false}
         error={null}
         {...noop}
@@ -310,7 +294,6 @@ describe('ModelConnectionPanel', () => {
     render(
       <ModelConnectionPanel
         snapshot={baseSnapshot()}
-        profile="local-vps"
         busy={false}
         error={null}
         {...noop}

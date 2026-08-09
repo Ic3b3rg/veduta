@@ -16,7 +16,6 @@ import {
 
 export interface ModelConnectionPanelProps {
   snapshot: ModelConnectionsSnapshot
-  profile: 'loopback' | 'local-vps' | 'vps'
   busy: boolean
   error: string | null
   /** Injectable clock for the device-code countdown; defaults to `() => new Date()`. */
@@ -38,16 +37,21 @@ export interface ModelConnectionPanelProps {
  * routing control -- which connection, and which of its models. A
  * CONTROLLED, presentation-only component: it never calls `fetch` itself,
  * it only reports intent through its `on*` props, so the same panel can be
- * embedded in the onboarding wizard's Model connection step and (once
- * consuming code exists) a standalone settings surface without either
- * caller duplicating the network plumbing. Follows the wizard step
+ * embedded in the onboarding wizard's Model connection step
+ * (`wizard-step-model-connection.tsx`) and the standalone settings view
+ * (`settings-model-connections.tsx`) without either caller duplicating the
+ * network plumbing (`model-connection-controller.ts`'s
+ * `useModelConnectionsController`). The mock-provider checkbox is gated on
+ * `snapshot.mockControlAvailable` rather than a `profile` prop -- the
+ * daemon already ties that flag to the Local VPS profile
+ * (`model-connection-registry.ts`), so the panel needs no profile of its
+ * own to reproduce the same gate. Follows the wizard step
  * components' form classNames (`wizard-step-form`, `wizard-actions`,
  * `wizard-help-note`, `.error`) so it reads as one visual family with the
  * rest of onboarding.
  */
 export function ModelConnectionPanel({
   snapshot,
-  profile,
   busy,
   error,
   now,
@@ -96,7 +100,7 @@ export function ModelConnectionPanel({
         onApplySelection={onApplySelection}
       />
 
-      {profile === 'local-vps' && (
+      {snapshot.mockControlAvailable && (
         <label className="model-connection-mock-toggle">
           <input
             type="checkbox"

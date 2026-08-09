@@ -29,6 +29,7 @@ import { createChatLoop } from './chat-loop.ts'
 import {
   CodexSessionPool,
   CODEX_BINARY_MISSING_REASON,
+  CODEX_EGRESS_HOSTS,
   ensureCodexHome,
   resolveCodexBinary,
   spawnCodexAppServer,
@@ -417,12 +418,30 @@ export function assembleEgressPolicy(input: {
     const raw: unknown = JSON.parse(readFileSync(egressJsonPath, 'utf8'))
     policy.allow(EgressConfigSchema.parse(raw).allow)
   }
+  // The Codex app-server child process (issue #47, `docs/adr/0014-…`
+  // amendment) speaks to OpenAI's own hosts directly over its own stdio
+  // subprocess, not through this daemon's `fetch`/Undici dispatcher, so
+  // these hosts are never reachable through the enforcement this policy
+  // installs — they exist here only so a host-level firewall in front of
+  // the whole machine (docs/SECURITY.md §3.4) has one allowlist to read
+  // instead of two. Allowed only when a Codex connection is actually
+  // configured: an install that never authorizes ChatGPT never gains a new
+  // allowed host, matching every other provider's fail-closed gating above.
+  if (
+    loadConnectionsConfig(input.rootDir).connections.some(
+      (connection) => connection.method === 'chatgpt-codex',
+    )
+  ) {
+    policy.allow(CODEX_EGRESS_HOSTS)
+  }
   // Push service hosts (issue #18) are deliberately absent from this
   // policy: `web-push` calls `https.request` directly, bypassing the
   // Undici dispatcher this policy installs into, so it cannot be the
   // enforcement point for push egress. That enforcement lives in
   // `web-push-transport.ts`'s static `isAllowedPushEndpoint` allowlist,
-  // checked both at subscribe time and again before every send.
+  // checked both at subscribe time and again before every send. The Codex
+  // child process above is the same class of exception, for the same
+  // structural reason (its own subprocess, its own transport).
   return policy
 }
 

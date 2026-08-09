@@ -79,19 +79,19 @@ the terminal or handling a raw token. Existing API-key users keep an equally sup
       step is exposed.
 - [ ] **ChatGPT subscription:** the same journey succeeds with Codex device/browser
       authorization, and a forced access-token expiry refreshes without user intervention.
-- [ ] **Consistent UX:** Claude subscription, ChatGPT subscription, and all three BYOK methods
+- [x] **Consistent UX:** Claude subscription, ChatGPT subscription, and all three BYOK methods
       render the same lifecycle and recovery states; provider-specific fields appear only when
       that adapter needs them.
-- [ ] **Routing controls:** onboarding and chat show one connection select plus one filtered model
+- [x] **Routing controls:** onboarding and chat show one connection select plus one filtered model
       select, the full account catalog is available, successful changes apply globally and
       immediately, and failed changes roll back with the exact reason.
-- [ ] **Multiple accounts:** two independently named connections for one provider coexist and can
+- [x] **Multiple accounts:** two independently named connections for one provider coexist and can
       be selected without overwriting each other's credentials; a migrated legacy BYOK install
       remains routed exactly as before.
-- [ ] **Failure policy:** a revoked subscription stops the turn with a reconnect action; a test
+- [x] **Failure policy:** a revoked subscription stops the turn with a reconnect action; a test
       proves there is no implicit metered or mock fallback, while an explicitly enabled safe
       fallback is surfaced and recorded.
-- [ ] **Security boundary:** provider-side tools cannot execute, credentials never enter chat,
+- [x] **Security boundary:** provider-side tools cannot execute, credentials never enter chat,
       model context, logs, URLs, or process arguments, and connection mutations require an
       authenticated PWA session.
 - [ ] Adapter contract tests cover authorization, refresh, catalog, verification, revocation,
@@ -110,3 +110,32 @@ the terminal or handling a raw token. Existing API-key users keep an equally sup
 None — builds on completed issues [003](003-agent-runner-wrapper.md),
 [010](010-model-routing.md), and [019](019-onboarding-wizard.md), and on
 [ADR-0014](../docs/adr/0014-subscription-inference-boundary.md).
+
+## Status note (2026-08-09)
+
+Five of the eight criteria above are satisfied by what shipped (Consistent UX, Routing
+controls, Multiple accounts, Failure policy, Security boundary — each backed by the deterministic
+tests listed in the implementation plan's slices 1-15). Three stay open, and cannot be closed by
+more code in this repository alone:
+
+- **Claude subscription** is unsatisfiable until Anthropic approves a third party offering
+  Claude.ai login or routing subscription credentials — `claudeSubscriptionAdapter`
+  (`packages/daemon/src/model-connection-claude.ts`) is permanently `unsupported` with that exact
+  reason, by design (ADR-0014 amendment). See
+  [`docs/references/11-model-connections-manual-smoke.md`](../docs/references/11-model-connections-manual-smoke.md)
+  §"Claude subscription — the gate" for how to re-verify the gate has not silently lifted.
+- **ChatGPT subscription** is implemented end to end behind the exactly-pinned `codex app-server`
+  0.146.1 binary (device-code authorization, catalog, verify, streamed turns, automatic
+  refresh, revoke) and every step is covered by contract and unit tests against
+  `codex-app-server-fake.ts`. What is still missing is the real-account manual smoke in
+  `docs/references/11-model-connections-manual-smoke.md` — no CI environment carries the pinned
+  binary, so this criterion cannot be ticked until that walk is actually run once against a real
+  ChatGPT account.
+- **The adapter contract tests half of the last criterion is done** (`model-connection-adapter-contract.test.ts`,
+  `describe.each` over BYOK, Claude and Codex); **the manual-smoke half is not**, for the same two
+  reasons above — a real Claude account smoke is impossible while the gate stands, and the real
+  ChatGPT account smoke is still to be run. Forced access-token expiry is exercised only through
+  deterministic fakes (`model-connection-codex.test.ts`'s `refresh reports expired when the
+refresh call fails`), matching what `docs/references/11-model-connections-manual-smoke.md`
+  records as the only testable path: the public ChatGPT API gives no way to force a provider-side
+  token expiry on demand.

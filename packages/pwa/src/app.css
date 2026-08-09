@@ -867,6 +867,53 @@ input:focus-visible {
   gap: 6px;
 }
 
+/* The topbar's compact chat selects (issue #47): same select styling as the
+   wizard/panel forms, sized down to sit inline with the other topbar-actions
+   pills. */
+.chat-model-selects {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-model-selects select {
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font-size: 12px;
+  max-width: 160px;
+  min-height: 30px;
+  padding: 4px 6px;
+}
+
+.chat-model-selects .error {
+  flex-basis: 100%;
+  font-size: 12px;
+  margin: 0;
+}
+
+/* Standalone Model connections settings view (issue #47): a full-page
+   sibling of `.app-shell`, following the same surface/border tokens the
+   wizard shell uses. */
+.model-connections-settings {
+  display: grid;
+  gap: 16px;
+  margin: 0 auto;
+  max-width: 720px;
+  padding: 16px;
+}
+
+.model-connections-settings-header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+.model-connections-settings-header h2 {
+  font-size: 20px;
+  margin: 0;
+}
+
 @media (max-width: 760px) {
   .app-shell {
     padding: 14px 12px 190px;

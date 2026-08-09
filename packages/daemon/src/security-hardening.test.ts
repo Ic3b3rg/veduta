@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 import { afterEach, describe, expect, it } from 'vitest'
+import { CODEX_EGRESS_HOSTS } from './codex-app-server.ts'
+import { saveConnectionsConfig } from './connections-config.ts'
 import { EgressDeniedError, EgressPolicy, installEgressEnforcement } from './egress.ts'
 import { envSecretResolver, ModelRouter } from './model-routing.ts'
 import { defaultRedactor, installConsoleRedaction } from './redaction.ts'
@@ -52,6 +54,56 @@ describe('AC1 — egress: blocked host is denied, logged host-only, and unreacha
     const logged = readFileSync(denialLogPath, 'utf8')
     expect(logged).toContain('evil.example')
     expect(logged).not.toContain('/steal')
+  })
+
+  it('assembleEgressPolicy allows the Codex hosts only when a Codex connection is configured', () => {
+    const rootDirWithoutCodex = freshRoot('veduta-egress-policy-no-codex-')
+    const policyWithoutCodex = assembleEgressPolicy({
+      rootDir: rootDirWithoutCodex,
+      providers: [],
+      toolDomains: [],
+    })
+    for (const host of CODEX_EGRESS_HOSTS) {
+      expect(() => policyWithoutCodex.check(`https://${host}/`)).toThrow(EgressDeniedError)
+    }
+
+    const rootDirWithCodex = freshRoot('veduta-egress-policy-codex-')
+    saveConnectionsConfig(rootDirWithCodex, {
+      version: 1,
+      connections: [
+        {
+          id: 'b1b1b1b1-0000-4000-8000-000000000001',
+          method: 'chatgpt-codex',
+          provider: 'openai',
+          label: 'OpenAI · ChatGPT subscription',
+          state: 'connected',
+          stateAt: new Date().toISOString(),
+          enabledForFallback: false,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      mockEnabled: false,
+    })
+    const policyWithCodex = assembleEgressPolicy({
+      rootDir: rootDirWithCodex,
+      providers: [],
+      toolDomains: [],
+    })
+    for (const host of CODEX_EGRESS_HOSTS) {
+      expect(() => policyWithCodex.check(`https://${host}/`)).not.toThrow()
+    }
+  })
+
+  it('assembleEgressPolicy still fails boot for a connection whose provider is outside PROVIDER_HOSTS', () => {
+    const rootDir = freshRoot('veduta-egress-policy-unknown-provider-')
+
+    expect(() =>
+      assembleEgressPolicy({
+        rootDir,
+        providers: ['some-future-provider'],
+        toolDomains: [],
+      }),
+    ).toThrow(/some-future-provider/)
   })
 
   describe('installEgressEnforcement (global dispatcher)', () => {
