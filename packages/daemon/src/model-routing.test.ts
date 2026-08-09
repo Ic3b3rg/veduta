@@ -2,12 +2,14 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import type { ModelRef } from './agent-runner.ts'
 import {
   ModelRouter,
   ModelRoutingExhaustedError,
   NoAvailableModelError,
   NonRetryableModelError,
   RoutingConfigSchema,
+  RuntimeRoutingConfigSchema,
   SpendingCapError,
   defaultRoutingConfig,
   loadRoutingConfig,
@@ -19,15 +21,22 @@ import {
   type SecretResolver,
 } from './model-routing.ts'
 
+// `primary`/`primary-fallback` — deliberately NOT `mock`: issue #47's
+// strip-then-append rule (`withMockFallback`) and `candidates()`'s
+// drop-mock-once-a-real-candidate-resolves rule both key off the literal
+// provider string `'mock'`, so a two-provider failover fixture must use a
+// different placeholder name to stay independent of that behavior. The
+// dedicated `mock` semantics are exercised in their own `describe` blocks
+// below.
 const testConfig: RoutingConfig = {
   tiers: {
     reasoning: [
-      { provider: 'mock', modelId: 'strong' },
-      { provider: 'mock-fallback', modelId: 'strong-fallback' },
+      { provider: 'primary', modelId: 'strong' },
+      { provider: 'primary-fallback', modelId: 'strong-fallback' },
     ],
     triage: [
-      { provider: 'mock', modelId: 'cheap' },
-      { provider: 'mock-fallback', modelId: 'cheap-fallback' },
+      { provider: 'primary', modelId: 'cheap' },
+      { provider: 'primary-fallback', modelId: 'cheap-fallback' },
     ],
   },
   providerKeys: {},
@@ -150,11 +159,11 @@ describe('routing config', () => {
 describe('withMockFallback', () => {
   const noKeysResolve: SecretResolver = { resolve: () => undefined }
 
-  it('appends the keyless mock candidate to both tiers when no key resolves, without mutating the input', () => {
+  it('appends a mock candidate on loopback', () => {
     const config = defaultRoutingConfig()
     const original = structuredClone(config)
 
-    const withFallback = withMockFallback(config, noKeysResolve)
+    const withFallback = withMockFallback(config, noKeysResolve, { profile: 'loopback' })
 
     expect(withFallback.tiers.triage.at(-1)).toEqual({ provider: 'mock', modelId: 'reader-mock' })
     expect(withFallback.tiers.reasoning.at(-1)).toEqual({
@@ -170,7 +179,7 @@ describe('withMockFallback', () => {
       resolve: (ref) => (ref === config.providerKeys['anthropic'] ? 'sk-real-key' : undefined),
     }
 
-    const withFallback = withMockFallback(config, onlyAnthropicResolves)
+    const withFallback = withMockFallback(config, onlyAnthropicResolves, { profile: 'loopback' })
 
     expect(withFallback.tiers.triage).toEqual(config.tiers.triage)
     expect(withFallback.tiers.reasoning).toEqual(config.tiers.reasoning)
@@ -187,10 +196,85 @@ describe('withMockFallback', () => {
       dailyCapUsd: { triage: 1, reasoning: 5 },
     }
 
-    const withFallback = withMockFallback(config, noKeysResolve)
+    const withFallback = withMockFallback(config, noKeysResolve, { profile: 'loopback' })
 
     expect(withFallback.tiers.triage).toEqual(config.tiers.triage)
     expect(withFallback.tiers.reasoning).toEqual(config.tiers.reasoning)
+  })
+
+  it('never appends on the vps profile', () => {
+    const withFallback = withMockFallback(defaultRoutingConfig(), noKeysResolve, {
+      profile: 'vps',
+    })
+
+    expect(withFallback.tiers.triage.some((entry) => entry.provider === 'mock')).toBe(false)
+    expect(withFallback.tiers.reasoning.some((entry) => entry.provider === 'mock')).toBe(false)
+  })
+
+  it('appends on local-vps only when mockEnabled is true', () => {
+    const withoutControl = withMockFallback(defaultRoutingConfig(), noKeysResolve, {
+      profile: 'local-vps',
+    })
+    expect(withoutControl.tiers.reasoning.some((entry) => entry.provider === 'mock')).toBe(false)
+
+    const withControl = withMockFallback(defaultRoutingConfig(), noKeysResolve, {
+      profile: 'local-vps',
+      mockEnabled: true,
+    })
+    expect(withControl.tiers.reasoning.at(-1)).toEqual({
+      provider: 'mock',
+      modelId: 'worker-mock',
+    })
+  })
+
+  it('strips a hand-edited persisted mock candidate on the vps profile', () => {
+    const config: RoutingConfig = {
+      ...defaultRoutingConfig(),
+      tiers: {
+        triage: [{ provider: 'mock', modelId: 'reader-mock' }],
+        reasoning: [
+          { provider: 'anthropic', modelId: 'claude-sonnet-5' },
+          { provider: 'mock', modelId: 'worker-mock' },
+        ],
+      },
+    }
+
+    const withFallback = withMockFallback(config, noKeysResolve, { profile: 'vps' })
+
+    expect(withFallback.tiers.triage).toEqual([])
+    expect(withFallback.tiers.reasoning).toEqual([
+      { provider: 'anthropic', modelId: 'claude-sonnet-5' },
+    ])
+  })
+
+  it('strips a persisted mock candidate on local-vps when the development control is off', () => {
+    const config: RoutingConfig = {
+      ...defaultRoutingConfig(),
+      tiers: {
+        triage: [{ provider: 'mock', modelId: 'reader-mock' }],
+        reasoning: [{ provider: 'mock', modelId: 'worker-mock' }],
+      },
+    }
+
+    const withFallback = withMockFallback(config, noKeysResolve, {
+      profile: 'local-vps',
+      mockEnabled: false,
+    })
+
+    expect(withFallback.tiers.triage).toEqual([])
+    expect(withFallback.tiers.reasoning).toEqual([])
+  })
+
+  it('tolerates the resulting empty tier — RuntimeRoutingConfigSchema has no .min(1)', () => {
+    const config: RoutingConfig = {
+      ...defaultRoutingConfig(),
+      tiers: { triage: [{ provider: 'mock', modelId: 'reader-mock' }], reasoning: [] },
+    }
+
+    const withFallback = withMockFallback(config, noKeysResolve, { profile: 'vps' })
+
+    expect(() => RuntimeRoutingConfigSchema.parse(withFallback)).not.toThrow()
+    expect(withFallback.tiers.triage).toEqual([])
   })
 })
 
@@ -254,17 +338,20 @@ describe('route', () => {
     )
 
     const [chatCall, triageCall] = router.callLog()
-    expect(chatCall?.model).toEqual({ provider: 'mock', modelId: 'strong', tier: 'reasoning' })
-    expect(triageCall?.model).toEqual({ provider: 'mock', modelId: 'cheap', tier: 'triage' })
+    expect(chatCall?.model).toEqual({ provider: 'primary', modelId: 'strong', tier: 'reasoning' })
+    expect(triageCall?.model).toEqual({ provider: 'primary', modelId: 'cheap', tier: 'triage' })
     expect(chatCall?.model.modelId).not.toBe(triageCall?.model.modelId)
   })
 
   it('skips providers whose BYOK secret does not resolve', () => {
     const router = testRouter({
-      config: { ...testConfig, providerKeys: { mock: 'secret://env/VEDUTA_TEST_MISSING_KEY' } },
+      config: {
+        ...testConfig,
+        providerKeys: { primary: 'secret://env/VEDUTA_TEST_MISSING_KEY' },
+      },
     })
     expect(router.route({ purpose: 'chat-turn', origin: 'user' })).toEqual({
-      provider: 'mock-fallback',
+      provider: 'primary-fallback',
       modelId: 'strong-fallback',
       tier: 'reasoning',
     })
@@ -275,8 +362,8 @@ describe('route', () => {
       config: {
         ...testConfig,
         providerKeys: {
-          mock: 'secret://env/VEDUTA_TEST_MISSING_KEY',
-          'mock-fallback': 'secret://env/VEDUTA_TEST_MISSING_KEY_2',
+          primary: 'secret://env/VEDUTA_TEST_MISSING_KEY',
+          'primary-fallback': 'secret://env/VEDUTA_TEST_MISSING_KEY_2',
         },
       },
     })
@@ -298,14 +385,14 @@ describe('failover', () => {
     })
 
     const result = await router.execute({ purpose: 'chat-turn', origin: 'user' }, async (model) => {
-      if (model.provider === 'mock') throw new Error('connect ETIMEDOUT')
+      if (model.provider === 'primary') throw new Error('connect ETIMEDOUT')
       return `answered by ${model.modelId}`
     })
 
     expect(result).toBe('answered by strong-fallback')
     expect(router.callLog().map((call) => [call.model.provider, call.outcome])).toEqual([
-      ['mock', 'error'],
-      ['mock-fallback', 'ok'],
+      ['primary', 'error'],
+      ['primary-fallback', 'ok'],
     ])
     expect(events.filter((event) => event.type === 'model.failover')).toHaveLength(1)
     expect(slept).toEqual([250])
@@ -320,7 +407,7 @@ describe('failover', () => {
         throw new Error(`down: ${model.provider}`)
       }),
     ).rejects.toThrow(ModelRoutingExhaustedError)
-    expect(attempts).toEqual(['mock', 'mock-fallback'])
+    expect(attempts).toEqual(['primary', 'primary-fallback'])
   })
 
   it('does not fail over on non-retryable errors', async () => {
@@ -332,7 +419,7 @@ describe('failover', () => {
         throw new NonRetryableModelError('invalid API key')
       }),
     ).rejects.toThrow(/invalid API key/)
-    expect(attempts).toEqual(['mock'])
+    expect(attempts).toEqual(['primary'])
   })
 
   it('redacts key-shaped fragments from persisted call errors and failover reasons', async () => {
@@ -340,7 +427,7 @@ describe('failover', () => {
     const router = testRouter({ onEvent: (event) => events.push(event) })
 
     await router.execute({ purpose: 'chat-turn', origin: 'user' }, async (model) => {
-      if (model.provider === 'mock') throw new Error('401 for key sk-ant-veduta-1234567890')
+      if (model.provider === 'primary') throw new Error('401 for key sk-ant-veduta-1234567890')
       return 'ok'
     })
 
@@ -361,7 +448,128 @@ describe('failover', () => {
         throw badRequest
       }),
     ).rejects.toThrow('bad request')
-    expect(attempts).toEqual(['mock'])
+    expect(attempts).toEqual(['primary'])
+  })
+})
+
+describe('onCallError', () => {
+  it('fires with the failing ModelRef before failover', async () => {
+    const calls: { model: ModelRef; error: unknown }[] = []
+    const router = testRouter({
+      onCallError: (model, error) => calls.push({ model, error }),
+    })
+
+    await router.execute({ purpose: 'chat-turn', origin: 'user' }, async (model) => {
+      if (model.provider === 'primary') throw new Error('connect ETIMEDOUT')
+      return 'ok'
+    })
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.model).toEqual({ provider: 'primary', modelId: 'strong', tier: 'reasoning' })
+    expect(calls[0]?.error).toBeInstanceOf(Error)
+  })
+
+  it('never breaks routing when the listener itself throws', async () => {
+    const router = testRouter({
+      onCallError: () => {
+        throw new Error('listener boom')
+      },
+    })
+
+    const result = await router.execute({ purpose: 'chat-turn', origin: 'user' }, async (model) => {
+      if (model.provider === 'primary') throw new Error('connect ETIMEDOUT')
+      return 'still ok'
+    })
+
+    expect(result).toBe('still ok')
+  })
+})
+
+describe('Model connections routing (issue #47)', () => {
+  it('candidates() drops the mock candidate when a real connection resolves', () => {
+    const router = testRouter({
+      config: {
+        tiers: {
+          reasoning: [
+            { provider: 'anthropic', modelId: 'claude-sonnet-5', connectionId: 'conn-1' },
+            { provider: 'mock', modelId: 'worker-mock' },
+          ],
+          triage: [{ provider: 'mock', modelId: 'reader-mock' }],
+        },
+        providerKeys: {},
+        connectionKeys: { 'conn-1': 'secret://vault/conn-1-api-key' },
+        dailyCapUsd: { triage: 1, reasoning: 5 },
+      },
+      secrets: {
+        resolve: (ref) => (ref === 'secret://vault/conn-1-api-key' ? 'sk-real' : undefined),
+      },
+    })
+
+    expect(router.route({ purpose: 'chat-turn', origin: 'user' })).toEqual({
+      provider: 'anthropic',
+      modelId: 'claude-sonnet-5',
+      tier: 'reasoning',
+      connectionId: 'conn-1',
+    })
+  })
+
+  it('candidates() resolves a connection-bound entry through connectionKeys, not providerKeys', () => {
+    const router = testRouter({
+      config: {
+        tiers: {
+          reasoning: [
+            { provider: 'anthropic', modelId: 'claude-sonnet-5', connectionId: 'conn-1' },
+          ],
+          triage: [{ provider: 'anthropic', modelId: 'claude-sonnet-5', connectionId: 'conn-1' }],
+        },
+        // A stale/wrong legacy providerKeys entry for the same provider must
+        // never be consulted once the tier entry names a connectionId.
+        providerKeys: { anthropic: 'secret://vault/wrong-key' },
+        connectionKeys: { 'conn-1': 'secret://vault/conn-1-api-key' },
+        dailyCapUsd: { triage: 1, reasoning: 5 },
+      },
+      secrets: {
+        resolve: (ref) => (ref === 'secret://vault/conn-1-api-key' ? 'sk-real' : undefined),
+      },
+    })
+
+    expect(router.route({ purpose: 'chat-turn', origin: 'user' }).connectionId).toBe('conn-1')
+  })
+
+  it('throws NoAvailableModelError when the tier is empty after the strip', () => {
+    const router = testRouter({
+      config: {
+        tiers: { reasoning: [], triage: [{ provider: 'primary', modelId: 'cheap' }] },
+        providerKeys: {},
+        connectionKeys: {},
+        dailyCapUsd: { triage: 1, reasoning: 5 },
+      },
+    })
+
+    expect(() => router.route({ purpose: 'chat-turn', origin: 'user' })).toThrow(
+      NoAvailableModelError,
+    )
+  })
+
+  it('setConfig makes the next route() use the new tier head', () => {
+    const router = testRouter()
+    expect(router.route({ purpose: 'chat-turn', origin: 'user' }).provider).toBe('primary')
+
+    router.setConfig({
+      tiers: {
+        reasoning: [{ provider: 'switched', modelId: 'new-model' }],
+        triage: testConfig.tiers.triage,
+      },
+      providerKeys: {},
+      connectionKeys: {},
+      dailyCapUsd: { triage: 1, reasoning: 5 },
+    })
+
+    expect(router.route({ purpose: 'chat-turn', origin: 'user' })).toEqual({
+      provider: 'switched',
+      modelId: 'new-model',
+      tier: 'reasoning',
+    })
   })
 })
 

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
@@ -212,15 +212,9 @@ describe('storeConnectionApiKey', () => {
     storeConnectionApiKey({ rootDir: dir, vault }, connectionId, DISTINCTIVE_KEY)
 
     expect(vault.resolve(`secret://vault/${connectionId}-api-key`)).toBe(DISTINCTIVE_KEY)
-    // Read `routing.json` directly rather than round-tripping through
-    // `loadRoutingConfig`: this slice adds `connectionKeys` to
-    // `RoutingConfigSchema` and this writer as its first consumer, but
-    // `loadRoutingConfig`'s defaults-merge does not read `connectionKeys`
-    // back from disk yet (issue #47's routing-derivation work does).
-    const raw = JSON.parse(readFileSync(join(dir, 'routing.json'), 'utf8')) as {
-      connectionKeys: Record<string, string>
-    }
-    expect(raw.connectionKeys[connectionId]).toBe(`secret://vault/${connectionId}-api-key`)
+    expect(loadRoutingConfig(dir).connectionKeys[connectionId]).toBe(
+      `secret://vault/${connectionId}-api-key`,
+    )
   })
 })
 

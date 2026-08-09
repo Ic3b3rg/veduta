@@ -26,6 +26,7 @@ import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import { chatToolRegistry as buildChatToolRegistry } from './chat-tool-registry.ts'
 import { createChatLoop } from './chat-loop.ts'
 import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
+import { loadConnectionsConfig } from './connections-config.ts'
 import { EgressPolicy, installEgressEnforcement } from './egress.ts'
 import { EventIngestion, type FetchStage } from './event-ingestion.ts'
 import type { ExternalEvent } from './external-event.ts'
@@ -701,7 +702,10 @@ export function buildServer(options: ServerOptions = {}) {
   // shuts proactivity off; the user hears about it in chat. Live spend
   // recording (turn-end costUsd -> recordSpend) is the chat loop's own job
   // (chat-loop.ts's `runTurn`), constructed below.
-  const routingConfig = withMockFallback(loadRoutingConfig(store.spacesEngine.rootDir), secrets)
+  const routingConfig = withMockFallback(loadRoutingConfig(store.spacesEngine.rootDir), secrets, {
+    profile,
+    mockEnabled: loadConnectionsConfig(store.spacesEngine.rootDir).mockEnabled,
+  })
   const router = new ModelRouter({
     rootDir: store.spacesEngine.rootDir,
     config: routingConfig,

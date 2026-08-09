@@ -924,7 +924,10 @@ function parseModelRef(value: unknown): ModelRef | undefined {
   const modelId = stringValue(value['modelId'])
   const tier = value['tier']
   if (!provider || !modelId || (tier !== 'triage' && tier !== 'reasoning')) return undefined
-  return { provider, modelId, tier }
+  const connectionId = stringValue(value['connectionId'])
+  return connectionId === undefined
+    ? { provider, modelId, tier }
+    : { provider, modelId, tier, connectionId }
 }
 
 function isAssistantError(

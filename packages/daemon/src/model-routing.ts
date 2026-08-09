@@ -51,10 +51,20 @@ export const SecretRefSchema = z
   .string()
   .regex(/^secret:\/\/.+$/, 'provider keys must be secret:// references, never plaintext')
 
-const TierModelSchema = z.object({
+export const TierModelSchema = z.object({
   provider: z.string().min(1),
   modelId: z.string().min(1),
+  /**
+   * The Model connection this tier entry is bound to (issue #47). When
+   * present, the key resolves through `RoutingConfig.connectionKeys[connectionId]`
+   * instead of the legacy bare-provider `providerKeys[provider]` lookup —
+   * two connections on the same provider never share a key. Absent means
+   * the legacy path, unchanged.
+   */
+  connectionId: z.string().min(1).optional(),
 })
+
+export type TierModel = z.infer<typeof TierModelSchema>
 
 export const RoutingConfigSchema = z.object({
   tiers: z.object({
@@ -72,6 +82,34 @@ export const RoutingConfigSchema = z.object({
 
 export type RoutingConfig = z.infer<typeof RoutingConfigSchema>
 
+/**
+ * The runtime contract `ModelRouter` actually enforces, as opposed to
+ * `RoutingConfigSchema`'s on-disk contract: `tiers.triage`/`tiers.reasoning`
+ * may be empty. The on-disk file always keeps at least one candidate per
+ * tier (`.min(1)`), so a hand-edited `routing.json` can never be saved into
+ * a state with nothing to route to; but the profile-gated mock strip
+ * (`withMockFallback`, issue #47) can legitimately empty a tier at
+ * runtime — a `vps` profile with no connected Model connection and no BYOK
+ * key has nothing left to route to — and `candidates()` then throws
+ * `NoAvailableModelError`, a visible stop rather than a crash. Every
+ * `RoutingConfig` already satisfies this schema; it is the wider contract,
+ * never a separate shape to keep in sync.
+ */
+export const RuntimeRoutingConfigSchema = z.object({
+  tiers: z.object({
+    triage: z.array(TierModelSchema),
+    reasoning: z.array(TierModelSchema),
+  }),
+  providerKeys: z.record(SecretRefSchema),
+  connectionKeys: z.record(SecretRefSchema).default({}),
+  dailyCapUsd: z.object({
+    triage: z.number().positive(),
+    reasoning: z.number().positive(),
+  }),
+})
+
+export type RuntimeRoutingConfig = z.infer<typeof RuntimeRoutingConfigSchema>
+
 const RoutingOverridesSchema = z.object({
   tiers: z
     .object({
@@ -80,6 +118,8 @@ const RoutingOverridesSchema = z.object({
     })
     .optional(),
   providerKeys: z.record(SecretRefSchema).optional(),
+  /** Read back on load so a Model connection's key survives a restart (issue #47) — see `loadRoutingConfig`. */
+  connectionKeys: z.record(SecretRefSchema).optional(),
   dailyCapUsd: z
     .object({
       triage: z.number().positive().optional(),
@@ -130,37 +170,77 @@ export function loadRoutingConfig(rootDir: string): RoutingConfig {
       reasoning: overrides.tiers?.reasoning ?? defaults.tiers.reasoning,
     },
     providerKeys: { ...defaults.providerKeys, ...overrides.providerKeys },
+    connectionKeys: { ...defaults.connectionKeys, ...overrides.connectionKeys },
     dailyCapUsd: { ...defaults.dailyCapUsd, ...overrides.dailyCapUsd },
   })
 }
 
 /**
- * Appends a keyless mock candidate (`reader-mock` for triage, `worker-mock`
- * for reasoning) to any tier with no candidate whose provider key actually
- * resolves. Keeps the dev/Local VPS profile without provider keys (by
- * design) routable — the quarantined reader and Workers both need a model
- * to route to — while a tier with at least one resolvable key is left
- * untouched. The mock candidate disappears as soon as a real key resolves;
- * the real provider client replaces `mockReaderComplete` with the Agent
- * loop wiring. Returns a new config; never mutates `config`.
+ * Profile-gated, strip-then-append mock control (issue #47,
+ * docs/adr/0014-subscription-inference-boundary.md amendment). Two ordered
+ * steps, never the other order:
+ *
+ * 1. **Strip.** `mockAllowed` is true on `loopback` always, on `local-vps`
+ *    only when `options.mockEnabled` is true, and never on `vps`. When not
+ *    allowed, EVERY `provider === 'mock'` entry is removed from both
+ *    tiers — persisted, derived, or hand-edited alike — because a VPS
+ *    install must never answer from the mock even if a `routing.json` on
+ *    disk still names it. A tier can end up empty; `RuntimeRoutingConfigSchema`
+ *    permits that and `candidates()` then throws `NoAvailableModelError`, a
+ *    visible stop rather than a silent mock answer.
+ * 2. **Append.** Only when allowed and no tier candidate resolves a key: a
+ *    keyless mock candidate (`reader-mock` for triage, `worker-mock` for
+ *    reasoning) is appended, exactly as before this issue. Keeps the
+ *    dev/Local-VPS-with-the-development-control profile routable with no
+ *    provider key configured.
+ *
+ * `candidates()` adds a second, structural guarantee on top of this: once a
+ * real candidate resolves, every mock entry is dropped from the attempt
+ * list, so a failed real connection can never fail over onto the mock
+ * (issues/047-model-connections.md).
+ *
+ * Returns a new `RuntimeRoutingConfig`; never mutates `config`.
  */
-export function withMockFallback(config: RoutingConfig, secrets: SecretResolver): RoutingConfig {
-  const keyResolves = (entries: { provider: string; modelId: string }[]) =>
+export function withMockFallback(
+  config: RoutingConfig | RuntimeRoutingConfig,
+  secrets: SecretResolver,
+  options: { profile: 'loopback' | 'local-vps' | 'vps'; mockEnabled?: boolean },
+): RuntimeRoutingConfig {
+  const mockAllowed =
+    options.profile === 'loopback' ||
+    (options.profile === 'local-vps' && options.mockEnabled === true)
+
+  const stripped: RuntimeRoutingConfig = mockAllowed
+    ? config
+    : {
+        ...config,
+        tiers: {
+          triage: config.tiers.triage.filter((entry) => entry.provider !== 'mock'),
+          reasoning: config.tiers.reasoning.filter((entry) => entry.provider !== 'mock'),
+        },
+      }
+  if (!mockAllowed) return RuntimeRoutingConfigSchema.parse(stripped)
+
+  const keyResolves = (entries: TierModel[]) =>
     entries.some((entry) => {
-      const secretRef = config.providerKeys[entry.provider]
+      const secretRef =
+        entry.connectionId !== undefined
+          ? stripped.connectionKeys[entry.connectionId]
+          : stripped.providerKeys[entry.provider]
       return secretRef === undefined || secrets.resolve(secretRef) !== undefined
     })
-  return {
-    ...config,
+
+  return RuntimeRoutingConfigSchema.parse({
+    ...stripped,
     tiers: {
-      triage: keyResolves(config.tiers.triage)
-        ? config.tiers.triage
-        : [...config.tiers.triage, { provider: 'mock', modelId: 'reader-mock' }],
-      reasoning: keyResolves(config.tiers.reasoning)
-        ? config.tiers.reasoning
-        : [...config.tiers.reasoning, { provider: 'mock', modelId: 'worker-mock' }],
+      triage: keyResolves(stripped.tiers.triage)
+        ? stripped.tiers.triage
+        : [...stripped.tiers.triage, { provider: 'mock', modelId: 'reader-mock' }],
+      reasoning: keyResolves(stripped.tiers.reasoning)
+        ? stripped.tiers.reasoning
+        : [...stripped.tiers.reasoning, { provider: 'mock', modelId: 'worker-mock' }],
     },
-  }
+  })
 }
 
 /**
@@ -264,7 +344,7 @@ export interface UsageSnapshot {
 }
 
 export interface ModelRouterOptions {
-  config?: RoutingConfig
+  config?: RoutingConfig | RuntimeRoutingConfig
   /** When set, calls and spend persist to `<rootDir>/usage/<date>.jsonl`. */
   rootDir?: string
   secrets?: SecretResolver
@@ -272,6 +352,14 @@ export interface ModelRouterOptions {
   sleep?: (ms: number) => Promise<void>
   onEvent?: (event: RouterEvent) => void
   isRetryable?: (error: unknown) => boolean
+  /**
+   * Fired from `execute`'s catch, before the retry/failover decision, with
+   * the exact `ModelRef` that just failed (issue #47: lets a caller mark a
+   * BYOK connection `failed` on a 401/403 so routing drops it on the next
+   * rebuild). Wrapped in its own try/catch — a misbehaving listener must
+   * never break routing.
+   */
+  onCallError?: (model: ModelRef, error: unknown) => void
 }
 
 const BACKOFF_BASE_MS = 250
@@ -286,25 +374,39 @@ interface DailyUsage {
 }
 
 export class ModelRouter {
-  private readonly config: RoutingConfig
+  private config: RuntimeRoutingConfig
   private readonly rootDir: string | undefined
   private readonly secrets: SecretResolver
   private readonly now: () => Date
   private readonly sleep: (ms: number) => Promise<void>
   private readonly onEvent: ((event: RouterEvent) => void) | undefined
+  private readonly onCallError: ((model: ModelRef, error: unknown) => void) | undefined
   private readonly isRetryable: (error: unknown) => boolean
   private readonly calls: RoutedCall[] = []
   private usageToday: DailyUsage
 
   constructor(options: ModelRouterOptions = {}) {
-    this.config = options.config ?? defaultRoutingConfig()
+    this.config = RuntimeRoutingConfigSchema.parse(options.config ?? defaultRoutingConfig())
     this.rootDir = options.rootDir
     this.secrets = options.secrets ?? envSecretResolver
     this.now = options.now ?? (() => new Date())
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
     this.onEvent = options.onEvent
+    this.onCallError = options.onCallError
     this.isRetryable = options.isRetryable ?? defaultIsRetryable
     this.usageToday = this.restoreUsage(this.today())
+  }
+
+  /**
+   * Swaps the live routing config (issue #47's live-apply path: the
+   * registry rebuilds routing on every connection mutation and calls this
+   * so the next `route()`/`execute()` sees it — no restart required).
+   * Validated against the runtime contract first, so a malformed derived
+   * config fails loudly here rather than surfacing as a confusing routing
+   * bug later.
+   */
+  setConfig(config: RuntimeRoutingConfig): void {
+    this.config = RuntimeRoutingConfigSchema.parse(config)
   }
 
   route(request: RouteRequest): ModelRef {
@@ -336,6 +438,11 @@ export class ModelRouter {
       } catch (error) {
         const reason = sanitizeErrorText(error)
         this.logCall(request, model, 'error', reason)
+        try {
+          this.onCallError?.(model, error)
+        } catch {
+          // A misbehaving listener must never break routing (issue #47).
+        }
         if (!this.isRetryable(error)) throw error
         lastError = error
         const next = candidates[attempt + 1]
@@ -420,15 +527,33 @@ export class ModelRouter {
 
   private candidates(tier: ModelTier): ModelRef[] {
     const skipped: string[] = []
-    const available = this.config.tiers[tier].flatMap((entry) => {
-      const secretRef = this.config.providerKeys[entry.provider]
+    let available = this.config.tiers[tier].flatMap((entry) => {
+      // A connection-bound entry resolves its key from `connectionKeys`
+      // (keyed by connection id, so two accounts on the same provider never
+      // collide, issue #47); a legacy entry resolves from the bare-provider
+      // `providerKeys` map, exactly as before.
+      const secretRef =
+        entry.connectionId !== undefined
+          ? this.config.connectionKeys[entry.connectionId]
+          : this.config.providerKeys[entry.provider]
       // Providers without a configured key entry are keyless (mock, local).
       if (secretRef !== undefined && this.secrets.resolve(secretRef) === undefined) {
         skipped.push(entry.provider)
         return []
       }
-      return [{ provider: entry.provider, modelId: entry.modelId, tier }]
+      const model: ModelRef = { provider: entry.provider, modelId: entry.modelId, tier }
+      return [
+        entry.connectionId === undefined ? model : { ...model, connectionId: entry.connectionId },
+      ]
     })
+    // A failed real connection must never be answered by the mock
+    // (issues/047-model-connections.md): once at least one non-mock
+    // candidate resolved, every keyless mock candidate is dropped from the
+    // attempt list, belt and braces alongside `withMockFallback`'s
+    // append-only-when-nothing-resolves rule.
+    if (available.some((model) => model.provider !== 'mock')) {
+      available = available.filter((model) => model.provider !== 'mock')
+    }
     if (available.length === 0) throw new NoAvailableModelError(tier, skipped)
     return available
   }

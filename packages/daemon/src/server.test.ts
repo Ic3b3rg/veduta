@@ -12,7 +12,7 @@ import {
 } from '@veduta/protocol'
 import { describe, expect, it, vi } from 'vitest'
 import { AuthStore, type PasskeyRelyingParty, type StoredPasskey } from './auth-store.ts'
-import { loadRoutingConfig } from './model-routing.ts'
+import { NoAvailableModelError, loadRoutingConfig } from './model-routing.ts'
 import { NOTIFICATION_SETTINGS_SURFACE_ID } from './notification-settings-surface.ts'
 import { NotificationsConfigSchema, saveNotificationsConfig } from './notifications-config.ts'
 import { applyByok } from './onboarding-step-byok.ts'
@@ -267,10 +267,19 @@ describe('production auth boundary', () => {
     expect(devices.json()).toMatchObject({ devices: [{ name: 'Silvio iPhone' }] })
   })
 
-  it('drives a meal-logging chat message through the real chat loop (mock candidate) and patches srf-meals, even under production auth with no provider key configured', async () => {
+  it('drives a meal-logging chat message through the real chat loop (mock candidate) and patches srf-meals, even under production auth with no provider key configured, once the Local VPS development mock control is enabled', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-meal-mock-'))
+    // A bare production-auth `buildServer` call resolves to the `vps`
+    // profile (`server.ts`'s default profile derivation), where
+    // `withMockFallback` (issue #47) never appends the mock candidate. This
+    // test exercises the real chat loop through the mock, so it now needs
+    // the Local VPS profile plus its explicit development mock control.
+    await writeFile(join(dataDir, 'connections.json'), JSON.stringify({ mockEnabled: true }))
     const { auth, token } = await readyAuthStore()
     const { gateway, store } = buildServer({
+      dataDir,
       auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+      profile: 'local-vps',
     })
 
     expect(await chatSendProducesMealsPatch(gateway, store, token)).toBe(true)
@@ -286,8 +295,11 @@ describe('production auth boundary', () => {
 })
 
 describe('AC4: switching mock -> real provider is configuration only (issue 023)', () => {
-  it('a fresh Local VPS root with no provider key anywhere routes both tiers through the keyless mock candidate', async () => {
+  it('a fresh Local VPS root with no provider key anywhere routes both tiers through the keyless mock candidate once the development mock control is enabled', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'veduta-ac4-mock-'))
+    // Local VPS never appends the mock candidate on its own (issue #47): it
+    // requires the explicit development mock control on top of the profile.
+    await writeFile(join(dataDir, 'connections.json'), JSON.stringify({ mockEnabled: true }))
     const { auth, token } = await readyAuthStore()
     const { gateway, store, router } = buildServer({
       dataDir,
@@ -365,6 +377,35 @@ describe('AC4: switching mock -> real provider is configuration only (issue 023)
     } finally {
       delete process.env['VEDUTA_VAULT_KEY']
     }
+  })
+})
+
+describe('a vps profile never routes through the mock (issue #47)', () => {
+  it('a vps-profile install with no Model connection has no routable model and says so instead of answering from the mock', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-vps-no-connection-'))
+    const { auth, token } = await readyAuthStore()
+    const { gateway, store, router } = buildServer({
+      dataDir,
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+      profile: 'vps',
+    })
+
+    // A fresh vps root has no provider key anywhere and no Model connection,
+    // and the vps profile never appends the mock candidate
+    // (`model-routing.ts`'s `withMockFallback`, issue #47): both tiers are
+    // left with nothing to route to.
+    expect(() => router.route({ purpose: 'chat-turn', origin: 'user' })).toThrow(
+      NoAvailableModelError,
+    )
+
+    const socket = new SchedulerFakeSocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor(), token })
+    socket.receive({ type: 'chat.send', text: 'I ate a pizza', spaceId: 'spc-health' })
+
+    await waitForTurnSettled(socket)
+
+    expect(socket.sent.some((frame) => frame.type === 'chat.turn-error')).toBe(true)
   })
 })
 

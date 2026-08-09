@@ -8,13 +8,22 @@ export interface ModelRef {
   provider: string
   modelId: string
   tier: ModelTier
+  /**
+   * The Model connection this ref is bound to (issue #47). Absent means the
+   * legacy bare-provider routing path. Compared by `modelRefsEqual` so
+   * switching accounts on the same provider+model still records a
+   * `'model-change'` SessionEntry — the user is on a different key, even
+   * though the provider and model strings look identical.
+   */
+  connectionId?: string
 }
 
 export function modelRefsEqual(left: ModelRef | undefined, right: ModelRef | undefined): boolean {
   return (
     left?.provider === right?.provider &&
     left?.modelId === right?.modelId &&
-    left?.tier === right?.tier
+    left?.tier === right?.tier &&
+    left?.connectionId === right?.connectionId
   )
 }
 

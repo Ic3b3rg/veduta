@@ -117,11 +117,15 @@ describe('AgentRunner contract', () => {
     const router = new ModelRouter({
       config: {
         tiers: {
+          // `backup`, deliberately not `mock`: `model-routing.ts`'s
+          // candidates() drops every literal `mock` entry once a non-mock
+          // candidate resolves (issue #47), which would defeat this
+          // fixture's two-distinct-provider failover on the very first call.
           reasoning: [
             { provider: 'down', modelId: 'primary' },
-            { provider: 'mock', modelId: 'fallback' },
+            { provider: 'backup', modelId: 'fallback' },
           ],
-          triage: [{ provider: 'mock', modelId: 'cheap' }],
+          triage: [{ provider: 'backup', modelId: 'cheap' }],
         },
         providerKeys: {},
         connectionKeys: {},
@@ -137,7 +141,7 @@ describe('AgentRunner contract', () => {
 
     const branch = await store.load('session-failover')
     expect(branch.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
-    expect(branch.model).toEqual({ provider: 'mock', modelId: 'fallback', tier: 'reasoning' })
+    expect(branch.model).toEqual({ provider: 'backup', modelId: 'fallback', tier: 'reasoning' })
     expect(router.callLog().map((call) => call.outcome)).toEqual(['error', 'ok'])
   })
 
@@ -151,6 +155,37 @@ describe('AgentRunner contract', () => {
 
     const branch = await store.load('session-repeat')
     expect(branch.messages.filter((message) => message.role === 'user')).toHaveLength(2)
+  })
+})
+
+describe('modelRefsEqual', () => {
+  it('treats two accounts on the same provider and model as different', () => {
+    const first: ModelRef = {
+      provider: 'anthropic',
+      modelId: 'claude-sonnet-5',
+      tier: 'reasoning',
+      connectionId: 'conn-1',
+    }
+    const second: ModelRef = { ...first, connectionId: 'conn-2' }
+
+    expect(modelRefsEqual(first, second)).toBe(false)
+    expect(modelRefsEqual(first, { ...first })).toBe(true)
+  })
+
+  it('treats a connection-bound ref and a legacy unbound ref on the same provider and model as different', () => {
+    const bound: ModelRef = {
+      provider: 'anthropic',
+      modelId: 'claude-sonnet-5',
+      tier: 'reasoning',
+      connectionId: 'conn-1',
+    }
+    const legacy: ModelRef = {
+      provider: 'anthropic',
+      modelId: 'claude-sonnet-5',
+      tier: 'reasoning',
+    }
+
+    expect(modelRefsEqual(bound, legacy)).toBe(false)
   })
 })
 
