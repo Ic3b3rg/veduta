@@ -1,9 +1,4 @@
-import type {
-  ByokProvider,
-  OnboardingStatus,
-  OnboardingStepId,
-  OnboardingTiers,
-} from '@veduta/protocol'
+import type { OnboardingStatus, OnboardingStepId } from '@veduta/protocol'
 
 /**
  * Pure presentation logic for the onboarding wizard (issue 019): step
@@ -41,20 +36,12 @@ export const WIZARD_STEP_META: Record<OnboardingStepId, OnboardingStepMeta> = {
       'domain later: sudo systemctl edit veduta, override VEDUTA_PUBLIC_DOMAIN in the drop-in, ' +
       'then sudo systemctl restart veduta.',
   },
-  byok: {
-    title: 'Bring your own key',
+  'model-connection': {
+    title: 'Model connection',
     description:
-      'Add an API key for Anthropic, OpenAI, or OpenRouter so the daemon can reason with a ' +
-      'real model. Skipping is fine: without a key the daemon serves the built-in mock ' +
-      'provider; add a key later with: pnpm --filter @veduta/daemon vault set <provider> <key> ' +
-      '--root <data dir>.',
-  },
-  models: {
-    title: 'Models',
-    description:
-      'Choose which models handle each tier: triage is a cheap, fast model used for quick ' +
-      'classification; reasoning is a stronger model used for chat turns and heartbeat ' +
-      'reasoning. Sensible defaults are pre-selected.',
+      'Connect a provider subscription or API key so the daemon can reason with a real ' +
+      'model. Veduta keeps the Agent loop and your data on your server -- a Model connection ' +
+      'only ever supplies inference.',
   },
   'first-space': {
     title: 'First Space',
@@ -114,18 +101,22 @@ export function isStepDone(status: OnboardingStatus, id: OnboardingStepId): bool
 }
 
 /**
- * Whether the BYOK step can offer "keep existing key" for a provider — the
- * keep-existing sentinel only makes sense when the vault already has a key
- * stored for it.
+ * Fail-closed gate for Home (issue #47, ADR-0014 amendment): a
+ * failed `/api/onboarding` fetch must never silently fall through to Home on
+ * a production install, since a status the PWA cannot read might be hiding a
+ * required wizard. `true` blocks Home in favor of a status-unavailable
+ * screen when the fetch failed AND (the daemon is running in `production`
+ * auth mode, OR auth mode is still unknown but a token is already stored --
+ * the ambiguous case a stale reload can land in). Loopback dev
+ * (`authMode === 'dev'`) always fails OPEN: it never runs onboarding-gated
+ * production auth in the first place, so a status fetch failing there is a
+ * transient dev-server hiccup, not a reason to block the app.
  */
-export function byokKeepExistingAvailable(
-  status: OnboardingStatus,
-  provider: ByokProvider,
-): boolean {
-  return status.byok.providers.some((entry) => entry.provider === provider && entry.hasKey)
-}
-
-/** Pass-through of the daemon's current tier assignments, pre-filled as the models step's defaults. */
-export function defaultTierSelections(status: OnboardingStatus): OnboardingTiers {
-  return status.models.tiers
+export function homeBlockedByStatusFailure(input: {
+  authMode: 'dev' | 'production' | undefined
+  hasToken: boolean
+  onboardingLoad: 'loading' | 'ready' | 'error'
+}): boolean {
+  if (input.onboardingLoad !== 'error') return false
+  return input.authMode === 'production' || (input.authMode === undefined && input.hasToken)
 }

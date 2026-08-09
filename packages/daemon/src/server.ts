@@ -1518,6 +1518,7 @@ export function buildServer(options: ServerOptions = {}) {
     spacesEngine: store.spacesEngine,
     env: onboardingOptions.env ?? process.env,
     scheduleExit: onboardingOptions.scheduleExit ?? defaultScheduleExit(app),
+    secrets,
     // Issue #47: an imported provider key becomes a visible, usable Model
     // connection before the migration import route's response goes out,
     // with no daemon restart required.

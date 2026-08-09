@@ -1,5 +1,7 @@
 import type { FinishResponse } from '@veduta/protocol'
+import type { SecretResolver } from './model-routing.ts'
 import { loadOnboardingConfig, saveOnboardingConfig } from './onboarding-config.ts'
+import { assertModelConnectionReady } from './onboarding-step-model-connection.ts'
 import {
   OnboardingStepError,
   resolveLegacy,
@@ -13,6 +15,8 @@ export interface FinishDeps {
   scheduleExit: () => void
   /** Feeds the same legacy-visibility resolution `buildOnboardingStatus` uses, so the completion gate below checks exactly the steps the wizard actually showed. */
   env: NodeJS.ProcessEnv
+  /** Fed to `assertModelConnectionReady` (issue #47), the last check before completion — the same gate `applyModelConnectionStep` itself enforces, so finishing can never bypass it. */
+  secrets: SecretResolver
   homeDir?: string
   now?: () => Date
 }
@@ -55,6 +59,18 @@ export function applyFinish(deps: FinishDeps): FinishResponse {
       409,
     )
   }
+
+  // The last check before completing (issue #47, ADR-0014 amendment): a
+  // status only every OTHER step already being `completed`/`skipped` cannot
+  // catch by itself — a hand-edited `onboarding.json` could mark
+  // `model-connection` completed and then have its only connection revoked
+  // out from under it. This is the exact same gate
+  // `applyModelConnectionStep` enforces, so finishing can never bypass it.
+  assertModelConnectionReady({
+    rootDir: deps.rootDir,
+    profile: deps.profile,
+    secrets: deps.secrets,
+  })
 
   saveOnboardingConfig(deps.rootDir, {
     ...config,

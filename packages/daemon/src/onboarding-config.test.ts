@@ -6,6 +6,7 @@ import {
   ONBOARDING_FILE_NAME,
   OnboardingConfigSchema,
   loadOnboardingConfig,
+  migrateLegacyStepIds,
   saveOnboardingConfig,
   type OnboardingConfig,
 } from './onboarding-config.ts'
@@ -56,6 +57,70 @@ describe('loadOnboardingConfig', () => {
     // The corrupted content must survive the failed load — no silent reset.
     expect(() => loadOnboardingConfig(dir)).toThrow(/refusing to silently reset/)
   })
+
+  it('maps a legacy byok:completed/models:completed file onto model-connection:completed', () => {
+    const dir = freshRoot()
+    writeFileSync(
+      join(dir, ONBOARDING_FILE_NAME),
+      JSON.stringify({
+        version: 1,
+        steps: { domain: 'completed', byok: 'completed', models: 'completed' },
+      }),
+    )
+    const config = loadOnboardingConfig(dir)
+    expect(config.steps).toEqual({ domain: 'completed', 'model-connection': 'completed' })
+  })
+
+  it('maps byok:skipped onto model-connection:skipped', () => {
+    const dir = freshRoot()
+    writeFileSync(
+      join(dir, ONBOARDING_FILE_NAME),
+      JSON.stringify({ version: 1, steps: { byok: 'skipped', models: 'completed' } }),
+    )
+    const config = loadOnboardingConfig(dir)
+    expect(config.steps['model-connection']).toBe('skipped')
+  })
+
+  it('drops the legacy keys so the next save is clean', () => {
+    const dir = freshRoot()
+    writeFileSync(
+      join(dir, ONBOARDING_FILE_NAME),
+      JSON.stringify({ version: 1, steps: { byok: 'completed', models: 'completed' } }),
+    )
+    const config = loadOnboardingConfig(dir)
+    expect(config.steps).not.toHaveProperty('byok')
+    expect(config.steps).not.toHaveProperty('models')
+    saveOnboardingConfig(dir, config)
+    expect(loadOnboardingConfig(dir).steps).toEqual({ 'model-connection': 'completed' })
+  })
+})
+
+describe('migrateLegacyStepIds', () => {
+  it('leaves a file with neither legacy key unchanged', () => {
+    const raw = { version: 1, steps: { domain: 'completed' } }
+    expect(migrateLegacyStepIds(raw)).toEqual(raw)
+  })
+
+  it('leaves a pending legacy byok absent on model-connection rather than pending', () => {
+    const migrated = migrateLegacyStepIds({ version: 1, steps: { byok: 'pending' } }) as {
+      steps: Record<string, unknown>
+    }
+    expect(migrated.steps).not.toHaveProperty('model-connection')
+    expect(migrated.steps).not.toHaveProperty('byok')
+  })
+
+  it('an existing steps["model-connection"] wins over what byok would otherwise compute', () => {
+    const migrated = migrateLegacyStepIds({
+      version: 1,
+      steps: { byok: 'completed', 'model-connection': 'pending' },
+    }) as { steps: Record<string, unknown> }
+    expect(migrated.steps['model-connection']).toBe('pending')
+  })
+
+  it('passes through a non-object payload unchanged', () => {
+    expect(migrateLegacyStepIds(null)).toBeNull()
+    expect(migrateLegacyStepIds('not an object')).toBe('not an object')
+  })
 })
 
 describe('saveOnboardingConfig', () => {
@@ -85,7 +150,7 @@ describe('saveOnboardingConfig', () => {
   it('parses to the same shape via OnboardingConfigSchema (strict round-trip)', () => {
     const dir = freshRoot()
     const config = OnboardingConfigSchema.parse({
-      steps: { byok: 'completed' },
+      steps: { 'model-connection': 'completed' },
       completedAt: '2026-07-24T10:00:00.000Z',
     })
     saveOnboardingConfig(dir, config)

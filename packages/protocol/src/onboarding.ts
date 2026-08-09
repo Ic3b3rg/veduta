@@ -3,16 +3,18 @@ import { z } from 'zod'
 /**
  * The onboarding wizard's step order:
  * `migration` (only surfaced when a legacy Hermes/OpenClaw install is detected) →
- * `domain` → `byok` → `models` → `first-space` → `integrations` → `finish`.
- * `first-space` precedes `integrations` because every ingestion source requires a
- * target `spaceId` (`ingestion-config.ts`) — the issue's list is descriptive, this
- * order is structural. See `issues/019-onboarding-wizard.md`.
+ * `domain` → `model-connection` → `first-space` → `integrations` → `finish`.
+ * `model-connection` replaced the separate `byok` and `models` steps (issue #47,
+ * `docs/adr/0014-subscription-inference-boundary.md`): one step now covers
+ * connecting a provider (API key or a subscription) and picking a model,
+ * instead of two. `first-space` precedes `integrations` because every ingestion
+ * source requires a target `spaceId` (`ingestion-config.ts`) — the issue's list
+ * is descriptive, this order is structural. See `issues/019-onboarding-wizard.md`.
  */
 export const OnboardingStepIdSchema = z.enum([
   'migration',
   'domain',
-  'byok',
-  'models',
+  'model-connection',
   'first-space',
   'integrations',
   'finish',
@@ -94,24 +96,13 @@ export const LegacyDetectionSchema = z.object({
   sourceHome: z.string().min(1).optional(),
 })
 
-/** One model assignment within a routing tier — mirrors `TierModelSchema` in `model-routing.ts`. */
-export const OnboardingTierModelSchema = z.object({
-  provider: z.string().min(1),
-  modelId: z.string().min(1),
-})
-
 /**
- * The two model tiers from `model-routing.ts`'s `RoutingConfigSchema.tiers`:
- * `triage` (cheap/fast classification) and `reasoning` (chat turns, heartbeat
- * reasoning). The `models` onboarding step edits this shape directly so it
- * can be validated against the same routing schema on the daemon side.
+ * BYOK providers (issue #47: now one of several Model connection methods,
+ * `ModelConnectionMethodIdSchema` in `model-connection.ts`). Kept here — not
+ * removed with `ByokApplyRequestSchema`/`ByokTestRequestSchema` — because
+ * `import.ts`'s `ImportPlanSchema.secretsImported` still names a real thing:
+ * the three provider ids a legacy install's vault keys can carry.
  */
-export const OnboardingTiersSchema = z.object({
-  triage: z.array(OnboardingTierModelSchema).min(1),
-  reasoning: z.array(OnboardingTierModelSchema).min(1),
-})
-
-/** BYOK providers offered by the wizard — hosts are `PROVIDER_HOSTS` in `server.ts`. */
 export const ByokProviderSchema = z.enum(['anthropic', 'openai', 'openrouter'])
 
 /**
@@ -139,17 +130,18 @@ export const OnboardingStatusSchema = z.object({
     domain: z.string().nullable(),
     tlsActive: z.boolean(),
   }),
-  byok: z.object({
+  /**
+   * The `model-connection` step's resume state (issue #47, replacing the old
+   * `byok`/`models` fields): whether the vault is open, how many Model
+   * connections exist and are `connected`, whether an effective selection is
+   * in place, and whether the Local VPS development mock control is on.
+   * Never a secret value — same discipline as the fields it replaced.
+   */
+  modelConnection: z.object({
     vaultAvailable: z.boolean(),
-    providers: z.array(
-      z.object({
-        provider: ByokProviderSchema,
-        hasKey: z.boolean(),
-      }),
-    ),
-  }),
-  models: z.object({
-    tiers: OnboardingTiersSchema,
+    connectedCount: z.number().int().min(0),
+    hasSelection: z.boolean(),
+    mockEnabled: z.boolean(),
   }),
   firstSpace: z.object({
     suggestedName: z.string().min(1),
@@ -193,44 +185,20 @@ export const MigrationChoiceRequestSchema = z.object({
 })
 
 /**
- * `POST /api/onboarding/byok/test` body. `key` omitted means "test the
- * stored vault key" — the keep-existing sentinel used throughout the wizard
- * so a resumed session never has to re-enter a secret it already has.
+ * `POST /api/onboarding/model-connection` body (issue #47, replacing the old
+ * `byok`/`models` steps): `useMock` requests the Local VPS development-only
+ * mock control be turned on as part of completing this step — a 409 on the
+ * `vps` profile, and a no-op on `loopback` (the mock is already automatic
+ * there). Omitted means "leave the mock control as it already is" — every
+ * connecting/selecting happens through `/api/model-connections/*` instead,
+ * this step only records completion once `assertModelConnectionReady`
+ * (`onboarding-step-model-connection.ts`) is satisfied.
  */
-export const ByokTestRequestSchema = z.object({
-  provider: ByokProviderSchema,
-  key: z.string().min(1).optional(),
-})
-
-/**
- * `POST /api/onboarding/byok/test` response. The check is a deterministic
- * key check, not an LLM turn: `valid` (2xx from the
- * provider's models endpoint), `invalid` (401/403), or `unreachable`
- * (network error, timeout, or any other status).
- */
-export const ByokTestResponseSchema = z.object({
-  result: z.enum(['valid', 'invalid', 'unreachable']),
-})
-
-/**
- * `POST /api/onboarding/byok` body. Either skip (loopback/Local VPS fall
- * back to the mock provider; VPS profile prints the vault CLI dead-end
- * command) or store a key for a provider. `key` omitted on the provider
- * branch means "keep the existing stored key" — the same keep-existing
- * sentinel as `ByokTestRequestSchema`.
- */
-export const ByokApplyRequestSchema = z.union([
-  z.object({ skip: z.literal(true) }),
-  z.object({
-    provider: ByokProviderSchema,
-    key: z.string().min(1).optional(),
-  }),
-])
-
-/** `POST /api/onboarding/models` body — validated again against `RoutingConfigSchema.tiers` on the daemon. */
-export const ModelsApplyRequestSchema = z.object({
-  tiers: OnboardingTiersSchema,
-})
+export const ModelConnectionStepRequestSchema = z
+  .object({
+    useMock: z.boolean().optional(),
+  })
+  .strict()
 
 /**
  * `POST /api/onboarding/first-space` body. The daemon slugifies `name` and
@@ -307,15 +275,10 @@ export type InstallerStageStatus = z.infer<typeof InstallerStageStatusSchema>
 export type InstallerStage = z.infer<typeof InstallerStageSchema>
 export type InstallerStageEvent = z.infer<typeof InstallerStageEventSchema>
 export type LegacyDetection = z.infer<typeof LegacyDetectionSchema>
-export type OnboardingTierModel = z.infer<typeof OnboardingTierModelSchema>
-export type OnboardingTiers = z.infer<typeof OnboardingTiersSchema>
 export type ByokProvider = z.infer<typeof ByokProviderSchema>
 export type OnboardingStatus = z.infer<typeof OnboardingStatusSchema>
 export type MigrationChoiceRequest = z.infer<typeof MigrationChoiceRequestSchema>
-export type ByokTestRequest = z.infer<typeof ByokTestRequestSchema>
-export type ByokTestResponse = z.infer<typeof ByokTestResponseSchema>
-export type ByokApplyRequest = z.infer<typeof ByokApplyRequestSchema>
-export type ModelsApplyRequest = z.infer<typeof ModelsApplyRequestSchema>
+export type ModelConnectionStepRequest = z.infer<typeof ModelConnectionStepRequestSchema>
 export type FirstSpaceRequest = z.infer<typeof FirstSpaceRequestSchema>
 export type GmailIntegrationRequest = z.infer<typeof GmailIntegrationRequestSchema>
 export type CalendarIntegrationRequest = z.infer<typeof CalendarIntegrationRequestSchema>

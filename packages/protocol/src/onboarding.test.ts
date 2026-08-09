@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ByokApplyRequestSchema,
   CalendarIntegrationRequestSchema,
   InstallerStageEventSchema,
   IntegrationsApplyRequestSchema,
+  ModelConnectionStepRequestSchema,
   OnboardingProfileSchema,
   OnboardingStepIdSchema,
   OnboardingStatusSchema,
@@ -14,14 +14,18 @@ describe('OnboardingStepIdSchema', () => {
     for (const id of [
       'migration',
       'domain',
-      'byok',
-      'models',
+      'model-connection',
       'first-space',
       'integrations',
       'finish',
     ]) {
       expect(OnboardingStepIdSchema.safeParse(id).success).toBe(true)
     }
+  })
+
+  it('rejects the removed byok/models step ids (issue #47: replaced by model-connection)', () => {
+    expect(OnboardingStepIdSchema.safeParse('byok').success).toBe(false)
+    expect(OnboardingStepIdSchema.safeParse('models').success).toBe(false)
   })
 
   it('rejects an unknown step id', () => {
@@ -46,31 +50,22 @@ describe('OnboardingStatusSchema', () => {
     required: true,
     completed: false,
     profile: 'vps' as const,
-    currentStep: 'byok' as const,
+    currentStep: 'model-connection' as const,
     steps: [
       { id: 'migration', status: 'skipped' },
       { id: 'domain', status: 'completed' },
-      { id: 'byok', status: 'pending' },
-      { id: 'models', status: 'pending' },
+      { id: 'model-connection', status: 'pending' },
       { id: 'first-space', status: 'pending' },
       { id: 'integrations', status: 'pending' },
       { id: 'finish', status: 'pending' },
     ],
     legacy: { openclaw: false, hermes: true, sourceHome: '/home/silvio' },
     domain: { domain: 'veduta.example.com', tlsActive: true },
-    byok: {
+    modelConnection: {
       vaultAvailable: true,
-      providers: [
-        { provider: 'anthropic', hasKey: false },
-        { provider: 'openai', hasKey: false },
-        { provider: 'openrouter', hasKey: false },
-      ],
-    },
-    models: {
-      tiers: {
-        triage: [{ provider: 'anthropic', modelId: 'claude-haiku' }],
-        reasoning: [{ provider: 'anthropic', modelId: 'claude-sonnet' }],
-      },
+      connectedCount: 0,
+      hasSelection: false,
+      mockEnabled: false,
     },
     firstSpace: {
       suggestedName: 'Home',
@@ -175,17 +170,17 @@ describe('InstallerStageEventSchema', () => {
   })
 })
 
-describe('ByokApplyRequestSchema', () => {
-  it('accepts the skip branch', () => {
-    expect(ByokApplyRequestSchema.safeParse({ skip: true }).success).toBe(true)
+describe('ModelConnectionStepRequestSchema', () => {
+  it('accepts an empty body', () => {
+    expect(ModelConnectionStepRequestSchema.safeParse({}).success).toBe(true)
   })
 
-  it('accepts a provider with no key (keep-existing sentinel)', () => {
-    expect(ByokApplyRequestSchema.safeParse({ provider: 'anthropic' }).success).toBe(true)
+  it('accepts useMock: true', () => {
+    expect(ModelConnectionStepRequestSchema.safeParse({ useMock: true }).success).toBe(true)
   })
 
-  it('rejects an empty-string key', () => {
-    expect(ByokApplyRequestSchema.safeParse({ provider: 'anthropic', key: '' }).success).toBe(false)
+  it('rejects an unknown key', () => {
+    expect(ModelConnectionStepRequestSchema.safeParse({ skip: true }).success).toBe(false)
   })
 })
 

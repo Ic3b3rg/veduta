@@ -1,8 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import {
-  ByokApplyRequestSchema,
-  ByokTestRequestSchema,
-  ByokTestResponseSchema,
   FinishResponseSchema,
   FirstSpaceRequestSchema,
   ImportApplyRequestSchema,
@@ -11,14 +8,14 @@ import {
   ImportPreviewRequestSchema,
   IntegrationsApplyRequestSchema,
   MigrationChoiceRequestSchema,
-  ModelsApplyRequestSchema,
+  ModelConnectionStepRequestSchema,
   OnboardingStatusSchema,
   type OnboardingStatus,
 } from '@veduta/protocol'
 import { z } from 'zod'
 import { ImportRefusedError, type ImportConnectionSink } from './import-apply.ts'
 import { sendModelConnectionError } from './model-connection-routes.ts'
-import { applyByok, testProviderKey } from './onboarding-step-byok.ts'
+import type { SecretResolver } from './model-routing.ts'
 import { confirmDomain } from './onboarding-step-domain.ts'
 import { applyFinish } from './onboarding-step-finish.ts'
 import { applyFirstSpace } from './onboarding-step-first-space.ts'
@@ -29,7 +26,7 @@ import {
   runLegacyImport,
   type MigrationImportDeps,
 } from './onboarding-step-migration.ts'
-import { applyModels } from './onboarding-step-models.ts'
+import { applyModelConnectionStep } from './onboarding-step-model-connection.ts'
 import {
   buildOnboardingStatus,
   OnboardingStepError,
@@ -44,8 +41,7 @@ import type { SpacesEngine } from './spaces-engine.ts'
  * `buildServer` and threaded through here rather than reopened —
  * two `SecretsVault` instances writing the same file would race.
  * `scheduleExit` is `applyFinish`'s injectable graceful-exit hook (VPS and
- * Local VPS profiles only); `fetchImpl` lets tests stub the BYOK key check
- * without a real network call.
+ * Local VPS profiles only).
  */
 export interface OnboardingRoutesDeps {
   rootDir: string
@@ -65,7 +61,13 @@ export interface OnboardingRoutesDeps {
   spacesEngine: SpacesEngine
   env: NodeJS.ProcessEnv
   scheduleExit: () => void
-  fetchImpl?: typeof fetch
+  /**
+   * Fed to `assertModelConnectionReady`/`applyModelConnectionStep` (issue
+   * #47) and to `applyFinish`'s own last-check call to the same gate — the
+   * exact resolver the router itself uses, so "does a stored key actually
+   * resolve" never disagrees between the wizard step and a live turn.
+   */
+  secrets: SecretResolver
   /**
    * Threaded through to the migration import routes (issue #47): reconciles
    * an imported provider key into a visible Model connection before the
@@ -229,45 +231,30 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingR
     return currentStatus(deps)
   })
 
-  app.post('/api/onboarding/byok/test', async (request, reply) => {
-    const parsed = ByokTestRequestSchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
+  // The three routes the `model-connection` step replaced (issue #47,
+  // `docs/adr/0014-subscription-inference-boundary.md` amendment): a stale
+  // browser tab left open across the upgrade gets an actionable 410 instead
+  // of a raw 404 or a schema-validation crash. `api.ts`'s `postJson` throws
+  // `ReloadRequiredError` on exactly this status, so the wizard shell can
+  // render a Reload button rather than a generic failed-request message.
+  const RELOAD_MESSAGE =
+    'this onboarding step was replaced by Model connections; reload the app to continue'
+  for (const path of [
+    '/api/onboarding/byok/test',
+    '/api/onboarding/byok',
+    '/api/onboarding/models',
+  ]) {
+    app.post(path, (_request, reply) => reply.status(410).send({ error: RELOAD_MESSAGE }))
+  }
 
-    let key: string
-    if (parsed.data.key !== undefined) {
-      key = parsed.data.key
-    } else {
-      // Keep-existing sentinel: test whatever key is already
-      // stored for this provider instead of requiring it be resubmitted.
-      const stored = deps.vault?.resolve(`secret://vault/${parsed.data.provider}`)
-      if (stored === undefined) {
-        return reply.status(400).send({
-          error: `no stored key for ${parsed.data.provider}; submit a key to test, or store one first`,
-        })
-      }
-      key = stored
-    }
-
-    const result = await testProviderKey(parsed.data.provider, key, deps.fetchImpl ?? fetch)
-    return ByokTestResponseSchema.parse({ result })
-  })
-
-  app.post('/api/onboarding/byok', (request, reply) => {
-    const parsed = ByokApplyRequestSchema.safeParse(request.body)
+  app.post('/api/onboarding/model-connection', (request, reply) => {
+    const parsed = ModelConnectionStepRequestSchema.safeParse(request.body)
     if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
     try {
-      applyByok({ rootDir: deps.rootDir, vault: deps.vault }, parsed.data)
-    } catch (error) {
-      return sendStepError(reply, error)
-    }
-    return currentStatus(deps)
-  })
-
-  app.post('/api/onboarding/models', (request, reply) => {
-    const parsed = ModelsApplyRequestSchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
-    try {
-      applyModels(deps.rootDir, parsed.data.tiers)
+      applyModelConnectionStep(
+        { rootDir: deps.rootDir, profile: deps.profile, secrets: deps.secrets },
+        parsed.data,
+      )
     } catch (error) {
       return sendStepError(reply, error)
     }
@@ -308,6 +295,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingR
         profile: deps.profile,
         scheduleExit: deps.scheduleExit,
         env: deps.env,
+        secrets: deps.secrets,
       })
       return FinishResponseSchema.parse(result)
     } catch (error) {

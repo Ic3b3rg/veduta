@@ -2,9 +2,8 @@ import { fromPartial } from '@total-typescript/shoehorn'
 import type { OnboardingStatus, OnboardingStepId, OnboardingStepStatus } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import {
-  byokKeepExistingAvailable,
   currentStep,
-  defaultTierSelections,
+  homeBlockedByStatusFailure,
   isStepDone,
   stepIndicator,
   visibleSteps,
@@ -14,8 +13,7 @@ import {
 const ALL_STEP_IDS: OnboardingStepId[] = [
   'migration',
   'domain',
-  'byok',
-  'models',
+  'model-connection',
   'first-space',
   'integrations',
   'finish',
@@ -37,19 +35,11 @@ function buildStatus(overrides: Partial<OnboardingStatus> = {}): OnboardingStatu
     steps: stepList(ALL_STEP_IDS.filter((id) => id !== 'migration')),
     legacy: { openclaw: false, hermes: false },
     domain: { domain: 'example.com', tlsActive: true },
-    byok: {
+    modelConnection: {
       vaultAvailable: true,
-      providers: [
-        { provider: 'anthropic', hasKey: false },
-        { provider: 'openai', hasKey: false },
-        { provider: 'openrouter', hasKey: false },
-      ],
-    },
-    models: {
-      tiers: {
-        triage: [{ provider: 'anthropic', modelId: 'claude-haiku' }],
-        reasoning: [{ provider: 'anthropic', modelId: 'claude-sonnet' }],
-      },
+      connectedCount: 0,
+      hasSelection: false,
+      mockEnabled: false,
     },
     firstSpace: { suggestedName: 'Home', existingSpaces: [] },
     integrations: {
@@ -77,8 +67,8 @@ describe('visibleSteps', () => {
 
 describe('currentStep (resume)', () => {
   it('trusts status.currentStep when present', () => {
-    const status = buildStatus({ currentStep: 'byok' })
-    expect(currentStep(status)).toBe('byok')
+    const status = buildStatus({ currentStep: 'model-connection' })
+    expect(currentStep(status)).toBe('model-connection')
   })
 
   it('falls back to the first pending step when currentStep is null', () => {
@@ -86,14 +76,13 @@ describe('currentStep (resume)', () => {
       currentStep: null,
       steps: [
         { id: 'domain', status: 'completed' },
-        { id: 'byok', status: 'completed' },
-        { id: 'models', status: 'pending' },
+        { id: 'model-connection', status: 'completed' },
         { id: 'first-space', status: 'pending' },
         { id: 'integrations', status: 'pending' },
         { id: 'finish', status: 'pending' },
       ],
     })
-    expect(currentStep(status)).toBe('models')
+    expect(currentStep(status)).toBe('first-space')
   })
 
   it('returns null when every step is done and currentStep is null', () => {
@@ -115,14 +104,13 @@ describe('stepIndicator', () => {
       currentStep: null,
       steps: [
         { id: 'domain', status: 'completed' },
-        { id: 'byok', status: 'completed' },
-        { id: 'models', status: 'pending' },
+        { id: 'model-connection', status: 'completed' },
         { id: 'first-space', status: 'pending' },
         { id: 'integrations', status: 'pending' },
         { id: 'finish', status: 'pending' },
       ],
     })
-    expect(stepIndicator(status)).toEqual({ index: 3, total: 6 })
+    expect(stepIndicator(status)).toEqual({ index: 3, total: 5 })
   })
 
   it('reports index past the end when the wizard is fully done', () => {
@@ -140,14 +128,13 @@ describe('stepIndicator', () => {
       steps: [
         { id: 'migration', status: 'completed' },
         { id: 'domain', status: 'pending' },
-        { id: 'byok', status: 'pending' },
-        { id: 'models', status: 'pending' },
+        { id: 'model-connection', status: 'pending' },
         { id: 'first-space', status: 'pending' },
         { id: 'integrations', status: 'pending' },
         { id: 'finish', status: 'pending' },
       ],
     })
-    expect(stepIndicator(status)).toEqual({ index: 2, total: 7 })
+    expect(stepIndicator(status)).toEqual({ index: 2, total: 6 })
   })
 })
 
@@ -156,16 +143,15 @@ describe('isStepDone', () => {
     const status = buildStatus({
       steps: [
         { id: 'domain', status: 'completed' },
-        { id: 'byok', status: 'skipped' },
-        { id: 'models', status: 'pending' },
+        { id: 'model-connection', status: 'skipped' },
         { id: 'first-space', status: 'pending' },
         { id: 'integrations', status: 'pending' },
         { id: 'finish', status: 'pending' },
       ],
     })
     expect(isStepDone(status, 'domain')).toBe(true)
-    expect(isStepDone(status, 'byok')).toBe(true)
-    expect(isStepDone(status, 'models')).toBe(false)
+    expect(isStepDone(status, 'model-connection')).toBe(true)
+    expect(isStepDone(status, 'first-space')).toBe(false)
   })
 
   it('is false for a step id absent from status.steps (e.g. migration when not offered)', () => {
@@ -174,36 +160,50 @@ describe('isStepDone', () => {
   })
 })
 
-describe('byokKeepExistingAvailable', () => {
-  it('is true only when the provider already has a stored key', () => {
-    const status = buildStatus({
-      byok: {
-        vaultAvailable: true,
-        providers: [
-          { provider: 'anthropic', hasKey: true },
-          { provider: 'openai', hasKey: false },
-          { provider: 'openrouter', hasKey: false },
-        ],
-      },
-    })
-    expect(byokKeepExistingAvailable(status, 'anthropic')).toBe(true)
-    expect(byokKeepExistingAvailable(status, 'openai')).toBe(false)
+describe('homeBlockedByStatusFailure', () => {
+  it('blocks Home on production when the onboarding status fetch failed', () => {
+    expect(
+      homeBlockedByStatusFailure({
+        authMode: 'production',
+        hasToken: true,
+        onboardingLoad: 'error',
+      }),
+    ).toBe(true)
   })
 
-  it('is false for a provider missing from status.byok.providers', () => {
-    const status = buildStatus({ byok: { vaultAvailable: true, providers: [] } })
-    expect(byokKeepExistingAvailable(status, 'anthropic')).toBe(false)
+  it('blocks Home when auth mode is not yet known but a token is already stored (a stale reload)', () => {
+    expect(
+      homeBlockedByStatusFailure({ authMode: undefined, hasToken: true, onboardingLoad: 'error' }),
+    ).toBe(true)
   })
-})
 
-describe('defaultTierSelections', () => {
-  it('passes through the daemon-reported tier assignments unchanged', () => {
-    const tiers = {
-      triage: [{ provider: 'openai', modelId: 'gpt-mini' }],
-      reasoning: [{ provider: 'openai', modelId: 'gpt-strong' }],
-    }
-    const status = buildStatus({ models: { tiers } })
-    expect(defaultTierSelections(status)).toEqual(tiers)
+  it('still fails open on loopback dev auth', () => {
+    expect(
+      homeBlockedByStatusFailure({ authMode: 'dev', hasToken: false, onboardingLoad: 'error' }),
+    ).toBe(false)
+  })
+
+  it('fails open when auth mode is unknown and no token is stored', () => {
+    expect(
+      homeBlockedByStatusFailure({ authMode: undefined, hasToken: false, onboardingLoad: 'error' }),
+    ).toBe(false)
+  })
+
+  it('never blocks Home while the status is loading or already ready', () => {
+    expect(
+      homeBlockedByStatusFailure({
+        authMode: 'production',
+        hasToken: true,
+        onboardingLoad: 'loading',
+      }),
+    ).toBe(false)
+    expect(
+      homeBlockedByStatusFailure({
+        authMode: 'production',
+        hasToken: true,
+        onboardingLoad: 'ready',
+      }),
+    ).toBe(false)
   })
 })
 
@@ -220,8 +220,9 @@ describe('WIZARD_STEP_META completeness', () => {
     expect(WIZARD_STEP_META.domain.description).toContain('systemctl edit veduta')
   })
 
-  it('byok skip-consequence copy states the exact vault CLI command', () => {
-    expect(WIZARD_STEP_META.byok.description).toContain('vault set')
+  it("model-connection copy states that Veduta keeps the Agent loop and data on the user's server", () => {
+    expect(WIZARD_STEP_META['model-connection'].description).toContain('Agent loop')
+    expect(WIZARD_STEP_META['model-connection'].description).toContain('your server')
   })
 
   it('integrations copy states the exact Google Cloud console URL and gcloud pubsub commands', () => {

@@ -77,18 +77,18 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       expect(body.mode).toBe('production')
     })
 
-    await test.step('walk the onboarding wizard with defaults (domain, byok, models, first-space, integrations)', async () => {
+    await test.step('walk the onboarding wizard with defaults (domain, model connection, first-space, integrations)', async () => {
       await expect(page.getByRole('heading', { name: 'Set up Veduta' })).toBeVisible()
 
       // Domain: read-only for the Local VPS profile, just confirm.
       await page.getByRole('button', { name: 'Continue' }).click()
 
-      // BYOK: mock provider stays in place -- skip.
-      await expect(page.getByRole('button', { name: 'Skip' })).toBeVisible()
-      await page.getByRole('button', { name: 'Skip' }).click()
-
-      // Models: sensible defaults are pre-selected already.
-      await page.getByRole('button', { name: 'Save & continue' }).click()
+      // Model connection: no real connection -- tick the Local VPS
+      // development-only mock control, then Continue (issue #47).
+      await expect(page.getByLabel(/built-in mock provider/i)).toBeVisible()
+      await page.getByLabel(/built-in mock provider/i).check()
+      await expect(page.getByRole('button', { name: 'Continue' })).toBeEnabled()
+      await page.getByRole('button', { name: 'Continue' }).click()
 
       // First Space: keep the suggested name.
       await page.getByRole('button', { name: 'Create' }).click()

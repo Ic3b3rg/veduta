@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
-  ByokProviderSchema,
   InstallerStageEventSchema,
   type InstallerStageEvent,
   type LegacyDetection,
@@ -10,9 +9,9 @@ import {
   type OnboardingStepId,
   type Space,
 } from '@veduta/protocol'
+import { loadConnectionsConfig } from './connections-config.ts'
 import { OPENCLAW_ALIASES } from './import-source.ts'
 import { loadIngestionConfig } from './ingestion-config.ts'
-import { loadRoutingConfig } from './model-routing.ts'
 import { loadOnboardingConfig } from './onboarding-config.ts'
 import type { SecretsVault } from './secrets-vault.ts'
 
@@ -20,20 +19,17 @@ import type { SecretsVault } from './secrets-vault.ts'
  * The wizard's canonical step order. `migration` is filtered out of the *visible* set by
  * `buildOnboardingStatus` when no legacy install is detected — this array
  * itself always lists every step so callers have one source of truth for
- * ordering.
+ * ordering. `byok`/`models` collapsed into the single `model-connection` step
+ * (issue #47, `docs/adr/0014-subscription-inference-boundary.md`).
  */
 export const ONBOARDING_STEP_ORDER: OnboardingStepId[] = [
   'migration',
   'domain',
-  'byok',
-  'models',
+  'model-connection',
   'first-space',
   'integrations',
   'finish',
 ]
-
-/** Derived from the protocol schema (fix from code review) so a new BYOK provider only ever needs adding in one place. */
-const BYOK_PROVIDERS = ByokProviderSchema.options
 
 /**
  * Scans `home` for a legacy Hermes/OpenClaw install (`~/.hermes`,
@@ -203,7 +199,7 @@ export function buildOnboardingStatus(deps: OnboardingStatusDeps): OnboardingSta
 
   const installer = readInstallerSummary(deps.rootDir)
 
-  const routing = loadRoutingConfig(deps.rootDir)
+  const connectionsFile = loadConnectionsConfig(deps.rootDir)
   const ingestion = loadIngestionConfig(deps.rootDir)
 
   const existingSpaces = deps
@@ -225,14 +221,19 @@ export function buildOnboardingStatus(deps: OnboardingStatusDeps): OnboardingSta
     legacy,
     ...(installer === undefined ? {} : { installer }),
     domain: { domain: deps.domain, tlsActive: deps.tlsActive },
-    byok: {
+    // The `model-connection` step's resume state (issue #47, replacing the
+    // old `byok`/`models` fields): a plain count and booleans, computed
+    // directly from `connections.json` — no injected dependency, the same
+    // "read the config file directly" style `loadRoutingConfig`/
+    // `loadIngestionConfig` already use just above.
+    modelConnection: {
       vaultAvailable: deps.vault !== undefined,
-      providers: BYOK_PROVIDERS.map((provider) => ({
-        provider,
-        hasKey: deps.vault?.has(provider) ?? false,
-      })),
+      connectedCount: connectionsFile.connections.filter(
+        (connection) => connection.state === 'connected',
+      ).length,
+      hasSelection: connectionsFile.selection !== undefined,
+      mockEnabled: connectionsFile.mockEnabled,
     },
-    models: { tiers: routing.tiers },
     firstSpace: {
       suggestedName: config.firstSpace?.name ?? 'Personal',
       existingSpaces,

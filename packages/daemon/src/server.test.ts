@@ -15,7 +15,7 @@ import { AuthStore, type PasskeyRelyingParty, type StoredPasskey } from './auth-
 import { NoAvailableModelError, loadRoutingConfig } from './model-routing.ts'
 import { NOTIFICATION_SETTINGS_SURFACE_ID } from './notification-settings-surface.ts'
 import { NotificationsConfigSchema, saveNotificationsConfig } from './notifications-config.ts'
-import { applyByok } from './onboarding-step-byok.ts'
+import { storeProviderKey } from './provider-api-key.ts'
 import { reflectionSurfaceId } from './reflection-surface.ts'
 import { SecretsVault } from './secrets-vault.ts'
 import { buildServer } from './server.ts'
@@ -326,19 +326,14 @@ describe('AC4: switching mock -> real provider is configuration only (issue 023)
     const keyMaterial = Buffer.from('a test key material, long enough for scrypt')
     process.env['VEDUTA_VAULT_KEY'] = keyMaterial.toString('utf8')
     try {
-      // Drive the BYOK apply path directly (`onboarding-step-byok.ts`'s
-      // `applyByok`) rather than through `POST /api/onboarding/byok`:
-      // `buildServer`'s `ServerOptions` has no `fetchImpl` seam for the
-      // onboarding routes it wires up (only `registerOnboardingRoutes`
-      // called directly, as `onboarding-routes.test.ts` does, accepts one),
-      // and `applyByok` itself never calls `fetchImpl` — only the separate
-      // `/byok/test` key check does — so this reaches the exact production
-      // code path with no network involved.
+      // Drive the legacy key-storage path directly (`provider-api-key.ts`'s
+      // `storeProviderKey`, the exact mechanism the old `/api/onboarding/byok`
+      // route used before issue #47's Model connections swap) rather than
+      // through the daemon's own onboarding routes: this reaches the exact
+      // production code path — vault write plus `routing.json`'s legacy
+      // `providerKeys` pointer — with no network involved.
       const vault = SecretsVault.open(dataDir, keyMaterial)
-      applyByok(
-        { rootDir: dataDir, vault },
-        { provider: 'anthropic', key: 'sk-real-anthropic-key' },
-      )
+      storeProviderKey({ rootDir: dataDir, vault }, 'anthropic', 'sk-real-anthropic-key')
 
       const routingAfterApply = loadRoutingConfig(dataDir)
       expect(routingAfterApply.providerKeys['anthropic']).toBe('secret://vault/anthropic')
@@ -385,13 +380,10 @@ describe('AC4: switching mock -> real provider is configuration only (issue 023)
     process.env['VEDUTA_VAULT_KEY'] = keyMaterial.toString('utf8')
     try {
       // A pre-Model-connections install: a real key in `routing.json`'s
-      // `providerKeys` via the legacy BYOK apply path, no `connections.json`
+      // `providerKeys` via the legacy key-storage path, no `connections.json`
       // at all yet.
       const vault = SecretsVault.open(dataDir, keyMaterial)
-      applyByok(
-        { rootDir: dataDir, vault },
-        { provider: 'anthropic', key: 'sk-real-anthropic-key' },
-      )
+      storeProviderKey({ rootDir: dataDir, vault }, 'anthropic', 'sk-real-anthropic-key')
       expect(existsSync(join(dataDir, 'connections.json'))).toBe(false)
 
       // Boot runs `reconcileByokConnections` before the router/bridge exist

@@ -2,7 +2,6 @@ import {
   AuthorizeModelConnectionResponseSchema,
   AuthSessionSchema,
   AuthStatusSchema,
-  ByokTestResponseSchema,
   FinishResponseSchema,
   GatewayServerMessageSchema,
   ImportApplyResponseSchema,
@@ -21,9 +20,6 @@ import {
   type AuthorizeModelConnectionResponse,
   type AuthSession,
   type AuthStatus,
-  type ByokApplyRequest,
-  type ByokTestRequest,
-  type ByokTestResponse,
   type CreateModelConnectionRequest,
   type FinishResponse,
   type FirstSpaceRequest,
@@ -39,7 +35,7 @@ import {
   type ModelConnection,
   type ModelConnectionCatalogResponse,
   type ModelConnectionsSnapshot,
-  type ModelsApplyRequest,
+  type ModelConnectionStepRequest,
   type OnboardingStatus,
   type Surface,
   type SurfaceArchivedEvent,
@@ -174,25 +170,22 @@ export async function confirmDomainStep(token?: string): Promise<OnboardingStatu
   return OnboardingStatusSchema.parse(await postJson('/api/onboarding/domain', {}, token))
 }
 
-export async function testByokKey(
-  request: ByokTestRequest,
-  token?: string,
-): Promise<ByokTestResponse> {
-  return ByokTestResponseSchema.parse(await postJson('/api/onboarding/byok/test', request, token))
-}
-
-export async function applyByokStep(
-  request: ByokApplyRequest,
-  token?: string,
-): Promise<OnboardingStatus> {
-  return OnboardingStatusSchema.parse(await postJson('/api/onboarding/byok', request, token))
-}
-
-export async function applyModelsStep(
-  tiers: ModelsApplyRequest['tiers'],
+/**
+ * `POST /api/onboarding/model-connection` (issue #47, replacing the old
+ * `applyByokStep`/`applyModelsStep`): completes the wizard's single Model
+ * connection step. Every connect/authorize/verify/select action itself
+ * happens through the `/api/model-connections/*` helpers below —
+ * `wizard-step-model-connection.tsx` calls this only once, to advance past
+ * the step, with `useMock` set when the Local VPS development mock checkbox
+ * is on.
+ */
+export async function applyModelConnectionStep(
+  request: ModelConnectionStepRequest,
   token?: string,
 ): Promise<OnboardingStatus> {
-  return OnboardingStatusSchema.parse(await postJson('/api/onboarding/models', { tiers }, token))
+  return OnboardingStatusSchema.parse(
+    await postJson('/api/onboarding/model-connection', request, token),
+  )
 }
 
 export async function applyFirstSpaceStep(

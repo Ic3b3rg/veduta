@@ -1,17 +1,16 @@
-import type { ByokProvider, ImportSourceKind, OnboardingStatus } from '@veduta/protocol'
+import type { ImportSourceKind, OnboardingStatus } from '@veduta/protocol'
 import { useState } from 'react'
 import {
-  applyByokStep,
   applyFirstSpaceStep,
   applyIntegrationsStep,
-  applyModelsStep,
+  applyModelConnectionStep,
   confirmDomainStep,
   fetchAuthStatus,
   finishOnboarding,
   previewLegacyImport,
+  ReloadRequiredError,
   runLegacyImport,
   submitMigrationChoice,
-  testByokKey,
 } from './api.ts'
 import { startMigrationPreview, type MigrationPreviewState } from './import-preview-state.ts'
 import {
@@ -21,13 +20,12 @@ import {
   visibleSteps,
   WIZARD_STEP_META,
 } from './onboarding-state.ts'
-import { WizardStepByok } from './wizard-step-byok.tsx'
 import { WizardStepDomain } from './wizard-step-domain.tsx'
 import { WizardStepFinish } from './wizard-step-finish.tsx'
 import { WizardStepFirstSpace } from './wizard-step-first-space.tsx'
 import { WizardStepIntegrations } from './wizard-step-integrations.tsx'
 import { WizardStepMigration } from './wizard-step-migration.tsx'
-import { WizardStepModels } from './wizard-step-models.tsx'
+import { WizardStepModelConnection } from './wizard-step-model-connection.tsx'
 
 interface FinishState {
   submitted: boolean
@@ -57,6 +55,11 @@ export function OnboardingWizard({
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
+  // Set only by `ReloadRequiredError` (issue #47): a stale tab called one of
+  // the three onboarding routes the Model connections swap removed. Renders
+  // instead of the normal error banner, with a Reload button, since no
+  // retry of the same request can ever succeed.
+  const [reloadMessage, setReloadMessage] = useState<string | undefined>(undefined)
   const [finishState, setFinishState] = useState<FinishState>({
     submitted: false,
     restarting: false,
@@ -78,6 +81,10 @@ export function OnboardingWizard({
     try {
       onStatus(await fn())
     } catch (e) {
+      if (e instanceof ReloadRequiredError) {
+        setReloadMessage(e.message)
+        return
+      }
       setError(e instanceof Error ? e.message : 'request failed')
     } finally {
       setBusy(false)
@@ -242,88 +249,93 @@ export function OnboardingWizard({
           })}
         </ol>
 
-        {active === 'migration' && (
-          <WizardStepMigration
-            status={status}
-            busy={busy}
-            error={error}
-            onChoice={(choice) => void run(() => submitMigrationChoice(choice, token))}
-            preview={migrationPreview}
-            onPreview={(source) => void runMigrationPreview(source, false)}
-            onOverwriteChange={onMigrationOverwriteChange}
-            onApply={(source, overwrite) => void onMigrationApply(source, overwrite)}
-            onContinue={onMigrationContinue}
-          />
-        )}
-        {active === 'domain' && (
-          <WizardStepDomain
-            status={status}
-            busy={busy}
-            error={error}
-            onConfirm={() => void run(() => confirmDomainStep(token))}
-          />
-        )}
-        {active === 'byok' && (
-          <WizardStepByok
-            status={status}
-            busy={busy}
-            error={error}
-            onTest={(provider: ByokProvider, key?: string) =>
-              testByokKey({ provider, ...(key === undefined ? {} : { key }) }, token)
-            }
-            onApply={(request) => void run(() => applyByokStep(request, token))}
-          />
-        )}
-        {active === 'models' && (
-          <WizardStepModels
-            status={status}
-            busy={busy}
-            error={error}
-            onApply={(tiers) => void run(() => applyModelsStep(tiers, token))}
-          />
-        )}
-        {active === 'first-space' && (
-          <WizardStepFirstSpace
-            status={status}
-            busy={busy}
-            error={error}
-            onApply={(request) => void run(() => applyFirstSpaceStep(request, token))}
-          />
-        )}
-        {active === 'integrations' && (
-          <WizardStepIntegrations
-            status={status}
-            busy={busy}
-            error={error}
-            onApply={(request) => void run(() => applyIntegrationsStep(request, token))}
-          />
-        )}
-        {active === 'finish' && (
-          <WizardStepFinish
-            profile={status.profile}
-            busy={busy}
-            error={error}
-            submitted={finishState.submitted}
-            restarting={finishState.restarting}
-            restartRequired={finishState.restartRequired}
-            restartTimedOut={finishState.restartTimedOut}
-            onFinish={() => void onFinish()}
-            onEnterHome={onCompleted}
-            onRetryRestart={() => void onRetryRestart()}
-          />
-        )}
+        {reloadMessage !== undefined ? (
+          <div className="wizard-step-form">
+            <p className="error" role="alert">
+              {reloadMessage}
+            </p>
+            <div className="wizard-actions">
+              <button type="button" onClick={() => window.location.reload()}>
+                Reload
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {active === 'migration' && (
+              <WizardStepMigration
+                status={status}
+                busy={busy}
+                error={error}
+                onChoice={(choice) => void run(() => submitMigrationChoice(choice, token))}
+                preview={migrationPreview}
+                onPreview={(source) => void runMigrationPreview(source, false)}
+                onOverwriteChange={onMigrationOverwriteChange}
+                onApply={(source, overwrite) => void onMigrationApply(source, overwrite)}
+                onContinue={onMigrationContinue}
+              />
+            )}
+            {active === 'domain' && (
+              <WizardStepDomain
+                status={status}
+                busy={busy}
+                error={error}
+                onConfirm={() => void run(() => confirmDomainStep(token))}
+              />
+            )}
+            {active === 'model-connection' && (
+              <WizardStepModelConnection
+                status={status}
+                token={token}
+                busy={busy}
+                error={error}
+                onContinue={(request) => void run(() => applyModelConnectionStep(request, token))}
+              />
+            )}
+            {active === 'first-space' && (
+              <WizardStepFirstSpace
+                status={status}
+                busy={busy}
+                error={error}
+                onApply={(request) => void run(() => applyFirstSpaceStep(request, token))}
+              />
+            )}
+            {active === 'integrations' && (
+              <WizardStepIntegrations
+                status={status}
+                busy={busy}
+                error={error}
+                onApply={(request) => void run(() => applyIntegrationsStep(request, token))}
+              />
+            )}
+            {active === 'finish' && (
+              <WizardStepFinish
+                profile={status.profile}
+                busy={busy}
+                error={error}
+                submitted={finishState.submitted}
+                restarting={finishState.restarting}
+                restartRequired={finishState.restartRequired}
+                restartTimedOut={finishState.restartTimedOut}
+                onFinish={() => void onFinish()}
+                onEnterHome={onCompleted}
+                onRetryRestart={() => void onRetryRestart()}
+              />
+            )}
 
-        {status.installer && (
-          <details className="wizard-installer-summary">
-            <summary>Installer report</summary>
-            <ul>
-              {status.installer.stages.map((stage) => (
-                <li key={stage.id}>
-                  {stage.title}: {stage.status}
-                </li>
-              ))}
-            </ul>
-          </details>
+            {status.installer && (
+              <details className="wizard-installer-summary">
+                <summary>Installer report</summary>
+                <ul>
+                  {status.installer.stages.map((stage) => (
+                    <li key={stage.id}>
+                      {stage.title}: {stage.status}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </>
         )}
       </div>
     </main>

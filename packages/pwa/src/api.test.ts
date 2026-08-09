@@ -59,12 +59,11 @@ function buildOnboardingStatus(): OnboardingStatus {
     steps: [],
     legacy: { openclaw: false, hermes: false },
     domain: { domain: null, tlsActive: false },
-    byok: { vaultAvailable: true, providers: [] },
-    models: {
-      tiers: {
-        triage: [{ provider: 'anthropic', modelId: 'claude-haiku' }],
-        reasoning: [{ provider: 'anthropic', modelId: 'claude-sonnet' }],
-      },
+    modelConnection: {
+      vaultAvailable: true,
+      connectedCount: 0,
+      hasSelection: false,
+      mockEnabled: false,
     },
     firstSpace: { suggestedName: 'Home', existingSpaces: [] },
     integrations: {

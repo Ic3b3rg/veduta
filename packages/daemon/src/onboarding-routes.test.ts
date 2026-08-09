@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fromPartial } from '@total-typescript/shoehorn'
 import {
   ImportApplyResponseSchema,
   ImportPlanSchema,
@@ -10,16 +9,15 @@ import {
 } from '@veduta/protocol'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { saveConnectionsConfig } from './connections-config.ts'
+import type { SecretResolver } from './model-routing.ts'
 import { saveOnboardingConfig } from './onboarding-config.ts'
 import { registerOnboardingRoutes, type OnboardingRoutesDeps } from './onboarding-routes.ts'
 import { SecretsVault } from './secrets-vault.ts'
 import { SpacesEngine } from './spaces-engine.ts'
 
 const KEY_MATERIAL = Buffer.from('a test key material, long enough for scrypt')
-const VALID_TIERS = {
-  triage: [{ provider: 'anthropic', modelId: 'claude-haiku' }],
-  reasoning: [{ provider: 'anthropic', modelId: 'claude-sonnet' }],
-}
+const noSecrets: SecretResolver = { resolve: () => undefined }
 
 let rootDir: string | undefined
 
@@ -50,8 +48,31 @@ function baseDeps(
     // which steps are visible.
     env: { VEDUTA_LEGACY_HOME: dir },
     scheduleExit: () => {},
+    secrets: noSecrets,
     ...overrides,
   }
+}
+
+/** A `connected` connection with a stored selection -- satisfies `assertModelConnectionReady` on every profile, including `vps`, where there is no development mock control to fall back on. */
+function connectAndSelectAnthropic(dir: string): void {
+  saveConnectionsConfig(dir, {
+    version: 1,
+    connections: [
+      {
+        id: 'anthropic',
+        method: 'anthropic-api-key',
+        provider: 'anthropic',
+        label: 'Claude',
+        state: 'connected',
+        stateAt: '2026-08-09T00:00:00.000Z',
+        enabledForFallback: false,
+        createdAt: '2026-08-09T00:00:00.000Z',
+        selectedModelId: 'claude-sonnet-5',
+      },
+    ],
+    selection: { connectionId: 'anthropic', modelId: 'claude-sonnet-5' },
+    mockEnabled: false,
+  })
 }
 
 function buildApp(deps: OnboardingRoutesDeps): FastifyInstance {
@@ -70,18 +91,6 @@ function buildStagedHermesFixture(dir: string): string {
   return stagedDir
 }
 
-function okResponse(status: number): Response {
-  return fromPartial<Response>({
-    status,
-    json: () => {
-      throw new Error('response body must never be read')
-    },
-    text: () => {
-      throw new Error('response body must never be read')
-    },
-  })
-}
-
 describe('GET /api/onboarding', () => {
   it('returns a status shape that parses with OnboardingStatusSchema', async () => {
     const dir = freshRoot()
@@ -95,7 +104,7 @@ describe('GET /api/onboarding', () => {
 })
 
 describe('onboarding wizard flow (loopback)', () => {
-  it('walks migration -> domain -> byok(skip) -> models -> first-space -> integrations(skip) -> finish, never scheduling exit', async () => {
+  it('walks migration -> domain -> model-connection -> first-space -> integrations(skip) -> finish, never scheduling exit', async () => {
     const dir = freshRoot()
     const scheduleExit = vi.fn()
     const app = buildApp(baseDeps(dir, { scheduleExit }))
@@ -110,19 +119,14 @@ describe('onboarding wizard flow (loopback)', () => {
     const domain = await app.inject({ method: 'POST', url: '/api/onboarding/domain', payload: {} })
     expect(domain.statusCode).toBe(200)
 
-    const byok = await app.inject({
+    // Loopback: the mock provider is automatic, so an empty body is enough
+    // to satisfy `assertModelConnectionReady` and complete the step.
+    const modelConnection = await app.inject({
       method: 'POST',
-      url: '/api/onboarding/byok',
-      payload: { skip: true },
+      url: '/api/onboarding/model-connection',
+      payload: {},
     })
-    expect(byok.statusCode).toBe(200)
-
-    const models = await app.inject({
-      method: 'POST',
-      url: '/api/onboarding/models',
-      payload: { tiers: VALID_TIERS },
-    })
-    expect(models.statusCode).toBe(200)
+    expect(modelConnection.statusCode).toBe(200)
 
     const firstSpace = await app.inject({
       method: 'POST',
@@ -159,16 +163,18 @@ describe('onboarding wizard flow (loopback)', () => {
     // The completion gate (code review fix) requires every other visible
     // step done first — pin every step here rather than exercising it
     // through the whole wizard, since that's what the flow test above does.
+    // The `vps` profile has no development mock control, so the Model
+    // connection readiness gate needs a real connected+selected fixture.
     saveOnboardingConfig(dir, {
       version: 1,
       steps: {
         domain: 'completed',
-        byok: 'skipped',
-        models: 'completed',
+        'model-connection': 'completed',
         'first-space': 'completed',
         integrations: 'skipped',
       },
     })
+    connectAndSelectAnthropic(dir)
     const scheduleExit = vi.fn()
     const app = buildApp(baseDeps(dir, { profile: 'vps', scheduleExit }))
 
@@ -186,12 +192,12 @@ describe('onboarding wizard flow (loopback)', () => {
       version: 1,
       steps: {
         domain: 'completed',
-        byok: 'skipped',
-        models: 'completed',
+        'model-connection': 'completed',
         'first-space': 'completed',
         integrations: 'skipped',
       },
     })
+    saveConnectionsConfig(dir, { version: 1, connections: [], mockEnabled: true })
     const scheduleExit = vi.fn()
     const app = buildApp(baseDeps(dir, { profile: 'local-vps', scheduleExit }))
 
@@ -208,107 +214,112 @@ describe('onboarding wizard flow (loopback)', () => {
     const app = buildApp(baseDeps(dir))
 
     await app.inject({ method: 'POST', url: '/api/onboarding/domain', payload: {} })
-    await app.inject({ method: 'POST', url: '/api/onboarding/byok', payload: { skip: true } })
+    await app.inject({ method: 'POST', url: '/api/onboarding/model-connection', payload: {} })
 
     const status = (
       await app.inject({ method: 'GET', url: '/api/onboarding' })
     ).json() as OnboardingStatus
-    expect(status.currentStep).toBe('models')
+    expect(status.currentStep).toBe('first-space')
 
     await app.close()
   })
 })
 
-describe('POST /api/onboarding/byok/test', () => {
-  it('valid: a stubbed 2xx maps to result "valid"', async () => {
+describe('the removed byok/models routes (issue #47: replaced by Model connections)', () => {
+  it.each([
+    ['/api/onboarding/byok/test', { provider: 'anthropic', key: 'sk-test-key' }],
+    ['/api/onboarding/byok', { skip: true }],
+    ['/api/onboarding/models', { tiers: {} }],
+  ])('POST %s returns 410 with a reload instruction', async (url, payload) => {
     const dir = freshRoot()
-    const fetchImpl = vi.fn().mockResolvedValue(okResponse(200))
-    const app = buildApp(baseDeps(dir, { fetchImpl }))
+    const app = buildApp(baseDeps(dir))
+
+    const res = await app.inject({ method: 'POST', url, payload })
+    expect(res.statusCode).toBe(410)
+    expect(res.json()).toEqual({
+      error: 'this onboarding step was replaced by Model connections; reload the app to continue',
+    })
+
+    await app.close()
+  })
+})
+
+describe('POST /api/onboarding/model-connection', () => {
+  it('completes the step on loopback with an empty body', async () => {
+    const dir = freshRoot()
+    const app = buildApp(baseDeps(dir))
 
     const res = await app.inject({
       method: 'POST',
-      url: '/api/onboarding/byok/test',
-      payload: { provider: 'anthropic', key: 'sk-test-key' },
+      url: '/api/onboarding/model-connection',
+      payload: {},
     })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ result: 'valid' })
+    const status = res.json() as OnboardingStatus
+    expect(status.steps.find((step) => step.id === 'model-connection')?.status).toBe('completed')
 
     await app.close()
   })
 
-  it('invalid: a stubbed 401 maps to result "invalid"', async () => {
+  it('refuses on the vps profile with no connected connection, and never completes the step', async () => {
     const dir = freshRoot()
-    const fetchImpl = vi.fn().mockResolvedValue(okResponse(401))
-    const app = buildApp(baseDeps(dir, { fetchImpl }))
+    const app = buildApp(baseDeps(dir, { profile: 'vps' }))
 
     const res = await app.inject({
       method: 'POST',
-      url: '/api/onboarding/byok/test',
-      payload: { provider: 'openai', key: 'sk-test-key' },
+      url: '/api/onboarding/model-connection',
+      payload: {},
     })
-    expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ result: 'invalid' })
-
-    await app.close()
-  })
-
-  it('key omitted with no stored key -> 400 with a clear message, never a fetch call', async () => {
-    const dir = freshRoot()
-    const fetchImpl = vi.fn()
-    const app = buildApp(baseDeps(dir, { fetchImpl }))
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/onboarding/byok/test',
-      payload: { provider: 'anthropic' },
-    })
-    expect(res.statusCode).toBe(400)
-    expect((res.json() as { error: string }).error).toContain('anthropic')
-    expect(fetchImpl).not.toHaveBeenCalled()
-
-    await app.close()
-  })
-
-  it('key omitted with a stored key -> tests the stored key (keep-existing sentinel)', async () => {
-    const dir = freshRoot()
-    const vault = SecretsVault.open(dir, KEY_MATERIAL)
-    vault.set('anthropic', 'sk-stored-key')
-    const fetchImpl = vi.fn().mockResolvedValue(okResponse(200))
-    const app = buildApp(baseDeps(dir, { vault, fetchImpl }))
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/onboarding/byok/test',
-      payload: { provider: 'anthropic' },
-    })
-    expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ result: 'valid' })
-    expect(fetchImpl).toHaveBeenCalledWith(
-      'https://api.anthropic.com/v1/models',
-      expect.objectContaining({
-        headers: { 'x-api-key': 'sk-stored-key', 'anthropic-version': '2023-06-01' },
-      }),
+    expect(res.statusCode).toBe(409)
+    expect((res.json() as { error: string }).error).toBe(
+      'connect a Model connection and select a model before continuing',
     )
 
     await app.close()
   })
-})
 
-describe('POST /api/onboarding/byok — vault dead end', () => {
-  it('submitting a key with no vault open -> 409 with the exact keyfile commands', async () => {
+  it('accepts useMock on local-vps and turns the development mock control on', async () => {
     const dir = freshRoot()
-    const app = buildApp(baseDeps(dir, { vault: undefined }))
+    const app = buildApp(baseDeps(dir, { profile: 'local-vps' }))
 
     const res = await app.inject({
       method: 'POST',
-      url: '/api/onboarding/byok',
-      payload: { provider: 'anthropic', key: 'sk-test-key' },
+      url: '/api/onboarding/model-connection',
+      payload: { useMock: true },
+    })
+    expect(res.statusCode).toBe(200)
+    expect((res.json() as OnboardingStatus).modelConnection.mockEnabled).toBe(true)
+
+    await app.close()
+  })
+
+  it('refuses useMock on vps with the exact message', async () => {
+    const dir = freshRoot()
+    const app = buildApp(baseDeps(dir, { profile: 'vps' }))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/onboarding/model-connection',
+      payload: { useMock: true },
     })
     expect(res.statusCode).toBe(409)
-    const body = res.json() as { error: string }
-    expect(body.error).toContain('VEDUTA_VAULT_KEYFILE')
-    expect(body.error).toContain('head -c 48 /dev/urandom')
-    expect(body.error).not.toContain('sk-test-key')
+    expect((res.json() as { error: string }).error).toBe(
+      'the development mock control is available only on the Local VPS profile',
+    )
+
+    await app.close()
+  })
+
+  it('an unknown body key -> 400 with zod issues', async () => {
+    const dir = freshRoot()
+    const app = buildApp(baseDeps(dir))
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/onboarding/model-connection',
+      payload: { skip: true },
+    })
+    expect(res.statusCode).toBe(400)
 
     await app.close()
   })
@@ -495,14 +506,13 @@ describe('bad request bodies', () => {
 })
 
 describe('POST /api/onboarding/finish — completion gate', () => {
-  it('finish with a pending byok step -> 409 naming byok, not a 500', async () => {
+  it('finish with a pending model-connection step -> 409 naming it, not a 500', async () => {
     const dir = freshRoot()
     saveOnboardingConfig(dir, {
       version: 1,
       steps: {
         domain: 'completed',
-        // byok left pending.
-        models: 'completed',
+        // model-connection left pending.
         'first-space': 'completed',
         integrations: 'skipped',
       },
@@ -511,7 +521,29 @@ describe('POST /api/onboarding/finish — completion gate', () => {
 
     const res = await app.inject({ method: 'POST', url: '/api/onboarding/finish', payload: {} })
     expect(res.statusCode).toBe(409)
-    expect((res.json() as { error: string }).error).toContain('byok')
+    expect((res.json() as { error: string }).error).toContain('model-connection')
+
+    await app.close()
+  })
+
+  it('vps: finish refuses until a Model connection is connected and selected, even with every other step done', async () => {
+    const dir = freshRoot()
+    saveOnboardingConfig(dir, {
+      version: 1,
+      steps: {
+        domain: 'completed',
+        'model-connection': 'completed',
+        'first-space': 'completed',
+        integrations: 'skipped',
+      },
+    })
+    const app = buildApp(baseDeps(dir, { profile: 'vps' }))
+
+    const res = await app.inject({ method: 'POST', url: '/api/onboarding/finish', payload: {} })
+    expect(res.statusCode).toBe(409)
+    expect((res.json() as { error: string }).error).toBe(
+      'connect a Model connection and select a model before continuing',
+    )
 
     await app.close()
   })
@@ -532,28 +564,25 @@ describe('POST /api/onboarding/finish — completion gate', () => {
 })
 
 describe('unexpected internal errors', () => {
-  it('a stubbed internal TypeError from a step module -> 500 with a generic message, never the internal text', async () => {
+  it('a corrupted connections.json -> 500 with a generic message, never the internal text', async () => {
     const dir = freshRoot()
-    // A vault double whose `.set` throws — simulates an unexpected internal
-    // failure (a bug), never a user-input problem, so this must map to a
-    // generic 500 and never echo the real error text (code review fix).
-    const vault = fromPartial<SecretsVault>({
-      has: () => false,
-      set: () => {
-        throw new TypeError('boom: an unexpected internal failure')
-      },
-    })
-    const app = buildApp(baseDeps(dir, { vault }))
+    // Simulates an unexpected internal failure (a bug or a hand-edited
+    // config), never a user-input problem, so this must map to a generic
+    // 500 and never echo the real error text (code review fix). `vps` so
+    // `applyModelConnectionStep` actually reads `connections.json` rather
+    // than short-circuiting on the loopback profile.
+    writeFileSync(join(dir, 'connections.json'), '{not json at all')
+    const app = buildApp(baseDeps(dir, { profile: 'vps' }))
 
     const res = await app.inject({
       method: 'POST',
-      url: '/api/onboarding/byok',
-      payload: { provider: 'anthropic', key: 'sk-test-key' },
+      url: '/api/onboarding/model-connection',
+      payload: {},
     })
     expect(res.statusCode).toBe(500)
     const body = res.json() as { error: string }
-    expect(body.error).not.toContain('boom')
-    expect(body.error).not.toContain('TypeError')
+    expect(body.error).not.toContain('invalid JSON')
+    expect(body.error).not.toContain('connections.json')
 
     await app.close()
   })

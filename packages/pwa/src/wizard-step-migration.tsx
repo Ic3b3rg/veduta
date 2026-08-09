@@ -31,8 +31,8 @@ const GROUP_LABELS: Record<ImportAction, string> = {
  * each previewed independently since the wire API takes exactly one source
  * per request. All fetch orchestration lives in the
  * shell (`onboarding-wizard.tsx`) -- this component only renders `preview`
- * and calls back into the handlers it is given, the same shape as
- * `WizardStepByok`'s `onTest`/`onApply`. "Migrate later" / "configure
+ * and calls back into the handlers it is given, the same on*-handler shape
+ * every other wizard step component uses. "Migrate later" / "configure
  * manually" stay available at any point up to and including a preview --
  * a user can defer after previewing, before Apply -- but not once a
  * successful result is on screen awaiting Continue (see below): recording

@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { saveConnectionsConfig } from './connections-config.ts'
+import type { SecretResolver } from './model-routing.ts'
 import { loadOnboardingConfig, saveOnboardingConfig } from './onboarding-config.ts'
 import { OnboardingStepError } from './onboarding-status.ts'
 import { applyFinish } from './onboarding-step-finish.ts'
@@ -18,22 +20,51 @@ function freshRoot(): string {
   return rootDir
 }
 
+const noSecrets: SecretResolver = { resolve: () => undefined }
+
 /**
  * Every visible step other than `finish` already completed/skipped, so
  * `applyFinish`'s completion gate lets the call through. `migration` is not
  * included: with no `legacy` recorded and `VEDUTA_LEGACY_HOME` pinned to a
  * clean temp dir (see `env` below), it is never part of the visible set.
+ * Also stamps a `connections.json` with the Local VPS development mock
+ * control on (issue #47): `assertModelConnectionReady`'s own last check
+ * needs a satisfied Model connection gate independent of the step statuses
+ * above it, and `mockEnabled` satisfies every profile these tests exercise
+ * (`loopback` never checks it; `local-vps` and `vps` fixtures below add
+ * their own connection instead where the mock control does not apply).
  */
 function completeAllPriorSteps(dir: string): void {
   saveOnboardingConfig(dir, {
     version: 1,
     steps: {
       domain: 'completed',
-      byok: 'skipped',
-      models: 'completed',
+      'model-connection': 'completed',
       'first-space': 'completed',
       integrations: 'skipped',
     },
+  })
+}
+
+/** A `connected` connection with a stored selection — satisfies `assertModelConnectionReady` on every profile, including `vps` where the mock control does not exist. */
+function connectAndSelectAnthropic(dir: string): void {
+  saveConnectionsConfig(dir, {
+    version: 1,
+    connections: [
+      {
+        id: 'anthropic',
+        method: 'anthropic-api-key',
+        provider: 'anthropic',
+        label: 'Claude',
+        state: 'connected',
+        stateAt: '2026-07-24T10:00:00.000Z',
+        enabledForFallback: false,
+        createdAt: '2026-07-24T10:00:00.000Z',
+        selectedModelId: 'claude-sonnet-5',
+      },
+    ],
+    selection: { connectionId: 'anthropic', modelId: 'claude-sonnet-5' },
+    mockEnabled: false,
   })
 }
 
@@ -47,6 +78,7 @@ describe('applyFinish', () => {
       profile: 'loopback',
       scheduleExit,
       env: { VEDUTA_LEGACY_HOME: dir },
+      secrets: noSecrets,
       now: () => new Date('2026-07-24T10:00:00.000Z'),
     })
 
@@ -61,12 +93,14 @@ describe('applyFinish', () => {
   it('vps: completes the step, saves the config, THEN calls scheduleExit, and reports restarting: true', () => {
     const dir = freshRoot()
     completeAllPriorSteps(dir)
+    connectAndSelectAnthropic(dir)
     let scheduleExitCalls = 0
 
     const response = applyFinish({
       rootDir: dir,
       profile: 'vps',
       env: { VEDUTA_LEGACY_HOME: dir },
+      secrets: noSecrets,
       scheduleExit: () => {
         // By the time scheduleExit runs, the config must already be durable.
         scheduleExitCalls += 1
@@ -82,12 +116,14 @@ describe('applyFinish', () => {
   it('local-vps: completes the step, saves the config, THEN calls scheduleExit, and reports restarting: true (issue 023: the Local VPS runner loop plays the systemd role)', () => {
     const dir = freshRoot()
     completeAllPriorSteps(dir)
+    saveConnectionsConfig(dir, { version: 1, connections: [], mockEnabled: true })
     let scheduleExitCalls = 0
 
     const response = applyFinish({
       rootDir: dir,
       profile: 'local-vps',
       env: { VEDUTA_LEGACY_HOME: dir },
+      secrets: noSecrets,
       scheduleExit: () => {
         // By the time scheduleExit runs, the config must already be durable.
         scheduleExitCalls += 1
@@ -110,6 +146,7 @@ describe('applyFinish', () => {
       profile: 'loopback',
       scheduleExit,
       env,
+      secrets: noSecrets,
       now: () => new Date('2026-07-24T10:00:00.000Z'),
     })
     applyFinish({
@@ -117,6 +154,7 @@ describe('applyFinish', () => {
       profile: 'loopback',
       scheduleExit,
       env,
+      secrets: noSecrets,
       now: () => new Date('2026-07-24T11:00:00.000Z'),
     })
 
@@ -125,14 +163,13 @@ describe('applyFinish', () => {
     expect(config.completedAt).toBe('2026-07-24T11:00:00.000Z')
   })
 
-  it('completion gate: a pending byok step throws an OnboardingStepError naming byok, with a 409 status code', () => {
+  it('completion gate: a pending model-connection step throws an OnboardingStepError naming it, with a 409 status code', () => {
     const dir = freshRoot()
     saveOnboardingConfig(dir, {
       version: 1,
       steps: {
         domain: 'completed',
-        // byok left pending.
-        models: 'completed',
+        // model-connection left pending.
         'first-space': 'completed',
         integrations: 'skipped',
       },
@@ -145,6 +182,7 @@ describe('applyFinish', () => {
         profile: 'loopback',
         scheduleExit: vi.fn(),
         env: { VEDUTA_LEGACY_HOME: dir },
+        secrets: noSecrets,
       })
       expect.fail('expected applyFinish to throw')
     } catch (error) {
@@ -153,7 +191,7 @@ describe('applyFinish', () => {
 
     expect(caught).toBeInstanceOf(OnboardingStepError)
     expect((caught as OnboardingStepError).statusCode).toBe(409)
-    expect((caught as OnboardingStepError).message).toContain('byok')
+    expect((caught as OnboardingStepError).message).toContain('model-connection')
     // Nothing was persisted: a rejected finish must not mark the wizard done.
     expect(loadOnboardingConfig(dir).steps.finish).toBeUndefined()
   })
@@ -164,8 +202,7 @@ describe('applyFinish', () => {
       version: 1,
       steps: {
         domain: 'completed',
-        byok: 'skipped',
-        models: 'completed',
+        'model-connection': 'skipped',
         'first-space': 'completed',
         integrations: 'skipped',
       },
@@ -178,7 +215,26 @@ describe('applyFinish', () => {
         profile: 'loopback',
         scheduleExit: vi.fn(),
         env: { VEDUTA_LEGACY_HOME: dir },
+        secrets: noSecrets,
       }),
     ).toThrow(/migration/)
+  })
+
+  it('refuses on vps until a Model connection is connected and selected, even with every other step completed', () => {
+    const dir = freshRoot()
+    completeAllPriorSteps(dir)
+    // No connections.json at all, and no legacy providerKeys resolve
+    // (noSecrets) -- the completion gate above passes (every OTHER step is
+    // done) but the Model connection readiness gate must still refuse.
+    expect(() =>
+      applyFinish({
+        rootDir: dir,
+        profile: 'vps',
+        scheduleExit: vi.fn(),
+        env: { VEDUTA_LEGACY_HOME: dir },
+        secrets: noSecrets,
+      }),
+    ).toThrow(OnboardingStepError)
+    expect(loadOnboardingConfig(dir).steps.finish).toBeUndefined()
   })
 })

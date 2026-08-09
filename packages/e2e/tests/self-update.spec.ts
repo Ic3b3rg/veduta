@@ -713,9 +713,12 @@ async function onboardMinimal(page: Page, stack: LocalVpsStack): Promise<void> {
 
   await expect(page.getByRole('heading', { name: 'Set up Veduta' })).toBeVisible()
   await page.getByRole('button', { name: 'Continue' }).click()
-  await expect(page.getByRole('button', { name: 'Skip' })).toBeVisible()
-  await page.getByRole('button', { name: 'Skip' }).click()
-  await page.getByRole('button', { name: 'Save & continue' }).click()
+  // Model connection (issue #47): no real connection -- tick the Local VPS
+  // development-only mock control, then Continue.
+  await expect(page.getByLabel(/built-in mock provider/i)).toBeVisible()
+  await page.getByLabel(/built-in mock provider/i).check()
+  await expect(page.getByRole('button', { name: 'Continue' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Continue' }).click()
   await page.getByRole('button', { name: 'Create' }).click()
   await expect(page.getByRole('button', { name: 'Skip' })).toBeVisible()
   await page.getByRole('button', { name: 'Skip' }).click()

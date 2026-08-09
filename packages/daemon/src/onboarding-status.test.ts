@@ -1,9 +1,9 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fromPartial } from '@total-typescript/shoehorn'
 import type { Space } from '@veduta/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
+import { saveConnectionsConfig } from './connections-config.ts'
 import { saveOnboardingConfig } from './onboarding-config.ts'
 import {
   ONBOARDING_STEP_ORDER,
@@ -85,8 +85,7 @@ describe('ONBOARDING_STEP_ORDER', () => {
     expect(ONBOARDING_STEP_ORDER).toEqual([
       'migration',
       'domain',
-      'byok',
-      'models',
+      'model-connection',
       'first-space',
       'integrations',
       'finish',
@@ -123,6 +122,32 @@ describe('buildOnboardingStatus: required matrix', () => {
     const status = buildOnboardingStatus(baseDeps(dir, { profile: 'local-vps' }))
     expect(status.required).toBe(false)
     expect(status.completed).toBe(true)
+  })
+
+  it('a legacy install whose finish step is completed still reports completed (issue #47: no retroactive lockout)', () => {
+    const dir = freshRoot()
+    // A file still shaped like a pre-issue-#47 install (byok/models step
+    // ids on disk): `loadOnboardingConfig`'s `migrateLegacyStepIds` handles
+    // this on load, but `finish: 'completed'` is untouched by that
+    // migration either way — written directly as JSON since
+    // `OnboardingConfigSchema`'s step enum no longer types `byok`/`models`.
+    writeFileSync(
+      join(dir, 'onboarding.json'),
+      JSON.stringify({
+        version: 1,
+        steps: {
+          domain: 'completed',
+          byok: 'completed',
+          models: 'completed',
+          'first-space': 'completed',
+          integrations: 'skipped',
+          finish: 'completed',
+        },
+      }),
+    )
+    const status = buildOnboardingStatus(baseDeps(dir, { profile: 'vps' }))
+    expect(status.completed).toBe(true)
+    expect(status.required).toBe(false)
   })
 
   it('loopback profile, incomplete wizard, no force -> not required', () => {
@@ -179,18 +204,21 @@ describe('buildOnboardingStatus: migration visibility', () => {
 })
 
 describe('buildOnboardingStatus: currentStep resume ordering', () => {
-  it('resumes at models when byok is already completed', () => {
-    const dir = freshRoot()
-    saveOnboardingConfig(dir, { version: 1, steps: { domain: 'completed', byok: 'completed' } })
-    const status = buildOnboardingStatus(baseDeps(dir))
-    expect(status.currentStep).toBe('models')
-  })
-
-  it('treats skipped steps as passed for resume purposes', () => {
+  it('resumes at first-space when model-connection is already completed', () => {
     const dir = freshRoot()
     saveOnboardingConfig(dir, {
       version: 1,
-      steps: { domain: 'completed', byok: 'skipped', models: 'completed' },
+      steps: { domain: 'completed', 'model-connection': 'completed' },
+    })
+    const status = buildOnboardingStatus(baseDeps(dir))
+    expect(status.currentStep).toBe('first-space')
+  })
+
+  it('treats a skipped model-connection step as passed for resume purposes', () => {
+    const dir = freshRoot()
+    saveOnboardingConfig(dir, {
+      version: 1,
+      steps: { domain: 'completed', 'model-connection': 'skipped' },
     })
     const status = buildOnboardingStatus(baseDeps(dir))
     expect(status.currentStep).toBe('first-space')
@@ -202,8 +230,7 @@ describe('buildOnboardingStatus: currentStep resume ordering', () => {
       version: 1,
       steps: {
         domain: 'completed',
-        byok: 'skipped',
-        models: 'completed',
+        'model-connection': 'skipped',
         'first-space': 'completed',
         integrations: 'skipped',
         finish: 'completed',
@@ -255,43 +282,61 @@ describe('buildOnboardingStatus: installer summary', () => {
   })
 })
 
-describe('buildOnboardingStatus: byok hasKey', () => {
-  it('vaultAvailable is false and every hasKey is false when no vault is open', () => {
+describe('buildOnboardingStatus: modelConnection resume state', () => {
+  it('vaultAvailable false, connectedCount 0, no selection, mock off with nothing on disk', () => {
     const dir = freshRoot()
     const status = buildOnboardingStatus(baseDeps(dir))
-    expect(status.byok.vaultAvailable).toBe(false)
-    expect(status.byok.providers).toEqual([
-      { provider: 'anthropic', hasKey: false },
-      { provider: 'openai', hasKey: false },
-      { provider: 'openrouter', hasKey: false },
-    ])
+    expect(status.modelConnection).toEqual({
+      vaultAvailable: false,
+      connectedCount: 0,
+      hasSelection: false,
+      mockEnabled: false,
+    })
   })
 
-  it('reflects hasKey from a real SecretsVault', () => {
+  it('vaultAvailable reflects an open vault regardless of connections.json', () => {
     const dir = freshRoot()
     const vault = SecretsVault.open(dir, KEY_MATERIAL)
-    vault.set('anthropic', 'sk-ant-test-key')
     const status = buildOnboardingStatus(baseDeps(dir, { vault }))
-    expect(status.byok.vaultAvailable).toBe(true)
-    expect(status.byok.providers).toEqual([
-      { provider: 'anthropic', hasKey: true },
-      { provider: 'openai', hasKey: false },
-      { provider: 'openrouter', hasKey: false },
-    ])
+    expect(status.modelConnection.vaultAvailable).toBe(true)
   })
 
-  it('reflects hasKey from a fromPartial vault double', () => {
+  it('counts only connected connections and reports a stored selection and mockEnabled', () => {
     const dir = freshRoot()
-    const vault = fromPartial<SecretsVault>({
-      has: (name: string) => name === 'openai',
-      resolve: () => undefined,
+    saveConnectionsConfig(dir, {
+      version: 1,
+      connections: [
+        {
+          id: 'anthropic',
+          method: 'anthropic-api-key',
+          provider: 'anthropic',
+          label: 'Claude',
+          state: 'connected',
+          stateAt: '2026-08-09T00:00:00.000Z',
+          enabledForFallback: false,
+          createdAt: '2026-08-09T00:00:00.000Z',
+        },
+        {
+          id: 'openai',
+          method: 'openai-api-key',
+          provider: 'openai',
+          label: 'OpenAI',
+          state: 'failed',
+          stateAt: '2026-08-09T00:00:00.000Z',
+          enabledForFallback: false,
+          createdAt: '2026-08-09T00:00:00.000Z',
+        },
+      ],
+      selection: { connectionId: 'anthropic', modelId: 'claude-sonnet-5' },
+      mockEnabled: true,
     })
-    const status = buildOnboardingStatus(baseDeps(dir, { vault }))
-    expect(status.byok.providers).toEqual([
-      { provider: 'anthropic', hasKey: false },
-      { provider: 'openai', hasKey: true },
-      { provider: 'openrouter', hasKey: false },
-    ])
+    const status = buildOnboardingStatus(baseDeps(dir))
+    expect(status.modelConnection).toEqual({
+      vaultAvailable: false,
+      connectedCount: 1,
+      hasSelection: true,
+      mockEnabled: true,
+    })
   })
 })
 
