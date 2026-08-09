@@ -2,7 +2,7 @@
 
 An operator guide for running Veduta's **Local VPS profile** -- a local execution profile that
 exercises the same core production flows as a real VPS deployment (real passkey/WebAuthn auth,
-BYOK or mock LLM routing, persistent configuration, egress enforcement, the full onboarding
+Model connections or mock LLM routing, persistent configuration, egress enforcement, the full onboarding
 wizard) on your own machine, with explicit local substitutes for VPS-only infrastructure. The
 decision and its rationale are in [docs/adr/0009-local-vps-profile.md](../docs/adr/0009-local-vps-profile.md);
 the acceptance criteria this profile satisfies are in
@@ -43,8 +43,9 @@ the runner's own exit code. Ctrl-C (SIGINT) or SIGTERM stops the daemon and the 
 2. Open that URL **in a browser** -- see the caveat below about `localhost` vs `127.0.0.1`.
 3. Register a passkey (WebAuthn). This is a real ceremony: your browser/OS/security key handles
    it exactly as it would against a real VPS.
-4. Walk the onboarding wizard: domain (read-only -- there is no public domain here), BYOK (skip
-   to keep the mock provider, or add a real key), models, first Space, integrations.
+4. Walk the onboarding wizard: domain (read-only -- there is no public domain here), Model
+   connection (tick the development-only mock checkbox to keep the mock provider, or connect a
+   real provider), first Space, integrations.
 5. Finish. The wizard's finish step makes the daemon exit `0` on purpose; the runner loop
    restarts it with the new configuration, and the wizard itself waits for the daemon to answer
    again before showing Home.
@@ -85,8 +86,8 @@ rm -rf ~/.veduta-local-vps   # or your --base-dir
 The last row used to be the odd one out: before the real Agent loop wiring (issue #37) landed,
 Local VPS ran a deterministic chat->Surface demo that the VPS profile did not. That is gone --
 every profile now routes every chat turn through `ModelRouter.execute`, landing on a real
-provider wherever BYOK resolves a key and on the same deterministic mock candidate everywhere
-else (loopback, Local VPS, and a keyless VPS alike).
+provider wherever a Model connection resolves a key and on the same deterministic mock candidate
+everywhere else (loopback, Local VPS, and a keyless VPS alike).
 
 ## The `localhost` caveat
 
@@ -97,8 +98,8 @@ the browser will refuse to match your registered passkey against it.
 ## Switching the provider: mock to real
 
 No flow change -- this is configuration only, the same shape as the VPS profile. **Prefer the
-wizard**: during onboarding, use the BYOK step (in the browser) to add a provider key instead of
-skipping it -- the key never touches argv or shell history.
+wizard**: during onboarding, use the Model connection step (in the browser) to add a provider key
+instead of skipping it -- the key never touches argv or shell history.
 
 Only if you need to set a key outside the wizard, the vault CLI works against the same data
 directory:
@@ -116,13 +117,13 @@ Either path points `routing.json`'s `providerKeys[name]` at `secret://vault/<nam
 configured for a tier, the router falls back to the keyless mock candidates (`withMockFallback`
 in `packages/daemon/src/model-routing.ts`) so triage/reasoning stay routable regardless.
 
-### BYOK smoke check (issue #37 AC7)
+### Model connection smoke check (issue #37 AC7)
 
 The manual acceptance check for the real Agent loop — deliberately not CI-gated because it
 spends real provider credit:
 
-1. Boot the profile and add a real provider key through the wizard's BYOK step (or the vault
-   CLI above), so `routing.json`'s reasoning tier resolves that provider.
+1. Boot the profile and add a real provider key through the wizard's Model connection step (or
+   the vault CLI above), so `routing.json`'s reasoning tier resolves that provider.
 2. Open a Space and send any chat message from the browser.
 3. Expect: a streamed reply renders token by token (the in-progress entry with the pulsing
    cursor), the final text lands in the chat log, the Space's Event log

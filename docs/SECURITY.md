@@ -37,6 +37,8 @@ If the user explicitly asks "read me the email", the text enters a turn marked u
 
 The daemon can contact **only declared hosts**: configured LLM providers, endpoints of active integrations, push service. Every tool declares the domains it uses; everything else is denied at the network level. A successful injection still has nowhere to exfiltrate to.
 
+The ChatGPT Model connection spawns a `codex app-server` child process that makes its own outbound connections (`auth.openai.com`, `chatgpt.com`, `api.openai.com`); the daemon's dispatcher cannot intercept them, the same class of exception as the web-push delivery path. The daemon never logs the child's stderr or payloads — only structured one-line diagnostics with byte counts. An operator who enforces egress at the host firewall must allow those hosts for the ChatGPT connection method, and may block them to disable it. OS-level sandboxing of the child process is out of scope for issue 047; the residual filesystem exposure is accepted and the child runs with a reduced environment from its own empty `CODEX_HOME` directory.
+
 ### 3.5 Hardened ingestion
 
 HMAC-validated webhooks (Hermes pattern); automatic, monitored renewal of Gmail/Calendar watches; per-source rate limiting; event deduplication; events that fail schema validation are discarded and logged, never "interpreted".
@@ -44,6 +46,8 @@ HMAC-validated webhooks (Hermes pattern); automatic, monitored renewal of Gmail/
 ## 4. Secrets
 
 API keys and OAuth tokens live in an **encrypted secrets vault** (key derived at boot); the agent and its contexts see only opaque references (`secret://provider/anthropic`), resolved by the trust layer at call time. No secret ever appears in LLM context, logs, the Event log, or plaintext backups. Import from OpenClaw/Hermes: secrets migrated only with an explicit flag (discipline learned from studying the repos).
+
+One documented deviation: the ChatGPT Model connection's OAuth credentials are owned by Codex itself inside a per-connection `CODEX_HOME` directory (mode `0700`) under the data root, because managed Codex login has no supported callback into an external vault. Encryption at rest for that directory is a deployment concern.
 
 ## 5. Audit and limits
 

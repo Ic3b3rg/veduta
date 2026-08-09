@@ -4,6 +4,11 @@ v1 deployment profile: self-hosted daemon on a **VPS with a public IP** (the mai
 
 Status: accepted
 
+## Amendments
+
+- [ADR-0014](0014-subscription-inference-boundary.md) replaces BYOK as the only real-model setup path with Model connections: subscription-backed and BYOK connections share one Gateway-owned boundary.
+- [ADR-0015](0015-vps-access-modes.md) separates the VPS profile from browser exposure. A VPS may use Public, Tunnel, or Tailnet access; a public domain is no longer an invariant of the profile.
+
 ## Considered Options
 
 - Hosted multi-tenant: rejected for v1 — costs that scale, liability for the most intimate data, multi-tenancy to architect from day one. The door stays open to a managed hosted offering as a future business model (the Nous/Chronos path).

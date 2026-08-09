@@ -41,11 +41,23 @@ The lightweight development profile (`pnpm dev`): loopback-only, no authenticati
 _Avoid_: dev mode, Local VPS profile (a different thing), test mode
 
 **VPS profile**:
-The v1 deployment profile: the daemon on a VPS with a public IP, automatic HTTPS/ACME, passkey auth, systemd supervision.
+The production deployment profile: the Gateway runs on a VPS with passkey authentication, hardened systemd supervision, persistent data, and self-updates. It does not imply public exposure; the installation chooses Public, Tunnel, or Tailnet access.
 _Avoid_: production mode, prod
 
+**Public access**:
+A VPS access mode in which the Gateway is reached through a stable public domain, binds to public interfaces, and manages HTTPS certificates through ACME. The domain is the WebAuthn origin and RP ID.
+_Avoid_: VPS profile (the execution profile supports more than one access mode), public profile
+
+**Tunnel access**:
+A VPS access mode in which the Gateway binds only to loopback and the browser reaches it through an SSH local forward at a stable `http://localhost:<port>` origin. It needs neither a public domain nor ACME; passkey authentication remains enabled.
+_Avoid_: Local VPS profile (a development profile), unauthenticated mode, SSH profile
+
+**Tailnet access**:
+A VPS access mode in which Tailscale Serve gives authorized tailnet devices a stable HTTPS origin while the Gateway remains bound to loopback. It supports browsers and phones without exposing a public port. Tailscale Funnel is not this mode and must never be enabled implicitly.
+_Avoid_: Tunnel access (device-local SSH forwarding), public access, Tailscale Funnel
+
 **Local VPS profile**:
-A local execution profile that exercises the same product flows as the VPS profile where possible: authentication, BYOK, persistent configuration, Gateway, PWA, Spaces, Surfaces, and real or mock model providers. User-visible flow parity is the invariant; local orchestration may differ, including Docker Compose. It replaces external VPS-only dependencies with explicit local substitutes.
+A local execution profile that exercises the same product flows as the VPS profile where possible: authentication, Model connections, persistent configuration, Gateway, PWA, Spaces, Surfaces, and real or mock model providers. User-visible flow parity is the invariant; local orchestration may differ, including Docker Compose. It replaces external VPS-only dependencies with explicit local substitutes.
 _Avoid_: dev mode, staging (unless it is a remote shared environment), production mode
 
 **Agent**:
@@ -63,6 +75,10 @@ _Avoid_: direct action, shortcut
 **Agent path**:
 A Surface action that requires judgment and goes through the Agent ("regenerate the plan").
 _Avoid_: semantic action (in code), slow path
+
+**Model connection**:
+A Gateway-wide configured route that lets the Agent use a model through either a provider subscription or BYOK. It is shared by every Space and supplies inference only; the Agent loop and its tools remain inside Veduta.
+_Avoid_: provider login (only one possible setup method), agent runtime
 
 **Automation**:
 A job or timer created by the Agent but visible to and switchable off by the user in the Space. Includes the one-shot timers armed on learned deadlines.
@@ -136,4 +152,5 @@ A ChannelAdapter to a messenger (Telegram/WhatsApp): quick input and notificatio
 _Avoid_: primary channel, bot (as a product)
 
 **BYOK**:
-The user brings their own LLM provider API keys; model routing (triage/reasoning tiers) is built on top.
+One Model connection method: the user supplies an LLM provider API key. A provider subscription is a different Model connection method.
+_Avoid_: subscription login, OAuth

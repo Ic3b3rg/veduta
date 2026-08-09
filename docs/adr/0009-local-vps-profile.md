@@ -1,6 +1,6 @@
 # Local VPS profile for production-like development
 
-Veduta keeps a `Local VPS profile` alongside `pnpm dev`: a local execution profile that aims for user-visible flow parity with the VPS profile, while allowing local orchestration such as Docker Compose and explicit substitutes for VPS-only infrastructure. This lets us test core production flows locally, including passkey login, BYOK or mock LLM routing, persistent config, Home, chat, Surfaces, and restarts, without freezing development on a real public deployment.
+Veduta keeps a `Local VPS profile` alongside `pnpm dev`: a local execution profile that aims for user-visible flow parity with the VPS profile, while allowing local orchestration such as Docker Compose and explicit substitutes for VPS-only infrastructure. This lets us test core production flows locally, including passkey login, Model connections or mock LLM routing (ADR-0014), persistent config, Home, chat, Surfaces, and restarts, without freezing development on a real public deployment.
 
 Status: accepted
 
