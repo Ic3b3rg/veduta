@@ -26,6 +26,13 @@ import { AuthStoreError, type AuthStore } from './auth-store.ts'
 import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import { chatToolRegistry as buildChatToolRegistry } from './chat-tool-registry.ts'
 import { createChatLoop } from './chat-loop.ts'
+import {
+  CodexSessionPool,
+  CODEX_BINARY_MISSING_REASON,
+  ensureCodexHome,
+  resolveCodexBinary,
+  spawnCodexAppServer,
+} from './codex-app-server.ts'
 import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
 import { loadConnectionsConfig, type ConnectionsFile } from './connections-config.ts'
 import { EgressPolicy, installEgressEnforcement } from './egress.ts'
@@ -46,8 +53,10 @@ import { createMockChatResponder } from './mock-chat-model.ts'
 import { mockReaderComplete } from './mock-provider.ts'
 import { createMockReflectionDistiller } from './mock-reflection-distiller.ts'
 import { createMockWorkerRunner, createMockWorkerReviewComplete } from './mock-worker-runner.ts'
+import { ModelConnectionError } from './model-connection-adapter.ts'
 import { BYOK_ADAPTERS } from './model-connection-byok.ts'
 import { claudeSubscriptionAdapter } from './model-connection-claude.ts'
+import { codexSubscriptionAdapter } from './model-connection-codex.ts'
 import { reconcileByokConnections } from './model-connection-migration.ts'
 import { ModelConnectionRegistry } from './model-connection-registry.ts'
 import { registerModelConnectionRoutes } from './model-connection-routes.ts'
@@ -779,6 +788,30 @@ export function buildServer(options: ServerOptions = {}) {
     now,
   })
 
+  // The Codex app-server session pool (issue #47,
+  // `docs/adr/0014-subscription-inference-boundary.md` amendment): one
+  // pooled `codex app-server` child per connection id, closed on the
+  // daemon's existing `onClose` hook below so no app-server child outlives
+  // this process. The factory does everything `CodexSessionPool`'s own doc
+  // comment leaves to it — resolve the pinned binary, freshly assert the
+  // connection's own `CODEX_HOME` (0700, empty), and spawn — so a missing
+  // or mis-pinned binary fails the same way `codexSubscriptionAdapter`'s
+  // own `availability()` reports it, not a bare `ENOENT`.
+  const codexSessionPool = new CodexSessionPool({
+    factory: async ({ codexHome }) => {
+      const binary = resolveCodexBinary(process.env, store.spacesEngine.rootDir)
+      if (binary === undefined) {
+        throw new ModelConnectionError('unsupported', CODEX_BINARY_MISSING_REASON)
+      }
+      ensureCodexHome(codexHome)
+      return spawnCodexAppServer({
+        binary,
+        codexHome,
+        clientInfo: { name: 'veduta', version: resolveInstalledVersion() },
+      })
+    },
+  })
+
   // The Model connection registry (issue #47): owns `connections.json`,
   // adapter dispatch, and every routing rebuild that follows a connection
   // state change. `isRoutableModel: isBuiltinModel` (M5) marks a catalog
@@ -786,7 +819,7 @@ export function buildServer(options: ServerOptions = {}) {
   // letting it fail mid-turn.
   const registry = new ModelConnectionRegistry({
     rootDir: store.spacesEngine.rootDir,
-    adapters: [...BYOK_ADAPTERS, claudeSubscriptionAdapter],
+    adapters: [...BYOK_ADAPTERS, claudeSubscriptionAdapter, codexSubscriptionAdapter],
     vault,
     secrets,
     profile,
@@ -796,6 +829,7 @@ export function buildServer(options: ServerOptions = {}) {
     isRoutableModel: isBuiltinModel,
     onRoutingChanged: (file) => onRoutingChangedSlot.current(file),
     env: process.env,
+    codexSession: (connectionId, codexHome) => codexSessionPool.get(connectionId, codexHome),
   })
   registry.normalizeInFlightStatesOnBoot()
 
@@ -1066,6 +1100,11 @@ export function buildServer(options: ServerOptions = {}) {
     heartbeatSurfaces.dispose()
     reflectionSurfaces.dispose()
     updateManager?.dispose()
+    // Registered before `chatLoop`'s own `onClose` hook below, so — per
+    // Fastify's reverse registration order — this runs AFTER `chatLoop.stop()`:
+    // in-flight chat turns get a chance to finish before their Codex child
+    // processes are killed.
+    await codexSessionPool.closeAll()
   })
 
   // Background Workers (issue #17, ADR-0002, ARCHITECTURE §3.6): ephemeral

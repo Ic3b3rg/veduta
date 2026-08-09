@@ -31,6 +31,7 @@ import {
   type ModelConnectionAdapter,
   type RefreshResult,
 } from './model-connection-adapter.ts'
+import type { CodexTransport } from './codex-app-server.ts'
 import { loadRoutingConfig, type SecretResolver } from './model-routing.ts'
 import type { ModelConnectionRuntime } from './pi-provider-bridge.ts'
 import type { SecretsVault } from './secrets-vault.ts'
@@ -79,6 +80,15 @@ export interface ModelConnectionRegistryOptions {
   /** Fired after every mutation that persists `connections.json`, so `server.ts` can rebuild and swap the live routing config with no restart. */
   onRoutingChanged?: (file: ConnectionsFile) => void
   env: NodeJS.ProcessEnv
+  /**
+   * Backs every Codex connection's `AdapterContext.codexTransport` (issue
+   * #47): `server.ts` supplies `(id, codexHome) => codexSessionPool.get(id,
+   * codexHome)`, so every verb the Codex adapter runs against the same
+   * connection shares one pooled app-server process instead of spawning a
+   * fresh one per call. Absent in every test that never authorizes a Codex
+   * connection.
+   */
+  codexSession?: (connectionId: string, codexHome: string) => Promise<CodexTransport>
 }
 
 /** The result of `applySelectionPrepared`'s step 1 (R3): the WOULD-BE file, never written yet, plus the generation it was computed against. */
@@ -140,6 +150,8 @@ export class ModelConnectionRegistry {
   private readonly isRoutableModel: (provider: string, modelId: string) => boolean
   private readonly onRoutingChanged: ((file: ConnectionsFile) => void) | undefined
   private readonly env: NodeJS.ProcessEnv
+  private readonly codexSession:
+    ((connectionId: string, codexHome: string) => Promise<CodexTransport>) | undefined
 
   private tail: Promise<unknown> = Promise.resolve()
   private generation = 0
@@ -159,6 +171,7 @@ export class ModelConnectionRegistry {
     this.isRoutableModel = options.isRoutableModel
     this.onRoutingChanged = options.onRoutingChanged
     this.env = options.env
+    this.codexSession = options.codexSession
   }
 
   /** The R3 compare-and-swap counter, read by the route layer before starting a selection probe outside the queue. */
@@ -225,6 +238,12 @@ export class ModelConnectionRegistry {
       probe: (modelId: string) => this.probeFn(connectionId, modelId),
       codexHome: join(this.rootDir, 'codex', connectionId),
       ...(secretRef === undefined ? {} : { secretRef }),
+      ...(this.codexSession === undefined
+        ? {}
+        : {
+            codexTransport: (options: { codexHome: string }) =>
+              this.codexSession!(connectionId, options.codexHome),
+          }),
     }
   }
 

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { ConnectionLifecycleStateSchema, ModelCatalogEntrySchema } from '@veduta/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createFakeCodexTransport } from './codex-app-server-fake.ts'
 import {
   ModelConnectionError,
   type AdapterContext,
@@ -11,6 +12,7 @@ import {
   type ModelConnectionErrorCode,
 } from './model-connection-adapter.ts'
 import { claudeSubscriptionAdapter } from './model-connection-claude.ts'
+import { codexSubscriptionAdapter } from './model-connection-codex.ts'
 import { BYOK_ADAPTERS } from './model-connection-byok.ts'
 import type { SecretResolver } from './model-routing.ts'
 import { SecretsVault } from './secrets-vault.ts'
@@ -87,7 +89,39 @@ const CLAUDE_CASE: AdapterCase = {
     }),
 }
 
-const CASES: AdapterCase[] = [...BYOK_ADAPTERS.map(byokCase), CLAUDE_CASE]
+const CODEX_CASE: AdapterCase = {
+  name: codexSubscriptionAdapter.methodId,
+  adapter: codexSubscriptionAdapter,
+  available: true,
+  buildContext: (rootDir: string): AdapterContext => {
+    const transport = createFakeCodexTransport({
+      responses: {
+        initialize: { version: '0.146.1' },
+        'account/login/start': {
+          loginId: 'contract-login',
+          verificationUrl: 'https://chatgpt.com/device',
+          userCode: 'CTRT-0000',
+        },
+        'account/read': { planType: 'ChatGPT Plus' },
+        'model/list': { models: [{ id: 'model-a' }] },
+        'account/logout': {},
+      },
+    })
+    return fromPartial<AdapterContext>({
+      connectionId: CONNECTION_ID,
+      rootDir,
+      vault: undefined,
+      secrets: fromPartial<SecretResolver>({ resolve: () => undefined }),
+      fetchImpl: vi.fn(),
+      now: () => new Date('2026-08-09T10:00:00.000Z'),
+      probe: vi.fn().mockResolvedValue(undefined),
+      codexHome: join(rootDir, 'codex', CONNECTION_ID),
+      codexTransport: async () => transport,
+    })
+  },
+}
+
+const CASES: AdapterCase[] = [...BYOK_ADAPTERS.map(byokCase), CLAUDE_CASE, CODEX_CASE]
 
 let rootDir: string | undefined
 

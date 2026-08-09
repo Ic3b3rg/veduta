@@ -4,6 +4,7 @@ import type {
   ModelCatalogEntry,
   ModelConnectionMethodId,
 } from '@veduta/protocol'
+import type { CodexTransportFactory } from './codex-app-server.ts'
 import { sanitizeErrorText, type SecretResolver } from './model-routing.ts'
 import type { SecretsVault } from './secrets-vault.ts'
 
@@ -61,11 +62,14 @@ export interface AdapterContext {
   /** Per-connection Codex credential dir, `<rootDir>/codex/<connectionId>`; created 0700, empty. */
   codexHome: string
   /**
-   * Injectable JSON-RPC seam for the Codex app-server transport. Typed
-   * `unknown` here because the transport module does not exist yet — the
-   * Codex slice narrows this to its own `CodexTransportFactory` type.
+   * Injectable JSON-RPC seam to this connection's Codex app-server
+   * transport (issue #47): `model-connection-registry.ts`'s `contextFor`
+   * binds it to a `CodexSessionPool`-backed accessor closed over this
+   * connection's id, so `model-connection-codex.ts` never spawns anything
+   * itself and every other adapter simply never reads it. Absent for a
+   * connection whose method is not Codex.
    */
-  codexTransport?: unknown
+  codexTransport?: CodexTransportFactory
   /**
    * The record's own secret reference, supplied by the registry (issue #47,
    * `docs/adr/0014-…` amendment's R6 ruling: the original `secret://vault/…`
