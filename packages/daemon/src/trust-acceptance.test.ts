@@ -584,6 +584,7 @@ function testRouter(): ModelRouter {
       triage: [{ provider: 'mock', modelId: 'cheap' }],
     },
     providerKeys: {},
+    connectionKeys: {},
     dailyCapUsd: { triage: 5, reasoning: 5 },
   }
   return new ModelRouter({

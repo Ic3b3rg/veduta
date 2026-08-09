@@ -66,6 +66,7 @@ function buildHarness(): Harness {
       triage: [{ provider: 'fake', modelId: 'fake-model' }],
     },
     providerKeys: {},
+    connectionKeys: {},
     dailyCapUsd: { triage: 5, reasoning: 20 },
   }
   const router = new ModelRouter({ config, rootDir, sleep: async () => {} })

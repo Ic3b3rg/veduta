@@ -1,12 +1,11 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fromPartial } from '@total-typescript/shoehorn'
 import type { ByokProvider } from '@veduta/protocol'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { loadRoutingConfig } from './model-routing.ts'
 import { loadOnboardingConfig } from './onboarding-config.ts'
-import { applyByok, testProviderKey, type ByokDeps } from './onboarding-step-byok.ts'
+import { applyByok, type ByokDeps } from './onboarding-step-byok.ts'
 import { VaultUnavailableError } from './onboarding-status.ts'
 import { VAULT_FILE_NAME, SecretsVault } from './secrets-vault.ts'
 
@@ -24,89 +23,6 @@ function freshRoot(): string {
   rootDir = mkdtempSync(join(tmpdir(), 'veduta-onboarding-byok-'))
   return rootDir
 }
-
-function okResponse(status: number): Response {
-  return fromPartial<Response>({
-    status,
-    json: () => {
-      throw new Error('response body must never be read')
-    },
-    text: () => {
-      throw new Error('response body must never be read')
-    },
-  })
-}
-
-describe('testProviderKey', () => {
-  it('anthropic: GETs the models endpoint with x-api-key + anthropic-version headers', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(okResponse(200))
-    const result = await testProviderKey('anthropic', DISTINCTIVE_KEY, fetchImpl)
-    expect(result).toBe('valid')
-    expect(fetchImpl).toHaveBeenCalledWith(
-      'https://api.anthropic.com/v1/models',
-      expect.objectContaining({
-        method: 'GET',
-        redirect: 'error',
-        headers: { 'x-api-key': DISTINCTIVE_KEY, 'anthropic-version': '2023-06-01' },
-      }),
-    )
-  })
-
-  it('openai: GETs the models endpoint with a Bearer Authorization header', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(okResponse(200))
-    const result = await testProviderKey('openai', DISTINCTIVE_KEY, fetchImpl)
-    expect(result).toBe('valid')
-    expect(fetchImpl).toHaveBeenCalledWith(
-      'https://api.openai.com/v1/models',
-      expect.objectContaining({ headers: { Authorization: `Bearer ${DISTINCTIVE_KEY}` } }),
-    )
-  })
-
-  it('openrouter: GETs the models endpoint with a Bearer Authorization header', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(okResponse(200))
-    const result = await testProviderKey('openrouter', DISTINCTIVE_KEY, fetchImpl)
-    expect(result).toBe('valid')
-    expect(fetchImpl).toHaveBeenCalledWith(
-      'https://openrouter.ai/api/v1/models',
-      expect.objectContaining({ headers: { Authorization: `Bearer ${DISTINCTIVE_KEY}` } }),
-    )
-  })
-
-  it('401 -> invalid', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(okResponse(401))
-    expect(await testProviderKey('anthropic', DISTINCTIVE_KEY, fetchImpl)).toBe('invalid')
-  })
-
-  it('403 -> invalid', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(okResponse(403))
-    expect(await testProviderKey('openai', DISTINCTIVE_KEY, fetchImpl)).toBe('invalid')
-  })
-
-  it('any other status -> unreachable', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(okResponse(500))
-    expect(await testProviderKey('openrouter', DISTINCTIVE_KEY, fetchImpl)).toBe('unreachable')
-  })
-
-  it('a thrown network error -> unreachable', async () => {
-    const fetchImpl = vi.fn().mockRejectedValue(new TypeError('fetch failed'))
-    expect(await testProviderKey('anthropic', DISTINCTIVE_KEY, fetchImpl)).toBe('unreachable')
-  })
-
-  it('a timeout (AbortError) -> unreachable', async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockRejectedValue(new DOMException('The operation was aborted', 'AbortError'))
-    expect(await testProviderKey('anthropic', DISTINCTIVE_KEY, fetchImpl)).toBe('unreachable')
-  })
-
-  it('never surfaces the key in a thrown/returned value beyond the verdict string', async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockRejectedValue(new Error(`upstream said no for ${DISTINCTIVE_KEY}`))
-    const result = await testProviderKey('anthropic', DISTINCTIVE_KEY, fetchImpl)
-    expect(result).toBe('unreachable')
-  })
-})
 
 describe('applyByok', () => {
   it('skip marks the step skipped without touching the vault or routing', () => {

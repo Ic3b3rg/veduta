@@ -124,6 +124,7 @@ describe('AgentRunner contract', () => {
           triage: [{ provider: 'mock', modelId: 'cheap' }],
         },
         providerKeys: {},
+        connectionKeys: {},
         dailyCapUsd: { triage: 1, reasoning: 5 },
       },
       sleep: async () => {},

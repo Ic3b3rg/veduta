@@ -52,6 +52,7 @@ function testRoutingConfig(): RoutingConfig {
       triage: [{ provider: 'mock', modelId: 'cheap' }],
     },
     providerKeys: {},
+    connectionKeys: {},
     dailyCapUsd: { triage: 5, reasoning: 5 },
   }
 }

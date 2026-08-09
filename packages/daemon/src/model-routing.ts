@@ -62,6 +62,8 @@ export const RoutingConfigSchema = z.object({
     reasoning: z.array(TierModelSchema).min(1),
   }),
   providerKeys: z.record(SecretRefSchema),
+  /** Per Model-connection key refs (issue #47), keyed by connection id rather than provider name — two accounts on the same provider never collide. */
+  connectionKeys: z.record(SecretRefSchema).default({}),
   dailyCapUsd: z.object({
     triage: z.number().positive(),
     reasoning: z.number().positive(),
@@ -105,6 +107,7 @@ export function defaultRoutingConfig(): RoutingConfig {
       openai: 'secret://env/OPENAI_API_KEY',
       openrouter: 'secret://env/OPENROUTER_API_KEY',
     },
+    connectionKeys: {},
     dailyCapUsd: { triage: 5, reasoning: 20 },
   }
 }

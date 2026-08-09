@@ -108,6 +108,7 @@ describe('AC2 — no plaintext secret survives in any durable rootDir artifact',
             reasoning: [{ provider: 'anthropic', modelId: 'test-model' }],
           },
           providerKeys: {},
+          connectionKeys: {},
           dailyCapUsd: { triage: 5, reasoning: 20 },
         },
       })

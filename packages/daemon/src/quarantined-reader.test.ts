@@ -22,6 +22,7 @@ const testConfig: RoutingConfig = {
     ],
   },
   providerKeys: {},
+  connectionKeys: {},
   dailyCapUsd: { triage: 5, reasoning: 5 },
 }
 

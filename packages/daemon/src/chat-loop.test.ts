@@ -77,6 +77,7 @@ function buildHarness(
     },
     // No entry for 'fake': keyless, allowed (model-routing.ts's `candidates()`).
     providerKeys: {},
+    connectionKeys: {},
     dailyCapUsd: { triage: 5, reasoning: 20 },
   }
   // No real backoff delay between failover attempts in tests.

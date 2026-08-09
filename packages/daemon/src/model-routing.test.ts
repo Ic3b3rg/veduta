@@ -31,6 +31,7 @@ const testConfig: RoutingConfig = {
     ],
   },
   providerKeys: {},
+  connectionKeys: {},
   dailyCapUsd: { triage: 1, reasoning: 5 },
 }
 
@@ -182,6 +183,7 @@ describe('withMockFallback', () => {
         reasoning: [{ provider: 'local', modelId: 'reasoning-local' }],
       },
       providerKeys: {},
+      connectionKeys: {},
       dailyCapUsd: { triage: 1, reasoning: 5 },
     }
 
@@ -208,6 +210,7 @@ describe('saveRoutingConfig', () => {
         openai: 'secret://vault/openai',
         openrouter: 'secret://vault/openrouter',
       },
+      connectionKeys: {},
       dailyCapUsd: { triage: 2, reasoning: 10 },
     }
 

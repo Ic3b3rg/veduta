@@ -21,6 +21,7 @@ const routingConfig: RoutingConfig = {
   },
   // Keyless "mock" provider (no entry here): the router resolves it without a secret.
   providerKeys: {},
+  connectionKeys: {},
   dailyCapUsd: { triage: 5, reasoning: 20 },
 }
 
