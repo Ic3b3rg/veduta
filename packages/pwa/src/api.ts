@@ -1,4 +1,5 @@
 import {
+  AuthorizeModelConnectionResponseSchema,
   AuthSessionSchema,
   AuthStatusSchema,
   ByokTestResponseSchema,
@@ -6,16 +7,24 @@ import {
   GatewayServerMessageSchema,
   ImportApplyResponseSchema,
   ImportPlanSchema,
+  ModelConnectionCatalogResponseSchema,
+  ModelConnectionSchema,
+  ModelConnectionsSnapshotSchema,
   OnboardingStatusSchema,
   SurfaceSnapshotSchema,
   SurfaceSchema,
+  VerifyModelConnectionResponseSchema,
   WebAuthnOptionsEnvelopeSchema,
+  type ApplyModelSelectionRequest,
   type AtomNode,
+  type AuthorizeModelConnectionRequest,
+  type AuthorizeModelConnectionResponse,
   type AuthSession,
   type AuthStatus,
   type ByokApplyRequest,
   type ByokTestRequest,
   type ByokTestResponse,
+  type CreateModelConnectionRequest,
   type FinishResponse,
   type FirstSpaceRequest,
   type GatewayServerMessage,
@@ -27,6 +36,9 @@ import {
   type JsonObject,
   type JsonValue,
   type MigrationChoiceRequest,
+  type ModelConnection,
+  type ModelConnectionCatalogResponse,
+  type ModelConnectionsSnapshot,
   type ModelsApplyRequest,
   type OnboardingStatus,
   type Surface,
@@ -35,6 +47,8 @@ import {
   type SurfacePatchEvent,
   type SurfacePinnedEvent,
   type SurfaceSnapshot,
+  type UpdateModelConnectionRequest,
+  type VerifyModelConnectionResponse,
 } from '@veduta/protocol'
 import {
   startAuthentication,
@@ -199,6 +213,94 @@ export async function applyIntegrationsStep(
 
 export async function finishOnboarding(token?: string): Promise<FinishResponse> {
   return FinishResponseSchema.parse(await postJson('/api/onboarding/finish', {}, token))
+}
+
+// Model connections (issue #47, `docs/adr/0014-subscription-inference-boundary.md`):
+// `model-connection-panel.tsx`'s only path to the daemon. Every response is
+// zod-parsed against `@veduta/protocol` before it reaches the panel or
+// `model-connection-view.ts`, matching every other helper in this file.
+
+export async function fetchModelConnections(token?: string): Promise<ModelConnectionsSnapshot> {
+  return ModelConnectionsSnapshotSchema.parse(await getJson('/api/model-connections', token))
+}
+
+export async function createModelConnection(
+  body: CreateModelConnectionRequest,
+  token?: string,
+): Promise<ModelConnectionsSnapshot> {
+  return ModelConnectionsSnapshotSchema.parse(await postJson('/api/model-connections', body, token))
+}
+
+export async function authorizeModelConnection(
+  id: string,
+  body: AuthorizeModelConnectionRequest,
+  token?: string,
+): Promise<AuthorizeModelConnectionResponse> {
+  return AuthorizeModelConnectionResponseSchema.parse(
+    await postJson(`/api/model-connections/${encodeURIComponent(id)}/authorize`, body, token),
+  )
+}
+
+export async function fetchModelConnection(id: string, token?: string): Promise<ModelConnection> {
+  return ModelConnectionSchema.parse(
+    await getJson(`/api/model-connections/${encodeURIComponent(id)}`, token),
+  )
+}
+
+export async function refreshModelConnectionCatalog(
+  id: string,
+  token?: string,
+): Promise<ModelConnectionCatalogResponse> {
+  return ModelConnectionCatalogResponseSchema.parse(
+    await postJson(`/api/model-connections/${encodeURIComponent(id)}/catalog`, {}, token),
+  )
+}
+
+export async function verifyModelConnection(
+  id: string,
+  modelId: string,
+  token?: string,
+): Promise<VerifyModelConnectionResponse> {
+  return VerifyModelConnectionResponseSchema.parse(
+    await postJson(`/api/model-connections/${encodeURIComponent(id)}/verify`, { modelId }, token),
+  )
+}
+
+export async function updateModelConnection(
+  id: string,
+  patch: UpdateModelConnectionRequest,
+  token?: string,
+): Promise<ModelConnectionsSnapshot> {
+  return ModelConnectionsSnapshotSchema.parse(
+    await patchJson(`/api/model-connections/${encodeURIComponent(id)}`, patch, token),
+  )
+}
+
+export async function deleteModelConnection(
+  id: string,
+  token?: string,
+): Promise<ModelConnectionsSnapshot> {
+  return ModelConnectionsSnapshotSchema.parse(
+    await deleteJson(`/api/model-connections/${encodeURIComponent(id)}`, token),
+  )
+}
+
+export async function applyModelSelection(
+  body: ApplyModelSelectionRequest,
+  token?: string,
+): Promise<ModelConnectionsSnapshot> {
+  return ModelConnectionsSnapshotSchema.parse(
+    await postJson('/api/model-connections/selection', body, token),
+  )
+}
+
+export async function setMockProvider(
+  enabled: boolean,
+  token?: string,
+): Promise<ModelConnectionsSnapshot> {
+  return ModelConnectionsSnapshotSchema.parse(
+    await postJson('/api/model-connections/mock', { enabled }, token),
+  )
 }
 
 /** Clears a Space's attention badge on focus (ADR): the
@@ -484,7 +586,7 @@ async function verifyLogin(
 
 async function getJson(path: string, token?: string): Promise<unknown> {
   const res = await fetch(path, { headers: authHeaders(token) })
-  if (!res.ok) throw new Error(await errorMessageFromResponse(res, path))
+  if (!res.ok) return throwForResponse(res, path)
   return res.json()
 }
 
@@ -494,8 +596,45 @@ async function postJson(path: string, body: unknown, token?: string): Promise<un
     headers: { ...authHeaders(token), 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(await errorMessageFromResponse(res, path))
+  if (!res.ok) return throwForResponse(res, path)
   return res.json()
+}
+
+async function patchJson(path: string, body: unknown, token?: string): Promise<unknown> {
+  const res = await fetch(path, {
+    method: 'PATCH',
+    headers: { ...authHeaders(token), 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) return throwForResponse(res, path)
+  return res.json()
+}
+
+async function deleteJson(path: string, token?: string): Promise<unknown> {
+  const res = await fetch(path, { method: 'DELETE', headers: authHeaders(token) })
+  if (!res.ok) return throwForResponse(res, path)
+  return res.json()
+}
+
+/**
+ * A daemon route removed by the Model connections swap (issue #47) --
+ * `/api/onboarding/byok`, `/api/onboarding/byok/test`, `/api/onboarding/models`
+ * -- answers `410` with a reload instruction instead of disappearing outright,
+ * so a browser tab left open across an upgrade gets an actionable message
+ * (`onboarding-wizard.tsx`'s `run()` catch renders it with a Reload button)
+ * rather than a generic failed-request error.
+ */
+export class ReloadRequiredError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ReloadRequiredError'
+  }
+}
+
+async function throwForResponse(res: Response, path: string): Promise<never> {
+  const message = await errorMessageFromResponse(res, path)
+  if (res.status === 410) throw new ReloadRequiredError(message)
+  throw new Error(message)
 }
 
 async function errorMessageFromResponse(res: Response, path: string): Promise<string> {
