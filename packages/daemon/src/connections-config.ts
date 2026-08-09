@@ -54,6 +54,8 @@ export const ModelConnectionRecordSchema = z
       .object({ label: z.string().min(1) })
       .strict()
       .optional(),
+    /** Last time `refresh`/`ensureFresh` actually ran the adapter call (issue #47): lets `ensureFresh` skip a re-check within its 5-minute window instead of hitting the provider on every turn. */
+    lastRefreshAt: z.string().optional(),
   })
   .strict()
 

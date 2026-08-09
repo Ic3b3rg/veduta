@@ -4,7 +4,7 @@ import type {
   ModelCatalogEntry,
   ModelConnectionMethodId,
 } from '@veduta/protocol'
-import { sanitizeErrorText } from './model-routing.ts'
+import { sanitizeErrorText, type SecretResolver } from './model-routing.ts'
 import type { SecretsVault } from './secrets-vault.ts'
 
 /**
@@ -46,6 +46,14 @@ export interface AdapterContext {
   connectionId: string
   rootDir: string
   vault: SecretsVault | undefined
+  /**
+   * Resolves any `secret://…` reference the same way the router does
+   * (issue #47): a BYOK adapter's `catalog`/`refresh` never opens the vault
+   * directly, so a vault-backed and an env-backed key (`secret://env/…`,
+   * kept alive by a migrated legacy install) work through the identical
+   * code path.
+   */
+  secrets: SecretResolver
   fetchImpl: typeof fetch
   now: () => Date
   /** One real inference call through the production path. */
@@ -58,6 +66,14 @@ export interface AdapterContext {
    * Codex slice narrows this to its own `CodexTransportFactory` type.
    */
   codexTransport?: unknown
+  /**
+   * The record's own secret reference, supplied by the registry (issue #47,
+   * `docs/adr/0014-…` amendment's R6 ruling: the original `secret://vault/…`
+   * or `secret://env/…` reference is preserved verbatim, never re-derived).
+   * Absent for a connection that has never stored a key (a fresh device-code
+   * connection, or a BYOK connection created without one yet).
+   */
+  secretRef?: string
 }
 
 export type AuthorizeInput = { apiKey?: string }
