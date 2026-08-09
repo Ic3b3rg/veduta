@@ -55,6 +55,15 @@ const REFRESHABLE_STATES: readonly ConnectionLifecycleState[] = [
 
 const ENSURE_FRESH_WINDOW_MS = 5 * 60_000
 
+/**
+ * The exact message `findRecord` throws for an id with no matching record
+ * (issue #47). Exported so `model-connection-routes.ts` can tell "the target
+ * connection does not exist" (→ HTTP 404) apart from every other `'rejected'`
+ * `ModelConnectionError` (→ HTTP 400) without duplicating the string in two
+ * files.
+ */
+export const CONNECTION_NOT_FOUND_MESSAGE = 'no such Model connection'
+
 export interface ModelConnectionRegistryOptions {
   rootDir: string
   adapters: readonly ModelConnectionAdapter[]
@@ -191,7 +200,7 @@ export class ModelConnectionRegistry {
 
   private findRecord(file: ConnectionsFile, id: string): ModelConnectionRecord {
     const record = file.connections.find((candidate) => candidate.id === id)
-    if (!record) throw new ModelConnectionError('rejected', 'no such Model connection')
+    if (!record) throw new ModelConnectionError('rejected', CONNECTION_NOT_FOUND_MESSAGE)
     return record
   }
 

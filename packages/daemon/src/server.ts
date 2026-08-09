@@ -50,6 +50,7 @@ import { BYOK_ADAPTERS } from './model-connection-byok.ts'
 import { claudeSubscriptionAdapter } from './model-connection-claude.ts'
 import { reconcileByokConnections } from './model-connection-migration.ts'
 import { ModelConnectionRegistry } from './model-connection-registry.ts'
+import { registerModelConnectionRoutes } from './model-connection-routes.ts'
 import {
   deriveRoutingConfig,
   egressProvidersFor,
@@ -865,12 +866,40 @@ export function buildServer(options: ServerOptions = {}) {
     secrets,
     mockResponder: createMockChatResponder({ store, now }),
   })
+  // Issue #47's verify-then-commit selection flow and every adapter's
+  // `verify` (`ctx.probe`, `model-connection-adapter.ts`)
+  // share this ONE probe implementation. It deliberately does NOT reuse the
+  // live `bridge` above: `bridge`'s config getter reads `routingState.current()`,
+  // whose `connectionKeys` only ever contains the connection that is
+  // ALREADY the active selection or an enabled fallback — a freshly created
+  // or not-yet-selected connection has no entry there yet, so probing
+  // through the live bridge would fail to resolve a key for exactly the
+  // connection a caller is trying to verify. Instead, this derives a
+  // throwaway candidate config as though `connectionId` WERE the selection
+  // for `modelId` (regardless of what is actually stored) — that always
+  // gives the target connection a `connectionKeys` entry — and builds a
+  // one-off bridge over it. Nothing here touches `routingState`/`router`;
+  // the caller (the registry's mutation queue, or the `/selection` route)
+  // decides separately whether the probe's success gets committed.
   probeSlot.current = (connectionId, modelId) => {
-    const record = loadConnectionsConfig(store.spacesEngine.rootDir).connections.find(
-      (candidate) => candidate.id === connectionId,
-    )
+    const file = loadConnectionsConfig(store.spacesEngine.rootDir)
+    const record = file.connections.find((candidate) => candidate.id === connectionId)
     if (!record) throw new Error(`no such Model connection: ${connectionId}`)
-    return probeModel(bridge, {
+    const candidateConfig = withMockFallback(
+      deriveRoutingConfig(loadRoutingConfig(store.spacesEngine.rootDir), {
+        ...file,
+        selection: { connectionId, modelId },
+      }),
+      secrets,
+      { profile, mockEnabled: file.mockEnabled },
+    )
+    const probeBridge = createProviderBridge({
+      config: candidateConfig,
+      connections: () => registry.runtimes(),
+      secrets,
+      mockResponder: createMockChatResponder({ store, now }),
+    })
+    return probeModel(probeBridge, {
       provider: record.provider,
       modelId,
       tier: 'reasoning',
@@ -1493,6 +1522,19 @@ export function buildServer(options: ServerOptions = {}) {
     // connection before the migration import route's response goes out,
     // with no daemon restart required.
     connections: { reconcileImportedByokKeys: (names) => registry.reconcileImportedKeys(names) },
+  })
+
+  // Model connections routes (issue #47): registered directly on `app`,
+  // same as `registerOnboardingRoutes` above, so the production `onRequest`
+  // auth hook already installed covers them too — nothing here is added to
+  // `isPublicUnauthenticatedPath`. `probe` is the exact same closure the
+  // registry itself calls through `AdapterContext.probe` (`probeSlot.current`
+  // above) — one probe implementation, used both for a single connection's
+  // `verify` and for `/selection`'s verify-then-commit flow.
+  registerModelConnectionRoutes(app, {
+    registry,
+    profile,
+    probe: (connectionId, modelId) => probeSlot.current(connectionId, modelId),
   })
 
   app.post('/api/surfaces/:surfaceId/actions', (request, reply) => {

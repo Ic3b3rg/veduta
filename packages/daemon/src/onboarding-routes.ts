@@ -17,6 +17,7 @@ import {
 } from '@veduta/protocol'
 import { z } from 'zod'
 import { ImportRefusedError, type ImportConnectionSink } from './import-apply.ts'
+import { sendModelConnectionError } from './model-connection-routes.ts'
 import { applyByok, testProviderKey } from './onboarding-step-byok.ts'
 import { confirmDomain } from './onboarding-step-domain.ts'
 import { applyFinish } from './onboarding-step-finish.ts'
@@ -126,8 +127,18 @@ function migrationImportDeps(deps: OnboardingRoutesDeps): MigrationImportDeps {
  * its own `statusCode`, defaulting to 400; anything else is unexpected (a
  * bug, not bad input) and maps to a generic 500 — its real message is never
  * echoed to the client, since it was never written to be safe to show one.
+ *
+ * `sendModelConnectionError` (issue #47) gets first look: once
+ * `onboarding-step-model-connection.ts` lands, `applyModelConnectionStep`
+ * can throw a `ModelConnectionError` (e.g. "connect a Model connection
+ * before continuing" surfaced through the registry) that deserves the exact
+ * same 409/400/502 mapping `/api/model-connections/*` itself uses, rather
+ * than a second copy of that mapping here. The import is one-directional —
+ * `model-connection-routes.ts` never imports this module — so there is no
+ * cycle.
  */
 function sendStepError(reply: FastifyReply, error: unknown): FastifyReply {
+  if (sendModelConnectionError(reply, error)) return reply
   if (error instanceof VaultUnavailableError) {
     return reply.status(409).send({ error: error.message })
   }
