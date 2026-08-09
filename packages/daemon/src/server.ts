@@ -34,6 +34,7 @@ import {
   spawnCodexAppServer,
 } from './codex-app-server.ts'
 import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
+import { createConnectionRuntimes } from './connection-inference.ts'
 import { loadConnectionsConfig, type ConnectionsFile } from './connections-config.ts'
 import { EgressPolicy, installEgressEnforcement } from './egress.ts'
 import { EventIngestion, type FetchStage } from './event-ingestion.ts'
@@ -830,8 +831,25 @@ export function buildServer(options: ServerOptions = {}) {
     onRoutingChanged: (file) => onRoutingChangedSlot.current(file),
     env: process.env,
     codexSession: (connectionId, codexHome) => codexSessionPool.get(connectionId, codexHome),
+    // One place for the reconnect notice regardless of which caller marked
+    // the connection (issue #47): a legacy BYOK 401/403 through the
+    // router's `onCallError` below, or a subscription turn that failed
+    // mid-stream through `connection-inference.ts`'s wrapper — both funnel
+    // through `noteCallFailure`, so this fires for either.
+    onCallFailure: (_connectionId, state) => {
+      if (state === 'revoked' || state === 'expired') {
+        gateway.broadcastSystemNotice('Open Model connections to reconnect.')
+      }
+    },
   })
   registry.normalizeInFlightStatesOnBoot()
+  // Wraps `registry.runtimes()`'s raw subscription sources with the
+  // pre-inference freshness check and the revoked/expired →
+  // `NonRetryableModelError` mapping (issue #47,
+  // docs/adr/0014-subscription-inference-boundary.md) — every place the
+  // provider bridge is built below reads connections through this, never a
+  // bare `() => registry.runtimes()`.
+  const connectionRuntimes = createConnectionRuntimes(registry)
 
   // Model routing (issue #10, widened by issue #47's Model connections):
   // per-tier config derived from `connections.json` over `<dataDir>/routing.json`'s
@@ -857,7 +875,9 @@ export function buildServer(options: ServerOptions = {}) {
       // A migrated legacy connection's id IS its provider name, so an
       // unbound legacy `ModelRef` (no `connectionId`) still maps onto the
       // right record here — a BYOK 401/403 marks it `failed` and the next
-      // routing rebuild drops it (issue #47).
+      // routing rebuild drops it (issue #47). The reconnect system notice
+      // for a revoked/expired transition is the registry's own
+      // `onCallFailure` above, not duplicated here.
       void registry.noteCallFailure(model.connectionId ?? model.provider, error)
     },
     onEvent: (event) => {
@@ -896,7 +916,7 @@ export function buildServer(options: ServerOptions = {}) {
   // visible to the very next call.
   const bridge = createProviderBridge({
     config: () => routingState.current(),
-    connections: () => registry.runtimes(),
+    connections: connectionRuntimes,
     secrets,
     mockResponder: createMockChatResponder({ store, now }),
   })
@@ -929,7 +949,7 @@ export function buildServer(options: ServerOptions = {}) {
     )
     const probeBridge = createProviderBridge({
       config: candidateConfig,
-      connections: () => registry.runtimes(),
+      connections: connectionRuntimes,
       secrets,
       mockResponder: createMockChatResponder({ store, now }),
     })
@@ -1172,6 +1192,11 @@ export function buildServer(options: ServerOptions = {}) {
     isTrustWrapped,
     toolsFor: chatToolRegistry,
     send: (clientId, frame) => gateway.sendToClient(clientId, frame),
+    // Issue #47: a ChatGPT/Codex connection answers in text only —
+    // Veduta's own tools are filtered out of a turn routed to it, before
+    // `PiAgentRunner.prompt` ever offers them to pi.
+    toolsEnabledForModel: (model) =>
+      !(model.connectionId !== undefined && registry.isTextOnly(model.connectionId)),
   })
   chatTurnHandler = (event) => {
     void chatLoop.handleChatMessage(event)

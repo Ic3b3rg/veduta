@@ -6,6 +6,7 @@ import type { CodexTransport } from './codex-app-server.ts'
 import { ModelConnectionError, type AdapterContext } from './model-connection-adapter.ts'
 import { codexSubscriptionAdapter, createCodexAdapter } from './model-connection-codex.ts'
 import type { SecretResolver } from './model-routing.ts'
+import type { SubscriptionStreamRequest } from './pi-provider-bridge.ts'
 
 const CONNECTION_ID = 'c0ffee00-0000-4000-8000-000000000000'
 const ROOT_DIR = '/tmp/veduta-codex-adapter-test'
@@ -198,6 +199,154 @@ describe('verify', () => {
     await expect(codexSubscriptionAdapter.verify(ctx, 'model-a')).rejects.toThrow(
       'the probe turn failed',
     )
+  })
+})
+
+function subscriptionRequest(signal?: AbortSignal): SubscriptionStreamRequest {
+  return {
+    modelId: 'gpt-5-codex',
+    prompt: { systemPrompt: 'You are Veduta.', messages: [{ role: 'user', text: 'hi' }] },
+    ...(signal ? { signal } : {}),
+  }
+}
+
+/** Drains a `stream()` generator, collecting every yielded delta; returns the thrown error (if any) instead of letting it escape, so a refusal test can assert both the collected deltas and the error in one place. */
+async function drain(
+  generator: AsyncIterable<string>,
+): Promise<{ deltas: string[]; error: unknown }> {
+  const deltas: string[] = []
+  try {
+    for await (const delta of generator) deltas.push(delta)
+    return { deltas, error: undefined }
+  } catch (error) {
+    return { deltas, error }
+  }
+}
+
+describe('stream', () => {
+  it('yields text deltas and completes on the turn-completed notification', async () => {
+    const transport = createFakeCodexTransport({
+      responses: {
+        'thread/start': { threadId: 'thread-1' },
+        'turn/start': { turnId: 'turn-1' },
+      },
+      notifications: [
+        {
+          method: 'item/updated',
+          params: { threadId: 'thread-1', item: { type: 'agentMessage', delta: 'hel' } },
+        },
+        {
+          method: 'item/updated',
+          params: { threadId: 'thread-1', item: { type: 'agentMessage', delta: 'lo' } },
+        },
+        { method: 'turn/completed', params: { threadId: 'thread-1' } },
+      ],
+    })
+
+    const { deltas, error } = await drain(
+      codexSubscriptionAdapter.stream!(contextWith(transport), subscriptionRequest()),
+    )
+
+    expect(error).toBeUndefined()
+    expect(deltas).toEqual(['hel', 'lo'])
+    expect(transport.requests.map((request) => request.method)).toEqual([
+      'thread/start',
+      'turn/start',
+    ])
+    expect(transport.requests[0]?.params).toMatchObject({ approvalPolicy: 'never' })
+    expect(transport.requests.some((request) => request.method === 'turn/interrupt')).toBe(false)
+  })
+
+  it('drops a reasoning item and forwards only text', async () => {
+    const transport = createFakeCodexTransport({
+      responses: {
+        'thread/start': { threadId: 'thread-1' },
+        'turn/start': { turnId: 'turn-1' },
+      },
+      notifications: [
+        {
+          method: 'item/updated',
+          params: { threadId: 'thread-1', item: { type: 'reasoning', text: 'let me think' } },
+        },
+        {
+          method: 'item/completed',
+          params: { threadId: 'thread-1', item: { type: 'agentMessage', text: 'the answer' } },
+        },
+        { method: 'turn/completed', params: { threadId: 'thread-1' } },
+      ],
+    })
+
+    const { deltas, error } = await drain(
+      codexSubscriptionAdapter.stream!(contextWith(transport), subscriptionRequest()),
+    )
+
+    expect(error).toBeUndefined()
+    expect(deltas).toEqual(['the answer'])
+  })
+
+  it('interrupts and refuses on a command-execution item', async () => {
+    const transport = createFakeCodexTransport({
+      responses: {
+        'thread/start': { threadId: 'thread-1' },
+        'turn/start': { turnId: 'turn-1' },
+        'turn/interrupt': {},
+      },
+      notifications: [
+        {
+          method: 'item/updated',
+          params: {
+            threadId: 'thread-1',
+            item: { type: 'commandExecution', text: 'rm -rf /' },
+          },
+        },
+      ],
+    })
+
+    const { deltas, error } = await drain(
+      codexSubscriptionAdapter.stream!(contextWith(transport), subscriptionRequest()),
+    )
+
+    expect(deltas).toEqual([])
+    expect(error).toMatchObject({
+      code: 'unsupported',
+      message:
+        'the Codex turn attempted a tool action; refusing to run a turn that could act outside Veduta',
+    })
+    expect(transport.requests.map((request) => request.method)).toEqual([
+      'thread/start',
+      'turn/start',
+      'turn/interrupt',
+    ])
+    expect(
+      transport.requests.find((request) => request.method === 'turn/interrupt')?.params,
+    ).toEqual({ threadId: 'thread-1' })
+  })
+
+  it('sends turn/interrupt and abandons the thread when the turn is already aborted', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const transport = createFakeCodexTransport({
+      responses: {
+        'thread/start': { threadId: 'thread-1' },
+        'turn/interrupt': {},
+      },
+    })
+
+    const { deltas, error } = await drain(
+      codexSubscriptionAdapter.stream!(
+        contextWith(transport),
+        subscriptionRequest(controller.signal),
+      ),
+    )
+
+    expect(deltas).toEqual([])
+    expect(error).toMatchObject({ code: 'unsupported' })
+    // `turn/start` is never reached — no thread reuse, no resume, nothing
+    // to interrupt beyond the one `turn/interrupt` best-effort call.
+    expect(transport.requests.map((request) => request.method)).toEqual([
+      'thread/start',
+      'turn/interrupt',
+    ])
   })
 })
 

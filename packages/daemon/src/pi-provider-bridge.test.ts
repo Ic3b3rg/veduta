@@ -7,6 +7,7 @@ import {
   isBuiltinModel,
   probeModel,
   type MockResponder,
+  type ModelConnectionRuntime,
   type PiChatContext,
 } from './pi-provider-bridge.ts'
 // `PiModel` is a project type re-exported through `pi-agent-runner.ts`
@@ -502,6 +503,135 @@ describe('createProviderBridge', () => {
       // would risk.
       expect(denials).toHaveLength(2)
       expect(denials.every((denial) => denial.host === 'api.anthropic.com')).toBe(true)
+    })
+  })
+
+  describe('resolveModel (subscription connections, issue #47)', () => {
+    it('returns a veduta-subscription descriptor for a subscription runtime, keeping the canonical provider', () => {
+      const runtime: ModelConnectionRuntime = {
+        connectionId: 'codex-conn',
+        provider: 'openai',
+        transport: 'subscription',
+        stream: async function* () {
+          yield 'never called'
+        },
+      }
+      const bridge = createProviderBridge({
+        config,
+        secrets: noKeysResolve,
+        connections: () => [runtime],
+      })
+
+      const model = bridge.resolveModel({
+        provider: 'openai',
+        modelId: 'gpt-5-codex',
+        tier: 'reasoning',
+        connectionId: 'codex-conn',
+      })
+
+      expect(model.api).toBe('veduta-subscription')
+      expect(model.provider).toBe('openai')
+      expect(model.id).toBe('gpt-5-codex')
+    })
+  })
+
+  describe('streamFn (subscription connections, issue #47)', () => {
+    function subscriptionBridge(runtime: ModelConnectionRuntime | undefined) {
+      return createProviderBridge({
+        config,
+        secrets: noKeysResolve,
+        connections: () => (runtime ? [runtime] : []),
+      })
+    }
+
+    it("streams a subscription connection's text deltas and resolves the final message", async () => {
+      const runtime: ModelConnectionRuntime = {
+        connectionId: 'codex-conn',
+        provider: 'openai',
+        transport: 'subscription',
+        stream: async function* () {
+          yield 'hello'
+          yield ' world'
+        },
+      }
+      const bridge = subscriptionBridge(runtime)
+      const model = bridge.resolveModel({
+        provider: 'openai',
+        modelId: 'gpt-5-codex',
+        tier: 'reasoning',
+        connectionId: 'codex-conn',
+      })
+
+      const stream = await bridge.streamFn(model, minimalContext(), {})
+      const deltas: string[] = []
+      for await (const event of stream) {
+        if (event.type === 'text_delta') deltas.push(event.delta)
+      }
+      const finalMessage = await stream.result()
+
+      expect(deltas).toEqual(['hello', ' world'])
+      expect(finalMessage.stopReason).toBe('stop')
+      expect(finalMessage.content).toEqual([{ type: 'text', text: 'hello world' }])
+    })
+
+    it('fails closed for a subscription descriptor with no runtime', async () => {
+      // The connection existed (and streamed) at `resolveModel` time; the
+      // runtime roster changed (a revoke, a daemon restart with a stale
+      // record) before `streamFn` ran — the descriptor still carries the
+      // `veduta-subscription` api, but no live runtime backs it anymore.
+      let runtimes: ModelConnectionRuntime[] = [
+        {
+          connectionId: 'codex-conn',
+          provider: 'openai',
+          transport: 'subscription',
+          stream: async function* () {
+            yield 'never reached'
+          },
+        },
+      ]
+      const bridge = createProviderBridge({
+        config,
+        secrets: noKeysResolve,
+        connections: () => runtimes,
+      })
+      const model = bridge.resolveModel({
+        provider: 'openai',
+        modelId: 'gpt-5-codex',
+        tier: 'reasoning',
+        connectionId: 'codex-conn',
+      })
+      expect(model.api).toBe('veduta-subscription')
+
+      runtimes = []
+      await expect(bridge.streamFn(model, minimalContext(), {})).rejects.toThrow(
+        /Model connection "codex-conn" is not available/,
+      )
+    })
+
+    it('a subscription turn refuses a context that carries tools (via toSubscriptionPrompt throw propagation)', async () => {
+      const runtime: ModelConnectionRuntime = {
+        connectionId: 'codex-conn',
+        provider: 'openai',
+        transport: 'subscription',
+        stream: async function* () {
+          yield 'should never run'
+        },
+      }
+      const bridge = subscriptionBridge(runtime)
+      const model = bridge.resolveModel({
+        provider: 'openai',
+        modelId: 'gpt-5-codex',
+        tier: 'reasoning',
+        connectionId: 'codex-conn',
+      })
+
+      await expect(
+        bridge.streamFn(
+          model,
+          { messages: [], tools: [{ name: 'search_memory', description: 'x', parameters: {} }] },
+          {},
+        ),
+      ).rejects.toThrow(/answers in text only/)
     })
   })
 

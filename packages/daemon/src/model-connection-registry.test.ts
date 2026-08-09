@@ -305,7 +305,43 @@ describe('noteCallFailure', () => {
     const dir = freshRoot()
     saveConnectionsConfig(dir, { version: 1, connections: [], mockEnabled: false })
     const registry = new ModelConnectionRegistry(baseOptions(dir, []))
+    const calls: unknown[] = []
+    const withCallback = new ModelConnectionRegistry(
+      baseOptions(dir, [], { onCallFailure: (id, state) => calls.push([id, state]) }),
+    )
+
     await expect(registry.noteCallFailure('nobody-here', new Error('x'))).resolves.toBeUndefined()
+    await withCallback.noteCallFailure('nobody-here', new Error('x'))
+    expect(calls).toEqual([])
+  })
+
+  it('fires onCallFailure once with the resulting state, regardless of which caller reached it (issue #47)', async () => {
+    const dir = freshRoot()
+    const migratedRecord: ModelConnectionRecord = {
+      id: 'anthropic',
+      method: 'anthropic-api-key',
+      provider: 'anthropic',
+      label: 'Claude · API key',
+      state: 'connected',
+      stateAt: '2026-08-09T09:00:00.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T09:00:00.000Z',
+      secretRef: 'secret://vault/anthropic',
+    }
+    saveConnectionsConfig(dir, { version: 1, connections: [migratedRecord], mockEnabled: false })
+    const calls: [string, string][] = []
+    const registry = new ModelConnectionRegistry(
+      baseOptions(dir, [], {
+        onCallFailure: (id, state) => calls.push([id, state]),
+      }),
+    )
+
+    await registry.noteCallFailure(
+      'anthropic',
+      new ModelConnectionError('unauthorized', 'the provider rejected this credential'),
+    )
+
+    expect(calls).toEqual([['anthropic', 'revoked']])
   })
 })
 
@@ -428,5 +464,107 @@ describe('authorize', () => {
     expect((deviceError as ModelConnectionError).message).toBe(
       "this connection re-authorizes through the provider's device code: submit an empty body",
     )
+  })
+})
+
+describe('runtimes (issue #47)', () => {
+  function codexAdapter(overrides: Partial<ModelConnectionAdapter> = {}): ModelConnectionAdapter {
+    return createFakeAdapter({
+      methodId: 'chatgpt-codex',
+      providerName: 'openai',
+      capabilities: {
+        authorization: 'device-code',
+        refresh: 'automatic',
+        revocation: 'provider',
+        vedutaTools: false,
+        metered: false,
+      },
+      ...overrides,
+    })
+  }
+
+  it('builds a subscription runtime for a connected Codex connection whose adapter implements stream', async () => {
+    const dir = freshRoot()
+    const adapter = codexAdapter({
+      stream: async function* () {
+        yield 'hello from codex'
+      },
+    })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+    const created = await registry.create({ method: 'chatgpt-codex' })
+    const connectionId = created.connections[0]?.id
+    if (!connectionId) throw new Error('test setup failed')
+    await registry.authorize(connectionId, {})
+
+    const [runtime] = registry.runtimes()
+
+    expect(runtime).toMatchObject({ connectionId, provider: 'openai', transport: 'subscription' })
+    expect(runtime?.stream).toBeTypeOf('function')
+    const deltas: string[] = []
+    for await (const delta of runtime!.stream!({
+      modelId: 'gpt-5-codex',
+      prompt: { systemPrompt: '', messages: [] },
+    })) {
+      deltas.push(delta)
+    }
+    expect(deltas).toEqual(['hello from codex'])
+  })
+
+  it('reports a chatgpt-codex connection as builtin transport when its adapter has no stream verb', async () => {
+    const dir = freshRoot()
+    const adapter = codexAdapter() // no `stream` override
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+    const created = await registry.create({ method: 'chatgpt-codex' })
+    const connectionId = created.connections[0]?.id
+    if (!connectionId) throw new Error('test setup failed')
+    await registry.authorize(connectionId, {})
+
+    const [runtime] = registry.runtimes()
+
+    expect(runtime).toEqual({ connectionId, provider: 'openai', transport: 'builtin' })
+  })
+
+  it('omits every connection that is not connected', async () => {
+    const dir = freshRoot()
+    const adapter = createFakeAdapter()
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+    await registry.create({ method: 'anthropic-api-key' }) // never authorized: stays 'available'
+
+    expect(registry.runtimes()).toEqual([])
+  })
+})
+
+describe('isTextOnly (issue #47)', () => {
+  it('is true for a connected chatgpt-codex connection', async () => {
+    const dir = freshRoot()
+    const adapter = createFakeAdapter({
+      methodId: 'chatgpt-codex',
+      providerName: 'openai',
+      capabilities: {
+        authorization: 'device-code',
+        refresh: 'automatic',
+        revocation: 'provider',
+        vedutaTools: false,
+        metered: false,
+      },
+    })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+    const created = await registry.create({ method: 'chatgpt-codex' })
+    const connectionId = created.connections[0]?.id
+    if (!connectionId) throw new Error('test setup failed')
+
+    expect(registry.isTextOnly(connectionId)).toBe(true)
+  })
+
+  it('is false for a BYOK connection and for an id with no matching record', async () => {
+    const dir = freshRoot()
+    const adapter = createFakeAdapter()
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+    const created = await registry.create({ method: 'anthropic-api-key' })
+    const connectionId = created.connections[0]?.id
+    if (!connectionId) throw new Error('test setup failed')
+
+    expect(registry.isTextOnly(connectionId)).toBe(false)
+    expect(registry.isTextOnly('no-such-connection')).toBe(false)
   })
 })

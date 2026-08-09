@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { GatewayServerMessage } from '@veduta/protocol'
-import type { SessionStore, ToolDef } from './agent-runner.ts'
+import type { ModelRef, SessionStore, ToolDef } from './agent-runner.ts'
 import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import type { ModelRouter } from './model-routing.ts'
 import { sanitizeErrorText } from './model-routing.ts'
@@ -41,6 +41,14 @@ export interface ChatLoopOptions {
   /** The Space's tool registry, or `[]` for global chat (issue #37: no tools until a Space is chosen). */
   toolsFor: (spaceId: string | undefined) => ToolDef[]
   send: (clientId: string, frame: GatewayServerMessage) => void
+  /**
+   * Forwarded verbatim into every `PiAgentRunner` this loop constructs
+   * (issue #47: a ChatGPT/Codex connection answers in text only).
+   * `server.ts` supplies `(model) => !(model.connectionId && registry.isTextOnly(model.connectionId))`.
+   * Omitted keeps every pre-issue-47 caller and test offering tools exactly
+   * as before.
+   */
+  toolsEnabledForModel?: (model: ModelRef) => boolean
 }
 
 export interface ChatLoop {
@@ -107,6 +115,9 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
       streamFn: options.bridge.streamFn,
       toolParameters: piToolParameters(options.toolsFor(spaceId)),
       isToolTrustWrapped: options.isTrustWrapped,
+      ...(options.toolsEnabledForModel
+        ? { toolsEnabledForModel: options.toolsEnabledForModel }
+        : {}),
     })
     await runner.start(sessionId)
     runners.set(sessionId, runner)

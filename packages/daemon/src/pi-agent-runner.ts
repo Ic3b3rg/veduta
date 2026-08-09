@@ -180,6 +180,18 @@ export interface PiAgentRunnerOptions {
    * back to its compat `streamSimple`.
    */
   streamFn?: PiStreamFn
+  /**
+   * Filters Veduta's own tools out of a turn when the routed model's
+   * connection cannot run them (issue #47, docs/adr/0014-…: a ChatGPT
+   * subscription connection answers in text only). Applied immediately
+   * after `gateToolsForOrigins` in `prompt()` — the same choke point every
+   * caller of this runner already passes through — so a text-only
+   * connection never sees a taint-cleared tool either. Returning `false`
+   * empties the tool list for that turn; any other result (including
+   * omitting this option entirely) keeps the taint gate's own result
+   * unchanged.
+   */
+  toolsEnabledForModel?: (model: ModelRef) => boolean
 }
 
 export class PiAgentRunner implements AgentRunner {
@@ -194,6 +206,7 @@ export class PiAgentRunner implements AgentRunner {
   private readonly getApiKey:
     ((provider: string) => Promise<string | undefined> | string | undefined) | undefined
   private readonly streamFn: PiStreamFn | undefined
+  private readonly toolsEnabledForModel: ((model: ModelRef) => boolean) | undefined
   private sessionId: string | undefined = undefined
   private currentModel: ModelRef | undefined = undefined
   private agent: Agent | undefined = undefined
@@ -247,6 +260,7 @@ export class PiAgentRunner implements AgentRunner {
     this.isToolTrustWrapped = options.isToolTrustWrapped
     this.getApiKey = options.getApiKey
     this.streamFn = options.streamFn
+    this.toolsEnabledForModel = options.toolsEnabledForModel
   }
 
   async start(sessionId: string): Promise<void> {
@@ -306,8 +320,13 @@ export class PiAgentRunner implements AgentRunner {
       candidateOrigins,
       this.isToolTrustWrapped,
     )
+    // Issue #47: a connection whose adapter cannot run Veduta's tools
+    // (`vedutaTools: false`, a ChatGPT/Codex connection) never sees them,
+    // regardless of what the taint gate above already cleared — the
+    // capability cliff is about the connection, not the turn's trust level.
+    const offeredTools = this.toolsEnabledForModel?.(model) === false ? [] : gatedTools
 
-    const tools = this.toPiTools(gatedTools)
+    const tools = this.toPiTools(offeredTools)
     const contextPolicy = options.contextPolicy ?? this.defaultContextPolicy
     if (!this.agent) {
       // Retry-safe contract (issue #37): when `userMessageAppended` is true,

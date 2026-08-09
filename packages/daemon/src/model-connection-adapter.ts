@@ -6,6 +6,7 @@ import type {
 } from '@veduta/protocol'
 import type { CodexTransportFactory } from './codex-app-server.ts'
 import { sanitizeErrorText, type SecretResolver } from './model-routing.ts'
+import type { SubscriptionStreamRequest } from './pi-provider-bridge.ts'
 import type { SecretsVault } from './secrets-vault.ts'
 
 /**
@@ -107,6 +108,15 @@ export interface ModelConnectionAdapter {
   catalog(ctx: AdapterContext): Promise<ModelCatalogEntry[]>
   verify(ctx: AdapterContext, modelId: string): Promise<void>
   revoke(ctx: AdapterContext): Promise<{ providerRevoked: boolean; note?: string }>
+  /**
+   * Only for methods whose inference does not go through pi-ai's builtin
+   * catalog (issue #47: Codex). `ModelConnectionRegistry.runtimes()` reads
+   * this off the adapter to decide whether a `connected` connection can be
+   * a `'subscription'`-transport runtime at all — a `vedutaTools: false`
+   * capability alone is not enough; the adapter must actually implement
+   * this verb. Absent on every BYOK/Claude adapter.
+   */
+  stream?(ctx: AdapterContext, request: SubscriptionStreamRequest): AsyncIterable<string>
 }
 
 export type ModelConnectionErrorCode =

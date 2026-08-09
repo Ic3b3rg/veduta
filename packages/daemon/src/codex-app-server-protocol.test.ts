@@ -3,10 +3,14 @@ import {
   AccountReadResponseSchema,
   CodexProtocolError,
   InitializeResponseSchema,
+  ItemNotificationSchema,
   LoginStartResponseSchema,
   ModelListResponseSchema,
   parseCodexNotification,
   parseCodexResponse,
+  ThreadStartResponseSchema,
+  TurnCompletedNotificationSchema,
+  TurnStartResponseSchema,
 } from './codex-app-server-protocol.ts'
 
 describe('parseCodexResponse', () => {
@@ -91,5 +95,54 @@ describe('parseCodexNotification', () => {
       method: 'codex/some-future-notification',
       params: { anything: 42 },
     })
+  })
+})
+
+describe('the inference-seam schemas (issue #47)', () => {
+  it('parses a thread/start response', () => {
+    const parsed = parseCodexResponse(ThreadStartResponseSchema, 'thread/start', {
+      threadId: 'thread-1',
+    })
+    expect(parsed).toEqual({ threadId: 'thread-1' })
+  })
+
+  it('parses a turn/start response', () => {
+    const parsed = parseCodexResponse(TurnStartResponseSchema, 'turn/start', { turnId: 'turn-1' })
+    expect(parsed).toEqual({ turnId: 'turn-1' })
+  })
+
+  it('parses an agentMessage item notification carrying an incremental delta', () => {
+    const parsed = parseCodexResponse(ItemNotificationSchema, 'item/updated', {
+      threadId: 'thread-1',
+      item: { type: 'agentMessage', delta: 'hel' },
+    })
+    expect(parsed.item).toEqual({ type: 'agentMessage', delta: 'hel' })
+  })
+
+  it('parses an item notification whose type this build has never seen, without throwing', () => {
+    // `CodexItemSchema`'s own doc comment: the item body is deliberately
+    // `.passthrough()` so a command-execution/patch/MCP-tool-call/unknown
+    // item still parses — only its `type` matters to the refusal decision
+    // `model-connection-codex.ts`'s `stream()` makes from it, never its
+    // other fields.
+    const parsed = parseCodexResponse(ItemNotificationSchema, 'item/updated', {
+      threadId: 'thread-1',
+      item: { type: 'commandExecution', command: 'rm -rf /', exitCode: 1 },
+    })
+    expect(parsed.item.type).toBe('commandExecution')
+  })
+
+  it('parses a turn/completed notification', () => {
+    const parsed = parseCodexResponse(TurnCompletedNotificationSchema, 'turn/completed', {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+    })
+    expect(parsed).toEqual({ threadId: 'thread-1', turnId: 'turn-1' })
+  })
+
+  it('throws CodexProtocolError when an item notification is missing its item', () => {
+    expect(() =>
+      parseCodexResponse(ItemNotificationSchema, 'item/updated', { threadId: 'thread-1' }),
+    ).toThrow(CodexProtocolError)
   })
 })

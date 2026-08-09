@@ -33,7 +33,7 @@ import {
 } from './model-connection-adapter.ts'
 import type { CodexTransport } from './codex-app-server.ts'
 import { loadRoutingConfig, type SecretResolver } from './model-routing.ts'
-import type { ModelConnectionRuntime } from './pi-provider-bridge.ts'
+import type { ModelConnectionRuntime, SubscriptionStreamRequest } from './pi-provider-bridge.ts'
 import type { SecretsVault } from './secrets-vault.ts'
 
 /** The interrupted-authorization reason every persisted in-flight state is normalized to on boot (issue #47, ADR-0014 amendment). */
@@ -89,6 +89,16 @@ export interface ModelConnectionRegistryOptions {
    * connection.
    */
   codexSession?: (connectionId: string, codexHome: string) => Promise<CodexTransport>
+  /**
+   * Fired at the end of every `noteCallFailure` call, regardless of which
+   * caller reached it (issue #47): the router's `onCallError` for a legacy
+   * BYOK 401/403, or `connection-inference.ts`'s wrapper for a subscription
+   * turn that failed mid-stream. Centralizing this here — rather than
+   * letting each caller decide separately whether to notify — is what makes
+   * `server.ts`'s reconnect system notice fire for both paths from one
+   * place instead of two.
+   */
+  onCallFailure?: (connectionId: string, state: ConnectionLifecycleState) => void
 }
 
 /** The result of `applySelectionPrepared`'s step 1 (R3): the WOULD-BE file, never written yet, plus the generation it was computed against. */
@@ -152,6 +162,8 @@ export class ModelConnectionRegistry {
   private readonly env: NodeJS.ProcessEnv
   private readonly codexSession:
     ((connectionId: string, codexHome: string) => Promise<CodexTransport>) | undefined
+  private readonly onCallFailure:
+    ((connectionId: string, state: ConnectionLifecycleState) => void) | undefined
 
   private tail: Promise<unknown> = Promise.resolve()
   private generation = 0
@@ -172,6 +184,7 @@ export class ModelConnectionRegistry {
     this.onRoutingChanged = options.onRoutingChanged
     this.env = options.env
     this.codexSession = options.codexSession
+    this.onCallFailure = options.onCallFailure
   }
 
   /** The R3 compare-and-swap counter, read by the route layer before starting a selection probe outside the queue. */
@@ -746,13 +759,20 @@ export class ModelConnectionRegistry {
    * legacy `ModelRef` (no `connectionId`) still resolves here when the
    * caller passes `model.connectionId ?? model.provider`. No match is a
    * silent no-op — a candidate with no matching record was never a Model
-   * connection to begin with.
+   * connection to begin with. Returns the resulting lifecycle state (or
+   * `undefined` for the no-op case) so a caller can react to a
+   * revoked/expired transition — `server.ts`'s reconnect system notice
+   * (issue #47) and `connection-inference.ts`'s own `noteCallFailure` call
+   * both read this.
    */
-  async noteCallFailure(idOrProvider: string, error: unknown): Promise<void> {
+  async noteCallFailure(
+    idOrProvider: string,
+    error: unknown,
+  ): Promise<ConnectionLifecycleState | undefined> {
     return this.queue(() => {
       const file = loadConnectionsConfig(this.rootDir)
       const record = file.connections.find((candidate) => candidate.id === idOrProvider)
-      if (!record) return
+      if (!record) return undefined
 
       const err = connectionErrorFrom(error)
       const state: ConnectionLifecycleState =
@@ -764,20 +784,60 @@ export class ModelConnectionRegistry {
       })
       const nextFile = this.replaceRecord(file, updated)
       this.persist(nextFile)
+      this.onCallFailure?.(record.id, state)
+      return state
     })
   }
 
   /**
-   * Placeholder for the inference slice: once a subscription adapter
-   * (Codex) exists, this turns every `connected` connection into the
-   * runtime descriptor `pi-provider-bridge.ts` needs to route a turn.
-   * Typed against the real `ModelConnectionRuntime` shape already (issue
-   * #47's boot wiring, `server.ts`) — returning nothing yet — so
-   * `server.ts`'s `connections: () => registry.runtimes()` wiring lands
-   * once instead of being threaded through twice.
+   * Every `connected` connection as a `pi-provider-bridge.ts`
+   * `ModelConnectionRuntime` (issue #47): `'subscription'` transport for a
+   * `chatgpt-codex` connection whose adapter implements `stream`,
+   * `'builtin'` for everything else. The `stream` member here calls the
+   * adapter directly, with NO freshness check and NO failure-state
+   * mapping — `connection-inference.ts`'s `createConnectionRuntimes` is
+   * the one place that wraps it with `ensureFresh`/`noteCallFailure`
+   * before `server.ts` ever hands this array to the provider bridge; this
+   * method stays a plain, synchronous snapshot of what the registry
+   * currently knows.
    */
   runtimes(): ModelConnectionRuntime[] {
-    return []
+    const file = loadConnectionsConfig(this.rootDir)
+    return file.connections
+      .filter((record) => record.state === 'connected')
+      .map((record) => {
+        const adapter = this.findAdapter(record.method)
+        const transport: ModelConnectionRuntime['transport'] =
+          record.method === 'chatgpt-codex' && adapter.stream !== undefined
+            ? 'subscription'
+            : 'builtin'
+        if (transport !== 'subscription') {
+          return { connectionId: record.id, provider: record.provider, transport }
+        }
+        const context = this.contextFor(record.id, record.secretRef)
+        const adapterStream = adapter.stream!
+        return {
+          connectionId: record.id,
+          provider: record.provider,
+          transport,
+          stream: (request: SubscriptionStreamRequest) => adapterStream(context, request),
+        }
+      })
+  }
+
+  /**
+   * Sync (issue #47): `PiAgentRunner`'s `toolsEnabledForModel` gate runs on
+   * every `prompt()` call, so it cannot await a mutation-queue read — this
+   * reads `connections.json` directly, the same way `deriveDisplaySelection`
+   * already does outside the queue for a read-only lookup. `false`
+   * (tools allowed) for any id with no matching record: a stale/removed
+   * connection is the router's problem to refuse, not this gate's.
+   */
+  isTextOnly(connectionId: string): boolean {
+    const file = loadConnectionsConfig(this.rootDir)
+    const record = file.connections.find((candidate) => candidate.id === connectionId)
+    if (!record) return false
+    return !this.findAdapter(record.method).capabilities.vedutaTools
   }
 
   /**

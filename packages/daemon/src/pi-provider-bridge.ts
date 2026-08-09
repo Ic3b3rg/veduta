@@ -1,4 +1,5 @@
 import {
+  createAssistantMessageEventStream,
   createFauxCore,
   fauxAssistantMessage,
   fauxText,
@@ -7,7 +8,11 @@ import {
   type AssistantMessageEventStream,
   type Context,
   type FauxResponseStep,
+  type ImageContent,
   type SimpleStreamOptions,
+  type TextContent,
+  type ThinkingContent,
+  type ToolCall,
   type Usage,
 } from '@earendil-works/pi-ai'
 import { streamSimple } from '@earendil-works/pi-ai/compat'
@@ -15,6 +20,7 @@ import { getBuiltinModel } from '@earendil-works/pi-ai/providers/all'
 import type { ModelRef } from './agent-runner.ts'
 import type { RoutingConfig, RuntimeRoutingConfig, SecretResolver } from './model-routing.ts'
 import type { PiModel, PiStreamFn } from './pi-agent-runner.ts'
+import { toSubscriptionPrompt, type SubscriptionPrompt } from './subscription-prompt.ts'
 
 /**
  * ADR-0004 amendment (issue #37): this is the model-routing counterpart to
@@ -39,6 +45,11 @@ export type PiUsage = Usage
  * `unknown` cast, never a plain object literal.
  */
 export type PiAssistantMessageEventStream = AssistantMessageEventStream
+/** pi-ai's per-block content types, renamed for the same reason — `subscription-prompt.ts` (issue #47) needs these to render a `PiChatContext` into text without ever importing pi-ai directly. */
+export type PiTextContent = TextContent
+export type PiImageContent = ImageContent
+export type PiThinkingContent = ThinkingContent
+export type PiToolCall = ToolCall
 
 /**
  * `fake-provider.ts` (test support) may import only from this module — the
@@ -70,17 +81,30 @@ export interface ProviderBridge {
 }
 
 /**
- * A routable Model connection as the bridge sees it (issue #47). `transport`
- * is `'builtin'` today — every connection resolves through pi-ai's own
- * builtin catalog (Anthropic/OpenAI/OpenRouter). The `'subscription'`
- * transport (Codex, answering through the daemon's own adapter rather than
- * pi-ai, per docs/adr/0014-subscription-inference-boundary.md) arrives with
- * its first consumer in the inference-seam work that follows this slice.
+ * A routable Model connection as the bridge sees it (issue #47). `'builtin'`
+ * resolves through pi-ai's own builtin catalog (Anthropic/OpenAI/OpenRouter,
+ * `resolveBuiltinModel` below). `'subscription'` (Codex) answers through the
+ * daemon's own adapter instead of pi-ai
+ * (docs/adr/0014-subscription-inference-boundary.md) — its `stream` member
+ * is what `resolveModel`/`streamFn` call instead of ever dialing pi-ai's own
+ * HTTP client for that connection. `connection-inference.ts` is the one
+ * place that builds this array for `server.ts` — it wraps
+ * `ModelConnectionRegistry.runtimes()`'s raw sources with the
+ * freshness/failure policy this bridge deliberately does not know about.
  */
 export interface ModelConnectionRuntime {
   connectionId: string
   provider: string
-  transport: 'builtin'
+  transport: 'builtin' | 'subscription'
+  /** Present only on a `'subscription'`-transport runtime. Absent (or a runtime with none) fails the turn closed — never silently degrades to the builtin/mock path. */
+  stream?: (request: SubscriptionStreamRequest) => AsyncIterable<string>
+}
+
+/** One subscription-transport turn's request (issue #47): the prompt is already the exact `PiChatContext` mapping (`subscription-prompt.ts`) — a subscription adapter never sees pi's structured `Context`. */
+export interface SubscriptionStreamRequest {
+  modelId: string
+  prompt: SubscriptionPrompt
+  signal?: AbortSignal
 }
 
 export interface ProviderBridgeOptions {
@@ -94,10 +118,14 @@ export interface ProviderBridgeOptions {
   config: RoutingConfig | (() => RuntimeRoutingConfig)
   secrets: SecretResolver
   /**
-   * The live connection roster (issue #47). Not yet consulted by this
-   * bridge — every connection today resolves through the builtin branch
-   * below — and arrives with its first consumer alongside the
-   * `'subscription'` transport.
+   * The live connection roster (issue #47): `resolveModel` consults this to
+   * find a `'subscription'`-transport runtime for a connection-bound
+   * `ModelRef`, and `streamFn` reads the matching runtime's `stream` back
+   * off the descriptor's `CONNECTION_BINDING` stamp. `server.ts` supplies
+   * `connection-inference.ts`'s `createConnectionRuntimes(registry)`, never
+   * a bare `() => registry.runtimes()` — the wrapping there is what makes a
+   * revoked/expired subscription fail the turn instead of silently
+   * retrying with a stale credential.
    */
   connections?: () => ModelConnectionRuntime[]
   /** Deterministic loopback chat behavior, not yet supplied by any caller. Omit for a single canned reply. */
@@ -145,10 +173,29 @@ export function createProviderBridge(options: ProviderBridgeOptions): ProviderBr
   const readConfig = (): RoutingConfig | RuntimeRoutingConfig =>
     typeof config === 'function' ? config() : config
 
+  /** The live connection roster, read at the point of use (issue #47) — same rationale as `readConfig`. */
+  const liveConnections = (): ModelConnectionRuntime[] => options.connections?.() ?? []
+
+  const findRuntime = (connectionId: string): ModelConnectionRuntime | undefined =>
+    liveConnections().find((runtime) => runtime.connectionId === connectionId)
+
   const resolveModel = (model: ModelRef): PiModel => {
     if (model.provider === 'mock') {
       const descriptor: BoundPiModel = { ...mockModelDescriptor(model.modelId) }
       descriptor[CONNECTION_BINDING] = model.connectionId ?? null
+      return descriptor
+    }
+    // A connection-bound `ModelRef` whose runtime is `'subscription'`
+    // transport (Codex) never resolves through pi-ai's builtin catalog at
+    // all — it answers through the connection's own `stream` verb instead
+    // (docs/adr/0014-subscription-inference-boundary.md). Checked before
+    // the builtin lookup below so a subscription connection's `modelId`
+    // (from its own `model/list` catalog, not pi-ai's) never has to exist
+    // in pi-ai's catalog.
+    const runtime = model.connectionId === undefined ? undefined : findRuntime(model.connectionId)
+    if (runtime?.transport === 'subscription') {
+      const descriptor: BoundPiModel = { ...subscriptionModelDescriptor(runtime, model.modelId) }
+      descriptor[CONNECTION_BINDING] = runtime.connectionId
       return descriptor
     }
     // pi-ai's builtin catalog lookup returns a shared object per
@@ -246,8 +293,53 @@ export function createProviderBridge(options: ProviderBridgeOptions): ProviderBr
     return apiKey
   }
 
+  /**
+   * The single point where a subscription-transport request's runtime is
+   * decided (issue #47) — the `stream`-verb counterpart of
+   * `resolveRequestApiKey` above. Reads the `CONNECTION_BINDING` stamp only
+   * — never `model.provider` — and throws rather than falling through to
+   * ANY other transport when it cannot yield a usable runtime. There is no
+   * API key to resolve on this path by construction (a subscription
+   * connection answers through its own adapter, never pi-ai's HTTP client),
+   * so this fails closed on "no active runtime for this connection" instead
+   * of the empty-key check `resolveRequestApiKey` uses — the fail-closed
+   * guard that function embodies is not weakened by this branch existing
+   * beside it, it simply has nothing to resolve here.
+   */
+  const resolveSubscriptionRuntime = (model: PiModel): ModelConnectionRuntime => {
+    const boundModel = model as BoundPiModel
+    if (!Object.prototype.hasOwnProperty.call(boundModel, CONNECTION_BINDING)) {
+      throw new Error(
+        'this model descriptor did not come from the provider bridge; refusing the turn',
+      )
+    }
+    const connectionId = boundModel[CONNECTION_BINDING] as string | null
+    const runtime = connectionId === null ? undefined : findRuntime(connectionId)
+    if (!runtime || runtime.transport !== 'subscription' || !runtime.stream) {
+      throw new Error(
+        connectionId === null
+          ? 'a subscription-transport model descriptor carries no connection id — this is a daemon wiring bug'
+          : `Model connection "${connectionId}" is not available to answer a subscription turn — reconnect it and try again`,
+      )
+    }
+    return runtime
+  }
+
   const streamFn: PiStreamFn = (model, context, streamOptions) => {
     if (model.provider === 'mock') return streamMock(model, context, streamOptions, mockResponder)
+    if (model.api === 'veduta-subscription') {
+      try {
+        const runtime = resolveSubscriptionRuntime(model)
+        const prompt = toSubscriptionPrompt(context)
+        // `runtime.stream` was just proven present by `resolveSubscriptionRuntime`.
+        return streamSubscription(model, prompt, streamOptions, runtime.stream!)
+      } catch (error) {
+        // Same rejected-promise rationale as the catch below: `toSubscriptionPrompt`'s
+        // fail-closed refusal (a turn carrying Veduta tools) and a missing
+        // runtime both throw synchronously here, before any stream exists.
+        return Promise.reject(error)
+      }
+    }
     try {
       const apiKey = resolveRequestApiKey(model, streamOptions)
       return streamSimple(model, context, { ...streamOptions, apiKey })
@@ -375,4 +467,123 @@ function streamMock(
     : piFauxAssistantMessage('Hello — the mock provider has no response script configured yet.')
   core.setResponses([step])
   return core.stream(model, context, streamOptions)
+}
+
+/**
+ * A hand-built descriptor for a `'subscription'`-transport runtime (issue
+ * #47), the same footing as `mockModelDescriptor` above: `api:
+ * 'veduta-subscription'` is a novel string pi-ai's `Api` type happily
+ * accepts (`KnownApi | (string & {})`, verified against the installed
+ * package — see docs/adr/0014-subscription-inference-boundary.md), and it
+ * is what `streamFn` switches on to route the call through the connection's
+ * own `stream` verb instead of pi-ai's compat `streamSimple`.
+ *
+ * pi-ai ships its own `openai-codex` provider and `openai-codex-responses`
+ * api (`providers/all.js`) — deliberately NOT used here. They reproduce
+ * Codex's own OAuth client identity, which
+ * `issues/047-model-connections.md` records is not something Veduta may
+ * do (ref-11's research: a third-party product may not present itself as
+ * the pinned Codex client to obtain subscription credentials outside the
+ * documented `codex app-server` device-code flow). `runtime.provider` here
+ * is the canonical provider name (`'openai'`) purely for display and
+ * egress-host lookup — never used to pick a pi-ai provider client.
+ */
+function subscriptionModelDescriptor(runtime: ModelConnectionRuntime, modelId: string): PiModel {
+  return {
+    id: modelId,
+    name: modelId,
+    api: 'veduta-subscription',
+    provider: runtime.provider,
+    baseUrl: 'http://localhost:0',
+    reasoning: false,
+    input: ['text'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128000,
+    maxTokens: 16384,
+  }
+}
+
+/** Every field of a subscription turn's usage report — no token accounting happens on this path (issue #47: the connection's own adapter, not pi-ai, ran the call). */
+const SUBSCRIPTION_USAGE: PiUsage = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+}
+
+/**
+ * Builds the `'veduta-subscription'` branch's `AssistantMessageEventStream`
+ * (issue #47) on `createAssistantMessageEventStream()` — pi-ai's own
+ * extension seam (`utils/event-stream.d.ts`'s doc comment: "for use in
+ * extensions") — rather than a faux queue: `runtimeStream` is a real,
+ * incrementally-arriving async iterable of text deltas (the Codex
+ * adapter's `stream`), not a canned response to replay. Emits exactly the
+ * event sequence pi's own providers use for a text-only reply: `start` →
+ * `text_start` → one `text_delta` per chunk → `text_end` → `done`; any
+ * thrown error (including `toSubscriptionPrompt`'s tools refusal reaching
+ * this far, or the runtime stream itself failing mid-turn) becomes the
+ * `error` event pi's own faux/real providers use, carrying the message on
+ * `errorMessage` — never a rejected promise once the stream object exists,
+ * matching pi's contract that a provider failure is a resolved turn with
+ * `stopReason: 'error'` (`pi-agent-runner.ts`'s own doc comments on
+ * `TurnFailedError`/`turnFailureStatus`).
+ */
+function streamSubscription(
+  model: PiModel,
+  prompt: SubscriptionPrompt,
+  streamOptions: SimpleStreamOptions | undefined,
+  runtimeStream: (request: SubscriptionStreamRequest) => AsyncIterable<string>,
+): PiAssistantMessageEventStream {
+  const outer = createAssistantMessageEventStream()
+  const base = {
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: SUBSCRIPTION_USAGE,
+    timestamp: Date.now(),
+  } as const
+  queueMicrotask(async () => {
+    try {
+      let text = ''
+      let partial: PiAssistantMessage = {
+        role: 'assistant',
+        content: [],
+        stopReason: 'stop',
+        ...base,
+      }
+      outer.push({ type: 'start', partial: { ...partial } })
+      outer.push({ type: 'text_start', contentIndex: 0, partial: { ...partial } })
+      for await (const delta of runtimeStream({
+        modelId: model.id,
+        prompt,
+        ...(streamOptions?.signal ? { signal: streamOptions.signal } : {}),
+      })) {
+        text += delta
+        partial = { ...partial, content: [{ type: 'text', text }] }
+        outer.push({ type: 'text_delta', contentIndex: 0, delta, partial: { ...partial } })
+      }
+      outer.push({ type: 'text_end', contentIndex: 0, content: text, partial: { ...partial } })
+      const finalMessage: PiAssistantMessage = {
+        role: 'assistant',
+        content: [{ type: 'text', text }],
+        stopReason: 'stop',
+        ...base,
+      }
+      outer.push({ type: 'done', reason: 'stop', message: finalMessage })
+      outer.end(finalMessage)
+    } catch (error) {
+      const finalMessage: PiAssistantMessage = {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage: error instanceof Error ? error.message : String(error),
+        ...base,
+      }
+      outer.push({ type: 'error', reason: 'error', error: finalMessage })
+      outer.end(finalMessage)
+    }
+  })
+  return outer
 }

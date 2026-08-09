@@ -10,11 +10,17 @@ import {
 } from './codex-app-server.ts'
 import {
   AccountReadResponseSchema,
+  CODEX_REASONING_ITEM_TYPE,
+  CODEX_TEXT_ITEM_TYPE,
   InitializeResponseSchema,
+  ItemNotificationSchema,
   LoginStartResponseSchema,
   ModelListResponseSchema,
   parseCodexNotification,
   parseCodexResponse,
+  ThreadStartResponseSchema,
+  TurnCompletedNotificationSchema,
+  TurnStartResponseSchema,
   type LoginCompletedNotification,
 } from './codex-app-server-protocol.ts'
 import {
@@ -27,6 +33,8 @@ import {
   type ModelConnectionAdapter,
   type RefreshResult,
 } from './model-connection-adapter.ts'
+import type { SubscriptionStreamRequest } from './pi-provider-bridge.ts'
+import { renderSubscriptionPrompt } from './subscription-prompt.ts'
 import { resolveInstalledVersion } from './version.ts'
 
 /**
@@ -43,10 +51,16 @@ import { resolveInstalledVersion } from './version.ts'
  * transport factory via `CodexAdapterDeps`, letting tests substitute the
  * deterministic fake without ever touching a real binary.
  *
- * The `stream` verb (real chat inference through a tool-less
- * `thread/start`+`turn/start`) is deliberately absent — it lands with its
- * own fail-closed tool-set proof in the inference-seam slice that follows
- * this one.
+ * `stream` (issue #47's inference seam,
+ * docs/adr/0014-subscription-inference-boundary.md) is a fresh
+ * `thread/start` + `turn/start` per call — never reused, never resumed.
+ * `thread/start` carries the 0.146.1-valid restriction options this
+ * transcription could confirm (`approvalPolicy: 'never'`, a read-only
+ * sandbox); the actual fail-closed guarantee is a RUNTIME proof per
+ * streamed item, not a start-time assertion (the pinned response carries no
+ * tool-set field to assert against): any item that is not plain assistant
+ * text or reasoning triggers `turn/interrupt`, abandons the thread, and
+ * refuses.
  */
 
 const METHOD_DISPLAY_NAME = 'ChatGPT subscription'
@@ -200,6 +214,106 @@ async function revoke(ctx: AdapterContext): Promise<{ providerRevoked: boolean; 
   return { providerRevoked: false, note: REVOKE_NOTE }
 }
 
+const TOOL_ACTION_REFUSED_MESSAGE =
+  'the Codex turn attempted a tool action; refusing to run a turn that could act outside Veduta'
+
+const TURN_ABORTED_MESSAGE = 'the Codex turn was aborted before it completed'
+
+/** How long `stream()` waits before re-polling `transport.notifications()` when a drain came back empty and the turn has not completed — the real transport's notifications arrive asynchronously as the child process writes them; a test that pre-loads its whole scripted sequence before calling `stream()` never reaches this path at all. */
+const NOTIFICATION_POLL_INTERVAL_MS = 25
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Real chat inference through a tool-less turn (issue #47): a fresh
+ * `thread/start` + `turn/start` per call, NEVER a `thread/resume` — every
+ * call abandons its own thread on completion, interruption, or refusal. The
+ * fail-closed guarantee is the per-item check inside the notification loop
+ * below, not anything asserted on `thread/start`'s response — the pinned
+ * 0.146.1 response carries no tool-set field to assert against.
+ */
+async function* stream(
+  ctx: AdapterContext,
+  request: SubscriptionStreamRequest,
+): AsyncGenerator<string, void, void> {
+  const transport = await getTransport(ctx)
+
+  const threadStartRaw = await transport.request('thread/start', {
+    model: request.modelId,
+    // The 0.146.1-valid restriction options this transcription could
+    // confirm: never let the app-server auto-approve anything, and keep its
+    // own filesystem sandbox read-only. Neither field's value is itself the
+    // fail-closed guarantee — the per-item check below is.
+    approvalPolicy: 'never',
+    // transcription note: field name/value per 0.146.1 — the read-only
+    // sandbox policy.
+    sandboxPolicy: 'readOnly',
+    cwd: ctx.codexHome,
+  })
+  const { threadId } = parseCodexResponse(ThreadStartResponseSchema, 'thread/start', threadStartRaw)
+
+  const abandonThread = async (): Promise<void> => {
+    try {
+      await transport.request('turn/interrupt', { threadId })
+    } catch {
+      // Best-effort: the thread is abandoned regardless — never reused,
+      // never resumed (thread-per-turn, issue #47).
+    }
+  }
+
+  if (request.signal?.aborted) {
+    await abandonThread()
+    throw new ModelConnectionError('unsupported', TURN_ABORTED_MESSAGE)
+  }
+
+  const turnStartRaw = await transport.request('turn/start', {
+    threadId,
+    input: renderSubscriptionPrompt(request.prompt),
+  })
+  parseCodexResponse(TurnStartResponseSchema, 'turn/start', turnStartRaw)
+
+  while (true) {
+    if (request.signal?.aborted) {
+      await abandonThread()
+      throw new ModelConnectionError('unsupported', TURN_ABORTED_MESSAGE)
+    }
+
+    let sawNotification = false
+    for await (const frame of transport.notifications()) {
+      sawNotification = true
+
+      if (frame.method === 'turn/completed') {
+        parseCodexResponse(TurnCompletedNotificationSchema, 'turn/completed', frame.params)
+        return
+      }
+
+      if (frame.method === 'item/updated' || frame.method === 'item/completed') {
+        const { item } = parseCodexResponse(ItemNotificationSchema, frame.method, frame.params)
+        if (item.type === CODEX_TEXT_ITEM_TYPE) {
+          const text = item.delta ?? item.text
+          if (text) yield text
+          continue
+        }
+        if (item.type === CODEX_REASONING_ITEM_TYPE) continue // silently dropped, never fatal
+        // Any other item type — command execution, patch application, web
+        // search, an MCP tool call, or a type this build has never seen —
+        // is the runtime-observable proof the turn attempted to act outside
+        // Veduta.
+        await abandonThread()
+        throw new ModelConnectionError('unsupported', TOOL_ACTION_REFUSED_MESSAGE)
+      }
+
+      // An unrelated notification method (e.g. `account/updated`, drained
+      // while a turn happens to be in flight) is ignored here — only
+      // item/turn notifications are this loop's concern.
+    }
+
+    if (!sawNotification) await delay(NOTIFICATION_POLL_INTERVAL_MS)
+  }
+}
+
 export interface CodexAdapterDeps {
   /** Resolves the pinned binary path; production passes `resolveCodexBinary`. */
   resolveBinary: (env: NodeJS.ProcessEnv, rootDir: string) => string | undefined
@@ -275,6 +389,7 @@ export function createCodexAdapter(deps: CodexAdapterDeps): ModelConnectionAdapt
     catalog,
     verify,
     revoke,
+    stream,
   }
 }
 
