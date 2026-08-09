@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Fastify from 'fastify'
 import { z } from 'zod'
+import type { ModelRef } from './agent-runner.ts'
 import { AllowlistSurfaceManager } from './allowlist-surface.ts'
 import { ApprovalSurfaceManager } from './approval-surface.ts'
 import { ProgressiveAuthLockout } from './auth-rate-limit.ts'
@@ -26,7 +27,7 @@ import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import { chatToolRegistry as buildChatToolRegistry } from './chat-tool-registry.ts'
 import { createChatLoop } from './chat-loop.ts'
 import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
-import { loadConnectionsConfig } from './connections-config.ts'
+import { loadConnectionsConfig, type ConnectionsFile } from './connections-config.ts'
 import { EgressPolicy, installEgressEnforcement } from './egress.ts'
 import { EventIngestion, type FetchStage } from './event-ingestion.ts'
 import type { ExternalEvent } from './external-event.ts'
@@ -45,6 +46,15 @@ import { createMockChatResponder } from './mock-chat-model.ts'
 import { mockReaderComplete } from './mock-provider.ts'
 import { createMockReflectionDistiller } from './mock-reflection-distiller.ts'
 import { createMockWorkerRunner, createMockWorkerReviewComplete } from './mock-worker-runner.ts'
+import { BYOK_ADAPTERS } from './model-connection-byok.ts'
+import { claudeSubscriptionAdapter } from './model-connection-claude.ts'
+import { reconcileByokConnections } from './model-connection-migration.ts'
+import { ModelConnectionRegistry } from './model-connection-registry.ts'
+import {
+  deriveRoutingConfig,
+  egressProvidersFor,
+  RoutingState,
+} from './model-connection-routing.ts'
 import {
   ModelRouter,
   envSecretResolver,
@@ -58,7 +68,7 @@ import { loadNotificationsConfig } from './notifications-config.ts'
 import { registerOnboardingRoutes } from './onboarding-routes.ts'
 import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
 import { PiJsonlSessionStore } from './pi-agent-runner.ts'
-import { createProviderBridge } from './pi-provider-bridge.ts'
+import { createProviderBridge, isBuiltinModel, probeModel } from './pi-provider-bridge.ts'
 import { PushStore } from './push-store.ts'
 import { QuarantinedReader } from './quarantined-reader.ts'
 import { defaultRedactor } from './redaction.ts'
@@ -324,6 +334,24 @@ const PROVIDER_HOSTS: Record<string, string> = {
   anthropic: 'api.anthropic.com',
   openai: 'api.openai.com',
   openrouter: 'openrouter.ai',
+}
+
+/**
+ * The label a `model.failover` system notice names the destination by
+ * (issue #47): a connection-bound `ModelRef` resolves to that connection's
+ * own user-facing label, read fresh off `connections.json` rather than
+ * cached, so a renamed connection is announced under its current name; an
+ * unbound legacy `ModelRef` (no `connectionId`) falls back to
+ * `provider/modelId`, exactly as bare as the router's own log entries.
+ */
+function connectionLabel(rootDir: string, model: ModelRef): string {
+  if (model.connectionId !== undefined) {
+    const record = loadConnectionsConfig(rootDir).connections.find(
+      (candidate) => candidate.id === model.connectionId,
+    )
+    if (record) return record.label
+  }
+  return `${model.provider}/${model.modelId}`
 }
 
 const EgressConfigSchema = z.object({ allow: z.array(z.string()) })
@@ -697,40 +725,158 @@ export function buildServer(options: ServerOptions = {}) {
     await treeProposals.flush()
   })
 
-  // Model routing (issue #10): per-tier config from <dataDir>/routing.json,
-  // spend persisted under <dataDir>/usage/. Past a daily cap the router
-  // shuts proactivity off; the user hears about it in chat. Live spend
-  // recording (turn-end costUsd -> recordSpend) is the chat loop's own job
-  // (chat-loop.ts's `runTurn`), constructed below.
-  const routingConfig = withMockFallback(loadRoutingConfig(store.spacesEngine.rootDir), secrets, {
-    profile,
-    mockEnabled: loadConnectionsConfig(store.spacesEngine.rootDir).mockEnabled,
-  })
-  const router = new ModelRouter({
+  // Model connection migration (issue #47, docs/adr/0014-subscription-inference-boundary.md
+  // amendment): a pre-Model-connections install keeps its provider keys in
+  // `routing.json`'s `providerKeys` with no `connections.json` record for
+  // them at all. Runs once, here, before the registry below ever reads
+  // `connections.json`, so a freshly migrated connection is already on disk
+  // the first time anything asks for a snapshot. Writes only
+  // `connections.json` and never sets a selection, so it changes nothing
+  // about how this install currently routes (`model-connection-migration.ts`'s
+  // own doc comment has the full argument).
+  reconcileByokConnections({
     rootDir: store.spacesEngine.rootDir,
-    config: routingConfig,
+    routing: loadRoutingConfig(store.spacesEngine.rootDir),
     secrets,
-    onEvent: (event) => {
-      if (event.type !== 'spending.cap-exceeded') return
-      gateway.broadcastSystemNotice(
-        `Daily ${event.tier} spending cap reached ($${event.spentUsd.toFixed(2)} of ` +
-          `$${event.capUsd.toFixed(2)}). Proactivity is paused until tomorrow; chat stays available.`,
-      )
-    },
+    now,
   })
 
-  // The provider bridge (issue #37, ADR-0004 amendment): maps a routed
-  // `ModelRef` plus its resolved key onto pi-ai's provider clients for every
-  // real turn, and onto the deterministic mock model
-  // (`createMockChatResponder`) for the keyless routing candidate
+  // The registry below has to be constructed before `routingState`/`router`
+  // (its initial config already needs the registry's freshly migrated
+  // `connections.json`) and before `bridge` (whose `probe` needs the
+  // router's routing config to run a real inference call) — but the
+  // registry's own options need callbacks into both. Each gets one mutable
+  // slot, assigned its real behavior once both sides exist a few lines
+  // below; `const` everywhere else keeps `routingState`/`router`/`bridge`
+  // themselves un-reassignable. `onRoutingChangedSlot`'s default is a
+  // deliberate no-op: `registry.normalizeInFlightStatesOnBoot()` immediately
+  // below can call it once, harmlessly, before the real callback is wired —
+  // the very next lines rebuild `routingState`/`router` from the
+  // now-normalized file regardless.
+  const onRoutingChangedSlot: { current: (file: ConnectionsFile) => void } = {
+    current: () => {},
+  }
+  const probeSlot: { current: (connectionId: string, modelId: string) => Promise<void> } = {
+    current: () => {
+      throw new Error('the provider bridge is not ready yet; this is a daemon boot-order bug')
+    },
+  }
+
+  // The Model connection migration (issue #47, docs/adr/0014-subscription-inference-boundary.md
+  // amendment): a pre-Model-connections install keeps its provider keys in
+  // `routing.json`'s `providerKeys` with no `connections.json` record for
+  // them at all. Runs once, here, before the registry below ever reads
+  // `connections.json`, so a freshly migrated connection is already on disk
+  // the first time anything asks for a snapshot. Writes only
+  // `connections.json` and never sets a selection, so it changes nothing
+  // about how this install currently routes (`model-connection-migration.ts`'s
+  // own doc comment has the full argument).
+  reconcileByokConnections({
+    rootDir: store.spacesEngine.rootDir,
+    routing: loadRoutingConfig(store.spacesEngine.rootDir),
+    secrets,
+    now,
+  })
+
+  // The Model connection registry (issue #47): owns `connections.json`,
+  // adapter dispatch, and every routing rebuild that follows a connection
+  // state change. `isRoutableModel: isBuiltinModel` (M5) marks a catalog
+  // entry this build cannot actually route to as disabled rather than
+  // letting it fail mid-turn.
+  const registry = new ModelConnectionRegistry({
+    rootDir: store.spacesEngine.rootDir,
+    adapters: [...BYOK_ADAPTERS, claudeSubscriptionAdapter],
+    vault,
+    secrets,
+    profile,
+    fetchImpl: fetch,
+    now,
+    probe: (connectionId, modelId) => probeSlot.current(connectionId, modelId),
+    isRoutableModel: isBuiltinModel,
+    onRoutingChanged: (file) => onRoutingChangedSlot.current(file),
+    env: process.env,
+  })
+  registry.normalizeInFlightStatesOnBoot()
+
+  // Model routing (issue #10, widened by issue #47's Model connections):
+  // per-tier config derived from `connections.json` over `<dataDir>/routing.json`'s
+  // legacy fallback chain, spend persisted under `<dataDir>/usage/`. Past a
+  // daily cap the router shuts proactivity off; the user hears about it in
+  // chat. Live spend recording (turn-end costUsd -> recordSpend) is the chat
+  // loop's own job (chat-loop.ts's `runTurn`), constructed below.
+  const routingState = new RoutingState(
+    withMockFallback(
+      deriveRoutingConfig(
+        loadRoutingConfig(store.spacesEngine.rootDir),
+        loadConnectionsConfig(store.spacesEngine.rootDir),
+      ),
+      secrets,
+      { profile, mockEnabled: loadConnectionsConfig(store.spacesEngine.rootDir).mockEnabled },
+    ),
+  )
+  const router = new ModelRouter({
+    rootDir: store.spacesEngine.rootDir,
+    config: routingState.current(),
+    secrets,
+    onCallError: (model, error) => {
+      // A migrated legacy connection's id IS its provider name, so an
+      // unbound legacy `ModelRef` (no `connectionId`) still maps onto the
+      // right record here — a BYOK 401/403 marks it `failed` and the next
+      // routing rebuild drops it (issue #47).
+      void registry.noteCallFailure(model.connectionId ?? model.provider, error)
+    },
+    onEvent: (event) => {
+      if (event.type === 'spending.cap-exceeded') {
+        gateway.broadcastSystemNotice(
+          `Daily ${event.tier} spending cap reached ($${event.spentUsd.toFixed(2)} of ` +
+            `$${event.capUsd.toFixed(2)}). Proactivity is paused until tomorrow; chat stays available.`,
+        )
+        return
+      }
+      if (event.type === 'model.failover') {
+        gateway.broadcastSystemNotice(
+          `Switched to ${connectionLabel(store.spacesEngine.rootDir, event.to)} after: ${event.reason}`,
+        )
+      }
+    },
+  })
+  onRoutingChangedSlot.current = (file) => {
+    const derived = withMockFallback(
+      deriveRoutingConfig(loadRoutingConfig(store.spacesEngine.rootDir), file),
+      secrets,
+      { profile, mockEnabled: file.mockEnabled },
+    )
+    routingState.replace(derived)
+    router.setConfig(derived)
+  }
+
+  // The provider bridge (issue #37, ADR-0004 amendment; widened by issue
+  // #47): maps a routed `ModelRef` plus its resolved key onto pi-ai's
+  // provider clients for every real turn, and onto the deterministic mock
+  // model (`createMockChatResponder`) for the keyless routing candidate
   // `withMockFallback` appends above — the same loopback behavior the
   // pre-issue-37 chat stand-ins produced, now returned as tool calls the
-  // gated registry below actually executes.
+  // gated registry below actually executes. `config`/`connections` are
+  // getters, not snapshots, so the registry's live routing rebuilds are
+  // visible to the very next call.
   const bridge = createProviderBridge({
-    config: routingConfig,
+    config: () => routingState.current(),
+    connections: () => registry.runtimes(),
     secrets,
     mockResponder: createMockChatResponder({ store, now }),
   })
+  probeSlot.current = (connectionId, modelId) => {
+    const record = loadConnectionsConfig(store.spacesEngine.rootDir).connections.find(
+      (candidate) => candidate.id === connectionId,
+    )
+    if (!record) throw new Error(`no such Model connection: ${connectionId}`)
+    return probeModel(bridge, {
+      provider: record.provider,
+      modelId,
+      tier: 'reasoning',
+      connectionId,
+    })
+  }
   // One JSONL session per Space plus one for the global chat (chat-loop.ts's
   // `sessionIdFor`), persisted under `<rootDir>/sessions` — `backup.ts` already
   // lists `sessions` among the plain-file-tree entries a backup copies
@@ -1343,6 +1489,10 @@ export function buildServer(options: ServerOptions = {}) {
     spacesEngine: store.spacesEngine,
     env: onboardingOptions.env ?? process.env,
     scheduleExit: onboardingOptions.scheduleExit ?? defaultScheduleExit(app),
+    // Issue #47: an imported provider key becomes a visible, usable Model
+    // connection before the migration import route's response goes out,
+    // with no daemon restart required.
+    connections: { reconcileImportedByokKeys: (names) => registry.reconcileImportedKeys(names) },
   })
 
   app.post('/api/surfaces/:surfaceId/actions', (request, reply) => {
@@ -1481,7 +1631,14 @@ export function buildServer(options: ServerOptions = {}) {
   ]
   const egress = assembleEgressPolicy({
     rootDir: store.spacesEngine.rootDir,
-    providers: Object.keys(routingConfig.providerKeys),
+    // Maps every `providerKeys`/`connectionKeys` entry back onto its
+    // canonical provider (issue #47): a migrated connection's id already IS
+    // the provider name, a new connection's id is a uuid only
+    // `connections.json` can resolve.
+    providers: egressProvidersFor(
+      routingState.current(),
+      loadConnectionsConfig(store.spacesEngine.rootDir),
+    ),
     ...(Object.values(ingestionConfig.sources).some((source) => Boolean(source.google))
       ? { googleHosts: ['oauth2.googleapis.com', 'www.googleapis.com'] }
       : {}),
@@ -1503,6 +1660,7 @@ export function buildServer(options: ServerOptions = {}) {
     store,
     gateway,
     router,
+    connections: registry,
     scheduler,
     ingestion,
     watchManager,

@@ -8,7 +8,7 @@ import type {
   ImportResult,
   ImportSourceKind,
 } from '@veduta/protocol'
-import { applyImport } from './import-apply.ts'
+import { applyImport, type ImportConnectionSink } from './import-apply.ts'
 import { sourceLabel } from './import-mapping.ts'
 import { planLegacyImport } from './import-plan.ts'
 import { buildImportCommand } from './import-preview-text.ts'
@@ -72,6 +72,14 @@ export interface MigrationImportDeps {
    * Defaults to a recursive `rmSync`.
    */
   removeStagedCopy?: (dir: string) => void
+  /**
+   * Threaded straight through to `applyImport` (issue #47): reconciles any
+   * provider key this run imports into a visible Model connection before the
+   * import's own lock releases. `server.ts` supplies the daemon's
+   * `ModelConnectionRegistry`; absent in tests that do not care about Model
+   * connections.
+   */
+  connections?: ImportConnectionSink
 }
 
 /** Where the installer stages a detected legacy install: `<rootDir>/import-source/<kind>/`. */
@@ -313,6 +321,7 @@ export async function runLegacyImport(
       rootDir: deps.rootDir,
       ...(deps.vault === undefined ? {} : { vault: deps.vault }),
       ...(deps.keyMaterial === undefined ? {} : { keyMaterial: deps.keyMaterial }),
+      ...(deps.connections === undefined ? {} : { connections: deps.connections }),
     },
     { snapshot, secrets, options: { overwrite: request.overwrite, secrets: request.secrets } },
   )

@@ -60,11 +60,28 @@ export class ImportRefusedError extends Error {
   }
 }
 
+/**
+ * The narrow sink `applyImportLocked` calls into right after importing
+ * secrets (issue #47, `docs/adr/0014-subscription-inference-boundary.md`
+ * amendment): turns whatever provider keys just landed in the vault into a
+ * visible, selectable Model connection before the apply lock releases, so
+ * an imported key is usable without a daemon restart. `server.ts` supplies
+ * `registry.reconcileImportedKeys` bound to the daemon's own
+ * `ModelConnectionRegistry`; the CLI importer supplies none, since its
+ * process exits before any daemon would read the result anyway — boot's own
+ * `reconcileByokConnections` (`model-connection-migration.ts`) covers that
+ * path on the next start instead.
+ */
+export interface ImportConnectionSink {
+  reconcileImportedByokKeys(vaultNames: string[]): Promise<void>
+}
+
 export interface ApplyImportDeps {
   rootDir: string
   vault?: SecretsVault
   keyMaterial?: Buffer
   now?: () => Date
+  connections?: ImportConnectionSink
 }
 
 /**
@@ -439,6 +456,13 @@ async function applyImportLocked(
   const secretsImported = plan.options.secrets
     ? importAllowlistedSecrets(rootDir, deps.vault, input.secrets.importable)
     : []
+
+  // Reconcile any freshly imported provider key into a visible Model
+  // connection, still inside the lock this whole function holds
+  // (`applyImport`'s `finally` releases it only after this returns) — so the
+  // connection exists by the time a caller's response goes out, with no
+  // separate daemon restart required (issue #47).
+  await deps.connections?.reconcileImportedByokKeys(secretsImported)
 
   // Step 8: archive + NOTES.md. `buildNotesMarkdown` now
   // renders the REAL `WriteImportArchiveResult` from the walk that just ran

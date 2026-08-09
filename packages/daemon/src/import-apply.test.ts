@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
 import type { ImportItem, ImportOptions, ImportPlan } from '@veduta/protocol'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { restoreBackup } from './backup.ts'
 import {
   ImportRefusedError,
@@ -24,6 +24,9 @@ import { IMPORTED_SPACE_SLUG, adaptSoul } from './import-mapping.ts'
 import { scanLegacySecrets, type SecretScan } from './import-secrets.ts'
 import { readLegacySource, type LegacySourceSnapshot } from './import-source.ts'
 import { findImport, loadImportState } from './import-state.ts'
+import { BYOK_ADAPTERS } from './model-connection-byok.ts'
+import { ModelConnectionRegistry } from './model-connection-registry.ts'
+import { envSecretResolver } from './model-routing.ts'
 import { SecretsVault } from './secrets-vault.ts'
 import { SpacesEngine } from './spaces-engine.ts'
 
@@ -422,6 +425,53 @@ describe('applyImport — no secret anywhere', () => {
         },
       ),
     ).rejects.toThrow(ImportRefusedError)
+  })
+})
+
+describe('applyImport — Model connection reconciliation (issue #47)', () => {
+  it('reconciles an imported anthropic key into a visible connection inside the same apply', async () => {
+    const sourceDir = buildHermesFixture()
+    const rootDir = freshDir('veduta-apply-target-')
+    const vault = SecretsVault.open(rootDir, KEY_MATERIAL)
+    const read = readHermesFixture(sourceDir)
+
+    // The real registry, not a recording fake: proves the imported key ends
+    // up as an actual `connected` connection record, not just that some
+    // callback fired with the right arguments.
+    const registry = new ModelConnectionRegistry({
+      rootDir,
+      adapters: BYOK_ADAPTERS,
+      vault,
+      secrets: envSecretResolver,
+      profile: 'loopback',
+      fetchImpl: vi.fn() as unknown as typeof fetch,
+      now: () => new Date('2026-08-09T10:00:00.000Z'),
+      probe: async () => {},
+      isRoutableModel: () => true,
+      env: {},
+    })
+
+    await applyImport(
+      {
+        rootDir,
+        vault,
+        keyMaterial: KEY_MATERIAL,
+        connections: {
+          reconcileImportedByokKeys: (names) => registry.reconcileImportedKeys(names),
+        },
+      },
+      {
+        snapshot: read.snapshot,
+        secrets: read.secrets,
+        options: { overwrite: false, secrets: true },
+      },
+    )
+
+    const snapshot = await registry.snapshot()
+    const anthropic = snapshot.connections.find((connection) => connection.id === 'anthropic')
+    expect(anthropic?.state).toBe('connected')
+    const openai = snapshot.connections.find((connection) => connection.id === 'openai')
+    expect(openai?.state).toBe('connected')
   })
 })
 

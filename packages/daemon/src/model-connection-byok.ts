@@ -24,7 +24,8 @@ import { fetchProviderCatalog, storeConnectionApiKey, testProviderKey } from './
  * legacy install) work through the identical code path.
  */
 
-const PROVIDER_DISPLAY_NAMES: Record<ByokProvider, string> = {
+/** Exported so `model-connection-migration.ts` builds the same label text for a migrated legacy connection, rather than keeping a second copy of this map (issue #47). */
+export const PROVIDER_DISPLAY_NAMES: Record<ByokProvider, string> = {
   anthropic: 'Claude',
   openai: 'OpenAI',
   openrouter: 'OpenRouter',

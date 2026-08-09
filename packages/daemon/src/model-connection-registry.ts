@@ -32,6 +32,7 @@ import {
   type RefreshResult,
 } from './model-connection-adapter.ts'
 import { loadRoutingConfig, type SecretResolver } from './model-routing.ts'
+import type { ModelConnectionRuntime } from './pi-provider-bridge.ts'
 import type { SecretsVault } from './secrets-vault.ts'
 
 /** The interrupted-authorization reason every persisted in-flight state is normalized to on boot (issue #47, ADR-0014 amendment). */
@@ -742,10 +743,12 @@ export class ModelConnectionRegistry {
    * Placeholder for the inference slice: once a subscription adapter
    * (Codex) exists, this turns every `connected` connection into the
    * runtime descriptor `pi-provider-bridge.ts` needs to route a turn.
-   * Declared here — returning nothing yet — so `server.ts`'s wiring lands
+   * Typed against the real `ModelConnectionRuntime` shape already (issue
+   * #47's boot wiring, `server.ts`) — returning nothing yet — so
+   * `server.ts`'s `connections: () => registry.runtimes()` wiring lands
    * once instead of being threaded through twice.
    */
-  runtimes(): readonly unknown[] {
+  runtimes(): ModelConnectionRuntime[] {
     return []
   }
 

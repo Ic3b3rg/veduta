@@ -378,6 +378,65 @@ describe('AC4: switching mock -> real provider is configuration only (issue 023)
       delete process.env['VEDUTA_VAULT_KEY']
     }
   })
+
+  it('a migrated legacy BYOK install routes to exactly the same model as before migration', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-ac4-migration-'))
+    const keyMaterial = Buffer.from('a test key material, long enough for scrypt')
+    process.env['VEDUTA_VAULT_KEY'] = keyMaterial.toString('utf8')
+    try {
+      // A pre-Model-connections install: a real key in `routing.json`'s
+      // `providerKeys` via the legacy BYOK apply path, no `connections.json`
+      // at all yet.
+      const vault = SecretsVault.open(dataDir, keyMaterial)
+      applyByok(
+        { rootDir: dataDir, vault },
+        { provider: 'anthropic', key: 'sk-real-anthropic-key' },
+      )
+      expect(existsSync(join(dataDir, 'connections.json'))).toBe(false)
+
+      // Boot runs `reconcileByokConnections` before the router/bridge exist
+      // (`server.ts`'s boot wiring, issue #47): the legacy key becomes a
+      // visible, `connected` Model connection under the reserved
+      // `anthropic` id, with no `selection` ever written.
+      const { auth } = await readyAuthStore()
+      const { router, connections } = buildServer({
+        dataDir,
+        auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+        profile: 'local-vps',
+      })
+
+      // Routing is byte-identical to the pre-migration AC4 expectation
+      // above: migration writes only `connections.json` and never sets a
+      // selection, so `deriveRoutingConfig` returns the base routing
+      // config unchanged (`model-connection-routing.ts`).
+      expect(router.route({ purpose: 'chat-turn', origin: 'user' })).toEqual({
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-5',
+        tier: 'reasoning',
+      })
+      expect(router.route({ purpose: 'classification', origin: 'user' })).toEqual({
+        provider: 'anthropic',
+        modelId: 'claude-haiku-4-5',
+        tier: 'triage',
+      })
+
+      const snapshot = await connections.snapshot()
+      const anthropic = snapshot.connections.find((connection) => connection.id === 'anthropic')
+      expect(anthropic).toMatchObject({
+        id: 'anthropic',
+        state: 'connected',
+        selectedModelId: 'claude-sonnet-5',
+      })
+      // No `selection` was ever written to `connections.json` by migration —
+      // the snapshot's own display-selection fallback derives this same
+      // value from `routing.json`'s reasoning-tier head purely for the PWA's
+      // selects, matching the migrated connection by its reserved id
+      // (`model-connection-registry.ts`'s `deriveDisplaySelection`).
+      expect(snapshot.selection).toEqual({ connectionId: 'anthropic', modelId: 'claude-sonnet-5' })
+    } finally {
+      delete process.env['VEDUTA_VAULT_KEY']
+    }
+  })
 })
 
 describe('a vps profile never routes through the mock (issue #47)', () => {

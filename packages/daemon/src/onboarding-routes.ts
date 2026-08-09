@@ -16,7 +16,7 @@ import {
   type OnboardingStatus,
 } from '@veduta/protocol'
 import { z } from 'zod'
-import { ImportRefusedError } from './import-apply.ts'
+import { ImportRefusedError, type ImportConnectionSink } from './import-apply.ts'
 import { applyByok, testProviderKey } from './onboarding-step-byok.ts'
 import { confirmDomain } from './onboarding-step-domain.ts'
 import { applyFinish } from './onboarding-step-finish.ts'
@@ -65,6 +65,13 @@ export interface OnboardingRoutesDeps {
   env: NodeJS.ProcessEnv
   scheduleExit: () => void
   fetchImpl?: typeof fetch
+  /**
+   * Threaded through to the migration import routes (issue #47): reconciles
+   * an imported provider key into a visible Model connection before the
+   * import's own lock releases. `server.ts` supplies the daemon's
+   * `ModelConnectionRegistry`.
+   */
+  connections?: ImportConnectionSink
 }
 
 /** A request body that must be empty (or absent) — `.strict()` so an unexpected key is a 400, not silently ignored (issue #19 code review fix). */
@@ -102,6 +109,7 @@ function migrationImportDeps(deps: OnboardingRoutesDeps): MigrationImportDeps {
     vault: deps.vault,
     keyMaterial: deps.vaultKeyMaterial,
     env: deps.env,
+    ...(deps.connections === undefined ? {} : { connections: deps.connections }),
   }
 }
 
