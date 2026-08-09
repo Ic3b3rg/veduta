@@ -13,7 +13,7 @@ import {
 import { streamSimple } from '@earendil-works/pi-ai/compat'
 import { getBuiltinModel } from '@earendil-works/pi-ai/providers/all'
 import type { ModelRef } from './agent-runner.ts'
-import type { RoutingConfig, SecretResolver } from './model-routing.ts'
+import type { RoutingConfig, RuntimeRoutingConfig, SecretResolver } from './model-routing.ts'
 import type { PiModel, PiStreamFn } from './pi-agent-runner.ts'
 
 /**
@@ -69,12 +69,63 @@ export interface ProviderBridge {
   streamFn: PiStreamFn
 }
 
+/**
+ * A routable Model connection as the bridge sees it (issue #47). `transport`
+ * is `'builtin'` today — every connection resolves through pi-ai's own
+ * builtin catalog (Anthropic/OpenAI/OpenRouter). The `'subscription'`
+ * transport (Codex, answering through the daemon's own adapter rather than
+ * pi-ai, per docs/adr/0014-subscription-inference-boundary.md) arrives with
+ * its first consumer in the inference-seam work that follows this slice.
+ */
+export interface ModelConnectionRuntime {
+  connectionId: string
+  provider: string
+  transport: 'builtin'
+}
+
 export interface ProviderBridgeOptions {
-  config: RoutingConfig
+  /**
+   * A live config snapshot, or a getter for one (issue #47): the registry
+   * rebuilds routing on every connection mutation, and a function lets the
+   * bridge always read the current config instead of one captured at
+   * construction time. A plain `RoutingConfig` — every existing caller —
+   * keeps working unchanged.
+   */
+  config: RoutingConfig | (() => RuntimeRoutingConfig)
   secrets: SecretResolver
+  /**
+   * The live connection roster (issue #47). Not yet consulted by this
+   * bridge — every connection today resolves through the builtin branch
+   * below — and arrives with its first consumer alongside the
+   * `'subscription'` transport.
+   */
+  connections?: () => ModelConnectionRuntime[]
   /** Deterministic loopback chat behavior, not yet supplied by any caller. Omit for a single canned reply. */
   mockResponder?: MockResponder
 }
+
+/**
+ * Binds a resolved `PiModel` descriptor to the Model connection it came
+ * from (issue #47). A symbol-keyed property is invisible to
+ * `JSON.stringify` and survives `{ ...model }` spreads (own enumerable
+ * symbol keys are copied) — pi-agent-core carries the exact descriptor
+ * object `resolveModel` returned across a turn, by reference, so the stamp
+ * rides along with it. `streamFn` reads this back to decide which key
+ * resolves the request; `model.provider` itself is never repurposed for
+ * this (see `resolveBuiltinModel` below for why).
+ */
+const CONNECTION_BINDING = Symbol('veduta.connectionId')
+
+/**
+ * Every descriptor `resolveModel` returns carries this stamp: `null` for a
+ * legacy, unbound `ModelRef` (the bare-provider `providerKeys` path,
+ * unchanged since issue #37), or the Model connection id whose
+ * `connectionKeys` entry must resolve the request's key. A descriptor with
+ * no own property at this key never came from this bridge at all —
+ * `streamFn` treats that as a fail-closed refusal rather than guessing
+ * which key it should use.
+ */
+type BoundPiModel = PiModel & { [CONNECTION_BINDING]?: string | null }
 
 /**
  * Maps a routed `ModelRef` plus its resolved key onto pi-ai's provider
@@ -85,12 +136,45 @@ export interface ProviderBridgeOptions {
 export function createProviderBridge(options: ProviderBridgeOptions): ProviderBridge {
   const { config, secrets, mockResponder } = options
 
-  const resolveModel = (model: ModelRef): PiModel =>
-    model.provider === 'mock' ? mockModelDescriptor(model.modelId) : resolveBuiltinModel(model)
+  /**
+   * Normalizes the `RoutingConfig | (() => RuntimeRoutingConfig)` union
+   * (issue #47) to a single read, called at the point of use rather than
+   * once at construction time — the registry's live routing rebuilds must
+   * be visible to the very next call, not just the next `createProviderBridge`.
+   */
+  const readConfig = (): RoutingConfig | RuntimeRoutingConfig =>
+    typeof config === 'function' ? config() : config
+
+  const resolveModel = (model: ModelRef): PiModel => {
+    if (model.provider === 'mock') {
+      const descriptor: BoundPiModel = { ...mockModelDescriptor(model.modelId) }
+      descriptor[CONNECTION_BINDING] = model.connectionId ?? null
+      return descriptor
+    }
+    // pi-ai's builtin catalog lookup returns a shared object per
+    // provider+model, not a fresh one per call. Stamping it in place would
+    // leak one connection's binding onto every other `ModelRef` that
+    // resolves to the same provider+model — two accounts on the same
+    // provider must never end up sharing a key
+    // (docs/adr/0014-subscription-inference-boundary.md). Clone first,
+    // stamp the clone.
+    const descriptor: BoundPiModel = { ...resolveBuiltinModel(model) }
+    descriptor[CONNECTION_BINDING] = model.connectionId ?? null
+    // `descriptor.provider` is left exactly as `resolveBuiltinModel`
+    // returned it — never rewritten to the connection id. pi-ai's compat
+    // layer decides whether a call goes through its builtin provider
+    // clients (with the provider's own baseUrl, headers and auth applied)
+    // by matching `model.provider` against its own catalog; substituting a
+    // connection id here would silently divert the request onto a
+    // different, unauthenticated code path instead of just failing loudly.
+    // The connection travels on `CONNECTION_BINDING` instead, precisely so
+    // `provider` can stay canonical.
+    return descriptor
+  }
 
   const getApiKey = (provider: string): string | undefined => {
     if (provider === 'mock') return undefined
-    const secretRef = config.providerKeys[provider]
+    const secretRef = readConfig().providerKeys[provider]
     // docs/SECURITY.md §4: resolved here, at call time, immediately before
     // pi issues the request (pi-agent-core reads `getApiKey(model.provider)`
     // per call, not once up front) — the key itself never enters LLM
@@ -101,35 +185,80 @@ export function createProviderBridge(options: ProviderBridgeOptions): ProviderBr
     return secretRef === undefined ? undefined : secrets.resolve(secretRef)
   }
 
+  /**
+   * The single point where a request's API key is decided (issue #47).
+   * Reads the `CONNECTION_BINDING` stamp `resolveModel` left on the
+   * descriptor — never `model.provider` — and throws (never returns a key
+   * pulled from the wrong place) when that stamp cannot yield one. Callers
+   * turn the throw into a rejected promise; see the comment in `streamFn`
+   * for why that indirection exists.
+   */
+  const resolveRequestApiKey = (
+    model: PiModel,
+    streamOptions: SimpleStreamOptions | undefined,
+  ): string => {
+    const boundModel = model as BoundPiModel
+    if (!Object.prototype.hasOwnProperty.call(boundModel, CONNECTION_BINDING)) {
+      // Fail closed: a descriptor with no binding at all never passed
+      // through this bridge's `resolveModel`, so there is no record of
+      // which key — if any — it is entitled to. Never fall through to
+      // `streamOptions.apiKey`: that value could belong to any provider.
+      throw new Error(
+        'this model descriptor did not come from the provider bridge; refusing the turn',
+      )
+    }
+    // `hasOwnProperty` above already proved the stamp is present, so the
+    // value is `string | null` in practice; the cast just tells the
+    // compiler what the runtime check already guarantees.
+    const connectionId = boundModel[CONNECTION_BINDING] as string | null
+
+    let apiKey: string | undefined
+    let missingKeyMessage: string
+    if (connectionId === null) {
+      // Legacy, unbound descriptor: the bare-provider `providerKeys` path,
+      // unchanged since issue #37.
+      apiKey = streamOptions?.apiKey
+      missingKeyMessage =
+        `no API key resolved for provider "${model.provider}" — refusing to let pi-ai fall ` +
+        `back to an ambient environment variable (docs/SECURITY.md §4); check that ` +
+        `routing.json's providerKeys entry for "${model.provider}" references a secret the ` +
+        `vault/env resolver can actually resolve`
+    } else {
+      // Connection-bound: the key resolves from `connectionKeys[connectionId]`
+      // only. `streamOptions.apiKey` is deliberately never read on this
+      // path — pi-agent-core pre-fills it with `getApiKey(model.provider)`,
+      // the LEGACY bare-provider key, before every call, and reading it
+      // here would silently bill whatever account that legacy key belongs
+      // to instead of the connection the user actually selected.
+      const secretRef = readConfig().connectionKeys[connectionId]
+      apiKey = secretRef === undefined ? undefined : secrets.resolve(secretRef)
+      missingKeyMessage =
+        `no stored key for Model connection "${connectionId}" — refusing the turn rather ` +
+        `than borrowing another credential`
+    }
+
+    // The guard treats a whitespace-only key exactly like a missing one on
+    // both paths: pi-ai trims the value it receives and falls back to the
+    // ambient environment lookup when the trimmed result is empty, so
+    // `'  '` would sail past a plain undefined-check and reopen the bypass
+    // this whole function exists to close.
+    if (apiKey === undefined || apiKey.trim() === '') throw new Error(missingKeyMessage)
+    return apiKey
+  }
+
   const streamFn: PiStreamFn = (model, context, streamOptions) => {
     if (model.provider === 'mock') return streamMock(model, context, streamOptions, mockResponder)
-    // docs/SECURITY.md §4: a resolved key reaches pi only through
-    // `getApiKey` above, at call time, never through pi-ai's own fallback.
-    // pi-ai's compat `streamSimple` silently reads `getEnvApiKey` (ambient
-    // `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/... ) when `options.apiKey` is
-    // undefined — that path bypasses the vault/SecretResolver entirely, so
-    // an operator's stray shell env var could authenticate a request the
-    // trust layer never approved. Fail closed instead of delegating.
-    // The guard treats a whitespace-only key exactly like a missing one:
-    // pi-ai trims the value it receives and falls back to the ambient
-    // environment lookup when the trimmed result is empty, so `'  '` would
-    // sail past a plain undefined-check and reopen the bypass.
-    if (streamOptions?.apiKey === undefined || streamOptions.apiKey.trim() === '') {
+    try {
+      const apiKey = resolveRequestApiKey(model, streamOptions)
+      return streamSimple(model, context, { ...streamOptions, apiKey })
+    } catch (error) {
       // A rejected promise, not a synchronous throw: every other branch of
       // this function returns `AssistantMessageEventStream | Promise<...>`,
       // and callers (this bridge's own tests, pi's agent loop) both drive
       // `streamFn` with `await`/`.rejects` — a synchronous throw here would
       // reject before either ever gets the chance to attach a handler.
-      return Promise.reject(
-        new Error(
-          `no API key resolved for provider "${model.provider}" — refusing to let pi-ai fall ` +
-            `back to an ambient environment variable (docs/SECURITY.md §4); check that ` +
-            `routing.json's providerKeys entry for "${model.provider}" references a secret the ` +
-            `vault/env resolver can actually resolve`,
-        ),
-      )
+      return Promise.reject(error)
     }
-    return streamSimple(model, context, streamOptions)
   }
 
   return { resolveModel, getApiKey, streamFn }
@@ -149,6 +278,54 @@ function resolveBuiltinModel(model: ModelRef): PiModel {
     )
   }
   return found
+}
+
+/**
+ * True when pi-ai's builtin catalog can resolve `provider`/`modelId`
+ * (issue #47): the Model connection registry uses this to mark a
+ * connection's catalog entries that this build cannot actually route to as
+ * disabled, rather than let them silently fail mid-turn. `tier` has no
+ * bearing on whether the catalog lookup succeeds — `'reasoning'` is an
+ * arbitrary but valid placeholder so the call satisfies `ModelRef`.
+ */
+export function isBuiltinModel(provider: string, modelId: string): boolean {
+  try {
+    resolveBuiltinModel({ provider, modelId, tier: 'reasoning' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * One minimal turn through the exact `resolveModel` + `streamFn` path a
+ * real chat turn takes (issue #47) — every Model connection method's
+ * verification step is this call, never a bare status-code check.
+ * `bridge.getApiKey` supplies the legacy provider key for an unbound
+ * `ModelRef`; a connection-bound `ModelRef` ignores whatever this returns
+ * (`resolveRequestApiKey` resolves from `connectionKeys` instead), exactly
+ * like a real turn would.
+ */
+export async function probeModel(bridge: ProviderBridge, model: ModelRef): Promise<void> {
+  const descriptor = bridge.resolveModel(model)
+  const context: PiChatContext = {
+    systemPrompt: 'You are a connection test.',
+    messages: [{ role: 'user', content: 'ping', timestamp: Date.now() }],
+  }
+  const apiKey = bridge.getApiKey(descriptor.provider)
+  const stream = await bridge.streamFn(descriptor, context, {
+    ...(apiKey === undefined ? {} : { apiKey }),
+    maxTokens: 8,
+  })
+  for await (const _event of stream) {
+    // Drain to completion; only the final message matters here.
+  }
+  const finalMessage = await stream.result()
+  if (finalMessage.stopReason === 'error') {
+    throw new Error(
+      finalMessage.errorMessage ?? 'the connection test failed with no error message reported',
+    )
+  }
 }
 
 /**

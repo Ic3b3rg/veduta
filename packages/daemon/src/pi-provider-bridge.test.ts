@@ -4,9 +4,17 @@ import { installEgressEnforcement, EgressPolicy, type EgressDenial } from './egr
 import { defaultRoutingConfig, type SecretResolver } from './model-routing.ts'
 import {
   createProviderBridge,
+  isBuiltinModel,
+  probeModel,
   type MockResponder,
   type PiChatContext,
 } from './pi-provider-bridge.ts'
+// `PiModel` is a project type re-exported through `pi-agent-runner.ts`
+// (`import-boundary.test.ts`'s `UNRESTRICTED_FILES`/`TYPE_ONLY_FILES` guard
+// only the `@earendil-works/pi-agent-core`/`pi-ai` packages themselves, not
+// this project file), used below only to type an intentionally malformed
+// fixture — never to construct a live provider client.
+import type { PiModel } from './pi-agent-runner.ts'
 
 /**
  * `import-boundary.test.ts` allows this file only `import type` of
@@ -58,6 +66,36 @@ describe('createProviderBridge', () => {
           tier: 'reasoning',
         }),
       ).toThrow(/anthropic/)
+    })
+
+    it('keeps the canonical pi-ai provider on the descriptor and never substitutes the connection id', () => {
+      // ADR-0014 amendment / issue #47: pi-ai's own routing (compat's
+      // `shouldUseBuiltinModels`) keys off `model.provider`, so a connection
+      // id can never be written there — it rides on a private stamp
+      // instead (see the `streamFn` describe block below).
+      const bridge = createProviderBridge({ config, secrets: noKeysResolve })
+      const model = bridge.resolveModel({
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-5',
+        tier: 'reasoning',
+        connectionId: 'conn-xyz',
+      })
+      expect(model.provider).toBe('anthropic')
+      expect(model.id).toBe('claude-sonnet-5')
+    })
+
+    it('returns a fresh clone per call (two calls do not share one object)', () => {
+      // pi-ai's builtin catalog lookup returns one shared object per
+      // provider+model; without cloning, stamping it would leak one
+      // connection's binding onto every other caller that resolves the
+      // same provider+model (issue #47).
+      const bridge = createProviderBridge({ config, secrets: noKeysResolve })
+      const ref = { provider: 'anthropic', modelId: 'claude-sonnet-5', tier: 'reasoning' as const }
+      const first = bridge.resolveModel(ref)
+      const second = bridge.resolveModel(ref)
+      expect(first).not.toBe(second)
+      ;(first as { name: string }).name = 'mutated-in-place'
+      expect(second.name).not.toBe('mutated-in-place')
     })
 
     it('resolves the mock candidates without touching the builtin catalog', () => {
@@ -294,6 +332,215 @@ describe('createProviderBridge', () => {
           { apiKey: '   ' },
         ),
       ).rejects.toThrow(/no API key resolved/)
+    })
+  })
+
+  describe('streamFn (connection binding, issue #47)', () => {
+    // Same save/restore convention as the egress suite above.
+    let savedDispatcher: ReturnType<typeof getGlobalDispatcher>
+
+    beforeEach(() => {
+      savedDispatcher = getGlobalDispatcher()
+    })
+
+    afterEach(() => {
+      setGlobalDispatcher(savedDispatcher)
+    })
+
+    it('still refuses a legacy descriptor whose resolved key is empty (guard unchanged)', async () => {
+      const bridge = createProviderBridge({ config, secrets: noKeysResolve })
+      const model = bridge.resolveModel({
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-5',
+        tier: 'reasoning',
+      })
+
+      await expect(bridge.streamFn(model, { messages: [] }, { apiKey: '   ' })).rejects.toThrow(
+        /no API key resolved/,
+      )
+    })
+
+    it('rejects a descriptor without the bridge stamp', async () => {
+      const bridge = createProviderBridge({ config, secrets: noKeysResolve })
+      const stamped = bridge.resolveModel({
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-5',
+        tier: 'reasoning',
+      })
+      // `JSON.stringify` never serializes symbol-keyed properties, so a
+      // round-trip through it produces exactly the shape of a descriptor
+      // that never passed through this bridge's `resolveModel` at all —
+      // the only realistic way one could reach `streamFn` unstamped.
+      const unstamped = JSON.parse(JSON.stringify(stamped)) as PiModel
+
+      await expect(
+        bridge.streamFn(unstamped, { messages: [] }, { apiKey: 'sk-test' }),
+      ).rejects.toThrow(/did not come from the provider bridge/)
+    })
+
+    it('resolves a connection-bound key from connectionKeys and ignores streamOptions.apiKey', async () => {
+      const policy = new EgressPolicy() // no hosts declared: denies everything
+      const denials: EgressDenial[] = []
+      policy.onDenial((denial) => denials.push(denial))
+      installEgressEnforcement(policy)
+
+      const boundConfig = {
+        ...config,
+        connectionKeys: { 'conn-a': 'secret://vault/conn-a-api-key' },
+      }
+      const secrets: SecretResolver = {
+        resolve: (ref) => (ref === 'secret://vault/conn-a-api-key' ? 'sk-conn-a' : undefined),
+      }
+      const bridge = createProviderBridge({ config: boundConfig, secrets })
+      const model = bridge.resolveModel({
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-5',
+        tier: 'reasoning',
+        connectionId: 'conn-a',
+      })
+
+      const stream = await bridge.streamFn(
+        model,
+        { messages: [{ role: 'user', content: 'hi', timestamp: Date.now() }] },
+        // A decoy: if the bridge ever read this on a connection-bound
+        // descriptor, the empty-key guard would reject before any network
+        // attempt — the request reaching (and being denied by) egress is
+        // proof it resolved the key from `connectionKeys` instead.
+        { apiKey: '' },
+      )
+      for await (const _event of stream) {
+        // drain to completion
+      }
+      await stream.result()
+
+      expect(denials).toHaveLength(1)
+      expect(denials[0]?.host).toBe('api.anthropic.com')
+    })
+
+    it('fails closed when a connection binding resolves no key rather than borrowing streamOptions.apiKey', async () => {
+      const policy = new EgressPolicy() // no hosts declared: denies everything
+      const denials: EgressDenial[] = []
+      policy.onDenial((denial) => denials.push(denial))
+      installEgressEnforcement(policy)
+
+      // `connectionKeys` has no entry for 'conn-a' — the connection is
+      // bound but unresolvable.
+      const bridge = createProviderBridge({ config, secrets: noKeysResolve })
+      const model = bridge.resolveModel({
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-5',
+        tier: 'reasoning',
+        connectionId: 'conn-a',
+      })
+
+      await expect(
+        bridge.streamFn(
+          model,
+          { messages: [{ role: 'user', content: 'hi', timestamp: Date.now() }] },
+          // pi-agent-core pre-fills exactly this with the legacy provider
+          // key before every call — a perfectly valid-looking decoy that
+          // must never be borrowed for a connection-bound turn.
+          { apiKey: 'sk-legacy-provider-key-should-never-be-used' },
+        ),
+      ).rejects.toThrow(/no stored key for Model connection "conn-a"/)
+
+      // No egress denial either: proof the request never reached the
+      // dispatcher — the bridge refused before ever calling into pi-ai.
+      expect(denials).toHaveLength(0)
+    })
+
+    it('two connections on the same provider and model resolve their own keys (per-call clone isolation)', async () => {
+      const policy = new EgressPolicy() // no hosts declared: denies everything
+      const denials: EgressDenial[] = []
+      policy.onDenial((denial) => denials.push(denial))
+      installEgressEnforcement(policy)
+
+      const boundConfig = {
+        ...config,
+        connectionKeys: {
+          'conn-a': 'secret://vault/conn-a-api-key',
+          'conn-b': 'secret://vault/conn-b-api-key',
+        },
+      }
+      const secrets: SecretResolver = {
+        resolve: (ref) => {
+          if (ref === 'secret://vault/conn-a-api-key') return 'sk-conn-a'
+          if (ref === 'secret://vault/conn-b-api-key') return 'sk-conn-b'
+          return undefined
+        },
+      }
+      const bridge = createProviderBridge({ config: boundConfig, secrets })
+
+      const modelA = bridge.resolveModel({
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-5',
+        tier: 'reasoning',
+        connectionId: 'conn-a',
+      })
+      const modelB = bridge.resolveModel({
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-5',
+        tier: 'reasoning',
+        connectionId: 'conn-b',
+      })
+      expect(modelA).not.toBe(modelB)
+
+      for (const model of [modelA, modelB]) {
+        const stream = await bridge.streamFn(
+          model,
+          { messages: [{ role: 'user', content: 'hi', timestamp: Date.now() }] },
+          {},
+        )
+        for await (const _event of stream) {
+          // drain to completion
+        }
+        await stream.result()
+      }
+
+      // Both reached the network — neither connection's binding was lost
+      // or overwritten by the other's, which a shared (unlcloned) descriptor
+      // would risk.
+      expect(denials).toHaveLength(2)
+      expect(denials.every((denial) => denial.host === 'api.anthropic.com')).toBe(true)
+    })
+  })
+
+  describe('probeModel', () => {
+    it("surfaces the provider's exact errorMessage", async () => {
+      const responder: MockResponder = () => ({
+        role: 'assistant',
+        content: [],
+        api: 'mock',
+        provider: 'mock',
+        model: 'reader-mock',
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: 'error',
+        errorMessage: 'the provider rejected the request: invalid api key',
+        timestamp: Date.now(),
+      })
+      const bridge = createProviderBridge({
+        config,
+        secrets: noKeysResolve,
+        mockResponder: responder,
+      })
+
+      await expect(
+        probeModel(bridge, { provider: 'mock', modelId: 'reader-mock', tier: 'triage' }),
+      ).rejects.toThrow('the provider rejected the request: invalid api key')
+    })
+  })
+
+  describe('isBuiltinModel', () => {
+    it('is true for anthropic claude models and false for a made-up provider', () => {
+      expect(isBuiltinModel('anthropic', 'claude-sonnet-5')).toBe(true)
+      expect(isBuiltinModel('not-a-provider', 'x')).toBe(false)
     })
   })
 })
