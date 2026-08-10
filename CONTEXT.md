@@ -76,6 +76,18 @@ _Avoid_: direct action, shortcut
 A Surface action that requires judgment and goes through the Agent ("regenerate the plan").
 _Avoid_: semantic action (in code), slow path
 
+**Trace**:
+A bounded, redacted diagnostic record that links one operation to its meaningful steps through a
+`traceId`. It helps the user locate runtime failures but is not business state, provenance, an
+audit guarantee, or model chain of thought; an explicit gap is valid when diagnostics were lost.
+_Avoid_: Event log, audit log, history, chain of thought
+
+**Runtime log**:
+The installation-wide rotating technical stream emitted by the Gateway at DEBUG, INFO, WARN, and
+ERROR levels. It can carry a `traceId` for correlation but remains distinct from both a Trace and a
+Space's Event log.
+_Avoid_: Event log, Trace, activity history
+
 **Model connection**:
 A Gateway-wide configured route that lets the Agent use a model through either a provider subscription or BYOK. It is shared by every Space and supplies inference only; the Agent loop and its tools remain inside Veduta.
 _Avoid_: provider login (only one possible setup method), agent runtime

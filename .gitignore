@@ -14,6 +14,7 @@ packages/e2e/test-results/
 packages/e2e/playwright-report/
 packages/e2e/blob-report/
 .serena/
+.superpowers/
 # Working notes for the issue in flight. AGENTS.md: never committed — which is
 # also why a comment may not cite them.
 tasks/

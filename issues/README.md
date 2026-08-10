@@ -12,6 +12,7 @@ Adoption:      019 onboarding-wizard → 020 importer
 Polish:        032 facts-hygiene → 021 advanced-memory → 022 emergent-templates
 Models:        047 model-connections
 Access:        048 guided-vps-access-installer → 049 tailnet-access
+Operations:    050 internal-trace-console
 ```
 
 Parallelizable: (006,007,008) after 002; (010,011) after 003; (019,020) after 009.
@@ -45,3 +46,4 @@ Parallelizable: (006,007,008) after 002; (010,011) after 003; (019,020) after 00
 | 047 | [Model connections](047-model-connections.md)                           | Adoption     |
 | 048 | [Guided VPS access installer](048-guided-vps-access-installer.md)       | Adoption     |
 | 049 | [Tailnet access](049-tailnet-access.md)                                 | Adoption     |
+| 050 | [Internal trace console](050-internal-trace-console.md)                 | Operations   |
