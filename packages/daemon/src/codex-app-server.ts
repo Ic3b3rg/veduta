@@ -14,7 +14,7 @@ import { ModelConnectionError } from './model-connection-adapter.ts'
  * can drive `codex-app-server-fake.ts`'s deterministic fake instead.
  */
 
-/** The exact upstream version this build supports (issue #47: an exact pin, not a `major.minor`, because a strict parse over hand-transcribed schemas is only as safe as the version it was transcribed from). */
+/** The exact upstream version this build supports (issue #47: an exact pin, not a `major.minor`, because required fields, method semantics, and item-type guards are hand-transcribed from this version even though inert unknown response fields are tolerated). */
 export const CODEX_PINNED_VERSION = '0.146.1'
 
 /** Hosts the spawned child reaches on its own — the daemon's egress dispatcher cannot intercept a subprocess's sockets (`docs/SECURITY.md` §3.4). Allowed only while at least one Codex connection exists (`server.ts`'s egress wiring). */

@@ -4,7 +4,14 @@ import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { ConnectionLifecycleStateSchema, ModelCatalogEntrySchema } from '@veduta/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createFakeCodexTransport } from './codex-app-server-fake.ts'
+import {
+  createFakeCodexTransport,
+  fakeCodexConnectedAccountReadResponse,
+  fakeCodexInitializeResponse,
+  fakeCodexLoginStartResponse,
+  fakeCodexModelEntry,
+  fakeCodexModelListResponse,
+} from './codex-app-server-fake.ts'
 import {
   ModelConnectionError,
   type AdapterContext,
@@ -98,19 +105,15 @@ const CODEX_CASE: AdapterCase = {
       responses: {
         // Field names observed 2026-08-10 against the real 0.146.1 binary —
         // `codex-app-server-protocol.ts`'s per-schema doc comments.
-        initialize: {
-          userAgent: 'veduta/0.146.1 (Mac OS 26.5.1; arm64) unknown (veduta; 0.0.0)',
-          codexHome: '/home/user/.codex',
-          platformFamily: 'unix',
-          platformOs: 'macos',
-        },
-        'account/login/start': {
+        initialize: fakeCodexInitializeResponse(),
+        'account/login/start': fakeCodexLoginStartResponse({
           loginId: 'contract-login',
-          verificationUrl: 'https://chatgpt.com/device',
           userCode: 'CTRT-0000',
-        },
-        'account/read': { account: { planType: 'ChatGPT Plus' }, requiresOpenaiAuth: false },
-        'model/list': { data: [{ id: 'model-a' }] },
+        }),
+        'account/read': fakeCodexConnectedAccountReadResponse(),
+        'model/list': fakeCodexModelListResponse([
+          fakeCodexModelEntry({ id: 'model-a', displayName: 'Model A' }),
+        ]),
         'account/logout': {},
       },
     })

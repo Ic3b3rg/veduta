@@ -1,40 +1,35 @@
 import { z } from 'zod'
 
 /**
- * Hand-written, strict zod schemas for the Codex app-server JSON-RPC
- * messages Veduta consumes (issue #47,
+ * Hand-written zod schemas for the Codex app-server JSON-RPC messages
+ * Veduta consumes (issue #47,
  * `docs/adr/0014-subscription-inference-boundary.md` amendment). Every
  * shape here is **transcribed** from the pinned `@openai/codex` version
  * `0.146.1` (source commit `9d00bb0`), per the research in
  * `docs/references/11-model-connections-manual-smoke.md` and the "what to
  * build" section of `issues/047-model-connections.md`. It is not generated
  * from the binary — the binary is absent from CI, and generating schemas at
- * build time would break an offline install — so a real 0.146.1 response
- * shaped differently than transcribed here is a bug in this transcription,
- * to be fixed by re-reading the pinned source, never by loosening a schema
- * to "make it pass".
+ * build time would break an offline install.
  *
- * `initialize`, `account/read` (unauthenticated), and `model/list`
- * (unauthenticated) were re-checked 2026-08-10 against the real, pinned
- * 0.146.1 binary itself — installed with `npm install @openai/codex@0.146.1`
- * outside this repo, run as `codex app-server`, and spoken to directly over
- * stdio — after a real instance found `InitializeResponseSchema`'s original
- * `{ version: string }` guess never matched any real response (issue #47).
- * Each schema below whose doc comment says "observed" or "CONFIRMED" was
- * corrected against that live output; every other schema (and every field
- * inside a schema still marked `transcription note`) remains
- * research-only — this build never logs in, so an authenticated response
- * shape stays unobserved.
+ * `initialize`, `account/login/start` (started and immediately canceled),
+ * `account/read` (unauthenticated), and `model/list` (unauthenticated) were
+ * re-checked 2026-08-10 against the real, pinned 0.146.1 binary itself —
+ * installed with `npm install @openai/codex@0.146.1` outside this repo, run
+ * as `codex app-server`, and spoken to directly over stdio. Each schema
+ * below whose doc comment says "observed" or "CONFIRMED" was corrected
+ * against that live output; every other schema (and every field inside a
+ * schema still marked `transcription note`) remains research-only — this
+ * build never logs in, so an authenticated response shape stays unobserved.
  *
- * Every schema is `.strict()` unless its own doc comment says otherwise: a
- * response carrying an unexpected extra field fails the parse rather than
- * being silently accepted, and `parseCodexResponse` turns that failure into
- * a typed `CodexProtocolError` — a strict-parse mismatch is a signal that
- * this transcription (or the live binary) drifted from the pin, never
- * something to guess past. Where ref-11's research did not pin an exact
- * field name or nesting, the field is marked `transcription note` and kept
- * optional rather than invented — an absent field never fails the parse,
- * only a field of the wrong type does.
+ * Required response and notification fields are the fail-closed contract:
+ * an absent or mistyped required field becomes a typed `CodexProtocolError`.
+ * Their schemas deliberately use plain `z.object`, which tolerates and
+ * strips unknown keys. Additive upstream fields are inert to Veduta, and
+ * rejecting them would turn routine protocol growth between patch releases
+ * into a signed Veduta release without strengthening the boundary. This is
+ * the response-parsing policy recorded by `issues/047-model-connections.md`.
+ * Outbound params are built by `model-connection-codex.ts`, not parsed here;
+ * schemas for params Veduta controls may remain strict if one is added.
  */
 
 /** Thrown by `parseCodexResponse`/`parseCodexNotification` when a Codex app-server message does not match its pinned-protocol schema. Never thrown for a genuinely unknown notification method — those are ignored, not parsed. */
@@ -76,52 +71,47 @@ export function parseCodexResponse<T>(schema: z.ZodType<T>, method: string, raw:
  * `userAgent` (observed verbatim:
  * `"veduta/0.146.1 (Mac OS 26.5.1; arm64) unknown (veduta; 0.0.0)"`) and
  * extracted with `codexVersionFromUserAgent` in `model-connection-codex.ts`.
- * `.strict()` deliberately rejects any other reported field — a future
- * app-server response carrying more than these four is exactly the kind of
- * drift this pin exists to catch, not to silently tolerate.
  */
-export const InitializeResponseSchema = z
-  .object({
-    // observed 2026-08-10 — carries the app-server's own version, embedded
-    // rather than a dedicated field (see the schema's own doc comment).
-    userAgent: z.string().min(1),
-    // observed 2026-08-10 — the CODEX_HOME path the app-server resolved for
-    // this session; not read by this build.
-    codexHome: z.string().min(1),
-    // observed 2026-08-10 (value: "unix"); not read by this build.
-    platformFamily: z.string().min(1),
-    // observed 2026-08-10 (value: "macos"); not read by this build.
-    platformOs: z.string().min(1),
-  })
-  .strict()
+export const InitializeResponseSchema = z.object({
+  // observed 2026-08-10 — carries the app-server's own version, embedded
+  // rather than a dedicated field (see the schema's own doc comment).
+  userAgent: z.string().min(1),
+  // observed 2026-08-10 — the CODEX_HOME path the app-server resolved for
+  // this session; not read by this build.
+  codexHome: z.string().min(1),
+  // observed 2026-08-10 (value: "unix"); not read by this build.
+  platformFamily: z.string().min(1),
+  // observed 2026-08-10 (value: "macos"); not read by this build.
+  platformOs: z.string().min(1),
+})
 
 /**
  * `account/login/start` response for `{ type: 'chatgptDeviceCode' }`:
- * `loginId`, `verificationUrl`, `userCode` are the three fields ref-11's
- * research confirms by name. `expiresAt` is NOT confirmed — ref-11 records
- * only that Veduta must fall back to its own 15-minute cap when the
- * provider does not report one — so it stays optional and marked.
+ * CONFIRMED 2026-08-10 by direct observation against the real, pinned
+ * binary without completing a login. The response carries the same
+ * `chatgptDeviceCode` type discriminator as the request plus `loginId`,
+ * `verificationUrl`, and `userCode`. `expiresAt` was absent from the live
+ * response; it remains optional because the adapter already supports a
+ * provider-reported expiry and otherwise applies its own 15-minute cap.
  */
-export const LoginStartResponseSchema = z
-  .object({
-    loginId: z.string().min(1),
-    verificationUrl: z.string().min(1),
-    userCode: z.string().min(1),
-    // transcription note: field name per 0.146.1 — ref-11 does not confirm
-    // whether (or under what key) the app-server reports its own
-    // device-code expiry; `model-connection-codex.ts` falls back to a
-    // Veduta-declared 15-minute cap when this is absent
-    // (`DeviceChallenge.expirySource`).
-    expiresAt: z.string().min(1).optional(),
-  })
-  .strict()
+export const LoginStartResponseSchema = z.object({
+  // observed 2026-08-10 — discriminator for the device-code result variant.
+  type: z.literal('chatgptDeviceCode'),
+  loginId: z.string().min(1),
+  verificationUrl: z.string().min(1),
+  userCode: z.string().min(1),
+  // transcription note: field name per 0.146.1 — ref-11 does not confirm
+  // whether (or under what key) the app-server reports its own
+  // device-code expiry; `model-connection-codex.ts` falls back to a
+  // Veduta-declared 15-minute cap when this is absent
+  // (`DeviceChallenge.expirySource`).
+  expiresAt: z.string().min(1).optional(),
+})
 
-/** `account/login/completed` notification: the one field ref-11 confirms — the `loginId` a `refresh()` poll correlates against its own in-memory challenge. */
-export const LoginCompletedNotificationSchema = z
-  .object({
-    loginId: z.string().min(1),
-  })
-  .strict()
+/** `account/login/completed` notification: `loginId` is the field a `refresh()` poll correlates against its own in-memory challenge. A canceled live login also carried `success` and `error`; those inert additions are intentionally tolerated. */
+export const LoginCompletedNotificationSchema = z.object({
+  loginId: z.string().min(1),
+})
 
 /**
  * `account/updated` notification. ref-11 records only that this follows
@@ -130,9 +120,10 @@ export const LoginCompletedNotificationSchema = z
  * gets the plan type from `account/read`'s own response instead, so this
  * notification is drained and correlated by method name only; no field on
  * it is load-bearing here. Kept intentionally empty-shaped rather than
- * guessing a key that would then gate a strict parse on an invented field.
+ * guessing a required key; the object check remains, while unknown fields
+ * are tolerated.
  */
-export const AccountUpdatedNotificationSchema = z.object({}).strict()
+export const AccountUpdatedNotificationSchema = z.object({})
 
 /**
  * `account/read` response (called with `{ refreshToken: true }`). The
@@ -153,28 +144,25 @@ export const AccountUpdatedNotificationSchema = z.object({}).strict()
  * through `planType` → `email` → a fixed "ChatGPT" string in
  * `model-connection-codex.ts`.
  */
-export const AccountReadResponseSchema = z
-  .object({
-    account: z
-      .object({
-        // transcription note: field name per 0.146.1 — NOT independently
-        // observed (auth-gated).
-        email: z.string().min(1).optional(),
-        // transcription note: field name per 0.146.1 — the "plan type"
-        // ref-11 says `account/updated` carries; used here instead since it
-        // is `account/read`'s response this adapter actually reads for the
-        // connected account label. NOT independently observed (auth-gated).
-        planType: z.string().min(1).optional(),
-      })
-      .strict()
-      .nullable(),
-    // observed 2026-08-10 — true when no ChatGPT account is signed in.
-    requiresOpenaiAuth: z.boolean(),
-  })
-  .strict()
+export const AccountReadResponseSchema = z.object({
+  account: z
+    .object({
+      // transcription note: field name per 0.146.1 — NOT independently
+      // observed (auth-gated).
+      email: z.string().min(1).optional(),
+      // transcription note: field name per 0.146.1 — the "plan type"
+      // ref-11 says `account/updated` carries; used here instead since it
+      // is `account/read`'s response this adapter actually reads for the
+      // connected account label. NOT independently observed (auth-gated).
+      planType: z.string().min(1).optional(),
+    })
+    .nullable(),
+  // observed 2026-08-10 — true when no ChatGPT account is signed in.
+  requiresOpenaiAuth: z.boolean(),
+})
 
-/** `account/logout` response: the supported disconnect call. ref-11 records no response payload beyond success — modeled as an empty object; any field would be an unexpected drift. */
-export const LogoutResponseSchema = z.object({}).strict()
+/** `account/logout` response: the supported disconnect call. ref-11 records no required response field beyond a successful JSON-RPC result, so any object is accepted and unknown fields are ignored. */
+export const LogoutResponseSchema = z.object({})
 
 /**
  * One entry of `model/list`'s catalog (issue #47: "show the full returned
@@ -212,12 +200,10 @@ export const CodexModelEntrySchema = z
  * guessed, and an exhausted `nextCursor` is reported as `null`, not simply
  * absent.
  */
-export const ModelListResponseSchema = z
-  .object({
-    data: z.array(CodexModelEntrySchema),
-    nextCursor: z.string().min(1).nullable().optional(),
-  })
-  .strict()
+export const ModelListResponseSchema = z.object({
+  data: z.array(CodexModelEntrySchema),
+  nextCursor: z.string().min(1).nullable().optional(),
+})
 
 /**
  * `thread/start` response (issue #47,
@@ -228,20 +214,16 @@ export const ModelListResponseSchema = z
  * `stream()` instead — a runtime check against every streamed item, not a
  * start-time assertion on this response.
  */
-export const ThreadStartResponseSchema = z
-  .object({
-    // transcription note: field name per 0.146.1.
-    threadId: z.string().min(1),
-  })
-  .strict()
+export const ThreadStartResponseSchema = z.object({
+  // transcription note: field name per 0.146.1.
+  threadId: z.string().min(1),
+})
 
 /** `turn/start` response: confirms the turn id a later `turn/interrupt` (or a streamed item/turn notification) correlates against. */
-export const TurnStartResponseSchema = z
-  .object({
-    // transcription note: field name per 0.146.1.
-    turnId: z.string().min(1),
-  })
-  .strict()
+export const TurnStartResponseSchema = z.object({
+  // transcription note: field name per 0.146.1.
+  turnId: z.string().min(1),
+})
 
 /**
  * One streamed item, as carried by an `item/updated` (incremental) or
@@ -278,22 +260,18 @@ export const CodexItemSchema = z
 export const CODEX_TEXT_ITEM_TYPE = 'agentMessage'
 export const CODEX_REASONING_ITEM_TYPE = 'reasoning'
 
-/** `item/updated` or `item/completed` notification (issue #47): the top-level envelope is fixed (`.strict()`); the nested item stays `.passthrough()` per `CodexItemSchema`'s own doc comment. */
-export const ItemNotificationSchema = z
-  .object({
-    threadId: z.string().min(1),
-    turnId: z.string().min(1).optional(),
-    item: CodexItemSchema,
-  })
-  .strict()
+/** `item/updated` or `item/completed` notification (issue #47): `threadId` and `item` stay required while unknown envelope fields are tolerated; the nested item stays `.passthrough()` per `CodexItemSchema`'s own doc comment. */
+export const ItemNotificationSchema = z.object({
+  threadId: z.string().min(1),
+  turnId: z.string().min(1).optional(),
+  item: CodexItemSchema,
+})
 
 /** `turn/completed` notification: the turn finished with no further items to stream. */
-export const TurnCompletedNotificationSchema = z
-  .object({
-    threadId: z.string().min(1),
-    turnId: z.string().min(1).optional(),
-  })
-  .strict()
+export const TurnCompletedNotificationSchema = z.object({
+  threadId: z.string().min(1),
+  turnId: z.string().min(1).optional(),
+})
 
 export type InitializeResponse = z.infer<typeof InitializeResponseSchema>
 export type LoginStartResponse = z.infer<typeof LoginStartResponseSchema>
@@ -309,18 +287,19 @@ export type CodexItem = z.infer<typeof CodexItemSchema>
 export type ItemNotification = z.infer<typeof ItemNotificationSchema>
 export type TurnCompletedNotification = z.infer<typeof TurnCompletedNotificationSchema>
 
-/** A notification frame after the protocol layer has had a chance to recognize its method. An unrecognized method is deliberately NOT parsed — `params` passes through opaque — so a future notification type never fails a strict parse on the way to being ignored. */
+/** A notification frame after the protocol layer has had a chance to recognize its method. An unrecognized method is deliberately NOT parsed — `params` passes through opaque — so a future notification type cannot fail validation on the way to being ignored. */
 export type CodexNotification =
   | { method: 'account/login/completed'; params: LoginCompletedNotification }
   | { method: 'account/updated'; params: AccountUpdatedNotification }
   | { method: string; params: unknown }
 
 /**
- * Dispatches one notification frame by method name: a recognized method is
- * strict-parsed (a mismatch throws `CodexProtocolError`, the same as any
- * consumed response); an unrecognized method is ignored — returned with its
- * `params` untouched, never parsed, never fatal. This is the ONE place that
- * decides which notification methods this build recognizes.
+ * Dispatches one notification frame by method name: a recognized method's
+ * required fields are parsed (a mismatch throws `CodexProtocolError`, the
+ * same as any consumed response) while unknown fields are tolerated; an
+ * unrecognized method is ignored — returned with its `params` untouched,
+ * never parsed, never fatal. This is the ONE place that decides which
+ * notification methods this build recognizes.
  */
 export function parseCodexNotification(method: string, params: unknown): CodexNotification {
   switch (method) {

@@ -1,4 +1,11 @@
 import { createNotificationHub, type CodexTransport } from './codex-app-server.ts'
+import type {
+  AccountReadResponse,
+  CodexModelEntry,
+  InitializeResponse,
+  LoginStartResponse,
+  ModelListResponse,
+} from './codex-app-server-protocol.ts'
 import { ModelConnectionError } from './model-connection-adapter.ts'
 
 /**
@@ -17,7 +24,104 @@ import { ModelConnectionError } from './model-connection-adapter.ts'
  * for every live subscription — and every future one's ring replay — to
  * see; it is the device-code poll loop's live case. `close()` ends every
  * live subscription, the same as the real transport's own `close()`.
+ *
+ * The response factories below centralize the field-complete shapes grounded
+ * in the pinned 0.146.1 binary. Their comments distinguish directly observed
+ * fields from the auth-gated or optional transcription-only fields. Tests use
+ * these factories instead of repeating partial protocol objects that can
+ * drift away from the executable they stand in for.
  */
+
+/** Complete `initialize` result observed from the pinned binary, with only the embedded version varied for pin-mismatch tests. */
+export function fakeCodexInitializeResponse(version = '0.146.1'): InitializeResponse {
+  return {
+    userAgent: `veduta/${version} (Mac OS 26.5.1; arm64) unknown (veduta; 0.0.0)`,
+    codexHome: '/home/user/.codex',
+    platformFamily: 'unix',
+    platformOs: 'macos',
+  }
+}
+
+interface FakeCodexLoginStartOptions {
+  loginId: string
+  userCode: string
+  expiresAt?: string
+}
+
+/** Complete device-code `account/login/start` result observed from the pinned binary; `expiresAt` exercises the adapter's documented optional provider-expiry path. */
+export function fakeCodexLoginStartResponse({
+  loginId,
+  userCode,
+  expiresAt,
+}: FakeCodexLoginStartOptions): LoginStartResponse {
+  return {
+    type: 'chatgptDeviceCode',
+    loginId,
+    verificationUrl: 'https://auth.openai.com/codex/device',
+    userCode,
+    ...(expiresAt === undefined ? {} : { expiresAt }),
+  }
+}
+
+/** The observed `account/read` envelope with the auth-gated, transcription-only plan field used by connected-state tests. */
+export function fakeCodexConnectedAccountReadResponse(
+  planType = 'ChatGPT Plus',
+): AccountReadResponse {
+  return { account: { planType }, requiresOpenaiAuth: false }
+}
+
+/** Complete unauthenticated `account/read` result observed from the pinned binary. */
+export function fakeCodexSignedOutAccountReadResponse(): AccountReadResponse {
+  return { account: null, requiresOpenaiAuth: true }
+}
+
+interface FakeCodexModelEntryOptions {
+  id: string
+  displayName?: string
+  description?: string
+  isDefault?: boolean
+}
+
+/** Complete `model/list` entry shape observed from the pinned binary, with load-bearing display fields varied by the test. */
+export function fakeCodexModelEntry({
+  id,
+  displayName = id,
+  description = `${displayName} description`,
+  isDefault = false,
+}: FakeCodexModelEntryOptions): CodexModelEntry {
+  return {
+    id,
+    model: id,
+    upgrade: null,
+    upgradeInfo: null,
+    availabilityNux: null,
+    displayName,
+    description,
+    modelSpecialty: null,
+    hidden: false,
+    supportedReasoningEfforts: [
+      {
+        reasoningEffort: 'medium',
+        description: 'Balances speed and reasoning depth for everyday tasks',
+      },
+    ],
+    defaultReasoningEffort: 'medium',
+    inputModalities: ['text', 'image'],
+    supportsPersonality: false,
+    additionalSpeedTiers: ['fast'],
+    serviceTiers: [{ id: 'priority', name: 'Fast', description: '1.5x speed, increased usage' }],
+    defaultServiceTier: null,
+    isDefault,
+  }
+}
+
+/** Complete cursor-paginated `model/list` envelope observed from the pinned binary. */
+export function fakeCodexModelListResponse(
+  data: CodexModelEntry[],
+  nextCursor: string | null = null,
+): ModelListResponse {
+  return { data, nextCursor }
+}
 
 export interface FakeCodexScript {
   /** One entry per JSON-RPC method this fake answers: a fixed value, a `Promise` that resolves to one (lets a test hold a call open to simulate a busy transport), or a factory computed from the call's params and how many times this method has been called so far (0-indexed) — lets a test script `model/list`'s cursor pagination. Returning (or throwing) an `Error` instance makes the call reject with it. */

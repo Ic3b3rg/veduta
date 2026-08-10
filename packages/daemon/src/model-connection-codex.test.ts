@@ -1,7 +1,16 @@
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { describe, expect, it, vi } from 'vitest'
-import { createFakeCodexTransport, type FakeCodexTransport } from './codex-app-server-fake.ts'
+import {
+  createFakeCodexTransport,
+  fakeCodexConnectedAccountReadResponse,
+  fakeCodexInitializeResponse,
+  fakeCodexLoginStartResponse,
+  fakeCodexModelEntry,
+  fakeCodexModelListResponse,
+  fakeCodexSignedOutAccountReadResponse,
+  type FakeCodexTransport,
+} from './codex-app-server-fake.ts'
 import { CodexSessionPool, type CodexTransport } from './codex-app-server.ts'
 import { ModelConnectionError, type AdapterContext } from './model-connection-adapter.ts'
 import {
@@ -16,21 +25,6 @@ import type { SubscriptionStreamRequest } from './pi-provider-bridge.ts'
 const CONNECTION_ID = 'c0ffee00-0000-4000-8000-000000000000'
 const ROOT_DIR = '/tmp/veduta-codex-adapter-test'
 const NOW = () => new Date('2026-08-09T10:00:00.000Z')
-
-/** The real `initialize` response shape (observed 2026-08-10 against the pinned 0.146.1 binary — `InitializeResponseSchema`'s own doc comment), with `version` embedded in `userAgent` the way the real app-server reports it. */
-function codexInitializeResponse(version: string): {
-  userAgent: string
-  codexHome: string
-  platformFamily: string
-  platformOs: string
-} {
-  return {
-    userAgent: `veduta/${version} (Mac OS 26.5.1; arm64) unknown (veduta; 0.0.0)`,
-    codexHome: '/home/user/.codex',
-    platformFamily: 'unix',
-    platformOs: 'macos',
-  }
-}
 
 function contextWith(transport: FakeCodexTransport): AdapterContext {
   return fromPartial<AdapterContext>({
@@ -50,11 +44,10 @@ describe('authorize', () => {
   it('returns the verification URL and user code from account/login/start', async () => {
     const transport = createFakeCodexTransport({
       responses: {
-        'account/login/start': {
+        'account/login/start': fakeCodexLoginStartResponse({
           loginId: 'login-1',
-          verificationUrl: 'https://chatgpt.com/device',
           userCode: 'ABCD-1234',
-        },
+        }),
       },
     })
 
@@ -63,7 +56,7 @@ describe('authorize', () => {
     expect(result.state).toBe('waiting-for-user')
     if (result.state !== 'waiting-for-user') throw new Error('unreachable')
     expect(result.challenge.loginId).toBe('login-1')
-    expect(result.challenge.verificationUrl).toBe('https://chatgpt.com/device')
+    expect(result.challenge.verificationUrl).toBe('https://auth.openai.com/codex/device')
     expect(result.challenge.userCode).toBe('ABCD-1234')
     expect(result.challenge.expirySource).toBe('veduta-default')
     expect(new Date(result.challenge.expiresAt).getTime()).toBe(NOW().getTime() + 15 * 60_000)
@@ -79,12 +72,11 @@ describe('authorize', () => {
   it('uses the provider-reported expiry when account/login/start carries one', async () => {
     const transport = createFakeCodexTransport({
       responses: {
-        'account/login/start': {
+        'account/login/start': fakeCodexLoginStartResponse({
           loginId: 'login-2',
-          verificationUrl: 'https://chatgpt.com/device',
           userCode: 'WXYZ-9876',
           expiresAt: '2026-08-09T10:05:00.000Z',
-        },
+        }),
       },
     })
 
@@ -116,11 +108,10 @@ describe('authorize', () => {
     // Codex response scripted" rather than letting the test pass silently.
     const transport = createFakeCodexTransport({
       responses: {
-        'account/login/start': {
+        'account/login/start': fakeCodexLoginStartResponse({
           loginId: 'login-1',
-          verificationUrl: 'https://chatgpt.com/device',
           userCode: 'ABCD-1234',
-        },
+        }),
       },
     })
 
@@ -134,7 +125,7 @@ describe('authorize', () => {
 describe('initializeCodexTransport', () => {
   it('the pool initializes every transport it creates', async () => {
     const transport = createFakeCodexTransport({
-      responses: { initialize: codexInitializeResponse('0.146.1') },
+      responses: { initialize: fakeCodexInitializeResponse() },
     })
     const pool = new CodexSessionPool({
       factory: async () => {
@@ -154,8 +145,8 @@ describe('initializeCodexTransport', () => {
   it('a version-mismatched app-server never reaches an adapter verb', async () => {
     const transport = createFakeCodexTransport({
       responses: {
-        initialize: codexInitializeResponse('0.999.0'),
-        'account/read': { account: { planType: 'ChatGPT Plus' }, requiresOpenaiAuth: false },
+        initialize: fakeCodexInitializeResponse('0.999.0'),
+        'account/read': fakeCodexConnectedAccountReadResponse(),
       },
     })
     // The exact close-on-failure pattern `server.ts`'s pool factory uses
@@ -191,7 +182,7 @@ describe('refresh', () => {
 
     const result = await codexSubscriptionAdapter.refresh(contextWith(transport), {
       loginId: 'login-1',
-      verificationUrl: 'https://chatgpt.com/device',
+      verificationUrl: 'https://auth.openai.com/codex/device',
       userCode: 'ABCD-1234',
       expiresAt: '2026-08-09T10:15:00.000Z',
       expirySource: 'veduta-default',
@@ -203,14 +194,14 @@ describe('refresh', () => {
   it('reaches connected after account/login/completed matches the challenge', async () => {
     const transport = createFakeCodexTransport({
       responses: {
-        'account/read': { account: { planType: 'ChatGPT Plus' }, requiresOpenaiAuth: false },
+        'account/read': fakeCodexConnectedAccountReadResponse(),
       },
       notifications: [{ method: 'account/login/completed', params: { loginId: 'login-1' } }],
     })
 
     const result = await codexSubscriptionAdapter.refresh(contextWith(transport), {
       loginId: 'login-1',
-      verificationUrl: 'https://chatgpt.com/device',
+      verificationUrl: 'https://auth.openai.com/codex/device',
       userCode: 'ABCD-1234',
       expiresAt: '2026-08-09T10:15:00.000Z',
       expirySource: 'veduta-default',
@@ -253,7 +244,7 @@ describe('refresh', () => {
     // answers successfully — never a JSON-RPC error — with `account: null`
     // when no ChatGPT account is signed in.
     const transport = createFakeCodexTransport({
-      responses: { 'account/read': { account: null, requiresOpenaiAuth: true } },
+      responses: { 'account/read': fakeCodexSignedOutAccountReadResponse() },
     })
 
     const result = await codexSubscriptionAdapter.refresh(contextWith(transport))
@@ -274,10 +265,15 @@ describe('catalog', () => {
         'model/list': (params: unknown, callIndex: number) => {
           if (callIndex === 0) {
             expect(params).toEqual({ includeHidden: false })
-            return { data: [{ id: 'model-a', displayName: 'Model A' }], nextCursor: 'page-2' }
+            return fakeCodexModelListResponse(
+              [fakeCodexModelEntry({ id: 'model-a', displayName: 'Model A' })],
+              'page-2',
+            )
           }
           expect(params).toEqual({ includeHidden: false, cursor: 'page-2' })
-          return { data: [{ id: 'model-b', isDefault: true }], nextCursor: null }
+          return fakeCodexModelListResponse([
+            fakeCodexModelEntry({ id: 'model-b', isDefault: true }),
+          ])
         },
       },
     })
@@ -285,8 +281,20 @@ describe('catalog', () => {
     const entries = await codexSubscriptionAdapter.catalog(contextWith(transport))
 
     expect(entries).toEqual([
-      { id: 'model-a', label: 'Model A', routable: true },
-      { id: 'model-b', label: 'model-b', isDefault: true, routable: true },
+      {
+        id: 'model-a',
+        label: 'Model A',
+        description: 'Model A description',
+        isDefault: false,
+        routable: true,
+      },
+      {
+        id: 'model-b',
+        label: 'model-b',
+        description: 'model-b description',
+        isDefault: true,
+        routable: true,
+      },
     ])
   })
 })
@@ -665,7 +673,7 @@ describe('availability', () => {
   it('is available when the probe transport reports the pinned version', async () => {
     const adapter = createCodexAdapter({
       resolveBinary: () => '/opt/codex/bin/codex',
-      probeTransport: async () => fakeTransportOf(codexInitializeResponse('0.146.1')),
+      probeTransport: async () => fakeTransportOf(fakeCodexInitializeResponse()),
     })
 
     const result = await adapter.availability(
@@ -677,7 +685,7 @@ describe('availability', () => {
   it('names both versions on a mismatched binary', async () => {
     const adapter = createCodexAdapter({
       resolveBinary: () => '/opt/codex/bin/codex',
-      probeTransport: async () => fakeTransportOf(codexInitializeResponse('0.147.0')),
+      probeTransport: async () => fakeTransportOf(fakeCodexInitializeResponse('0.147.0')),
     })
 
     const result = await adapter.availability(
@@ -720,7 +728,7 @@ describe('availability', () => {
       resolveBinary: () => '/opt/codex/bin/codex',
       probeTransport: async () => {
         probeCalls++
-        return fakeTransportOf(codexInitializeResponse('0.146.1'))
+        return fakeTransportOf(fakeCodexInitializeResponse())
       },
     })
     const env = fromPartial<Parameters<typeof adapter.availability>[0]>({
