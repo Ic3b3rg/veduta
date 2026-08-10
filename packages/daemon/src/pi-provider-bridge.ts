@@ -162,6 +162,46 @@ const CONNECTION_BINDING = Symbol('veduta.connectionId')
 type BoundPiModel = PiModel & { [CONNECTION_BINDING]?: string | null }
 
 /**
+ * Clones `base` and stamps the clone with `connectionId` (issue #47) — the
+ * one place `resolveModel`'s three branches (mock, subscription, builtin)
+ * all go through. Cloning first is load-bearing, not decorative:
+ * `resolveBuiltinModel`'s pi-ai lookup returns a shared object per
+ * provider+model, not a fresh one per call, so stamping it in place would
+ * leak one connection's binding onto every other `ModelRef` that resolves
+ * to the same provider+model — two accounts on the same provider must
+ * never end up sharing a key
+ * (docs/adr/0014-subscription-inference-boundary.md).
+ */
+function stampConnection(base: PiModel, connectionId: string | null): BoundPiModel {
+  const descriptor: BoundPiModel = { ...base }
+  descriptor[CONNECTION_BINDING] = connectionId
+  return descriptor
+}
+
+/**
+ * Reads the `CONNECTION_BINDING` stamp off `model` — `null` for a legacy,
+ * unbound descriptor, the Model connection id otherwise. Throws when
+ * `model` carries no stamp at all: it never passed through this bridge's
+ * `resolveModel`, so there is no record of which key or runtime it is
+ * entitled to, and neither `resolveRequestApiKey` nor
+ * `resolveSubscriptionRuntime` (the two callers) may fall through to a
+ * guess. Callers turn the throw into a rejected promise; see the comment in
+ * `streamFn` for why that indirection exists.
+ */
+function connectionIdOf(model: PiModel): string | null {
+  const boundModel = model as BoundPiModel
+  if (!Object.prototype.hasOwnProperty.call(boundModel, CONNECTION_BINDING)) {
+    throw new Error(
+      'this model descriptor did not come from the provider bridge; refusing the turn',
+    )
+  }
+  // `hasOwnProperty` above already proved the stamp is present, so the
+  // value is `string | null` in practice; the cast just tells the compiler
+  // what the runtime check already guarantees.
+  return boundModel[CONNECTION_BINDING] as string | null
+}
+
+/**
  * Maps a routed `ModelRef` plus its resolved key onto pi-ai's provider
  * clients (ADR-0004 §"pi is never imported directly"): `resolveModel` and
  * `streamFn` are the two seams `PiAgentRunner` was built with and never
@@ -187,9 +227,7 @@ export function createProviderBridge(options: ProviderBridgeOptions): ProviderBr
 
   const resolveModel = (model: ModelRef): PiModel => {
     if (model.provider === 'mock') {
-      const descriptor: BoundPiModel = { ...mockModelDescriptor(model.modelId) }
-      descriptor[CONNECTION_BINDING] = model.connectionId ?? null
-      return descriptor
+      return stampConnection(mockModelDescriptor(model.modelId), model.connectionId ?? null)
     }
     // A connection-bound `ModelRef` whose runtime is `'subscription'`
     // transport (Codex) never resolves through pi-ai's builtin catalog at
@@ -200,19 +238,11 @@ export function createProviderBridge(options: ProviderBridgeOptions): ProviderBr
     // in pi-ai's catalog.
     const runtime = model.connectionId === undefined ? undefined : findRuntime(model.connectionId)
     if (runtime?.transport === 'subscription') {
-      const descriptor: BoundPiModel = { ...subscriptionModelDescriptor(runtime, model.modelId) }
-      descriptor[CONNECTION_BINDING] = runtime.connectionId
-      return descriptor
+      return stampConnection(
+        subscriptionModelDescriptor(runtime, model.modelId),
+        runtime.connectionId,
+      )
     }
-    // pi-ai's builtin catalog lookup returns a shared object per
-    // provider+model, not a fresh one per call. Stamping it in place would
-    // leak one connection's binding onto every other `ModelRef` that
-    // resolves to the same provider+model — two accounts on the same
-    // provider must never end up sharing a key
-    // (docs/adr/0014-subscription-inference-boundary.md). Clone first,
-    // stamp the clone.
-    const descriptor: BoundPiModel = { ...resolveBuiltinModel(model) }
-    descriptor[CONNECTION_BINDING] = model.connectionId ?? null
     // `descriptor.provider` is left exactly as `resolveBuiltinModel`
     // returned it — never rewritten to the connection id. pi-ai's compat
     // layer decides whether a call goes through its builtin provider
@@ -220,9 +250,9 @@ export function createProviderBridge(options: ProviderBridgeOptions): ProviderBr
     // by matching `model.provider` against its own catalog; substituting a
     // connection id here would silently divert the request onto a
     // different, unauthenticated code path instead of just failing loudly.
-    // The connection travels on `CONNECTION_BINDING` instead, precisely so
-    // `provider` can stay canonical.
-    return descriptor
+    // The connection travels on `CONNECTION_BINDING` instead (`stampConnection`'s
+    // own doc comment), precisely so `provider` can stay canonical.
+    return stampConnection(resolveBuiltinModel(model), model.connectionId ?? null)
   }
 
   const getApiKey = (provider: string): string | undefined => {
@@ -250,20 +280,10 @@ export function createProviderBridge(options: ProviderBridgeOptions): ProviderBr
     model: PiModel,
     streamOptions: SimpleStreamOptions | undefined,
   ): string => {
-    const boundModel = model as BoundPiModel
-    if (!Object.prototype.hasOwnProperty.call(boundModel, CONNECTION_BINDING)) {
-      // Fail closed: a descriptor with no binding at all never passed
-      // through this bridge's `resolveModel`, so there is no record of
-      // which key — if any — it is entitled to. Never fall through to
-      // `streamOptions.apiKey`: that value could belong to any provider.
-      throw new Error(
-        'this model descriptor did not come from the provider bridge; refusing the turn',
-      )
-    }
-    // `hasOwnProperty` above already proved the stamp is present, so the
-    // value is `string | null` in practice; the cast just tells the
-    // compiler what the runtime check already guarantees.
-    const connectionId = boundModel[CONNECTION_BINDING] as string | null
+    // Never falls through to `streamOptions.apiKey` on a missing stamp —
+    // that value could belong to any provider (`connectionIdOf`'s own fail-
+    // closed doc comment).
+    const connectionId = connectionIdOf(model)
 
     let apiKey: string | undefined
     let missingKeyMessage: string
@@ -313,13 +333,7 @@ export function createProviderBridge(options: ProviderBridgeOptions): ProviderBr
    * beside it, it simply has nothing to resolve here.
    */
   const resolveSubscriptionRuntime = (model: PiModel): ModelConnectionRuntime => {
-    const boundModel = model as BoundPiModel
-    if (!Object.prototype.hasOwnProperty.call(boundModel, CONNECTION_BINDING)) {
-      throw new Error(
-        'this model descriptor did not come from the provider bridge; refusing the turn',
-      )
-    }
-    const connectionId = boundModel[CONNECTION_BINDING] as string | null
+    const connectionId = connectionIdOf(model)
     const runtime = connectionId === null ? undefined : findRuntime(connectionId)
     if (!runtime || runtime.transport !== 'subscription' || !runtime.stream) {
       throw new Error(

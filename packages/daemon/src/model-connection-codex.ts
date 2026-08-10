@@ -108,6 +108,12 @@ async function getTransport(ctx: AdapterContext): Promise<CodexTransport> {
   return ctx.codexTransport({ codexHome: ctx.codexHome })
 }
 
+/** Sends `initialize` and returns the reported version — shared by `initializeCodexTransport` (throws on mismatch) and `availability()` (reports it instead). */
+async function requestInitializeVersion(transport: CodexTransport): Promise<string> {
+  const raw = await transport.request('initialize', { clientInfo: clientInfo() })
+  return parseCodexResponse(InitializeResponseSchema, 'initialize', raw).version
+}
+
 /**
  * Sends `initialize` and enforces the exact `CODEX_PINNED_VERSION` pin
  * (issue #47). `server.ts`'s `CodexSessionPool` factory calls this on
@@ -120,10 +126,9 @@ async function getTransport(ctx: AdapterContext): Promise<CodexTransport> {
  * pool's handshake covers it, and every other verb, the same way.
  */
 export async function initializeCodexTransport(transport: CodexTransport): Promise<void> {
-  const raw = await transport.request('initialize', { clientInfo: clientInfo() })
-  const initialized = parseCodexResponse(InitializeResponseSchema, 'initialize', raw)
-  if (initialized.version !== CODEX_PINNED_VERSION) {
-    throw new ModelConnectionError('unsupported', versionMismatchReason(initialized.version))
+  const version = await requestInitializeVersion(transport)
+  if (version !== CODEX_PINNED_VERSION) {
+    throw new ModelConnectionError('unsupported', versionMismatchReason(version))
   }
 }
 
@@ -458,11 +463,10 @@ export function createCodexAdapter(deps: CodexAdapterDeps): ModelConnectionAdapt
     let transport: CodexTransport | undefined
     try {
       transport = await deps.probeTransport({ binary, codexHome })
-      const raw = await transport.request('initialize', { clientInfo: clientInfo() })
-      const initialized = parseCodexResponse(InitializeResponseSchema, 'initialize', raw)
-      return initialized.version === CODEX_PINNED_VERSION
+      const version = await requestInitializeVersion(transport)
+      return version === CODEX_PINNED_VERSION
         ? { available: true }
-        : { available: false, reason: versionMismatchReason(initialized.version) }
+        : { available: false, reason: versionMismatchReason(version) }
     } catch (error) {
       return { available: false, reason: connectionErrorFrom(error).message }
     } finally {

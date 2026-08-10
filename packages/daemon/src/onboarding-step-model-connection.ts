@@ -2,7 +2,7 @@ import type { ModelConnectionStepRequest } from '@veduta/protocol'
 import type { ConnectionsFile } from './connections-config.ts'
 import { loadConnectionsConfig, saveConnectionsConfig } from './connections-config.ts'
 import { deriveRoutingConfig } from './model-connection-routing.ts'
-import { loadRoutingConfig, type SecretResolver } from './model-routing.ts'
+import { loadRoutingConfig, secretRefForTierModel, type SecretResolver } from './model-routing.ts'
 import { loadOnboardingConfig, saveOnboardingConfig } from './onboarding-config.ts'
 import { OnboardingStepError } from './onboarding-status.ts'
 
@@ -47,17 +47,14 @@ function hasEffectiveSelection(
   secrets: SecretResolver,
   file: ConnectionsFile,
 ): boolean {
+  const routing = loadRoutingConfig(rootDir)
   if (file.selection !== undefined) {
-    return deriveRoutingConfig(loadRoutingConfig(rootDir), file).tiers.reasoning.length > 0
+    return deriveRoutingConfig(routing, file).tiers.reasoning.length > 0
   }
 
-  const routing = loadRoutingConfig(rootDir)
   const head = routing.tiers.reasoning[0]
   if (!head) return false
-  const secretRef =
-    head.connectionId !== undefined
-      ? routing.connectionKeys[head.connectionId]
-      : routing.providerKeys[head.provider]
+  const secretRef = secretRefForTierModel(head, routing)
   if (secretRef === undefined) return false
   return secrets.resolve(secretRef) !== undefined
 }

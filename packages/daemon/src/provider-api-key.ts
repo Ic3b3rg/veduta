@@ -36,6 +36,21 @@ export const PROVIDER_ENDPOINTS: Record<ByokProvider, ProviderEndpoint> = {
 
 const TEST_TIMEOUT_MS = 10_000
 
+/** The GET every provider check shares — no redirect, bounded by `timeoutMs` — behind one place so `testProviderKey` and `fetchProviderCatalog` cannot drift on the request shape. */
+function fetchModelsEndpoint(
+  endpoint: ProviderEndpoint,
+  key: string,
+  timeoutMs: number,
+  fetchImpl: typeof fetch,
+): Promise<Response> {
+  return fetchImpl(endpoint.url, {
+    method: 'GET',
+    headers: endpoint.headers(key),
+    redirect: 'error',
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+}
+
 /**
  * `POST /api/onboarding/byok/test` (§7). Deterministic key
  * check: GETs the provider's models endpoint, follows no redirects, and
@@ -53,12 +68,7 @@ export async function testProviderKey(
   defaultRedactor.register(key)
   const endpoint = PROVIDER_ENDPOINTS[provider]
   try {
-    const response = await fetchImpl(endpoint.url, {
-      method: 'GET',
-      headers: endpoint.headers(key),
-      redirect: 'error',
-      signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
-    })
+    const response = await fetchModelsEndpoint(endpoint, key, TEST_TIMEOUT_MS, fetchImpl)
     if (response.status >= 200 && response.status < 300) return 'valid'
     if (response.status === 401 || response.status === 403) return 'invalid'
     return 'unreachable'
@@ -238,12 +248,7 @@ export async function fetchProviderCatalog(
 
   let response: Response
   try {
-    response = await fetchImpl(endpoint.url, {
-      method: 'GET',
-      headers: endpoint.headers(key),
-      redirect: 'error',
-      signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS),
-    })
+    response = await fetchModelsEndpoint(endpoint, key, CATALOG_TIMEOUT_MS, fetchImpl)
   } catch (error) {
     throw connectionErrorFrom(error)
   }

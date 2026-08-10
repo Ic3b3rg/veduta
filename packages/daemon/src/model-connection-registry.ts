@@ -128,6 +128,31 @@ function withState(
 }
 
 /**
+ * The fields every freshly-created record shares (issue #47): `create` and
+ * `reconcileImportedKeys` each build one from an adapter plus a lifecycle
+ * state, differing only in `id`, `label`, and any `secretRef`.
+ */
+function newRecordFields(
+  id: string,
+  adapter: ModelConnectionAdapter,
+  stateAt: string,
+  state: ConnectionLifecycleState,
+): Pick<
+  ModelConnectionRecord,
+  'id' | 'method' | 'provider' | 'state' | 'stateAt' | 'enabledForFallback' | 'createdAt'
+> {
+  return {
+    id,
+    method: adapter.methodId,
+    provider: adapter.providerName,
+    state,
+    stateAt,
+    enabledForFallback: false,
+    createdAt: stateAt,
+  }
+}
+
+/**
  * `ModelConnectionRegistry` owns `connections.json`, the in-memory device
  * challenge map, the per-process availability cache, and every routing
  * rebuild that follows a state change (issue #47, `docs/adr/0014-…`
@@ -459,14 +484,8 @@ export class ModelConnectionRegistry {
       const label = request.label ?? `${adapter.providerDisplayName} · ${adapter.methodDisplayName}`
 
       let record: ModelConnectionRecord = {
-        id,
-        method: adapter.methodId,
-        provider: adapter.providerName,
+        ...newRecordFields(id, adapter, stateAt, 'available'),
         label,
-        state: 'available',
-        stateAt,
-        enabledForFallback: false,
-        createdAt: stateAt,
       }
 
       if (adapter.capabilities.authorization === 'api-key' && request.apiKey !== undefined) {
@@ -946,14 +965,8 @@ export class ModelConnectionRegistry {
 
         const stateAt = this.now().toISOString()
         const record: ModelConnectionRecord = {
-          id: provider.data,
-          method: adapter.methodId,
-          provider: provider.data,
+          ...newRecordFields(provider.data, adapter, stateAt, 'connected'),
           label: `${adapter.providerDisplayName} · ${adapter.methodDisplayName}`,
-          state: 'connected',
-          stateAt,
-          enabledForFallback: false,
-          createdAt: stateAt,
           secretRef: `secret://vault/${name}`,
         }
         connections = [...connections, record]

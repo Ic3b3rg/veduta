@@ -66,6 +66,23 @@ export const TierModelSchema = z.object({
 
 export type TierModel = z.infer<typeof TierModelSchema>
 
+/**
+ * Resolves one tier entry's own secret reference (issue #47): a
+ * connection-bound entry through `connectionKeys[entry.connectionId]`, a
+ * legacy entry through the bare-provider `providerKeys[entry.provider]` —
+ * the ONE rule `ModelRouter.candidates`, `withMockFallback`'s `keyResolves`,
+ * and `onboarding-step-model-connection.ts`'s readiness check all apply
+ * identically, rather than each re-deriving it.
+ */
+export function secretRefForTierModel(
+  entry: TierModel,
+  config: { providerKeys: Record<string, string>; connectionKeys: Record<string, string> },
+): string | undefined {
+  return entry.connectionId !== undefined
+    ? config.connectionKeys[entry.connectionId]
+    : config.providerKeys[entry.provider]
+}
+
 export const RoutingConfigSchema = z.object({
   tiers: z.object({
     triage: z.array(TierModelSchema).min(1),
@@ -232,10 +249,7 @@ export function withMockFallback(
 
   const keyResolves = (entries: TierModel[]) =>
     entries.some((entry) => {
-      const secretRef =
-        entry.connectionId !== undefined
-          ? stripped.connectionKeys[entry.connectionId]
-          : stripped.providerKeys[entry.provider]
+      const secretRef = secretRefForTierModel(entry, stripped)
       return secretRef === undefined || secrets.resolve(secretRef) !== undefined
     })
 
@@ -573,10 +587,7 @@ export class ModelRouter {
       // (keyed by connection id, so two accounts on the same provider never
       // collide, issue #47); a legacy entry resolves from the bare-provider
       // `providerKeys` map, exactly as before.
-      const secretRef =
-        entry.connectionId !== undefined
-          ? this.config.connectionKeys[entry.connectionId]
-          : this.config.providerKeys[entry.provider]
+      const secretRef = secretRefForTierModel(entry, this.config)
       // Providers without a configured key entry are keyless (mock, local).
       if (secretRef !== undefined && this.secrets.resolve(secretRef) === undefined) {
         skipped.push(entry.provider)
