@@ -19,6 +19,10 @@
 # This script never deletes anything: no --fresh flag, no `rm` of any user path. The vault
 # keyfile in particular is generated once and never rotated in place -- see the comment above
 # `ensure_vault_keyfile` below.
+#
+# On first boot against a fresh data dir, and only when a controlling tty is attached, this
+# also offers once to provision the ChatGPT subscription connection method via
+# deploy/codex-setup.sh -- see the comment above that offer below.
 
 set -euo pipefail
 
@@ -162,6 +166,32 @@ ensure_vault_keyfile() {
 }
 
 ensure_vault_keyfile
+
+# --- Offer to provision the ChatGPT subscription Model connection (issue #47, deploy/codex-
+# setup.sh) --------------------------------------------------------------------------------
+#
+# Asked at most once per data dir: a "no" writes a marker file so this never nags on every
+# subsequent boot, and is silently skipped outright when there is no controlling tty (a
+# non-interactive run, e.g. under a supervisor) or when VEDUTA_CODEX_BIN already points somewhere
+# -- either way there is nothing useful to ask.
+
+CODEX_SETUP_MARKER="$DATA_DIR/codex/.setup-declined"
+
+if [ ! -e "$DATA_DIR/codex/bin/codex" ] && [ -z "${VEDUTA_CODEX_BIN:-}" ] && [ -t 0 ] &&
+  [ ! -e "$CODEX_SETUP_MARKER" ]; then
+  printf 'Enable the ChatGPT subscription connection method (installs the pinned @openai/codex 0.146.1 into the data dir)? [y/N] ' >&2
+  IFS= read -r codex_setup_answer
+  case "$codex_setup_answer" in
+    y | Y | yes | Yes | YES)
+      "$REPO_ROOT/deploy/codex-setup.sh" --data-dir "$DATA_DIR" --yes
+      ;;
+    *)
+      mkdir -p "$(dirname "$CODEX_SETUP_MARKER")"
+      : >"$CODEX_SETUP_MARKER"
+      printf 'You can enable it later: deploy/codex-setup.sh --data-dir %s\n' "$DATA_DIR" >&2
+      ;;
+  esac
+fi
 
 # --- Build the PWA (the daemon serves packages/pwa/dist/) -----------------------------------
 

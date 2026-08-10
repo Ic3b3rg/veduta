@@ -623,7 +623,7 @@ describe('availability', () => {
     expect(result).toEqual({
       available: false,
       reason:
-        'the Codex app-server binary is not installed: set VEDUTA_CODEX_BIN to a pinned @openai/codex 0.146.1 binary — see docs/SECURITY.md',
+        'the Codex app-server binary is not installed: run deploy/codex-setup.sh on the instance (or set VEDUTA_CODEX_BIN to a pinned @openai/codex 0.146.1 binary) — see docs/SECURITY.md',
     })
   })
 

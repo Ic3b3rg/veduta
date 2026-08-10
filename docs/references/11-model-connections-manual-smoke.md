@@ -8,8 +8,9 @@
 ## ChatGPT subscription — real-account smoke
 
 Prerequisites: a VPS or Local VPS install, a pinned `@openai/codex` 0.146.1 binary reachable at
-`VEDUTA_CODEX_BIN` (or `<data root>/codex/bin/codex`), a ChatGPT account with device-code login
-enabled in its security settings.
+`VEDUTA_CODEX_BIN` (or `<data root>/codex/bin/codex` -- provision it with
+[`deploy/codex-setup.sh`](../../deploy/codex-setup.sh) rather than a hand-run `npm install`), a
+ChatGPT account with device-code login enabled in its security settings.
 
 1. Open Model connections (onboarding step or settings), add **OpenAI · ChatGPT subscription**,
    start authorization.

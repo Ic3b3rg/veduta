@@ -134,6 +134,28 @@ spends real provider credit:
 
 Record the outcome (date, provider, model) in the issue or deployment notes when performed.
 
+## ChatGPT subscription (Codex)
+
+The ChatGPT subscription Model connection (issue #47) needs a pinned `@openai/codex` 0.146.1
+binary at `<data dir>/codex/bin/codex` (or `VEDUTA_CODEX_BIN`) -- the daemon refuses any other
+version. `pnpm local-vps` offers to provision it interactively the first time it runs against a
+fresh data dir with no binary present and no `VEDUTA_CODEX_BIN` set: answer the one `[y/N]`
+prompt, or decline and it will not ask again for that data dir (a marker file records the
+decision; re-run the standalone command below whenever you are ready).
+
+The standalone command, usable at any time and also what the runner's offer calls under the
+hood:
+
+```sh
+deploy/codex-setup.sh --data-dir ~/.veduta-local-vps/data
+```
+
+It detects node/npm, shows the install plan, asks for confirmation, installs the pinned version,
+and verifies it before printing the exact next steps (restarting the daemon, the Model
+connections UI path, the firewall hosts the child process needs). See
+[`docs/references/11-model-connections-manual-smoke.md`](../docs/references/11-model-connections-manual-smoke.md)
+for the full real-account smoke walk.
+
 ## Self-update
 
 The Local VPS profile exercises the same update machinery described in

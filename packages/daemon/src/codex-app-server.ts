@@ -22,7 +22,7 @@ export const CODEX_EGRESS_HOSTS = ['auth.openai.com', 'chatgpt.com', 'api.openai
 
 /** The exact reason `model-connection-codex.ts`'s `availability()` reports when no binary is configured — shared with `codex-app-server.ts`'s own production transport factory so a caller that skips the availability check still fails with the same actionable message rather than a bare `ENOENT`. */
 export const CODEX_BINARY_MISSING_REASON =
-  'the Codex app-server binary is not installed: set VEDUTA_CODEX_BIN to a pinned @openai/codex 0.146.1 binary — see docs/SECURITY.md'
+  'the Codex app-server binary is not installed: run deploy/codex-setup.sh on the instance (or set VEDUTA_CODEX_BIN to a pinned @openai/codex 0.146.1 binary) — see docs/SECURITY.md'
 
 /**
  * The Gateway-owned JSON-RPC seam to one running `codex app-server`
