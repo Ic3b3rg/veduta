@@ -6,7 +6,7 @@ import type {
   ModelConnectionsSnapshot,
   UpdateModelConnectionRequest,
 } from '@veduta/protocol'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   catalogOptions,
   challengeCountdownLabel,
@@ -23,7 +23,7 @@ export interface ModelConnectionPanelProps {
   onCreate: (body: CreateModelConnectionRequest) => void
   onAuthorize: (id: string, body: AuthorizeModelConnectionRequest) => void
   onVerify: (id: string, modelId: string) => void
-  /** Resolves `false` when the daemon rejected the selection (issue #47 fix batch C) so `SelectionControls` can roll its local draft state back to the committed selection. */
+  /** Resolves `false` when the daemon rejected the selection (issue #47) so `SelectionControls` can roll its local draft state back to the committed selection. */
   onApplySelection: (connectionId: string, modelId: string) => Promise<boolean>
   onUpdate: (id: string, patch: UpdateModelConnectionRequest) => void
   onRemove: (id: string) => void
@@ -371,6 +371,22 @@ function SelectionControls({
   )
   const [modelId, setModelId] = useState(snapshot.selection?.modelId ?? '')
 
+  // A rejected apply's rollback (below) must read the CURRENT committed
+  // selection, not the one that was current when the click that triggered
+  // it happened (issue #47): the `onClick` closure below captures `snapshot`
+  // as of THAT render, and a plain re-render never rewrites an
+  // already-created closure. `latestSnapshot.current` is kept in sync with
+  // every render's `snapshot` prop by this effect instead, so the callback —
+  // which only dereferences it once `onApplySelection`'s promise actually
+  // settles, after the controller has refetched — reads whatever render most
+  // recently committed, not the one at click time. An effect (not a
+  // during-render assignment) because refs must not be written while
+  // rendering.
+  const latestSnapshot = useRef(snapshot)
+  useEffect(() => {
+    latestSnapshot.current = snapshot
+  }, [snapshot])
+
   const selectedConnection = connectedConnections.find(
     (connection) => connection.id === connectionId,
   )
@@ -422,11 +438,12 @@ function SelectionControls({
             // A rejection (verify-then-commit: nothing was applied
             // server-side) must snap both drafts back to the selection that
             // is actually committed, not just leave the error banner over
-            // stale selects (issue #47 fix batch C).
+            // stale selects (issue #47). Reads `latestSnapshot.current`,
+            // not `snapshot` directly — see that ref's own comment above.
             void onApplySelection(connectionId, modelId).then((committed) => {
               if (committed) return
-              setConnectionId(snapshot.selection?.connectionId ?? '')
-              setModelId(snapshot.selection?.modelId ?? '')
+              setConnectionId(latestSnapshot.current.selection?.connectionId ?? '')
+              setModelId(latestSnapshot.current.selection?.modelId ?? '')
             })
           }}
         >

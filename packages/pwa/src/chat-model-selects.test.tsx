@@ -100,8 +100,8 @@ describe('ChatModelSelects', () => {
     expect(screen.queryByRole('button', { name: /^revoke$/i })).toBeNull()
     expect(screen.queryByLabelText(/api key/i)).toBeNull()
     // The "Model connections" button lives unconditionally in the topbar
-    // (`app.tsx`) since issue #47 fix batch C, not inside this
-    // self-contained, no-connections-renders-nothing component.
+    // (`app.tsx`) since issue #47, not inside this self-contained,
+    // no-connections-renders-nothing component.
     expect(screen.queryByRole('button', { name: 'Model connections' })).toBeNull()
   })
 

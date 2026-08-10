@@ -93,10 +93,9 @@ export function App() {
   // Which full-page view is showing (issue #47): a minimal view switch, not
   // a router -- Home is the only view with the topbar/space-rail/chat shell,
   // and `model-connections` is a standalone screen reached from the
-  // topbar's unconditional "Model connections" button (issue #47 fix batch
-  // C: it must be reachable even with zero connections, so it lives next to
-  // `ChatModelSelects` rather than inside it) and left via its own Back
-  // button.
+  // topbar's unconditional "Model connections" button (it must be reachable
+  // even with zero connections, so it lives next to `ChatModelSelects`
+  // rather than inside it) and left via its own Back button.
   const [view, setView] = useState<'home' | 'model-connections'>('home')
   const [onboardingRetryToken, setOnboardingRetryToken] = useState(0)
   const gatewayRef = useRef<GatewayConnection | null>(null)

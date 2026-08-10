@@ -22,10 +22,10 @@ import type {
  * API keys) the connection's own user-chosen label is appended as the last
  * resort. Display names come from the snapshot's own `methods[]` (the
  * Gateway's `ModelConnectionMethodSchema.providerDisplayName`/
- * `methodDisplayName`, issue #47 fix batch C) rather than a PWA-side map
- * duplicating that metadata -- a connection whose method the daemon no
- * longer lists falls back to the raw provider/method strings the
- * connection record itself carries.
+ * `methodDisplayName`) rather than a PWA-side map duplicating that
+ * metadata -- a connection whose method the daemon no longer lists falls
+ * back to the raw provider/method strings the connection record itself
+ * carries.
  */
 export function connectionSelectLabel(
   connection: ModelConnection,

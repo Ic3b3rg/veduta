@@ -343,28 +343,55 @@ async function* stream(
   // only reader competing for its frames.
   const subscription = transport.notifications()[Symbol.asyncIterator]()
 
-  const turnStartRaw = await transport.request('turn/start', {
-    threadId,
-    input: renderSubscriptionPrompt(request.prompt),
-  })
-  const { turnId } = parseCodexResponse(TurnStartResponseSchema, 'turn/start', turnStartRaw)
-
+  // The try/finally that releases `subscription` starts IMMEDIATELY after
+  // it is acquired (issue #47) — `turn/start` itself is inside it, not
+  // before it: a rejected `turn/start` call, or a response that fails
+  // `parseCodexResponse`, used to leave this subscription open forever
+  // (the transport's own `idle()` never seeing it go away) because the
+  // finally block used to start only after `turn/start` had already
+  // succeeded.
   let turnTimer: NodeJS.Timeout | undefined
-  const turnTimedOut = new Promise<'timeout'>((resolve) => {
-    turnTimer = setTimeout(() => resolve('timeout'), CODEX_TURN_TIMEOUT_MS)
-  })
-
+  let abortListener: (() => void) | undefined
   try {
-    while (true) {
-      if (request.signal?.aborted) {
-        await abandonThread()
-        throw new ModelConnectionError('unsupported', TURN_ABORTED_MESSAGE)
-      }
+    const turnStartRaw = await transport.request('turn/start', {
+      threadId,
+      input: renderSubscriptionPrompt(request.prompt),
+    })
+    const { turnId } = parseCodexResponse(TurnStartResponseSchema, 'turn/start', turnStartRaw)
 
+    const turnTimedOut = new Promise<'timeout'>((resolve) => {
+      turnTimer = setTimeout(() => resolve('timeout'), CODEX_TURN_TIMEOUT_MS)
+    })
+
+    // Races the abort signal against the notification wait itself (issue
+    // #47), rather than only checking `request.signal?.aborted` at the top
+    // of each loop iteration: a signal that fires while `subscription.next()`
+    // is still pending on a silent turn (no further frame ever arrives) used
+    // to go unnoticed until the NEXT frame woke the loop up, or — absent
+    // one — the full `CODEX_TURN_TIMEOUT_MS` bound. The listener is added
+    // once, here, and removed in the `finally` below regardless of how the
+    // turn ends.
+    const aborted = new Promise<'aborted'>((resolve) => {
+      if (request.signal === undefined) return
+      if (request.signal.aborted) {
+        resolve('aborted')
+        return
+      }
+      abortListener = () => resolve('aborted')
+      request.signal.addEventListener('abort', abortListener)
+    })
+
+    while (true) {
       const outcome = await Promise.race([
         subscription.next().then((result) => ({ kind: 'frame' as const, result })),
         turnTimedOut.then(() => ({ kind: 'timeout' as const })),
+        aborted.then(() => ({ kind: 'aborted' as const })),
       ])
+
+      if (outcome.kind === 'aborted') {
+        await abandonThread()
+        throw new ModelConnectionError('unsupported', TURN_ABORTED_MESSAGE)
+      }
 
       if (outcome.kind === 'timeout') {
         await abandonThread()
@@ -419,6 +446,7 @@ async function* stream(
     }
   } finally {
     if (turnTimer) clearTimeout(turnTimer)
+    if (abortListener) request.signal?.removeEventListener('abort', abortListener)
     await subscription.return?.()
   }
 }

@@ -194,7 +194,10 @@ export class ModelConnectionRegistry {
 
   private tail: Promise<unknown> = Promise.resolve()
   private generation = 0
-  private readonly inflightRefresh = new Map<string, Promise<RefreshResult>>()
+  private readonly inflightRefresh = new Map<
+    string,
+    { promise: Promise<RefreshResult>; challenge: DeviceChallenge | undefined }
+  >()
   private readonly challenges = new Map<string, DeviceChallenge>()
   private readonly availabilityCache = new Map<ModelConnectionMethodId, AdapterAvailability>()
 
@@ -381,11 +384,27 @@ export class ModelConnectionRegistry {
    * Coalesces concurrent refreshes of the same connection into one adapter
    * call: the map is checked and populated synchronously, before the first
    * `await`, so two callers arriving in the same tick share the same
-   * in-flight promise rather than issuing two calls to the provider.
+   * in-flight promise rather than issuing two calls to the provider. The
+   * challenge each caller is polling for is part of the coalescing key
+   * (issue #47): a refresh started against a PREVIOUS challenge must never
+   * be handed to a caller polling a NEWER one (a reauthorization installed a
+   * fresh device challenge while the old refresh was still in flight) — that
+   * caller instead waits for the stale call to settle (so the same
+   * connection is never hit by two overlapping adapter calls), then issues
+   * its own fresh refresh against the challenge it actually holds. Two
+   * callers sharing the exact same challenge (including two callers with no
+   * challenge at all — `undefined === undefined`) still join one call, same
+   * as before.
    */
   private refreshInternal(id: string, challenge?: DeviceChallenge): Promise<RefreshResult> {
     const inflight = this.inflightRefresh.get(id)
-    if (inflight) return inflight
+    if (inflight) {
+      if (inflight.challenge === challenge) return inflight.promise
+      return inflight.promise.then(
+        () => this.refreshInternal(id, challenge),
+        () => this.refreshInternal(id, challenge),
+      )
+    }
 
     const run = (async (): Promise<RefreshResult> => {
       const file = loadConnectionsConfig(this.rootDir)
@@ -394,10 +413,10 @@ export class ModelConnectionRegistry {
       return adapter.refresh(this.contextFor(id, record.secretRef), challenge)
     })()
 
-    this.inflightRefresh.set(id, run)
+    this.inflightRefresh.set(id, { promise: run, challenge })
     run
       .finally(() => {
-        if (this.inflightRefresh.get(id) === run) this.inflightRefresh.delete(id)
+        if (this.inflightRefresh.get(id)?.promise === run) this.inflightRefresh.delete(id)
       })
       .catch(() => {
         // The caller of `run` observes the rejection; this branch exists only
@@ -690,9 +709,23 @@ export class ModelConnectionRegistry {
    * so a boot-time migration (`model-connection-migration.ts`'s
    * `reconcileByokConnections`, which skips any id that already has a
    * record) can never resurrect it as a fresh `'connected'` connection the
-   * moment the daemon restarts. A vault-backed or keyless connection has no
-   * such environment-level survivor to account for and is deleted outright,
-   * as before.
+   * moment the daemon restarts.
+   *
+   * A reserved legacy provider id (`id` is `'anthropic'`/`'openai'`/
+   * `'openrouter'`) gets the same tombstone treatment even once its
+   * `secretRef` has been repointed at the vault by a later reauthorization
+   * (`runAuthorization`): `routing.json`'s `providerKeys` entry for that
+   * provider is untouched by this method (only `connectionKeys` is), so
+   * deleting the record outright would leave that legacy pointer as the
+   * only trace of the provider — exactly what `reconcileByokConnections`
+   * treats as "never migrated yet" and turns back into a fresh `'connected'`
+   * connection on the next boot. Keeping the id occupied, in whatever state,
+   * is what blocks that resurrection. The vault entry a reauthorization
+   * created is still gone — `adapter.revoke` above already deleted it, since
+   * it ran against this record's CURRENT (vault-backed) `secretRef`.
+   *
+   * A vault-backed or keyless connection with no reserved id has no such
+   * survivor to account for and is deleted outright, as before.
    */
   async remove(id: string): Promise<ModelConnectionsSnapshot> {
     return this.queue(async () => {
@@ -712,18 +745,22 @@ export class ModelConnectionRegistry {
       this.challenges.delete(id)
       const selection = file.selection?.connectionId === id ? undefined : file.selection
       const isEnvBacked = record.secretRef?.startsWith('secret://env/') === true
-      const connections = isEnvBacked
-        ? file.connections.map((candidate) =>
-            candidate.id === id
-              ? withState(candidate, {
-                  state: 'revoked',
-                  stateAt: this.now().toISOString(),
-                  stateReason:
-                    'the key comes from the daemon environment and stays there; remove the environment variable to retire it',
-                })
-              : candidate,
-          )
-        : file.connections.filter((candidate) => candidate.id !== id)
+      const isReservedProviderId = ByokProviderSchema.safeParse(id).success
+      const tombstoneReason = isEnvBacked
+        ? 'the key comes from the daemon environment and stays there; remove the environment variable to retire it'
+        : "the daemon's legacy provider configuration still references this provider; the tombstone keeps it retired"
+      const connections =
+        isEnvBacked || isReservedProviderId
+          ? file.connections.map((candidate) =>
+              candidate.id === id
+                ? withState(candidate, {
+                    state: 'revoked',
+                    stateAt: this.now().toISOString(),
+                    stateReason: tombstoneReason,
+                  })
+                : candidate,
+            )
+          : file.connections.filter((candidate) => candidate.id !== id)
       // `selection` must be dropped from `file` FIRST, not merely left
       // un-overridden: spreading `...file` already copies its `selection`
       // key onto `nextFile`, so a later conditional spread that omits
@@ -735,12 +772,16 @@ export class ModelConnectionRegistry {
         connections,
         ...(selection ? { selection } : {}),
       }
-      this.persist(nextFile)
       // A legacy hand-edited `routing.json` may still carry this id's
-      // `connectionKeys` entry (issue #47): drop it here too, so a stale
-      // pointer can never resolve after the connection is gone or
-      // tombstoned.
+      // `connectionKeys` entry (issue #47): dropped BEFORE `persist` below,
+      // not after — `persist` synchronously fires `onRoutingChanged`, which
+      // rebuilds the live routing config from `routing.json` as it stands
+      // AT THAT MOMENT. Dropping the pointer afterward would let that
+      // rebuild still see the stale entry and keep the removed connection's
+      // route live until the next unrelated mutation happened to trigger
+      // another rebuild.
       this.dropRoutingConnectionKey(id)
+      this.persist(nextFile)
       return this.buildSnapshot(nextFile)
     })
   }
@@ -816,10 +857,19 @@ export class ModelConnectionRegistry {
    * a connection that just turned out to be revoked/expired, BEFORE ever
    * calling the adapter's own `stream` verb, rather than only reacting to a
    * failure mid-call.
+   *
+   * The current record's own state is read FIRST, before either skip check
+   * (issue #47): a connection that is already revoked/expired/failed must
+   * never fall through the static-method skip or the freshness window and
+   * come back as `undefined` — the "no-op, nothing changed" signal a caller
+   * reads as "still safe to call the adapter" — just because it happens to
+   * have a recent `lastRefreshAt` or a `refresh: 'static'` method. Only a
+   * connection that is CURRENTLY `'connected'` reaches either skip check.
    */
   async ensureFresh(id: string): Promise<ConnectionLifecycleState | undefined> {
     const file = loadConnectionsConfig(this.rootDir)
     const record = this.findRecord(file, id)
+    if (record.state !== 'connected') return record.state
     const adapter = this.findAdapter(record.method)
     if (adapter.capabilities.refresh === 'static') return undefined
     const last = record.lastRefreshAt ? new Date(record.lastRefreshAt).getTime() : undefined

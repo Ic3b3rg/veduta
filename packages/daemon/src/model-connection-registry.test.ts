@@ -21,6 +21,7 @@ import {
   ModelConnectionRegistry,
   type ModelConnectionRegistryOptions,
 } from './model-connection-registry.ts'
+import { reconcileByokConnections } from './model-connection-migration.ts'
 import { deriveRoutingConfig } from './model-connection-routing.ts'
 import {
   defaultRoutingConfig,
@@ -491,6 +492,127 @@ describe('remove', () => {
 
     expect(loadRoutingConfig(dir).connectionKeys[vaultBackedId]).toBeUndefined()
   })
+
+  it('removing a connection with a legacy routing pointer drops the route in the same rebuild', async () => {
+    const dir = freshRoot()
+    const vault = SecretsVault.open(dir, KEY_MATERIAL)
+    const vaultBackedId = 'e5e5e5e5-0000-4000-8000-000000000004'
+    vault.set(`${vaultBackedId}-api-key`, 'sk-vault-backed')
+    saveConnectionsConfig(dir, {
+      version: 1,
+      connections: [
+        {
+          id: vaultBackedId,
+          method: 'anthropic-api-key',
+          provider: 'anthropic',
+          label: 'Claude · API key',
+          state: 'connected',
+          stateAt: '2026-08-09T09:00:00.000Z',
+          enabledForFallback: false,
+          createdAt: '2026-08-09T09:00:00.000Z',
+          secretRef: `secret://vault/${vaultBackedId}-api-key`,
+        },
+      ],
+      mockEnabled: false,
+    })
+    saveRoutingConfig(dir, {
+      ...defaultRoutingConfig(),
+      connectionKeys: { [vaultBackedId]: `secret://vault/${vaultBackedId}-api-key` },
+    })
+
+    // `onRoutingChanged` fires synchronously from inside `persist` — this
+    // records what `routing.json`'s own pointer looks like at the EXACT
+    // moment the live routing rebuild reads it, not after `remove` returns.
+    const seenConnectionKeyDuringRebuild: (string | undefined)[] = []
+    const registry = new ModelConnectionRegistry(
+      baseOptions(dir, [createByokAdapter('anthropic')], {
+        vault,
+        onRoutingChanged: () => {
+          seenConnectionKeyDuringRebuild.push(loadRoutingConfig(dir).connectionKeys[vaultBackedId])
+        },
+      }),
+    )
+
+    await registry.remove(vaultBackedId)
+
+    expect(seenConnectionKeyDuringRebuild).toEqual([undefined])
+  })
+})
+
+describe('remove tombstones a reserved legacy provider id (issue #47)', () => {
+  it('removing a reauthorized migrated connection leaves a tombstone so boot cannot recreate it', async () => {
+    const dir = freshRoot()
+    const vault = SecretsVault.open(dir, KEY_MATERIAL)
+    // A minimal stand-in for the BYOK adapter's own authorize/revoke
+    // (`model-connection-byok.ts`), narrowed to the one thing this test
+    // cares about: a vault-backed `secretRef` is written on authorize and
+    // deleted on revoke, exactly like the real adapter's contract.
+    const adapter = createFakeAdapter({
+      authorize: async (ctx, input) => {
+        const vaultName = /^secret:\/\/vault\/(.+)$/.exec(ctx.secretRef ?? '')?.[1]
+        if (vaultName !== undefined && ctx.vault !== undefined && input.apiKey !== undefined) {
+          ctx.vault.set(vaultName, input.apiKey)
+        }
+        return { state: 'connected' }
+      },
+      revoke: async (ctx) => {
+        const vaultName = /^secret:\/\/vault\/(.+)$/.exec(ctx.secretRef ?? '')?.[1]
+        if (vaultName !== undefined) ctx.vault?.delete(vaultName)
+        return { providerRevoked: false }
+      },
+    })
+    saveConnectionsConfig(dir, {
+      version: 1,
+      connections: [
+        {
+          id: 'anthropic',
+          method: 'anthropic-api-key',
+          provider: 'anthropic',
+          label: 'Claude · API key (legacy)',
+          state: 'connected',
+          stateAt: '2026-08-09T09:00:00.000Z',
+          enabledForFallback: false,
+          createdAt: '2026-08-09T09:00:00.000Z',
+          secretRef: 'secret://env/ANTHROPIC_API_KEY',
+        },
+      ],
+      mockEnabled: false,
+    })
+
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter], { vault }))
+    await registry.authorize('anthropic', { apiKey: 'sk-new-key' })
+    expect(vault.has('anthropic-api-key')).toBe(true)
+
+    await registry.remove('anthropic')
+
+    const file = loadConnectionsConfig(dir)
+    const tombstone = file.connections.find((c) => c.id === 'anthropic')
+    expect(tombstone).toBeDefined()
+    expect(tombstone?.state).toBe('revoked')
+    expect(tombstone?.stateReason).toBe(
+      "the daemon's legacy provider configuration still references this provider; the tombstone keeps it retired",
+    )
+    // The key material is gone — the vault entry the reauthorization
+    // created is still deleted, even though the record survives as a
+    // tombstone rather than being removed outright.
+    expect(vault.has('anthropic-api-key')).toBe(false)
+
+    // Boot-time reconcile must not recreate a fresh 'connected' record: the
+    // tombstone already occupies the reserved 'anthropic' id, and
+    // `reconcileByokConnections` skips any provider that already has one.
+    reconcileByokConnections({
+      rootDir: dir,
+      routing: {
+        ...defaultRoutingConfig(),
+        providerKeys: { anthropic: 'secret://env/ANTHROPIC_API_KEY' },
+      },
+      secrets: envSecretResolver,
+      now: () => new Date('2026-08-09T11:00:00.000Z'),
+    })
+
+    const afterBoot = loadConnectionsConfig(dir).connections.find((c) => c.id === 'anthropic')
+    expect(afterBoot?.state).toBe('revoked')
+  })
 })
 
 describe('authorize', () => {
@@ -712,6 +834,33 @@ describe('ensureFresh (issue #47)', () => {
     expect(await registry.ensureFresh('anthropic')).toBeUndefined()
     expect(refreshSpy).not.toHaveBeenCalled()
   })
+
+  it('reports a revoked record even inside the freshness window', async () => {
+    const dir = freshRoot()
+    const refreshSpy = vi.fn()
+    // A static-refresh method AND a `lastRefreshAt` from a minute ago —
+    // BOTH of `ensureFresh`'s skip conditions would fire on this record if
+    // its current state were read after them; the record's own state must
+    // win over either skip.
+    const adapter = createFakeAdapter({ refresh: refreshSpy })
+    const record: ModelConnectionRecord = {
+      id: 'anthropic',
+      method: 'anthropic-api-key',
+      provider: 'anthropic',
+      label: 'Claude · API key',
+      state: 'revoked',
+      stateAt: '2026-08-09T09:00:00.000Z',
+      stateReason: 'the provider rejected this credential',
+      lastRefreshAt: '2026-08-09T09:59:00.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T09:00:00.000Z',
+    }
+    saveConnectionsConfig(dir, { version: 1, connections: [record], mockEnabled: false })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+
+    expect(await registry.ensureFresh('anthropic')).toBe('revoked')
+    expect(refreshSpy).not.toHaveBeenCalled()
+  })
 })
 
 describe('authorize secretRef repointing (issue #47)', () => {
@@ -857,5 +1006,75 @@ describe('applyRefreshResult compare-and-swap (issue #47)', () => {
     expect(resolved.state).toBe('failed')
     const persisted = loadConnectionsConfig(dir).connections.find((c) => c.id === id)
     expect(persisted?.state).toBe('failed')
+  })
+})
+
+describe('refresh singleflight challenge identity (issue #47)', () => {
+  function deviceChallenge(userCode: string): DeviceChallenge {
+    return {
+      loginId: `login-${userCode}`,
+      verificationUrl: 'https://chatgpt.com/device',
+      userCode,
+      expiresAt: '2026-08-09T12:00:00.000Z',
+      expirySource: 'provider',
+    }
+  }
+
+  it("a poll for a new challenge never receives the previous challenge's refresh result", async () => {
+    const dir = freshRoot()
+    let firstRefreshResolve: ((result: RefreshResult) => void) | undefined
+    const firstRefreshDeferred = new Promise<RefreshResult>((resolve) => {
+      firstRefreshResolve = resolve
+    })
+    let challengeCounter = 0
+    const refresh = vi
+      .fn()
+      .mockImplementationOnce(() => firstRefreshDeferred)
+      .mockImplementationOnce(async () => ({ state: 'connected' }) satisfies RefreshResult)
+    const adapter = createFakeAdapter({
+      methodId: 'chatgpt-codex',
+      providerName: 'openai',
+      capabilities: {
+        authorization: 'device-code',
+        refresh: 'automatic',
+        revocation: 'provider',
+        vedutaTools: false,
+        metered: false,
+      },
+      authorize: async () => {
+        challengeCounter += 1
+        return { state: 'waiting-for-user', challenge: deviceChallenge(`CODE-${challengeCounter}`) }
+      },
+      refresh,
+    })
+    // An advancing clock (mirroring `applyRefreshResult compare-and-swap`'s
+    // own tests above): the compare-and-swap this test relies on to prove
+    // A's stale result never persists distinguishes mutations by `stateAt`,
+    // which only moves when `now()` actually does.
+    let clock = new Date('2026-08-09T10:00:00.000Z')
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter], { now: () => clock }))
+    const created = await registry.create({ method: 'chatgpt-codex' })
+    const id = created.connections[0]?.id
+    if (!id) throw new Error('test setup failed')
+    await registry.authorize(id, {}) // installs challenge #1 ("A")
+
+    clock = new Date('2026-08-09T10:05:00.000Z')
+    const pollA = registry.read(id) // starts a refresh call for challenge A, and blocks on it
+
+    clock = new Date('2026-08-09T10:10:00.000Z')
+    await registry.authorize(id, {}) // installs challenge #2 ("B") while A's refresh is still in flight
+
+    const pollB = registry.read(id) // must NOT join A's stale in-flight refresh
+
+    // A's refresh finally settles, with a result that would be wrong to
+    // hand to a caller polling for B (the connection is not actually
+    // 'connected' from B's point of view).
+    firstRefreshResolve!({ state: 'expired', reason: 'stale result for challenge A' })
+
+    const resultB = await pollB
+    await pollA
+
+    expect(refresh).toHaveBeenCalledTimes(2)
+    expect(resultB.state).toBe('connected')
   })
 })

@@ -502,6 +502,68 @@ describe('stream', () => {
     expect(deltas).toEqual(['hello'])
   })
 
+  it('a failed turn/start releases the notification subscription (the transport returns to idle)', async () => {
+    const transport = createFakeCodexTransport({
+      responses: {
+        'thread/start': { threadId: 'thread-1' },
+        'turn/start': new Error('the app-server rejected turn/start'),
+      },
+    })
+
+    const { deltas, error } = await drain(
+      codexSubscriptionAdapter.stream!(contextWith(transport), subscriptionRequest()),
+    )
+
+    expect(deltas).toEqual([])
+    expect(error).toBeDefined()
+    // The subscription acquired before `turn/start` must still be released
+    // on this failure path — otherwise the transport never reports idle
+    // again, and a pooled transport with a leaked subscriber is never
+    // reused cleanly.
+    expect(transport.idle()).toBe(true)
+  })
+
+  it('an abort during a silent turn interrupts immediately', async () => {
+    vi.useFakeTimers()
+    try {
+      const controller = new AbortController()
+      const transport = createFakeCodexTransport({
+        responses: {
+          'thread/start': { threadId: 'thread-1' },
+          'turn/start': { turnId: 'turn-1' },
+          'turn/interrupt': {},
+        },
+        // No notification ever arrives — a silent turn: `subscription.next()`
+        // would otherwise hang until this connection's own turn bound.
+      })
+
+      const drainPromise = drain(
+        codexSubscriptionAdapter.stream!(
+          contextWith(transport),
+          subscriptionRequest(controller.signal),
+        ),
+      )
+
+      await vi.advanceTimersByTimeAsync(0) // let thread/start + turn/start settle
+      controller.abort()
+      // No further time advance: the abort must be noticed as soon as it
+      // fires — raced directly against the notification wait — not only
+      // once a further frame arrives or the `CODEX_TURN_TIMEOUT_MS` bound
+      // does.
+      const { deltas, error } = await drainPromise
+
+      expect(deltas).toEqual([])
+      expect(error).toMatchObject({ code: 'unsupported' })
+      expect(transport.requests.map((request) => request.method)).toEqual([
+        'thread/start',
+        'turn/start',
+        'turn/interrupt',
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('refuses a turn that exceeds the turn bound', async () => {
     vi.useFakeTimers()
     try {

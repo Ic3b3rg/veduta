@@ -105,9 +105,9 @@ describe('App', () => {
     vi.mocked(fetchOnboardingStatus).mockResolvedValue(
       fromPartial<OnboardingStatus>({ required: false, completed: true }),
     )
-    // A pure-mock install (issue #47 fix batch C): `ChatModelSelects` renders
-    // nothing for this snapshot, yet the settings view must still be
-    // reachable to add a first connection.
+    // A pure-mock install (issue #47): `ChatModelSelects` renders nothing
+    // for this snapshot, yet the settings view must still be reachable to
+    // add a first connection.
     vi.mocked(fetchModelConnections).mockResolvedValue({
       vaultAvailable: true,
       mockEnabled: true,

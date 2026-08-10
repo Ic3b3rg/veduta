@@ -40,9 +40,9 @@ export interface ModelConnectionsController {
   onVerify: (id: string, modelId: string) => void
   /**
    * Resolves `true` once the selection actually committed, `false` when the
-   * daemon rejected it (issue #47 fix batch C: a rejected selection must
-   * roll the panel's local draft state back to what is actually applied, not
-   * just show an error banner over stale selects).
+   * daemon rejected it: a rejected selection must roll the panel's local
+   * draft state back to what is actually applied, not just show an error
+   * banner over stale selects (issue #47).
    */
   onApplySelection: (connectionId: string, modelId: string) => Promise<boolean>
   onUpdate: (id: string, patch: UpdateModelConnectionRequest) => void
@@ -78,10 +78,10 @@ export function useModelConnectionsController(token?: string): ModelConnectionsC
     return () => clearInterval(timer)
   }, [snapshot, refresh])
 
-  // The result-returning variant `onApplySelection` needs (issue #47 fix
-  // batch C): every other action stays fire-and-forget void, since only a
-  // rejected selection change has local draft state (the panel's Connection
-  // /Model selects) that must snap back to the committed value on failure.
+  // The result-returning variant `onApplySelection` needs (issue #47):
+  // every other action stays fire-and-forget void, since only a rejected
+  // selection change has local draft state (the panel's Connection/Model
+  // selects) that must snap back to the committed value on failure.
   const runActionForResult = useCallback(
     async (fn: () => Promise<unknown>): Promise<boolean> => {
       setBusy(true)
@@ -91,7 +91,18 @@ export function useModelConnectionsController(token?: string): ModelConnectionsC
         await refresh()
         return true
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'request failed')
+        const message = e instanceof Error ? e.message : 'request failed'
+        // Refetch BEFORE resolving `false` (issue #47): the snapshot this
+        // call started with may already be stale by the time the daemon
+        // rejects it (e.g. another client committed a different selection
+        // while this one's probe was running), so the caller's rollback
+        // must read the CURRENT committed selection, not the one that was
+        // current before this request began. `refresh()` may itself clear
+        // or replace `error` on success/failure — this call's own message
+        // is restored unconditionally afterward so the banner still
+        // explains what was actually rejected.
+        await refresh()
+        setError(message)
         return false
       } finally {
         setBusy(false)

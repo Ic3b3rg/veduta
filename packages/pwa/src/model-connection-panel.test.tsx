@@ -333,8 +333,80 @@ describe('ModelConnectionPanel', () => {
     // Verify-then-commit: nothing was applied server-side, so both drafts
     // snap back to the selection that is actually committed rather than
     // leaving the selects showing the rejected value under the error
-    // banner (issue #47 fix batch C).
+    // banner (issue #47).
     await waitFor(() => expect(modelSelect.value).toBe('claude-model-a'))
+    expect(connectionSelect.value).toBe(connectionA.id)
+  })
+
+  it("a rejected selection resets the selects to the server's current selection, not the stale one", async () => {
+    const connectionA: ModelConnection = {
+      id: 'a1a1a1a1-0000-4000-8000-000000000001',
+      method: 'anthropic-api-key',
+      provider: 'anthropic',
+      label: 'Claude',
+      state: 'connected',
+      stateAt: '2026-08-09T00:00:00.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T00:00:00.000Z',
+      catalog: [
+        { id: 'claude-model-a', label: 'Claude model A', routable: true },
+        { id: 'claude-model-b', label: 'Claude model B', routable: true },
+        { id: 'claude-model-c', label: 'Claude model C', routable: true },
+      ],
+    }
+    let resolveApply: ((committed: boolean) => void) | undefined
+    const onApplySelection = vi.fn().mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveApply = resolve
+        }),
+    )
+
+    const { rerender } = render(
+      <ModelConnectionPanel
+        snapshot={baseSnapshot({
+          methods: [anthropicApiKeyMethod],
+          connections: [connectionA],
+          selection: { connectionId: connectionA.id, modelId: 'claude-model-a' },
+        })}
+        busy={false}
+        error={null}
+        {...noop}
+        onApplySelection={onApplySelection}
+      />,
+    )
+
+    const connectionSelect = document.getElementById('model-connection-select') as HTMLSelectElement
+    const modelSelect = document.getElementById('model-select') as HTMLSelectElement
+
+    fireEvent.change(modelSelect, { target: { value: 'claude-model-b' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Use this model' }))
+    expect(onApplySelection).toHaveBeenCalledWith(connectionA.id, 'claude-model-b')
+
+    // While the apply is still in flight, ANOTHER client committed
+    // `claude-model-c` server-side, and the controller's refetch (triggered
+    // as part of handling this rejection) delivers that as a fresh
+    // `snapshot` prop -- before `onApplySelection`'s own promise settles.
+    rerender(
+      <ModelConnectionPanel
+        snapshot={baseSnapshot({
+          methods: [anthropicApiKeyMethod],
+          connections: [connectionA],
+          selection: { connectionId: connectionA.id, modelId: 'claude-model-c' },
+        })}
+        busy={false}
+        error="the provider rejected the probe: invalid_api_key"
+        {...noop}
+        onApplySelection={onApplySelection}
+      />,
+    )
+
+    resolveApply!(false)
+
+    // The rollback must read the snapshot as it stands NOW (`claude-model-c`),
+    // not the one captured in the `onClick` closure at the moment the click
+    // happened (`claude-model-a`).
+    await waitFor(() => expect(modelSelect.value).toBe('claude-model-c'))
     expect(connectionSelect.value).toBe(connectionA.id)
   })
 
