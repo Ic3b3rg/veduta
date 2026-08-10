@@ -152,16 +152,23 @@ function hasStringName(error: unknown): error is { name: string } {
 }
 
 /**
- * Normalizes any thrown value into a `ModelConnectionError`. An existing
- * `ModelConnectionError` passes through unchanged. A fetch-failure shape —
- * a `TypeError` reporting `fetch failed`, an `AbortError`, or a timed-out
- * `DOMException` — maps to `'unreachable'`; everything else maps to
- * `'internal'`. The message ALWAYS goes through `sanitizeErrorText` first,
- * so a provider error embedding a registered secret is redacted before it
- * ever reaches a caller.
+ * Normalizes any thrown value into a `ModelConnectionError`. A fetch-failure
+ * shape — a `TypeError` reporting `fetch failed`, an `AbortError`, or a
+ * timed-out `DOMException` — maps to `'unreachable'`; everything else maps
+ * to `'internal'`. The message ALWAYS goes through `sanitizeErrorText`
+ * first, so a provider error embedding a registered secret is redacted
+ * before it ever reaches a caller. An existing `ModelConnectionError` keeps
+ * its code but is NOT passed through unchanged (issue #47): its own
+ * message goes through `sanitizeErrorText` too, into a NEW error — a
+ * transport that lifts a child process's own text verbatim into
+ * `ModelConnectionError` (e.g. `codex-app-server.ts`'s JSON-RPC error
+ * handling before this fix) must not have that text survive un-sanitized
+ * just because it already arrives wrapped.
  */
 export function connectionErrorFrom(error: unknown): ModelConnectionError {
-  if (error instanceof ModelConnectionError) return error
+  if (error instanceof ModelConnectionError) {
+    return new ModelConnectionError(error.code, sanitizeErrorText(error))
+  }
   const code: ModelConnectionErrorCode = isConnectivityFailure(error) ? 'unreachable' : 'internal'
   return new ModelConnectionError(code, sanitizeErrorText(error))
 }

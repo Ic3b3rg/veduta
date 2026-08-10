@@ -55,6 +55,19 @@ function handle(message) {
     }, 30)
     return
   }
+  if (message.method === 'emit') {
+    send({ jsonrpc: '2.0', method: message.params.method, params: message.params.params })
+    send({ jsonrpc: '2.0', id: message.id, result: {} })
+    return
+  }
+  if (message.method === 'boom') {
+    send({
+      jsonrpc: '2.0',
+      id: message.id,
+      error: { code: message.params.code, message: 'sensitive-child-controlled-text-do-not-leak' },
+    })
+    return
+  }
   send({ jsonrpc: '2.0', id: message.id, result: { echoedMethod: message.method, params: message.params ?? null } })
 }
 `
@@ -159,6 +172,66 @@ describe('spawnCodexAppServer', () => {
     }
     spy.mockRestore()
   })
+
+  it("a child JSON-RPC error becomes a fixed diagnostic, never the child's text", async () => {
+    const root = freshRoot()
+    const transport = spawnFake(join(root, 'codex', 'conn-boom'))
+
+    const error = await transport
+      .request('boom', { code: -32602 })
+      .catch((caught: unknown) => caught)
+
+    expect(error).toMatchObject({ code: 'unreachable' })
+    const message = (error as { message: string }).message
+    expect(message).not.toContain('sensitive-child-controlled-text-do-not-leak')
+    expect(message).toContain('invalid parameters')
+  })
+
+  it('two notification consumers each see every frame', async () => {
+    const root = freshRoot()
+    const transport = spawnFake(join(root, 'codex', 'conn-multi'))
+    const subA = transport.notifications()[Symbol.asyncIterator]()
+    const subB = transport.notifications()[Symbol.asyncIterator]()
+    const nextA = subA.next()
+    const nextB = subB.next()
+
+    await transport.request('emit', { method: 'item/updated', params: { threadId: 't1' } })
+
+    await expect(nextA).resolves.toMatchObject({
+      value: { method: 'item/updated', params: { threadId: 't1' } },
+    })
+    await expect(nextB).resolves.toMatchObject({
+      value: { method: 'item/updated', params: { threadId: 't1' } },
+    })
+  })
+
+  it('a consumer never removes frames from another', async () => {
+    const root = freshRoot()
+    const transport = spawnFake(join(root, 'codex', 'conn-multi2'))
+
+    await transport.request('emit', { method: 'account/updated', params: { n: 1 } })
+
+    const subA = transport.notifications()[Symbol.asyncIterator]()
+    const first = await subA.next()
+    expect(first.value).toEqual({ method: 'account/updated', params: { n: 1 } })
+
+    // A second, later subscription still sees the same frame via the
+    // retained ring — subA's own read did not remove it.
+    const subB = transport.notifications()[Symbol.asyncIterator]()
+    const second = await subB.next()
+    expect(second.value).toEqual({ method: 'account/updated', params: { n: 1 } })
+  })
+
+  it('a closed transport ends its notification subscriptions', async () => {
+    const root = freshRoot()
+    const transport = spawnFake(join(root, 'codex', 'conn-close-sub'))
+
+    const sub = transport.notifications()[Symbol.asyncIterator]()
+    const pending = sub.next()
+    transport.close()
+
+    await expect(pending).rejects.toMatchObject({ code: 'unreachable' })
+  })
 })
 
 describe('ensureCodexHome', () => {
@@ -213,5 +286,42 @@ describe('CodexSessionPool', () => {
     // A fake transport tracks its own `closed` flag; closeAll must have
     // reached it through the pool, not merely resolved without doing so.
     expect((transport as ReturnType<typeof createFakeCodexTransport>).closed).toBe(true)
+  })
+
+  it('the idle timer re-arms while a transport is busy', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolveSlow: (() => void) | undefined
+      const transport = createFakeCodexTransport({
+        responses: {
+          slow: () =>
+            new Promise<void>((resolve) => {
+              resolveSlow = resolve
+            }),
+        },
+      })
+      const pool = new CodexSessionPool({
+        factory: async () => transport,
+        idleMs: 1_000,
+      })
+
+      await pool.get('conn-pool-busy', '/tmp/veduta-codex-app-server-busy')
+      const pending = transport.request('slow')
+
+      // The timer fires while the request above is still in flight — the
+      // transport is not idle, so it must re-arm rather than close.
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(transport.closed).toBe(false)
+
+      resolveSlow?.()
+      await pending
+
+      // Now idle (no in-flight request, no live subscription) — the
+      // re-armed timer's next fire closes it.
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(transport.closed).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

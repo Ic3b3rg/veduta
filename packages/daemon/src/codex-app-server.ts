@@ -26,17 +26,36 @@ export const CODEX_BINARY_MISSING_REASON =
 
 /**
  * The Gateway-owned JSON-RPC seam to one running `codex app-server`
- * process. `request` resolves or rejects one call; `notifications()`
- * drains whatever notification frames have arrived since the last call —
- * it never blocks waiting for one that has not arrived yet, so a caller
- * (`model-connection-codex.ts`'s `refresh()`, polled every ~2s by the PWA)
- * can check "has anything happened yet?" without hanging a request on a
- * device-code login the user has not finished. `close()` is idempotent and
- * safe to call more than once.
+ * process. `request` resolves or rejects one call; two tiers can be
+ * concurrent on the same pooled transport — a heartbeat/device-code poll
+ * and an in-flight chat turn — so `notifications()` returns an INDEPENDENT
+ * subscription per caller (backed by `createNotificationHub`'s bounded
+ * ring): each subscription replays recent history, then yields live frames,
+ * and nothing one subscription's reader does ever removes a frame another
+ * subscription still needs. `recentNotifications()` is the non-blocking,
+ * non-destructive alternative for a one-shot check (`model-connection-codex.ts`'s
+ * device-code login poll) that must never compete with a live turn's own
+ * subscription for frames. `idle()` — no in-flight request AND no live
+ * subscription — is what `CodexSessionPool`'s timer checks before closing an
+ * entry, so a transport mid-turn is never killed out from under it. `close()`
+ * is idempotent and safe to call more than once.
  */
 export interface CodexTransport {
   request(method: string, params?: unknown): Promise<unknown>
+  /**
+   * An INDEPENDENT subscription over every notification frame from now on:
+   * it replays a snapshot of the retained ring taken at subscription time,
+   * then yields live frames as they arrive. Terminates by throwing
+   * `ModelConnectionError('unreachable', …)` once the transport exits or is
+   * closed. A `break`/`return()`/`throw()` on the consumer's `for await`
+   * deregisters this subscription, so an abandoned reader never lingers as
+   * a permanent live listener.
+   */
   notifications(): AsyncIterable<{ method: string; params: unknown }>
+  /** A non-destructive copy of the retained notification ring (most recent `MAX_RETAINED_NOTIFICATIONS` frames) — never blocks, never consumes a frame a live `notifications()` subscription still needs. */
+  recentNotifications(): { method: string; params: unknown }[]
+  /** True when this transport has no in-flight request and no live notification subscription. */
+  idle(): boolean
   close(): void
 }
 
@@ -94,7 +113,143 @@ interface JsonRpcFrame {
   method?: unknown
   params?: unknown
   result?: unknown
-  error?: { message?: unknown } | unknown
+  error?: { code?: unknown; message?: unknown } | unknown
+}
+
+/** The bounded ring size `createNotificationHub` retains — enough recent history that a late subscription (a fresh `notifications()` call right after a burst of item frames) still sees what already arrived, without retaining an unbounded transcript for a long-lived pooled transport. */
+export const MAX_RETAINED_NOTIFICATIONS = 500
+
+interface NotificationSubscriber {
+  push(frame: { method: string; params: unknown }): void
+  end(error: ModelConnectionError): void
+}
+
+/**
+ * Backs `notifications()` on both the real transport below and
+ * `codex-app-server-fake.ts`'s fake (issue #47: notifications used to be
+ * one shared buffer that `notifications()` spliced empty on every call, so a
+ * second concurrent consumer — a heartbeat poll racing an in-flight chat
+ * turn on the same pooled transport — stole frames the other still needed).
+ * `retain` appends to a bounded ring and pushes to every live subscriber;
+ * nothing a reader does ever removes a frame. `subscribe()` returns an
+ * INDEPENDENT iterator: it replays a snapshot of the ring taken at
+ * subscription time, then yields live frames as `retain` pushes them, and
+ * throws the hub's terminal error (set by `endAll`) instead of hanging
+ * forever once the transport exits or closes. A `break`/`return()`/`throw()`
+ * on the consumer's `for await` deregisters the subscription.
+ */
+export function createNotificationHub(): {
+  retain(frame: { method: string; params: unknown }): void
+  subscribe(): AsyncIterable<{ method: string; params: unknown }>
+  recent(): { method: string; params: unknown }[]
+  subscriberCount(): number
+  endAll(error: ModelConnectionError): void
+} {
+  const ring: { method: string; params: unknown }[] = []
+  const subscribers = new Set<NotificationSubscriber>()
+  let terminal: ModelConnectionError | undefined
+
+  function retain(frame: { method: string; params: unknown }): void {
+    ring.push(frame)
+    if (ring.length > MAX_RETAINED_NOTIFICATIONS) ring.shift()
+    for (const subscriber of subscribers) subscriber.push(frame)
+  }
+
+  function endAll(error: ModelConnectionError): void {
+    terminal = error
+    for (const subscriber of subscribers) subscriber.end(error)
+    subscribers.clear()
+  }
+
+  function subscribe(): AsyncIterable<{ method: string; params: unknown }> {
+    return {
+      [Symbol.asyncIterator]() {
+        const queue: { method: string; params: unknown }[] = [...ring]
+        let wake: (() => void) | undefined
+        let endError: ModelConnectionError | undefined = terminal
+        let ended = terminal !== undefined
+
+        const subscriber: NotificationSubscriber = {
+          push(frame) {
+            queue.push(frame)
+            wake?.()
+            wake = undefined
+          },
+          end(error) {
+            endError = error
+            ended = true
+            wake?.()
+            wake = undefined
+          },
+        }
+        if (!ended) subscribers.add(subscriber)
+
+        function deregister(): void {
+          subscribers.delete(subscriber)
+        }
+
+        return {
+          async next() {
+            while (queue.length === 0 && !ended) {
+              await new Promise<void>((resolve) => {
+                wake = resolve
+              })
+            }
+            if (queue.length > 0) {
+              return { value: queue.shift()!, done: false }
+            }
+            deregister()
+            throw (
+              endError ?? new ModelConnectionError('unreachable', 'the Codex transport was closed')
+            )
+          },
+          async return(value?: unknown) {
+            deregister()
+            return { value, done: true as const }
+          },
+          async throw(error?: unknown) {
+            deregister()
+            throw error
+          },
+        }
+      },
+    }
+  }
+
+  return {
+    retain,
+    subscribe,
+    recent: () => [...ring],
+    subscriberCount: () => subscribers.size,
+    endAll,
+  }
+}
+
+/** Fixed, child-controlled-text-free diagnostics for a JSON-RPC error response (issue #47): the child process's own `error.message` must never reach `ModelConnectionError`, `connections.json`, or the PWA — only a safe string keyed by the standard JSON-RPC error code, with one fallback for anything this table does not name. */
+const CODEX_RPC_ERROR_DIAGNOSTICS: Record<number, string> = {
+  [-32700]: 'the Codex app-server rejected the request: malformed JSON-RPC',
+  [-32600]: 'the Codex app-server rejected the request: invalid request',
+  [-32601]: 'the Codex app-server rejected the request: unknown method',
+  [-32602]: 'the Codex app-server rejected the request: invalid parameters',
+  [-32603]: 'the Codex app-server rejected the request: internal error',
+}
+
+function rpcErrorCode(error: unknown): number | undefined {
+  return typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof (error as { code?: unknown }).code === 'number'
+    ? (error as { code: number }).code
+    : undefined
+}
+
+/** Maps a JSON-RPC error response onto a fixed, safe diagnostic — never the child's own `error.message` (issue #47). */
+function diagnosticForRpcError(error: unknown): string {
+  const code = rpcErrorCode(error)
+  if (code === undefined) return 'the Codex app-server rejected the request'
+  return (
+    CODEX_RPC_ERROR_DIAGNOSTICS[code] ?? `the Codex app-server rejected the request (code ${code})`
+  )
 }
 
 /**
@@ -123,7 +278,7 @@ export function spawnCodexAppServer(options: {
 
   let nextId = 1
   const pending = new Map<number, PendingRequest>()
-  const notificationBuffer: { method: string; params: unknown }[] = []
+  const hub = createNotificationHub()
   let stderrBytes = 0
   let exited = false
   let stdoutBuffer = ''
@@ -154,21 +309,17 @@ export function spawnCodexAppServer(options: {
       clearTimeout(request.timer)
       pending.delete(frame.id)
       if (frame.error !== undefined) {
-        const message =
-          typeof frame.error === 'object' &&
-          frame.error !== null &&
-          'message' in frame.error &&
-          typeof (frame.error as { message?: unknown }).message === 'string'
-            ? (frame.error as { message: string }).message
-            : 'the Codex app-server returned an error response'
-        request.reject(new ModelConnectionError('unreachable', message))
+        // The child's own `error.message` never reaches `ModelConnectionError`
+        // (issue #47) — only a fixed diagnostic keyed by the JSON-RPC
+        // error code.
+        request.reject(new ModelConnectionError('unreachable', diagnosticForRpcError(frame.error)))
         return
       }
       request.resolve(frame.result)
       return
     }
     if (typeof frame.method === 'string') {
-      notificationBuffer.push({ method: frame.method, params: frame.params })
+      hub.retain({ method: frame.method, params: frame.params })
     }
   }
 
@@ -193,9 +344,12 @@ export function spawnCodexAppServer(options: {
 
   child.on('error', (error) => {
     exited = true
-    failAllPending(
-      new ModelConnectionError('unreachable', `codex app-server failed to start: ${error.message}`),
+    const connectionError = new ModelConnectionError(
+      'unreachable',
+      `codex app-server failed to start: ${error.message}`,
     )
+    failAllPending(connectionError)
+    hub.endAll(connectionError)
   })
 
   // `close` (not `exit`) fires once stdio has fully flushed, so `stderrBytes`
@@ -207,12 +361,12 @@ export function spawnCodexAppServer(options: {
     // Exactly one structured diagnostic line, no raw payload — the stderr
     // discipline this module's doc comment describes.
     console.error('codex app-server exited', { code, signal, stderrBytes })
-    failAllPending(
-      new ModelConnectionError(
-        'unreachable',
-        `the Codex app-server process exited (code ${code ?? 'null'}, signal ${signal ?? 'null'})`,
-      ),
+    const connectionError = new ModelConnectionError(
+      'unreachable',
+      `the Codex app-server process exited (code ${code ?? 'null'}, signal ${signal ?? 'null'})`,
     )
+    failAllPending(connectionError)
+    hub.endAll(connectionError)
   })
 
   async function request(method: string, params?: unknown): Promise<unknown> {
@@ -247,23 +401,29 @@ export function spawnCodexAppServer(options: {
     })
   }
 
-  function notifications(): AsyncIterable<{ method: string; params: unknown }> {
-    const batch = notificationBuffer.splice(0, notificationBuffer.length)
-    return {
-      async *[Symbol.asyncIterator]() {
-        for (const item of batch) yield item
-      },
-    }
+  function idle(): boolean {
+    return pending.size === 0 && hub.subscriberCount() === 0
   }
 
   function close(): void {
     if (exited) return
     exited = true
-    failAllPending(new ModelConnectionError('unreachable', 'the Codex transport was closed'))
+    const connectionError = new ModelConnectionError(
+      'unreachable',
+      'the Codex transport was closed',
+    )
+    failAllPending(connectionError)
+    hub.endAll(connectionError)
     child.kill()
   }
 
-  return { request, notifications, close }
+  return {
+    request,
+    notifications: hub.subscribe,
+    recentNotifications: hub.recent,
+    idle,
+    close,
+  }
 }
 
 interface PoolEntry {
@@ -276,9 +436,15 @@ const DEFAULT_IDLE_MS = 5 * 60_000
 /**
  * One live `CodexTransport` per connection id, so a chat turn and a
  * refresh poll for the same connection share one running app-server
- * process instead of spawning a fresh one per call. An entry is killed
- * after `idleMs` (default 5 minutes) of no `get()` calls; the timer is
- * `unref()`d so an idle pool never keeps the daemon process alive on its
+ * process instead of spawning a fresh one per call. An entry's idle timer
+ * (default 5 minutes, rearmed by every `get()`) does not close the entry
+ * outright when it fires — it closes it only when `transport.idle()`
+ * reports no in-flight request and no live notification subscription
+ * (issue #47: the timer used to close unconditionally, which could kill
+ * a transport mid-turn — after which the old shared-buffer `notifications()`
+ * would return empty batches forever and the adapter's poll loop would hang
+ * forever). Otherwise the timer re-arms and checks again later. Every timer
+ * is `unref()`d so an idle pool never keeps the daemon process alive on its
  * own. `closeAll()` is wired into `server.ts`'s existing `onClose` hook.
  */
 export class CodexSessionPool {
@@ -318,10 +484,16 @@ export class CodexSessionPool {
   private armTimer(connectionId: string): NodeJS.Timeout {
     const timer = setTimeout(() => {
       const entry = this.entries.get(connectionId)
-      if (entry) {
+      if (!entry) return
+      if (entry.transport.idle()) {
         entry.transport.close()
         this.entries.delete(connectionId)
+        return
       }
+      // Busy (an in-flight request or a live notification subscription,
+      // e.g. mid-turn) — re-arm and check again later rather than closing a
+      // transport a caller is still using.
+      entry.timer = this.armTimer(connectionId)
     }, this.idleMs)
     timer.unref()
     return timer

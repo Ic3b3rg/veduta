@@ -58,7 +58,7 @@ import { createMockWorkerRunner, createMockWorkerReviewComplete } from './mock-w
 import { ModelConnectionError } from './model-connection-adapter.ts'
 import { BYOK_ADAPTERS } from './model-connection-byok.ts'
 import { claudeSubscriptionAdapter } from './model-connection-claude.ts'
-import { codexSubscriptionAdapter } from './model-connection-codex.ts'
+import { codexSubscriptionAdapter, initializeCodexTransport } from './model-connection-codex.ts'
 import { reconcileByokConnections } from './model-connection-migration.ts'
 import { ModelConnectionRegistry } from './model-connection-registry.ts'
 import { registerModelConnectionRoutes } from './model-connection-routes.ts'
@@ -804,9 +804,14 @@ export function buildServer(options: ServerOptions = {}) {
   // daemon's existing `onClose` hook below so no app-server child outlives
   // this process. The factory does everything `CodexSessionPool`'s own doc
   // comment leaves to it — resolve the pinned binary, freshly assert the
-  // connection's own `CODEX_HOME` (0700, empty), and spawn — so a missing
-  // or mis-pinned binary fails the same way `codexSubscriptionAdapter`'s
-  // own `availability()` reports it, not a bare `ENOENT`.
+  // connection's own `CODEX_HOME` (0700, empty), spawn, and hand-shake
+  // (issue #47: `initializeCodexTransport` version-pins every transport
+  // this factory hands out, not only the one whichever verb reaches first —
+  // a respawned or reconnected process used to go unversioned until
+  // `authorize()` happened to run) — so a missing or mis-pinned binary
+  // fails the same way `codexSubscriptionAdapter`'s own `availability()`
+  // reports it, not a bare `ENOENT`, and a mis-pinned process is closed
+  // again rather than ever reaching a verb.
   const codexSessionPool = new CodexSessionPool({
     factory: async ({ codexHome }) => {
       const binary = resolveCodexBinary(process.env, store.spacesEngine.rootDir)
@@ -814,11 +819,18 @@ export function buildServer(options: ServerOptions = {}) {
         throw new ModelConnectionError('unsupported', CODEX_BINARY_MISSING_REASON)
       }
       ensureCodexHome(codexHome)
-      return spawnCodexAppServer({
+      const transport = spawnCodexAppServer({
         binary,
         codexHome,
         clientInfo: { name: 'veduta', version: resolveInstalledVersion() },
       })
+      try {
+        await initializeCodexTransport(transport)
+      } catch (error) {
+        transport.close()
+        throw error
+      }
+      return transport
     },
   })
 

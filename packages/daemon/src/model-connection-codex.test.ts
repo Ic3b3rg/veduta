@@ -1,10 +1,15 @@
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createFakeCodexTransport, type FakeCodexTransport } from './codex-app-server-fake.ts'
-import type { CodexTransport } from './codex-app-server.ts'
+import { CodexSessionPool, type CodexTransport } from './codex-app-server.ts'
 import { ModelConnectionError, type AdapterContext } from './model-connection-adapter.ts'
-import { codexSubscriptionAdapter, createCodexAdapter } from './model-connection-codex.ts'
+import {
+  CODEX_TURN_TIMEOUT_MS,
+  codexSubscriptionAdapter,
+  createCodexAdapter,
+  initializeCodexTransport,
+} from './model-connection-codex.ts'
 import type { SecretResolver } from './model-routing.ts'
 import type { SubscriptionStreamRequest } from './pi-provider-bridge.ts'
 
@@ -30,7 +35,6 @@ describe('authorize', () => {
   it('returns the verification URL and user code from account/login/start', async () => {
     const transport = createFakeCodexTransport({
       responses: {
-        initialize: { version: '0.146.1' },
         'account/login/start': {
           loginId: 'login-1',
           verificationUrl: 'https://chatgpt.com/device',
@@ -49,20 +53,17 @@ describe('authorize', () => {
     expect(result.challenge.expirySource).toBe('veduta-default')
     expect(new Date(result.challenge.expiresAt).getTime()).toBe(NOW().getTime() + 15 * 60_000)
 
-    expect(transport.requests[0]).toEqual({
-      method: 'initialize',
-      params: { clientInfo: { name: 'veduta', version: expect.any(String) } },
-    })
-    expect(transport.requests[1]).toEqual({
-      method: 'account/login/start',
-      params: { type: 'chatgptDeviceCode' },
-    })
+    // No `initialize` here (issue #47): the pool's own factory
+    // handshakes every transport it hands out before any verb sees it, so
+    // `authorize()` goes straight to the device-code call.
+    expect(transport.requests).toEqual([
+      { method: 'account/login/start', params: { type: 'chatgptDeviceCode' } },
+    ])
   })
 
   it('uses the provider-reported expiry when account/login/start carries one', async () => {
     const transport = createFakeCodexTransport({
       responses: {
-        initialize: { version: '0.146.1' },
         'account/login/start': {
           loginId: 'login-2',
           verificationUrl: 'https://chatgpt.com/device',
@@ -81,7 +82,6 @@ describe('authorize', () => {
   it('surfaces the disabled-device-code reason when account/login/start fails', async () => {
     const transport = createFakeCodexTransport({
       responses: {
-        initialize: { version: '0.146.1' },
         'account/login/start': new Error('device-code login is not enabled for this account'),
       },
     })
@@ -93,6 +93,75 @@ describe('authorize', () => {
       code: 'unsupported',
       message: expect.stringContaining('device-code login is disabled for this ChatGPT account'),
     })
+  })
+
+  it('does not re-initialize a pooled transport', async () => {
+    // No `initialize` scripted at all: if `authorize()` regressed to sending
+    // its own handshake again, the fake would reject the call with "no fake
+    // Codex response scripted" rather than letting the test pass silently.
+    const transport = createFakeCodexTransport({
+      responses: {
+        'account/login/start': {
+          loginId: 'login-1',
+          verificationUrl: 'https://chatgpt.com/device',
+          userCode: 'ABCD-1234',
+        },
+      },
+    })
+
+    const result = await codexSubscriptionAdapter.authorize(contextWith(transport), {})
+
+    expect(result.state).toBe('waiting-for-user')
+    expect(transport.requests.some((request) => request.method === 'initialize')).toBe(false)
+  })
+})
+
+describe('initializeCodexTransport', () => {
+  it('the pool initializes every transport it creates', async () => {
+    const transport = createFakeCodexTransport({
+      responses: { initialize: { version: '0.146.1' } },
+    })
+    const pool = new CodexSessionPool({
+      factory: async () => {
+        await initializeCodexTransport(transport)
+        return transport
+      },
+    })
+
+    await pool.get('conn-init', '/tmp/veduta-codex-init')
+
+    expect(transport.requests[0]).toEqual({
+      method: 'initialize',
+      params: { clientInfo: { name: 'veduta', version: expect.any(String) } },
+    })
+  })
+
+  it('a version-mismatched app-server never reaches an adapter verb', async () => {
+    const transport = createFakeCodexTransport({
+      responses: {
+        initialize: { version: '0.999.0' },
+        'account/read': { planType: 'ChatGPT Plus' },
+      },
+    })
+    // The exact close-on-failure pattern `server.ts`'s pool factory uses
+    // (issue #47): a mis-pinned transport is closed, never returned.
+    const pool = new CodexSessionPool({
+      factory: async () => {
+        try {
+          await initializeCodexTransport(transport)
+        } catch (error) {
+          transport.close()
+          throw error
+        }
+        return transport
+      },
+    })
+
+    await expect(pool.get('conn-mismatch', '/tmp/veduta-codex-mismatch')).rejects.toMatchObject({
+      code: 'unsupported',
+    })
+    expect(transport.closed).toBe(true)
+    expect(transport.requests.map((request) => request.method)).toEqual(['initialize'])
   })
 })
 
@@ -348,6 +417,116 @@ describe('stream', () => {
       'turn/interrupt',
     ])
   })
+
+  it('thread/start carries the confirmed tool-restriction config', async () => {
+    const transport = createFakeCodexTransport({
+      responses: {
+        'thread/start': { threadId: 'thread-1' },
+        'turn/start': { turnId: 'turn-1' },
+      },
+      notifications: [{ method: 'turn/completed', params: { threadId: 'thread-1' } }],
+    })
+
+    await drain(codexSubscriptionAdapter.stream!(contextWith(transport), subscriptionRequest()))
+
+    expect(transport.requests[0]).toEqual({
+      method: 'thread/start',
+      params: {
+        model: 'gpt-5-codex',
+        approvalPolicy: 'never',
+        sandbox: 'read-only',
+        config: { web_search: 'disabled', disabled_tools: true },
+        dynamicTools: [],
+        cwd: join(ROOT_DIR, 'codex', CONNECTION_ID),
+      },
+    })
+  })
+
+  it('ignores item notifications for another thread', async () => {
+    const transport = createFakeCodexTransport({
+      responses: {
+        'thread/start': { threadId: 'thread-1' },
+        'turn/start': { turnId: 'turn-1' },
+      },
+      notifications: [
+        {
+          method: 'item/updated',
+          params: {
+            threadId: 'some-other-thread',
+            item: { type: 'agentMessage', delta: 'nope' },
+          },
+        },
+        {
+          method: 'item/updated',
+          params: { threadId: 'thread-1', item: { type: 'agentMessage', delta: 'yes' } },
+        },
+        { method: 'turn/completed', params: { threadId: 'some-other-thread' } },
+        { method: 'turn/completed', params: { threadId: 'thread-1' } },
+      ],
+    })
+
+    const { deltas, error } = await drain(
+      codexSubscriptionAdapter.stream!(contextWith(transport), subscriptionRequest()),
+    )
+
+    expect(error).toBeUndefined()
+    expect(deltas).toEqual(['yes'])
+  })
+
+  it("a device-code poll never consumes a live turn's items", async () => {
+    const transport = createFakeCodexTransport({
+      responses: {
+        'thread/start': { threadId: 'thread-1' },
+        'turn/start': { turnId: 'turn-1' },
+      },
+      notifications: [
+        {
+          method: 'item/updated',
+          params: { threadId: 'thread-1', item: { type: 'agentMessage', text: 'hello' } },
+        },
+        { method: 'turn/completed', params: { threadId: 'thread-1' } },
+      ],
+    })
+
+    // A concurrent device-code poll on the same pooled transport reads via
+    // `recentNotifications()` — the way `refresh()`'s login-completed check
+    // does — before the turn's own subscription ever gets a chance to run.
+    // It must never drain what that subscription still needs.
+    transport.recentNotifications()
+
+    const { deltas, error } = await drain(
+      codexSubscriptionAdapter.stream!(contextWith(transport), subscriptionRequest()),
+    )
+
+    expect(error).toBeUndefined()
+    expect(deltas).toEqual(['hello'])
+  })
+
+  it('refuses a turn that exceeds the turn bound', async () => {
+    vi.useFakeTimers()
+    try {
+      const transport = createFakeCodexTransport({
+        responses: {
+          'thread/start': { threadId: 'thread-1' },
+          'turn/start': { turnId: 'turn-1' },
+          'turn/interrupt': {},
+        },
+        // No `turn/completed` ever arrives — the turn bound is what ends this.
+      })
+
+      const drainPromise = drain(
+        codexSubscriptionAdapter.stream!(contextWith(transport), subscriptionRequest()),
+      )
+      await vi.advanceTimersByTimeAsync(CODEX_TURN_TIMEOUT_MS)
+      const { deltas, error } = await drainPromise
+
+      expect(deltas).toEqual([])
+      expect(error).toMatchObject({ code: 'unreachable' })
+      expect(transport.requests.some((request) => request.method === 'turn/interrupt')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('revoke', () => {
@@ -415,7 +594,7 @@ describe('availability', () => {
     })
   })
 
-  it('caches the result across repeated calls on the same adapter instance', async () => {
+  it('runs the probe on every call — the registry owns the one availability cache', async () => {
     let probeCalls = 0
     const adapter = createCodexAdapter({
       resolveBinary: () => '/opt/codex/bin/codex',
@@ -433,6 +612,6 @@ describe('availability', () => {
     await adapter.availability(env)
     await adapter.availability(env)
 
-    expect(probeCalls).toBe(1)
+    expect(probeCalls).toBe(2)
   })
 })

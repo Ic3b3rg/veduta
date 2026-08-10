@@ -31,8 +31,18 @@ describe('connectionErrorFrom', () => {
     expect(unknown.code).toBe('internal')
   })
 
-  it('passes an existing ModelConnectionError through unchanged', () => {
-    const original = new ModelConnectionError('unauthorized', 'the key was rejected')
-    expect(connectionErrorFrom(original)).toBe(original)
+  it('sanitizes an existing ModelConnectionError message', () => {
+    defaultRedactor.register(DISTINCTIVE_SECRET)
+    const original = new ModelConnectionError(
+      'unauthorized',
+      `the key was rejected: ${DISTINCTIVE_SECRET}`,
+    )
+
+    const result = connectionErrorFrom(original)
+
+    expect(result).not.toBe(original)
+    expect(result.code).toBe('unauthorized')
+    expect(result.message).not.toContain(DISTINCTIVE_SECRET)
+    expect(result.message).toContain('[redacted]')
   })
 })

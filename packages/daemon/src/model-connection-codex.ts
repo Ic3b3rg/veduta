@@ -49,18 +49,31 @@ import { resolveInstalledVersion } from './version.ts'
  * itself. `availability()` has no `AdapterContext` to work with (it runs
  * before any connection exists), so it is injected its own throwaway
  * transport factory via `CodexAdapterDeps`, letting tests substitute the
- * deterministic fake without ever touching a real binary.
+ * deterministic fake without ever touching a real binary. `server.ts`'s pool
+ * factory calls `initializeCodexTransport` on every transport it hands out
+ * (issue #47) — `authorize()` no longer sends its own `initialize`, so a
+ * respawned or reconnected process is version-pinned before any verb ever
+ * reaches it, not only the one that happened to run `authorize()` first.
  *
  * `stream` (issue #47's inference seam,
  * docs/adr/0014-subscription-inference-boundary.md) is a fresh
- * `thread/start` + `turn/start` per call — never reused, never resumed.
- * `thread/start` carries the 0.146.1-valid restriction options this
+ * `thread/start` + `turn/start` per call — never reused, never resumed —
+ * and acquires exactly ONE `transport.notifications()` subscription for the
+ * whole turn, before `turn/start` (issue #47): a concurrent
+ * device-code poll on the same pooled transport reads through
+ * `recentNotifications()` instead (see `loginCompleted` below) and can
+ * never steal a frame this subscription still needs. Every item/turn frame
+ * is checked against this call's own `threadId` (and `turnId` when the
+ * frame carries one) before being acted on, so a frame from another turn
+ * sharing the same pooled transport is ignored rather than misread as this
+ * one's. `thread/start` carries the 0.146.1-valid restriction options this
  * transcription could confirm (`approvalPolicy: 'never'`, a read-only
- * sandbox); the actual fail-closed guarantee is a RUNTIME proof per
- * streamed item, not a start-time assertion (the pinned response carries no
- * tool-set field to assert against): any item that is not plain assistant
- * text or reasoning triggers `turn/interrupt`, abandons the thread, and
- * refuses.
+ * sandbox, disabled web search, an empty dynamic-tool set); the actual
+ * fail-closed guarantee is a RUNTIME proof per streamed item, not a
+ * start-time assertion (the pinned response carries no tool-set field to
+ * assert against): any item that is not plain assistant text or reasoning
+ * triggers `turn/interrupt`, abandons the thread, and refuses. A turn that
+ * runs longer than `CODEX_TURN_TIMEOUT_MS` is abandoned the same way.
  */
 
 const METHOD_DISPLAY_NAME = 'ChatGPT subscription'
@@ -95,10 +108,27 @@ async function getTransport(ctx: AdapterContext): Promise<CodexTransport> {
   return ctx.codexTransport({ codexHome: ctx.codexHome })
 }
 
+/**
+ * Sends `initialize` and enforces the exact `CODEX_PINNED_VERSION` pin
+ * (issue #47). `server.ts`'s `CodexSessionPool` factory calls this on
+ * every transport it creates, BEFORE handing it to any verb — the pool
+ * used to hand out unhandshaked transports, so a process respawned after a
+ * daemon restart never ran `initialize` at all until whichever verb
+ * happened to be first (`authorize()`, always) reached it; a connection
+ * that was already `connected` and never re-authorized skipped the version
+ * check entirely. `authorize()` no longer sends its own `initialize` — the
+ * pool's handshake covers it, and every other verb, the same way.
+ */
+export async function initializeCodexTransport(transport: CodexTransport): Promise<void> {
+  const raw = await transport.request('initialize', { clientInfo: clientInfo() })
+  const initialized = parseCodexResponse(InitializeResponseSchema, 'initialize', raw)
+  if (initialized.version !== CODEX_PINNED_VERSION) {
+    throw new ModelConnectionError('unsupported', versionMismatchReason(initialized.version))
+  }
+}
+
 async function authorize(ctx: AdapterContext): Promise<AuthorizeResult> {
   const transport = await getTransport(ctx)
-  const initializeRaw = await transport.request('initialize', { clientInfo: clientInfo() })
-  parseCodexResponse(InitializeResponseSchema, 'initialize', initializeRaw)
 
   let raw: unknown
   try {
@@ -132,20 +162,25 @@ async function authorize(ctx: AdapterContext): Promise<AuthorizeResult> {
   return { state: 'waiting-for-user', challenge }
 }
 
-/** Drains whatever notifications are currently buffered, looking for an `account/login/completed` matching `loginId`. A completion for a different login is drained and ignored — never mistaken for this one. */
-async function loginCompleted(transport: CodexTransport, loginId: string): Promise<boolean> {
-  let completed = false
-  for await (const frame of transport.notifications()) {
+/**
+ * Reads whatever notifications this transport has retained so far, looking
+ * for an `account/login/completed` matching `loginId` — via
+ * `recentNotifications()`, never `notifications()` (issue #47): this
+ * poll and an in-flight chat turn can share the same pooled transport, and
+ * a one-shot login-completed check must never consume a frame the turn's
+ * own live subscription still needs. A completion for a different login is
+ * seen and ignored — never mistaken for this one.
+ */
+function loginCompleted(transport: CodexTransport, loginId: string): boolean {
+  return transport.recentNotifications().some((frame) => {
     const notification = parseCodexNotification(frame.method, frame.params)
-    if (notification.method === 'account/login/completed') {
-      const params = notification.params as LoginCompletedNotification
-      if (params.loginId === loginId) completed = true
-    }
-    // `account/updated` and any unrecognized method are drained and
-    // ignored here: the connected account's label comes from `account/read`
-    // below, not from this notification stream.
-  }
-  return completed
+    if (notification.method !== 'account/login/completed') return false
+    const params = notification.params as LoginCompletedNotification
+    return params.loginId === loginId
+    // `account/updated` and any unrecognized method are seen and ignored
+    // here: the connected account's label comes from `account/read` below,
+    // not from this notification stream.
+  })
 }
 
 async function readAccount(transport: CodexTransport): Promise<RefreshResult> {
@@ -168,7 +203,7 @@ async function readAccount(transport: CodexTransport): Promise<RefreshResult> {
 async function refresh(ctx: AdapterContext, challenge?: DeviceChallenge): Promise<RefreshResult> {
   const transport = await getTransport(ctx)
   if (challenge !== undefined) {
-    const completed = await loginCompleted(transport, challenge.loginId)
+    const completed = loginCompleted(transport, challenge.loginId)
     if (!completed) return { state: 'waiting-for-user' }
   }
   return readAccount(transport)
@@ -190,9 +225,9 @@ async function catalog(ctx: AdapterContext): Promise<ModelCatalogEntry[]> {
         label: model.label ?? model.id,
         ...(model.description === undefined ? {} : { description: model.description }),
         ...(model.isDefault === undefined ? {} : { isDefault: model.isDefault }),
-        // Always true: the registry's `applyRoutable` overrides this for
-        // every non-api-key method regardless (M5) — a subscription
-        // connection's catalog is never curated down.
+        // Always true: `model-connection-registry.ts`'s `applyRoutable`
+        // overrides this for every non-api-key method regardless — a
+        // subscription connection's catalog is never curated down.
         routable: true,
       })
     }
@@ -219,20 +254,26 @@ const TOOL_ACTION_REFUSED_MESSAGE =
 
 const TURN_ABORTED_MESSAGE = 'the Codex turn was aborted before it completed'
 
-/** How long `stream()` waits before re-polling `transport.notifications()` when a drain came back empty and the turn has not completed — the real transport's notifications arrive asynchronously as the child process writes them; a test that pre-loads its whole scripted sequence before calling `stream()` never reaches this path at all. */
-const NOTIFICATION_POLL_INTERVAL_MS = 25
+/** How long one `stream()` turn may run before it is abandoned outright (issue #47) — bounds a turn whose app-server process never emits `turn/completed` (a hang, a runaway generation) so a chat request can never wait on it forever. */
+export const CODEX_TURN_TIMEOUT_MS = 600_000
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
+const TURN_TIMEOUT_MESSAGE = `the Codex turn exceeded its ${CODEX_TURN_TIMEOUT_MS / 60_000}-minute bound and was abandoned`
 
 /**
  * Real chat inference through a tool-less turn (issue #47): a fresh
  * `thread/start` + `turn/start` per call, NEVER a `thread/resume` — every
- * call abandons its own thread on completion, interruption, or refusal. The
- * fail-closed guarantee is the per-item check inside the notification loop
- * below, not anything asserted on `thread/start`'s response — the pinned
- * 0.146.1 response carries no tool-set field to assert against.
+ * call abandons its own thread on completion, interruption, refusal, or a
+ * `CODEX_TURN_TIMEOUT_MS` timeout. The fail-closed guarantee is the
+ * per-item check inside the notification loop below, not anything asserted
+ * on `thread/start`'s response — the pinned 0.146.1 response carries no
+ * tool-set field to assert against. Exactly ONE `transport.notifications()`
+ * subscription is acquired for the whole turn, before `turn/start` (issue
+ * #47) — never re-subscribed mid-loop, so a device-code poll sharing
+ * this connection's pooled transport (`loginCompleted`, reading through
+ * `recentNotifications()` instead) can never steal a frame this
+ * subscription still needs, and every frame this turn does not itself own
+ * (a stale frame from an earlier turn on the same pooled transport) is
+ * filtered by `threadId`/`turnId` rather than acted on.
  */
 async function* stream(
   ctx: AdapterContext,
@@ -244,12 +285,35 @@ async function* stream(
     model: request.modelId,
     // The 0.146.1-valid restriction options this transcription could
     // confirm: never let the app-server auto-approve anything, and keep its
-    // own filesystem sandbox read-only. Neither field's value is itself the
-    // fail-closed guarantee — the per-item check below is.
+    // own filesystem sandbox read-only. Neither field's value, nor `config`
+    // and `dynamicTools` below, is itself the fail-closed guarantee — the
+    // per-item check in the loop below is; every field here is best-effort
+    // defense in depth and the turn must still work if the app-server
+    // ignores any of them.
     approvalPolicy: 'never',
-    // transcription note: field name/value per 0.146.1 — the read-only
-    // sandbox policy.
-    sandboxPolicy: 'readOnly',
+    // transcription note: field name/value per 0.146.1 — `ThreadStartParams`'
+    // own read-only sandbox enum (`read-only`/`workspace-write`/
+    // `danger-full-access`). Corrected from an earlier `sandboxPolicy: 'readOnly'`
+    // guess: `codex app-server generate-json-schema --experimental` against
+    // a locally installed 0.146.0 binary confirms `ThreadStartParams` names
+    // this field `sandbox`, not `sandboxPolicy` — `sandboxPolicy` is
+    // `TurnStartParams`' own, differently-shaped field. `permissions` (a
+    // named profile id) is deliberately NOT sent alongside `sandbox`: the
+    // same schema documents the two as mutually exclusive on this call.
+    sandbox: 'read-only',
+    // transcription note: field name/value per 0.146.1 — `Config.web_search`
+    // (enum `disabled`/`cached`/`indexed`/`live`), confirmed the same way as
+    // `sandbox` above; turns off the app-server's native web-search tool.
+    // `disabled_tools` targets the app-server's remaining default tool set;
+    // this build could not independently confirm its exact value shape, so
+    // it is sent best-effort only — `Config`'s own schema declares
+    // `additionalProperties: true`, so an unrecognized override key is
+    // inert rather than a `thread/start` failure.
+    config: { web_search: 'disabled', disabled_tools: true },
+    // transcription note: field name per 0.146.1 — an empty dynamic-tool
+    // set, confirmed present on `ThreadStartParams` the same way as
+    // `sandbox`/`config` above; best-effort, not the guarantee (see above).
+    dynamicTools: [],
     cwd: ctx.codexHome,
   })
   const { threadId } = parseCodexResponse(ThreadStartResponseSchema, 'thread/start', threadStartRaw)
@@ -268,29 +332,68 @@ async function* stream(
     throw new ModelConnectionError('unsupported', TURN_ABORTED_MESSAGE)
   }
 
+  // Acquired BEFORE `turn/start` (issue #47) so no frame the app-server
+  // emits between `turn/start` and this loop's first read is ever missed —
+  // and never re-acquired below, so this turn's own subscription is the
+  // only reader competing for its frames.
+  const subscription = transport.notifications()[Symbol.asyncIterator]()
+
   const turnStartRaw = await transport.request('turn/start', {
     threadId,
     input: renderSubscriptionPrompt(request.prompt),
   })
-  parseCodexResponse(TurnStartResponseSchema, 'turn/start', turnStartRaw)
+  const { turnId } = parseCodexResponse(TurnStartResponseSchema, 'turn/start', turnStartRaw)
 
-  while (true) {
-    if (request.signal?.aborted) {
-      await abandonThread()
-      throw new ModelConnectionError('unsupported', TURN_ABORTED_MESSAGE)
-    }
+  let turnTimer: NodeJS.Timeout | undefined
+  const turnTimedOut = new Promise<'timeout'>((resolve) => {
+    turnTimer = setTimeout(() => resolve('timeout'), CODEX_TURN_TIMEOUT_MS)
+  })
 
-    let sawNotification = false
-    for await (const frame of transport.notifications()) {
-      sawNotification = true
+  try {
+    while (true) {
+      if (request.signal?.aborted) {
+        await abandonThread()
+        throw new ModelConnectionError('unsupported', TURN_ABORTED_MESSAGE)
+      }
+
+      const outcome = await Promise.race([
+        subscription.next().then((result) => ({ kind: 'frame' as const, result })),
+        turnTimedOut.then(() => ({ kind: 'timeout' as const })),
+      ])
+
+      if (outcome.kind === 'timeout') {
+        await abandonThread()
+        throw new ModelConnectionError('unreachable', TURN_TIMEOUT_MESSAGE)
+      }
+
+      if (outcome.result.done) {
+        // The subscription's own contract (`codex-app-server.ts`'s
+        // `createNotificationHub`) throws rather than completing normally —
+        // this is unreachable in practice, kept only so the generic
+        // `IteratorResult` type is exhaustively handled.
+        throw new ModelConnectionError(
+          'unreachable',
+          'the Codex transport ended its notification stream',
+        )
+      }
+      const frame = outcome.result.value
 
       if (frame.method === 'turn/completed') {
-        parseCodexResponse(TurnCompletedNotificationSchema, 'turn/completed', frame.params)
+        const completed = parseCodexResponse(
+          TurnCompletedNotificationSchema,
+          'turn/completed',
+          frame.params,
+        )
+        if (completed.threadId !== threadId) continue
+        if (completed.turnId !== undefined && completed.turnId !== turnId) continue
         return
       }
 
       if (frame.method === 'item/updated' || frame.method === 'item/completed') {
-        const { item } = parseCodexResponse(ItemNotificationSchema, frame.method, frame.params)
+        const parsed = parseCodexResponse(ItemNotificationSchema, frame.method, frame.params)
+        if (parsed.threadId !== threadId) continue
+        if (parsed.turnId !== undefined && parsed.turnId !== turnId) continue
+        const { item } = parsed
         if (item.type === CODEX_TEXT_ITEM_TYPE) {
           const text = item.delta ?? item.text
           if (text) yield text
@@ -305,12 +408,13 @@ async function* stream(
         throw new ModelConnectionError('unsupported', TOOL_ACTION_REFUSED_MESSAGE)
       }
 
-      // An unrelated notification method (e.g. `account/updated`, drained
+      // An unrelated notification method (e.g. `account/updated`, seen
       // while a turn happens to be in flight) is ignored here — only
       // item/turn notifications are this loop's concern.
     }
-
-    if (!sawNotification) await delay(NOTIFICATION_POLL_INTERVAL_MS)
+  } finally {
+    if (turnTimer) clearTimeout(turnTimer)
+    await subscription.return?.()
   }
 }
 
@@ -337,21 +441,18 @@ function defaultProbeTransport(options: {
 
 /**
  * Builds the Codex adapter with injectable binary-resolution/probe
- * dependencies (issue #47). `availability()`'s result is cached in this
- * call's own closure — "once per process" in production, where exactly one
- * `codexSubscriptionAdapter` instance ever exists, and per-test-instance in
- * `model-connection-codex.test.ts`, where each test builds its own via this
- * factory instead of sharing the module-level singleton.
+ * dependencies (issue #47). `availability()` runs its probe on every call —
+ * it does NOT cache its own result (issue #47): `model-connection-registry.ts`'s
+ * `getAvailability` is the one process-lifetime availability cache, keyed
+ * per adapter method id, and a second cache here would only let this
+ * adapter's own probe result silently outlive whatever invalidated the
+ * registry's copy.
  */
 export function createCodexAdapter(deps: CodexAdapterDeps): ModelConnectionAdapter {
-  let cached: AdapterAvailability | undefined
-
   async function availability(env: AdapterEnv): Promise<AdapterAvailability> {
-    if (cached) return cached
     const binary = deps.resolveBinary(env.env, env.rootDir)
     if (binary === undefined) {
-      cached = { available: false, reason: CODEX_BINARY_MISSING_REASON }
-      return cached
+      return { available: false, reason: CODEX_BINARY_MISSING_REASON }
     }
     const codexHome = join(env.rootDir, 'codex', AVAILABILITY_PROBE_DIR)
     let transport: CodexTransport | undefined
@@ -359,16 +460,14 @@ export function createCodexAdapter(deps: CodexAdapterDeps): ModelConnectionAdapt
       transport = await deps.probeTransport({ binary, codexHome })
       const raw = await transport.request('initialize', { clientInfo: clientInfo() })
       const initialized = parseCodexResponse(InitializeResponseSchema, 'initialize', raw)
-      cached =
-        initialized.version === CODEX_PINNED_VERSION
-          ? { available: true }
-          : { available: false, reason: versionMismatchReason(initialized.version) }
+      return initialized.version === CODEX_PINNED_VERSION
+        ? { available: true }
+        : { available: false, reason: versionMismatchReason(initialized.version) }
     } catch (error) {
-      cached = { available: false, reason: connectionErrorFrom(error).message }
+      return { available: false, reason: connectionErrorFrom(error).message }
     } finally {
       transport?.close()
     }
-    return cached
   }
 
   return {
