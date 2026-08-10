@@ -330,7 +330,7 @@ describe('ModelConnectionPanel', () => {
 
     expect(onApplySelection).toHaveBeenCalledWith(connectionA.id, 'claude-model-b')
 
-    // Verify-then-commit: nothing was applied server-side, so both drafts
+    // Verify-then-commit: nothing was applied Gateway-side, so both drafts
     // snap back to the selection that is actually committed rather than
     // leaving the selects showing the rejected value under the error
     // banner (issue #47).
@@ -338,7 +338,7 @@ describe('ModelConnectionPanel', () => {
     expect(connectionSelect.value).toBe(connectionA.id)
   })
 
-  it("a rejected selection resets the selects to the server's current selection, not the stale one", async () => {
+  it("a rejected selection resets the selects to the Gateway's current selection, not the stale one", async () => {
     const connectionA: ModelConnection = {
       id: 'a1a1a1a1-0000-4000-8000-000000000001',
       method: 'anthropic-api-key',
@@ -384,7 +384,7 @@ describe('ModelConnectionPanel', () => {
     expect(onApplySelection).toHaveBeenCalledWith(connectionA.id, 'claude-model-b')
 
     // While the apply is still in flight, ANOTHER client committed
-    // `claude-model-c` server-side, and the controller's refetch (triggered
+    // `claude-model-c` Gateway-side, and the controller's refetch (triggered
     // as part of handling this rejection) delivers that as a fresh
     // `snapshot` prop -- before `onApplySelection`'s own promise settles.
     rerender(
