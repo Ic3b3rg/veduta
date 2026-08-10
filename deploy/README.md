@@ -46,6 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.
 | `--update-root-key <key\|@file>` | (none)                                     | Minisign root public key pinning the feed above (raw text or `@/path/to/file`) -- omitted by default; see "Updates" below |
 | `--apply`                        | off                                        | Run unattended (needs `--domain`/`--email` when no tty is attached)                                                       |
 | `--preview`                      | off                                        | Force preview mode, even with a tty attached                                                                              |
+| `--skip-codex`                   | off                                        | Skip provisioning the pinned Codex binary (ChatGPT subscription Model connection) during `build`                          |
 | `--help`                         | --                                         | Print usage                                                                                                               |
 
 ### Reruns are pinned

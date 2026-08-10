@@ -179,16 +179,19 @@ CODEX_SETUP_MARKER="$DATA_DIR/codex/.setup-declined"
 
 if [ ! -e "$DATA_DIR/codex/bin/codex" ] && [ -z "${VEDUTA_CODEX_BIN:-}" ] && [ -t 0 ] &&
   [ ! -e "$CODEX_SETUP_MARKER" ]; then
-  printf 'Enable the ChatGPT subscription connection method (installs the pinned @openai/codex 0.146.1 into the data dir)? [y/N] ' >&2
+  # Default-yes (Hermes's dev-script convention for an optional dependency,
+  # docs/references/12-hermes-installer-provisioning.md: setup-hermes.sh:280) -- empty input
+  # (just pressing Enter) accepts; only an explicit n/no declines.
+  printf 'Enable the ChatGPT subscription connection method (installs the pinned @openai/codex 0.146.1 into the data dir)? [Y/n] ' >&2
   IFS= read -r codex_setup_answer
   case "$codex_setup_answer" in
-    y | Y | yes | Yes | YES)
-      "$REPO_ROOT/deploy/codex-setup.sh" --data-dir "$DATA_DIR" --yes
-      ;;
-    *)
+    n | N | no | No | NO)
       mkdir -p "$(dirname "$CODEX_SETUP_MARKER")"
       : >"$CODEX_SETUP_MARKER"
       printf 'You can enable it later: deploy/codex-setup.sh --data-dir %s\n' "$DATA_DIR" >&2
+      ;;
+    *)
+      "$REPO_ROOT/deploy/codex-setup.sh" --data-dir "$DATA_DIR" --yes
       ;;
   esac
 fi

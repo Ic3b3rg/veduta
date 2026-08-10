@@ -27,7 +27,11 @@
 # pairing. Node installation (which needs the exact version pinned by the checked-out repo's
 # .node-version) is folded into the "build" stage rather than added as its own "node" stage id,
 # so the ids stay exactly the ten enumerated above; reordering stage ids is fine as long as they
-# stay stable and documented.
+# stay stable and documented. Provisioning the pinned Codex binary the ChatGPT subscription
+# Model connection needs (issue #47/#48) is folded into "build" the same way, right after the
+# pnpm build succeeds -- see provision_codex below and
+# docs/references/12-hermes-installer-provisioning.md for the guided-provisioning pattern (silent
+# by default, skippable with --skip-codex, a failure here is a warning, never fatal) it copies.
 #
 # Supply-chain trust root: the repository is cloned over GitHub TLS and pinned to a concrete
 # commit SHA (resolved with `git rev-parse` and hard-reset to, even when --ref names a branch or
@@ -85,6 +89,7 @@ UPDATE_FEED="$DEFAULT_UPDATE_FEED"
 UPDATE_ROOT_KEY=""
 EXPLICIT_APPLY=false
 EXPLICIT_PREVIEW=false
+SKIP_CODEX=false
 SHOW_HELP=false
 PREVIEW_MODE=false
 RERUN_CMD=""
@@ -255,6 +260,10 @@ parse_args() {
         EXPLICIT_PREVIEW=true
         shift
         ;;
+      --skip-codex)
+        SKIP_CODEX=true
+        shift
+        ;;
       --help | -h)
         SHOW_HELP=true
         shift
@@ -291,6 +300,11 @@ Options:
                       RELEASING.md for how the upstream key is published.
   --apply             Run unattended (requires --domain and --email when no tty is attached)
   --preview           Force preview mode: print the stage plan, make no changes, exit 0
+  --skip-codex        Skip provisioning the pinned Codex binary (ChatGPT subscription Model
+                      connection, issue #47) during the build stage. Default: provision it --
+                      a failure there is a warning, never fatal to the install (see
+                      docs/references/12-hermes-installer-provisioning.md); enable it later with
+                      deploy/codex-setup.sh --data-dir <data-dir> --yes.
   --help              Show this help
 
 Modes:
@@ -398,6 +412,9 @@ compute_rerun_cmd() {
   fi
   if [ "$EXPLICIT_APPLY" = "true" ]; then
     flags="$flags --apply"
+  fi
+  if [ "$SKIP_CODEX" = "true" ]; then
+    flags="$flags --skip-codex"
   fi
 
   if [ -n "${0:-}" ] && [ -f "$0" ] && [ -r "$0" ]; then
@@ -513,8 +530,13 @@ EOF
   printf '  supervisor:      /var/lib/veduta/updates/bin/veduta-run (veduta:veduta 0755), ExecStart wraps through it\n' >&2
   printf '  node version:    %s\n' "$(preview_node_version_note)" >&2
   printf '  pnpm version:    %s\n' "$(preview_pnpm_version_note)" >&2
+  if [ "$SKIP_CODEX" = "true" ]; then
+    printf '  codex binary:    skipped (--skip-codex given) -- provision later with deploy/codex-setup.sh\n' >&2
+  else
+    printf '  codex binary:    provisioned into %s/codex via deploy/codex-setup.sh (best-effort, never fails the build stage)\n' "$DATA_DIR" >&2
+  fi
   printf '\n' >&2
-  printf 'flags: --domain --email --repo --ref --data-dir --update-feed --update-root-key --apply --preview --help\n' >&2
+  printf 'flags: --domain --email --repo --ref --data-dir --update-feed --update-root-key --apply --preview --skip-codex --help\n' >&2
   printf 'stage protocol: one JSON line per stage transition on stdout (schema: @veduta/protocol InstallerStageEventSchema)\n' >&2
 }
 
@@ -992,6 +1014,48 @@ build_stage() {
     printf 'error: tsx binary not found at %s after build -- check that @veduta/daemon devDependencies installed correctly\n' "$tsx_bin" >&2
     fail_stage 1
   fi
+
+  provision_codex
+}
+
+# Best-effort provisioning of the pinned Codex binary the ChatGPT subscription Model connection
+# needs (issue #47, deploy/codex-setup.sh), folded into this stage rather than added as its own
+# stage id -- exactly like Node above (see the header comment) -- and following the guided-
+# provisioning pattern distilled from the Hermes agent installer in
+# docs/references/12-hermes-installer-provisioning.md: silent by default (no prompt, no
+# elevation beyond what this stage already runs with), skippable with --skip-codex, and a
+# failure here is a warning with the exact manual retry command, NEVER fatal to the build stage
+# -- unlike Node just above, which the daemon cannot run without at all, the ChatGPT subscription
+# connection method is one optional Model connection among several. Time-boxed with `timeout`
+# (this script has no existing long-running-step timeout helper to reuse, unlike the polling
+# loops first_boot_stage uses for its own waits).
+#
+# codex-setup.sh's own `npm install --prefix <dataDir>/codex/vendor` and `mkdir -p` calls apply
+# no ownership of their own -- this installer never drops privilege via runuser/sudo -u/su
+# anywhere (every stage, including this one, runs as the same root the script itself must run as;
+# see preflight_stage), so a root-run provision would otherwise leave <data-dir>/codex root-owned
+# inside a data directory that user_layout_stage already created veduta:veduta -- the explicit
+# chown below is what the daemon (running as `veduta` under ProtectHome=yes) needs to actually
+# read and execute the provisioned binary.
+provision_codex() {
+  local codex_script=/opt/veduta/deploy/codex-setup.sh manual_hint
+
+  manual_hint="sudo $codex_script --data-dir $DATA_DIR --yes && sudo chown -R veduta:veduta $DATA_DIR/codex"
+
+  if [ "$SKIP_CODEX" = "true" ]; then
+    printf 'skipping Codex provisioning (--skip-codex given) -- enable the ChatGPT subscription connection method later with:\n  %s\n' \
+      "$manual_hint" >&2
+    return 0
+  fi
+
+  if run timeout 300 "$codex_script" --data-dir "$DATA_DIR" --yes; then
+    run chown -R veduta:veduta "$DATA_DIR/codex"
+    printf 'provisioned the ChatGPT subscription connection method (Codex) into %s/codex\n' "$DATA_DIR" >&2
+  else
+    printf 'warning: the ChatGPT subscription connection method could not be provisioned; enable it later with:\n  %s\n' \
+      "$manual_hint" >&2
+  fi
+  return 0
 }
 
 vault_keyfile_stage() {

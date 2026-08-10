@@ -139,9 +139,9 @@ Record the outcome (date, provider, model) in the issue or deployment notes when
 The ChatGPT subscription Model connection (issue #47) needs a pinned `@openai/codex` 0.146.1
 binary at `<data dir>/codex/bin/codex` (or `VEDUTA_CODEX_BIN`) -- the daemon refuses any other
 version. `pnpm local-vps` offers to provision it interactively the first time it runs against a
-fresh data dir with no binary present and no `VEDUTA_CODEX_BIN` set: answer the one `[y/N]`
-prompt, or decline and it will not ask again for that data dir (a marker file records the
-decision; re-run the standalone command below whenever you are ready).
+fresh data dir with no binary present and no `VEDUTA_CODEX_BIN` set: answer the one `[Y/n]`
+prompt (empty input accepts), or decline and it will not ask again for that data dir (a marker
+file records the decision; re-run the standalone command below whenever you are ready).
 
 The standalone command, usable at any time and also what the runner's offer calls under the
 hood:
