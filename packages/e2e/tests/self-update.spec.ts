@@ -715,8 +715,12 @@ async function onboardMinimal(page: Page, stack: LocalVpsStack): Promise<void> {
   await page.getByRole('button', { name: 'Continue' }).click()
   // Model connection (issue #47): no real connection -- tick the Local VPS
   // development-only mock control, then Continue.
+  // The checkbox is controlled: it reflects the Gateway's persisted
+  // mockEnabled only after the POST round-trip, so click and await the
+  // state instead of check(), which asserts an immediate flip.
   await expect(page.getByLabel(/built-in mock provider/i)).toBeVisible()
-  await page.getByLabel(/built-in mock provider/i).check()
+  await page.getByLabel(/built-in mock provider/i).click()
+  await expect(page.getByLabel(/built-in mock provider/i)).toBeChecked()
   await expect(page.getByRole('button', { name: 'Continue' })).toBeEnabled()
   await page.getByRole('button', { name: 'Continue' }).click()
   await page.getByRole('button', { name: 'Create' }).click()

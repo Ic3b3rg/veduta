@@ -85,8 +85,12 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
 
       // Model connection: no real connection -- tick the Local VPS
       // development-only mock control, then Continue (issue #47).
+      // The checkbox is controlled: it reflects the Gateway's persisted
+      // mockEnabled only after the POST round-trip, so click and await the
+      // state instead of check(), which asserts an immediate flip.
       await expect(page.getByLabel(/built-in mock provider/i)).toBeVisible()
-      await page.getByLabel(/built-in mock provider/i).check()
+      await page.getByLabel(/built-in mock provider/i).click()
+      await expect(page.getByLabel(/built-in mock provider/i)).toBeChecked()
       await expect(page.getByRole('button', { name: 'Continue' })).toBeEnabled()
       await page.getByRole('button', { name: 'Continue' }).click()
 
