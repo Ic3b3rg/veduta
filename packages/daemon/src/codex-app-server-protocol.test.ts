@@ -15,10 +15,16 @@ import {
 
 describe('parseCodexResponse', () => {
   it('parses a well-formed initialize response', () => {
+    // The real shape observed 2026-08-10 against the pinned 0.146.1 binary
+    // (`InitializeResponseSchema`'s own doc comment): no `version` field at
+    // all, the version lives inside `userAgent`.
     const parsed = parseCodexResponse(InitializeResponseSchema, 'initialize', {
-      version: '0.146.1',
+      userAgent: 'veduta/0.146.1 (Mac OS 26.5.1; arm64) unknown (veduta; 0.0.0)',
+      codexHome: '/home/user/.codex',
+      platformFamily: 'unix',
+      platformOs: 'macos',
     })
-    expect(parsed.version).toBe('0.146.1')
+    expect(parsed.userAgent).toBe('veduta/0.146.1 (Mac OS 26.5.1; arm64) unknown (veduta; 0.0.0)')
   })
 
   it('parses a well-formed account/login/start response', () => {
@@ -36,30 +42,58 @@ describe('parseCodexResponse', () => {
 
   it('parses a model/list response with cursor pagination', () => {
     const parsed = parseCodexResponse(ModelListResponseSchema, 'model/list', {
-      models: [{ id: 'gpt-5-codex', label: 'GPT-5 Codex', isDefault: true }],
+      data: [{ id: 'gpt-5-codex', displayName: 'GPT-5 Codex', isDefault: true }],
       nextCursor: 'page-2',
     })
-    expect(parsed.models).toHaveLength(1)
+    expect(parsed.data).toHaveLength(1)
     expect(parsed.nextCursor).toBe('page-2')
   })
 
-  it('parses an account/read response missing every optional field', () => {
-    const parsed = parseCodexResponse(AccountReadResponseSchema, 'account/read', {})
-    expect(parsed).toEqual({})
+  it('parses a model/list catalog entry carrying fields this build does not model', () => {
+    // Observed 2026-08-10: a real entry carries roughly a dozen further
+    // fields (`CodexModelEntrySchema`'s own doc comment) — `.passthrough()`
+    // must let them through rather than failing the parse.
+    const parsed = parseCodexResponse(ModelListResponseSchema, 'model/list', {
+      data: [
+        {
+          id: 'gpt-5-codex',
+          model: 'gpt-5-codex',
+          displayName: 'GPT-5 Codex',
+          hidden: false,
+          supportedReasoningEfforts: [{ reasoningEffort: 'low', description: 'fast' }],
+        },
+      ],
+      nextCursor: null,
+    })
+    expect(parsed.data[0]?.id).toBe('gpt-5-codex')
+    expect(parsed.nextCursor).toBeNull()
+  })
+
+  it('parses an account/read response reporting no signed-in account', () => {
+    // The real shape observed 2026-08-10 with no ChatGPT account signed in
+    // (`AccountReadResponseSchema`'s own doc comment).
+    const parsed = parseCodexResponse(AccountReadResponseSchema, 'account/read', {
+      account: null,
+      requiresOpenaiAuth: true,
+    })
+    expect(parsed).toEqual({ account: null, requiresOpenaiAuth: true })
   })
 
   it('throws CodexProtocolError, naming the method, on an unexpected extra field', () => {
+    const wellFormed = {
+      userAgent: 'veduta/0.146.1 (Mac OS 26.5.1; arm64) unknown (veduta; 0.0.0)',
+      codexHome: '/home/user/.codex',
+      platformFamily: 'unix',
+      platformOs: 'macos',
+    }
     expect(() =>
       parseCodexResponse(InitializeResponseSchema, 'initialize', {
-        version: '0.146.1',
+        ...wellFormed,
         unexpectedField: 'drift',
       }),
     ).toThrow(CodexProtocolError)
     try {
-      parseCodexResponse(InitializeResponseSchema, 'initialize', {
-        version: '0.146.1',
-        extra: true,
-      })
+      parseCodexResponse(InitializeResponseSchema, 'initialize', { ...wellFormed, extra: true })
     } catch (error) {
       expect(error).toBeInstanceOf(CodexProtocolError)
       expect((error as CodexProtocolError).method).toBe('initialize')

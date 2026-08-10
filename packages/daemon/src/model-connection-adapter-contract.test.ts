@@ -96,14 +96,21 @@ const CODEX_CASE: AdapterCase = {
   buildContext: (rootDir: string): AdapterContext => {
     const transport = createFakeCodexTransport({
       responses: {
-        initialize: { version: '0.146.1' },
+        // Field names observed 2026-08-10 against the real 0.146.1 binary —
+        // `codex-app-server-protocol.ts`'s per-schema doc comments.
+        initialize: {
+          userAgent: 'veduta/0.146.1 (Mac OS 26.5.1; arm64) unknown (veduta; 0.0.0)',
+          codexHome: '/home/user/.codex',
+          platformFamily: 'unix',
+          platformOs: 'macos',
+        },
         'account/login/start': {
           loginId: 'contract-login',
           verificationUrl: 'https://chatgpt.com/device',
           userCode: 'CTRT-0000',
         },
-        'account/read': { planType: 'ChatGPT Plus' },
-        'model/list': { models: [{ id: 'model-a' }] },
+        'account/read': { account: { planType: 'ChatGPT Plus' }, requiresOpenaiAuth: false },
+        'model/list': { data: [{ id: 'model-a' }] },
         'account/logout': {},
       },
     })

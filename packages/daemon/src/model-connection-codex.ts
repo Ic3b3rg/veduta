@@ -33,6 +33,7 @@ import {
   type ModelConnectionAdapter,
   type RefreshResult,
 } from './model-connection-adapter.ts'
+import { sanitizeErrorText } from './model-routing.ts'
 import type { SubscriptionStreamRequest } from './pi-provider-bridge.ts'
 import { renderSubscriptionPrompt } from './subscription-prompt.ts'
 import { resolveInstalledVersion } from './version.ts'
@@ -94,8 +95,36 @@ function clientInfo(): { name: string; version: string } {
   return { name: 'veduta', version: resolveInstalledVersion() }
 }
 
-function versionMismatchReason(found: string): string {
-  return `the installed Codex binary reports version ${found}; Veduta supports exactly ${CODEX_PINNED_VERSION} — install the pinned version`
+/**
+ * Extracts a semver-shaped substring (e.g. `0.146.1`) out of the
+ * `initialize` response's `userAgent` (issue #47) — the real v1 protocol
+ * embeds the app-server's own version there, confirmed 2026-08-10 by direct
+ * observation against the real, pinned binary
+ * (`InitializeResponseSchema`'s own doc comment in
+ * `codex-app-server-protocol.ts`); there is no separate `version` field to
+ * read instead. `undefined` when no such substring is found — the caller
+ * must then report the mismatch using the raw `userAgent` itself, never
+ * guess a version out of it.
+ */
+export function codexVersionFromUserAgent(userAgent: string): string | undefined {
+  return /\b(\d+\.\d+\.\d+)\b/.exec(userAgent)?.[1]
+}
+
+/** What `requestInitializeVersion` reports: the extracted version (`undefined` when `userAgent` carried nothing semver-shaped) alongside the raw `userAgent` a mismatch reason falls back to describing. */
+interface CodexInitializeProbe {
+  version: string | undefined
+  userAgent: string
+}
+
+function versionMismatchReason(probe: CodexInitializeProbe): string {
+  if (probe.version === undefined) {
+    // The `userAgent` string is provider-controlled child output — never
+    // embedded into a user-visible reason unsanitized (the same discipline
+    // `codex-app-server.ts`'s JSON-RPC error handling applies to the
+    // child's own `error.message`).
+    return `the installed Codex binary's initialize response reported no recognizable version in its userAgent ("${sanitizeErrorText(probe.userAgent)}"); Veduta supports exactly ${CODEX_PINNED_VERSION} — install the pinned version`
+  }
+  return `the installed Codex binary reports version ${probe.version}; Veduta supports exactly ${CODEX_PINNED_VERSION} — install the pinned version`
 }
 
 async function getTransport(ctx: AdapterContext): Promise<CodexTransport> {
@@ -108,10 +137,11 @@ async function getTransport(ctx: AdapterContext): Promise<CodexTransport> {
   return ctx.codexTransport({ codexHome: ctx.codexHome })
 }
 
-/** Sends `initialize` and returns the reported version — shared by `initializeCodexTransport` (throws on mismatch) and `availability()` (reports it instead). */
-async function requestInitializeVersion(transport: CodexTransport): Promise<string> {
+/** Sends `initialize` and returns the version extracted from its `userAgent` (plus the raw `userAgent` itself, for a mismatch reason to fall back on) — shared by `initializeCodexTransport` (throws on mismatch) and `availability()` (reports it instead). */
+async function requestInitializeVersion(transport: CodexTransport): Promise<CodexInitializeProbe> {
   const raw = await transport.request('initialize', { clientInfo: clientInfo() })
-  return parseCodexResponse(InitializeResponseSchema, 'initialize', raw).version
+  const { userAgent } = parseCodexResponse(InitializeResponseSchema, 'initialize', raw)
+  return { version: codexVersionFromUserAgent(userAgent), userAgent }
 }
 
 /**
@@ -126,9 +156,9 @@ async function requestInitializeVersion(transport: CodexTransport): Promise<stri
  * pool's handshake covers it, and every other verb, the same way.
  */
 export async function initializeCodexTransport(transport: CodexTransport): Promise<void> {
-  const version = await requestInitializeVersion(transport)
-  if (version !== CODEX_PINNED_VERSION) {
-    throw new ModelConnectionError('unsupported', versionMismatchReason(version))
+  const probe = await requestInitializeVersion(transport)
+  if (probe.version !== CODEX_PINNED_VERSION) {
+    throw new ModelConnectionError('unsupported', versionMismatchReason(probe))
   }
 }
 
@@ -191,8 +221,22 @@ function loginCompleted(transport: CodexTransport, loginId: string): boolean {
 async function readAccount(transport: CodexTransport): Promise<RefreshResult> {
   try {
     const raw = await transport.request('account/read', { refreshToken: true })
-    const account = parseCodexResponse(AccountReadResponseSchema, 'account/read', raw)
-    const label = account.planType ?? account.email ?? 'ChatGPT'
+    const parsed = parseCodexResponse(AccountReadResponseSchema, 'account/read', raw)
+    if (parsed.account === null) {
+      // Observed 2026-08-10 against the real 0.146.1 binary: `account/read`
+      // answers successfully (never a JSON-RPC error) with `account: null,
+      // requiresOpenaiAuth: true` when no ChatGPT account is signed in — a
+      // completed login this build's own poll (`loginCompleted` above)
+      // somehow missed, or a session the provider ended without ever
+      // rejecting a request outright. Treated as `'expired'`, matching this
+      // function's existing fallback below for a refresh that failed for
+      // any reason other than an explicit `unauthorized`.
+      return {
+        state: 'expired',
+        reason: 'the Codex app-server reports no signed-in ChatGPT account',
+      }
+    }
+    const label = parsed.account.planType ?? parsed.account.email ?? 'ChatGPT'
     return { state: 'connected', account: { label } }
   } catch (error) {
     const err = connectionErrorFrom(error)
@@ -224,10 +268,10 @@ async function catalog(ctx: AdapterContext): Promise<ModelCatalogEntry[]> {
       ...(cursor === undefined ? {} : { cursor }),
     })
     const page = parseCodexResponse(ModelListResponseSchema, 'model/list', raw)
-    for (const model of page.models) {
+    for (const model of page.data) {
       entries.push({
         id: model.id,
-        label: model.label ?? model.id,
+        label: model.displayName ?? model.id,
         ...(model.description === undefined ? {} : { description: model.description }),
         ...(model.isDefault === undefined ? {} : { isDefault: model.isDefault }),
         // Always true: `model-connection-registry.ts`'s `applyRoutable`
@@ -236,7 +280,9 @@ async function catalog(ctx: AdapterContext): Promise<ModelCatalogEntry[]> {
         routable: true,
       })
     }
-    cursor = page.nextCursor
+    // Observed 2026-08-10: an exhausted `model/list` reports `nextCursor` as
+    // `null`, not simply absent — both end pagination the same way.
+    cursor = page.nextCursor ?? undefined
   } while (cursor !== undefined)
   return entries
 }
@@ -491,10 +537,10 @@ export function createCodexAdapter(deps: CodexAdapterDeps): ModelConnectionAdapt
     let transport: CodexTransport | undefined
     try {
       transport = await deps.probeTransport({ binary, codexHome })
-      const version = await requestInitializeVersion(transport)
-      return version === CODEX_PINNED_VERSION
+      const probe = await requestInitializeVersion(transport)
+      return probe.version === CODEX_PINNED_VERSION
         ? { available: true }
-        : { available: false, reason: versionMismatchReason(version) }
+        : { available: false, reason: versionMismatchReason(probe) }
     } catch (error) {
       return { available: false, reason: connectionErrorFrom(error).message }
     } finally {

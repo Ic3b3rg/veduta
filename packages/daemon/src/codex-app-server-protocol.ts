@@ -14,15 +14,27 @@ import { z } from 'zod'
  * to be fixed by re-reading the pinned source, never by loosening a schema
  * to "make it pass".
  *
- * Every schema is `.strict()`: a response carrying an unexpected extra
- * field fails the parse rather than being silently accepted, and
- * `parseCodexResponse` turns that failure into a typed `CodexProtocolError`
- * — a strict-parse mismatch is a signal that this transcription (or the
- * live binary) drifted from the pin, never something to guess past. Where
- * ref-11's research did not pin an exact field name or nesting, the field
- * is marked `transcription note` and kept optional rather than invented —
- * an absent field never fails the parse, only a field of the wrong type
- * does.
+ * `initialize`, `account/read` (unauthenticated), and `model/list`
+ * (unauthenticated) were re-checked 2026-08-10 against the real, pinned
+ * 0.146.1 binary itself — installed with `npm install @openai/codex@0.146.1`
+ * outside this repo, run as `codex app-server`, and spoken to directly over
+ * stdio — after a real instance found `InitializeResponseSchema`'s original
+ * `{ version: string }` guess never matched any real response (issue #47).
+ * Each schema below whose doc comment says "observed" or "CONFIRMED" was
+ * corrected against that live output; every other schema (and every field
+ * inside a schema still marked `transcription note`) remains
+ * research-only — this build never logs in, so an authenticated response
+ * shape stays unobserved.
+ *
+ * Every schema is `.strict()` unless its own doc comment says otherwise: a
+ * response carrying an unexpected extra field fails the parse rather than
+ * being silently accepted, and `parseCodexResponse` turns that failure into
+ * a typed `CodexProtocolError` — a strict-parse mismatch is a signal that
+ * this transcription (or the live binary) drifted from the pin, never
+ * something to guess past. Where ref-11's research did not pin an exact
+ * field name or nesting, the field is marked `transcription note` and kept
+ * optional rather than invented — an absent field never fails the parse,
+ * only a field of the wrong type does.
  */
 
 /** Thrown by `parseCodexResponse`/`parseCodexNotification` when a Codex app-server message does not match its pinned-protocol schema. Never thrown for a genuinely unknown notification method — those are ignored, not parsed. */
@@ -49,19 +61,37 @@ export function parseCodexResponse<T>(schema: z.ZodType<T>, method: string, raw:
 }
 
 /**
- * `initialize` response: the app-server's own reported version, used by
- * `model-connection-codex.ts`'s `availability()` to enforce the exact
- * `CODEX_PINNED_VERSION` pin. `.strict()` deliberately rejects any other
- * reported field — a future app-server response carrying more than a
- * version is exactly the kind of drift this pin exists to catch, not to
- * silently tolerate.
+ * `initialize` response, used by `model-connection-codex.ts`'s
+ * `availability()`/`initializeCodexTransport()` to enforce the exact
+ * `CODEX_PINNED_VERSION` pin. CONFIRMED 2026-08-10 by direct observation
+ * against the real, pinned `@openai/codex@0.146.1` binary (installed with
+ * `npm install @openai/codex@0.146.1` outside this repo, then run as
+ * `codex app-server` and sent a live `initialize` request over stdio) —
+ * this replaces an earlier, wrong `{ version: string }` guess that no real
+ * 0.146.1 response ever matched, which made the ChatGPT method permanently
+ * report itself unavailable. The real shape matches the v1 protocol's own
+ * `InitializeResponse` struct (`codex-rs/app-server-protocol/src/protocol/v1.rs`
+ * in `openai/codex` at commit `9d00bb0`): there is no separate `version`
+ * field at all — the app-server's own version is embedded inside
+ * `userAgent` (observed verbatim:
+ * `"veduta/0.146.1 (Mac OS 26.5.1; arm64) unknown (veduta; 0.0.0)"`) and
+ * extracted with `codexVersionFromUserAgent` in `model-connection-codex.ts`.
+ * `.strict()` deliberately rejects any other reported field — a future
+ * app-server response carrying more than these four is exactly the kind of
+ * drift this pin exists to catch, not to silently tolerate.
  */
 export const InitializeResponseSchema = z
   .object({
-    // transcription note: field name per 0.146.1 — the initialize response
-    // reports the app-server's own version so a caller can enforce a pin
-    // without shelling out to a separate `--version` flag.
-    version: z.string().min(1),
+    // observed 2026-08-10 — carries the app-server's own version, embedded
+    // rather than a dedicated field (see the schema's own doc comment).
+    userAgent: z.string().min(1),
+    // observed 2026-08-10 — the CODEX_HOME path the app-server resolved for
+    // this session; not read by this build.
+    codexHome: z.string().min(1),
+    // observed 2026-08-10 (value: "unix"); not read by this build.
+    platformFamily: z.string().min(1),
+    // observed 2026-08-10 (value: "macos"); not read by this build.
+    platformOs: z.string().min(1),
   })
   .strict()
 
@@ -105,48 +135,87 @@ export const LoginCompletedNotificationSchema = z
 export const AccountUpdatedNotificationSchema = z.object({}).strict()
 
 /**
- * `account/read` response (called with `{ refreshToken: true }`): ref-11
- * confirms this reports "account and plan state" without pinning exact
- * keys. Modeled conservatively — both fields optional — so a real response
- * carrying either (or neither) still parses; `label` in
- * `RefreshResult.account` falls back through `planType` → `email` →
- * a fixed "ChatGPT" string in `model-connection-codex.ts`.
+ * `account/read` response (called with `{ refreshToken: true }`). The
+ * envelope — a nullable `account` object plus a `requiresOpenaiAuth` flag —
+ * is CONFIRMED 2026-08-10 by direct observation against the real, pinned
+ * 0.146.1 binary with no ChatGPT account signed in: `account/read` answers
+ * successfully (never a JSON-RPC error) with
+ * `{ account: null, requiresOpenaiAuth: true }`, which supersedes an
+ * earlier transcription that assumed a flat, always-populated object —
+ * `model-connection-codex.ts`'s `readAccount` treats a `null` account as
+ * `'expired'`, never `'connected'`. The fields INSIDE a signed-in `account`
+ * object remain transcription-based: ref-11 confirms only that the call
+ * reports "account and plan state" without pinning exact keys, and this
+ * research never logs in to observe the authenticated shape (issue #47's
+ * ground rule — no credentials are touched). Modeled conservatively — both
+ * fields optional — so an authenticated response carrying either (or
+ * neither) still parses; `label` in `RefreshResult.account` falls back
+ * through `planType` → `email` → a fixed "ChatGPT" string in
+ * `model-connection-codex.ts`.
  */
 export const AccountReadResponseSchema = z
   .object({
-    // transcription note: field name per 0.146.1
-    email: z.string().min(1).optional(),
-    // transcription note: field name per 0.146.1 — the "plan type" ref-11
-    // says `account/updated` carries; used here instead since it is
-    // `account/read`'s response this adapter actually reads for the
-    // connected account label.
-    planType: z.string().min(1).optional(),
+    account: z
+      .object({
+        // transcription note: field name per 0.146.1 — NOT independently
+        // observed (auth-gated).
+        email: z.string().min(1).optional(),
+        // transcription note: field name per 0.146.1 — the "plan type"
+        // ref-11 says `account/updated` carries; used here instead since it
+        // is `account/read`'s response this adapter actually reads for the
+        // connected account label. NOT independently observed (auth-gated).
+        planType: z.string().min(1).optional(),
+      })
+      .strict()
+      .nullable(),
+    // observed 2026-08-10 — true when no ChatGPT account is signed in.
+    requiresOpenaiAuth: z.boolean(),
   })
   .strict()
 
 /** `account/logout` response: the supported disconnect call. ref-11 records no response payload beyond success — modeled as an empty object; any field would be an unexpected drift. */
 export const LogoutResponseSchema = z.object({}).strict()
 
-/** One entry of `model/list`'s catalog (issue #47: "show the full returned catalog without a curated subset"). */
+/**
+ * One entry of `model/list`'s catalog (issue #47: "show the full returned
+ * catalog without a curated subset"). `.passthrough()` deliberately, not
+ * `.strict()` — CONFIRMED 2026-08-10 by direct observation against the
+ * real, pinned 0.146.1 binary (`model/list` answers without a ChatGPT
+ * login, so this call — unlike `account/read` above — was directly
+ * observable end to end): a real entry carries at least a dozen further
+ * fields this build has no use for (`model`, `upgrade`, `upgradeInfo`,
+ * `availabilityNux`, `modelSpecialty`, `hidden`, `supportedReasoningEfforts`,
+ * `defaultReasoningEffort`, `inputModalities`, `supportsPersonality`,
+ * `additionalSpeedTiers`, `serviceTiers`, `defaultServiceTier`). None of
+ * that is drift — it is the catalog's ordinary shape — so a `.strict()`
+ * schema here would reject every real response on fields it never asked
+ * about.
+ */
 export const CodexModelEntrySchema = z
   .object({
     id: z.string().min(1),
-    // transcription note: field name per 0.146.1 — ref-11 confirms the
-    // response carries display metadata without pinning its key; falls
+    // observed 2026-08-10 — the display name this transcription originally
+    // guessed was called `label`; the real field is `displayName`. Falls
     // back to `id` in `model-connection-codex.ts` when absent.
-    label: z.string().min(1).optional(),
+    displayName: z.string().min(1).optional(),
     description: z.string().min(1).optional(),
-    // transcription note: field name per 0.146.1 — the "default marker"
-    // ref-11 describes.
+    // observed 2026-08-10 — the "default marker" ref-11 describes.
     isDefault: z.boolean().optional(),
   })
-  .strict()
+  .passthrough()
 
-/** `model/list` response: cursor-paginated, exhausted by `model-connection-codex.ts`'s `catalog()`. */
+/**
+ * `model/list` response: cursor-paginated, exhausted by
+ * `model-connection-codex.ts`'s `catalog()`. CONFIRMED 2026-08-10 by direct
+ * observation (see `CodexModelEntrySchema`'s own doc comment): the catalog
+ * array is keyed `data`, not `models` as this transcription originally
+ * guessed, and an exhausted `nextCursor` is reported as `null`, not simply
+ * absent.
+ */
 export const ModelListResponseSchema = z
   .object({
-    models: z.array(CodexModelEntrySchema),
-    nextCursor: z.string().min(1).optional(),
+    data: z.array(CodexModelEntrySchema),
+    nextCursor: z.string().min(1).nullable().optional(),
   })
   .strict()
 
