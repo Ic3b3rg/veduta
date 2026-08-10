@@ -276,6 +276,21 @@ describe('withMockFallback', () => {
     expect(() => RuntimeRoutingConfigSchema.parse(withFallback)).not.toThrow()
     expect(withFallback.tiers.triage).toEqual([])
   })
+
+  it('never appends the mock when an explicit real selection exists, even on loopback with an empty tier', () => {
+    const config: RoutingConfig = {
+      ...defaultRoutingConfig(),
+      tiers: { triage: [], reasoning: [] },
+    }
+
+    const withFallback = withMockFallback(config, noKeysResolve, {
+      profile: 'loopback',
+      hasRealSelection: true,
+    })
+
+    expect(withFallback.tiers.triage).toEqual([])
+    expect(withFallback.tiers.reasoning).toEqual([])
+  })
 })
 
 describe('saveRoutingConfig', () => {

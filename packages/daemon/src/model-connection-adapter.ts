@@ -73,10 +73,13 @@ export interface AdapterContext {
   codexTransport?: CodexTransportFactory
   /**
    * The record's own secret reference, supplied by the registry (issue #47,
-   * `docs/adr/0014-…` amendment's R6 ruling: the original `secret://vault/…`
-   * or `secret://env/…` reference is preserved verbatim, never re-derived).
-   * Absent for a connection that has never stored a key (a fresh device-code
-   * connection, or a BYOK connection created without one yet).
+   * `docs/adr/0014-…` amendment: for a non-api-key adapter the original
+   * `secret://vault/…` or `secret://env/…` reference is preserved verbatim,
+   * never re-derived; an api-key adapter's successful authorize always
+   * repoints it at this connection's own vault entry instead, per
+   * `model-connection-registry.ts`'s `runAuthorization`). Absent for a
+   * connection that has never stored a key (a fresh device-code connection,
+   * or a BYOK connection created without one yet).
    */
   secretRef?: string
 }

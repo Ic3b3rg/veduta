@@ -2,7 +2,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { loadConnectionsConfig } from './connections-config.ts'
+import {
+  loadConnectionsConfig,
+  saveConnectionsConfig,
+  type ModelConnectionRecord,
+} from './connections-config.ts'
 import { reconcileByokConnections } from './model-connection-migration.ts'
 import { defaultRoutingConfig, saveRoutingConfig, type RoutingConfig } from './model-routing.ts'
 
@@ -131,5 +135,38 @@ describe('reconcileByokConnections', () => {
     expect(existsSync(join(dir, 'routing.json'))).toBe(true)
     expect(readFileSync(join(dir, 'routing.json'), 'utf8')).toBe(before)
     expect(statSync(join(dir, 'routing.json')).mtimeMs).toBe(beforeMtime)
+  })
+
+  it('boot reconcile never recreates a tombstoned env-backed connection', () => {
+    const dir = freshRoot()
+    // `ModelConnectionRegistry.remove` (issue #47) replaces an env-backed
+    // connection with a 'revoked' tombstone rather than deleting it, so the
+    // id survives in `connections.json` — this must be enough to keep the
+    // NEXT boot's reconcile from treating the provider as never-migrated and
+    // recreating a fresh 'connected' record for it.
+    const tombstone: ModelConnectionRecord = {
+      id: 'anthropic',
+      method: 'anthropic-api-key',
+      provider: 'anthropic',
+      label: 'Claude · API key',
+      state: 'revoked',
+      stateAt: '2026-08-09T09:00:00.000Z',
+      stateReason:
+        'the key comes from the daemon environment and stays there; remove the environment variable to retire it',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T09:00:00.000Z',
+      secretRef: 'secret://env/ANTHROPIC_API_KEY',
+    }
+    saveConnectionsConfig(dir, { version: 1, connections: [tombstone], mockEnabled: false })
+    const routing = defaultRoutingConfig()
+    const secrets = resolverFor({ 'secret://env/ANTHROPIC_API_KEY': 'sk-ant-from-env' })
+
+    const wrote = reconcileByokConnections({ rootDir: dir, routing, secrets, now: NOW })
+
+    expect(wrote).toBe(false)
+    const anthropic = loadConnectionsConfig(dir).connections.find(
+      (connection) => connection.id === 'anthropic',
+    )
+    expect(anthropic?.state).toBe('revoked')
   })
 })

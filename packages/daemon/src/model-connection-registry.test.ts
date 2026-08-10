@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { DeviceChallenge } from '@veduta/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createByokAdapter } from './model-connection-byok.ts'
 import {
@@ -14,12 +15,19 @@ import {
   ModelConnectionError,
   type AuthorizeResult,
   type ModelConnectionAdapter,
+  type RefreshResult,
 } from './model-connection-adapter.ts'
 import {
   ModelConnectionRegistry,
   type ModelConnectionRegistryOptions,
 } from './model-connection-registry.ts'
-import { envSecretResolver } from './model-routing.ts'
+import { deriveRoutingConfig } from './model-connection-routing.ts'
+import {
+  defaultRoutingConfig,
+  envSecretResolver,
+  loadRoutingConfig,
+  saveRoutingConfig,
+} from './model-routing.ts'
 import { defaultRedactor } from './redaction.ts'
 import { SecretsVault } from './secrets-vault.ts'
 
@@ -381,7 +389,7 @@ describe('commitSelection', () => {
 })
 
 describe('remove', () => {
-  it('deletes the vault entry for a vault-backed key and keeps an env-backed one (R6)', async () => {
+  it('deletes the vault entry and the record for a vault-backed key', async () => {
     const dir = freshRoot()
     const vault = SecretsVault.open(dir, KEY_MATERIAL)
     const vaultBackedId = 'b2b2b2b2-0000-4000-8000-000000000001'
@@ -398,6 +406,20 @@ describe('remove', () => {
       createdAt: '2026-08-09T09:00:00.000Z',
       secretRef: `secret://vault/${vaultBackedId}-api-key`,
     }
+    saveConnectionsConfig(dir, { version: 1, connections: [vaultBacked], mockEnabled: false })
+
+    const registry = new ModelConnectionRegistry(
+      baseOptions(dir, [createByokAdapter('anthropic')], { vault }),
+    )
+
+    await registry.remove(vaultBackedId)
+
+    expect(vault.has(`${vaultBackedId}-api-key`)).toBe(false)
+    expect(loadConnectionsConfig(dir).connections.some((c) => c.id === vaultBackedId)).toBe(false)
+  })
+
+  it('removing an env-backed connection leaves a revoked tombstone', async () => {
+    const dir = freshRoot()
     const envBacked: ModelConnectionRecord = {
       id: 'anthropic',
       method: 'anthropic-api-key',
@@ -411,8 +433,54 @@ describe('remove', () => {
     }
     saveConnectionsConfig(dir, {
       version: 1,
-      connections: [vaultBacked, envBacked],
+      connections: [envBacked],
+      selection: { connectionId: 'anthropic', modelId: 'claude-sonnet-5' },
       mockEnabled: false,
+    })
+
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [createByokAdapter('anthropic')]))
+
+    await registry.remove('anthropic')
+
+    const file = loadConnectionsConfig(dir)
+    const tombstone = file.connections.find((c) => c.id === 'anthropic')
+    expect(tombstone).toBeDefined()
+    expect(tombstone?.state).toBe('revoked')
+    expect(tombstone?.stateReason).toBe(
+      'the key comes from the daemon environment and stays there; remove the environment variable to retire it',
+    )
+    // The env var is left exactly where it was — the record just stops
+    // pointing at it.
+    expect(tombstone?.secretRef).toBe('secret://env/ANTHROPIC_API_KEY')
+    // The selection that pointed at this connection is cleared.
+    expect(file.selection).toBeUndefined()
+  })
+
+  it('drops a legacy routing.json connectionKeys entry for the removed id', async () => {
+    const dir = freshRoot()
+    const vault = SecretsVault.open(dir, KEY_MATERIAL)
+    const vaultBackedId = 'c3c3c3c3-0000-4000-8000-000000000002'
+    vault.set(`${vaultBackedId}-api-key`, 'sk-vault-backed')
+    saveConnectionsConfig(dir, {
+      version: 1,
+      connections: [
+        {
+          id: vaultBackedId,
+          method: 'anthropic-api-key',
+          provider: 'anthropic',
+          label: 'Claude · API key',
+          state: 'connected',
+          stateAt: '2026-08-09T09:00:00.000Z',
+          enabledForFallback: false,
+          createdAt: '2026-08-09T09:00:00.000Z',
+          secretRef: `secret://vault/${vaultBackedId}-api-key`,
+        },
+      ],
+      mockEnabled: false,
+    })
+    saveRoutingConfig(dir, {
+      ...defaultRoutingConfig(),
+      connectionKeys: { [vaultBackedId]: `secret://vault/${vaultBackedId}-api-key` },
     })
 
     const registry = new ModelConnectionRegistry(
@@ -420,11 +488,8 @@ describe('remove', () => {
     )
 
     await registry.remove(vaultBackedId)
-    expect(vault.has(`${vaultBackedId}-api-key`)).toBe(false)
-    expect(loadConnectionsConfig(dir).connections.some((c) => c.id === vaultBackedId)).toBe(false)
 
-    await registry.remove('anthropic')
-    expect(loadConnectionsConfig(dir).connections.some((c) => c.id === 'anthropic')).toBe(false)
+    expect(loadRoutingConfig(dir).connectionKeys[vaultBackedId]).toBeUndefined()
   })
 })
 
@@ -510,6 +575,30 @@ describe('runtimes (issue #47)', () => {
     expect(deltas).toEqual(['hello from codex'])
   })
 
+  it('a connected adapter implementing stream gets a subscription runtime regardless of method id', async () => {
+    const dir = freshRoot()
+    // A BYOK-shaped api-key adapter that (hypothetically) also implements
+    // `stream` — the transport decision is adapter-authoritative (issue
+    // #47), never keyed off `record.method === 'chatgpt-codex'` specifically.
+    const adapter = createFakeAdapter({
+      stream: async function* () {
+        yield 'hello from a non-codex subscription adapter'
+      },
+    })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+    const created = await registry.create({ method: 'anthropic-api-key', apiKey: 'sk-test' })
+    const connectionId = created.connections[0]?.id
+    if (!connectionId) throw new Error('test setup failed')
+
+    const [runtime] = registry.runtimes()
+
+    expect(runtime).toMatchObject({
+      connectionId,
+      provider: 'anthropic',
+      transport: 'subscription',
+    })
+  })
+
   it('reports a chatgpt-codex connection as builtin transport when its adapter has no stream verb', async () => {
     const dir = freshRoot()
     const adapter = codexAdapter() // no `stream` override
@@ -566,5 +655,207 @@ describe('isTextOnly (issue #47)', () => {
 
     expect(registry.isTextOnly(connectionId)).toBe(false)
     expect(registry.isTextOnly('no-such-connection')).toBe(false)
+  })
+})
+
+describe('ensureFresh (issue #47)', () => {
+  it('returns the post-refresh lifecycle state', async () => {
+    const dir = freshRoot()
+    const adapter = createFakeAdapter({
+      methodId: 'chatgpt-codex',
+      providerName: 'openai',
+      capabilities: {
+        authorization: 'device-code',
+        refresh: 'automatic',
+        revocation: 'provider',
+        vedutaTools: false,
+        metered: false,
+      },
+      refresh: async () => ({ state: 'expired', reason: 'the refresh token is gone' }),
+    })
+    const record: ModelConnectionRecord = {
+      id: 'aaaaaaaa-1111-4000-8000-000000000000',
+      method: 'chatgpt-codex',
+      provider: 'openai',
+      label: 'ChatGPT · Subscription',
+      state: 'connected',
+      stateAt: '2026-08-09T09:00:00.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T09:00:00.000Z',
+    }
+    saveConnectionsConfig(dir, { version: 1, connections: [record], mockEnabled: false })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+
+    const state = await registry.ensureFresh('aaaaaaaa-1111-4000-8000-000000000000')
+
+    expect(state).toBe('expired')
+    expect(loadConnectionsConfig(dir).connections[0]?.state).toBe('expired')
+  })
+
+  it('returns undefined for a static-refresh method without calling the adapter', async () => {
+    const dir = freshRoot()
+    const refreshSpy = vi.fn()
+    const adapter = createFakeAdapter({ refresh: refreshSpy })
+    const record: ModelConnectionRecord = {
+      id: 'anthropic',
+      method: 'anthropic-api-key',
+      provider: 'anthropic',
+      label: 'Claude · API key',
+      state: 'connected',
+      stateAt: '2026-08-09T09:00:00.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T09:00:00.000Z',
+    }
+    saveConnectionsConfig(dir, { version: 1, connections: [record], mockEnabled: false })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+
+    expect(await registry.ensureFresh('anthropic')).toBeUndefined()
+    expect(refreshSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('authorize secretRef repointing (issue #47)', () => {
+  function migratedEnvBackedRecord(
+    overrides: Partial<ModelConnectionRecord> = {},
+  ): ModelConnectionRecord {
+    return {
+      id: 'anthropic',
+      method: 'anthropic-api-key',
+      provider: 'anthropic',
+      label: 'Claude · API key',
+      state: 'connected',
+      stateAt: '2026-08-09T09:00:00.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T09:00:00.000Z',
+      secretRef: 'secret://env/ANTHROPIC_API_KEY',
+      ...overrides,
+    }
+  }
+
+  it('reauthorizing a migrated env-backed connection repoints secretRef at the per-connection vault entry', async () => {
+    const dir = freshRoot()
+    saveConnectionsConfig(dir, {
+      version: 1,
+      connections: [migratedEnvBackedRecord()],
+      mockEnabled: false,
+    })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [createFakeAdapter()]))
+
+    await registry.authorize('anthropic', { apiKey: 'sk-new-key' })
+
+    const updated = loadConnectionsConfig(dir).connections.find((c) => c.id === 'anthropic')
+    expect(updated?.secretRef).toBe('secret://vault/anthropic-api-key')
+    expect(updated?.state).toBe('connected')
+  })
+
+  it('a reauthorized migrated connection resolves the new key for catalog and routing', async () => {
+    const dir = freshRoot()
+    saveConnectionsConfig(dir, {
+      version: 1,
+      connections: [migratedEnvBackedRecord({ selectedModelId: 'model-a' })],
+      selection: { connectionId: 'anthropic', modelId: 'model-a' },
+      mockEnabled: false,
+    })
+    let seenSecretRef: string | undefined
+    const adapter = createFakeAdapter({
+      catalog: async (ctx) => {
+        seenSecretRef = ctx.secretRef
+        return [{ id: 'model-a', label: 'Model A', routable: true }]
+      },
+    })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+
+    await registry.authorize('anthropic', { apiKey: 'sk-new-key' })
+
+    expect(seenSecretRef).toBe('secret://vault/anthropic-api-key')
+    const derived = deriveRoutingConfig(defaultRoutingConfig(), loadConnectionsConfig(dir))
+    expect(derived.connectionKeys['anthropic']).toBe('secret://vault/anthropic-api-key')
+  })
+})
+
+describe('applyRefreshResult compare-and-swap (issue #47)', () => {
+  function deviceChallenge(userCode: string): DeviceChallenge {
+    return {
+      loginId: `login-${userCode}`,
+      verificationUrl: 'https://chatgpt.com/device',
+      userCode,
+      expiresAt: '2026-08-09T12:00:00.000Z',
+      expirySource: 'provider',
+    }
+  }
+
+  it('a late refresh result never clobbers a newer reauthorization challenge', async () => {
+    const dir = freshRoot()
+    let refreshResolve: ((result: RefreshResult) => void) | undefined
+    const refreshDeferred = new Promise<RefreshResult>((resolve) => {
+      refreshResolve = resolve
+    })
+    let challengeCounter = 0
+    const adapter = createFakeAdapter({
+      methodId: 'chatgpt-codex',
+      providerName: 'openai',
+      capabilities: {
+        authorization: 'device-code',
+        refresh: 'automatic',
+        revocation: 'provider',
+        vedutaTools: false,
+        metered: false,
+      },
+      authorize: async () => {
+        challengeCounter += 1
+        return { state: 'waiting-for-user', challenge: deviceChallenge(`CODE-${challengeCounter}`) }
+      },
+      refresh: () => refreshDeferred,
+    })
+    let clock = new Date('2026-08-09T10:00:00.000Z')
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter], { now: () => clock }))
+    const created = await registry.create({ method: 'chatgpt-codex' })
+    const id = created.connections[0]?.id
+    if (!id) throw new Error('test setup failed')
+    await registry.authorize(id, {}) // challenge #1, at the first clock reading
+
+    clock = new Date('2026-08-09T10:05:00.000Z') // the second, later clock reading
+    const readPromise = registry.read(id) // captures the pre-image, then blocks on the deferred refresh
+
+    // While that refresh is in flight, the user re-authorizes: a brand-new
+    // challenge #2 replaces #1, and the record's stateAt moves to the later
+    // clock reading.
+    await registry.authorize(id, {})
+
+    // Now the stale refresh resolves.
+    refreshResolve!({ state: 'waiting-for-user' })
+    const resolved = await readPromise
+
+    expect(resolved.challenge?.userCode).toBe('CODE-2')
+    expect(resolved.stateAt).toBe(clock.toISOString())
+    const persisted = loadConnectionsConfig(dir).connections.find((c) => c.id === id)
+    expect(persisted?.stateAt).toBe(clock.toISOString())
+  })
+
+  it('a late refresh result never overwrites a record changed while it was in flight', async () => {
+    const dir = freshRoot()
+    let refreshResolve: ((result: RefreshResult) => void) | undefined
+    const refreshDeferred = new Promise<RefreshResult>((resolve) => {
+      refreshResolve = resolve
+    })
+    const adapter = createFakeAdapter({ refresh: () => refreshDeferred })
+    let clock = new Date('2026-08-09T10:00:00.000Z')
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter], { now: () => clock }))
+    const created = await registry.create({ method: 'anthropic-api-key', apiKey: 'sk-test' })
+    const id = created.connections[0]?.id
+    if (!id) throw new Error('test setup failed')
+
+    clock = new Date('2026-08-09T10:05:00.000Z')
+    const refreshPromise = registry.refresh(id) // captures the 'connected'/creation-time pre-image
+
+    clock = new Date('2026-08-09T10:10:00.000Z')
+    await registry.noteCallFailure(id, new Error('boom')) // moves the record to 'failed'
+
+    refreshResolve!({ state: 'connected' })
+    const resolved = await refreshPromise
+
+    expect(resolved.state).toBe('failed')
+    const persisted = loadConnectionsConfig(dir).connections.find((c) => c.id === id)
+    expect(persisted?.state).toBe('failed')
   })
 })

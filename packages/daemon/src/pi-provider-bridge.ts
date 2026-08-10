@@ -18,7 +18,13 @@ import {
 import { streamSimple } from '@earendil-works/pi-ai/compat'
 import { getBuiltinModel } from '@earendil-works/pi-ai/providers/all'
 import type { ModelRef } from './agent-runner.ts'
-import type { RoutingConfig, RuntimeRoutingConfig, SecretResolver } from './model-routing.ts'
+import {
+  markNonRetryable,
+  NonRetryableModelError,
+  type RoutingConfig,
+  type RuntimeRoutingConfig,
+  type SecretResolver,
+} from './model-routing.ts'
 import type { PiModel, PiStreamFn } from './pi-agent-runner.ts'
 import { toSubscriptionPrompt, type SubscriptionPrompt } from './subscription-prompt.ts'
 
@@ -581,6 +587,16 @@ function streamSubscription(
         errorMessage: error instanceof Error ? error.message : String(error),
         ...base,
       }
+      // The thrown error's class identity is otherwise dropped here — pi
+      // resolves a provider failure as a completed turn carrying only a
+      // bare `errorMessage` string (issue #47,
+      // docs/adr/0014-subscription-inference-boundary.md amendment).
+      // `markNonRetryable` stamps the exact message OBJECT pi's own agent
+      // loop carries all the way to its `message_end` event, so
+      // `pi-agent-runner.ts`'s `handlePiEvent` can recover the classification
+      // `NonRetryableModelError` carried and refuse to fail this turn over
+      // onto a metered fallback (`model-routing.ts`'s `isMarkedNonRetryable`).
+      if (error instanceof NonRetryableModelError) markNonRetryable(finalMessage)
       outer.push({ type: 'error', reason: 'error', error: finalMessage })
       outer.end(finalMessage)
     }

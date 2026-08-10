@@ -21,6 +21,7 @@ function fakeRegistry(
     runtimes: () => runtimes,
     ensureFresh: async (connectionId) => {
       ensureFreshCalls.push(connectionId)
+      return undefined
     },
     noteCallFailure: async (connectionId) => {
       noteCallFailureCalls.push(connectionId)
@@ -78,6 +79,35 @@ describe('createConnectionRuntimes', () => {
     expect(deltas).toEqual(['hello'])
     expect(ensureFreshCalls).toEqual(['codex-conn'])
     expect(calls).toEqual(['stream'])
+  })
+
+  it('a connection ensureFresh finds expired never reaches the adapter stream', async () => {
+    const calls: string[] = []
+    const runtime: ModelConnectionRuntime = {
+      connectionId: 'codex-conn',
+      provider: 'openai',
+      transport: 'subscription',
+      stream: async function* () {
+        calls.push('stream')
+        yield 'should never run'
+      },
+    }
+    const { registry, noteCallFailureCalls } = fakeRegistry([runtime], {
+      ensureFresh: async () => 'expired',
+    })
+
+    const [wrapped] = createConnectionRuntimes(registry)()
+    const { deltas, error } = await collect(
+      wrapped!.stream!({ modelId: 'gpt-5-codex', prompt: { systemPrompt: '', messages: [] } }),
+    )
+
+    expect(deltas).toEqual([])
+    expect(error).toBeInstanceOf(NonRetryableModelError)
+    expect((error as Error).message).toContain('expired')
+    expect(calls).toEqual([])
+    // `ensureFresh`'s own refresh already persisted the expired state — no
+    // second `noteCallFailure` for the same transition.
+    expect(noteCallFailureCalls).toEqual([])
   })
 
   it('a revoked subscription throws NonRetryableModelError so the router never fails over', async () => {

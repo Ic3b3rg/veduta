@@ -1,4 +1,9 @@
-import type { DeviceChallenge, ModelConnection, ModelConnectionsSnapshot } from '@veduta/protocol'
+import type {
+  DeviceChallenge,
+  ModelConnection,
+  ModelConnectionMethod,
+  ModelConnectionsSnapshot,
+} from '@veduta/protocol'
 
 /**
  * Pure presentation logic for the Model connections panel (issue #47,
@@ -9,43 +14,31 @@ import type { DeviceChallenge, ModelConnection, ModelConnectionsSnapshot } from 
  * keeping wizard/panel logic unit-testable without a browser.
  */
 
-/** Display name for the three BYOK providers; a novel provider string falls back to itself (`providerDisplayName`). */
-export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
-  anthropic: 'Claude',
-  openai: 'OpenAI',
-  openrouter: 'OpenRouter',
-}
-
-export function providerDisplayName(provider: string): string {
-  return PROVIDER_DISPLAY_NAMES[provider] ?? provider
-}
-
-/**
- * Method-id to display name, mirroring the daemon's own adapter metadata
- * (`packages/daemon/src/model-connection-byok.ts`,
- * `model-connection-claude.ts`) rather than re-deriving it: every BYOK method
- * id ends in `-api-key` and reads "API key"; the two subscription methods
- * each have their own fixed copy.
- */
-function methodDisplayName(methodId: ModelConnection['method']): string {
-  if (methodId.endsWith('-api-key')) return 'API key'
-  if (methodId === 'chatgpt-codex') return 'ChatGPT subscription'
-  return 'Subscription'
-}
-
 /**
  * The label for one connection inside the Connection select (issue #47): a
  * provider with a single connection needs no disambiguation at all; more
  * than one collapses to provider + method; and if that still collides (two
  * connections on the same provider AND the same method -- e.g. two Claude
  * API keys) the connection's own user-chosen label is appended as the last
- * resort.
+ * resort. Display names come from the snapshot's own `methods[]` (the
+ * Gateway's `ModelConnectionMethodSchema.providerDisplayName`/
+ * `methodDisplayName`, issue #47 fix batch C) rather than a PWA-side map
+ * duplicating that metadata -- a connection whose method the daemon no
+ * longer lists falls back to the raw provider/method strings the
+ * connection record itself carries.
  */
-export function connectionSelectLabel(connection: ModelConnection, all: ModelConnection[]): string {
+export function connectionSelectLabel(
+  connection: ModelConnection,
+  all: ModelConnection[],
+  methods: ModelConnectionMethod[],
+): string {
+  const method = methods.find((candidate) => candidate.id === connection.method)
+  const providerName = method?.providerDisplayName ?? connection.provider
   const siblings = all.filter((candidate) => candidate.provider === connection.provider)
-  if (siblings.length <= 1) return providerDisplayName(connection.provider)
+  if (siblings.length <= 1) return providerName
 
-  const label = `${providerDisplayName(connection.provider)} · ${methodDisplayName(connection.method)}`
+  const methodName = method?.methodDisplayName ?? connection.method
+  const label = `${providerName} · ${methodName}`
   const sameMethodSiblings = siblings.filter((candidate) => candidate.method === connection.method)
   if (sameMethodSiblings.length <= 1) return label
 

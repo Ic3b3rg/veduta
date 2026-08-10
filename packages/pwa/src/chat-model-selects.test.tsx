@@ -50,7 +50,7 @@ describe('ChatModelSelects', () => {
   it('shows the active global connection and model', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(connectedSnapshot())))
 
-    render(<ChatModelSelects token="tok" onManage={vi.fn()} />)
+    render(<ChatModelSelects token="tok" />)
 
     const connectionSelect = await screen.findByRole('combobox', { name: 'Connection' })
     const modelSelect = screen.getByRole('combobox', { name: 'Model' })
@@ -69,7 +69,7 @@ describe('ChatModelSelects', () => {
       )
     vi.stubGlobal('fetch', fetchMock)
 
-    render(<ChatModelSelects token="tok" onManage={vi.fn()} />)
+    render(<ChatModelSelects token="tok" />)
 
     const modelSelect = (await screen.findByRole('combobox', {
       name: 'Model',
@@ -88,10 +88,10 @@ describe('ChatModelSelects', () => {
     await waitFor(() => expect(modelSelect.value).toBe('claude-sonnet-5'))
   })
 
-  it('offers no way to add or revoke a connection', async () => {
+  it('offers no way to add or revoke a connection, nor its own settings-view button', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(connectedSnapshot())))
 
-    render(<ChatModelSelects token="tok" onManage={vi.fn()} />)
+    render(<ChatModelSelects token="tok" />)
 
     await screen.findByRole('combobox', { name: 'Connection' })
     expect(screen.queryByRole('button', { name: /^add/i })).toBeNull()
@@ -99,6 +99,10 @@ describe('ChatModelSelects', () => {
     expect(screen.queryByRole('button', { name: /^authorize$/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /^revoke$/i })).toBeNull()
     expect(screen.queryByLabelText(/api key/i)).toBeNull()
+    // The "Model connections" button lives unconditionally in the topbar
+    // (`app.tsx`) since issue #47 fix batch C, not inside this
+    // self-contained, no-connections-renders-nothing component.
+    expect(screen.queryByRole('button', { name: 'Model connections' })).toBeNull()
   })
 
   it('renders nothing when no connections exist', async () => {
@@ -116,7 +120,7 @@ describe('ChatModelSelects', () => {
       ),
     )
 
-    const { container } = render(<ChatModelSelects token="tok" onManage={vi.fn()} />)
+    const { container } = render(<ChatModelSelects token="tok" />)
 
     await waitFor(() => expect(fetch).toHaveBeenCalled())
     expect(container.firstChild).toBeNull()

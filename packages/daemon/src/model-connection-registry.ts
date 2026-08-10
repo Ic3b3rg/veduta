@@ -28,11 +28,12 @@ import {
   type AdapterContext,
   type AdapterEnv,
   type AdapterAvailability,
+  type AuthorizeInput,
   type ModelConnectionAdapter,
   type RefreshResult,
 } from './model-connection-adapter.ts'
 import type { CodexTransport } from './codex-app-server.ts'
-import { loadRoutingConfig, type SecretResolver } from './model-routing.ts'
+import { loadRoutingConfig, saveRoutingConfig, type SecretResolver } from './model-routing.ts'
 import type { ModelConnectionRuntime, SubscriptionStreamRequest } from './pi-provider-bridge.ts'
 import type { SecretsVault } from './secrets-vault.ts'
 
@@ -75,7 +76,7 @@ export interface ModelConnectionRegistryOptions {
   now: () => Date
   /** One real inference call through the production path, addressed by connection id (server.ts's throwaway probe bridge, used by the verify-then-commit selection flow). */
   probe: (connectionId: string, modelId: string) => Promise<void>
-  /** Injected so the registry never has to import `pi-provider-bridge.ts` to know what this build can route to (M5). */
+  /** Injected so the registry never has to import `pi-provider-bridge.ts` to know what this build can route to (issue #47). */
   isRoutableModel: (provider: string, modelId: string) => boolean
   /** Fired after every mutation that persists `connections.json`, so `server.ts` can rebuild and swap the live routing config with no restart. */
   onRoutingChanged?: (file: ConnectionsFile) => void
@@ -101,7 +102,7 @@ export interface ModelConnectionRegistryOptions {
   onCallFailure?: (connectionId: string, state: ConnectionLifecycleState) => void
 }
 
-/** The result of `applySelectionPrepared`'s step 1 (R3): the WOULD-BE file, never written yet, plus the generation it was computed against. */
+/** The result of `applySelectionPrepared`'s step 1 (issue #47's verify-then-commit selection flow): the WOULD-BE file, never written yet, plus the generation it was computed against. */
 export interface PreparedSelection {
   candidateFile: ConnectionsFile
   generation: number
@@ -144,9 +145,10 @@ function withState(
  *   tick share one adapter call rather than issuing two.
  *
  * `generation` is bumped exactly once per persisted write (`persist()`) —
- * the round-2 R3 ruling's compare-and-swap counter that lets
- * `applySelectionPrepared`/`commitSelection` detect a connection change that
- * happened while a model-selection probe was running outside the queue.
+ * the compare-and-swap counter (issue #47's verify-then-commit selection
+ * flow) that lets `applySelectionPrepared`/`commitSelection` detect a
+ * connection change that happened while a model-selection probe was running
+ * outside the queue.
  */
 export class ModelConnectionRegistry {
   private readonly rootDir: string
@@ -187,7 +189,7 @@ export class ModelConnectionRegistry {
     this.onCallFailure = options.onCallFailure
   }
 
-  /** The R3 compare-and-swap counter, read by the route layer before starting a selection probe outside the queue. */
+  /** The compare-and-swap counter (issue #47's verify-then-commit selection flow), read by the route layer before starting a selection probe outside the queue. */
   currentGeneration(): number {
     return this.generation
   }
@@ -272,7 +274,7 @@ export class ModelConnectionRegistry {
     return availability
   }
 
-  /** `isRoutableModel` never applies to a non-api-key method (device-code/none): a subscription connection's catalog is always routable (M5). */
+  /** `isRoutableModel` never applies to a non-api-key method (device-code/none): a subscription connection's catalog is always routable (issue #47). */
   private applyRoutable(
     adapter: ModelConnectionAdapter,
     entries: ModelCatalogEntry[],
@@ -380,15 +382,35 @@ export class ModelConnectionRegistry {
     return run
   }
 
-  /** Runs the singleflight refresh, then applies its result to the persisted record inside the mutation queue. */
+  /**
+   * Runs the singleflight refresh, then applies its result to the persisted
+   * record inside the mutation queue. Compare-and-swap (issue #47): the
+   * record's `state`/`stateAt` pre-image is captured BEFORE the singleflight
+   * call even starts, so a caller that mutated this same connection (a
+   * reauthorization, a `noteCallFailure`, another refresh) while the adapter
+   * call was in flight is detected once the queued apply step actually runs
+   * — a mismatch means this result is stale, and it is discarded rather than
+   * clobbering whatever that newer mutation wrote; the caller returns the
+   * CURRENT record, unmodified. The in-memory device challenge is deleted
+   * only when it is still the exact object this call was given — a
+   * reauthorization that already replaced it with a fresh challenge must
+   * never have that new challenge erased by this stale result.
+   */
   private async applyRefreshResult(
     id: string,
     challenge?: DeviceChallenge,
   ): Promise<ModelConnection> {
+    const preFile = loadConnectionsConfig(this.rootDir)
+    const preRecord = this.findRecord(preFile, id)
+    const preImage = { state: preRecord.state, stateAt: preRecord.stateAt }
+
     const result = await this.refreshInternal(id, challenge)
     return this.queue(async () => {
       const file = loadConnectionsConfig(this.rootDir)
       const record = this.findRecord(file, id)
+      if (record.state !== preImage.state || record.stateAt !== preImage.stateAt) {
+        return this.connectionWire(record)
+      }
       const adapter = this.findAdapter(record.method)
 
       let updated = withState(record, {
@@ -400,7 +422,7 @@ export class ModelConnectionRegistry {
       })
 
       if (result.state === 'connected') {
-        this.challenges.delete(id)
+        if (this.challenges.get(id) === challenge) this.challenges.delete(id)
         const entries = await adapter.catalog(this.contextFor(id, updated.secretRef))
         updated = {
           ...updated,
@@ -448,43 +470,7 @@ export class ModelConnectionRegistry {
       }
 
       if (adapter.capabilities.authorization === 'api-key' && request.apiKey !== undefined) {
-        const secretRef = `secret://vault/${id}-api-key`
-        try {
-          const result = await adapter.authorize(this.contextFor(id, secretRef), {
-            apiKey: request.apiKey,
-          })
-          if (result.state === 'connected') {
-            record = withState(record, {
-              state: 'verifying',
-              stateAt: this.now().toISOString(),
-              secretRef,
-              ...(result.account === undefined ? {} : { account: result.account }),
-            })
-            const entries = await adapter.catalog(this.contextFor(id, secretRef))
-            record = {
-              ...record,
-              state: 'connected',
-              stateAt: this.now().toISOString(),
-              catalog: this.applyRoutable(adapter, entries),
-              catalogFetchedAt: this.now().toISOString(),
-            }
-          } else {
-            this.challenges.set(id, result.challenge)
-            record = withState(record, {
-              state: 'waiting-for-user',
-              stateAt: this.now().toISOString(),
-              secretRef,
-            })
-          }
-        } catch (error) {
-          const err = connectionErrorFrom(error)
-          record = withState(record, {
-            state: 'failed',
-            stateAt: this.now().toISOString(),
-            stateReason: err.message,
-            secretRef,
-          })
-        }
+        record = await this.runAuthorization(record, adapter, { apiKey: request.apiKey })
       }
 
       const file = loadConnectionsConfig(this.rootDir)
@@ -492,6 +478,69 @@ export class ModelConnectionRegistry {
       this.persist(nextFile)
       return this.buildSnapshot(nextFile)
     })
+  }
+
+  /**
+   * The authorize → 'verifying' → catalog → 'connected'/'failed'
+   * (or 'waiting-for-user') state machine shared by `create` and
+   * `authorize` (issue #47) — previously duplicated between the two.
+   * Computes the secretRef fresh rather than trusting whatever `record`
+   * already carries: for an `authorization: 'api-key'` adapter, a
+   * successful authorize ALWAYS repoints the record at THIS connection's own
+   * `secret://vault/<id>-api-key` entry — the adapter's own `authorize`
+   * (`model-connection-byok.ts`) just stored the new key there, so the
+   * record must follow it, replacing any previous reference (a migrated
+   * legacy `secret://env/…` ref included). The old environment variable, if
+   * any, is left exactly where it was; the record simply stops resolving
+   * through it. A non-api-key (device-code) adapter passes `record.secretRef`
+   * through unchanged — Codex owns its own credentials under `codexHome`
+   * and is never stamped with a vault reference here.
+   */
+  private async runAuthorization(
+    record: ModelConnectionRecord,
+    adapter: ModelConnectionAdapter,
+    input: AuthorizeInput,
+  ): Promise<ModelConnectionRecord> {
+    const id = record.id
+    const secretRef =
+      adapter.capabilities.authorization === 'api-key'
+        ? `secret://vault/${id}-api-key`
+        : record.secretRef
+
+    try {
+      const result = await adapter.authorize(this.contextFor(id, secretRef), input)
+      if (result.state === 'connected') {
+        const verifying = withState(record, {
+          state: 'verifying',
+          stateAt: this.now().toISOString(),
+          ...(secretRef === undefined ? {} : { secretRef }),
+          ...(result.account === undefined ? {} : { account: result.account }),
+        })
+        const entries = await adapter.catalog(this.contextFor(id, secretRef))
+        this.challenges.delete(id)
+        return {
+          ...verifying,
+          state: 'connected',
+          stateAt: this.now().toISOString(),
+          catalog: this.applyRoutable(adapter, entries),
+          catalogFetchedAt: this.now().toISOString(),
+        }
+      }
+      this.challenges.set(id, result.challenge)
+      return withState(record, {
+        state: 'waiting-for-user',
+        stateAt: this.now().toISOString(),
+        ...(secretRef === undefined ? {} : { secretRef }),
+      })
+    } catch (error) {
+      const err = connectionErrorFrom(error)
+      return withState(record, {
+        state: 'failed',
+        stateAt: this.now().toISOString(),
+        stateReason: err.message,
+        ...(secretRef === undefined ? {} : { secretRef }),
+      })
+    }
   }
 
   async authorize(
@@ -516,57 +565,15 @@ export class ModelConnectionRegistry {
         )
       }
 
-      // A fabricated vault secretRef only ever makes sense for an api-key
-      // method — a device-code connection (Codex, in a later slice) owns its
-      // credentials through `codexHome` instead and must never be stamped
-      // with a bogus vault reference here.
-      const secretRef =
-        adapter.capabilities.authorization === 'api-key'
-          ? (record.secretRef ?? `secret://vault/${id}-api-key`)
-          : record.secretRef
-      let working = withState(record, {
+      const authorizing = withState(record, {
         state: 'authorizing',
         stateAt: this.now().toISOString(),
       })
-
-      try {
-        const result = await adapter.authorize(
-          this.contextFor(id, secretRef),
-          input.apiKey === undefined ? {} : { apiKey: input.apiKey },
-        )
-        if (result.state === 'connected') {
-          working = withState(working, {
-            state: 'verifying',
-            stateAt: this.now().toISOString(),
-            ...(secretRef === undefined ? {} : { secretRef }),
-            ...(result.account === undefined ? {} : { account: result.account }),
-          })
-          const entries = await adapter.catalog(this.contextFor(id, secretRef))
-          working = {
-            ...working,
-            state: 'connected',
-            stateAt: this.now().toISOString(),
-            catalog: this.applyRoutable(adapter, entries),
-            catalogFetchedAt: this.now().toISOString(),
-          }
-          this.challenges.delete(id)
-        } else {
-          this.challenges.set(id, result.challenge)
-          working = withState(working, {
-            state: 'waiting-for-user',
-            stateAt: this.now().toISOString(),
-            ...(secretRef === undefined ? {} : { secretRef }),
-          })
-        }
-      } catch (error) {
-        const err = connectionErrorFrom(error)
-        working = withState(working, {
-          state: 'failed',
-          stateAt: this.now().toISOString(),
-          stateReason: err.message,
-          ...(secretRef === undefined ? {} : { secretRef }),
-        })
-      }
+      const working = await this.runAuthorization(
+        authorizing,
+        adapter,
+        input.apiKey === undefined ? {} : { apiKey: input.apiKey },
+      )
 
       const nextFile = this.replaceRecord(file, working)
       this.persist(nextFile)
@@ -656,6 +663,18 @@ export class ModelConnectionRegistry {
     })
   }
 
+  /**
+   * An env-backed key (issue #47) is never Veduta's to delete: the
+   * environment variable stays alive underneath the daemon regardless of
+   * what this method does, so removing the connection replaces the record
+   * with a `'revoked'` tombstone instead of dropping it — the id survives,
+   * so a boot-time migration (`model-connection-migration.ts`'s
+   * `reconcileByokConnections`, which skips any id that already has a
+   * record) can never resurrect it as a fresh `'connected'` connection the
+   * moment the daemon restarts. A vault-backed or keyless connection has no
+   * such environment-level survivor to account for and is deleted outright,
+   * as before.
+   */
   async remove(id: string): Promise<ModelConnectionsSnapshot> {
     return this.queue(async () => {
       const file = loadConnectionsConfig(this.rootDir)
@@ -672,19 +691,50 @@ export class ModelConnectionRegistry {
       }
 
       this.challenges.delete(id)
-      const connections = file.connections.filter((candidate) => candidate.id !== id)
       const selection = file.selection?.connectionId === id ? undefined : file.selection
+      const isEnvBacked = record.secretRef?.startsWith('secret://env/') === true
+      const connections = isEnvBacked
+        ? file.connections.map((candidate) =>
+            candidate.id === id
+              ? withState(candidate, {
+                  state: 'revoked',
+                  stateAt: this.now().toISOString(),
+                  stateReason:
+                    'the key comes from the daemon environment and stays there; remove the environment variable to retire it',
+                })
+              : candidate,
+          )
+        : file.connections.filter((candidate) => candidate.id !== id)
+      // `selection` must be dropped from `file` FIRST, not merely left
+      // un-overridden: spreading `...file` already copies its `selection`
+      // key onto `nextFile`, so a later conditional spread that omits
+      // `selection` (the removed-id case) would otherwise leave the STALE
+      // value in place rather than actually clearing it.
+      const { selection: _droppedSelection, ...fileWithoutSelection } = file
       const nextFile: ConnectionsFile = {
-        ...file,
+        ...fileWithoutSelection,
         connections,
         ...(selection ? { selection } : {}),
       }
       this.persist(nextFile)
+      // A legacy hand-edited `routing.json` may still carry this id's
+      // `connectionKeys` entry (issue #47): drop it here too, so a stale
+      // pointer can never resolve after the connection is gone or
+      // tombstoned.
+      this.dropRoutingConnectionKey(id)
       return this.buildSnapshot(nextFile)
     })
   }
 
-  /** R3 step 1: validates the target and returns the WOULD-BE file plus the generation it was computed against. Nothing is written. */
+  /** Drops `routing.json`'s `connectionKeys[id]` entry, if any — see `remove`'s own doc comment. */
+  private dropRoutingConnectionKey(id: string): void {
+    const routing = loadRoutingConfig(this.rootDir)
+    if (routing.connectionKeys[id] === undefined) return
+    const { [id]: _dropped, ...connectionKeys } = routing.connectionKeys
+    saveRoutingConfig(this.rootDir, { ...routing, connectionKeys })
+  }
+
+  /** Step 1 of the verify-then-commit selection flow (issue #47): validates the target and returns the WOULD-BE file plus the generation it was computed against. Nothing is written. */
   async applySelectionPrepared(connectionId: string, modelId: string): Promise<PreparedSelection> {
     return this.queue(() => {
       const file = loadConnectionsConfig(this.rootDir)
@@ -709,7 +759,7 @@ export class ModelConnectionRegistry {
     })
   }
 
-  /** R3 step 3: rejects with the try-again reason if anything else mutated the file while the caller's probe (run outside the queue) was in flight; otherwise commits atomically. */
+  /** Step 3 of the verify-then-commit selection flow (issue #47): rejects with the try-again reason if anything else mutated the file while the caller's probe (run outside the queue) was in flight; otherwise commits atomically. */
   async commitSelection(prepared: PreparedSelection): Promise<void> {
     return this.queue(() => {
       if (this.generation !== prepared.generation) {
@@ -741,20 +791,26 @@ export class ModelConnectionRegistry {
    * Pre-inference freshness check: a no-op for a `refresh: 'static'` method
    * (BYOK has nothing to refresh) and for a connection refreshed within the
    * last five minutes, so a chat turn never pays for a redundant provider
-   * round-trip on every call.
+   * round-trip on every call. Returns `undefined` for either skip case, or
+   * the connection's lifecycle state AFTER a refresh actually ran (issue
+   * #47): `connection-inference.ts`'s wrapper reads this to refuse a turn on
+   * a connection that just turned out to be revoked/expired, BEFORE ever
+   * calling the adapter's own `stream` verb, rather than only reacting to a
+   * failure mid-call.
    */
-  async ensureFresh(id: string): Promise<void> {
+  async ensureFresh(id: string): Promise<ConnectionLifecycleState | undefined> {
     const file = loadConnectionsConfig(this.rootDir)
     const record = this.findRecord(file, id)
     const adapter = this.findAdapter(record.method)
-    if (adapter.capabilities.refresh === 'static') return
+    if (adapter.capabilities.refresh === 'static') return undefined
     const last = record.lastRefreshAt ? new Date(record.lastRefreshAt).getTime() : undefined
-    if (last !== undefined && this.now().getTime() - last < ENSURE_FRESH_WINDOW_MS) return
-    await this.applyRefreshResult(id, this.challenges.get(id))
+    if (last !== undefined && this.now().getTime() - last < ENSURE_FRESH_WINDOW_MS) return undefined
+    const refreshed = await this.applyRefreshResult(id, this.challenges.get(id))
+    return refreshed.state
   }
 
   /**
-   * Maps a live-call failure onto the connection it came from (R5): a
+   * Maps a live-call failure onto the connection it came from (issue #47): a
    * migrated legacy connection's id IS its provider name, so an unbound
    * legacy `ModelRef` (no `connectionId`) still resolves here when the
    * caller passes `model.connectionId ?? model.provider`. No match is a
@@ -791,15 +847,17 @@ export class ModelConnectionRegistry {
 
   /**
    * Every `connected` connection as a `pi-provider-bridge.ts`
-   * `ModelConnectionRuntime` (issue #47): `'subscription'` transport for a
-   * `chatgpt-codex` connection whose adapter implements `stream`,
-   * `'builtin'` for everything else. The `stream` member here calls the
-   * adapter directly, with NO freshness check and NO failure-state
-   * mapping — `connection-inference.ts`'s `createConnectionRuntimes` is
-   * the one place that wraps it with `ensureFresh`/`noteCallFailure`
-   * before `server.ts` ever hands this array to the provider bridge; this
-   * method stays a plain, synchronous snapshot of what the registry
-   * currently knows.
+   * `ModelConnectionRuntime` (issue #47): `'subscription'` transport for any
+   * connection whose adapter implements `stream` (`model-connection-adapter.ts`'s
+   * doc comment on that member — only Codex today, but the check is
+   * adapter-authoritative, not a hardcoded method id, so a future
+   * subscription adapter needs no change here), `'builtin'` for everything
+   * else. The `stream` member here calls the adapter directly, with NO
+   * freshness check and NO failure-state mapping — `connection-inference.ts`'s
+   * `createConnectionRuntimes` is the one place that wraps it with
+   * `ensureFresh`/`noteCallFailure` before `server.ts` ever hands this array
+   * to the provider bridge; this method stays a plain, synchronous snapshot
+   * of what the registry currently knows.
    */
   runtimes(): ModelConnectionRuntime[] {
     const file = loadConnectionsConfig(this.rootDir)
@@ -808,9 +866,7 @@ export class ModelConnectionRegistry {
       .map((record) => {
         const adapter = this.findAdapter(record.method)
         const transport: ModelConnectionRuntime['transport'] =
-          record.method === 'chatgpt-codex' && adapter.stream !== undefined
-            ? 'subscription'
-            : 'builtin'
+          adapter.stream !== undefined ? 'subscription' : 'builtin'
         if (transport !== 'subscription') {
           return { connectionId: record.id, provider: record.provider, transport }
         }

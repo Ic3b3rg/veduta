@@ -99,7 +99,32 @@ describe('App', () => {
     expect(screen.queryByLabelText('Spaces')).toBeNull()
   })
 
-  it('the Model connections button switches the view and Back returns to Home', async () => {
+  it('the Model connections button renders with zero connections', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
+    vi.mocked(fetchSpaces).mockResolvedValue({ spaces: [], surfaceCursor: 0 })
+    vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+      fromPartial<OnboardingStatus>({ required: false, completed: true }),
+    )
+    // A pure-mock install (issue #47 fix batch C): `ChatModelSelects` renders
+    // nothing for this snapshot, yet the settings view must still be
+    // reachable to add a first connection.
+    vi.mocked(fetchModelConnections).mockResolvedValue({
+      vaultAvailable: true,
+      mockEnabled: true,
+      mockControlAvailable: false,
+      methods: [],
+      connections: [],
+      selection: null,
+    })
+
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByLabelText('Spaces')).toBeDefined())
+
+    expect(await screen.findByRole('button', { name: 'Model connections' })).toBeDefined()
+  })
+
+  it('the Model connections button opens the settings view', async () => {
     vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
     vi.mocked(fetchSpaces).mockResolvedValue({ spaces: [], surfaceCursor: 0 })
     vi.mocked(fetchOnboardingStatus).mockResolvedValue(

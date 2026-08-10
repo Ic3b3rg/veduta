@@ -188,11 +188,15 @@ export function loadRoutingConfig(rootDir: string): RoutingConfig {
  *    disk still names it. A tier can end up empty; `RuntimeRoutingConfigSchema`
  *    permits that and `candidates()` then throws `NoAvailableModelError`, a
  *    visible stop rather than a silent mock answer.
- * 2. **Append.** Only when allowed and no tier candidate resolves a key: a
- *    keyless mock candidate (`reader-mock` for triage, `worker-mock` for
- *    reasoning) is appended, exactly as before this issue. Keeps the
- *    dev/Local-VPS-with-the-development-control profile routable with no
- *    provider key configured.
+ * 2. **Append.** Only when allowed, no tier candidate resolves a key, AND
+ *    `options.hasRealSelection` is not true: a keyless mock candidate
+ *    (`reader-mock` for triage, `worker-mock` for reasoning) is appended,
+ *    exactly as before this issue. Keeps the dev/Local-VPS-with-the-development-control
+ *    profile routable with no provider key configured. `hasRealSelection`
+ *    (issue #47) skips this step entirely — an explicit real selection is
+ *    never silently answered by the mock: once the user has chosen a
+ *    specific Model connection, an empty tier must surface as
+ *    `NoAvailableModelError`, not quietly fall back to the mock.
  *
  * `candidates()` adds a second, structural guarantee on top of this: once a
  * real candidate resolves, every mock entry is dropped from the attempt
@@ -204,7 +208,11 @@ export function loadRoutingConfig(rootDir: string): RoutingConfig {
 export function withMockFallback(
   config: RoutingConfig | RuntimeRoutingConfig,
   secrets: SecretResolver,
-  options: { profile: 'loopback' | 'local-vps' | 'vps'; mockEnabled?: boolean },
+  options: {
+    profile: 'loopback' | 'local-vps' | 'vps'
+    mockEnabled?: boolean
+    hasRealSelection?: boolean
+  },
 ): RuntimeRoutingConfig {
   const mockAllowed =
     options.profile === 'loopback' ||
@@ -220,6 +228,7 @@ export function withMockFallback(
         },
       }
   if (!mockAllowed) return RuntimeRoutingConfigSchema.parse(stripped)
+  if (options.hasRealSelection === true) return RuntimeRoutingConfigSchema.parse(stripped)
 
   const keyResolves = (entries: TierModel[]) =>
     entries.some((entry) => {
@@ -301,6 +310,38 @@ export class NonRetryableModelError extends Error {
     super(message)
     this.name = 'NonRetryableModelError'
   }
+}
+
+/**
+ * Carrier objects (in practice, a `PiAssistantMessage`) that a
+ * `NonRetryableModelError` was raised for, tracked by object identity
+ * (issue #47, docs/adr/0014-subscription-inference-boundary.md amendment).
+ *
+ * pi resolves a provider failure as a completed turn whose assistant message
+ * carries `stopReason: 'error'` and a bare `errorMessage` string — the
+ * thrown error's class identity never crosses that boundary
+ * (`pi-provider-bridge.ts`'s `streamSubscription`, `pi-agent-runner.ts`'s
+ * `TurnFailedError` doc comment). pi's own agent loop carries the EXACT
+ * final-message object all the way from the stream to its `message_end`
+ * event (a `{ ...message }` copy happens only at `message_start`, never
+ * after), so a `WeakSet` keyed on that object's identity survives the trip:
+ * `markNonRetryable` is called on the message object at the point the
+ * `NonRetryableModelError` is caught, and `isMarkedNonRetryable` reads it
+ * back off `event.message` in `handlePiEvent`. A `WeakSet` (not a `Map`)
+ * because nothing here ever needs to enumerate or size this set — only ask
+ * "was this exact object marked" — and the entry must never outlive the
+ * message object itself.
+ */
+const nonRetryableCarriers = new WeakSet<object>()
+
+/** Marks `carrier` as having come from a `NonRetryableModelError` — see `nonRetryableCarriers`'s doc comment for the invariant this maintains. */
+export function markNonRetryable(carrier: object): void {
+  nonRetryableCarriers.add(carrier)
+}
+
+/** True only when `markNonRetryable` was called on this exact object. */
+export function isMarkedNonRetryable(carrier: unknown): boolean {
+  return typeof carrier === 'object' && carrier !== null && nonRetryableCarriers.has(carrier)
 }
 
 export type RouterEvent =

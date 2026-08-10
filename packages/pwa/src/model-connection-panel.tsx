@@ -23,7 +23,8 @@ export interface ModelConnectionPanelProps {
   onCreate: (body: CreateModelConnectionRequest) => void
   onAuthorize: (id: string, body: AuthorizeModelConnectionRequest) => void
   onVerify: (id: string, modelId: string) => void
-  onApplySelection: (connectionId: string, modelId: string) => void
+  /** Resolves `false` when the daemon rejected the selection (issue #47 fix batch C) so `SelectionControls` can roll its local draft state back to the committed selection. */
+  onApplySelection: (connectionId: string, modelId: string) => Promise<boolean>
   onUpdate: (id: string, patch: UpdateModelConnectionRequest) => void
   onRemove: (id: string) => void
   onSetMock: (enabled: boolean) => void
@@ -360,7 +361,7 @@ function SelectionControls({
   snapshot: ModelConnectionsSnapshot
   busy: boolean
   onVerify: (id: string, modelId: string) => void
-  onApplySelection: (connectionId: string, modelId: string) => void
+  onApplySelection: (connectionId: string, modelId: string) => Promise<boolean>
 }) {
   const connectedConnections = snapshot.connections.filter(
     (connection) => connection.state === 'connected',
@@ -389,7 +390,7 @@ function SelectionControls({
       >
         {connectedConnections.map((connection) => (
           <option key={connection.id} value={connection.id}>
-            {connectionSelectLabel(connection, snapshot.connections)}
+            {connectionSelectLabel(connection, snapshot.connections, snapshot.methods)}
           </option>
         ))}
       </select>
@@ -417,7 +418,17 @@ function SelectionControls({
         <button
           type="button"
           disabled={busy || !canAct}
-          onClick={() => onApplySelection(connectionId, modelId)}
+          onClick={() => {
+            // A rejection (verify-then-commit: nothing was applied
+            // server-side) must snap both drafts back to the selection that
+            // is actually committed, not just leave the error banner over
+            // stale selects (issue #47 fix batch C).
+            void onApplySelection(connectionId, modelId).then((committed) => {
+              if (committed) return
+              setConnectionId(snapshot.selection?.connectionId ?? '')
+              setModelId(snapshot.selection?.modelId ?? '')
+            })
+          }}
         >
           Use this model
         </button>

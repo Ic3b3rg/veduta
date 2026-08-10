@@ -1,4 +1,8 @@
-import type { ModelConnection, ModelConnectionsSnapshot } from '@veduta/protocol'
+import type {
+  ModelConnection,
+  ModelConnectionMethod,
+  ModelConnectionsSnapshot,
+} from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import {
   canContinue,
@@ -6,8 +10,37 @@ import {
   challengeCountdownLabel,
   connectionSelectLabel,
   lifecycleCopy,
-  providerDisplayName,
 } from './model-connection-view.ts'
+
+const anthropicApiKeyMethod: ModelConnectionMethod = {
+  id: 'anthropic-api-key',
+  provider: 'anthropic',
+  providerDisplayName: 'Claude',
+  methodDisplayName: 'API key',
+  capabilities: {
+    authorization: 'api-key',
+    refresh: 'static',
+    revocation: 'local-only',
+    vedutaTools: true,
+    metered: true,
+  },
+  available: true,
+}
+
+const claudeSubscriptionMethod: ModelConnectionMethod = {
+  id: 'claude-subscription',
+  provider: 'anthropic',
+  providerDisplayName: 'Claude',
+  methodDisplayName: 'Subscription',
+  capabilities: {
+    authorization: 'none',
+    refresh: 'static',
+    revocation: 'local-only',
+    vedutaTools: true,
+    metered: true,
+  },
+  available: false,
+}
 
 const anthropicApiKey: ModelConnection = {
   id: 'anthropic',
@@ -64,27 +97,35 @@ function emptySnapshot(
   }
 }
 
-describe('providerDisplayName', () => {
-  it('falls back to the raw provider string for a name it does not know', () => {
-    expect(providerDisplayName('some-future-provider')).toBe('some-future-provider')
-  })
-})
-
 describe('connectionSelectLabel', () => {
-  it('collapses to the provider name when a provider has one account', () => {
-    expect(connectionSelectLabel(anthropicApiKey, [anthropicApiKey])).toBe('Claude')
-  })
+  it('connection labels come from the snapshot method metadata', () => {
+    const methods = [anthropicApiKeyMethod, claudeSubscriptionMethod]
 
-  it('renders "Claude · Subscription" when two Claude accounts exist', () => {
+    expect(connectionSelectLabel(anthropicApiKey, [anthropicApiKey], methods)).toBe('Claude')
+
     const all = [anthropicApiKey, claudeSubscription]
-    expect(connectionSelectLabel(claudeSubscription, all)).toBe('Claude · Subscription')
-    expect(connectionSelectLabel(anthropicApiKey, all)).toBe('Claude · API key')
+    expect(connectionSelectLabel(claudeSubscription, all, methods)).toBe('Claude · Subscription')
+    expect(connectionSelectLabel(anthropicApiKey, all, methods)).toBe('Claude · API key')
   })
 
   it('appends the user label when provider and method both collide', () => {
     const all = [workKey, personalKey]
-    expect(connectionSelectLabel(workKey, all)).toBe('Claude · API key · Work key')
-    expect(connectionSelectLabel(personalKey, all)).toBe('Claude · API key · Personal key')
+    const methods = [anthropicApiKeyMethod]
+    expect(connectionSelectLabel(workKey, all, methods)).toBe('Claude · API key · Work key')
+    expect(connectionSelectLabel(personalKey, all, methods)).toBe('Claude · API key · Personal key')
+  })
+
+  it('an unknown provider falls back to its raw name', () => {
+    const novelConnection: ModelConnection = {
+      ...anthropicApiKey,
+      provider: 'some-future-provider',
+    }
+    // No method in the snapshot's `methods[]` matches this connection's
+    // method id, so the label falls back to the connection's own raw
+    // `provider` string instead of the daemon-supplied display name.
+    expect(connectionSelectLabel(novelConnection, [novelConnection], [])).toBe(
+      'some-future-provider',
+    )
   })
 })
 

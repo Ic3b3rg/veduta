@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
@@ -204,7 +204,7 @@ describe('fetchProviderCatalog', () => {
 })
 
 describe('storeConnectionApiKey', () => {
-  it("stores under <id>-api-key and points routing.json's connectionKeys at it", () => {
+  it('writes the vault only, never routing.json', () => {
     const dir = freshRoot()
     const vault = SecretsVault.open(dir, KEY_MATERIAL)
     const connectionId = '3fa85f64-5717-4562-b3fc-2c963f66afa6'
@@ -212,9 +212,10 @@ describe('storeConnectionApiKey', () => {
     storeConnectionApiKey({ rootDir: dir, vault }, connectionId, DISTINCTIVE_KEY)
 
     expect(vault.resolve(`secret://vault/${connectionId}-api-key`)).toBe(DISTINCTIVE_KEY)
-    expect(loadRoutingConfig(dir).connectionKeys[connectionId]).toBe(
-      `secret://vault/${connectionId}-api-key`,
-    )
+    // `connections.json`'s own `record.secretRef` is authoritative (issue
+    // #47); the runtime `connectionKeys` map is rebuilt live from it by
+    // `deriveRoutingConfig`, never persisted here.
+    expect(existsSync(join(dir, 'routing.json'))).toBe(false)
   })
 })
 

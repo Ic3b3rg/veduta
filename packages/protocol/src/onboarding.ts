@@ -21,10 +21,18 @@ export const OnboardingStepIdSchema = z.enum([
 ])
 
 /**
- * Per-step completion state persisted in `onboarding.json`. `skipped` covers the
- * one-tap-skip steps (BYOK falls back to the mock provider; integrations are
- * optional) — distinct from `completed` so the status view can render "skipped"
- * copy rather than implying the step actually ran.
+ * Per-step completion state persisted in `onboarding.json`. `model-connection`
+ * is never generically skippable (issue #47: "no free skip, only an honest
+ * built-in-mock statement on loopback") — `applyFinish` re-checks readiness
+ * against the live snapshot regardless of what status happens to be stored,
+ * so a stored `skipped` there would never let a required install through
+ * anyway. The one step this status value actually applies to going forward
+ * is the remaining optional step, `integrations`; the other place it appears
+ * is the legacy migration path (`onboarding-config.ts`), which maps a
+ * pre-#47 `steps.byok === 'skipped'` install onto
+ * `steps['model-connection'] = 'skipped'` so an old skip is not silently
+ * forgotten, even though a fresh install can no longer produce that value
+ * for this step.
  */
 export const OnboardingStepStatusSchema = z.enum(['pending', 'completed', 'skipped'])
 

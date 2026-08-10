@@ -117,14 +117,22 @@ export function storeProviderKey(
 
 /**
  * Stores one Model connection's API key in the vault under
- * `<connectionId>-api-key` and points `routing.json`'s
- * `connectionKeys[connectionId]` at it — keyed by the connection id rather
- * than the bare provider name `storeProviderKey` uses, so two independently
- * named connections for the same provider (issue #47's "Multiple accounts"
- * acceptance criterion) never overwrite each other's vault entry or routing
- * pointer. `key` is registered with `defaultRedactor` before anything else
- * runs, and the vault file is backed up before the write (issue #15
- * discipline).
+ * `<connectionId>-api-key` — keyed by the connection id rather than the bare
+ * provider name `storeProviderKey` uses, so two independently named
+ * connections for the same provider (issue #47's "Multiple accounts"
+ * acceptance criterion) never overwrite each other's vault entry. `key` is
+ * registered with `defaultRedactor` before anything else runs, and the vault
+ * file is backed up before the write (issue #15 discipline).
+ *
+ * Deliberately never touches `routing.json` (issue #47): `connections.json`'s
+ * own `record.secretRef` — set by `model-connection-registry.ts`'s
+ * `runAuthorization`, the caller of the adapter method that calls this — is
+ * the authoritative pointer for a Model connection's key, and the runtime
+ * `connectionKeys` map the router actually reads is rebuilt live from it on
+ * every mutation (`model-connection-routing.ts`'s `deriveRoutingConfig`).
+ * A second, persisted copy in `routing.json` would be redundant at best and
+ * a stale, unresolvable pointer at worst the moment the connection is
+ * removed or reauthorized elsewhere.
  */
 export function storeConnectionApiKey(
   deps: { rootDir: string; vault: SecretsVault },
@@ -135,11 +143,6 @@ export function storeConnectionApiKey(
   const secretName = `${connectionId}-api-key`
   backupFile(join(deps.rootDir, VAULT_FILE_NAME))
   deps.vault.set(secretName, key)
-  const routing = loadRoutingConfig(deps.rootDir)
-  saveRoutingConfig(deps.rootDir, {
-    ...routing,
-    connectionKeys: { ...routing.connectionKeys, [connectionId]: `secret://vault/${secretName}` },
-  })
 }
 
 /** GETs the provider's models endpoint above `TEST_TIMEOUT_MS`; `fetchProviderCatalog` uses a longer, catalog-sized budget instead. */

@@ -31,7 +31,7 @@ import {
   type ToolResult,
   type TriggerRef,
 } from './agent-runner.ts'
-import { NonRetryableModelError } from './model-routing.ts'
+import { isMarkedNonRetryable, NonRetryableModelError } from './model-routing.ts'
 import {
   effectiveOrigin,
   gateToolsForOrigins,
@@ -249,6 +249,20 @@ export class PiAgentRunner implements AgentRunner {
    * outbound action. Resumable mid-turn failover is future work.
    */
   private toolExecutedThisTurn = false
+  /**
+   * Whether the current turn's `turnError` (if any) came from a
+   * `NonRetryableModelError` on the pi stream boundary — recovered from the
+   * failed message object via `isMarkedNonRetryable`
+   * (`model-routing.ts`, issue #47, docs/adr/0014-subscription-inference-boundary.md
+   * amendment). Reset everywhere `turnError` is reset; set only in
+   * `handlePiEvent`'s assistant-error branch. `prompt()`'s turnError branch
+   * checks this the same way it already checks `toolExecutedThisTurn`: either
+   * one forces a `NonRetryableModelError` rather than the retryable
+   * `TurnFailedError`, so a revoked/expired subscription (or any other
+   * classified-non-retryable failure) can never fail over onto a same-turn
+   * metered fallback.
+   */
+  private turnErrorNonRetryable = false
 
   constructor(options: PiAgentRunnerOptions) {
     this.sessionStore = options.sessionStore
@@ -269,6 +283,7 @@ export class PiAgentRunner implements AgentRunner {
     const branch = await this.sessionStore.load(sessionId)
     this.currentModel = branch.model
     this.turnError = undefined
+    this.turnErrorNonRetryable = false
     this.agent = undefined
     if (this.currentModel)
       this.agent = this.createAgent(branch, this.currentModel, [], this.defaultContextPolicy)
@@ -372,6 +387,7 @@ export class PiAgentRunner implements AgentRunner {
     }
 
     this.turnError = undefined
+    this.turnErrorNonRetryable = false
     try {
       await this.agent.prompt(input)
     } catch (error) {
@@ -394,11 +410,17 @@ export class PiAgentRunner implements AgentRunner {
     // rejection, with the poisoned agent state discarded for the retry.
     if (this.turnError !== undefined) {
       const message = this.turnError
+      const nonRetryable = this.turnErrorNonRetryable
       this.turnError = undefined
+      this.turnErrorNonRetryable = false
       this.agent = undefined
       // Same reasoning as the catch block above: a tool already ran this
-      // attempt, so this failure must not fail over.
-      if (this.toolExecutedThisTurn) throw new NonRetryableModelError(message)
+      // attempt, so this failure must not fail over. `nonRetryable` covers
+      // the other case that must never fail over even with no tool call at
+      // all — the pi stream boundary's `NonRetryableModelError`
+      // classification, recovered via `isMarkedNonRetryable` in
+      // `handlePiEvent` below (issue #47).
+      if (this.toolExecutedThisTurn || nonRetryable) throw new NonRetryableModelError(message)
       const status = turnFailureStatus(message)
       throw new TurnFailedError(message, status === undefined ? {} : { status })
     }
@@ -513,6 +535,11 @@ export class PiAgentRunner implements AgentRunner {
           // A failed assistant message never enters the session store:
           // the failover retry must not rebuild a poisoned context.
           this.turnError = event.message.errorMessage ?? 'Agent error'
+          // Recovers the pi stream boundary's `NonRetryableModelError`
+          // classification (issue #47): `event.message` is the exact object
+          // `pi-provider-bridge.ts`'s `streamSubscription` marked, carried
+          // here by reference through pi's own agent loop.
+          this.turnErrorNonRetryable = isMarkedNonRetryable(event.message)
           await this.events.emit({ type: 'error', message: this.turnError })
           return
         }

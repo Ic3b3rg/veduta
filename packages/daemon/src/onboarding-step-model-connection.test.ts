@@ -103,6 +103,57 @@ describe('assertModelConnectionReady', () => {
     ).toThrow(OnboardingStepError)
   })
 
+  it('a failed explicit selection blocks the step even when a legacy provider key resolves', () => {
+    const dir = freshRoot()
+    saveConnectionsConfig(dir, {
+      version: 1,
+      connections: [{ ...connectedAnthropic, state: 'expired' }],
+      selection: { connectionId: 'anthropic', modelId: 'claude-sonnet-5' },
+      mockEnabled: false,
+    })
+    saveRoutingConfig(dir, {
+      tiers: {
+        triage: [{ provider: 'anthropic', modelId: 'claude-haiku-4-5' }],
+        reasoning: [{ provider: 'anthropic', modelId: 'claude-sonnet-5' }],
+      },
+      providerKeys: { anthropic: 'secret://env/ANTHROPIC_API_KEY' },
+      connectionKeys: {},
+      dailyCapUsd: { triage: 5, reasoning: 20 },
+    })
+    // Before the fix, a defined `file.selection` would still fall through to
+    // this resolvable legacy key and incorrectly pass.
+    const secrets = resolverFor({ 'secret://env/ANTHROPIC_API_KEY': 'sk-real-key' })
+
+    expect(() => assertModelConnectionReady({ rootDir: dir, profile: 'vps', secrets })).toThrow(
+      OnboardingStepError,
+    )
+  })
+
+  it('an explicit selection with an opted-in connected fallback still passes', () => {
+    const dir = freshRoot()
+    const fallback: ConnectionsFile['connections'][number] = {
+      id: 'openai',
+      method: 'openai-api-key',
+      provider: 'openai',
+      label: 'OpenAI',
+      state: 'connected',
+      stateAt: '2026-08-09T00:00:00.000Z',
+      enabledForFallback: true,
+      createdAt: '2026-08-09T00:00:00.000Z',
+      selectedModelId: 'gpt-5.5',
+    }
+    saveConnectionsConfig(dir, {
+      version: 1,
+      connections: [{ ...connectedAnthropic, state: 'expired' }, fallback],
+      selection: { connectionId: 'anthropic', modelId: 'claude-sonnet-5' },
+      mockEnabled: false,
+    })
+
+    expect(() =>
+      assertModelConnectionReady({ rootDir: dir, profile: 'vps', secrets: noSecrets }),
+    ).not.toThrow()
+  })
+
   it('passes on vps via the legacy routing fallback when a reasoning key resolves', () => {
     const dir = freshRoot()
     // No connections.json at all -- a pre-Model-connections install that

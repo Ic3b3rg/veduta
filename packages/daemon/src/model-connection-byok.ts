@@ -97,11 +97,13 @@ async function verify(ctx: AdapterContext, modelId: string): Promise<void> {
 }
 
 /**
- * Deletes the vault entry only when `secretRef` is vault-backed (R6, issue
- * #47's round-2 rulings): an env-backed key (`secret://env/…`, kept alive by
- * a migrated legacy install that never moved its key into the vault) is
- * never Veduta's to delete — the note tells the operator the environment
- * variable is what actually needs removing. A connection that was never
+ * Deletes the vault entry only when `secretRef` is vault-backed (issue #47):
+ * an env-backed key (`secret://env/…`, kept alive by a migrated legacy
+ * install that never moved its key into the vault) is never Veduta's to
+ * delete — the note tells the operator the environment variable is what
+ * actually needs removing; `model-connection-registry.ts`'s `remove` reads
+ * this same distinction to replace an env-backed connection with a tombstone
+ * instead of deleting the record outright. A connection that was never
  * authorized (`secretRef` absent) has nothing to revoke and never throws.
  */
 async function revoke(ctx: AdapterContext): Promise<{ providerRevoked: boolean; note?: string }> {

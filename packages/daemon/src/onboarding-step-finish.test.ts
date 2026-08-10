@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { saveConnectionsConfig } from './connections-config.ts'
-import type { SecretResolver } from './model-routing.ts'
+import { saveRoutingConfig, type SecretResolver } from './model-routing.ts'
 import { loadOnboardingConfig, saveOnboardingConfig } from './onboarding-config.ts'
 import { OnboardingStepError } from './onboarding-status.ts'
 import { applyFinish } from './onboarding-step-finish.ts'
@@ -21,6 +21,10 @@ function freshRoot(): string {
 }
 
 const noSecrets: SecretResolver = { resolve: () => undefined }
+
+function resolverFor(values: Record<string, string>): SecretResolver {
+  return { resolve: (ref) => values[ref] }
+}
 
 /**
  * Every visible step other than `finish` already completed/skipped, so
@@ -233,6 +237,52 @@ describe('applyFinish', () => {
         scheduleExit: vi.fn(),
         env: { VEDUTA_LEGACY_HOME: dir },
         secrets: noSecrets,
+      }),
+    ).toThrow(OnboardingStepError)
+    expect(loadOnboardingConfig(dir).steps.finish).toBeUndefined()
+  })
+
+  it('a failed explicit selection blocks finishing even when a legacy provider key resolves', () => {
+    const dir = freshRoot()
+    completeAllPriorSteps(dir)
+    saveConnectionsConfig(dir, {
+      version: 1,
+      connections: [
+        {
+          id: 'anthropic',
+          method: 'anthropic-api-key',
+          provider: 'anthropic',
+          label: 'Claude',
+          state: 'expired',
+          stateAt: '2026-07-24T10:00:00.000Z',
+          enabledForFallback: false,
+          createdAt: '2026-07-24T10:00:00.000Z',
+          selectedModelId: 'claude-sonnet-5',
+        },
+      ],
+      selection: { connectionId: 'anthropic', modelId: 'claude-sonnet-5' },
+      mockEnabled: false,
+    })
+    saveRoutingConfig(dir, {
+      tiers: {
+        triage: [{ provider: 'anthropic', modelId: 'claude-haiku-4-5' }],
+        reasoning: [{ provider: 'anthropic', modelId: 'claude-sonnet-5' }],
+      },
+      providerKeys: { anthropic: 'secret://env/ANTHROPIC_API_KEY' },
+      connectionKeys: {},
+      dailyCapUsd: { triage: 5, reasoning: 20 },
+    })
+    // Before the fix, a defined `file.selection` would still fall through to
+    // this resolvable legacy key and incorrectly let finish complete.
+    const secrets = resolverFor({ 'secret://env/ANTHROPIC_API_KEY': 'sk-real-key' })
+
+    expect(() =>
+      applyFinish({
+        rootDir: dir,
+        profile: 'vps',
+        scheduleExit: vi.fn(),
+        env: { VEDUTA_LEGACY_HOME: dir },
+        secrets,
       }),
     ).toThrow(OnboardingStepError)
     expect(loadOnboardingConfig(dir).steps.finish).toBeUndefined()

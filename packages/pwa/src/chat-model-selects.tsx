@@ -17,16 +17,13 @@ import { catalogOptions, connectionSelectLabel } from './model-connection-view.t
  * selects rendering the snapshot they already had.
  *
  * Renders nothing on a pure-mock install (no connections at all, e.g. a
- * fresh Loopback profile): there is nothing to pick between yet, and adding
- * a connection is the settings view's job, reached through `onManage`.
+ * fresh Loopback profile): there is nothing to pick between yet. Reaching
+ * the settings view (to add a connection, or for anything beyond this one
+ * routing control) is the topbar's own unconditional "Model connections"
+ * button's job (`app.tsx`), not this component's -- that button must stay
+ * reachable even when this component renders nothing.
  */
-export function ChatModelSelects({
-  token,
-  onManage,
-}: {
-  token?: string | undefined
-  onManage: () => void
-}) {
+export function ChatModelSelects({ token }: { token?: string | undefined }) {
   const [snapshot, setSnapshot] = useState<ModelConnectionsSnapshot | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -99,7 +96,7 @@ export function ChatModelSelects({
         {connectionId === '' && <option value="">No connection selected</option>}
         {connectedConnections.map((connection) => (
           <option key={connection.id} value={connection.id}>
-            {connectionSelectLabel(connection, snapshot.connections)}
+            {connectionSelectLabel(connection, snapshot.connections, snapshot.methods)}
           </option>
         ))}
       </select>
@@ -117,10 +114,6 @@ export function ChatModelSelects({
           </option>
         ))}
       </select>
-
-      <button type="button" onClick={onManage}>
-        Model connections
-      </button>
     </div>
   )
 }

@@ -139,9 +139,10 @@ describe('authorize', () => {
 
     expect(result).toEqual({ state: 'connected' })
     expect(vault.resolve(`secret://vault/${CONNECTION_ID}-api-key`)).toBe('sk-good-key')
-    expect(loadRoutingConfig(dir).connectionKeys[CONNECTION_ID]).toBe(
-      `secret://vault/${CONNECTION_ID}-api-key`,
-    )
+    // `storeConnectionApiKey` no longer writes `routing.json` at all (issue
+    // #47): `connections.json`'s own `record.secretRef` is authoritative,
+    // and the runtime `connectionKeys` map is rebuilt live from it.
+    expect(loadRoutingConfig(dir).connectionKeys[CONNECTION_ID]).toBeUndefined()
   })
 })
 

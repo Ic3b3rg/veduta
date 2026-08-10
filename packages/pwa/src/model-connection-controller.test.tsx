@@ -114,4 +114,24 @@ describe('useModelConnectionsController', () => {
     await waitFor(() => expect(result.current.error).toBe('the provider rejected the key'))
     expect(result.current.busy).toBe(false)
   })
+
+  it('onApplySelection resolves false when the request fails', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(emptySnapshot()))
+      .mockResolvedValueOnce(jsonResponse({ error: 'the provider rejected the probe' }, 400))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useModelConnectionsController())
+    await waitFor(() => expect(result.current.snapshot).toBeDefined())
+
+    let committed: boolean | undefined
+    await act(async () => {
+      committed = await result.current.onApplySelection('connection-1', 'model-1')
+    })
+
+    expect(committed).toBe(false)
+    expect(result.current.error).toBe('the provider rejected the probe')
+    expect(result.current.busy).toBe(false)
+  })
 })

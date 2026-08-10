@@ -38,7 +38,13 @@ export interface ModelConnectionsController {
   onCreate: (body: CreateModelConnectionRequest) => void
   onAuthorize: (id: string, body: AuthorizeModelConnectionRequest) => void
   onVerify: (id: string, modelId: string) => void
-  onApplySelection: (connectionId: string, modelId: string) => void
+  /**
+   * Resolves `true` once the selection actually committed, `false` when the
+   * daemon rejected it (issue #47 fix batch C: a rejected selection must
+   * roll the panel's local draft state back to what is actually applied, not
+   * just show an error banner over stale selects).
+   */
+  onApplySelection: (connectionId: string, modelId: string) => Promise<boolean>
   onUpdate: (id: string, patch: UpdateModelConnectionRequest) => void
   onRemove: (id: string) => void
   onSetMock: (enabled: boolean) => void
@@ -72,20 +78,33 @@ export function useModelConnectionsController(token?: string): ModelConnectionsC
     return () => clearInterval(timer)
   }, [snapshot, refresh])
 
-  const runAction = useCallback(
-    async (fn: () => Promise<unknown>) => {
+  // The result-returning variant `onApplySelection` needs (issue #47 fix
+  // batch C): every other action stays fire-and-forget void, since only a
+  // rejected selection change has local draft state (the panel's Connection
+  // /Model selects) that must snap back to the committed value on failure.
+  const runActionForResult = useCallback(
+    async (fn: () => Promise<unknown>): Promise<boolean> => {
       setBusy(true)
       setError(null)
       try {
         await fn()
         await refresh()
+        return true
       } catch (e) {
         setError(e instanceof Error ? e.message : 'request failed')
+        return false
       } finally {
         setBusy(false)
       }
     },
     [refresh],
+  )
+
+  const runAction = useCallback(
+    async (fn: () => Promise<unknown>) => {
+      await runActionForResult(fn)
+    },
+    [runActionForResult],
   )
 
   return {
@@ -101,7 +120,7 @@ export function useModelConnectionsController(token?: string): ModelConnectionsC
         if (result.result === 'failed') throw new Error(result.reason)
       }),
     onApplySelection: (connectionId, modelId) =>
-      void runAction(() => applyModelSelection({ connectionId, modelId }, token)),
+      runActionForResult(() => applyModelSelection({ connectionId, modelId }, token)),
     onUpdate: (id, patch) => void runAction(() => updateModelConnection(id, patch, token)),
     onRemove: (id) => void runAction(() => deleteModelConnection(id, token)),
     onSetMock: (enabled) => void runAction(() => setMockProvider(enabled, token)),

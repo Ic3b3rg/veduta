@@ -63,15 +63,15 @@ import { reconcileByokConnections } from './model-connection-migration.ts'
 import { ModelConnectionRegistry } from './model-connection-registry.ts'
 import { registerModelConnectionRoutes } from './model-connection-routes.ts'
 import {
-  deriveRoutingConfig,
+  buildRuntimeRouting,
   egressProvidersFor,
+  pruneOrphanConnectionKeys,
   RoutingState,
 } from './model-connection-routing.ts'
 import {
   ModelRouter,
   envSecretResolver,
   loadRoutingConfig,
-  withMockFallback,
   type SecretResolver,
 } from './model-routing.ts'
 import { NotificationCenter } from './notification-center.ts'
@@ -755,22 +755,6 @@ export function buildServer(options: ServerOptions = {}) {
     await treeProposals.flush()
   })
 
-  // Model connection migration (issue #47, docs/adr/0014-subscription-inference-boundary.md
-  // amendment): a pre-Model-connections install keeps its provider keys in
-  // `routing.json`'s `providerKeys` with no `connections.json` record for
-  // them at all. Runs once, here, before the registry below ever reads
-  // `connections.json`, so a freshly migrated connection is already on disk
-  // the first time anything asks for a snapshot. Writes only
-  // `connections.json` and never sets a selection, so it changes nothing
-  // about how this install currently routes (`model-connection-migration.ts`'s
-  // own doc comment has the full argument).
-  reconcileByokConnections({
-    rootDir: store.spacesEngine.rootDir,
-    routing: loadRoutingConfig(store.spacesEngine.rootDir),
-    secrets,
-    now,
-  })
-
   // The registry below has to be constructed before `routingState`/`router`
   // (its initial config already needs the registry's freshly migrated
   // `connections.json`) and before `bridge` (whose `probe` needs the
@@ -807,6 +791,12 @@ export function buildServer(options: ServerOptions = {}) {
     secrets,
     now,
   })
+  // A legacy hand-edited or pre-this-fix `routing.json` may still carry a
+  // `connectionKeys` entry with no matching `connections.json` record
+  // (issue #47: `storeConnectionApiKey` no longer writes here at all, and
+  // `ModelConnectionRegistry.remove` now drops its own id's entry directly —
+  // this boot-time sweep is what catches everything either fix predates).
+  pruneOrphanConnectionKeys(store.spacesEngine.rootDir)
 
   // The Codex app-server session pool (issue #47,
   // `docs/adr/0014-subscription-inference-boundary.md` amendment): one
@@ -834,9 +824,9 @@ export function buildServer(options: ServerOptions = {}) {
 
   // The Model connection registry (issue #47): owns `connections.json`,
   // adapter dispatch, and every routing rebuild that follows a connection
-  // state change. `isRoutableModel: isBuiltinModel` (M5) marks a catalog
-  // entry this build cannot actually route to as disabled rather than
-  // letting it fail mid-turn.
+  // state change. `isRoutableModel: isBuiltinModel` marks a catalog entry
+  // this build cannot actually route to as disabled rather than letting it
+  // fail mid-turn.
   const registry = new ModelConnectionRegistry({
     rootDir: store.spacesEngine.rootDir,
     adapters: [...BYOK_ADAPTERS, claudeSubscriptionAdapter, codexSubscriptionAdapter],
@@ -877,14 +867,12 @@ export function buildServer(options: ServerOptions = {}) {
   // chat. Live spend recording (turn-end costUsd -> recordSpend) is the chat
   // loop's own job (chat-loop.ts's `runTurn`), constructed below.
   const routingState = new RoutingState(
-    withMockFallback(
-      deriveRoutingConfig(
-        loadRoutingConfig(store.spacesEngine.rootDir),
-        loadConnectionsConfig(store.spacesEngine.rootDir),
-      ),
+    buildRuntimeRouting({
+      rootDir: store.spacesEngine.rootDir,
+      file: loadConnectionsConfig(store.spacesEngine.rootDir),
       secrets,
-      { profile, mockEnabled: loadConnectionsConfig(store.spacesEngine.rootDir).mockEnabled },
-    ),
+      profile,
+    }),
   )
   const router = new ModelRouter({
     rootDir: store.spacesEngine.rootDir,
@@ -915,11 +903,12 @@ export function buildServer(options: ServerOptions = {}) {
     },
   })
   onRoutingChangedSlot.current = (file) => {
-    const derived = withMockFallback(
-      deriveRoutingConfig(loadRoutingConfig(store.spacesEngine.rootDir), file),
+    const derived = buildRuntimeRouting({
+      rootDir: store.spacesEngine.rootDir,
+      file,
       secrets,
-      { profile, mockEnabled: file.mockEnabled },
-    )
+      profile,
+    })
     routingState.replace(derived)
     router.setConfig(derived)
   }
@@ -928,7 +917,7 @@ export function buildServer(options: ServerOptions = {}) {
   // #47): maps a routed `ModelRef` plus its resolved key onto pi-ai's
   // provider clients for every real turn, and onto the deterministic mock
   // model (`createMockChatResponder`) for the keyless routing candidate
-  // `withMockFallback` appends above — the same loopback behavior the
+  // `buildRuntimeRouting`'s `withMockFallback` step appends above — the same loopback behavior the
   // pre-issue-37 chat stand-ins produced, now returned as tool calls the
   // gated registry below actually executes. `config`/`connections` are
   // getters, not snapshots, so the registry's live routing rebuilds are
@@ -958,14 +947,12 @@ export function buildServer(options: ServerOptions = {}) {
     const file = loadConnectionsConfig(store.spacesEngine.rootDir)
     const record = file.connections.find((candidate) => candidate.id === connectionId)
     if (!record) throw new Error(`no such Model connection: ${connectionId}`)
-    const candidateConfig = withMockFallback(
-      deriveRoutingConfig(loadRoutingConfig(store.spacesEngine.rootDir), {
-        ...file,
-        selection: { connectionId, modelId },
-      }),
+    const candidateConfig = buildRuntimeRouting({
+      rootDir: store.spacesEngine.rootDir,
+      file: { ...file, selection: { connectionId, modelId } },
       secrets,
-      { profile, mockEnabled: file.mockEnabled },
-    )
+      profile,
+    })
     const probeBridge = createProviderBridge({
       config: candidateConfig,
       connections: connectionRuntimes,

@@ -4,7 +4,7 @@ import type {
   ModelConnectionMethod,
   ModelConnectionsSnapshot,
 } from '@veduta/protocol'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ModelConnectionPanel } from './model-connection-panel.tsx'
 
@@ -73,7 +73,7 @@ const noop = {
   onCreate: vi.fn(),
   onAuthorize: vi.fn(),
   onVerify: vi.fn(),
-  onApplySelection: vi.fn(),
+  onApplySelection: vi.fn().mockResolvedValue(true),
   onUpdate: vi.fn(),
   onRemove: vi.fn(),
   onSetMock: vi.fn(),
@@ -287,6 +287,55 @@ describe('ModelConnectionPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add connection' }))
 
     expect(onCreate).toHaveBeenCalledWith({ method: 'anthropic-api-key', apiKey: 'sk-test-key' })
+  })
+
+  it('a rejected selection resets both selects to the committed selection', async () => {
+    const connectionA: ModelConnection = {
+      id: 'a1a1a1a1-0000-4000-8000-000000000001',
+      method: 'anthropic-api-key',
+      provider: 'anthropic',
+      label: 'Claude',
+      state: 'connected',
+      stateAt: '2026-08-09T00:00:00.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T00:00:00.000Z',
+      catalog: [
+        { id: 'claude-model-a', label: 'Claude model A', routable: true },
+        { id: 'claude-model-b', label: 'Claude model B', routable: true },
+      ],
+    }
+    const onApplySelection = vi.fn().mockResolvedValue(false)
+
+    render(
+      <ModelConnectionPanel
+        snapshot={baseSnapshot({
+          methods: [anthropicApiKeyMethod],
+          connections: [connectionA],
+          selection: { connectionId: connectionA.id, modelId: 'claude-model-a' },
+        })}
+        busy={false}
+        error="the provider rejected the probe: invalid_api_key"
+        {...noop}
+        onApplySelection={onApplySelection}
+      />,
+    )
+
+    const connectionSelect = document.getElementById('model-connection-select') as HTMLSelectElement
+    const modelSelect = document.getElementById('model-select') as HTMLSelectElement
+
+    fireEvent.change(modelSelect, { target: { value: 'claude-model-b' } })
+    expect(modelSelect.value).toBe('claude-model-b')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use this model' }))
+
+    expect(onApplySelection).toHaveBeenCalledWith(connectionA.id, 'claude-model-b')
+
+    // Verify-then-commit: nothing was applied server-side, so both drafts
+    // snap back to the selection that is actually committed rather than
+    // leaving the selects showing the rejected value under the error
+    // banner (issue #47 fix batch C).
+    await waitFor(() => expect(modelSelect.value).toBe('claude-model-a'))
+    expect(connectionSelect.value).toBe(connectionA.id)
   })
 
   it('calls onSetMock when the development mock checkbox is toggled', () => {

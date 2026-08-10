@@ -1,7 +1,12 @@
 import { getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { installEgressEnforcement, EgressPolicy, type EgressDenial } from './egress.ts'
-import { defaultRoutingConfig, type SecretResolver } from './model-routing.ts'
+import {
+  defaultRoutingConfig,
+  isMarkedNonRetryable,
+  NonRetryableModelError,
+  type SecretResolver,
+} from './model-routing.ts'
 import {
   createProviderBridge,
   isBuiltinModel,
@@ -632,6 +637,66 @@ describe('createProviderBridge', () => {
           {},
         ),
       ).rejects.toThrow(/answers in text only/)
+    })
+
+    it('a NonRetryableModelError from the runtime stream is marked on the error message', async () => {
+      const runtime: ModelConnectionRuntime = {
+        connectionId: 'codex-conn',
+        provider: 'openai',
+        transport: 'subscription',
+        stream: () => {
+          throw new NonRetryableModelError('the subscription was revoked; reconnect and try again')
+        },
+      }
+      const bridge = subscriptionBridge(runtime)
+      const model = bridge.resolveModel({
+        provider: 'openai',
+        modelId: 'gpt-5-codex',
+        tier: 'reasoning',
+        connectionId: 'codex-conn',
+      })
+
+      const stream = await bridge.streamFn(model, minimalContext(), {})
+      for await (const _event of stream) {
+        // drain to completion
+      }
+      const finalMessage = await stream.result()
+
+      expect(finalMessage.stopReason).toBe('error')
+      expect(finalMessage.errorMessage).toBe(
+        'the subscription was revoked; reconnect and try again',
+      )
+      // The exact object identity `pi-agent-runner.ts`'s `handlePiEvent`
+      // later reads off `event.message` (issue #47) — pi's own agent loop
+      // carries this SAME object all the way to `message_end`.
+      expect(isMarkedNonRetryable(finalMessage)).toBe(true)
+    })
+
+    it('a plain error from the runtime stream is never marked non-retryable', async () => {
+      const runtime: ModelConnectionRuntime = {
+        connectionId: 'codex-conn',
+        provider: 'openai',
+        transport: 'subscription',
+        stream: () => {
+          throw new Error('a transient provider hiccup')
+        },
+      }
+      const bridge = subscriptionBridge(runtime)
+      const model = bridge.resolveModel({
+        provider: 'openai',
+        modelId: 'gpt-5-codex',
+        tier: 'reasoning',
+        connectionId: 'codex-conn',
+      })
+
+      const stream = await bridge.streamFn(model, minimalContext(), {})
+      for await (const _event of stream) {
+        // drain to completion
+      }
+      const finalMessage = await stream.result()
+
+      expect(finalMessage.stopReason).toBe('error')
+      expect(isMarkedNonRetryable(finalMessage)).toBe(false)
     })
   })
 

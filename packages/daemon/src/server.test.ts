@@ -12,7 +12,7 @@ import {
 } from '@veduta/protocol'
 import { describe, expect, it, vi } from 'vitest'
 import { AuthStore, type PasskeyRelyingParty, type StoredPasskey } from './auth-store.ts'
-import { NoAvailableModelError, loadRoutingConfig } from './model-routing.ts'
+import { NoAvailableModelError, loadRoutingConfig, saveRoutingConfig } from './model-routing.ts'
 import { NOTIFICATION_SETTINGS_SURFACE_ID } from './notification-settings-surface.ts'
 import { NotificationsConfigSchema, saveNotificationsConfig } from './notifications-config.ts'
 import { storeProviderKey } from './provider-api-key.ts'
@@ -457,6 +457,42 @@ describe('a vps profile never routes through the mock (issue #47)', () => {
     await waitForTurnSettled(socket)
 
     expect(socket.sent.some((frame) => frame.type === 'chat.turn-error')).toBe(true)
+  })
+})
+
+describe('boot survives an orphan routing.json connectionKeys entry (issue #47)', () => {
+  it('boot survives a routing.json carrying an orphan connectionKeys entry', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-orphan-connection-keys-'))
+    const keyMaterial = Buffer.from('a test key material, long enough for scrypt')
+    process.env['VEDUTA_VAULT_KEY'] = keyMaterial.toString('utf8')
+    try {
+      const vault = SecretsVault.open(dataDir, keyMaterial)
+      storeProviderKey({ rootDir: dataDir, vault }, 'anthropic', 'sk-real-anthropic-key')
+
+      // A stale `routing.json` `connectionKeys` entry with no matching
+      // `connections.json` record at all — a removed, or a hand-edited/
+      // pre-this-fix, connection id.
+      const routingBeforeBoot = loadRoutingConfig(dataDir)
+      saveRoutingConfig(dataDir, {
+        ...routingBeforeBoot,
+        connectionKeys: { 'ghost-conn': 'secret://vault/ghost-conn-api-key' },
+      })
+
+      const { auth } = await readyAuthStore()
+      expect(() =>
+        buildServer({
+          dataDir,
+          auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+          profile: 'local-vps',
+        }),
+      ).not.toThrow()
+
+      // The boot-time sweep (`pruneOrphanConnectionKeys`, called right after
+      // the BYOK migration reconcile in `server.ts`) drops the stale entry.
+      expect(loadRoutingConfig(dataDir).connectionKeys['ghost-conn']).toBeUndefined()
+    } finally {
+      delete process.env['VEDUTA_VAULT_KEY']
+    }
   })
 })
 

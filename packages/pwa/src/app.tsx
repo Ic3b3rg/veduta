@@ -92,9 +92,11 @@ export function App() {
   const [streamingTurns, setStreamingTurns] = useState<Map<string, StreamingTurn>>(new Map())
   // Which full-page view is showing (issue #47): a minimal view switch, not
   // a router -- Home is the only view with the topbar/space-rail/chat shell,
-  // and `model-connections` is a standalone screen reached from
-  // `ChatModelSelects`'s "Model connections" button and left via its own
-  // Back button.
+  // and `model-connections` is a standalone screen reached from the
+  // topbar's unconditional "Model connections" button (issue #47 fix batch
+  // C: it must be reachable even with zero connections, so it lives next to
+  // `ChatModelSelects` rather than inside it) and left via its own Back
+  // button.
   const [view, setView] = useState<'home' | 'model-connections'>('home')
   const [onboardingRetryToken, setOnboardingRetryToken] = useState(0)
   const gatewayRef = useRef<GatewayConnection | null>(null)
@@ -651,7 +653,10 @@ export function App() {
             {gatewayOnline ? 'Live' : 'Offline-ready'}
           </span>
           {queuedCount > 0 && <span className="status-pill pending">{queuedCount} queued</span>}
-          <ChatModelSelects token={authToken} onManage={() => setView('model-connections')} />
+          <ChatModelSelects token={authToken} />
+          <button type="button" onClick={() => setView('model-connections')}>
+            Model connections
+          </button>
           <NotificationBell token={authToken} />
           {showInstallGuide && (
             <InstallButton

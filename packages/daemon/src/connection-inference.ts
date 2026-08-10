@@ -1,3 +1,4 @@
+import type { ConnectionLifecycleState } from '@veduta/protocol'
 import { ModelConnectionError } from './model-connection-adapter.ts'
 import { NonRetryableModelError } from './model-routing.ts'
 import type { ModelConnectionRuntime, SubscriptionStreamRequest } from './pi-provider-bridge.ts'
@@ -15,7 +16,11 @@ import type { ModelConnectionRuntime, SubscriptionStreamRequest } from './pi-pro
  *
  * - a pre-inference freshness check (`registry.ensureFresh`) before every
  *   call, the same discipline `ModelConnectionRegistry.ensureFresh`'s own
- *   doc comment describes for a subscription's automatic refresh;
+ *   doc comment describes for a subscription's automatic refresh — and, when
+ *   that check itself finds the connection no longer `'connected'` (expired,
+ *   revoked, failed), refuses the turn with `NonRetryableModelError` BEFORE
+ *   the adapter's own `stream` verb is ever called, rather than only
+ *   reacting to a failure mid-call;
  * - on an `unauthorized`/`expired` failure mid-turn, marking the connection
  *   `revoked`/`expired` (`registry.noteCallFailure`) and rethrowing as
  *   `NonRetryableModelError`, so `ModelRouter` never fails a text-only
@@ -39,7 +44,7 @@ import type { ModelConnectionRuntime, SubscriptionStreamRequest } from './pi-pro
  */
 export interface RuntimeSourceRegistry {
   runtimes(): ModelConnectionRuntime[]
-  ensureFresh(connectionId: string): Promise<void>
+  ensureFresh(connectionId: string): Promise<ConnectionLifecycleState | undefined>
   noteCallFailure(connectionId: string, error: unknown): Promise<unknown>
 }
 
@@ -64,7 +69,19 @@ async function* streamWithRecovery(
   rawStream: (request: SubscriptionStreamRequest) => AsyncIterable<string>,
   request: SubscriptionStreamRequest,
 ): AsyncGenerator<string, void, void> {
-  await registry.ensureFresh(connectionId)
+  const state = await registry.ensureFresh(connectionId)
+  // `ensureFresh` just ran a real refresh (it returns `undefined` for its
+  // own no-op skips — a static-refresh method, or one still inside the
+  // freshness window) and found the connection is no longer `'connected'`:
+  // refuse the turn here, before the adapter's own `stream` verb is ever
+  // called, rather than only reacting to a failure mid-call. No second
+  // `noteCallFailure` — `ensureFresh`'s own refresh already persisted this
+  // state.
+  if (state !== undefined && state !== 'connected') {
+    throw new NonRetryableModelError(
+      `Model connection "${connectionId}" is ${state}; reconnect it and try again`,
+    )
+  }
   try {
     yield* rawStream(request)
   } catch (error) {
