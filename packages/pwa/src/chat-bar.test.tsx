@@ -1,10 +1,45 @@
 // @vitest-environment jsdom
 import type { ApprovalCard, ChatMessage } from '@veduta/protocol'
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatBar } from './chat-bar.tsx'
 
-afterEach(cleanup)
+const scrollTops = new WeakMap<HTMLElement, number>()
+const scrollHeights = new WeakMap<HTMLElement, number>()
+
+beforeEach(() => {
+  Object.defineProperties(HTMLElement.prototype, {
+    clientHeight: {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('chat-log') ? 100 : 0
+      },
+    },
+    scrollHeight: {
+      configurable: true,
+      get(this: HTMLElement) {
+        return scrollHeights.get(this) ?? (this.classList.contains('chat-log') ? 300 : 0)
+      },
+    },
+    scrollTop: {
+      configurable: true,
+      get(this: HTMLElement) {
+        return scrollTops.get(this) ?? 0
+      },
+      set(this: HTMLElement, value: number) {
+        const maximum = Math.max(0, this.scrollHeight - this.clientHeight)
+        scrollTops.set(this, Math.min(Math.max(0, value), maximum))
+      },
+    },
+  })
+})
+
+afterEach(() => {
+  cleanup()
+  Reflect.deleteProperty(HTMLElement.prototype, 'clientHeight')
+  Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight')
+  Reflect.deleteProperty(HTMLElement.prototype, 'scrollTop')
+})
 
 const noApprovalCards: ApprovalCard[] = []
 
@@ -12,20 +47,139 @@ function renderChatBar(
   entries: ChatMessage[],
   streamingEntries: { turnId: string; text: string }[],
 ) {
-  return render(
+  const chatBar = (
+    nextEntries: ChatMessage[],
+    nextStreamingEntries: { turnId: string; text: string }[],
+  ) => (
     <ChatBar
-      entries={entries}
-      streamingEntries={streamingEntries}
+      entries={nextEntries}
+      streamingEntries={nextStreamingEntries}
       approvalCards={noApprovalCards}
       focusedSpace={undefined}
       focusToken={0}
       onDismissApprovalCards={vi.fn()}
       onSend={vi.fn(() => true)}
-    />,
+    />
   )
+  const view = render(chatBar(entries, streamingEntries))
+
+  return {
+    ...view,
+    rerenderChatBar(
+      nextEntries: ChatMessage[],
+      nextStreamingEntries: { turnId: string; text: string }[],
+    ) {
+      view.rerender(chatBar(nextEntries, nextStreamingEntries))
+    },
+  }
 }
 
 describe('ChatBar', () => {
+  it('opens a loaded conversation at the latest message', () => {
+    renderChatBar([{ role: 'assistant', text: 'the latest message' }], [])
+
+    const conversation = screen.getByRole('log', { name: 'Conversation' })
+    expect(conversation.scrollTop).toBe(200)
+  })
+
+  it('keeps following the latest message while the conversation is at the bottom', () => {
+    const view = renderChatBar([{ role: 'user', text: 'hello' }], [])
+    const conversation = screen.getByRole('log', { name: 'Conversation' })
+    scrollHeights.set(conversation, 400)
+
+    view.rerenderChatBar(
+      [
+        { role: 'user', text: 'hello' },
+        { role: 'assistant', text: 'hi there' },
+      ],
+      [],
+    )
+
+    expect(conversation.scrollTop).toBe(300)
+  })
+
+  it('follows a streamed reply as it grows at the bottom', () => {
+    const entries: ChatMessage[] = []
+    const view = renderChatBar(entries, [{ turnId: 'turn-1', text: 'partial' }])
+    const conversation = screen.getByRole('log', { name: 'Conversation' })
+    scrollHeights.set(conversation, 400)
+
+    view.rerenderChatBar(entries, [{ turnId: 'turn-1', text: 'partial reply grows' }])
+
+    expect(conversation.scrollTop).toBe(300)
+  })
+
+  it('preserves the reading position when the reader scrolls away from the bottom', () => {
+    const entries: ChatMessage[] = []
+    const view = renderChatBar(entries, [{ turnId: 'turn-1', text: 'partial' }])
+    const conversation = screen.getByRole('log', { name: 'Conversation' })
+    conversation.scrollTop = 40
+    fireEvent.scroll(conversation)
+    scrollHeights.set(conversation, 400)
+
+    view.rerenderChatBar(entries, [{ turnId: 'turn-1', text: 'partial reply grows' }])
+
+    expect(conversation.scrollTop).toBe(40)
+  })
+
+  it('honors even a one-pixel upward scroll before more streamed text arrives', () => {
+    const entries: ChatMessage[] = []
+    const view = renderChatBar(entries, [{ turnId: 'turn-1', text: 'partial' }])
+    const conversation = screen.getByRole('log', { name: 'Conversation' })
+    conversation.scrollTop = 199
+    fireEvent.scroll(conversation)
+    scrollHeights.set(conversation, 400)
+
+    view.rerenderChatBar(entries, [{ turnId: 'turn-1', text: 'partial reply grows' }])
+
+    expect(conversation.scrollTop).toBe(199)
+  })
+
+  it('offers a return to the latest message only while the reader is away from the bottom', () => {
+    renderChatBar([{ role: 'assistant', text: 'latest' }], [])
+    const conversation = screen.getByRole('log', { name: 'Conversation' })
+    expect(screen.queryByRole('button', { name: 'Scroll to latest message' })).toBeNull()
+
+    conversation.scrollTop = 40
+    fireEvent.scroll(conversation)
+    expect(screen.getByRole('button', { name: 'Scroll to latest message' })).toBeDefined()
+
+    conversation.scrollTop = 200
+    fireEvent.scroll(conversation)
+    expect(screen.queryByRole('button', { name: 'Scroll to latest message' })).toBeNull()
+  })
+
+  it('returns to the latest message and resumes following after the scroll button is pressed', () => {
+    const entries: ChatMessage[] = []
+    const view = renderChatBar(entries, [{ turnId: 'turn-1', text: 'partial' }])
+    const conversation = screen.getByRole('log', { name: 'Conversation' })
+    conversation.scrollTop = 40
+    fireEvent.scroll(conversation)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Scroll to latest message' }))
+    expect(conversation.scrollTop).toBe(200)
+    expect(screen.queryByRole('button', { name: 'Scroll to latest message' })).toBeNull()
+
+    scrollHeights.set(conversation, 400)
+    view.rerenderChatBar(entries, [{ turnId: 'turn-1', text: 'partial reply grows' }])
+    expect(conversation.scrollTop).toBe(300)
+  })
+
+  it('resumes following after the reader manually returns to the bottom', () => {
+    const entries: ChatMessage[] = []
+    const view = renderChatBar(entries, [{ turnId: 'turn-1', text: 'partial' }])
+    const conversation = screen.getByRole('log', { name: 'Conversation' })
+    conversation.scrollTop = 40
+    fireEvent.scroll(conversation)
+    conversation.scrollTop = 200
+    fireEvent.scroll(conversation)
+    scrollHeights.set(conversation, 400)
+
+    view.rerenderChatBar(entries, [{ turnId: 'turn-1', text: 'partial reply grows' }])
+
+    expect(conversation.scrollTop).toBe(300)
+  })
+
   it('renders persisted entries with no in-progress affordance', () => {
     renderChatBar([{ role: 'assistant', text: 'the complete final answer' }], [])
 
