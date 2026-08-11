@@ -1,9 +1,11 @@
 # Reference 11 — Model connections: manual smoke and decision record
 
-> Companion to [issue 047](../../issues/047-model-connections.md) and the
-> [ADR-0014 amendment](../adr/0014-subscription-inference-boundary.md). Automated tests cover
-> every adapter against deterministic fakes; this documents the two checks that need a real
-> account or a human eye, and the wayfinder decision that unblocked the work.
+> Companion to [issue 047](../../issues/047-model-connections.md),
+> [issue 073](../../issues/073-chatgpt-subscription-surface-authoring.md), the
+> [ADR-0014 amendment](../adr/0014-subscription-inference-boundary.md), and
+> [ADR-0016](../adr/0016-primary-agent-connections-author-surfaces.md). Automated tests cover
+> every adapter against deterministic fakes; this documents the checks that need a real account
+> or a human eye, and the wayfinder decision that unblocked the original connection work.
 
 ## ChatGPT subscription — real-account smoke
 
@@ -18,14 +20,33 @@ ChatGPT account with device-code login enabled in its security settings.
 3. Sign in on OpenAI's page, enter the code; the connection must reach `connected` with the plan
    type as its account label.
 4. Confirm the model select lists the `model/list` catalog, select a model, verify — the live
-   inference test must pass.
-5. Send a chat message; the reply must stream token-by-token, and the connection's "answers in
-   text only" note must be visible.
-6. Trigger a refresh (`GET /api/model-connections/:id` after 5 idle minutes, or restart the
+   inference test must pass. Confirm this is the selected ChatGPT connection and no BYOK provider
+   key is configured for the run.
+5. Open an existing Space and ask the Agent to create a small Surface with one bound state field.
+   The reply must stream into chat, the protocol-valid Surface must appear live without a page
+   refresh, and the obsolete no-tools compatibility note must not be present.
+6. In the same focused Space, ask the Agent to update that field. The turn must call
+   `patch_state`; the rendered Atom must update live and the Surface must remain protocol-valid.
+7. Return to global chat and ask it to change that Surface. It must not mutate the Surface: global
+   chat still receives no Space tool registry. Inspect the focused Space's session, Surface
+   provenance, and Event log and confirm they contain the same tool/result and
+   `surface.create`/`surface.patch_state` records as a BYOK run, apart from provider metadata.
+8. Trigger a refresh (`GET /api/model-connections/:id` after 5 idle minutes, or restart the
    daemon and reconnect) and confirm the connection stays `connected` without re-entering
    anything.
-7. Disconnect. The UI must state that local credentials were cleared and provider-side sessions
+9. Disconnect. The UI must state that local credentials were cleared and provider-side sessions
    may need removal in the OpenAI account settings.
+
+### Real-account execution record
+
+- **2026-08-11 — passed:** Local VPS authorization store, pinned Codex 0.146.1,
+  `gpt-5.6-luna`. The production Codex adapter, provider bridge, and `PiAgentRunner` ran against a
+  temporary Veduta data root with empty `providerKeys`/`connectionKeys`; resolving an OpenAI API
+  key returned `undefined`. The live account called exactly `create_surface` and then
+  `patch_state` in 18.7 seconds. The final Surface parsed with state `status: "Patched"`, its
+  provenance was `trusted:system`, the session contained both tool results, and the Space Event
+  log contained `surface.create` followed by `surface.patch_state`. The existing Local VPS Spaces
+  were not modified, and credential contents were not printed.
 
 ## Claude subscription — the gate
 
@@ -47,3 +68,7 @@ The decision posted to the wayfinder frontier ticket:
 > an empty tool set). Claude subscription ships as a permanently gated adapter, unavailable with
 > the exact approval-requirement reason, per the issue-51 research. BYOK becomes one Model
 > connection method behind the same contract. Recorded in the ADR-0014 amendment.
+
+That quote is the historical issue-047 decision. ADR-0016 supersedes only its Codex exception:
+issue 073 enables the hardened dynamic-tool path for focused-Space turns while keeping
+provider-native tools disabled and global chat without tools.

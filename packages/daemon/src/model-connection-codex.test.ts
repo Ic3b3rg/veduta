@@ -38,6 +38,12 @@ function contextWith(transport: FakeCodexTransport): AdapterContext {
   })
 }
 
+describe('capabilities', () => {
+  it('offers Veduta tools through the hardened dynamic-tool adapter', () => {
+    expect(codexSubscriptionAdapter.capabilities.vedutaTools).toBe(true)
+  })
+})
+
 describe('authorize', () => {
   it('returns the verification URL and user code from account/login/start', async () => {
     const transport = createFakeCodexTransport({

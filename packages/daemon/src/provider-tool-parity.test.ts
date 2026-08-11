@@ -139,9 +139,8 @@ async function runProvider(
     getApiKey: provider.getApiKey,
     streamFn: provider.streamFn,
     toolParameters: piToolParameters([tool]),
-    // Issue #71 proves the structured AgentRunner path beneath the current
-    // primary-routing capability gate. Production keeps supplying that gate
-    // from server.ts until the later fail-closed hardening slice.
+    // Production keeps supplying the temporary capability gate from
+    // server.ts until issue #79 removes the compatibility seam.
   })
   const events: AgentEvent[] = []
   runner.on((event) => {

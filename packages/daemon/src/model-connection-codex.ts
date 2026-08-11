@@ -365,7 +365,7 @@ export function createCodexAdapter(deps: CodexAdapterDeps): ModelConnectionAdapt
       authorization: 'device-code',
       refresh: 'automatic',
       revocation: 'provider',
-      vedutaTools: false,
+      vedutaTools: true,
       metered: false,
     },
     availability,

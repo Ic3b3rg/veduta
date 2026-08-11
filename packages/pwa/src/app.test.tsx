@@ -1,13 +1,17 @@
 // @vitest-environment jsdom
 //
-// Focused app-level tests for the two pieces issue #47 adds to `app.tsx`
-// (the fail-closed status-unavailable gate and the Model connections view
-// switch) -- `app.tsx` had no test file before this issue, so this file
-// covers ONLY the new behavior rather than attempting full app-level
-// coverage of the pre-existing Gateway/streaming/Space machinery.
-import type { AuthStatus, ModelConnectionsSnapshot, OnboardingStatus } from '@veduta/protocol'
+// Focused app-level integration tests for behavior that crosses App's
+// networking, routing, and live-state seams. Lower-level helpers keep their
+// exhaustive coverage in their own colocated tests.
+import {
+  SurfaceCreatedEventSchema,
+  SurfacePatchEventSchema,
+  type AuthStatus,
+  type ModelConnectionsSnapshot,
+  type OnboardingStatus,
+} from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ApiModule from './api.ts'
 import { AUTH_TOKEN_KEY, HOME_CACHE_KEY } from './pwa-storage.ts'
@@ -27,6 +31,7 @@ vi.mock('./api.ts', async (importOriginal) => {
 import { App } from './app.tsx'
 import {
   ApiResponseError,
+  connectGateway,
   fetchAuthStatus,
   fetchModelConnections,
   fetchOnboardingStatus,
@@ -83,7 +88,150 @@ function connectedModelConnectionsSnapshot(): ModelConnectionsSnapshot {
   }
 }
 
+const CHATGPT_CONNECTION_ID = 'c0ffee00-0000-4000-8000-000000000073'
+const CHATGPT_MODEL_ID = 'gpt-5-codex'
+
+function connectedChatgptSubscriptionSnapshot(): ModelConnectionsSnapshot {
+  return {
+    vaultAvailable: true,
+    mockEnabled: false,
+    mockControlAvailable: false,
+    methods: [
+      {
+        id: 'chatgpt-codex',
+        provider: 'openai',
+        providerDisplayName: 'OpenAI',
+        methodDisplayName: 'ChatGPT subscription',
+        capabilities: {
+          authorization: 'device-code',
+          refresh: 'automatic',
+          revocation: 'provider',
+          vedutaTools: true,
+          metered: false,
+        },
+        available: true,
+      },
+    ],
+    connections: [
+      {
+        id: CHATGPT_CONNECTION_ID,
+        method: 'chatgpt-codex',
+        provider: 'openai',
+        label: 'OpenAI · ChatGPT subscription',
+        state: 'connected',
+        stateAt: '2026-08-11T09:00:00.000Z',
+        enabledForFallback: false,
+        createdAt: '2026-08-11T09:00:00.000Z',
+        selectedModelId: CHATGPT_MODEL_ID,
+        catalog: [{ id: CHATGPT_MODEL_ID, label: 'GPT-5 Codex', routable: true }],
+      },
+    ],
+    selection: { connectionId: CHATGPT_CONNECTION_ID, modelId: CHATGPT_MODEL_ID },
+  }
+}
+
 describe('App', () => {
+  it('renders a selected-subscription Surface, streamed confirmation, and follow-up patch live', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
+    vi.mocked(fetchSpaces).mockResolvedValue({
+      surfaceCursor: 0,
+      spaces: [
+        {
+          id: 'spc-health',
+          slug: 'health',
+          name: 'Health',
+          archived: false,
+          attention: 0,
+          attentionRevision: 0,
+          surfaces: [],
+        },
+      ],
+    })
+    vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+      fromPartial<OnboardingStatus>({ required: false, completed: true }),
+    )
+    vi.mocked(fetchModelConnections).mockResolvedValue(connectedChatgptSubscriptionSnapshot())
+
+    render(<App />)
+
+    await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+    const connectionSelect = await screen.findByRole<HTMLSelectElement>('combobox', {
+      name: 'Connection',
+    })
+    const modelSelect = screen.getByRole<HTMLSelectElement>('combobox', { name: 'Model' })
+    expect(connectionSelect.value).toBe(CHATGPT_CONNECTION_ID)
+    expect(modelSelect.value).toBe(CHATGPT_MODEL_ID)
+    const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
+    if (!handlers) throw new Error('Gateway handlers were not registered')
+
+    const created = SurfaceCreatedEventSchema.parse({
+      cursor: 1,
+      at: '2026-08-11T10:00:00.000Z',
+      spaceId: 'spc-health',
+      surface: {
+        id: 'srf-hydration',
+        spaceId: 'spc-health',
+        title: 'Hydration',
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [
+            { id: 'title', type: 'Title', props: { text: 'Hydration' } },
+            { id: 'status', type: 'Stat', binding: 'status', props: { label: 'Status' } },
+          ],
+        },
+        state: { status: 'Needs water' },
+        freshness: { updatedAt: '2026-08-11T10:00:00.000Z', updatedBy: 'agent' },
+        pinned: false,
+        pinnable: true,
+      },
+    })
+
+    act(() => {
+      handlers.onSurfaceCreated(created)
+      handlers.onChatTurnStart({
+        type: 'chat.turn-start',
+        turnId: 'turn-create',
+        spaceId: 'spc-health',
+      })
+      handlers.onChatTurnDelta({
+        type: 'chat.turn-delta',
+        turnId: 'turn-create',
+        spaceId: 'spc-health',
+        text: 'Hydration Surface created.',
+      })
+    })
+
+    expect(await screen.findByRole('button', { name: 'Focus Hydration' })).toBeDefined()
+    expect(screen.getByText('Needs water')).toBeDefined()
+    expect(screen.getByText('Hydration Surface created.')).toBeDefined()
+
+    const patch = SurfacePatchEventSchema.parse({
+      cursor: 2,
+      at: '2026-08-11T10:01:00.000Z',
+      spaceId: 'spc-health',
+      patch: {
+        surfaceId: 'srf-hydration',
+        operations: [{ target: 'state', op: 'replace', path: '/status', value: 'On track' }],
+      },
+      freshness: { updatedAt: '2026-08-11T10:01:00.000Z', updatedBy: 'agent' },
+    })
+
+    act(() => {
+      handlers.onChatTurnEnd({
+        type: 'chat.turn-end',
+        turnId: 'turn-create',
+        spaceId: 'spc-health',
+        message: { role: 'assistant', text: 'Hydration Surface created.' },
+      })
+      handlers.onSurfacePatch(patch)
+    })
+
+    expect(await screen.findByText('On track')).toBeDefined()
+    expect(screen.queryByText('Needs water')).toBeNull()
+    expect(screen.getByText('Hydration Surface created.')).toBeDefined()
+  })
+
   it('renders the status-unavailable screen instead of Home when the onboarding status fetch fails on a production session', async () => {
     localStorage.setItem(AUTH_TOKEN_KEY, 'a-stored-token')
     vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus())

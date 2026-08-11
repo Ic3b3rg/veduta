@@ -152,7 +152,9 @@ deploy/codex-setup.sh --data-dir ~/.veduta-local-vps/data
 
 It detects node/npm, shows the install plan, asks for confirmation, installs the pinned version,
 and verifies it before printing the exact next steps (restarting the daemon, the Model
-connections UI path, the firewall hosts the child process needs). See
+connections UI path, the firewall hosts the child process needs). The issue-073 smoke uses no
+provider API key: select the authorized ChatGPT connection, create a Surface from a focused-Space
+turn, then patch its bound state in a follow-up and confirm both changes render live. See
 [`docs/references/11-model-connections-manual-smoke.md`](../docs/references/11-model-connections-manual-smoke.md)
 for the full real-account smoke walk.
 

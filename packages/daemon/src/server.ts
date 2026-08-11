@@ -1159,9 +1159,9 @@ export function buildServer(options: ServerOptions = {}) {
     isTrustWrapped,
     toolsFor: chatToolRegistry,
     send: (clientId, frame) => gateway.sendToClient(clientId, frame),
-    // Issue #71 deliberately keeps the existing primary-routing capability
-    // gate while the structured Codex round trip is proven underneath it.
-    // The fail-closed hardening slice removes this temporary filter.
+    // Issue #73 expands the existing compatibility gate for the hardened
+    // Codex dynamic-tool adapter. Issue #79 removes this temporary filter
+    // once every AgentRunner category reaches provider parity.
     toolsEnabledForModel: (model) =>
       !(model.connectionId !== undefined && registry.isTextOnly(model.connectionId)),
   })

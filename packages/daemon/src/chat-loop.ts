@@ -42,8 +42,10 @@ export interface ChatLoopOptions {
   toolsFor: (spaceId: string | undefined) => ToolDef[]
   send: (clientId: string, frame: GatewayServerMessage) => void
   /**
-   * Forwarded verbatim into every `PiAgentRunner` this loop constructs
-   * (issue #71 retains the existing primary-routing capability gate).
+   * Forwarded verbatim into every `PiAgentRunner` this loop constructs.
+   * Issue #73 expands the existing compatibility gate so hardened Codex
+   * turns receive tools; issue #79 removes the seam after every AgentRunner
+   * category reaches parity.
    * `server.ts` supplies `(model) => !(model.connectionId && registry.isTextOnly(model.connectionId))`.
    * Omitted keeps every pre-issue-47 caller and test offering tools exactly
    * as before.
