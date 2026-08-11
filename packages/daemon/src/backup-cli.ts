@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { parseArgs } from 'node:util'
 import { createBackup, pruneBackups, restoreBackup } from './backup.ts'
 import { resolveVaultKeyMaterial } from './secrets-vault.ts'
 
@@ -20,30 +21,6 @@ const defaultIo: CliIo = {
   stderr: (line) => console.error(line),
 }
 
-interface ParsedArgs {
-  positionals: string[]
-  flags: Record<string, string>
-}
-
-function parseArgs(args: string[]): ParsedArgs {
-  const positionals: string[] = []
-  const flags: Record<string, string> = {}
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]
-    if (arg === undefined) continue
-    if (arg.startsWith('--')) {
-      const key = arg.slice(2)
-      const value = args[i + 1]
-      if (value === undefined) throw new Error(`missing value for --${key}`)
-      flags[key] = value
-      i++
-      continue
-    }
-    positionals.push(arg)
-  }
-  return { positionals, flags }
-}
-
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -60,14 +37,27 @@ export async function run(
   const io = context.io ?? defaultIo
   const [command, ...rest] = argv
 
-  let parsed: ParsedArgs
+  let parsed: {
+    values: { root?: string; out?: string; keep?: string; target?: string }
+    positionals: string[]
+  }
   try {
-    parsed = parseArgs(rest)
+    parsed = parseArgs({
+      args: rest,
+      options: {
+        root: { type: 'string' },
+        out: { type: 'string' },
+        keep: { type: 'string' },
+        target: { type: 'string' },
+      },
+      strict: true,
+      allowPositionals: true,
+    })
   } catch (error) {
     io.stderr(errorText(error))
     return 1
   }
-  const { positionals, flags } = parsed
+  const { positionals, values: flags } = parsed
 
   const rootDir = flags['root'] ?? env['VEDUTA_DATA_DIR'] ?? join(process.cwd(), '.veduta')
   const outDir = flags['out'] ?? join(rootDir, 'backups')

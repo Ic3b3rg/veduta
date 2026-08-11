@@ -1,8 +1,9 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { OnboardingStepIdSchema } from '@veduta/protocol'
 import { z } from 'zod'
 import { backupFile, writeJsonAtomic } from './config-backup.ts'
+import { readJsonFile } from './json-file.ts'
 
 /**
  * Onboarding wizard state (issue #19 AC2): `<rootDir>/onboarding.json` is
@@ -45,7 +46,7 @@ export const OnboardingConfigSchema = z
       .object({
         name: z.string(),
         slug: z.string(),
-        /** The daemon's own `spc-<slug>` id, so callers never re-derive it (issue #19 code review fix). Optional for backward compat with a file written before this field existed. */
+        /** The daemon's own `spc-<slug>` id, so callers never re-derive it. Optional for files written before this field existed. */
         spaceId: z.string().min(1).optional(),
       })
       .strict()
@@ -108,14 +109,10 @@ export function migrateLegacyStepIds(raw: unknown): unknown {
 export function loadOnboardingConfig(rootDir: string): OnboardingConfig {
   const path = onboardingPath(rootDir)
   if (!existsSync(path)) return OnboardingConfigSchema.parse({})
-  let raw: unknown
-  try {
-    raw = JSON.parse(readFileSync(path, 'utf8'))
-  } catch (error) {
-    throw new Error(
-      `invalid JSON in onboarding config ${path}: ${error instanceof Error ? error.message : String(error)} — refusing to silently reset resumable wizard state`,
-    )
-  }
+  const raw = readJsonFile(path, {
+    description: 'onboarding config',
+    refusal: 'refusing to silently reset resumable wizard state',
+  })
   return OnboardingConfigSchema.parse(migrateLegacyStepIds(raw))
 }
 

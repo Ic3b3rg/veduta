@@ -3,6 +3,7 @@ node_modules/
 dist/
 coverage/
 *.log
+/release.json*
 .veduta/
 # Local VPS profile's default data/auth dir (issue 023,
 # docs/adr/0009-local-vps-profile.md) normally lives under the user's home,

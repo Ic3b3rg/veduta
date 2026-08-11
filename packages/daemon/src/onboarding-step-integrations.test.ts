@@ -126,7 +126,7 @@ describe('applyIntegrations', () => {
       version: 1,
       steps: { 'first-space': 'completed' },
       // A spaceId that does NOT follow the `spc-<slug>` scheme — proves the
-      // recorded id wins over re-deriving it (issue #19 code review fix).
+      // recorded id wins over re-deriving it.
       firstSpace: { name: 'Personal', slug: 'personal', spaceId: 'spc-custom-id' },
     })
     const vault = SecretsVault.open(dir, KEY_MATERIAL)
@@ -210,9 +210,9 @@ describe('applyIntegrations', () => {
     expect(ingestion.sources.gmail).toBeDefined()
     expect(ingestion.sources.calendar).toBeDefined()
     // Two entirely different OAuth clients, each preserved under its own
-    // namespaced vault entry (issue #19 code review fix): the real bug this
-    // guards against is gmail/calendar silently overwriting each other's
-    // credentials because they used to share one `google-*` entry.
+    // namespaced vault entry. This guards against Gmail and Calendar
+    // silently overwriting each other's credentials through one shared
+    // `google-*` entry.
     expect(vault.resolve('secret://vault/gmail-client-secret')).toBe('gmail-oauth-secret')
     expect(vault.resolve('secret://vault/gmail-refresh-token')).toBe('gmail-oauth-refresh')
     expect(vault.resolve('secret://vault/calendar-client-secret')).toBe('calendar-oauth-secret')

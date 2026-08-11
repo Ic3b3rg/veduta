@@ -65,8 +65,8 @@ function trackerSurface(id: string, spaceId: string, options: { title?: string }
 
 /**
  * The same tracker composition `trackerSurface` builds, but with the tree's
- * `Title` text held fixed regardless of the Surface's own `title` (issue 022
- * review fix, harvest dedup test below): decouples the tree shape from the
+ * `Title` text held fixed regardless of the Surface's own `title`. This
+ * decouples the tree shape from the
  * Surface title so two Surfaces can share an identical reduced tree —
  * `treeHash` equal — while still differing in `intent` (which defaults to
  * `title`, per `templateFromSurface`).
@@ -157,7 +157,7 @@ describe('TemplateEngine', () => {
 
       const provenance = store.surfaceProvenance('srf-tracker-b')
       expect(provenance?.templateId).toBe(template.id)
-      // Ambiguous with `templateId` alone (issue 022 review fix): a
+      // Ambiguous with `templateId` alone: a
       // Template id is only unique within its own Space, so provenance must
       // also record which Space this reused Template lives in.
       expect(provenance?.templateSpaceId).toBe(spaceA.id)

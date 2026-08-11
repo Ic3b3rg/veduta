@@ -34,7 +34,7 @@ export interface FinishDeps {
  * `completed` status (with a fresh `completedAt`) and, on the VPS/Local VPS
  * profiles, schedules the exit again.
  *
- * Completion gate (code review fix): finishing before every OTHER visible
+ * The completion gate refuses to finish before every other visible
  * step (`onboarding-status.ts`'s own migration-visibility rule, reused so
  * this never drifts from what the wizard actually showed) is `completed` or
  * `skipped` throws a clear `OnboardingStepError` naming the first missing

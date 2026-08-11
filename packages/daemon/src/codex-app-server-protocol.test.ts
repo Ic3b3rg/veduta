@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   AccountReadResponseSchema,
+  AgentMessageDeltaNotificationSchema,
   CodexProtocolError,
   InitializeResponseSchema,
   ItemNotificationSchema,
@@ -211,29 +212,47 @@ describe('parseCodexNotification', () => {
 })
 
 describe('the inference-seam schemas (issue #47)', () => {
-  it('parses a thread/start response', () => {
+  it('parses the observed thread/start response with the id nested under thread', () => {
     const parsed = parseCodexResponse(ThreadStartResponseSchema, 'thread/start', {
-      threadId: 'thread-1',
+      thread: { id: 'thread-1', turns: [], status: { type: 'idle' } },
       modelProvider: 'openai',
     })
-    expect(parsed.threadId).toBe('thread-1')
+    expect(parsed).toEqual({ thread: { id: 'thread-1' } })
   })
 
-  it('parses a turn/start response', () => {
+  it('parses the observed turn/start response with the id nested under turn', () => {
     const parsed = parseCodexResponse(TurnStartResponseSchema, 'turn/start', {
-      turnId: 'turn-1',
-      status: 'inProgress',
+      turn: { id: 'turn-1', status: 'inProgress', items: [] },
     })
-    expect(parsed.turnId).toBe('turn-1')
+    expect(parsed).toEqual({ turn: { id: 'turn-1' } })
   })
 
-  it('parses an agentMessage item notification carrying an incremental delta', () => {
-    const parsed = parseCodexResponse(ItemNotificationSchema, 'item/updated', {
+  it('parses the observed turn/completed envelope with the id nested under turn', () => {
+    const parsed = parseCodexResponse(TurnCompletedNotificationSchema, 'turn/completed', {
       threadId: 'thread-1',
-      item: { type: 'agentMessage', delta: 'hel' },
-      sequenceNumber: 1,
+      turn: { id: 'turn-1', status: 'completed', items: [] },
     })
-    expect(parsed.item).toEqual({ type: 'agentMessage', delta: 'hel' })
+    expect(parsed).toEqual({ threadId: 'thread-1', turn: { id: 'turn-1' } })
+  })
+
+  it('parses the observed agent-message delta envelope', () => {
+    const parsed = parseCodexResponse(
+      AgentMessageDeltaNotificationSchema,
+      'item/agentMessage/delta',
+      {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'item-1',
+        delta: 'hel',
+        sequenceNumber: 1,
+      },
+    )
+    expect(parsed).toEqual({
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'item-1',
+      delta: 'hel',
+    })
   })
 
   it('parses an item notification whose type this build has never seen, without throwing', () => {
@@ -242,26 +261,31 @@ describe('the inference-seam schemas (issue #47)', () => {
     // item still parses — only its `type` matters to the refusal decision
     // `model-connection-codex.ts`'s `stream()` makes from it, never its
     // other fields.
-    const parsed = parseCodexResponse(ItemNotificationSchema, 'item/updated', {
+    const parsed = parseCodexResponse(ItemNotificationSchema, 'item/started', {
       threadId: 'thread-1',
-      item: { type: 'commandExecution', command: 'rm -rf /', exitCode: 1 },
+      turnId: 'turn-1',
+      startedAtMs: 1,
+      item: { id: 'item-1', type: 'commandExecution', command: 'rm -rf /', exitCode: 1 },
     })
     expect(parsed.item.type).toBe('commandExecution')
   })
 
-  it('parses a turn/completed notification', () => {
+  it('parses a turn/completed notification carrying unknown extra fields', () => {
     const parsed = parseCodexResponse(TurnCompletedNotificationSchema, 'turn/completed', {
       threadId: 'thread-1',
-      turnId: 'turn-1',
-      status: 'completed',
+      turn: { id: 'turn-1', status: 'completed', items: [] },
+      upstreamAddition: true,
     })
     expect(parsed.threadId).toBe('thread-1')
-    expect(parsed.turnId).toBe('turn-1')
+    expect(parsed.turn.id).toBe('turn-1')
   })
 
   it('throws CodexProtocolError when an item notification is missing its item', () => {
     expect(() =>
-      parseCodexResponse(ItemNotificationSchema, 'item/updated', { threadId: 'thread-1' }),
+      parseCodexResponse(ItemNotificationSchema, 'item/started', {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+      }),
     ).toThrow(CodexProtocolError)
   })
 })

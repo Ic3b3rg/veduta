@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { ModelConnectionsSnapshot } from '@veduta/protocol'
+import type { ModelConnection, ModelConnectionsSnapshot } from '@veduta/protocol'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useModelConnectionsController } from './model-connection-controller.ts'
@@ -58,24 +58,43 @@ describe('useModelConnectionsController', () => {
     expect(result.current.snapshot).toBeUndefined()
   })
 
-  it('polls while a connection is waiting-for-user and stops once it resolves', async () => {
+  it('polls a waiting connection through its refresh endpoint and stops once it resolves', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
-    const waitingConnection = {
+    const waitingConnection: ModelConnection = {
       id: 'b1b1b1b1-0000-4000-8000-000000000001',
-      method: 'chatgpt-codex' as const,
+      method: 'chatgpt-codex',
       provider: 'openai',
       label: 'OpenAI',
-      state: 'waiting-for-user' as const,
+      state: 'waiting-for-user',
       stateAt: '2026-08-09T00:00:00.000Z',
       enabledForFallback: false,
       createdAt: '2026-08-09T00:00:00.000Z',
+      challenge: {
+        loginId: 'login-1',
+        verificationUrl: 'https://auth.openai.com/codex/device',
+        userCode: 'ABCD-1234',
+        expiresAt: '2026-08-09T00:15:00.000Z',
+        expirySource: 'veduta-default',
+      },
     }
-    const connectedConnection = { ...waitingConnection, state: 'connected' as const }
+    const connectedConnection: ModelConnection = {
+      id: waitingConnection.id,
+      method: 'chatgpt-codex',
+      provider: 'openai',
+      label: 'OpenAI',
+      state: 'connected',
+      stateAt: '2026-08-09T00:00:02.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T00:00:00.000Z',
+      account: { label: 'prolite' },
+      catalog: [{ id: 'gpt-5.5', label: 'GPT-5.5', routable: true }],
+      catalogFetchedAt: '2026-08-09T00:00:02.000Z',
+    }
 
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse(emptySnapshot({ connections: [waitingConnection] })))
-      .mockResolvedValue(jsonResponse(emptySnapshot({ connections: [connectedConnection] })))
+      .mockResolvedValue(jsonResponse(connectedConnection))
     vi.stubGlobal('fetch', fetchMock)
 
     const { result } = renderHook(() => useModelConnectionsController())
@@ -88,7 +107,11 @@ describe('useModelConnectionsController', () => {
       await vi.advanceTimersByTimeAsync(2500)
     })
     expect(result.current.snapshot?.connections[0]?.state).toBe('connected')
-    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      `/api/model-connections/${waitingConnection.id}`,
+      expect.anything(),
+    )
 
     const callsAfterConnected = fetchMock.mock.calls.length
     await vi.advanceTimersByTimeAsync(6000)

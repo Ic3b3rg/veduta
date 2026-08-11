@@ -14,6 +14,10 @@ _Avoid_: division, project, area agent, workspace
 Persistent UI unit inside a Space: a declarative tree of Atoms bound to typed state. It is _living state_, not a response.
 _Avoid_: canvas, artifact, widget (ambiguous), dashboard (reserved for Home)
 
+**Surface authoring**:
+The Agent's core capability of creating or modifying a persistent Surface by composing validated Atoms in response to user intent. Every Model connection eligible to power the Agent provides this capability.
+_Avoid_: generative UI (ambiguous), generated markup, text-only mode
+
 **Home**:
 The primary screen of the PWA: shows all Spaces with their Surfaces. It is what the user sees "at first glance upon opening".
 _Avoid_: generic dashboard, feed
@@ -61,7 +65,7 @@ A local execution profile that exercises the same product flows as the VPS profi
 _Avoid_: dev mode, staging (unless it is a remote shared environment), production mode
 
 **Agent**:
-The system's single main LLM loop. One identity (SOUL); it switches context between Spaces, not personality.
+The system's single main LLM loop. One identity (SOUL); it selectively works across one or more Space contexts, not per-Space personalities.
 _Avoid_: orchestrator, firstmate, main assistant
 
 **Worker**:
@@ -91,6 +95,10 @@ _Avoid_: Event log, Trace, activity history
 **Model connection**:
 A Gateway-wide configured route that lets the Agent use a model through either a provider subscription or BYOK. It is shared by every Space and supplies inference only; the Agent loop and its tools remain inside Veduta.
 _Avoid_: provider login (only one possible setup method), agent runtime
+
+**Connection parity**:
+The product invariant that changing provider, model, or authorization method leaves the Agent's Veduta capabilities, workflows, and persistent outcomes unchanged. Only unavoidable connection properties such as authentication, catalog, price, latency, limits, and model quality may differ.
+_Avoid_: provider mode, text-only mode, degraded connection
 
 **Automation**:
 A job or timer created by the Agent but visible to and switchable off by the user in the Space. Includes the one-shot timers armed on learned deadlines.

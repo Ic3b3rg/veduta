@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
 import {
@@ -9,6 +9,7 @@ import {
   ConnectionLifecycleStateSchema,
 } from '@veduta/protocol'
 import { backupFile, writeJsonAtomic } from './config-backup.ts'
+import { readJsonFile } from './json-file.ts'
 import { SecretRefSchema } from './model-routing.ts'
 
 /**
@@ -80,16 +81,12 @@ function connectionsPath(rootDir: string): string {
 export function loadConnectionsConfig(rootDir: string): ConnectionsFile {
   const path = connectionsPath(rootDir)
   if (!existsSync(path)) return ConnectionsFileSchema.parse({})
-  let raw: unknown
-  try {
-    raw = JSON.parse(readFileSync(path, 'utf8'))
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new Error(
-      `invalid JSON in connections config ${path}: ${message} — refusing to silently reset Model connection state`,
-    )
-  }
-  return ConnectionsFileSchema.parse(raw)
+  return ConnectionsFileSchema.parse(
+    readJsonFile(path, {
+      description: 'connections config',
+      refusal: 'refusing to silently reset Model connection state',
+    }),
+  )
 }
 
 /**

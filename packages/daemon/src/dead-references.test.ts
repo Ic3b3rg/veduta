@@ -6,12 +6,9 @@ import { describe, expect, it } from 'vitest'
  * Guards the AGENTS.md rule "a comment may only cite something a reader of this
  * repository can open".
  *
- * Every issue in this project is built from a working plan under `tasks/`, which is
- * scratch and is never committed. Comments used to be full of pointers into those
- * documents — `` `tasks/plan.md` §4 ``, `(decision 7)`, `(D10/A1)`, `it('B7: ...')` —
- * and every one of them was unresolvable for anyone reading the repository, including
- * the person who wrote it a month later. Worse, they read as if they were citations,
- * so they discouraged writing the reasoning down where it belongs.
+ * Working plans under `tasks/` are scratch and are never committed. A pointer into one
+ * is unresolvable for anyone reading the repository and discourages recording the
+ * rationale where it belongs.
  *
  * Durable rationale goes in an ADR, the `issues/NNN-*.md` spec, `docs/references/`, or
  * the comment itself. References to those ARE welcome and deliberately not matched
@@ -68,8 +65,18 @@ const DEAD_PATTERNS: DeadPattern[] = [
   },
   {
     name: 'a reference to a review conversation',
-    pattern: /fix group|reconciliation item \d+/gi,
+    pattern: /fix group|reconciliation item \d+|review(?:\s|\/|\*)*(?:follow-up|fix(?:es)?)\b/gi,
     fix: 'say what the fix was; the conversation is not readable from the repository',
+  },
+  {
+    name: 'an issue-numbered review round',
+    pattern: /issue\s+#\d+\s+re-review/gi,
+    fix: 'cite the issue spec and state the invariant the review established',
+  },
+  {
+    name: 'an unspecified ADR',
+    pattern: /\(ADR\)/g,
+    fix: 'cite the exact ADR number or state the rationale directly',
   },
   {
     name: 'a lowercase review-round fix number (e.g. "fix 2")',
@@ -127,15 +134,17 @@ function findDeadReferences(): Hit[] {
   for (const file of scannedFiles()) {
     const relPath = relative(REPO_ROOT, file)
     if (relPath === SELF) continue
-    const lines = readFileSync(file, 'utf8').split('\n')
-    lines.forEach((text, index) => {
-      for (const pattern of DEAD_PATTERNS) {
-        pattern.pattern.lastIndex = 0
-        if (pattern.pattern.test(text)) {
-          hits.push({ file: relPath, line: index + 1, text: text.trim(), pattern })
-        }
+    const content = readFileSync(file, 'utf8')
+    const lines = content.split('\n')
+    for (const pattern of DEAD_PATTERNS) {
+      pattern.pattern.lastIndex = 0
+      for (const match of content.matchAll(pattern.pattern)) {
+        const firstToken = match[0].search(/[\w`(]/)
+        const offset = match.index + Math.max(firstToken, 0)
+        const line = content.slice(0, offset).split('\n').length
+        hits.push({ file: relPath, line, text: lines[line - 1]?.trim() ?? '', pattern })
       }
-    })
+    }
   }
   return hits
 }

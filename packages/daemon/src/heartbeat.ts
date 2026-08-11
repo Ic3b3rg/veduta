@@ -5,6 +5,7 @@ import { automationsSurfaceId } from './automations-surface.ts'
 import { nextCronOccurrence } from './cron.ts'
 import { timeToCron, type HeartbeatConfig } from './heartbeat-config.ts'
 import { reconcileManagedJobs } from './managed-jobs.ts'
+import { stripJsonCodeFence } from './model-output.ts'
 import { SpendingCapError, type ModelRouter } from './model-routing.ts'
 import type { Scheduler } from './scheduler.ts'
 import type { Store } from './store.ts'
@@ -131,19 +132,10 @@ export interface HeartbeatOptions {
 const TIME_SENSITIVE_TITLE_RE = /\b(today|daily|plan|schedule|agenda)\b/i
 const HOUR_MS = 60 * 60 * 1000
 
-const CODE_FENCE_RE = /^```(?:json)?\s*([\s\S]*?)\s*```$/i
-
-/** Copied from quarantined-reader.ts (kept private there) rather than imported. */
-function stripCodeFence(text: string): string {
-  const trimmed = text.trim()
-  const match = CODE_FENCE_RE.exec(trimmed)
-  return match?.[1] !== undefined ? match[1].trim() : trimmed
-}
-
 function parseJson<T>(text: string, schema: z.ZodType<T>): { ok: true; value: T } | { ok: false } {
   let json: unknown
   try {
-    json = JSON.parse(stripCodeFence(text))
+    json = JSON.parse(stripJsonCodeFence(text))
   } catch {
     return { ok: false }
   }

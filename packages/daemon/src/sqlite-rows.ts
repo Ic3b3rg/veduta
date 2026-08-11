@@ -35,3 +35,16 @@ export function withImmediateTransaction<T>(db: { exec(sql: string): void }, wri
     throw error
   }
 }
+
+/** Adds a column to an existing SQLite table when an older database lacks it. */
+export function ensureSqliteColumn(
+  db: Pick<DatabaseSync, 'exec' | 'prepare'>,
+  table: string,
+  column: string,
+  sqlType: string,
+): void {
+  const columns = db.prepare(`pragma table_info(${table})`).all()
+  const exists = columns.some((row) => requiredString(row, 'name') === column)
+  if (!exists) db.exec(`alter table ${table} add column ${column} ${sqlType}`)
+}
+import type { DatabaseSync } from 'node:sqlite'

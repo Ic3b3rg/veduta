@@ -1,4 +1,4 @@
-# 050 — Internal trace console: locate runtime problems and errors
+# 081 — Internal trace console: locate runtime problems and errors
 
 ## Context
 
@@ -8,9 +8,7 @@ different purposes and do not provide one reliable end-to-end correlation path.
 
 [ADR-0017](../docs/adr/0017-bounded-local-diagnostics.md) introduces bounded non-canonical Traces
 and Runtime logs without weakening the Event log, security audit, or session contracts. The
-approved design is recorded in
-[the internal trace console specification](../docs/superpowers/specs/2026-08-10-internal-trace-console-design.md),
-grounded by research into
+delivery constraints below are grounded by research into
 [Hermes](../docs/references/09-hermes-human-observability.md) and
 [operator consoles](../docs/references/10-operator-log-trace-interfaces.md).
 
@@ -55,6 +53,28 @@ without routinely entering the VPS.
 - Document the hard-down fallback: after a normal restart, retained diagnostics return to the PWA;
   if the Gateway cannot start, the operator uses exact `journalctl` and retained Runtime-file
   commands over SSH. Do not add a recovery sidecar or second viewer.
+
+## Contract constraints
+
+- Keep five focused responsibilities behind the feature: `TraceContext` propagates correlation,
+  `TraceRecorder` redacts and bounds events without failing product work, `TraceStore` owns retained
+  segments and the disposable index, `RuntimeLogger` owns technical output, and `TraceReader` owns
+  authenticated read-only delivery.
+- The Gateway generates every `traceId` and `stepId`. In-process propagation may use
+  `AsyncLocalStorage`; durable work that outlives its initiator starts a new root Trace and may carry
+  a `parentTraceId` instead of retaining an in-memory context indefinitely.
+- Define every Gateway-to-PWA record in `@veduta/protocol` with a versioned envelope. Known model,
+  tool, Surface, Event log, approval, delivery, and lifecycle details use discriminated schemas.
+  Unknown additive event families render visibly from their safe envelope instead of crashing or
+  disappearing.
+- Derive root status from start and terminal events. A recovered failed attempt remains an error
+  step inside a root that may complete; missing provider usage or reasoning remains absent.
+- Use `GET /api/trace-events`, `GET /api/traces/:traceId`,
+  `GET /api/runtime-log-segments`, `GET /api/runtime-log-segments/:segmentId`, and a separate
+  `/ws/trace` channel. Filesystem paths and credentials never cross those interfaces.
+- Represent queue saturation, partial final lines, rotated cursors, index corruption, sink failure,
+  and slow live clients as explicit bounded gaps or degraded states. Diagnostics may be incomplete,
+  but may not report completeness that was not observed.
 
 ## Acceptance criteria
 

@@ -129,6 +129,63 @@ describe('ModelConnectionPanel', () => {
     expect(screen.getByText('expires in 5:00')).toBeDefined()
   })
 
+  it('lists models when a polled device connection becomes connected', () => {
+    const connectionId = 'b1b1b1b1-0000-4000-8000-000000000001'
+    const waiting: ModelConnection = {
+      id: connectionId,
+      method: 'chatgpt-codex',
+      provider: 'openai',
+      label: 'OpenAI · ChatGPT subscription',
+      state: 'waiting-for-user',
+      stateAt: '2026-08-09T00:00:00.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T00:00:00.000Z',
+      challenge: {
+        loginId: 'login-1',
+        verificationUrl: 'https://chatgpt.com/device',
+        userCode: 'ABCD-1234',
+        expiresAt: '2026-08-09T00:05:00.000Z',
+        expirySource: 'provider',
+      },
+    }
+    const connected: ModelConnection = {
+      id: connectionId,
+      method: 'chatgpt-codex',
+      provider: 'openai',
+      label: 'OpenAI · ChatGPT subscription',
+      state: 'connected',
+      stateAt: '2026-08-09T00:00:02.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T00:00:00.000Z',
+      account: { label: 'prolite' },
+      catalog: [{ id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol', routable: true }],
+      catalogFetchedAt: '2026-08-09T00:00:02.000Z',
+    }
+
+    const { rerender } = render(
+      <ModelConnectionPanel
+        snapshot={baseSnapshot({ methods: [chatgptCodexMethod], connections: [waiting] })}
+        busy={false}
+        error={null}
+        {...noop}
+      />,
+    )
+
+    rerender(
+      <ModelConnectionPanel
+        snapshot={baseSnapshot({ methods: [chatgptCodexMethod], connections: [connected] })}
+        busy={false}
+        error={null}
+        {...noop}
+      />,
+    )
+
+    const connectionSelect = document.getElementById('model-connection-select') as HTMLSelectElement
+    const modelSelect = document.getElementById('model-select') as HTMLSelectElement
+    expect(connectionSelect.value).toBe(connectionId)
+    expect([...modelSelect.options].map((option) => option.textContent)).toContain('GPT-5.6-Sol')
+  })
+
   it('the model select only lists models from the selected connection', () => {
     const connectionA: ModelConnection = {
       id: 'a1a1a1a1-0000-4000-8000-000000000001',

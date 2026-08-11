@@ -50,7 +50,7 @@ function findShasumLine(shasumsText: string, fileName: string): string | undefin
  * anything is extracted or renamed into place — nothing is materialized for
  * a tampered tarball.
  *
- * Verification trust boundary (issue #43 review follow-up — AC6): when the
+ * Verification trust boundary (`issues/043-self-update.md`, AC6): when the
  * signed release metadata carries `nodeSha256` (`packages/protocol/src/update.ts`'s
  * `ReleaseMetadataSchema`), that SIGNED hash is authoritative — it cannot be
  * forged without the signing key, unlike `SHASUMS256.txt`, which is fetched

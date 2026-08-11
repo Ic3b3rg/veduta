@@ -565,7 +565,7 @@ describe('recoverAtBoot', () => {
 
   it('reconciles a Surface left unfinished by a crash between the commit event and the Surface patch — never clobbers the real report, appends no duplicate event', () => {
     // Simulates `settle()` having appended the `worker.delivered` commit-point
-    // event (issue #17 re-review) and then the process crashing
+    // event and then the process crashing
     // before the Surface patch/`markSettled` that follows it ran: the
     // Surface itself is still in its ACTIVE shape (`state.settled` false).
     const workerId = 'crash1'
@@ -672,7 +672,7 @@ describe('high-risk safety invariant (review never fails open)', () => {
     // high-risk briefing whose one turn never parses goes straight to the
     // fallback `settle()` call with `reviewStatus: 'skipped'` and no
     // caveat of its own — exactly the path `settle()`'s single enforcement
-    // point (issue #17 re-review) must still catch.
+    // point must still catch.
     const runner = new ScriptedAgentRunner([[{ text: 'not json', tokensUsed: 10 }]])
     const { pool } = makePool({ runner })
 

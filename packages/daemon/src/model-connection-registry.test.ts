@@ -126,6 +126,52 @@ describe('mutation queue', () => {
   })
 })
 
+describe('verify', () => {
+  it('completes when the probe refreshes the same automatic connection', async () => {
+    const dir = freshRoot()
+    const connectionId = 'aaaaaaaa-1111-4000-8000-000000000000'
+    const record: ModelConnectionRecord = {
+      id: connectionId,
+      method: 'chatgpt-codex',
+      provider: 'openai',
+      label: 'ChatGPT · Subscription',
+      state: 'connected',
+      stateAt: '2026-08-09T09:00:00.000Z',
+      lastRefreshAt: '2026-08-09T09:00:00.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T09:00:00.000Z',
+      catalog: [{ id: 'model-a', label: 'Model A', routable: true }],
+    }
+    saveConnectionsConfig(dir, { version: 1, connections: [record], mockEnabled: false })
+
+    const adapter = createFakeAdapter({
+      methodId: 'chatgpt-codex',
+      providerName: 'openai',
+      capabilities: {
+        authorization: 'device-code',
+        refresh: 'automatic',
+        revocation: 'provider',
+        vedutaTools: false,
+        metered: false,
+      },
+      verify: (ctx, modelId) => ctx.probe(modelId),
+    })
+    const registry = new ModelConnectionRegistry(
+      baseOptions(dir, [adapter], {
+        probe: async (id) => {
+          await registry.ensureFresh(id)
+        },
+      }),
+    )
+
+    await registry.verify(connectionId, 'model-a')
+
+    const updated = loadConnectionsConfig(dir).connections[0]
+    expect(updated?.lastRefreshAt).toBe('2026-08-09T10:00:00.000Z')
+    expect(updated?.selectedModelId).toBe('model-a')
+  }, 1_000)
+})
+
 describe('refresh singleflight', () => {
   it('two concurrent reads while waiting-for-user issue one adapter refresh', async () => {
     const dir = freshRoot()

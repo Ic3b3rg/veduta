@@ -1,27 +1,21 @@
 import { execFile } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
 import {
-  closeSync,
-  constants as fsConstants,
   cpSync,
   existsSync,
-  fsyncSync,
   mkdirSync,
   mkdtempSync,
-  openSync,
   readFileSync,
   readdirSync,
-  renameSync,
   rmSync,
   unlinkSync,
   writeFileSync,
-  writeSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
+import { writeFileAtomicDurable } from './atomic-file.ts'
 import { openGcm, sealGcm } from './secret-crypto.ts'
 
 /**
@@ -106,33 +100,6 @@ function decryptArchive(fileBuffer: Buffer, keyMaterial: Buffer): Buffer {
     // salt/iv, GCM covers the ciphertext) both surface as an auth failure
     // here — never partial or silently-wrong data.
     throw new Error('failed to decrypt backup: wrong key material or corrupted file')
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Atomic writes (mirrors secrets-vault.ts's tmp-then-rename discipline)
-// ---------------------------------------------------------------------------
-
-function writeFileAtomic(path: string, content: Buffer): void {
-  const dir = dirname(path)
-  mkdirSync(dir, { recursive: true })
-  const tmpPath = join(dir, `.${basename(path)}.tmp-${randomBytes(6).toString('hex')}`)
-  const fd = openSync(tmpPath, 'w', 0o600)
-  try {
-    writeSync(fd, content)
-    fsyncSync(fd)
-  } catch (error) {
-    closeSync(fd)
-    unlinkSync(tmpPath)
-    throw error
-  }
-  closeSync(fd)
-  renameSync(tmpPath, path)
-  const dirFd = openSync(dir, fsConstants.O_RDONLY)
-  try {
-    fsyncSync(dirFd)
-  } finally {
-    closeSync(dirFd)
   }
 }
 
@@ -269,7 +236,7 @@ export async function createBackup(options: CreateBackupOptions): Promise<string
       outDir,
       `${BACKUP_FILE_PREFIX}${isoForFilename(now())}${BACKUP_FILE_SUFFIX}`,
     )
-    writeFileAtomic(outPath, encrypted)
+    writeFileAtomicDurable(outPath, encrypted)
     return outPath
   } finally {
     rmSync(workDir, { recursive: true, force: true })

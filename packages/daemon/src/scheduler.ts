@@ -18,8 +18,18 @@ import {
   requiredString,
   withImmediateTransaction,
 } from './sqlite-rows.ts'
+import {
+  ConditionSchema,
+  automationFromRow,
+  initializeSchedulerSchema,
+  type Automation,
+  type Condition,
+} from './scheduler-persistence.ts'
 import type { FastMutationNotice, Store } from './store.ts'
 import { effectiveOrigin, isValidOrigin, toolWriteOrigin, type Origin } from './taint.ts'
+
+export { ConditionSchema }
+export type { Automation, Condition }
 
 /**
  * The daemon's scheduling system (issue #11, ADR-0005): one-shot timers
@@ -31,22 +41,6 @@ import { effectiveOrigin, isValidOrigin, toolWriteOrigin, type Origin } from './
  * side effects run, and interrupted claims are re-run on the next boot —
  * a duplicate reminder beats a lost deadline.
  */
-export const ConditionSchema = z.union([
-  z.object({
-    kind: z.literal('event-logged'),
-    /** Case-insensitive needle over Event log text. */
-    textIncludes: z.string().trim().min(1),
-    /** Window before the occurrence in which a matching event counts. */
-    withinHours: z.number().positive().max(720).default(24),
-  }),
-  z.object({
-    kind: z.literal('judgment'),
-    question: z.string().trim().min(1),
-  }),
-])
-
-export type Condition = z.infer<typeof ConditionSchema>
-
 export type JudgeVerdict = 'yes' | 'no' | 'unknown'
 
 /**
@@ -55,40 +49,6 @@ export type JudgeVerdict = 'yes' | 'no' | 'unknown'
  * daily spending caps govern scheduler judgments too.
  */
 export type JudgeFn = (question: string, spaceId: string) => Promise<JudgeVerdict> | JudgeVerdict
-
-export interface Automation {
-  id: number
-  kind: 'timer' | 'job'
-  spaceId: string
-  description: string
-  enabled: boolean
-  /** One-shot timers: the ISO instant to fire at. */
-  fireAt?: string
-  /** Recurring jobs: the cron expression. */
-  cron?: string
-  condition?: Condition
-  /** Materialized next occurrence; absent once completed or cancelled. */
-  nextRunAt?: string
-  status: 'armed' | 'completed' | 'cancelled'
-  lastRunAt?: string
-  lastOutcome?: string
-  createdAt: string
-  /** Origin of the turn that created this Automation. Absent = legacy = trusted:system. */
-  origin?: Origin
-  /** Names a registered internal handler (issue #16); absent for ordinary user jobs/timers. */
-  handler?: string
-  /** The Surface this timer/job covers, if any. */
-  targetSurfaceId?: string
-  /**
-   * IANA zone the `cron` field's five fields are local wall-clock time in
-   * (issue #21, e.g. the nightly Reflection job's 04:00 user-local firing
-   * time). Absent means the historical interpretation: `cron` is UTC, like
-   * every other timestamp in the daemon. Only daemon-owned managed jobs
-   * (`createManagedJob`) may set this — `createJob`, the Agent-facing tool,
-   * never does.
-   */
-  timezone?: string
-}
 
 /**
  * Context threaded through `onEscalation` for a firing occurrence (issue #18 2-3): `surfaceId` lets
@@ -166,7 +126,7 @@ export class Scheduler {
     this.now = options.now ?? (() => new Date())
     this.onEscalation = options.onEscalation
     this.judge = options.judge ?? (() => 'unknown')
-    this.initializeSchema()
+    initializeSchedulerSchema(this.db)
     this.recoverInterruptedRuns()
     this.ensureSurfaces()
     this.subscribeToggles()
@@ -862,61 +822,6 @@ export class Scheduler {
     })
   }
 
-  private initializeSchema(): void {
-    this.db.exec(`
-      pragma journal_mode = wal;
-      create table if not exists automations (
-        id integer primary key autoincrement,
-        kind text not null check (kind in ('timer', 'job')),
-        space_id text not null,
-        description text not null,
-        enabled integer not null default 1,
-        fire_at text,
-        cron text,
-        condition_json text,
-        next_run_at text,
-        status text not null default 'armed'
-          check (status in ('armed', 'completed', 'cancelled')),
-        last_run_at text,
-        last_outcome text,
-        created_at text not null,
-        origin text,
-        handler text,
-        target_surface_id text,
-        timezone text
-      );
-      create index if not exists automations_due
-        on automations (status, next_run_at);
-
-      create table if not exists automation_runs (
-        automation_id integer not null references automations(id),
-        scheduled_for text not null,
-        started_at text not null,
-        outcome text,
-        finished_at text,
-        primary key (automation_id, scheduled_for)
-      );
-    `)
-    // Defensive migration: a `scheduler.sqlite` created before this column
-    // existed must keep working — `create table if not exists` above only
-    // applies to a fresh database, so an existing one is migrated here.
-    this.ensureColumn('automations', 'origin', 'text')
-    // Same defensive migration for the handler-registry columns (issue #16):
-    // a pre-existing database predates them and must keep working.
-    this.ensureColumn('automations', 'handler', 'text')
-    this.ensureColumn('automations', 'target_surface_id', 'text')
-    // Same defensive migration for `timezone` (issue #21): a pre-existing
-    // database predates zoned managed jobs and must keep working.
-    this.ensureColumn('automations', 'timezone', 'text')
-  }
-
-  /** Adds `column` to `table` if an existing (pre-migration) database lacks it. */
-  private ensureColumn(table: string, column: string, sqlType: string): void {
-    const columns = this.db.prepare(`pragma table_info(${table})`).all()
-    const exists = columns.some((row) => requiredString(row, 'name') === column)
-    if (!exists) this.db.exec(`alter table ${table} add column ${column} ${sqlType}`)
-  }
-
   private nowIso(): string {
     return this.now().toISOString()
   }
@@ -939,47 +844,4 @@ function scheduleText(automation: Automation): string {
 function utcLabel(iso: string | undefined): string {
   if (!iso) return 'n/a'
   return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`
-}
-
-function automationFromRow(row: Record<string, unknown>): Automation {
-  const conditionJson = optionalString(row, 'condition_json')
-  const fireAt = optionalString(row, 'fire_at')
-  const cron = optionalString(row, 'cron')
-  const nextRunAt = optionalString(row, 'next_run_at')
-  const lastRunAt = optionalString(row, 'last_run_at')
-  const lastOutcome = optionalString(row, 'last_outcome')
-  const status = requiredString(row, 'status')
-  const kind = requiredString(row, 'kind')
-  // `origin` may be absent on rows written before this column existed, or
-  // on a legacy database not yet migrated; either way, absent = trusted.
-  const originValue = optionalString(row, 'origin')
-  const origin = originValue !== undefined && isValidOrigin(originValue) ? originValue : undefined
-  const handler = optionalString(row, 'handler')
-  const targetSurfaceId = optionalString(row, 'target_surface_id')
-  const timezone = optionalString(row, 'timezone')
-  if (status !== 'armed' && status !== 'completed' && status !== 'cancelled') {
-    throw new Error(`unexpected automation status: ${status}`)
-  }
-  if (kind !== 'timer' && kind !== 'job') throw new Error(`unexpected automation kind: ${kind}`)
-  return {
-    id: requiredNumber(row, 'id'),
-    kind,
-    spaceId: requiredString(row, 'space_id'),
-    description: requiredString(row, 'description'),
-    enabled: requiredNumber(row, 'enabled') === 1,
-    status,
-    createdAt: requiredString(row, 'created_at'),
-    ...(fireAt === undefined ? {} : { fireAt }),
-    ...(cron === undefined ? {} : { cron }),
-    ...(nextRunAt === undefined ? {} : { nextRunAt }),
-    ...(lastRunAt === undefined ? {} : { lastRunAt }),
-    ...(lastOutcome === undefined ? {} : { lastOutcome }),
-    ...(origin === undefined ? {} : { origin }),
-    ...(handler === undefined ? {} : { handler }),
-    ...(targetSurfaceId === undefined ? {} : { targetSurfaceId }),
-    ...(timezone === undefined ? {} : { timezone }),
-    ...(conditionJson === undefined
-      ? {}
-      : { condition: ConditionSchema.parse(JSON.parse(conditionJson)) }),
-  }
 }

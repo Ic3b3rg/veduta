@@ -1,4 +1,4 @@
-import { stampDataVersion } from './data-version.ts'
+import { stampDataVersion } from './data-version-marker.ts'
 
 /**
  * One forward-only data migration (`docs/adr/0013-signed-self-update.md`):

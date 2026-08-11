@@ -120,8 +120,8 @@ export function availableSlotNode(view: UpdateSurfaceView): AtomNode {
  * every other status has no outcome badge to show. Exported so
  * `update-manager.ts` can ask the same question before deciding whether to
  * overwrite `outcomeDetail`: a transient check failure must never clobber the
- * Badge recording a prior apply's real terminal outcome (issues/043-self-update.md's
- * review follow-up — a green `applied` Badge must never end up displaying a
+ * Badge recording a prior apply's real terminal outcome. A green `applied`
+ * Badge must never end up displaying a
  * feed-fetch error's text instead of its own outcome).
  */
 export function outcomeTone(status: UpdateSurfaceStatus): 'success' | 'danger' | undefined {

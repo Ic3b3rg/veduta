@@ -11,15 +11,15 @@ import { z } from 'zod'
  * from the binary — the binary is absent from CI, and generating schemas at
  * build time would break an offline install.
  *
- * `initialize`, `account/login/start` (started and immediately canceled),
- * `account/read` (unauthenticated), and `model/list` (unauthenticated) were
- * re-checked 2026-08-10 against the real, pinned 0.146.1 binary itself —
- * installed with `npm install @openai/codex@0.146.1` outside this repo, run
- * as `codex app-server`, and spoken to directly over stdio. Each schema
- * below whose doc comment says "observed" or "CONFIRMED" was corrected
- * against that live output; every other schema (and every field inside a
- * schema still marked `transcription note`) remains research-only — this
- * build never logs in, so an authenticated response shape stays unobserved.
+ * `initialize`, `account/login/start`, `account/read`, `model/list`, and —
+ * after a successful local device authorization — one complete
+ * `thread/start`/`turn/start` text turn were re-checked 2026-08-10 against
+ * the real, pinned 0.146.1 binary itself. The binary was spoken to directly
+ * over stdio; the turn capture covered its start responses plus
+ * `item/started`, `item/agentMessage/delta`, `item/completed`, and
+ * `turn/completed`. Each schema below whose doc comment says "observed" or
+ * "CONFIRMED" was corrected against that live output; every field still
+ * marked `transcription note` remains research-only.
  *
  * Required response and notification fields are the fail-closed contract:
  * an absent or mistyped required field becomes a typed `CodexProtocolError`.
@@ -208,29 +208,32 @@ export const ModelListResponseSchema = z.object({
 /**
  * `thread/start` response (issue #47,
  * docs/adr/0014-subscription-inference-boundary.md): confirms only the
- * fresh thread's id. The pinned 0.146.1 response carries no field this
+ * fresh thread's id. CONFIRMED 2026-08-10 against the pinned 0.146.1
+ * binary: the id is nested under `thread.id`, not returned as a top-level
+ * `threadId`. The response carries no field this
  * transcription can assert an empty tool set against, so the fail-closed
  * proof that a Codex turn cannot act lives in `model-connection-codex.ts`'s
  * `stream()` instead — a runtime check against every streamed item, not a
  * start-time assertion on this response.
  */
 export const ThreadStartResponseSchema = z.object({
-  // transcription note: field name per 0.146.1.
-  threadId: z.string().min(1),
+  thread: z.object({ id: z.string().min(1) }),
 })
 
-/** `turn/start` response: confirms the turn id a later `turn/interrupt` (or a streamed item/turn notification) correlates against. */
+/** `turn/start` response, CONFIRMED 2026-08-10 against the pinned binary: the id a later `turn/interrupt` (or streamed item/turn notification) correlates against is nested under `turn.id`. */
 export const TurnStartResponseSchema = z.object({
-  // transcription note: field name per 0.146.1.
-  turnId: z.string().min(1),
+  turn: z.object({ id: z.string().min(1) }),
 })
 
 /**
- * One streamed item, as carried by an `item/updated` (incremental) or
- * `item/completed` (finalized) notification during a turn (issue #47).
+ * One streamed item, as carried by an `item/started` or `item/completed`
+ * notification during a turn (issue #47). CONFIRMED 2026-08-10 against a
+ * live 0.146.1 turn; incremental assistant text arrives separately in an
+ * `item/agentMessage/delta` envelope.
  * `type` is the discriminator `model-connection-codex.ts`'s `stream()`
- * switches on: `'agentMessage'` is forwarded as text, `'reasoning'` is
- * silently dropped, and ANY other value — a real one this transcription
+ * switches on: `'agentMessage'` is forwarded as text, `'userMessage'` is
+ * the inert echo of Veduta's own input, `'reasoning'` is silently dropped,
+ * and ANY other value — a real one this transcription
  * does not yet name (command execution, patch application, web search, an
  * MCP tool call) or a genuinely unrecognized one — is the runtime-observable
  * proof the turn attempted to act outside plain assistant text, and refuses
@@ -242,35 +245,44 @@ export const TurnStartResponseSchema = z.object({
  */
 export const CodexItemSchema = z
   .object({
-    // transcription note: item type discriminator per 0.146.1 — the values
-    // this build recognizes are `'agentMessage'` and `'reasoning'`; every
-    // other value (including one this transcription has never observed) is
-    // treated as a tool-shaped item and refuses the turn.
+    // Observed 2026-08-10 on every `item/started`/`item/completed` payload;
+    // also correlates a completed assistant item with its delta envelopes.
+    id: z.string().min(1),
+    // Observed item type discriminator per 0.146.1 — the values this build
+    // recognizes are `'userMessage'`, `'agentMessage'`, and `'reasoning'`;
+    // every other value (including one this transcription has never
+    // observed) is treated as a tool-shaped item and refuses the turn.
     type: z.string().min(1),
-    // transcription note: field name per 0.146.1 — an `'agentMessage'`
-    // item's finalized text (`item/completed`).
+    // Observed field name per 0.146.1 — an `'agentMessage'` item's current
+    // or finalized text (`item/started`/`item/completed`).
     text: z.string().optional(),
-    // transcription note: field name per 0.146.1 — an `'agentMessage'`
-    // item's incremental text (`item/updated`).
-    delta: z.string().optional(),
   })
   .passthrough()
 
-/** The recognized `'agentMessage'` item type value (issue #47) — forwarded as text; `'reasoning'` is the other recognized value and is always dropped. */
+/** Recognized non-acting item type values observed against the pinned binary. */
 export const CODEX_TEXT_ITEM_TYPE = 'agentMessage'
+export const CODEX_USER_ITEM_TYPE = 'userMessage'
 export const CODEX_REASONING_ITEM_TYPE = 'reasoning'
 
-/** `item/updated` or `item/completed` notification (issue #47): `threadId` and `item` stay required while unknown envelope fields are tolerated; the nested item stays `.passthrough()` per `CodexItemSchema`'s own doc comment. */
+/** `item/started` or `item/completed` notification, CONFIRMED 2026-08-10: both correlation ids and `item` stay required while timestamp/additive fields are tolerated. */
 export const ItemNotificationSchema = z.object({
   threadId: z.string().min(1),
-  turnId: z.string().min(1).optional(),
+  turnId: z.string().min(1),
   item: CodexItemSchema,
 })
 
-/** `turn/completed` notification: the turn finished with no further items to stream. */
+/** `item/agentMessage/delta` notification, CONFIRMED 2026-08-10 against a live pinned-binary turn. */
+export const AgentMessageDeltaNotificationSchema = z.object({
+  threadId: z.string().min(1),
+  turnId: z.string().min(1),
+  itemId: z.string().min(1),
+  delta: z.string(),
+})
+
+/** `turn/completed` notification, CONFIRMED 2026-08-10 against the pinned binary: the completed turn id is nested under `turn.id`. */
 export const TurnCompletedNotificationSchema = z.object({
   threadId: z.string().min(1),
-  turnId: z.string().min(1).optional(),
+  turn: z.object({ id: z.string().min(1) }),
 })
 
 export type InitializeResponse = z.infer<typeof InitializeResponseSchema>
@@ -285,6 +297,7 @@ export type ThreadStartResponse = z.infer<typeof ThreadStartResponseSchema>
 export type TurnStartResponse = z.infer<typeof TurnStartResponseSchema>
 export type CodexItem = z.infer<typeof CodexItemSchema>
 export type ItemNotification = z.infer<typeof ItemNotificationSchema>
+export type AgentMessageDeltaNotification = z.infer<typeof AgentMessageDeltaNotificationSchema>
 export type TurnCompletedNotification = z.infer<typeof TurnCompletedNotificationSchema>
 
 /** A notification frame after the protocol layer has had a chance to recognize its method. An unrecognized method is deliberately NOT parsed — `params` passes through opaque — so a future notification type cannot fail validation on the way to being ignored. */

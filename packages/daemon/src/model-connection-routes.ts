@@ -13,7 +13,7 @@ import {
   VerifyModelConnectionResponseSchema,
   type ModelConnectionsSnapshot,
 } from '@veduta/protocol'
-import { z } from 'zod'
+import { rejectUnexpectedBody } from './fastify-validation.ts'
 import {
   connectionErrorFrom,
   ModelConnectionError,
@@ -47,17 +47,6 @@ export interface ModelConnectionRoutesDeps {
   registry: ModelConnectionRegistry
   profile: 'loopback' | 'local-vps' | 'vps'
   probe: (connectionId: string, modelId: string) => Promise<void>
-}
-
-/** A request body that must be empty (or absent) — `.strict()` so an unexpected key is a 400, not silently ignored (the same discipline as `onboarding-routes.ts`'s own copy). */
-const EmptyBodySchema = z.object({}).strict()
-
-/** 400 with the zod issues when `body` is neither `undefined` nor an empty object; `undefined` otherwise. */
-function rejectUnexpectedBody(reply: FastifyReply, body: unknown): FastifyReply | undefined {
-  if (body === undefined) return undefined
-  const parsed = EmptyBodySchema.safeParse(body)
-  if (parsed.success) return undefined
-  return reply.status(400).send({ error: parsed.error.issues })
 }
 
 /** Every `ModelConnectionErrorCode` maps to exactly one HTTP status (issue #47): a `Record` over the full union so a future code addition is a compile error here until it is placed, rather than silently falling through to 500. */

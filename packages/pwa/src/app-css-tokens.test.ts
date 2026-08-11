@@ -11,7 +11,16 @@ import { catalogCssText, catalogTokens } from '@veduta/catalog'
 
 // Comments are stripped before any parsing so a commented-out declaration
 // can never satisfy a guard as if it were live CSS.
-const appCss = readFileSync(new URL('./app.css', import.meta.url), 'utf8').replace(
+function readCssWithImports(url: URL, seen = new Set<string>()): string {
+  if (seen.has(url.href)) throw new Error(`cyclic CSS import: ${url.href}`)
+  seen.add(url.href)
+  const source = readFileSync(url, 'utf8')
+  return source.replace(/@import\s+['"]([^'"]+)['"]\s*;/g, (_statement, path: string) =>
+    readCssWithImports(new URL(path, url), seen),
+  )
+}
+
+const appCss = readCssWithImports(new URL('./app.css', import.meta.url)).replace(
   /\/\*[\s\S]*?\*\//g,
   '',
 )
@@ -93,8 +102,8 @@ describe('derived aliases are declared once, in the base block, at the expected 
 
 // -- guard 1b: referenced catalog variables exist -----------------------------
 
-describe('every --catalog-* variable referenced by app.css is one the catalog declares', () => {
-  // Guard 1 pins the literal text of app.css, so renaming a token in
+describe('every --catalog-* variable referenced by the PWA styles is one the catalog declares', () => {
+  // Guard 1 pins the literal stylesheet text, so renaming a token in
   // catalogTokens (name drift, not value drift) would leave these var()
   // references dangling -- resolving to nothing at runtime -- while the
   // stylesheet text stays unchanged. Cross-checking the references against
@@ -131,7 +140,7 @@ describe('dark status text aliases reference the raw catalog status tokens', () 
 // -- guard 3: duplication scanner (secondary guard) -------------------------
 
 describe('no hand-authored hex literal duplicates a catalog color', () => {
-  // app.css only ever hand-authors hex and rgba(...) literals, plus the
+  // PWA styles only hand-author hex and rgba(...) literals, plus the
   // derived color-mix() alias asserted above -- so hex equality against
   // catalogTokens is a sufficient literal check here. Hex is normalized to
   // opaque 6-digit form (#abc expands, alpha digits drop) so a shorthand or
@@ -154,7 +163,7 @@ describe('no hand-authored hex literal duplicates a catalog color', () => {
     ),
   )
 
-  it('has no overlap between app.css hex literals and catalogTokens colors', () => {
+  it('has no overlap between PWA stylesheet hex literals and catalogTokens colors', () => {
     const overlap = [...hexInAppCss].filter((hex) => catalogHexValues.has(hex))
     expect(overlap).toEqual([])
   })
@@ -165,14 +174,14 @@ describe('no hand-authored hex literal duplicates a catalog color', () => {
 describe('static metadata pins the same colors as the catalog and app.css', () => {
   // index.html and manifest.webmanifest are static files parsed before any
   // stylesheet runs, so they cannot reference CSS custom properties -- exact
-  // literal equality against catalogTokens / app.css is asserted instead.
+  // literal equality against catalogTokens / the loaded styles is asserted instead.
   it('index.html light theme-color matches catalogTokens.light.color.accent', () => {
     expect(metaThemeColor(indexHtml, '(prefers-color-scheme: light)')).toBe(
       catalogTokens.light.color.accent,
     )
   })
 
-  it('index.html dark theme-color matches app.css dark --page-bg', () => {
+  it('index.html dark theme-color matches the dark --page-bg', () => {
     const pageBgDark = declarationValue(darkBlock, '--page-bg')
     expect(metaThemeColor(indexHtml, '(prefers-color-scheme: dark)')).toBe(pageBgDark)
   })
@@ -181,7 +190,7 @@ describe('static metadata pins the same colors as the catalog and app.css', () =
     expect(manifest.theme_color).toBe(catalogTokens.light.color.accent)
   })
 
-  it('manifest background_color matches app.css base --page-bg', () => {
+  it('manifest background_color matches the base --page-bg', () => {
     const pageBgBase = declarationValue(baseBlock, '--page-bg')
     expect(manifest.background_color).toBe(pageBgBase)
   })

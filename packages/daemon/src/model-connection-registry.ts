@@ -667,19 +667,35 @@ export class ModelConnectionRegistry {
   }
 
   async verify(id: string, modelId: string): Promise<void> {
-    return this.queue(async () => {
-      const file = loadConnectionsConfig(this.rootDir)
-      const record = this.findRecord(file, id)
-      const adapter = this.findAdapter(record.method)
+    // A subscription probe performs the same pre-inference freshness check
+    // as a real turn. Run that check, and then the provider I/O itself,
+    // outside the mutation queue: an automatic refresh persists through
+    // this queue, so holding it across the probe would make each operation
+    // wait forever for the other (issue #47).
+    await this.ensureFresh(id)
 
-      await adapter.verify(this.contextFor(id, record.secretRef), modelId)
+    const file = loadConnectionsConfig(this.rootDir)
+    const record = this.findRecord(file, id)
+    const adapter = this.findAdapter(record.method)
+    const generation = this.generation
 
-      const updated = withState(record, {
+    await adapter.verify(this.contextFor(id, record.secretRef), modelId)
+
+    return this.queue(() => {
+      if (this.generation !== generation) {
+        throw new ModelConnectionError(
+          'rejected',
+          'the Model connections changed while the model test was running; try again',
+        )
+      }
+      const currentFile = loadConnectionsConfig(this.rootDir)
+      const currentRecord = this.findRecord(currentFile, id)
+      const updated = withState(currentRecord, {
         state: 'connected',
         stateAt: this.now().toISOString(),
         selectedModelId: modelId,
       })
-      const nextFile = this.replaceRecord(file, updated)
+      const nextFile = this.replaceRecord(currentFile, updated)
       this.persist(nextFile)
     })
   }
@@ -900,8 +916,7 @@ export class ModelConnectionRegistry {
       if (!record) return undefined
 
       const err = connectionErrorFrom(error)
-      const state: ConnectionLifecycleState =
-        err.code === 'expired' ? 'expired' : err.code === 'unauthorized' ? 'revoked' : 'failed'
+      const state = lifecycleStateAfterFailure(err.code)
       const updated = withState(record, {
         state,
         stateAt: this.now().toISOString(),
@@ -1027,4 +1042,12 @@ export class ModelConnectionRegistry {
       this.persist({ ...file, connections })
     })
   }
+}
+
+function lifecycleStateAfterFailure(
+  code: ReturnType<typeof connectionErrorFrom>['code'],
+): ConnectionLifecycleState {
+  if (code === 'expired') return 'expired'
+  if (code === 'unauthorized') return 'revoked'
+  return 'failed'
 }

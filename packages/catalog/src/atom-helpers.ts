@@ -1,4 +1,10 @@
-import type { Action, AtomNode, JsonObject, JsonValue } from '@veduta/protocol'
+import {
+  isJsonValue,
+  type Action,
+  type AtomNode,
+  type JsonObject,
+  type JsonValue,
+} from '@veduta/protocol'
 import type { CSSProperties } from 'react'
 import type { CatalogTokens } from './design-system.ts'
 import type { RenderContext } from './types.ts'
@@ -134,17 +140,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isJsonObject(value: unknown): value is JsonObject {
   if (!isRecord(value)) return false
   return Object.values(value).every(isJsonValue)
-}
-
-function isJsonValue(value: unknown): value is JsonValue {
-  if (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean'
-  ) {
-    return true
-  }
-  if (Array.isArray(value)) return value.every(isJsonValue)
-  return isJsonObject(value)
 }

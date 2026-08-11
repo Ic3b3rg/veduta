@@ -7,6 +7,8 @@ import {
   errorMessageFromBody,
   expiresInLabel,
   fastActionIdempotencyKey,
+  fetchOnboardingStatus,
+  fetchSpaces,
   freshnessLabel,
   optimisticFastSurface,
   pinSurface,
@@ -72,6 +74,40 @@ function buildOnboardingStatus(): OnboardingStatus {
     },
   }
 }
+
+describe('fetchOnboardingStatus', () => {
+  it('preserves a 401 status so the PWA can discard a stale session', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: 'passkey session required' }), { status: 401 }),
+      ),
+    )
+
+    await expect(fetchOnboardingStatus('stale-token')).rejects.toMatchObject({
+      message: 'passkey session required',
+      status: 401,
+    })
+  })
+})
+
+describe('fetchSpaces', () => {
+  it('preserves a 401 status so cached Home cannot keep a stale session alive', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: 'passkey session required' }), { status: 401 }),
+      ),
+    )
+
+    await expect(fetchSpaces('stale-token')).rejects.toMatchObject({
+      message: 'passkey session required',
+      status: 401,
+    })
+  })
+})
 
 describe('previewLegacyImport', () => {
   it('posts the source/overwrite/secrets body and parses the response against ImportPlanSchema', async () => {

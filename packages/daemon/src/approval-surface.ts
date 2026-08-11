@@ -1,4 +1,11 @@
 import { SurfaceSchema, type AtomNode, type JsonValue, type Surface } from '@veduta/protocol'
+import {
+  DECISION_ERROR_CAPTION_NODE_ID,
+  DECISION_ERROR_CAPTION_PATH,
+  decisionButtonNode,
+  decisionErrorCaptionNode,
+} from './decision-surface.ts'
+import { SerializedWorkQueue } from './serialized-work-queue.ts'
 import type { FastMutationNotice, Store } from './store.ts'
 import { neutralizeDelimiters } from './taint.ts'
 import {
@@ -22,10 +29,6 @@ import {
  */
 
 const SUMMARY_MAX_CHARS = 500
-/** Fixed position of the validation-error Caption in every card's tree. */
-const ERROR_CAPTION_NODE_ID = 'error'
-const ERROR_CAPTION_PATH = '/children/3'
-
 const APPROVAL_CARD_SURFACE_PREFIX = 'srf-approval-'
 
 export function approvalCardSurfaceId(approvalId: string): string {
@@ -70,9 +73,9 @@ export function buildApprovalCardSurface(
       // order could exceed the length bound.
       props: { text: truncate(neutralizeDelimiters(card.summary), SUMMARY_MAX_CHARS) },
     },
-    // Fixed at index 3 (`ERROR_CAPTION_PATH`) so `patchValidationError` can
+    // Fixed at index 3 (`DECISION_ERROR_CAPTION_PATH`) so `patchValidationError` can
     // replace it without needing to search the tree for it.
-    { id: ERROR_CAPTION_NODE_ID, type: 'Caption', props: { text: '' } },
+    { id: DECISION_ERROR_CAPTION_NODE_ID, type: 'Caption', props: { text: '' } },
     ...card.editableFields.map((field) => editableFieldNode(field.key, field.value)),
     ...(card.showAllowlistCheckbox ? [allowlistCheckboxNode(approval.toolName)] : []),
     {
@@ -146,19 +149,6 @@ function allowlistCheckboxNode(toolName: string): AtomNode {
   }
 }
 
-function decisionButtonNode(id: string, label: string, stateKey: string): AtomNode {
-  return {
-    id,
-    type: 'Button',
-    props: { label },
-    actions: [{ name: 'press', path: 'fast', stateKey, payload: { value: true } }],
-  }
-}
-
-function errorCaptionNode(message: string): AtomNode {
-  return { id: ERROR_CAPTION_NODE_ID, type: 'Caption', props: { text: message } }
-}
-
 function truncate(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max)}…`
 }
@@ -208,13 +198,14 @@ export class ApprovalSurfaceManager implements ApprovalCardPort {
   private readonly store: Store
   private readonly onError: (error: unknown) => void
   private trust: TrustLayer | undefined
-  private chain: Promise<unknown> = Promise.resolve()
+  private readonly resolutions: SerializedWorkQueue
   private readonly unsubscribe: () => void
 
   constructor(options: ApprovalSurfaceManagerOptions) {
     this.store = options.store
     this.onError =
       options.onError ?? ((error) => console.error('approval surface: resolution failed', error))
+    this.resolutions = new SerializedWorkQueue(this.onError)
     this.unsubscribe = this.store.onFastMutation((notice) => this.handleFastMutation(notice))
   }
 
@@ -224,7 +215,7 @@ export class ApprovalSurfaceManager implements ApprovalCardPort {
   }
 
   /**
-   * Boot rehydration (issue #14 review fix): a card
+   * Boot rehydration: a card
    * Surface that survived a daemon restart on disk is already fully
    * clickable — `handleFastMutation` resolves against the trust store
    * directly, not against anything `start()` builds — so this only ever
@@ -303,10 +294,7 @@ export class ApprovalSurfaceManager implements ApprovalCardPort {
 
   /** Test/shutdown hook: resolves once every enqueued resolution has settled. */
   flush(): Promise<void> {
-    return this.chain.then(
-      () => undefined,
-      () => undefined,
-    )
+    return this.resolutions.flush()
   }
 
   // -- ApprovalCardPort --------------------------------------------------
@@ -330,8 +318,8 @@ export class ApprovalSurfaceManager implements ApprovalCardPort {
         {
           target: 'tree',
           op: 'replace',
-          path: ERROR_CAPTION_PATH,
-          value: errorCaptionNode(message),
+          path: DECISION_ERROR_CAPTION_PATH,
+          value: decisionErrorCaptionNode(message),
         },
       ],
       { expectedTreeVersion: version.treeVersion, updatedBy: 'job', origin: 'trusted:system' },
@@ -366,16 +354,11 @@ export class ApprovalSurfaceManager implements ApprovalCardPort {
     if (approvalId === undefined) return // not a card-surface id shape at all
     if (!this.trust?.hasPendingCardSurface(approvalId, notice.surfaceId)) return
     const decision = notice.stateKey === DECISION_APPROVE_KEY ? 'approve' : 'reject'
-    this.enqueue(() => this.resolve(approvalId, decision))
+    this.resolutions.enqueue(() => this.resolve(approvalId, decision))
   }
 
   private async resolve(approvalId: string, decision: 'approve' | 'reject'): Promise<void> {
     if (!this.trust) throw new Error('approval surface: no TrustLayer attached (call setTrust)')
     await this.trust.resolve(approvalId, decision)
-  }
-
-  /** Serializes async resolution work; every entry terminates in its own `catch` (never an unhandled rejection). */
-  private enqueue(work: () => Promise<void>): void {
-    this.chain = this.chain.catch(() => {}).then(() => work().catch((error) => this.onError(error)))
   }
 }

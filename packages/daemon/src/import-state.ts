@@ -1,8 +1,9 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { ImportSourceKindSchema, type ImportSourceKind } from '@veduta/protocol'
 import { z } from 'zod'
 import { backupFile, writeJsonAtomic } from './config-backup.ts'
+import { readJsonFile } from './json-file.ts'
 
 /**
  * The import marker: `<rootDir>/import.json`
@@ -55,15 +56,12 @@ function importStatePath(rootDir: string): string {
 export function loadImportState(rootDir: string): ImportState {
   const path = importStatePath(rootDir)
   if (!existsSync(path)) return ImportStateSchema.parse({})
-  let raw: unknown
-  try {
-    raw = JSON.parse(readFileSync(path, 'utf8'))
-  } catch (error) {
-    throw new Error(
-      `invalid JSON in import state ${path}: ${error instanceof Error ? error.message : String(error)} — refusing to silently reset the import record`,
-    )
-  }
-  return ImportStateSchema.parse(raw)
+  return ImportStateSchema.parse(
+    readJsonFile(path, {
+      description: 'import state',
+      refusal: 'refusing to silently reset the import record',
+    }),
+  )
 }
 
 /**

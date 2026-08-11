@@ -1,7 +1,8 @@
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { chmodSync, readFileSync } from 'node:fs'
 import type { PushPayload } from '@veduta/protocol'
 import webpush from 'web-push'
 import { z } from 'zod'
+import { writeJsonAtomicDurable } from './atomic-file.ts'
 
 /**
  * Web Push transport (issue #18 plan 10): the daemon's only
@@ -88,13 +89,7 @@ export function ensureVapidKeys(
     privateKey: generated.privateKey,
     subject: email ? `mailto:${email}` : 'mailto:admin@veduta.local',
   }
-  mkdirSync(rootDir, { recursive: true })
-  const tmp = `${path}.tmp`
-  writeFileSync(tmp, `${JSON.stringify(VapidFileSchema.parse(keys), null, 2)}\n`, {
-    encoding: 'utf8',
-    mode: 0o600,
-  })
-  renameSync(tmp, path)
+  writeJsonAtomicDurable(path, VapidFileSchema.parse(keys))
   return keys
 }
 

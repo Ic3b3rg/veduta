@@ -30,23 +30,53 @@ export function piToolParameters(tools: ToolDef[]): Record<string, PiToolParamet
 }
 
 function toolParameters(tool: ToolDef): PiToolParameters {
-  // Providers don't resolve `$ref`: inline everything. A recursive schema
-  // (the Surface Atom tree, `create_surface`'s `tree` field) cannot be
-  // inlined infinitely, so zod-to-json-schema degrades the recursive branch
-  // to an unconstrained `{}` instead of emitting a `$ref` — an accepted
-  // widening, since the zod `safeParse` in `toPiAgentTool` is the real gate.
+  // Let the converter represent recursion with `$ref`, then inline every
+  // resolvable reference below. A reference that would close a cycle or whose
+  // target the converter omitted is widened to `{}`; providers receive no
+  // `$ref`, while repeated non-recursive schemas keep their full shape.
   const derived = zodToJsonSchema(tool.schema, {
     target: 'jsonSchema7',
-    $refStrategy: 'none',
+    $refStrategy: 'root',
   }) as Record<string, unknown>
   // `$schema` is a JSON-Schema-the-document marker, meaningless as one field
   // among a tool call's parameters; drop it before it reaches the provider.
   const { $schema: _schemaMarker, ...schema } = derived
-  const objectSchema = asObjectSchema(schema, tool.name)
+  const objectSchema = asObjectSchema(inlineJsonSchemaRefs(schema), tool.name)
   // TypeBox's `TSchema` is a JSON-Schema-shaped object at runtime; this cast
   // is the deliberate seam between zod-derived JSON Schema and pi's TypeBox
   // typing (issue #37) — the single point where that seam is crossed.
   return objectSchema as PiToolParameters
+}
+
+function inlineJsonSchemaRefs(schema: Record<string, unknown>): Record<string, unknown> {
+  const inline = (value: unknown, activeRefs: ReadonlySet<string>): unknown => {
+    if (Array.isArray(value)) return value.map((entry) => inline(entry, activeRefs))
+    if (!isRecord(value)) return value
+
+    const ref = value['$ref']
+    if (typeof ref === 'string') {
+      if (activeRefs.has(ref)) return {}
+      const target = resolveJsonPointer(schema, ref)
+      if (target === undefined) return {}
+      return inline(target, new Set(activeRefs).add(ref))
+    }
+
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, inline(entry, activeRefs)]),
+    )
+  }
+
+  return inline(schema, new Set()) as Record<string, unknown>
+}
+
+function resolveJsonPointer(root: Record<string, unknown>, pointer: string): unknown {
+  if (pointer === '#') return root
+  if (!pointer.startsWith('#/')) return undefined
+  return pointer
+    .slice(2)
+    .split('/')
+    .map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'))
+    .reduce<unknown>((value, part) => (isRecord(value) ? value[part] : undefined), root)
 }
 
 /**

@@ -1,0 +1,90 @@
+// @vitest-environment jsdom
+
+import { beforeEach, describe, expect, it } from 'vitest'
+import {
+  CHAT_HISTORY_KEY,
+  CHAT_HISTORY_LIMIT,
+  CHAT_QUEUE_KEY,
+  FAST_ACTION_QUEUE_KEY,
+  SURFACE_ORDER_KEY,
+  consumeSetupCode,
+  persistChatHistory,
+  readChatHistory,
+  readQueuedChat,
+  readQueuedFastActions,
+  readSetupCode,
+  readSurfaceOrders,
+} from './pwa-storage.ts'
+
+beforeEach(() => {
+  localStorage.clear()
+  history.replaceState(null, '', '/')
+})
+
+describe('setup code storage', () => {
+  it('reads and consumes the code while preserving the rest of the URL', () => {
+    history.replaceState({ from: 'test' }, '', '/setup?code=pair-me&next=home#finish')
+    expect(readSetupCode()).toBe('pair-me')
+    expect(consumeSetupCode()).toBe('pair-me')
+    expect(location.pathname + location.search + location.hash).toBe('/setup?next=home#finish')
+  })
+})
+
+describe('persisted PWA state', () => {
+  it('bounds and validates chat history', () => {
+    const entries = Array.from({ length: CHAT_HISTORY_LIMIT + 2 }, (_, index) => ({
+      role: 'user' as const,
+      text: `message ${index}`,
+    }))
+    persistChatHistory(entries)
+    expect(readChatHistory()).toEqual(entries.slice(-CHAT_HISTORY_LIMIT))
+
+    localStorage.setItem(CHAT_HISTORY_KEY, '[{"role":"unknown"}]')
+    expect(readChatHistory()).toEqual([])
+  })
+
+  it('drops malformed queued records without discarding valid siblings', () => {
+    localStorage.setItem(
+      CHAT_QUEUE_KEY,
+      JSON.stringify([
+        { id: 'chat-1', text: 'hello', at: '2026-08-11T00:00:00.000Z' },
+        { id: 'chat-2', at: '2026-08-11T00:00:00.000Z' },
+      ]),
+    )
+    localStorage.setItem(
+      FAST_ACTION_QUEUE_KEY,
+      JSON.stringify([
+        {
+          id: 'action-1',
+          surfaceId: 'srf-1',
+          nodeId: 'node-1',
+          actionName: 'toggle',
+          value: true,
+          idempotencyKey: 'key-1',
+          at: '2026-08-11T00:00:00.000Z',
+        },
+        { id: 'action-2' },
+      ]),
+    )
+
+    expect(readQueuedChat()).toHaveLength(1)
+    expect(readQueuedFastActions()).toHaveLength(1)
+  })
+
+  it('keeps only per-Space arrays of Surface ids', () => {
+    localStorage.setItem(
+      SURFACE_ORDER_KEY,
+      JSON.stringify({ 'spc-home': ['srf-a', 'srf-b'], broken: [1], scalar: 'srf-c' }),
+    )
+    expect(readSurfaceOrders()).toEqual({ 'spc-home': ['srf-a', 'srf-b'] })
+  })
+
+  it('fails closed on corrupt JSON', () => {
+    localStorage.setItem(CHAT_QUEUE_KEY, '{')
+    localStorage.setItem(FAST_ACTION_QUEUE_KEY, '{')
+    localStorage.setItem(SURFACE_ORDER_KEY, '{')
+    expect(readQueuedChat()).toEqual([])
+    expect(readQueuedFastActions()).toEqual([])
+    expect(readSurfaceOrders()).toEqual({})
+  })
+})

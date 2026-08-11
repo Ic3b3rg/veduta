@@ -5,6 +5,8 @@ import type {
   InitializeResponse,
   LoginStartResponse,
   ModelListResponse,
+  ThreadStartResponse,
+  TurnStartResponse,
 } from './codex-app-server-protocol.ts'
 import { ModelConnectionError } from './model-connection-adapter.ts'
 
@@ -25,11 +27,11 @@ import { ModelConnectionError } from './model-connection-adapter.ts'
  * see; it is the device-code poll loop's live case. `close()` ends every
  * live subscription, the same as the real transport's own `close()`.
  *
- * The response factories below centralize the field-complete shapes grounded
- * in the pinned 0.146.1 binary. Their comments distinguish directly observed
- * fields from the auth-gated or optional transcription-only fields. Tests use
- * these factories instead of repeating partial protocol objects that can
- * drift away from the executable they stand in for.
+ * The response factories below centralize the observed envelopes and their
+ * load-bearing parsed fields from the pinned 0.146.1 binary. Their comments
+ * distinguish directly observed fields from optional transcription-only
+ * fields. Tests use these factories instead of repeating obsolete top-level
+ * ids or other guessed protocol objects.
  */
 
 /** Complete `initialize` result observed from the pinned binary, with only the embedded version varied for pin-mismatch tests. */
@@ -121,6 +123,16 @@ export function fakeCodexModelListResponse(
   nextCursor: string | null = null,
 ): ModelListResponse {
   return { data, nextCursor }
+}
+
+/** Load-bearing `thread/start` result shape observed against the pinned binary: the thread id is nested under `thread`. */
+export function fakeCodexThreadStartResponse(id = 'thread-1'): ThreadStartResponse {
+  return { thread: { id } }
+}
+
+/** Load-bearing `turn/start` result shape observed against the pinned binary: the turn id is nested under `turn`. */
+export function fakeCodexTurnStartResponse(id = 'turn-1'): TurnStartResponse {
+  return { turn: { id } }
 }
 
 export interface FakeCodexScript {

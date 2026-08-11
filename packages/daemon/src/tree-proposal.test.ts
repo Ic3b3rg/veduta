@@ -126,7 +126,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     expect(card?.state[DECISION_REJECT_KEY]).toBe(false)
   })
 
-  it('previews a Button whose action changed, not just its Atom type (issue 022 review fix: an Atom-type list alone made a changed action indistinguishable from an unrelated same-shape replacement)', () => {
+  it('previews a Button whose action changed, not just its Atom type (an Atom-type list alone made a changed action indistinguishable from an unrelated same-shape replacement)', () => {
     store.createSurface(targetSurface('srf-preview-button', 2), 'agent')
     store.setPinned('srf-preview-button', true, { origin: 'trusted:user', updatedBy: 'user' })
     const version = store.getSurfaceVersion('srf-preview-button')
@@ -161,7 +161,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     expect(preview).toContain('action=submit@fast(item0)')
   })
 
-  it('previews a Markdown whose text changed, not just its Atom type, and neutralizes a delimiter-collision attempt in that text (issue 022 review fix)', () => {
+  it('previews a Markdown whose text changed, not just its Atom type, and neutralizes a delimiter-collision attempt in that text', () => {
     store.createSurface(targetSurface('srf-preview-markdown', 2), 'agent')
     store.setPinned('srf-preview-markdown', true, { origin: 'trusted:user', updatedBy: 'user' })
     const version = store.getSurfaceVersion('srf-preview-markdown')
@@ -246,7 +246,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     expect(managerErrors).toHaveLength(0)
   })
 
-  it('folds the target Surface content_origin into surface.tree_proposal_accepted, neutralizing and truncating the interpolated surfaceId (issue 022 review fix)', async () => {
+  it('folds the target Surface content_origin into surface.tree_proposal_accepted, neutralizing and truncating the interpolated surfaceId', async () => {
     // The id carries a delimiter collision and is long enough to be
     // truncated, so removing either the neutralization or the cap fails
     // this test instead of leaving it vacuously green.
@@ -278,7 +278,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     expect(text).toContain('…')
   })
 
-  it('folds the target Surface content_origin into surface.tree_proposal_rejected, neutralizing and truncating the interpolated surfaceId (issue 022 review fix)', async () => {
+  it('folds the target Surface content_origin into surface.tree_proposal_rejected, neutralizing and truncating the interpolated surfaceId', async () => {
     // The id carries a delimiter collision and is long enough to be
     // truncated, so removing either the neutralization or the cap fails
     // this test instead of leaving it vacuously green.
@@ -462,7 +462,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
       expect(stillImpostor?.title).toBe('Impostor') // never overwritten or archived
     })
 
-    it('reopens an accepted proposal that provably never applied (a crash between resolve() claiming the row and calling patchTree), and its card stays clickable (issue 022 review fix)', async () => {
+    it('reopens an accepted proposal that provably never applied (a crash between resolve() claiming the row and calling patchTree), and its card stays clickable', async () => {
       const id = 'srf-target-crash-accepted'
       store.createSurface(targetSurface(id, 2), 'agent')
       store.setPinned(id, true, { origin: 'trusted:user', updatedBy: 'user' })
@@ -538,7 +538,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     expect(treeProposalIdFromSurfaceId('srf-tree-proposal-not-a-number')).toBeUndefined()
   })
 
-  it('rejects every alias `Number()` used to accept onto a real proposal id (issue 022 review fix: a strict grammar, not Number.isInteger)', () => {
+  it('rejects every alias `Number()` used to accept onto a real proposal id (a strict grammar, not Number.isInteger)', () => {
     expect(treeProposalIdFromSurfaceId('srf-tree-proposal-03')).toBeUndefined()
     expect(treeProposalIdFromSurfaceId('srf-tree-proposal-7.0')).toBeUndefined()
     expect(treeProposalIdFromSurfaceId('srf-tree-proposal--7')).toBeUndefined()
@@ -558,7 +558,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     expect(title as string).not.toContain('<<<evil>>>')
   })
 
-  describe('security: only the persisted daemon-owned card is clickable (issue 022 review fix)', () => {
+  describe('security: only the persisted daemon-owned card is clickable', () => {
     /** A Surface with a `decision-accept` Button, the same fast-action shape a real card declares — but not created by this manager. */
     function fakeDecisionCard(id: string): Surface {
       return SurfaceSchema.parse({
@@ -658,7 +658,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     })
   })
 
-  it('reopens a proposal that fails to apply at accept time (a state patch removed the key the proposed node binds while treeVersion stayed put), so a later legitimate accept works (issue 022 review fix)', async () => {
+  it('reopens a proposal that fails to apply at accept time (a state patch removed the key the proposed node binds while treeVersion stayed put), so a later legitimate accept works', async () => {
     store.createSurface(targetSurface('srf-target-reopen', 2), 'agent')
     // An extra state key the base tree does not bind, so removing it later
     // does not also break `node-0`'s own pre-existing `item0` binding —
@@ -729,7 +729,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     expect(managerErrors).toHaveLength(1) // no new error on the successful retry
   })
 
-  it('a createCard failure (Surface already exists at the canonical id) is routed through onError, patchTree does not throw, and the proposal is still recorded exactly once (issue 022 review fix)', () => {
+  it('a createCard failure (Surface already exists at the canonical id) is routed through onError, patchTree does not throw, and the proposal is still recorded exactly once', () => {
     store.createSurface(targetSurface('srf-target-cardfail', 2), 'agent')
     store.setPinned('srf-target-cardfail', true, { origin: 'trusted:user', updatedBy: 'user' })
     const version = store.getSurfaceVersion('srf-target-cardfail')

@@ -557,7 +557,7 @@ describe('ApprovalSurfaceManager (real Store + TrustLayer)', () => {
     })
   })
 
-  describe('start() — null surface_id repair and impostor rejection (issue #14 review fix)', () => {
+  describe('start() — null surface_id repair and impostor rejection', () => {
     /** Raw db access: simulates `createCard()` crashing between `insertApprovalRow` and `setSurfaceId`, which no public API can otherwise construct. */
     interface RawDb {
       prepare(sql: string): { run(...args: unknown[]): unknown; get(...args: unknown[]): unknown }

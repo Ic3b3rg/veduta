@@ -1,9 +1,9 @@
 import { z } from 'zod'
 import { JsonObjectSchema } from '@veduta/protocol'
-import { defineTool, type ToolContext, type ToolDef } from './agent-runner.ts'
+import { defineTool, type ToolDef } from './agent-runner.ts'
 import type { MemoryRetrieval } from './memory-retrieval.ts'
 import { renderEventForContext, type SpaceEvent, type SpacesEngine } from './spaces-engine.ts'
-import { effectiveOrigin, toolWriteOrigin, type Origin } from './taint.ts'
+import { effectiveToolWriteOrigin, type Origin } from './taint.ts'
 
 export interface MemoryToolOptions {
   activeSpaceId?: string
@@ -161,7 +161,11 @@ export function createMemoryTools(
       egressDomains: [],
       handler(input, context) {
         const spaceId = resolveSpaceId(input.spaceId, options.activeSpaceId)
-        const result = engine.writeFact(spaceId, input.fact, writeOriginFor(context))
+        const result = engine.writeFact(
+          spaceId,
+          input.fact,
+          effectiveToolWriteOrigin(context.taint.origins(), context.origin),
+        )
         return {
           content: `FACTS ${result.operation}: ${result.fact.text}`,
           details: result,
@@ -181,7 +185,7 @@ export function createMemoryTools(
           type: input.type ?? 'turn',
           // Never `trusted:user`: an agent tool write must not be able to
           // satisfy scheduler conditions reserved for genuine user events.
-          origin: writeOriginFor(context),
+          origin: effectiveToolWriteOrigin(context.taint.origins(), context.origin),
           ...(input.payload === undefined ? {} : { payload: input.payload }),
         })
         return { content: event.text, details: event }
@@ -248,29 +252,6 @@ export function createMemoryTools(
           }),
         ]),
   ]
-}
-
-/**
- * The write origin `write_fact`/`append_event` stamp on what they persist
- * (issues/032-facts-hygiene-context-budget.md's write-path hardening,
- * docs/SECURITY.md §3.2): derived from the turn's **live** taint
- * accumulator, read at execution time, never from `context.origin` alone —
- * that field is fixed at turn start and does not see what happened since.
- *
- * The gap this closes: a turn can start trusted (`context.origin ===
- * 'trusted:user'`), retrieve an untrusted fact or event mid-turn through
- * `search_memory` (or `read_recent`/`search_log`), and then call `write_fact`
- * or `append_event`. Deriving the write origin from `context.origin` alone
- * would persist a clean `trusted:system` record even though the turn that
- * produced it had already seen untrusted content — laundering the origin: a
- * fresh session reading that record back would see it as trustworthy,
- * exactly the outcome `docs/SECURITY.md §3.2`'s taint tracking exists to
- * prevent. `effectiveOrigin` (taint.ts) already implements "most-untrusted
- * wins" over an origin chain; this reuses it over `context.taint.origins()`
- * instead of introducing a second provenance chooser.
- */
-function writeOriginFor(context: ToolContext): Origin {
-  return toolWriteOrigin(effectiveOrigin(context.taint.origins(), context.origin))
 }
 
 function resolveSpaceId(

@@ -784,7 +784,7 @@ describe('listPending / attachSurfaceId', () => {
   })
 })
 
-describe('hasPendingCardSurface (issue #14 review fix)', () => {
+describe('hasPendingCardSurface', () => {
   /** Directly inserts a pending row with a `null` surface_id — simulates `createCard()` crashing before `setSurfaceId` runs. */
   function insertNullSurfaceRow(layer: TrustLayer, id: string): void {
     const db = dbOf(layer)

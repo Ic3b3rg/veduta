@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { stripJsonCodeFence } from './model-output.ts'
 import { neutralizeDelimiters } from './taint.ts'
 
 /**
@@ -60,15 +61,6 @@ export const WorkerReportSchema = z
 
 export type WorkerReport = z.infer<typeof WorkerReportSchema>
 
-const CODE_FENCE_RE = /^```(?:json)?\s*([\s\S]*?)\s*```$/i
-
-/** Shared with worker-review.ts, which has the same fenced-JSON convention for its verdict. */
-export function stripCodeFence(text: string): string {
-  const trimmed = text.trim()
-  const match = CODE_FENCE_RE.exec(trimmed)
-  return match?.[1] !== undefined ? match[1].trim() : trimmed
-}
-
 export type ParseWorkerReportOutcome = { ok: true; report: WorkerReport } | { ok: false }
 
 /**
@@ -81,7 +73,7 @@ export type ParseWorkerReportOutcome = { ok: true; report: WorkerReport } | { ok
 export function parseWorkerReport(text: string): ParseWorkerReportOutcome {
   let json: unknown
   try {
-    json = JSON.parse(stripCodeFence(text))
+    json = JSON.parse(stripJsonCodeFence(text))
   } catch {
     return { ok: false }
   }

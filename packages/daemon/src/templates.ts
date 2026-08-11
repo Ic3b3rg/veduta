@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import {
   SurfaceSchema,
   SurfaceTemplateSchema,
+  canonicalJson,
   collectNodeBindingRefs,
   type Action,
   type AtomNode,
@@ -144,23 +145,6 @@ function templateIdEntropy(intent: string, hash: string): string {
   // literal backslash-zero, so this join has no ambiguity between two
   // different (intent, hash) pairs.
   return createHash('sha256').update(`${intent}\0${hash}`).digest('hex')
-}
-
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(sortKeysDeep(value))
-}
-
-function sortKeysDeep(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeysDeep)
-  if (value !== null && typeof value === 'object') {
-    const record = value as Record<string, unknown>
-    return Object.fromEntries(
-      Object.keys(record)
-        .sort()
-        .map((key) => [key, sortKeysDeep(record[key])]),
-    )
-  }
-  return value
 }
 
 export interface TemplateFromSurfaceOptions {

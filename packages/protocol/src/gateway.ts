@@ -66,7 +66,7 @@ export const SurfacePinnedEventSchema = z.object({
   spaceId: z.string().min(1),
   surfaceId: z.string().min(1),
   pinned: z.boolean(),
-  // The bumped freshness `setPinned` persists (issue 022 review fix): without
+  // The bumped freshness `setPinned` persists: without
   // it, a client applying this event in place had no way to move its own
   // `updatedAt`/`updatedBy` off whatever it last observed, and rendered a pin
   // as current while the rest of the Surface still looked stale. Mirrors

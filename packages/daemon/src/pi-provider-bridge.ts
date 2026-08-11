@@ -134,7 +134,7 @@ export interface ProviderBridgeOptions {
    * retrying with a stale credential.
    */
   connections?: () => ModelConnectionRuntime[]
-  /** Deterministic loopback chat behavior, not yet supplied by any caller. Omit for a single canned reply. */
+  /** Optional deterministic Loopback-profile chat behavior. Omit for a single canned reply. */
   mockResponder?: MockResponder
 }
 

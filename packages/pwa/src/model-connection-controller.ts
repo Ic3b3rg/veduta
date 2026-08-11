@@ -10,6 +10,7 @@ import {
   authorizeModelConnection,
   createModelConnection,
   deleteModelConnection,
+  fetchModelConnection,
   fetchModelConnections,
   refreshModelConnectionCatalog,
   setMockProvider,
@@ -21,12 +22,13 @@ const POLL_INTERVAL_MS = 2000
 
 /**
  * The fetch+poll+action orchestration `ModelConnectionPanel` needs (issue
- * #47): fetches the snapshot on mount, polls every 2s while any connection
- * is `waiting-for-user` (so a device-code login completed in another tab or
- * window is picked up without the user having to act here), and wraps every
- * mutating call so the panel's `busy`/`error` props always reflect the most
- * recent action. Extracted out of `wizard-step-model-connection.tsx` so the
- * onboarding step and the standalone Model connections settings view
+ * #47): fetches the snapshot on mount, polls every `waiting-for-user`
+ * connection through its per-item endpoint every 2s (the collection
+ * endpoint is snapshot-only; the per-item read runs the adapter refresh),
+ * and wraps every mutating call so the panel's `busy`/`error` props always
+ * reflect the most recent action. Extracted out of
+ * `wizard-step-model-connection.tsx` so the onboarding step and the
+ * standalone Model connections settings view
  * (`settings-model-connections.tsx`) share one implementation instead of two
  * copies drifting apart.
  */
@@ -71,12 +73,35 @@ export function useModelConnectionsController(token?: string): ModelConnectionsC
   }, [refresh])
 
   useEffect(() => {
-    const waiting =
-      snapshot?.connections.some((connection) => connection.state === 'waiting-for-user') ?? false
-    if (!waiting) return
-    const timer = setInterval(() => void refresh(), POLL_INTERVAL_MS)
+    const waitingIds =
+      snapshot?.connections
+        .filter((connection) => connection.state === 'waiting-for-user')
+        .map((connection) => connection.id) ?? []
+    if (waitingIds.length === 0) return
+
+    const poll = async () => {
+      try {
+        const refreshed = await Promise.all(waitingIds.map((id) => fetchModelConnection(id, token)))
+        const byId = new Map(refreshed.map((connection) => [connection.id, connection]))
+        setSnapshot((current) =>
+          current === undefined
+            ? current
+            : {
+                ...current,
+                connections: current.connections.map(
+                  (connection) => byId.get(connection.id) ?? connection,
+                ),
+              },
+        )
+        setError(null)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'failed to load Model connections')
+      }
+    }
+
+    const timer = setInterval(() => void poll(), POLL_INTERVAL_MS)
     return () => clearInterval(timer)
-  }, [snapshot, refresh])
+  }, [snapshot, token])
 
   // The result-returning variant `onApplySelection` needs (issue #47):
   // every other action stays fire-and-forget void, since only a rejected

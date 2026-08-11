@@ -1,0 +1,121 @@
+/* Model connections panel (issue #47, `docs/adr/0014-subscription-inference-boundary.md`):
+   the method list, the per-connection cards, and the device-code block --
+   shares the wizard's `.wizard-step-form` / `.wizard-actions` / `.wizard-help-note` /
+   `.error` styling wherever the markup already uses those classes. */
+.model-connection-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.model-connection-method-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.model-connection-method {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.model-connection-method.unavailable {
+  color: var(--text-muted);
+}
+
+.model-connection-method-name {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.model-connection-list {
+  display: grid;
+  gap: 10px;
+}
+
+.model-connection-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.model-connection-lifecycle {
+  color: var(--text-soft);
+  font-size: 13px;
+  margin: 0;
+}
+
+.model-connection-device-code {
+  background: var(--pill-bg);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.model-connection-device-code code {
+  background: var(--surface);
+  border-radius: 4px;
+  font-size: 14px;
+  padding: 4px 8px;
+  width: fit-content;
+}
+
+.model-connection-mock-toggle {
+  align-items: center;
+  color: var(--text-soft);
+  display: flex;
+  font-size: 13px;
+  gap: 6px;
+}
+
+/* The topbar's compact chat selects (issue #47): same select styling as the
+   wizard/panel forms, sized down to sit inline with the other topbar-actions
+   pills. */
+.chat-model-selects {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-model-selects select {
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font-size: 12px;
+  max-width: 160px;
+  min-height: 30px;
+  padding: 4px 6px;
+}
+
+.chat-model-selects .error {
+  flex-basis: 100%;
+  font-size: 12px;
+  margin: 0;
+}
+
+/* Standalone Model connections settings view (issue #47): a full-page
+   sibling of `.app-shell`, following the same surface/border tokens the
+   wizard shell uses. */
+.model-connections-settings {
+  display: grid;
+  gap: 16px;
+  margin: 0 auto;
+  max-width: 720px;
+  padding: 16px;
+}
+
+.model-connections-settings-header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+.model-connections-settings-header h2 {
+  font-size: 20px;
+  margin: 0;
+}

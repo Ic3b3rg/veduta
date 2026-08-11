@@ -1,4 +1,11 @@
 import { SurfaceSchema, type AtomNode, type PatchOperation, type Surface } from '@veduta/protocol'
+import {
+  DECISION_ERROR_CAPTION_NODE_ID,
+  DECISION_ERROR_CAPTION_PATH,
+  decisionButtonNode,
+  decisionErrorCaptionNode,
+} from './decision-surface.ts'
+import { SerializedWorkQueue } from './serialized-work-queue.ts'
 import type { FastMutationNotice, Store } from './store.ts'
 import type { TreeProposal } from './surface-engine.ts'
 import { effectiveOrigin, neutralizeDelimiters } from './taint.ts'
@@ -19,7 +26,7 @@ const OPERATIONS_PREVIEW_MAX_CHARS = 4000
 
 /**
  * Cap on each per-node prop value rendered into an operation's subtree
- * summary (issue 022 review fix, `summarizeNode`): a node's `label`/`text`/
+ * summary (`summarizeNode`): a node's `label`/`text`/
  * `title`/`placeholder` is exactly the substantive content the preview must
  * show, and exactly as attacker-influenceable as the target's own title —
  * the whole summary still sits inside `OPERATIONS_PREVIEW_MAX_CHARS`, but a
@@ -36,15 +43,11 @@ const NODE_SUMMARY_PROP_MAX_CHARS = 80
  */
 const SUMMARY_PROP_KEYS = ['label', 'text', 'title', 'placeholder'] as const
 
-/** Fixed position of the refusal Caption in every card's tree. */
-const ERROR_CAPTION_NODE_ID = 'error'
-const ERROR_CAPTION_PATH = '/children/3'
-
 const TREE_PROPOSAL_SURFACE_PREFIX = 'srf-tree-proposal-'
 
 /**
  * Strict grammar for the numeric suffix `treeProposalIdFromSurfaceId` parses
- * (issue 022 review fix): canonical decimal digits only, no leading zero, no
+ *: canonical decimal digits only, no leading zero, no
  * sign, no decimal point or exponent. `Number(raw)` alone accepted anything
  * `Number.isInteger` allows — `03`, `-7.0`, `-0x7`, `-+7`, `-7e0`, and even
  * the empty suffix (`Number('') === 0`) all round-tripped onto a real
@@ -113,9 +116,9 @@ export function buildTreeProposalSurface(proposal: TreeProposal, target: Surface
       },
     },
     { id: 'preview', type: 'Markdown', props: { text: previewText } },
-    // Fixed at index 3 (`ERROR_CAPTION_PATH`) so the refusal message can be
+    // Fixed at index 3 (`DECISION_ERROR_CAPTION_PATH`) so the refusal message can be
     // patched in place without needing to search the tree for it.
-    { id: ERROR_CAPTION_NODE_ID, type: 'Caption', props: { text: '' } },
+    { id: DECISION_ERROR_CAPTION_NODE_ID, type: 'Caption', props: { text: '' } },
     {
       id: 'decisions',
       type: 'Row',
@@ -136,23 +139,10 @@ export function buildTreeProposalSurface(proposal: TreeProposal, target: Surface
   })
 }
 
-function decisionButtonNode(id: string, label: string, stateKey: string): AtomNode {
-  return {
-    id,
-    type: 'Button',
-    props: { label },
-    actions: [{ name: 'press', path: 'fast', stateKey, payload: { value: true } }],
-  }
-}
-
-function errorCaptionNode(message: string): AtomNode {
-  return { id: ERROR_CAPTION_NODE_ID, type: 'Caption', props: { text: message } }
-}
-
 /**
  * One preview line per proposed operation: the op, its path, and — for
  * `add`/`replace` — a bounded, neutralized summary of the new subtree
- * (issue 022 review fix, `summarizeSubtree`). Listing only the Atom types a
+ * (`summarizeSubtree`). Listing only the Atom types a
  * new subtree introduces made a proposal that replaces a Button's action, or
  * a Markdown node's text, indistinguishable from an unrelated replacement of
  * the same shape — the user must be able to see what actually changed to
@@ -179,7 +169,7 @@ function operationPreviewLine(operation: PatchOperation): string {
  * order (root first): each node's type, id, `binding` when present, the
  * human-visible props it declares (`SUMMARY_PROP_KEYS`), and every declared
  * action's name/path(/stateKey) — the substantive content a preview needs,
- * not merely the Atom type (issue 022 review fix).
+ * not merely the Atom type.
  */
 function summarizeSubtree(root: AtomNode): string {
   const lines: string[] = []
@@ -242,7 +232,7 @@ export interface TreeProposalSurfaceManagerOptions {
 export class TreeProposalSurfaceManager {
   private readonly store: Store
   private readonly onError: (error: unknown) => void
-  private chain: Promise<unknown> = Promise.resolve()
+  private readonly resolutions: SerializedWorkQueue
   private readonly unsubscribeProposal: () => void
   private readonly unsubscribeFastMutation: () => void
 
@@ -250,6 +240,7 @@ export class TreeProposalSurfaceManager {
     this.store = options.store
     this.onError =
       options.onError ?? ((error) => console.error('tree proposal: resolution failed', error))
+    this.resolutions = new SerializedWorkQueue(this.onError)
     this.unsubscribeProposal = this.store.onTreeProposal((proposal) => this.createCard(proposal))
     this.unsubscribeFastMutation = this.store.onFastMutation((notice) =>
       this.handleFastMutation(notice),
@@ -297,7 +288,7 @@ export class TreeProposalSurfaceManager {
 
   /**
    * Reopens every `accepted` Tree proposal that provably never applied
-   * (issue 022 review fix): `resolve()` claims a proposal's row `accepted`
+   *: `resolve()` claims a proposal's row `accepted`
    * *before* calling `patchTree` — the exactly-once gate a doubled Accept
    * click needs — but a process crash between that claim and the apply
    * leaves the row permanently `accepted` with the card already gone from
@@ -331,17 +322,14 @@ export class TreeProposalSurfaceManager {
 
   /** Test/shutdown hook: resolves once every enqueued resolution has settled. */
   flush(): Promise<void> {
-    return this.chain.then(
-      () => undefined,
-      () => undefined,
-    )
+    return this.resolutions.flush()
   }
 
   /**
    * Builds and persists the preview card for a newly recorded proposal.
    * Never throws: a `createSurface` failure (e.g. the deterministic id
-   * somehow collided) is routed through `onError` instead (issue 022 review
-   * fix), exactly as the unknown-target case just below already was —
+   * somehow collided) is routed through `onError`, exactly as the
+   * unknown-target case just below already was —
    * `notifyTreeProposal` fires after the proposal's own recording
    * transaction has committed, so a card-creation failure must never make
    * the `patch_tree` tool report a failure for a proposal that is, in fact,
@@ -373,8 +361,8 @@ export class TreeProposalSurfaceManager {
   /**
    * The persisted daemon-owned card is the only clickable card — the same
    * stance `ApprovalSurfaceManager.handleFastMutation` takes
-   * (approval-surface.ts) — enforced by two checks, both required (issue
-   * 022 review fix): `treeProposalIdFromSurfaceId`'s strict grammar is a
+   * (`approval-surface.ts`) — enforced by two required checks.
+   * `treeProposalIdFromSurfaceId`'s strict grammar is a
    * cheap shape pre-filter, not proof the click landed on the real card, so
    * a click must also (a) target the exact canonical id for that proposal
    * — never an alias a looser grammar could once parse — and (b) land on a
@@ -397,7 +385,7 @@ export class TreeProposalSurfaceManager {
     const proposal = this.store.getTreeProposal(proposalId)
     if (!proposal || proposal.status !== 'pending') return
     const decision = notice.stateKey === DECISION_ACCEPT_KEY ? 'accept' : 'reject'
-    this.enqueue(() => this.resolve(proposalId, notice.surfaceId, decision))
+    this.resolutions.enqueue(() => this.resolve(proposalId, notice.surfaceId, decision))
   }
 
   private async resolve(
@@ -410,7 +398,7 @@ export class TreeProposalSurfaceManager {
 
     // `surface.tree_proposal_accepted`/`_rejected` interpolate the target's
     // own `surfaceId`, which is attacker-influenceable for a Surface built
-    // from an imported Template (issue 022 review fix, mirrors
+    // from an imported Template (mirrors
     // `recordTreeProposal`'s own `surface.tree_proposal` entry in
     // surface-engine.ts) — so the origin folds in the target's stored
     // `content_origin` instead of a hardcoded `trusted:system`, and the
@@ -471,8 +459,8 @@ export class TreeProposalSurfaceManager {
       // remove a key the proposed node binds while `treeVersion` stays put
       // (state patches are never gated by the pin), so `patchTree`'s
       // dry-run re-validation throws here even though the staleness check
-      // above passed. Reopen the row back to `pending` (issue 022 review
-      // fix) so the proposal is not stuck `accepted` forever with no way to
+      // above passed. Reopen the row back to `pending` so the proposal is
+      // not stuck `accepted` forever with no way to
       // retry, log the failure, and leave the card in place with the
       // refusal Caption explaining it, rather than silently discarding the
       // failure. The pressed decision key is reset, same as the stale path
@@ -508,8 +496,8 @@ export class TreeProposalSurfaceManager {
         {
           target: 'tree',
           op: 'replace',
-          path: ERROR_CAPTION_PATH,
-          value: errorCaptionNode(message),
+          path: DECISION_ERROR_CAPTION_PATH,
+          value: decisionErrorCaptionNode(message),
         },
       ],
       { expectedTreeVersion: version.treeVersion, updatedBy: 'job', origin: 'trusted:system' },
@@ -526,10 +514,5 @@ export class TreeProposalSurfaceManager {
   private archive(surfaceId: string): void {
     if (!this.store.getSurface(surfaceId)) return // already archived/unknown — graceful no-op
     this.store.archiveSurface(surfaceId, 'job')
-  }
-
-  /** Serializes async resolution work; every entry terminates in its own `catch` (never an unhandled rejection). */
-  private enqueue(work: () => Promise<void>): void {
-    this.chain = this.chain.catch(() => {}).then(() => work().catch((error) => this.onError(error)))
   }
 }

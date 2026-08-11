@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { z } from 'zod'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defineTool, type ToolContext, type ToolDef } from './agent-runner.ts'
 import { chatToolRegistry } from './chat-tool-registry.ts'
 import { MemoryConfigSchema } from './memory-config.ts'
@@ -158,8 +158,11 @@ function containsRef(value: unknown): boolean {
 describe('piToolParameters', () => {
   it('gives every tool in the real chat registry a top-level object schema, no $ref, no top-level allOf', () => {
     const { tools, dispose } = buildRealRegistry()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     try {
       const parameters = piToolParameters(tools)
+
+      expect(warn).not.toHaveBeenCalled()
 
       expect(Object.keys(parameters).sort()).toEqual([...new Set(tools.map((t) => t.name))].sort())
 
@@ -176,6 +179,7 @@ describe('piToolParameters', () => {
         expect(containsRef(schema), `"${tool.name}"'s schema still contains a $ref`).toBe(false)
       }
     } finally {
+      warn.mockRestore()
       dispose()
     }
   })

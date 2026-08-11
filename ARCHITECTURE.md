@@ -1,20 +1,19 @@
 # Architecture
 
-> The "revised picture": the original firstmate/secondmates/crewmates architecture, rethought for a home-first personal agent. Decisions are motivated in the [ADRs](docs/adr/); evidence is in the [research](docs/references/).
+> Veduta is a home-first personal agent whose hierarchy lives in data, not in persistent agent
+> roles. Decisions are motivated in the [ADRs](docs/adr/); evidence is in the
+> [research](docs/references/).
 
 ## 1. The thesis and the guiding principle
 
 **Product thesis**: a personal agent with a real home (persistent Surfaces per life area) beats a personal agent inside a chat. Verified as a market gap: OpenClaw/Hermes are chat-first even with the Canvas; Skye (the closest competitor) has not launched, is iPhone-only, and is locked into WidgetKit ([ref. 02](docs/references/02-competitor-home-first.md)).
 
-**Architectural principle**: _hierarchy lives in the data, not in agents_. The original formula (firstmate → division heads → teams) is reallocated as follows:
-
-| Original idea                  | Where it ends up                                                         | Why                                                                                                          |
-| ------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| Firstmate (director)           | The single agent loop                                                    | Every handoff between agents loses information (DPI, [ref. 03](docs/references/03-single-vs-multi-agent.md)) |
-| Secondmates (stable divisions) | **Spaces**: namespaced memory + Surfaces                                 | The isolation that was needed was _memory_ isolation, not agent isolation                                    |
-| Ephemeral crewmates            | Background **Workers**, "investigate-and-report"                         | The one case where multi-agent wins (parallel research, ~15x tokens)                                         |
-| Adversarial reviewer           | Review **only on high-risk asynchronous outputs**, in a separate context | Self-review makes results worse; cross-context review gives +11pp                                            |
-| Model routing                  | `ModelRef` with `triage`/`reasoning` tiers, per-call                     | RouteLLM: ~95% quality at −85% cost                                                                          |
+**Architectural principle**: _hierarchy lives in the data, not in agents_. One Agent selectively
+works across namespaced **Spaces**. Ephemeral **Workers** are limited to parallel, read-heavy
+investigate-and-report work, with separate review only for high-risk asynchronous output. Model
+routing remains a per-call choice through `ModelRef`. The rejected persistent-agent alternatives
+and their evidence are recorded in [ADR-0002](docs/adr/0002-single-agent-spaces.md) and
+[ref. 03](docs/references/03-single-vs-multi-agent.md).
 
 ## 2. The system at a glance
 

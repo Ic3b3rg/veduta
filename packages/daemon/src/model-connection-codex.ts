@@ -10,8 +10,10 @@ import {
 } from './codex-app-server.ts'
 import {
   AccountReadResponseSchema,
+  AgentMessageDeltaNotificationSchema,
   CODEX_REASONING_ITEM_TYPE,
   CODEX_TEXT_ITEM_TYPE,
+  CODEX_USER_ITEM_TYPE,
   InitializeResponseSchema,
   ItemNotificationSchema,
   LoginStartResponseSchema,
@@ -69,11 +71,12 @@ import { resolveInstalledVersion } from './version.ts'
  * sharing the same pooled transport is ignored rather than misread as this
  * one's. `thread/start` carries the 0.146.1-valid restriction options this
  * transcription could confirm (`approvalPolicy: 'never'`, a read-only
- * sandbox, disabled web search, an empty dynamic-tool set); the actual
+ * sandbox, and disabled web search); the actual
  * fail-closed guarantee is a RUNTIME proof per streamed item, not a
  * start-time assertion (the pinned response carries no tool-set field to
- * assert against): any item that is not plain assistant text or reasoning
- * triggers `turn/interrupt`, abandons the thread, and refuses. A turn that
+ * assert against): any item that is not plain assistant text, reasoning,
+ * or the inert echo of Veduta's own user input triggers `turn/interrupt`,
+ * abandons the thread, and refuses. A turn that
  * runs longer than `CODEX_TURN_TIMEOUT_MS` is abandoned the same way.
  */
 
@@ -218,11 +221,18 @@ function loginCompleted(transport: CodexTransport, loginId: string): boolean {
   })
 }
 
-async function readAccount(transport: CodexTransport): Promise<RefreshResult> {
+async function readAccount(
+  transport: CodexTransport,
+  options: {
+    refreshToken: boolean
+    signedOutState: 'expired' | 'waiting-for-user'
+  } = { refreshToken: true, signedOutState: 'expired' },
+): Promise<RefreshResult> {
   try {
-    const raw = await transport.request('account/read', { refreshToken: true })
+    const raw = await transport.request('account/read', { refreshToken: options.refreshToken })
     const parsed = parseCodexResponse(AccountReadResponseSchema, 'account/read', raw)
     if (parsed.account === null) {
+      if (options.signedOutState === 'waiting-for-user') return { state: 'waiting-for-user' }
       // Observed 2026-08-10 against the real 0.146.1 binary: `account/read`
       // answers successfully (never a JSON-RPC error) with `account: null,
       // requiresOpenaiAuth: true` when no ChatGPT account is signed in — a
@@ -253,7 +263,18 @@ async function refresh(ctx: AdapterContext, challenge?: DeviceChallenge): Promis
   const transport = await getTransport(ctx)
   if (challenge !== undefined) {
     const completed = loginCompleted(transport, challenge.loginId)
-    if (!completed) return { state: 'waiting-for-user' }
+    if (!completed) {
+      // The notification is an optimization, not the source of truth: a
+      // transport restart can discard its in-memory notification ring after
+      // Codex has already persisted the successful login. A non-refreshing
+      // account read recovers that state without rotating tokens on every
+      // two-second PWA poll; a still-null account means the user simply has
+      // not completed the device flow yet.
+      return readAccount(transport, {
+        refreshToken: false,
+        signedOutState: 'waiting-for-user',
+      })
+    }
   }
   return readAccount(transport)
 }
@@ -336,8 +357,8 @@ async function* stream(
     model: request.modelId,
     // The 0.146.1-valid restriction options this transcription could
     // confirm: never let the app-server auto-approve anything, and keep its
-    // own filesystem sandbox read-only. Neither field's value, nor `config`
-    // and `dynamicTools` below, is itself the fail-closed guarantee — the
+    // own filesystem sandbox read-only. Neither field's value nor `config`
+    // below is itself the fail-closed guarantee — the
     // per-item check in the loop below is; every field here is best-effort
     // defense in depth and the turn must still work if the app-server
     // ignores any of them.
@@ -361,17 +382,23 @@ async function* stream(
     // `additionalProperties: true`, so an unrecognized override key is
     // inert rather than a `thread/start` failure.
     config: { web_search: 'disabled', disabled_tools: true },
-    // transcription note: field name per 0.146.1 — an empty dynamic-tool
-    // set, confirmed present on `ThreadStartParams` the same way as
-    // `sandbox`/`config` above; best-effort, not the guarantee (see above).
-    dynamicTools: [],
+    // Do not send `dynamicTools`, even as `[]`: the pinned 0.146.1 server
+    // rejects that experimental field unless `initialize` opted into its
+    // `experimentalApi` capability. Veduta needs no dynamic tools and does
+    // not widen its protocol capabilities merely to transmit an empty set
+    // (issue #47); the runtime item guard below remains the fail-closed
+    // boundary for every tool-shaped item.
     cwd: ctx.codexHome,
   })
-  const { threadId } = parseCodexResponse(ThreadStartResponseSchema, 'thread/start', threadStartRaw)
+  const {
+    thread: { id: threadId },
+  } = parseCodexResponse(ThreadStartResponseSchema, 'thread/start', threadStartRaw)
 
+  let turnId: string | undefined
   const abandonThread = async (): Promise<void> => {
+    if (turnId === undefined) return
     try {
-      await transport.request('turn/interrupt', { threadId })
+      await transport.request('turn/interrupt', { threadId, turnId })
     } catch {
       // Best-effort: the thread is abandoned regardless — never reused,
       // never resumed (thread-per-turn, issue #47).
@@ -401,9 +428,12 @@ async function* stream(
   try {
     const turnStartRaw = await transport.request('turn/start', {
       threadId,
-      input: renderSubscriptionPrompt(request.prompt),
+      input: [{ type: 'text', text: renderSubscriptionPrompt(request.prompt) }],
     })
-    const { turnId } = parseCodexResponse(TurnStartResponseSchema, 'turn/start', turnStartRaw)
+    const parsedTurnStart = parseCodexResponse(TurnStartResponseSchema, 'turn/start', turnStartRaw)
+    const currentTurnId = parsedTurnStart.turn.id
+    turnId = currentTurnId
+    const streamedItemIds = new Set<string>()
 
     const turnTimedOut = new Promise<'timeout'>((resolve) => {
       turnTimer = setTimeout(() => resolve('timeout'), CODEX_TURN_TIMEOUT_MS)
@@ -463,20 +493,34 @@ async function* stream(
           frame.params,
         )
         if (completed.threadId !== threadId) continue
-        if (completed.turnId !== undefined && completed.turnId !== turnId) continue
+        if (completed.turn.id !== currentTurnId) continue
         return
       }
 
-      if (frame.method === 'item/updated' || frame.method === 'item/completed') {
+      if (frame.method === 'item/agentMessage/delta') {
+        const parsed = parseCodexResponse(
+          AgentMessageDeltaNotificationSchema,
+          frame.method,
+          frame.params,
+        )
+        if (parsed.threadId !== threadId || parsed.turnId !== currentTurnId) continue
+        streamedItemIds.add(parsed.itemId)
+        if (parsed.delta) yield parsed.delta
+        continue
+      }
+
+      if (frame.method === 'item/started' || frame.method === 'item/completed') {
         const parsed = parseCodexResponse(ItemNotificationSchema, frame.method, frame.params)
         if (parsed.threadId !== threadId) continue
-        if (parsed.turnId !== undefined && parsed.turnId !== turnId) continue
+        if (parsed.turnId !== currentTurnId) continue
         const { item } = parsed
         if (item.type === CODEX_TEXT_ITEM_TYPE) {
-          const text = item.delta ?? item.text
-          if (text) yield text
+          if (frame.method === 'item/completed' && !streamedItemIds.has(item.id) && item.text) {
+            yield item.text
+          }
           continue
         }
+        if (item.type === CODEX_USER_ITEM_TYPE) continue // echo of the request we just sent
         if (item.type === CODEX_REASONING_ITEM_TYPE) continue // silently dropped, never fatal
         // Any other item type — command execution, patch application, web
         // search, an MCP tool call, or a type this build has never seen —

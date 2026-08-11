@@ -183,12 +183,9 @@ export function applySurfaceStreamEvent(
   }
 }
 
-// Attention badge (ADR): the daemon's `space.attention` WS frame
-// and the `/api/spaces` snapshot can race (e.g. a snapshot refetch triggered
-// by an unrelated Surface event lands after a newer WS frame already bumped
-// the badge). Both merge points below apply REVISION-WINS: a frame only
-// takes effect when its revision is strictly newer than what's already held,
-// so a stale refetch can never claw back a badge to an older count.
+// The daemon's `space.attention` frame and the `/api/spaces` snapshot can
+// race. Both merge points below use the newest revision, so a stale refetch
+// cannot restore an older attention count.
 
 export interface SpaceAttentionFrame {
   spaceId: string

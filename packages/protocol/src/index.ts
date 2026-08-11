@@ -241,3 +241,4 @@ export {
   type UpdateStage,
   type UpdateProgress,
 } from './update.ts'
+export { canonicalJson, isJsonValue } from './json.ts'

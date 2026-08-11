@@ -160,7 +160,7 @@ describe('onboarding wizard flow (loopback)', () => {
 
   it('schedules exit on finish only on the vps profile', async () => {
     const dir = freshRoot()
-    // The completion gate (code review fix) requires every other visible
+    // The completion gate requires every other visible
     // step done first — pin every step here rather than exercising it
     // through the whole wizard, since that's what the flow test above does.
     // The `vps` profile has no development mock control, so the Model
@@ -568,7 +568,7 @@ describe('unexpected internal errors', () => {
     const dir = freshRoot()
     // Simulates an unexpected internal failure (a bug or a hand-edited
     // config), never a user-input problem, so this must map to a generic
-    // 500 and never echo the real error text (code review fix). `vps` so
+    // 500 and never echo the real error text. `vps` ensures
     // `applyModelConnectionStep` actually reads `connections.json` rather
     // than short-circuiting on the loopback profile.
     writeFileSync(join(dir, 'connections.json'), '{not json at all')

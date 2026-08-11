@@ -25,4 +25,6 @@ A Model connection adapter supplies inference and nothing else; Veduta's Agent l
 - The visible routing control is one connection select plus one model select; the internal triage tier follows the same selection rather than exposing a second picker.
 - Failover is permitted only to a `connected` connection the user explicitly enabled for fallback, is surfaced in chat and recorded in the usage log; the mock provider is automatic on Loopback, available on Local VPS only through an explicit development control, and never on a VPS — including any mock candidate a hand-edited `routing.json` may contain.
 
+[ADR-0016](0016-primary-agent-connections-author-surfaces.md) supersedes the ChatGPT text-only exception above: a Model connection must support Surface authoring before it is eligible to power the primary Agent.
+
 Status: accepted

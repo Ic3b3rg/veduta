@@ -1884,6 +1884,39 @@ describe('self-update wiring (issue #43, docs/adr/0013-signed-self-update.md)', 
     await app.close()
   })
 
+  it('treats a missing configured pinning file as disabled without logging a parse error', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-update-missing-pinning-'))
+    const updateHome = await mkdtemp(join(tmpdir(), 'veduta-update-home-'))
+    const missingPinningPath = join(updateHome, 'missing-update.json')
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    process.env['VEDUTA_UPDATE_HOME'] = updateHome
+    process.env['VEDUTA_UPDATE_PINNING'] = missingPinningPath
+
+    try {
+      const { app, store, scheduler } = buildServer({ dataDir })
+
+      try {
+        expect(store.getSurface(UPDATE_SURFACE_ID)).toBeUndefined()
+        expect(
+          scheduler
+            .listAutomations(SYSTEM_SPACE_ID)
+            .some((automation) => automation.handler === 'check-updates'),
+        ).toBe(false)
+        expect(
+          errorSpy.mock.calls.some(
+            ([message]) => typeof message === 'string' && message.startsWith('self-update:'),
+          ),
+        ).toBe(false)
+      } finally {
+        await app.close()
+      }
+    } finally {
+      errorSpy.mockRestore()
+      delete process.env['VEDUTA_UPDATE_HOME']
+      delete process.env['VEDUTA_UPDATE_PINNING']
+    }
+  })
+
   it('constructs UpdateManager, pre-creates the Update Surface, and registers the daily check-updates job when both envs are set and the pinning file parses', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'veduta-update-enabled-'))
     const updateHome = await mkdtemp(join(tmpdir(), 'veduta-update-home-'))

@@ -8,15 +8,15 @@ An open source, self-hosted, **home-first** personal agent: the primary interfac
 
 ## Documentation map
 
-| File                                 | Contents                                                                         |
-| ------------------------------------ | -------------------------------------------------------------------------------- |
-| [ARCHITECTURE.md](ARCHITECTURE.md)   | The full architecture picture, with diagrams and key flows                       |
-| [PRD.md](PRD.md)                     | Product Requirements: problem, target, v1 scope, success criteria                |
-| [CONTEXT.md](CONTEXT.md)             | Domain glossary (the project's ubiquitous language)                              |
-| [docs/SECURITY.md](docs/SECURITY.md) | Security and trust model (hardened against external content)                     |
-| [docs/adr/](docs/adr/)               | The architectural decisions, one per file, with the rationale                    |
-| [docs/references/](docs/references/) | The 7 research studies conducted (SOTA, competitors, academic evidence, runtime) |
-| [issues/](issues/)                   | The v1 work broken into implementable issues, with acceptance criteria           |
+| File                                 | Contents                                                                     |
+| ------------------------------------ | ---------------------------------------------------------------------------- |
+| [ARCHITECTURE.md](ARCHITECTURE.md)   | The full architecture picture, with diagrams and key flows                   |
+| [PRD.md](PRD.md)                     | Product Requirements: problem, target, v1 scope, success criteria            |
+| [CONTEXT.md](CONTEXT.md)             | Domain glossary (the project's ubiquitous language)                          |
+| [docs/SECURITY.md](docs/SECURITY.md) | Security and trust model (hardened against external content)                 |
+| [docs/adr/](docs/adr/)               | The architectural decisions, one per file, with the rationale                |
+| [docs/references/](docs/references/) | Research supporting product, architecture, security, runtime, and operations |
+| [issues/](issues/)                   | The v1 work broken into implementable issues, with acceptance criteria       |
 
 ## Foundational decisions (details in the ADRs)
 
@@ -30,8 +30,11 @@ An open source, self-hosted, **home-first** personal agent: the primary interfac
 8. **VPS-first, passkeys, BYOK; PWA as the primary client, messengers as thin Bridges** — [ADR-0008](docs/adr/0008-vps-passkey-byok.md)
 9. **A Local VPS profile keeps `pnpm dev` a lightweight loopback profile while still letting core production flows be rehearsed locally** — [ADR-0009](docs/adr/0009-local-vps-profile.md)
 
-## Status
+## Development
 
-2026-07-03 — Monorepo scaffold in place ([#1](https://github.com/Ic3b3rg/veduta/issues/1)): `pnpm install && pnpm dev` gives you the Home with seed data and a mock provider, no API keys needed. Next: issue [#2 — Surface protocol](https://github.com/Ic3b3rg/veduta/issues/2).
+`pnpm install && pnpm dev` starts the Loopback profile with seed data and a deterministic mock
+provider, so no VPS, domain, or API key is required. Current work and dependency order live in the
+[issue specifications](issues/README.md) and their mirrored
+[GitHub issues](https://github.com/Ic3b3rg/veduta/issues).
 
 For a production-like local rehearsal — real passkey login, egress enforcement, persistent config — instead of the lightweight loopback profile, run `pnpm local-vps`; see [deploy/local-vps.md](deploy/local-vps.md).

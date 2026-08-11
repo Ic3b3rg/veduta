@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { TIME_OF_DAY_RE } from './cron.ts'
+import { readJsonFile } from './json-file.ts'
 import { assertTimeZone } from './timezone.ts'
 
 /**
@@ -67,13 +68,5 @@ export type MemoryConfig = z.infer<typeof MemoryConfigSchema>
 export function loadMemoryConfig(rootDir: string): MemoryConfig {
   const path = join(rootDir, 'memory.json')
   if (!existsSync(path)) return MemoryConfigSchema.parse({})
-  let raw: unknown
-  try {
-    raw = JSON.parse(readFileSync(path, 'utf8'))
-  } catch (error) {
-    throw new Error(
-      `invalid JSON in memory config ${path}: ${error instanceof Error ? error.message : String(error)}`,
-    )
-  }
-  return MemoryConfigSchema.parse(raw)
+  return MemoryConfigSchema.parse(readJsonFile(path, { description: 'memory config' }))
 }

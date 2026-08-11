@@ -1,6 +1,6 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { z } from 'zod'
+import { writeJsonAtomicDurable } from './atomic-file.ts'
 import type { AuthDevice, AuthState, PersistedPasskey, PersistedSession } from './auth-store.ts'
 
 const PersistedPasskeySchema = z.object({
@@ -118,8 +118,5 @@ function toPersistedSession(input: z.infer<typeof PersistedSessionSchema>): Pers
 }
 
 export function saveAuthState(path: string, state: AuthState): void {
-  mkdirSync(dirname(path), { recursive: true })
-  const tmp = `${path}.tmp`
-  writeFileSync(tmp, `${JSON.stringify(AuthStateFileSchema.parse(state), null, 2)}\n`, 'utf8')
-  renameSync(tmp, path)
+  writeJsonAtomicDurable(path, AuthStateFileSchema.parse(state))
 }

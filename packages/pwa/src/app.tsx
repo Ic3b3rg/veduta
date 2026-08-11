@@ -1,8 +1,8 @@
 import type { ApprovalCard, ChatMessage, OnboardingStatus, Surface } from '@veduta/protocol'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ApprovalCards, dismissCardsForSurface } from './approval-cards.tsx'
-import { AttentionBadge } from './attention-badge.tsx'
+import { dismissCardsForSurface } from './approval-cards.tsx'
 import {
+  ApiResponseError,
   connectGateway,
   fetchAuthStatus,
   fetchOnboardingStatus,
@@ -15,8 +15,6 @@ import {
 } from './api.ts'
 import { AuthGate } from './auth-gate.tsx'
 import { OnboardingWizard } from './onboarding-wizard.tsx'
-import { ChatBar } from './chat-bar.tsx'
-import { ChatModelSelects } from './chat-model-selects.tsx'
 import { SettingsModelConnections } from './settings-model-connections.tsx'
 import {
   applyTurnFrame,
@@ -37,8 +35,7 @@ import {
   surfaceDeepLink,
   type SurfaceStreamEvent,
 } from './home-state.ts'
-import { InstallButton } from './install-button.tsx'
-import { NotificationBell } from './notification-bell.tsx'
+import { HomeScreen } from './home-screen.tsx'
 import { homeBlockedByStatusFailure } from './onboarding-state.ts'
 import {
   AUTH_TOKEN_KEY,
@@ -59,7 +56,6 @@ import {
   type QueuedFastAction,
 } from './pwa-storage.ts'
 import { syncPush } from './push.ts'
-import { SpaceSection } from './space-section.tsx'
 import './app.css'
 
 export function App() {
@@ -108,6 +104,14 @@ export function App() {
   // `applyIncomingTurnFrame`/`onClose` below for why a stale clientId would
   // otherwise strand a turn's closing frame.
   const clientIdRef = useRef<string | undefined>(undefined)
+
+  const resetUnauthorizedSession = useCallback(() => {
+    localStorage.removeItem(AUTH_TOKEN_KEY)
+    setAuthToken(undefined)
+    setOnboardingStatus(null)
+    setOnboardingLoad('loading')
+    setError(null)
+  }, [])
 
   const replaceSpaces = useCallback(
     (next: SpaceWithSurfaces[], cursor = surfaceCursorRef.current) => {
@@ -353,6 +357,10 @@ export function App() {
       })
       .catch((e: Error) => {
         setGatewayOnline(false)
+        if (e instanceof ApiResponseError && e.status === 401) {
+          resetUnauthorizedSession()
+          return
+        }
         if (spacesRef.current.length === 0) {
           localStorage.removeItem(AUTH_TOKEN_KEY)
           setAuthToken(undefined)
@@ -382,6 +390,7 @@ export function App() {
     authToken,
     replaceSpaces,
     refetchAndReplay,
+    resetUnauthorizedSession,
   ])
 
   // Onboarding wizard gate (issue 019): fetched once
@@ -407,12 +416,16 @@ export function App() {
         setOnboardingStatus(status)
         setOnboardingLoad('ready')
       } catch (e) {
+        if (e instanceof ApiResponseError && e.status === 401) {
+          resetUnauthorizedSession()
+          return
+        }
         console.warn('failed to fetch onboarding status:', e)
         setOnboardingLoad('error')
       }
     }
     void load()
-  }, [authMode, authToken, onboardingRetryToken])
+  }, [authMode, authToken, onboardingRetryToken, resetUnauthorizedSession])
 
   useEffect(() => {
     if (!gatewayOnline || queuedChat.length === 0) return
@@ -641,103 +654,45 @@ export function App() {
   }
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div>
-          <h1>Veduta</h1>
-          <p>{authMode === 'production' ? 'Passkey session' : 'Loopback profile'}</p>
-        </div>
-        <div className="topbar-actions" aria-live="polite">
-          <span className={gatewayOnline ? 'status-pill online' : 'status-pill'}>
-            {gatewayOnline ? 'Live' : 'Offline-ready'}
-          </span>
-          {queuedCount > 0 && <span className="status-pill pending">{queuedCount} queued</span>}
-          <ChatModelSelects token={authToken} />
-          <button type="button" onClick={() => setView('model-connections')}>
-            Model connections
-          </button>
-          <NotificationBell token={authToken} />
-          {showInstallGuide && (
-            <InstallButton
-              prompt={installPrompt}
-              onDone={() => {
-                localStorage.setItem(INSTALL_DISMISSED_KEY, '1')
-                setShowInstallGuide(false)
-              }}
-            />
-          )}
-        </div>
-      </header>
-
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-
-      <div className="home-layout">
-        <aside className="space-rail" aria-label="Spaces">
-          {spaces.map((space) => (
-            <button
-              key={space.id}
-              type="button"
-              className={space.id === focusedSpace?.id ? 'space-button selected' : 'space-button'}
-              onClick={() => focusSpace(space)}
-            >
-              <span>{space.name}</span>
-              <span className="badge-group">
-                <AttentionBadge count={space.attention} />
-                <span className="space-badge">{space.surfaces.length}</span>
-              </span>
-            </button>
-          ))}
-        </aside>
-
-        <main className="home" aria-label="Home">
-          {approvalCards.length > 0 && (
-            <ApprovalCards cards={approvalCards} onDismiss={setApprovalCards} />
-          )}
-
-          {spaces.map((space) => (
-            <SpaceSection
-              key={space.id}
-              space={space}
-              authToken={authToken}
-              focused={space.id === focusedSpace?.id}
-              focusedSurfaceId={focusedSurfaceId}
-              surfaceOrder={surfaceOrders[space.id] ?? []}
-              onFocus={focusSpace}
-              onMoveSurface={moveSurface}
-              onPatched={replaceSurface}
-              onQueueFastAction={queueFastAction}
-              onTogglePin={togglePin}
-              onError={setError}
-            />
-          ))}
-        </main>
-      </div>
-
-      <ChatBar
-        entries={chatEntries}
-        streamingEntries={Array.from(streamingTurns.values(), (turn) => ({
-          turnId: turn.turnId,
-          text: turn.text,
-        }))}
-        approvalCards={approvalCards}
-        focusedSpace={focusedSpace}
-        focusToken={focusChatToken}
-        onDismissApprovalCards={setApprovalCards}
-        onSend={(message) => {
-          const spaceId = focusedSpace?.id
-          const sent = gatewayRef.current?.sendChat(message, spaceId) ?? false
-          appendChatEntry({ role: 'user', text: message })
-          if (!sent) {
-            setQueuedChat((prev) => [...prev, queuedChatEntry(message, spaceId)])
-          }
-          return true
-        }}
-      />
-    </div>
+    <HomeScreen
+      authMode={authMode}
+      authToken={authToken}
+      gatewayOnline={gatewayOnline}
+      queuedCount={queuedCount}
+      installPrompt={installPrompt}
+      showInstallGuide={showInstallGuide}
+      error={error}
+      spaces={spaces}
+      focusedSpace={focusedSpace}
+      focusedSurfaceId={focusedSurfaceId}
+      surfaceOrders={surfaceOrders}
+      approvalCards={approvalCards}
+      chatEntries={chatEntries}
+      streamingEntries={Array.from(streamingTurns.values(), (turn) => ({
+        turnId: turn.turnId,
+        text: turn.text,
+      }))}
+      focusChatToken={focusChatToken}
+      onOpenModelConnections={() => setView('model-connections')}
+      onInstallDone={() => {
+        localStorage.setItem(INSTALL_DISMISSED_KEY, '1')
+        setShowInstallGuide(false)
+      }}
+      onFocusSpace={focusSpace}
+      onMoveSurface={moveSurface}
+      onSurfacePatched={replaceSurface}
+      onQueueFastAction={queueFastAction}
+      onTogglePin={togglePin}
+      onError={setError}
+      onApprovalCardsChange={setApprovalCards}
+      onSend={(message) => {
+        const spaceId = focusedSpace?.id
+        const sent = gatewayRef.current?.sendChat(message, spaceId) ?? false
+        appendChatEntry({ role: 'user', text: message })
+        if (!sent) setQueuedChat((prev) => [...prev, queuedChatEntry(message, spaceId)])
+        return true
+      }}
+    />
   )
 }
 

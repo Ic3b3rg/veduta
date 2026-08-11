@@ -559,8 +559,8 @@ export class TrustLayer {
 
   /**
    * The source of truth `ApprovalSurfaceManager.handleFastMutation` checks
-   * before resolving a click (boot-rehydration race; narrowed by the
-   * issue #14 review fix): true only if `approvalId` is still pending AND
+   * before resolving a click during boot rehydration: true only if
+   * `approvalId` is still pending AND
    * its row's own `surface_id` is already recorded AND matches `surfaceId`
    * exactly. A row whose `surface_id` is still `null` (`createCard()`
    * crashed before recording one) never accepts a click — accepting it

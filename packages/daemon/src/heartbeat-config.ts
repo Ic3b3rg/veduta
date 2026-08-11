@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { TIME_OF_DAY_RE, timeToCron } from './cron.ts'
+import { readJsonFile } from './json-file.ts'
 
 /**
  * Heartbeat configuration (issue #16): `<rootDir>/heartbeat.json`.
@@ -55,13 +56,5 @@ export type HeartbeatConfig = z.infer<typeof HeartbeatConfigSchema>
 export function loadHeartbeatConfig(rootDir: string): HeartbeatConfig {
   const path = join(rootDir, 'heartbeat.json')
   if (!existsSync(path)) return HeartbeatConfigSchema.parse({})
-  let raw: unknown
-  try {
-    raw = JSON.parse(readFileSync(path, 'utf8'))
-  } catch (error) {
-    throw new Error(
-      `invalid JSON in heartbeat config ${path}: ${error instanceof Error ? error.message : String(error)}`,
-    )
-  }
-  return HeartbeatConfigSchema.parse(raw)
+  return HeartbeatConfigSchema.parse(readJsonFile(path, { description: 'heartbeat config' }))
 }

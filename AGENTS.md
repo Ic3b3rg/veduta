@@ -9,11 +9,13 @@ single source of truth for coding agents; `CLAUDE.md` just imports it.
 - Install: `pnpm install` — pnpm only, never npm or yarn
 - Dev: `pnpm dev` → daemon on `http://127.0.0.1:8787` + PWA on `http://localhost:5173` (mock
   LLM provider and seed data — no VPS, domain, or API key required, by design)
-- Test all: `pnpm test` · one package: `pnpm --filter @veduta/daemon test` · one file:
+- Test package unit/integration suites: `pnpm test` · one package:
+  `pnpm --filter @veduta/daemon test` · one file:
   `pnpm --filter @veduta/daemon exec vitest run src/server.test.ts` — use `exec vitest run`, not
   `test -- <file>`: pnpm forwards the `--` to vitest, which then ignores the path and silently runs
   the whole suite instead of the file you asked for
-- Before finishing any change, run: `pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build`
+- Before finishing any change, run `pnpm check` (lint, formatting, typecheck, package tests, build).
+  Browser E2E is a separate CI job and is not included in `pnpm test`.
 
 ## Hard rules
 
@@ -66,3 +68,18 @@ single source of truth for coding agents; `CLAUDE.md` just imports it.
 - Security and trust model (trust levels, quarantined reader): `docs/SECURITY.md`
 - Research behind the decisions: `docs/references/`
 - Human contribution process: `CONTRIBUTING.md`
+
+## Agent skills
+
+### Issue tracker
+
+Work is tracked in GitHub Issues and mirrored by canonical specifications under `issues/`. See
+`docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The repository uses the five default triage roles. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+The repository uses a single-context domain layout. See `docs/agents/domain.md`.

@@ -1,6 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { z } from 'zod'
+import { writeJsonAtomicDurable } from './atomic-file.ts'
+import { readJsonFile } from './json-file.ts'
 
 /**
  * Notification discipline configuration (issue #18): `<rootDir>/notifications.json`.
@@ -47,24 +49,15 @@ export type NotificationsConfig = z.infer<typeof NotificationsConfigSchema>
 export function loadNotificationsConfig(rootDir: string): NotificationsConfig {
   const path = join(rootDir, 'notifications.json')
   if (!existsSync(path)) return NotificationsConfigSchema.parse({})
-  let raw: unknown
-  try {
-    raw = JSON.parse(readFileSync(path, 'utf8'))
-  } catch (error) {
-    throw new Error(
-      `invalid JSON in notifications config ${path}: ${error instanceof Error ? error.message : String(error)}`,
-    )
-  }
-  return NotificationsConfigSchema.parse(raw)
+  return NotificationsConfigSchema.parse(
+    readJsonFile(path, { description: 'notifications config' }),
+  )
 }
 
 export function saveNotificationsConfig(rootDir: string, config: NotificationsConfig): void {
   const path = join(rootDir, 'notifications.json')
   const validated = NotificationsConfigSchema.parse(config)
-  mkdirSync(dirname(path), { recursive: true })
-  const tmp = `${path}.tmp`
-  writeFileSync(tmp, `${JSON.stringify(validated, null, 2)}\n`, 'utf8')
-  renameSync(tmp, path)
+  writeJsonAtomicDurable(path, validated)
 }
 
 /** Per-Space override if configured, else the daemon-wide default. */

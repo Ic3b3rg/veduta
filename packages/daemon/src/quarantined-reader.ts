@@ -2,6 +2,7 @@ import type { JsonObject } from '@veduta/protocol'
 import { z } from 'zod'
 import type { ModelRef } from './agent-runner.ts'
 import type { ExternalEvent, ReaderHandoff } from './external-event.ts'
+import { stripJsonCodeFence } from './model-output.ts'
 import type { ModelRouter } from './model-routing.ts'
 import type { Store } from './store.ts'
 import { SOURCE_NAME_RE, neutralizeDelimiters, untrustedOrigin } from './taint.ts'
@@ -208,20 +209,12 @@ function correctiveNote(reason: string): string {
   )
 }
 
-const CODE_FENCE_RE = /^```(?:json)?\s*([\s\S]*?)\s*```$/i
-
-function stripCodeFence(text: string): string {
-  const trimmed = text.trim()
-  const match = CODE_FENCE_RE.exec(trimmed)
-  return match?.[1] !== undefined ? match[1].trim() : trimmed
-}
-
 type ParseOutcome = { ok: true; output: ReaderOutput } | { ok: false; reason: string }
 
 function parseAndSanitize(text: string): ParseOutcome {
   let json: unknown
   try {
-    json = JSON.parse(stripCodeFence(text))
+    json = JSON.parse(stripJsonCodeFence(text))
   } catch {
     return { ok: false, reason: 'invalid-json' }
   }

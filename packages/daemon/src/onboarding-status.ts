@@ -89,7 +89,7 @@ export class VaultUnavailableError extends Error {
 }
 
 /**
- * A user-facing onboarding step failure (code review fix): step modules
+ * A user-facing onboarding step failure. Step modules
  * throw this instead of a plain `Error` for anything the caller did wrong
  * (missing credential, first-space-before-integrations, an empty slug, a
  * finish attempted before every prior step is done, no stored key to
@@ -263,7 +263,7 @@ export function buildOnboardingStatus(deps: OnboardingStatusDeps): OnboardingSta
 }
 
 /**
- * Per-source Google OAuth credential presence (code review fix): gmail and
+ * Per-source Google OAuth credential presence. Gmail and
  * calendar each get their own `<kind>-client-id`/`<kind>-client-secret`/
  * `<kind>-refresh-token` vault entries (`onboarding-step-integrations.ts`)
  * so submitting different OAuth clients for the two no longer makes one

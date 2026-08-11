@@ -5,11 +5,11 @@ import {
   WorkerReportSchema,
   buildWorkerPrompt,
   parseWorkerReport,
-  stripCodeFence,
   truncateGoalLabel,
   type WorkerBriefing,
   type WorkerReport,
 } from './worker-briefing.ts'
+import { stripJsonCodeFence } from './model-output.ts'
 
 const validBriefing: WorkerBriefing = {
   goal: 'Research the ketogenic diet',
@@ -195,16 +195,16 @@ describe('truncateGoalLabel', () => {
   })
 })
 
-describe('stripCodeFence', () => {
+describe('stripJsonCodeFence', () => {
   it('strips a ```json fence', () => {
-    expect(stripCodeFence('```json\n{"a":1}\n```')).toBe('{"a":1}')
+    expect(stripJsonCodeFence('```json\n{"a":1}\n```')).toBe('{"a":1}')
   })
 
   it('strips a bare ``` fence', () => {
-    expect(stripCodeFence('```\n{"a":1}\n```')).toBe('{"a":1}')
+    expect(stripJsonCodeFence('```\n{"a":1}\n```')).toBe('{"a":1}')
   })
 
   it('returns trimmed input unchanged when there is no fence', () => {
-    expect(stripCodeFence('  {"a":1}  ')).toBe('{"a":1}')
+    expect(stripJsonCodeFence('  {"a":1}  ')).toBe('{"a":1}')
   })
 })

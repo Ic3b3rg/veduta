@@ -60,7 +60,7 @@ import {
  * enforced in exactly one place, at the end of `settle()`, so it also covers
  * the no-valid-draft fallback and any `'skipped'` path uniformly.
  *
- * Crash consistency (ADR-0003, issue #17 re-review): the `worker.delivered`
+ * Crash consistency (`issues/017-worker-review.md`): the `worker.delivered`
  * Event is the COMMIT POINT for a Worker's delivery, appended BEFORE the
  * Surface is patched — `recoverAtBoot` reconciles from that event on a
  * restart rather than assuming a `state.settled !== true` Surface is always a
@@ -108,7 +108,7 @@ interface LiveWorker {
   turnCount: number
   tokens: number
   lastValidReport?: WorkerReport
-  /** Incremented every time a turn's text parses as a schema-valid report (issue #17 re-review). Lets `reviewAndDeliver` tell "the corrective prompt produced a genuinely new draft" apart from "it produced nothing parseable at all". */
+  /** Incremented for each schema-valid report so review distinguishes a new corrected draft from an unparseable retry. */
   reportRevision: number
   budgetExceeded: boolean
   cancelled: boolean
@@ -391,8 +391,8 @@ export class WorkerPool {
       return
     }
 
-    // Captured BEFORE the corrective prompt so it can be compared against
-    // afterward (issue #17 re-review): re-reviewing is only ever
+    // Captured before the corrective prompt so it can be compared afterward.
+    // Re-reviewing is only
     // meaningful when the corrective turn actually produced a NEW
     // schema-valid draft, never when it re-parses to nothing and
     // `lastValidReport` is left exactly as it was before this call.
@@ -583,14 +583,14 @@ export class WorkerPool {
    * daemon-authored fallback, always wins. No-ops once `dispose()` has run
    * (shutdown must never deliver) or once already settled.
    *
-   * Crash consistency (issue #17 re-review): the `worker.delivered`
+   * Crash consistency (`issues/017-worker-review.md`): the `worker.delivered`
    * Event is appended BEFORE the Surface is patched/marked settled — it is
    * the COMMIT POINT `recoverAtBoot` reconciles from on a restart. A crash
    * between the two now always resolves to "delivered" (reconciled from the
    * event), never to a clobbered "Interrupted", and the event itself is
    * never silently lost.
    *
-   * High-risk invariant (issue #17 re-review): enforced in this one
+   * High-risk invariant: enforced in this one
    * place, after any `caveatOverride` has already been applied — a
    * high-risk report that is not `reviewStatus: 'passed'` and still carries
    * no caveat (e.g. the no-valid-draft fallback, or any future `'skipped'`
@@ -617,7 +617,7 @@ export class WorkerPool {
       statusReport(
         live.goalLabel,
         'No valid report was produced.',
-        outcome.fallbackReason ?? this.defaultFallbackReason(cancelled, budgetExceeded),
+        outcome.fallbackReason ?? this.defaultFallbackReason({ cancelled, budgetExceeded }),
       )
     let report: WorkerReport =
       outcome.caveatOverride !== undefined
@@ -660,9 +660,9 @@ export class WorkerPool {
     live.resolveSettled()
   }
 
-  private defaultFallbackReason(cancelled: boolean, budgetExceeded: boolean): string {
-    if (cancelled) return 'The worker was cancelled before producing a valid report.'
-    if (budgetExceeded) {
+  private defaultFallbackReason(flags: { cancelled: boolean; budgetExceeded: boolean }): string {
+    if (flags.cancelled) return 'The worker was cancelled before producing a valid report.'
+    if (flags.budgetExceeded) {
       return 'The worker reached its iteration or token budget before producing a valid report.'
     }
     return 'The worker did not produce a valid report.'
@@ -729,7 +729,7 @@ export class WorkerPool {
    * Scans the Space's Event log for a previously-appended `worker.delivered`
    * event for `workerId` (mirrors `quarantined-reader.alreadyHandled`'s
    * "idempotency via the Event log" idiom). This is the crash-consistency
-   * commit point `recoverAtBoot` (issue #17 re-review) reconciles
+   * commit point `recoverAtBoot` reconciles
    * boot recovery from, rather than treating every unsettled Surface as a
    * genuine orphan.
    */

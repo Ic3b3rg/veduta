@@ -131,6 +131,14 @@ export function toolWriteOrigin(turnOrigin: Origin): Origin {
   return isUntrusted(turnOrigin) ? turnOrigin : 'trusted:system'
 }
 
+/** Derives a persisted tool-write origin from the turn's live taint, not its initial snapshot. */
+export function effectiveToolWriteOrigin(
+  liveOrigins: Iterable<Origin | undefined>,
+  fallback: Origin,
+): Origin {
+  return toolWriteOrigin(effectiveOrigin(liveOrigins, fallback))
+}
+
 /** The `<source>` suffix of an untrusted origin, `undefined` for trusted ones. */
 export function untrustedSource(origin: Origin): string | undefined {
   return isUntrusted(origin) ? origin.slice(UNTRUSTED_PREFIX.length) : undefined

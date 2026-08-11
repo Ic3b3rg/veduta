@@ -1,0 +1,102 @@
+:root {
+  /* Derived from catalogTokens via the style element injected in main.tsx
+     (issue 024). Theme-independent: the --catalog-* variables flip with the
+     color scheme. Never redeclare these in the dark block — the drift test
+     enforces single declaration. Shell cards sit on the raised surface;
+     the chat dock tints the base surface (hence the two different catalog
+     surface variables below). */
+  --text: var(--catalog-color-text);
+  --text-muted: var(--catalog-color-text-muted);
+  --surface: var(--catalog-color-surface-raised);
+  --border: var(--catalog-color-border);
+  --accent: var(--catalog-color-accent);
+  --accent-text: var(--catalog-color-accent-text);
+  --focus: var(--catalog-color-focus);
+  --chat-dock-bg: color-mix(in srgb, var(--catalog-color-surface) 96%, transparent);
+
+  /* Shell-only tokens, hand-authored: no catalog counterpart (page
+     background, soft text/border tints, pills, status triads, chat dock
+     shadow). */
+  --page-bg: #f4f6f8;
+  --text-soft: #415060;
+  --border-strong: #bcc7d4;
+  --accent-soft: #8ab9aa;
+  --accent-soft-bg: #e3efe9;
+  --pill-bg: #e9edf2;
+  --success-bg: #dff4e8;
+  --success-border: #a5d9bd;
+  --success-text: #17643c;
+  --warning-bg: #fff1cf;
+  --warning-border: #e6c56c;
+  --warning-text: #775200;
+  --danger-bg: #fff1f0;
+  --danger-border: #f1b8b2;
+  --danger-text: #9b1c13;
+  --chat-dock-shadow: rgba(22, 32, 42, 0.09);
+  color-scheme: light;
+  color: var(--text);
+  background: var(--page-bg);
+  font-family: var(--catalog-font-family);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page-bg: #0c1117;
+    --text-soft: #bac4d0;
+    --border-strong: #3b475a;
+    --accent-soft: #3f6b59;
+    --accent-soft-bg: #1e2f28;
+    --pill-bg: #232c38;
+    --success-bg: #143427;
+    --success-border: #2c6b4a;
+    /* Dark status text equals the raw catalog status tokens; light keeps
+       darkened tints for contrast on the tinted backgrounds. */
+    --success-text: var(--catalog-color-success);
+    --warning-bg: #3a2f14;
+    --warning-border: #8a6d2f;
+    --warning-text: var(--catalog-color-warning);
+    --danger-bg: #351312;
+    --danger-border: #7a2f28;
+    --danger-text: var(--catalog-color-danger);
+    --chat-dock-shadow: rgba(0, 0, 0, 0.4);
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  overflow-x: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  min-height: 36px;
+  padding: 7px 11px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}

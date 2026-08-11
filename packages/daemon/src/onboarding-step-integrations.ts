@@ -32,8 +32,8 @@ interface GoogleCredentials {
 }
 
 /**
- * gmail and calendar are two independent Google Cloud OAuth clients in
- * practice (issue #19 code review fix): they used to share one
+ * Gmail and Calendar are two independent Google Cloud OAuth clients. They
+ * used to share one
  * `google-client-id`/`google-client-secret`/`google-refresh-token` vault
  * entry, so submitting different credentials for the two silently made the
  * second overwrite the first's. Every vault name is namespaced by service

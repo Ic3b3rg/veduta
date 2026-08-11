@@ -261,9 +261,6 @@ function ConnectionCard({
     }
   }
 
-  const actionLabel =
-    copy.action === 'authorize' ? 'Authorize' : copy.action === 'reconnect' ? 'Reconnect' : 'Retry'
-
   return (
     <div className="model-connection-card">
       <input
@@ -295,7 +292,7 @@ function ConnectionCard({
             disabled={busy || (isApiKeyMethod && reauthKey.trim() === '')}
             onClick={runAction}
           >
-            {actionLabel}
+            {connectionActionLabel(copy.action)}
           </button>
         </div>
       )}
@@ -351,6 +348,12 @@ function ConnectionCard({
   )
 }
 
+function connectionActionLabel(action: 'authorize' | 'reconnect' | 'retry'): string {
+  if (action === 'authorize') return 'Authorize'
+  if (action === 'reconnect') return 'Reconnect'
+  return 'Retry'
+}
+
 /** The one visible routing control: which connection, and which model from that connection's own catalog -- `catalogOptions` is only ever computed for the currently selected connection, so switching the Connection select always narrows the Model select to that connection's own models. */
 function SelectionControls({
   snapshot,
@@ -366,7 +369,7 @@ function SelectionControls({
   const connectedConnections = snapshot.connections.filter(
     (connection) => connection.state === 'connected',
   )
-  const [connectionId, setConnectionId] = useState(
+  const [draftConnectionId, setDraftConnectionId] = useState(
     snapshot.selection?.connectionId ?? connectedConnections[0]?.id ?? '',
   )
   const [modelId, setModelId] = useState(snapshot.selection?.modelId ?? '')
@@ -387,9 +390,15 @@ function SelectionControls({
     latestSnapshot.current = snapshot
   }, [snapshot])
 
-  const selectedConnection = connectedConnections.find(
-    (connection) => connection.id === connectionId,
-  )
+  // A device-code connection can become connected while this component
+  // stays mounted. React preserves the empty draft initialized during the
+  // waiting state, so fall back to the committed connection or the first
+  // newly connected one whenever that draft names no connected record.
+  const selectedConnection =
+    connectedConnections.find((connection) => connection.id === draftConnectionId) ??
+    connectedConnections.find((connection) => connection.id === snapshot.selection?.connectionId) ??
+    connectedConnections[0]
+  const connectionId = selectedConnection?.id ?? ''
   const modelOptions = selectedConnection ? catalogOptions(selectedConnection) : []
   const canAct = connectionId !== '' && modelId !== ''
 
@@ -400,7 +409,7 @@ function SelectionControls({
         id="model-connection-select"
         value={connectionId}
         onChange={(e) => {
-          setConnectionId(e.target.value)
+          setDraftConnectionId(e.target.value)
           setModelId('')
         }}
       >
@@ -442,7 +451,7 @@ function SelectionControls({
             // not `snapshot` directly — see that ref's own comment above.
             void onApplySelection(connectionId, modelId).then((committed) => {
               if (committed) return
-              setConnectionId(latestSnapshot.current.selection?.connectionId ?? '')
+              setDraftConnectionId(latestSnapshot.current.selection?.connectionId ?? '')
               setModelId(latestSnapshot.current.selection?.modelId ?? '')
             })
           }}

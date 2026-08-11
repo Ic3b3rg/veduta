@@ -1,16 +1,7 @@
 import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
-import {
-  AuthSessionSchema,
-  AuthStatusSchema,
-  ActionInvocationSchema,
-  OneTimeCodeSchema,
-  PairingCodeSchema,
-  PushSubscriptionSchema,
-  UpdatePinningSchema,
-  WebAuthnOptionsEnvelopeSchema,
-} from '@veduta/protocol'
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import { UpdatePinningSchema } from '@veduta/protocol'
+import type { FastifyInstance } from 'fastify'
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,7 +13,6 @@ import { AllowlistSurfaceManager } from './allowlist-surface.ts'
 import { ApprovalSurfaceManager } from './approval-surface.ts'
 import { ProgressiveAuthLockout } from './auth-rate-limit.ts'
 import { AuditSurfaceManager } from './audit-surface.ts'
-import { AuthStoreError, type AuthStore } from './auth-store.ts'
 import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import { chatToolRegistry as buildChatToolRegistry } from './chat-tool-registry.ts'
 import { createChatLoop } from './chat-loop.ts'
@@ -34,19 +24,20 @@ import {
   resolveCodexBinary,
   spawnCodexAppServer,
 } from './codex-app-server.ts'
-import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
 import { createConnectionRuntimes } from './connection-inference.ts'
 import { loadConnectionsConfig, type ConnectionsFile } from './connections-config.ts'
 import { EgressPolicy, installEgressEnforcement } from './egress.ts'
 import { EventIngestion, type FetchStage } from './event-ingestion.ts'
 import type { ExternalEvent } from './external-event.ts'
 import { promptFullText } from './full-text-flow.ts'
+import { registerGatewayRoute } from './gateway-route.ts'
 import { GatewayHub } from './gateway.ts'
 import { CalendarSource, GmailSource, GoogleTokenProvider } from './google-sources.ts'
 import { loadHeartbeatConfig } from './heartbeat-config.ts'
 import { HeartbeatSurfaceManager } from './heartbeat-surface.ts'
 import { Heartbeat } from './heartbeat.ts'
 import { loadIngestionConfig } from './ingestion-config.ts'
+import { registerIngestionRoutes } from './ingestion-routes.ts'
 import { loadMemoryConfig } from './memory-config.ts'
 import { MemoryIndex, type MemoryIndexOptions } from './memory-index.ts'
 import { MemoryRetrieval } from './memory-retrieval.ts'
@@ -81,6 +72,7 @@ import { registerOnboardingRoutes } from './onboarding-routes.ts'
 import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
 import { PiJsonlSessionStore } from './pi-agent-runner.ts'
 import { createProviderBridge, isBuiltinModel, probeModel } from './pi-provider-bridge.ts'
+import { registerPushRoutes } from './push-routes.ts'
 import { PushStore } from './push-store.ts'
 import { QuarantinedReader } from './quarantined-reader.ts'
 import { defaultRedactor } from './redaction.ts'
@@ -94,53 +86,20 @@ import {
   VAULT_FILE_NAME,
 } from './secrets-vault.ts'
 import { WatchManager } from './watch-renewal.ts'
-import { sendPwaAsset } from './static-assets.ts'
+import { registerAuthRoutes, registerRequestAuth, type ServerAuthOptions } from './server-auth.ts'
+import { registerSpaceSurfaceRoutes } from './space-surface-routes.ts'
 import { createSpawnWorkerTool } from './spawn-worker-tool.ts'
-import { Store, SurfaceActionError } from './store.ts'
-import { SurfaceNotPinnableError } from './surface-engine.ts'
-import { appendSystemSurface, ensureSystemSpace } from './system-space.ts'
+import { registerStaticRoutes } from './static-routes.ts'
+import { Store } from './store.ts'
+import { ensureSystemSpace } from './system-space.ts'
 import { TemplateEngine } from './template-engine.ts'
 import { TreeProposalSurfaceManager } from './tree-proposal.ts'
 import { isTrustWrapped, TrustLayer } from './trust-layer.ts'
 import { ensureDataVersion } from './update/data-version.ts'
 import { UpdateManager } from './update-manager.ts'
-import { usageSurface } from './usage-surface.ts'
 import { resolveInstalledVersion } from './version.ts'
-import {
-  ensureVapidKeys,
-  isAllowedPushEndpoint,
-  WebPushTransport,
-  type PushTransport,
-} from './web-push-transport.ts'
+import { ensureVapidKeys, WebPushTransport, type PushTransport } from './web-push-transport.ts'
 import { WorkerPool } from './worker.ts'
-
-// The client sends only node/action/payload: state keys come from declared
-// Atom actions, never from the client (ADR-0003).
-const SurfaceActionBodySchema = ActionInvocationSchema
-
-// `POST /api/surfaces/:surfaceId/pin`'s body (issues/022-emergent-templates.md):
-// pinning is a boolean user intent, nothing else the client can shape.
-const PinSurfaceBodySchema = z.object({ pinned: z.boolean() })
-
-const DeviceNameSchema = z.string().trim().min(1).max(80)
-
-const RegistrationOptionsBodySchema = z.object({
-  oneTimeCode: OneTimeCodeSchema,
-  deviceName: DeviceNameSchema,
-})
-
-const WebAuthnResponseSchema = z.object({ id: z.string().min(1) }).passthrough()
-
-const RegistrationVerifyBodySchema = z.object({
-  ceremonyId: z.string().min(1),
-  response: WebAuthnResponseSchema,
-})
-
-const LoginVerifyBodySchema = RegistrationVerifyBodySchema.extend({
-  deviceName: DeviceNameSchema.optional(),
-})
-
-const PushSubscriptionDeleteBodySchema = z.object({ endpoint: z.string().min(1) })
 
 export interface ServerOptions {
   pwaDistDir?: string
@@ -200,14 +159,8 @@ export interface ServerOptions {
   }
 }
 
-export type ServerAuthOptions =
-  | { mode: 'dev' }
-  | {
-      mode: 'production'
-      store: AuthStore
-      allowedOrigins: string[]
-      hstsMaxAgeSeconds?: number
-    }
+export { isAllowedOrigin } from './server-auth.ts'
+export type { ServerAuthOptions } from './server-auth.ts'
 
 const defaultPwaDistDir = fileURLToPath(new URL('../../pwa/dist/', import.meta.url))
 
@@ -445,11 +398,7 @@ export function assembleEgressPolicy(input: {
   return policy
 }
 
-/**
- * The Gateway in scaffold form (issue #1): HTTP API + chat WebSocket
- * on loopback, dev profile only. TLS/passkeys are issue #5, the real
- * ChannelAdapter surface sync is issue #4.
- */
+/** Builds the Gateway and wires its HTTP, WebSocket, persistence, and agent subsystems. */
 export function buildServer(options: ServerOptions = {}) {
   const app = Fastify({
     logger: false,
@@ -1083,7 +1032,7 @@ export function buildServer(options: ServerOptions = {}) {
 
   // Signed self-update (issue #43, docs/adr/0013-signed-self-update.md):
   // wired only when both `VEDUTA_UPDATE_HOME` and `VEDUTA_UPDATE_PINNING`
-  // are set AND the pinning file parses (`UpdatePiningSchema` — root-owned
+  // are set AND the pinning file exists and parses (`UpdatePinningSchema` — root-owned
   // trust anchors, `/etc/veduta/update.json` on a real install). Any other
   // profile (loopback dev, the test suite, a VPS/Local VPS instance that
   // hasn't opted in) gets zero behavior change: no `UpdateManager`, no
@@ -1094,7 +1043,7 @@ export function buildServer(options: ServerOptions = {}) {
   const updatePinningEnv = process.env['VEDUTA_UPDATE_PINNING']
   let updateManager: UpdateManager | undefined
   let updateFeedHost: string | undefined
-  if (updateHomeEnv && updatePinningEnv) {
+  if (updateHomeEnv && updatePinningEnv && existsSync(updatePinningEnv)) {
     try {
       const pinning = UpdatePinningSchema.parse(JSON.parse(readFileSync(updatePinningEnv, 'utf8')))
       updateFeedHost = new URL(pinning.feedUrl).hostname
@@ -1378,13 +1327,7 @@ export function buildServer(options: ServerOptions = {}) {
   })
   void app.register(websocket)
 
-  app.addHook('onRequest', async (request, reply) => {
-    if (auth.mode !== 'production') return
-    reply.header('strict-transport-security', hstsHeader(auth.hstsMaxAgeSeconds))
-    if (isPublicUnauthenticatedPath(request.url)) return
-    if (auth.store.verifySession(extractBearer(request.headers.authorization))) return
-    return reply.status(401).send({ error: 'passkey session required' })
-  })
+  registerRequestAuth(app, auth)
 
   app.get('/api/health', () => ({
     ok: true,
@@ -1392,199 +1335,18 @@ export function buildServer(options: ServerOptions = {}) {
     dataVersion: dataVersionGate.dataVersion,
   }))
 
-  app.get('/api/auth/status', () => {
-    return AuthStatusSchema.parse(
-      auth.mode === 'production'
-        ? auth.store.status()
-        : { mode: 'dev', passkeyRegistered: false, bootstrapRequired: false },
-    )
+  registerAuthRoutes(app, { auth, lockout })
+  registerStaticRoutes(app, pwaDistDir)
+
+  registerSpaceSurfaceRoutes(app, {
+    auth,
+    store,
+    router,
+    pushStore,
+    notificationCenter,
+    templateEngine,
   })
-
-  app.post('/api/auth/register/options', async (request, reply) => {
-    if (auth.mode !== 'production') return reply.status(404).send({ error: 'auth disabled' })
-    return authAttempt(lockout, request, reply, async () => {
-      const parsed = RegistrationOptionsBodySchema.safeParse(request.body)
-      if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
-      const envelope = await auth.store.startPasskeyRegistration(parsed.data)
-      return WebAuthnOptionsEnvelopeSchema.parse(envelope)
-    })
-  })
-
-  app.post('/api/auth/register/verify', async (request, reply) => {
-    if (auth.mode !== 'production') return reply.status(404).send({ error: 'auth disabled' })
-    return authAttempt(lockout, request, reply, async () => {
-      const parsed = RegistrationVerifyBodySchema.safeParse(request.body)
-      if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
-      const session = await auth.store.finishPasskeyRegistration(parsed.data)
-      return AuthSessionSchema.parse(session)
-    })
-  })
-
-  app.post('/api/auth/login/options', async (_request, reply) => {
-    if (auth.mode !== 'production') return reply.status(404).send({ error: 'auth disabled' })
-    const envelope = await auth.store.startPasskeyLogin()
-    return WebAuthnOptionsEnvelopeSchema.parse(envelope)
-  })
-
-  app.post('/api/auth/login/verify', async (request, reply) => {
-    if (auth.mode !== 'production') return reply.status(404).send({ error: 'auth disabled' })
-    return authAttempt(lockout, request, reply, async () => {
-      const parsed = LoginVerifyBodySchema.safeParse(request.body)
-      if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
-      const login = {
-        ceremonyId: parsed.data.ceremonyId,
-        response: parsed.data.response,
-      }
-      const session = await auth.store.finishPasskeyLogin(
-        parsed.data.deviceName === undefined
-          ? login
-          : { ...login, deviceName: parsed.data.deviceName },
-      )
-      return AuthSessionSchema.parse(session)
-    })
-  })
-
-  app.get('/api/auth/devices', (request, reply) => {
-    if (auth.mode !== 'production') return reply.status(404).send({ error: 'auth disabled' })
-    const token = extractBearer(request.headers.authorization)
-    if (!token) return reply.status(401).send({ error: 'passkey session required' })
-    return { devices: auth.store.listDevices(token) }
-  })
-
-  app.post('/api/auth/pairing-codes', (request, reply) => {
-    if (auth.mode !== 'production') return reply.status(404).send({ error: 'auth disabled' })
-    const token = extractBearer(request.headers.authorization)
-    if (!token) return reply.status(401).send({ error: 'passkey session required' })
-    return PairingCodeSchema.parse(auth.store.createPairingCode(token))
-  })
-
-  app.post('/api/auth/devices/:deviceId/revoke', (request, reply) => {
-    if (auth.mode !== 'production') return reply.status(404).send({ error: 'auth disabled' })
-    const token = extractBearer(request.headers.authorization)
-    if (!token) return reply.status(401).send({ error: 'passkey session required' })
-    const { deviceId } = request.params as { deviceId: string }
-    auth.store.revokeDevice(token, deviceId)
-    return reply.status(204).send()
-  })
-
-  app.get('/', (_request, reply) => sendPwaAsset(reply, pwaDistDir, 'index.html'))
-
-  app.get('/app/*', (_request, reply) => sendPwaAsset(reply, pwaDistDir, 'index.html'))
-
-  // The onboarding wizard's pairing landing page (issue #19):
-  // served as the SPA, same as `/app/*`, and public (below) so the printed
-  // first-boot/pairing URL (`<origin>/setup?code=...`) works before any
-  // session exists.
-  app.get('/setup', (_request, reply) => sendPwaAsset(reply, pwaDistDir, 'index.html'))
-
-  app.get('/manifest.webmanifest', (_request, reply) =>
-    sendPwaAsset(reply, pwaDistDir, 'manifest.webmanifest'),
-  )
-
-  app.get('/service-worker.js', (_request, reply) =>
-    sendPwaAsset(reply, pwaDistDir, 'service-worker.js'),
-  )
-
-  app.get('/assets/*', (request, reply) => {
-    const asset = (request.params as { '*': string })['*']
-    return sendPwaAsset(reply, pwaDistDir, `assets/${asset}`)
-  })
-
-  app.get('/icons/*', (request, reply) => {
-    const asset = (request.params as { '*': string })['*']
-    return sendPwaAsset(reply, pwaDistDir, `icons/${asset}`)
-  })
-
-  app.get('/api/spaces', (request) => {
-    const rawSnapshot = appendSystemSurface(
-      store.snapshot(),
-      usageSurface(router.usage(), new Date().toISOString()),
-    )
-    // Attention (issue #18): PushStore is the source of
-    // truth (0/0 default for a Space `notify()` has never touched).
-    const snapshot = {
-      ...rawSnapshot,
-      spaces: rawSnapshot.spaces.map((space) => {
-        const attention = pushStore.getAttention(space.id)
-        return { ...space, attention: attention.count, attentionRevision: attention.revision }
-      }),
-    }
-    if (auth.mode !== 'production') return snapshot
-    const token = extractBearer(request.headers.authorization)
-    return token ? appendConnectedDevicesSurface(snapshot, auth.store.listDevices(token)) : snapshot
-  })
-
-  app.get('/api/spaces/:spaceId/events', (request, reply) => {
-    const { spaceId } = request.params as { spaceId: string }
-    if (!store.getSpace(spaceId)) {
-      return reply.status(404).send({ error: `unknown space: ${spaceId}` })
-    }
-    return { events: store.eventLog(spaceId) }
-  })
-
-  // Web Push routes (issue #18): auth-gated by the same `onRequest` hook as
-  // every other `/api/*` route above — deliberately NOT added to
-  // `isPublicUnauthenticatedPath`, so a production deployment requires a
-  // passkey session for all four.
-  app.get('/api/push/vapid-public-key', () => ({ publicKey: vapid.publicKey }))
-
-  app.post('/api/push/subscriptions', (request, reply) => {
-    const parsed = PushSubscriptionSchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
-    if (!isAllowedPushEndpoint(parsed.data.endpoint)) {
-      return reply
-        .status(422)
-        .send({ error: 'push subscription endpoint host is not on the allowed push-service list' })
-    }
-    // Upsert by endpoint replaces any previous device binding: one
-    // subscription per endpoint, a device may hold several
-    // (one per browser/profile). Dev profile (no auth): deviceId stays NULL.
-    const deviceId =
-      auth.mode === 'production'
-        ? auth.store.verifySession(extractBearer(request.headers.authorization))?.device.id
-        : undefined
-    pushStore.upsertSubscription({
-      endpoint: parsed.data.endpoint,
-      p256dh: parsed.data.keys.p256dh,
-      auth: parsed.data.keys.auth,
-      ...(deviceId === undefined ? {} : { deviceId }),
-    })
-    return reply.status(204).send()
-  })
-
-  app.delete('/api/push/subscriptions', (request, reply) => {
-    const parsed = PushSubscriptionDeleteBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
-    if (auth.mode === 'production') {
-      const deviceId = auth.store.verifySession(extractBearer(request.headers.authorization))
-        ?.device.id
-      const subscription = pushStore
-        .listSubscriptions()
-        .find((candidate) => candidate.endpoint === parsed.data.endpoint)
-      // A subscription bound to a different (or no) device may not be
-      // deleted by this caller; an already-gone subscription is a no-op.
-      if (subscription && subscription.deviceId !== deviceId) {
-        return reply.status(403).send({ error: 'subscription does not belong to this device' })
-      }
-    }
-    // Dev profile (no auth): unscoped delete by endpoint, documented.
-    pushStore.deleteSubscription(parsed.data.endpoint)
-    return reply.status(204).send()
-  })
-
-  app.post('/api/spaces/:spaceId/attention/seen', (request, reply) => {
-    const { spaceId } = request.params as { spaceId: string }
-    if (!store.getSpace(spaceId)) {
-      return reply.status(404).send({ error: `unknown space: ${spaceId}` })
-    }
-    // `markSeen` is the no-silent-mutations gate (AGENTS.md): it appends a
-    // `notification.seen` Space event, and broadcasts via `onAttention`
-    // (wired to `gateway.broadcastSpaceAttention` above), only when the
-    // count actually changes. A zero-to-zero clear returns the unchanged
-    // current value instead.
-    const result = notificationCenter.markSeen(spaceId) ?? pushStore.getAttention(spaceId)
-    return { count: result.count, revision: result.revision }
-  })
+  registerPushRoutes(app, { auth, pushStore, vapid })
 
   // Onboarding wizard routes (issue #19): registered directly on `app`,
   // same as every route above, so the production `onRequest` auth hook
@@ -1620,122 +1382,8 @@ export function buildServer(options: ServerOptions = {}) {
     probe: (connectionId, modelId) => probeSlot.current(connectionId, modelId),
   })
 
-  app.post('/api/surfaces/:surfaceId/actions', (request, reply) => {
-    const { surfaceId } = request.params as { surfaceId: string }
-    const parsed = SurfaceActionBodySchema.safeParse(request.body)
-    if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues })
-    }
-    try {
-      // The mutation's own commit already reached every connected client
-      // through the Gateway's central Surface-event subscription; this
-      // endpoint only reports the result to the caller.
-      const result = store.invokeSurfaceAction(surfaceId, parsed.data)
-      if (result.path === 'agent') return reply.status(202).send({ turn: result.turn })
-      return { surface: result.mutation.surface }
-    } catch (error) {
-      if (error instanceof SurfaceActionError) {
-        return reply.status(statusForSurfaceActionError(error)).send({ error: error.message })
-      }
-      throw error
-    }
-  })
-
-  // `POST /api/surfaces/:surfaceId/pin` (issues/022-emergent-templates.md):
-  // auth-gated exactly like the `/actions` route above (the shared
-  // `onRequest` hook covers every `/api/*` route not listed in
-  // `isPublicUnauthenticatedPath`). Pinning goes through
-  // `TemplateEngine.pin`, not `store.setPinned` directly, so a pin also
-  // captures the Surface as a Template. Existence is checked before the pin
-  // is attempted so an unknown Surface (404) and a daemon-owned one refusing
-  // the pin (`SurfaceNotPinnableError`, 409) are never conflated —
-  // `SurfaceEngine.setPinned` raises that same error for both cases.
-  // `{ origin: 'trusted:user', updatedBy: 'user' }` is hardcoded, not derived
-  // from taint: reaching this route at all means an authenticated human
-  // session made the request (the shared auth hook above), so this is a
-  // genuine human act, exactly what `pin_surface` (the L0 Agent tool,
-  // `template-engine.ts`) is barred from asserting for itself — that tool
-  // derives its own write origin from the turn's live taint instead, and its
-  // schema only ever allows `pinned: true`.
-  app.post('/api/surfaces/:surfaceId/pin', (request, reply) => {
-    const { surfaceId } = request.params as { surfaceId: string }
-    const parsed = PinSurfaceBodySchema.safeParse(request.body)
-    if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues })
-    }
-    if (!store.getSurface(surfaceId)) {
-      return reply.status(404).send({ error: `unknown Surface: ${surfaceId}` })
-    }
-    try {
-      // The pin itself already reached every connected client through the
-      // Gateway's central Surface-event subscription (the `surface.pinned`
-      // message mapped from `kind: 'pinned'`, gateway.ts) — this endpoint
-      // only reports the result to the caller, the same shape as
-      // `/actions` above.
-      const { surface } = templateEngine.pin(surfaceId, parsed.data.pinned, {
-        origin: 'trusted:user',
-        updatedBy: 'user',
-      })
-      return { surface }
-    } catch (error) {
-      if (error instanceof SurfaceNotPinnableError) {
-        return reply.status(409).send({ error: error.message })
-      }
-      throw error
-    }
-  })
-
-  // Ingestion lives in its own scope: signatures verify the exact raw
-  // bytes, so body parsing is raw-buffer here and JSON everywhere else.
-  void app.register(async (instance) => {
-    instance.removeAllContentTypeParsers()
-    instance.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body, done) => {
-      done(null, body)
-    })
-    instance.post(
-      '/api/ingest/:source',
-      // External senders are untrusted: cap the body well below anything
-      // a legitimate push notification needs.
-      { bodyLimit: 256 * 1024 },
-      async (request, reply) => {
-        const { source } = request.params as { source: string }
-        // Unknown source names are attacker-chosen: collapse them into one
-        // lockout bucket per ip so a flood cannot grow the lockout map.
-        const key = `ingest:${request.ip}:${source in ingestion.sources() ? source : 'unknown'}`
-        const check = lockout.check(key)
-        if (!check.allowed) {
-          return reply
-            .header('retry-after', String(check.retryAfterSeconds))
-            .status(429)
-            .send({ error: 'ingestion endpoint temporarily locked' })
-        }
-        const response = await ingestion.handleWebhook(source, {
-          rawBody: Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0),
-          headers: request.headers,
-          query: request.query as Record<string, unknown>,
-        })
-        if (response.status === 401) lockout.recordFailure(key)
-        else lockout.recordSuccess(key)
-        if (response.retryAfterSeconds !== undefined) {
-          reply.header('retry-after', String(response.retryAfterSeconds))
-        }
-        return reply.status(response.status).send(response.body)
-      },
-    )
-  })
-
-  void app.register(async (instance) => {
-    instance.get('/ws/gateway', { websocket: true }, (socket, request) => {
-      if (
-        auth.mode === 'production' &&
-        !isAllowedOrigin(request.headers.origin, auth.allowedOrigins)
-      ) {
-        socket.close()
-        return
-      }
-      gateway.connect(socket)
-    })
-  })
+  registerIngestionRoutes(app, { ingestion, lockout })
+  registerGatewayRoute(app, { auth, gateway })
 
   // Egress allowlist (issue #15, docs/SECURITY.md §3.4): assembled from
   // what this daemon is actually configured to reach — the configured LLM
@@ -1802,81 +1450,5 @@ export function buildServer(options: ServerOptions = {}) {
     memoryRetrieval,
     reflection,
     reflectionSurfaces,
-  }
-}
-
-export function isAllowedOrigin(origin: string | undefined, allowedOrigins: string[]): boolean {
-  return Boolean(origin && allowedOrigins.includes(origin))
-}
-
-function hstsHeader(maxAgeSeconds = 31_536_000): string {
-  return `max-age=${maxAgeSeconds}; includeSubDomains`
-}
-
-function isPublicUnauthenticatedPath(url: string): boolean {
-  const path = url.split('?')[0] ?? url
-  return (
-    path === '/' ||
-    path === '/setup' ||
-    path.startsWith('/app/') ||
-    path.startsWith('/assets/') ||
-    path.startsWith('/icons/') ||
-    path === '/manifest.webmanifest' ||
-    path === '/service-worker.js' ||
-    path.startsWith('/.well-known/acme-challenge/') ||
-    // The Gateway WebSocket authenticates per connection, not per request
-    // (docs/SECURITY.md §6): a browser's WebSocket handshake cannot carry an
-    // Authorization header, so the Bearer hook would 401 every upgrade before
-    // the Gateway's own checks ever ran. The upgrade is exempted here and the
-    // connection is gated instead by the origin check at the route and the
-    // session token the first `hello` frame must carry (gateway.ts).
-    path === '/ws/gateway' ||
-    // Ingestion authenticates by per-source signature/token, not passkey.
-    path.startsWith('/api/ingest/') ||
-    path === '/api/auth/status' ||
-    path === '/api/auth/register/options' ||
-    path === '/api/auth/register/verify' ||
-    path === '/api/auth/login/options' ||
-    path === '/api/auth/login/verify'
-  )
-}
-
-function extractBearer(value: string | undefined): string | undefined {
-  if (!value) return undefined
-  const [scheme, token] = value.split(' ')
-  return scheme?.toLowerCase() === 'bearer' && token ? token : undefined
-}
-
-function statusForSurfaceActionError(error: SurfaceActionError): number {
-  if (error.code === 'unknown_surface') return 404
-  if (error.code === 'missing_value') return 400
-  return 403
-}
-
-async function authAttempt<T>(
-  lockout: ProgressiveAuthLockout,
-  request: FastifyRequest,
-  reply: FastifyReply,
-  run: () => Promise<T> | T,
-): Promise<T | FastifyReply> {
-  const key = `${request.ip}:${request.routeOptions.url ?? request.url}`
-  const check = lockout.check(key)
-  if (!check.allowed) {
-    return reply
-      .header('retry-after', String(check.retryAfterSeconds))
-      .status(429)
-      .send({ error: 'auth endpoint temporarily locked' })
-  }
-
-  try {
-    const result = await run()
-    if (!reply.sent) lockout.recordSuccess(key)
-    return result
-  } catch (error) {
-    if (error instanceof AuthStoreError) {
-      lockout.recordFailure(key)
-      return reply.status(401).send({ error: 'passkey authentication failed' })
-    }
-    throw error
   }
 }

@@ -1,66 +1,14 @@
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from 'node:fs'
-import { join } from 'node:path'
-import { z } from 'zod'
+import { existsSync, readdirSync } from 'node:fs'
+import { readDataVersion, stampDataVersion } from './data-version-marker.ts'
 import { runMigrations } from './migrations.ts'
+
+export { readDataVersion, stampDataVersion } from './data-version-marker.ts'
 
 /**
  * The data schema version this build expects. Bumped whenever a new entry
  * is appended to `MIGRATIONS` (`migrations.ts`).
  */
 export const CURRENT_DATA_VERSION = 1
-
-const DataVersionMarkerSchema = z.object({
-  dataVersion: z.number().int().nonnegative(),
-})
-
-function markerPath(rootDir: string): string {
-  return join(rootDir, 'data-version.json')
-}
-
-/**
- * Reads `<rootDir>/data-version.json`. `undefined` means no marker exists
- * yet — either a brand-new root or a pre-issue-43 data root, both handled
- * by `ensureDataVersion`. A marker file that exists but fails to parse (a
- * write interrupted before this module's atomic tmp+rename could complete,
- * or hand-edited garbage) throws rather than being treated as absent: a
- * boot refusal is safer than silently re-running migrations against a root
- * whose real version is now unknown.
- */
-export function readDataVersion(rootDir: string): number | undefined {
-  const path = markerPath(rootDir)
-  if (!existsSync(path)) return undefined
-  let raw: unknown
-  try {
-    raw = JSON.parse(readFileSync(path, 'utf8'))
-  } catch {
-    throw new Error(`${path} is corrupt: not valid JSON`)
-  }
-  const parsed = DataVersionMarkerSchema.safeParse(raw)
-  if (!parsed.success) throw new Error(`${path} is corrupt: expected {"dataVersion": <number>}`)
-  return parsed.data.dataVersion
-}
-
-/**
- * Writes the marker atomically: a tmp file plus rename, the same idiom
- * `auth-state-file.ts`'s `saveAuthState` uses for `auth.json`. A reader
- * never observes a half-written marker, and a crash between the write and
- * the rename leaves the previous marker (or none) intact rather than a
- * truncated file.
- */
-export function stampDataVersion(rootDir: string, dataVersion: number): void {
-  mkdirSync(rootDir, { recursive: true })
-  const path = markerPath(rootDir)
-  const tmp = `${path}.tmp`
-  writeFileSync(tmp, `${JSON.stringify({ dataVersion }, null, 2)}\n`, 'utf8')
-  renameSync(tmp, path)
-}
 
 export interface EnsureDataVersionResult {
   action: 'stamped-fresh' | 'bootstrapped' | 'ok'

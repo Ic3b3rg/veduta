@@ -158,13 +158,13 @@ const JournalSchema = z.object({
    * exist yet (the very first update), this is the legacy checkout path
    * (`UpdateTransactionOptions.legacyRoot`) instead — a real, resumable
    * executor location, not the empty string a missing symlink used to
-   * produce (issue #43 review follow-up). See `hadPriorRelease` for what
+   * produce. See `hadPriorRelease` for what
    * this path actually means to rollback.
    */
   executorRelease: z.string(),
   /**
    * Whether `releases/current` already pointed at a previous release when
-   * this transaction started (issue #43 review follow-up). `true` means
+   * this transaction started. `true` means
    * `executorRelease` above is a real `releases/vX.Y.Z` directory and
    * rollback's flip-back substate restores `current` to point at it; `false`
    * means this is a first update with no prior release at all —
@@ -332,7 +332,11 @@ function freshProgress(): UpdateProgress {
   }
 }
 
-/** Overwrites `progress.json` with every stage reset to `pending` (issue #43 review follow-up): called once, at the very start of a brand-new transaction — never on resume — so a new run never inherits a previous run's terminal stage statuses (all `done`) and reports an early failure honestly instead of appearing to have gotten further than it did. */
+/**
+ * Resets every progress stage at the start of a new transaction. Resume
+ * paths keep persisted progress, while a new run cannot inherit stale
+ * terminal stages and overstate how far it got.
+ */
 function resetProgress(home: UpdateHome): void {
   writeJsonAtomicBestEffort(progressPath(home), freshProgress())
 }
@@ -403,7 +407,7 @@ export interface UpdateTransactionOptions {
    * to journal as `executorRelease` for a first update, and a crash after
    * the symlink flip would have nowhere trustworthy to resume from except
    * the very candidate release being installed — exactly what this option
-   * exists to rule out (issue #43 review follow-up). Ignored once
+   * exists to rule out. Ignored once
    * `releases/current` already exists. `update-cli.ts` is expected to pass
    * this from an environment variable such as `VEDUTA_LEGACY_ROOT`.
    */
@@ -459,8 +463,8 @@ export type ResumeOutcome = TransactionOutcome | { status: 'nothing-to-resume' }
 // ---------------------------------------------------------------------------
 
 /**
- * Clears a leftover `releases/vX.Y.Z` directory before extraction (issue #43
- * review follow-up): `extractVerifiedArchive` refuses an existing `destDir`
+ * Clears a leftover `releases/vX.Y.Z` directory before extraction.
+ * `extractVerifiedArchive` refuses an existing `destDir`
  * by design (`tar-reader.ts`'s TOCTOU guard — correct, since a symlink or
  * file could otherwise race into the destination between preflight and
  * extraction), but that means a leftover directory from a crash between
@@ -672,7 +676,7 @@ async function runSelfCheckStep(
 // ---------------------------------------------------------------------------
 
 /**
- * Each step below is genuinely idempotent (issue #43 review follow-up): it
+ * Each step below is genuinely idempotent: it
  * is skipped outright once the *persisted* substate this call started with
  * (`priorSubstateIndex`, fixed at entry — never the locally-mutated
  * `journal`) already recorded it as done, and otherwise guarded by a
@@ -749,8 +753,8 @@ async function performRollback(ctx: Ctx, journalIn: Journal): Promise<Journal> {
       } else if (existsSync(ctx.home.currentSymlink)) {
         // A first update has no previous release to flip back to —
         // `executorRelease` only holds the legacy checkout, which is never
-        // a valid `releases/vX.Y.Z` target for `current` (issue #43 review
-        // follow-up). Removing the symlink outright, rather than leaving it
+        // a valid `releases/vX.Y.Z` target for `current`. Removing the symlink
+        // outright, rather than leaving it
         // pointing at the just-failed candidate release, is what makes the
         // wrapper fall back to running the legacy checkout again — the
         // same place the system served from before this transaction
@@ -1005,8 +1009,8 @@ async function runFromJournal(ctx: Ctx, initialJournal: Journal): Promise<Transa
  * Throws if a journal is already active with no matching leftover marker
  * file — the caller (`deploy/veduta-run`, via `update-cli.ts`) is expected to
  * call `resumeUpdateTransaction` in that case. When a journal AND a leftover
- * `state/marker.json` are both found, the journal wins (issue #43 review
- * follow-up): that combination means a previous run wrote the durable
+ * `state/marker.json` are both found, the journal wins: that combination
+ * means a previous run wrote the durable
  * journal and then crashed before consuming the marker file (see the ordering
  * note below), so this call degrades into a resume of the already-started
  * transaction rather than throwing.
@@ -1068,8 +1072,8 @@ export async function runUpdateTransaction(
     marker: options.marker,
     startedAt: now.toISOString(),
   }
-  // Reset progress and write the journal BEFORE consuming state/marker.json
-  // (issue #43 review follow-up): the journal write is fsynced and is the
+  // Reset progress and write the journal BEFORE consuming state/marker.json.
+  // The journal write is fsynced and is the
   // durable record of "this transaction has started" — consuming (renaming
   // away) the marker only after that write means a crash in between leaves
   // both the journal and the marker on disk, a well-defined state the branch
@@ -1119,8 +1123,8 @@ export async function resumeUpdateTransaction(options: ResumeOptions): Promise<R
   }
 
   // A crash mid-rollback must always resume (never abandon) the rollback
-  // itself — marching forward through the phase machine instead (issue #43
-  // review follow-up) could re-run the health check against a moved-aside or
+  // itself. Marching forward through the phase machine could re-run the
+  // health check against a moved-aside or
   // freshly-restored data root and silently discard the earlier rollback
   // decision. `performRollback` is idempotent from any of its substates, so
   // this always converges on the same 'rolled-back' terminal a fresh
@@ -1228,8 +1232,8 @@ export function sweepAckedResult(home: UpdateHome): boolean {
   const ts = isoForFilename(new Date())
   renameSync(rPath, join(home.historyDir, `${ts}-${result.toVersion}-result.json`))
   renameSync(ackPath, join(home.historyDir, `${ts}-${result.toVersion}-result-acked-${result.id}`))
-  // `update-manager.ts`'s own notify-dedupe marker (issue #43 review
-  // follow-up) has no forensic value once the result it guarded is itself
+  // `update-manager.ts`'s own notify-dedupe marker has no forensic value
+  // once the result it guarded is itself
   // archived — left behind, it would accumulate in `state/` forever.
   const notifiedPath = join(home.stateDir, `result-notified-${result.id}`)
   if (existsSync(notifiedPath)) rmSync(notifiedPath, { force: true })

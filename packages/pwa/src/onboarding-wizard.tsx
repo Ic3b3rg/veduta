@@ -227,21 +227,8 @@ export function OnboardingWizard({
             const done = isStepDone(status, id)
             const isCurrent = id === active
             return (
-              <li
-                key={id}
-                className={
-                  isCurrent
-                    ? 'wizard-progress-item current'
-                    : done
-                      ? 'wizard-progress-item done'
-                      : 'wizard-progress-item'
-                }
-              >
-                <span
-                  className={
-                    done ? 'status-pill online' : isCurrent ? 'status-pill pending' : 'status-pill'
-                  }
-                >
+              <li key={id} className={progressItemClass(done, isCurrent)}>
+                <span className={progressStatusClass(done, isCurrent)}>
                   {WIZARD_STEP_META[id].title}
                 </span>
               </li>
@@ -340,6 +327,16 @@ export function OnboardingWizard({
       </div>
     </main>
   )
+}
+
+function progressItemClass(done: boolean, current: boolean): string {
+  if (current) return 'wizard-progress-item current'
+  return done ? 'wizard-progress-item done' : 'wizard-progress-item'
+}
+
+function progressStatusClass(done: boolean, current: boolean): string {
+  if (done) return 'status-pill online'
+  return current ? 'status-pill pending' : 'status-pill'
 }
 
 /**

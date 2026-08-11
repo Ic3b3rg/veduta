@@ -1,0 +1,29 @@
+.auth-shell {
+  display: grid;
+  gap: 16px;
+  margin: 10vh auto 0;
+  max-width: 420px;
+  padding: 16px;
+}
+
+.auth-form {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.auth-form label {
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.auth-form input {
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  min-height: 40px;
+  padding: 8px 10px;
+}

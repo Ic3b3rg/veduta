@@ -30,8 +30,8 @@ export const MOCK_UNSUPPORTED_CLAIM_TEXT =
  * is guaranteed to reject. A corrective retry (detected via
  * `REVIEW_FEEDBACK_MARKER` in `prompt()`) always drops it: the reject→correct→pass
  * dev path exercises a genuinely different, corrected report rather than
- * replaying the same rejected text (issue #17 re-review, dev-fixture
- * honesty). Every other goal never includes the claim, so it passes review
+ * replaying the same rejected text. Every other goal never includes the
+ * claim, so it passes review
  * on the first attempt.
  */
 function mockWorkerReport(flagged: boolean): WorkerReport {
@@ -161,8 +161,8 @@ export const mockWorkerReviewComplete: (
 }
 
 /**
- * Dev fixture for acceptance C end-to-end (issue #17; content-driven
- * as of the re-review): a reject-then-pass variant of
+ * Content-driven dev fixture for acceptance C in
+ * `issues/017-worker-review.md`: a reject-then-pass variant of
  * `mockWorkerReviewComplete` keyed on the REPORT DATA embedded in
  * `buildReviewPrompt`'s output, not on a call counter. A submitted draft that
  * still contains `MOCK_UNSUPPORTED_CLAIM_TEXT` (the flagged claim

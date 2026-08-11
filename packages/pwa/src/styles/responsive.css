@@ -1,0 +1,82 @@
+@media (max-width: 760px) {
+  .app-shell {
+    padding: 14px 12px 190px;
+  }
+
+  .wizard-shell {
+    margin-top: 3vh;
+    padding: 12px;
+  }
+
+  .wizard-tier-row {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar,
+  .space-heading,
+  .approval-card {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .topbar,
+  .space-heading,
+  .approval-card,
+  .home-layout {
+    display: grid;
+  }
+
+  .topbar-actions {
+    justify-content: flex-start;
+  }
+
+  .space-heading {
+    gap: 8px;
+  }
+
+  .space-heading .space-badge {
+    justify-self: start;
+  }
+
+  .home-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .space-rail {
+    grid-auto-columns: minmax(140px, 1fr);
+    grid-auto-flow: column;
+    overflow-x: auto;
+    position: static;
+  }
+
+  .space-button {
+    min-width: 140px;
+  }
+
+  .surface-toolbar {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .surface-order {
+    justify-content: flex-start;
+  }
+
+  .chat-entry {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .chat-compose {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 100%;
+  }
+
+  .chat-compose input {
+    width: 100%;
+  }
+
+  .chat-compose button {
+    width: 100%;
+  }
+}

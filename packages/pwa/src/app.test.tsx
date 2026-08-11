@@ -10,7 +10,7 @@ import { fromPartial } from '@total-typescript/shoehorn'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ApiModule from './api.ts'
-import { AUTH_TOKEN_KEY } from './pwa-storage.ts'
+import { AUTH_TOKEN_KEY, HOME_CACHE_KEY } from './pwa-storage.ts'
 
 vi.mock('./api.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>()
@@ -26,6 +26,7 @@ vi.mock('./api.ts', async (importOriginal) => {
 
 import { App } from './app.tsx'
 import {
+  ApiResponseError,
   fetchAuthStatus,
   fetchModelConnections,
   fetchOnboardingStatus,
@@ -49,6 +50,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   localStorage.clear()
+  window.history.replaceState({}, '', '/')
   vi.clearAllMocks()
   vi.unstubAllGlobals()
 })
@@ -97,6 +99,40 @@ describe('App', () => {
     )
     expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined()
     expect(screen.queryByLabelText('Spaces')).toBeNull()
+  })
+
+  it('discards an unauthorized stored session and returns first boot to passkey registration', async () => {
+    window.history.replaceState({}, '', '/setup?code=fresh-code')
+    localStorage.setItem(AUTH_TOKEN_KEY, 'stale-token')
+    localStorage.setItem(
+      HOME_CACHE_KEY,
+      JSON.stringify({
+        surfaceCursor: 0,
+        spaces: [
+          {
+            id: 'spc-health',
+            slug: 'health',
+            name: 'Health',
+            archived: false,
+            surfaces: [],
+          },
+        ],
+      }),
+    )
+    vi.mocked(fetchAuthStatus).mockResolvedValue(
+      authStatus({ bootstrapRequired: true, passkeyRegistered: false }),
+    )
+    vi.mocked(fetchSpaces).mockRejectedValue(new ApiResponseError('passkey session required', 401))
+    vi.mocked(fetchOnboardingStatus).mockRejectedValue(
+      new ApiResponseError('passkey session required', 401),
+    )
+
+    render(<App />)
+
+    expect(await screen.findByRole('button', { name: 'Register passkey' })).toBeDefined()
+    expect((screen.getByLabelText('One-time code') as HTMLInputElement).value).toBe('fresh-code')
+    expect(localStorage.getItem(AUTH_TOKEN_KEY)).toBeNull()
+    expect(screen.queryByText(/could not read its setup status/i)).toBeNull()
   })
 
   it('the Model connections button renders with zero connections', async () => {

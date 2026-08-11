@@ -4,6 +4,12 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { JsonValue } from '@veduta/protocol'
 import { factIdentityLine, factRecordIds, type FactRecord, type FactsDocument } from './facts.ts'
+import {
+  initializeMemoryIndexSchema,
+  memoryIndexRowFromRow,
+  type MemoryIndexRow,
+  type MemoryRecordKind,
+} from './memory-index-persistence.ts'
 import { parseSpaceEventLine, type SpaceEvent, type SpacesEngine } from './spaces-engine.ts'
 import {
   optionalString,
@@ -11,8 +17,10 @@ import {
   requiredString,
   withImmediateTransaction,
 } from './sqlite-rows.ts'
-import { isValidOrigin, type Origin } from './taint.ts'
+import type { Origin } from './taint.ts'
 import { normalizeIsoInstant } from './timezone.ts'
+
+export type { MemoryIndexRow, MemoryRecordKind }
 
 /**
  * A disposable SQLite FTS5 index over one Space's Event log and FACTS
@@ -62,7 +70,6 @@ const DEFAULT_SEARCH_LIMIT = 20
 /** `search()` clamps any requested `limit` to this maximum. */
 export const MAX_SEARCH_LIMIT = 200
 
-export type MemoryRecordKind = 'event' | 'fact'
 export type MemoryTimeBasis = 'effective' | 'recorded'
 export type MemoryOrder = 'relevance' | 'recency'
 
@@ -152,16 +159,6 @@ export interface MemoryIndexOptions {
   now?: () => Date
 }
 
-export interface MemoryIndexRow {
-  sourceRef: string
-  spaceId: string
-  kind: MemoryRecordKind
-  recordedAt: string
-  occurredAt?: string
-  origin: Origin
-  score: number
-}
-
 export interface MemorySearchParams {
   spaceId: string
   /** Already-tokenized, already-quoted FTS5 terms. The caller owns query parsing. */
@@ -213,7 +210,7 @@ export class MemoryIndex {
     this.db = new DatabaseSync(join(options.rootDir, 'memory.sqlite'))
     this.spacesEngine = options.spacesEngine
     this.now = options.now ?? (() => new Date())
-    this.initializeSchema()
+    initializeMemoryIndexSchema(this.db)
     // Keeps the index current without waiting for the next boot's
     // `reconcile()`: `onMemoryWrite` (spaces-engine.ts) fires only after an
     // append actually landed on disk, so indexing here can never run ahead
@@ -438,7 +435,7 @@ export class MemoryIndex {
     `
 
     const rows = this.db.prepare(sql).all(...hitBindings, ...rangeBindings, limit)
-    return rows.map(rowToMemoryIndexRow)
+    return rows.map(memoryIndexRowFromRow)
   }
 
   /**
@@ -826,41 +823,6 @@ export class MemoryIndex {
   private today(): string {
     return this.now().toISOString().slice(0, 10)
   }
-
-  private initializeSchema(): void {
-    this.db.exec(`
-      pragma journal_mode = wal;
-
-      create table if not exists memory_meta (
-        key text primary key,
-        value text not null
-      );
-
-      create table if not exists memory_records (
-        source_ref  text primary key,
-        space_id    text not null,
-        kind        text not null check (kind in ('event', 'fact')),
-        recorded_at text not null,
-        occurred_at text,
-        origin      text not null,
-        hash        text not null
-      );
-      create index if not exists memory_records_space_time on memory_records (space_id, recorded_at);
-
-      create table if not exists memory_cursors (
-        source        text primary key,
-        indexed_bytes integer not null,
-        indexed_lines integer not null,
-        prefix_hash   text not null
-      );
-
-      create virtual table if not exists memory_fts using fts5(
-        text,
-        source_ref unindexed,
-        tokenize = 'porter unicode61 remove_diacritics 2'
-      );
-    `)
-  }
 }
 
 /**
@@ -965,21 +927,4 @@ function quoteFtsTerm(term: string): string {
 function clampSearchLimit(limit: number | undefined): number {
   const requested = limit === undefined ? DEFAULT_SEARCH_LIMIT : Math.trunc(limit)
   return Math.min(Math.max(1, requested), MAX_SEARCH_LIMIT)
-}
-
-function rowToMemoryIndexRow(row: Record<string, unknown>): MemoryIndexRow {
-  const kind = requiredString(row, 'kind')
-  if (kind !== 'event' && kind !== 'fact') throw new Error(`unexpected memory record kind: ${kind}`)
-  const origin = requiredString(row, 'origin')
-  if (!isValidOrigin(origin)) throw new Error(`unexpected memory record origin: ${origin}`)
-  const occurredAt = optionalString(row, 'occurred_at')
-  return {
-    sourceRef: requiredString(row, 'source_ref'),
-    spaceId: requiredString(row, 'space_id'),
-    kind,
-    recordedAt: requiredString(row, 'recorded_at'),
-    ...(occurredAt === undefined ? {} : { occurredAt }),
-    origin,
-    score: requiredNumber(row, 'score'),
-  }
 }

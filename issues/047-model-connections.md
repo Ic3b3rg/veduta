@@ -113,10 +113,16 @@ None — builds on completed issues [003](003-agent-runner-wrapper.md),
 
 ## Status note (2026-08-09)
 
+[ADR-0016](../docs/adr/0016-primary-agent-connections-author-surfaces.md) and
+[issue 051](051-codex-tool-parity.md) supersede only the shipped ChatGPT text-only exception. Model
+connection onboarding, lifecycle, catalog, selection, refresh, and failure behavior stay in this
+issue; tool-capable Agent routing moves to issue 051.
+
 Five of the eight criteria above are satisfied by what shipped (Consistent UX, Routing
-controls, Multiple accounts, Failure policy, Security boundary — each backed by the deterministic
-tests listed in the implementation plan's slices 1-15). Three stay open, and cannot be closed by
-more code in this repository alone:
+controls, Multiple accounts, Failure policy, Security boundary). The deterministic coverage lives
+alongside the implementation in `model-connection-*.test.ts`, `onboarding-*.test.ts`, and the PWA's
+`model-connection-*.test.tsx` files. Three criteria stay open and cannot be closed by more code in
+this repository alone:
 
 - **Claude subscription** is unsatisfiable until Anthropic approves a third party offering
   Claude.ai login or routing subscription credentials — `claudeSubscriptionAdapter`

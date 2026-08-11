@@ -23,7 +23,6 @@ import {
   SurfaceTemplateIdSchema,
   SurfaceTemplateSchema,
   type JsonObject,
-  type JsonValue,
   type Space,
   type Surface,
   type SurfaceTemplate,
@@ -43,39 +42,19 @@ import {
 import { projectFacts } from './facts-projection.ts'
 import { defaultRedactor } from './redaction.ts'
 import {
-  isUntrusted,
-  isValidOrigin,
-  untrustedDataBlock,
-  untrustedSource,
-  type Origin,
-} from './taint.ts'
+  eventsForContext,
+  parseSpaceEventLine,
+  readEventsFile,
+  renderEventForContext,
+  splitLogLines,
+  type AppendSpaceEventInput,
+  type SpaceEvent,
+} from './space-events.ts'
+import type { Origin } from './taint.ts'
 import { normalizeIsoInstant } from './timezone.ts'
 
-export interface SpaceEvent {
-  at: string
-  spaceId: string
-  type: string
-  text: string
-  origin: Origin
-  /**
-   * When the underlying thing happened, as opposed to `at` (when it was
-   * recorded): an imported email's send time, a Calendar event's start,
-   * versus the moment the reader or fast path appended this line
-   * (issues/021-advanced-memory.md). Always normalized to a single ISO
-   * instant before persisting — see `normalizeIsoInstant` (`timezone.ts`).
-   */
-  occurredAt?: string
-  payload?: JsonObject
-}
-
-export interface AppendSpaceEventInput {
-  text: string
-  type?: string
-  at?: string
-  occurredAt?: string
-  origin?: SpaceEvent['origin']
-  payload?: JsonObject
-}
+export { parseSpaceEventLine, renderEventForContext }
+export type { AppendSpaceEventInput, SpaceEvent }
 
 export interface SpaceProposal {
   id: string
@@ -1101,204 +1080,12 @@ This Space is for the ${spaceName} life area. Keep goals as Surfaces inside this
 `
 }
 
-function readerSummaryBlock(event: SpaceEvent): string | undefined {
-  if (event.type !== 'reader.summary') return undefined
-  const reader = event.payload?.['reader']
-  if (!isJsonObject(reader)) return undefined
-  // The source comes from the event's own origin mark — authoritative and
-  // grammar-validated — never from a (forgeable) payload field.
-  const source = untrustedSource(event.origin) ?? 'external'
-  const fields = Object.entries(reader).map(
-    ([key, value]) => [key, formatReaderFieldValue(value)] as [string, string],
-  )
-  return untrustedDataBlock(source, fields)
-}
-
-function formatReaderFieldValue(value: JsonValue): string {
-  if (Array.isArray(value)) return value.map((item) => formatReaderFieldValue(item)).join(', ')
-  if (value === null) return ''
-  return String(value)
-}
-
-/**
- * Cap on a rendered event's `type` label (docs/SECURITY.md §3.2): `type` is
- * free-form text an `append_event` tool call chooses (`memory-tools.ts`'s
- * `AppendEventSchema` only requires it non-empty), so under an untrusted
- * turn it is exactly as attacker-controlled as `event.text` — but unlike
- * `event.text`, it renders on the header line outside `untrustedDataBlock`,
- * for every event regardless of origin. Left unbounded, it could otherwise
- * bloat context or carry `<<<END data>>>`/`<<<UNTRUSTED ...>>>` sequences
- * that counterfeit the delimiter grammar around it.
- */
-const MAX_RENDERED_EVENT_TYPE_CHARS = 100
-
-/**
- * Renders `event.type` for the header line `renderEventForContext` builds.
- *
- * An event type is a machine-chosen identifier — `turn`, `reader.summary`,
- * `fact.write`, `automation.fire` — so the renderer keeps only what such an
- * identifier is made of and collapses every other run to a single `-`. That
- * is deliberately stricter than neutralizing the delimiter tokens: a type is
- * the one attacker-reachable field that renders *outside*
- * `untrustedDataBlock`, on the header line, for every event regardless of
- * origin, so it must not be able to carry prose there at all — neither a
- * counterfeit `<<<END data>>>` nor a sentence addressed to the Agent. A colon
- * is excluded on purpose along with everything else: `system:` / `assistant:`
- * is the role-marker shape the quarantined reader's own tripwire rejects
- * (`REJECT_PATTERNS`, `quarantined-reader.ts`), and no real event type needs
- * one.
- * Newlines go first, since a multi-line type could otherwise fabricate whole
- * extra lines ahead of the real untrusted block.
- *
- * Writes are constrained at the schema too (`memory-tools.ts` rejects a
- * malformed or daemon-reserved type), and that is the primary defence. This
- * one exists because the Event log is append-only and never rewritten
- * (ADR-0003): a line already on disk from before that constraint — or from an
- * importer — can only be defended against at render time.
- */
-function renderEventType(type: string): string {
-  const identifier = type.replace(/\r?\n/g, ' ').replace(/[^A-Za-z0-9._-]+/g, '-')
-  return identifier.slice(0, MAX_RENDERED_EVENT_TYPE_CHARS)
-}
-
-/**
- * The one taint-aware rendering of an Event log entry for anything the
- * Agent reads (`assembleContext`, the `read_recent`/`search_log` tool
- * results): untrusted event text renders only inside a delimited block —
- * the reader's own notices are content-free by construction, but a tainted
- * turn's `append_event` writes arbitrary text and must not reach the Agent
- * outside the delimiters.
- *
- * `event.type` is neutralized and capped (`renderEventType`) before it goes
- * on the header line, for both branches below: unlike `event.at`
- * (server-generated, never caller input — `appendEvent` defaults it and no
- * tool exposes it) and `event.occurredAt` (always run through
- * `normalizeIsoInstant` before being stored, so it can only ever be a valid
- * ISO instant), `type` reaches this renderer as arbitrary caller text and is
- * the one field here an untrusted turn actually controls.
- */
-export function renderEventForContext(event: SpaceEvent): string {
-  // Absent for the vast majority of events (anything the fast path or the
-  // Agent itself appends, where recorded time IS occurred time), so the
-  // suffix is empty and every rendering predating `occurredAt` is unchanged.
-  const occurred = event.occurredAt === undefined ? '' : ` (occurred ${event.occurredAt})`
-  const type = renderEventType(event.type)
-  if (!isUntrusted(event.origin)) {
-    return `- ${event.at}${occurred} [${type}] [${event.origin}] ${event.text}`
-  }
-  const line = `- ${event.at}${occurred} [${type}] [${event.origin}]`
-  const source = untrustedSource(event.origin) ?? 'external'
-  const block = readerSummaryBlock(event) ?? untrustedDataBlock(source, [['text', event.text]])
-  return `${line}\n${block}`
-}
-
-function eventsForContext(events: SpaceEvent[]): string {
-  if (events.length === 0) return 'No recent events.'
-  return events.map(renderEventForContext).join('\n')
-}
-
 function section(title: string, body: string): string {
   const trimmed = body.trim()
   const heading = `# ${title}`
   return trimmed.toLowerCase().startsWith(heading.toLowerCase())
     ? trimmed
     : `${heading}\n\n${trimmed}`
-}
-
-/**
- * The one way to turn a raw Event log line back into a `SpaceEvent`:
- * `undefined` for a blank line, malformed JSON, or an entry missing a
- * required field. Exported because the memory index
- * (issues/021-advanced-memory.md) dereferences a hit by re-reading the line
- * it points at, and it must reconstruct exactly the event the Agent would
- * see in context — a second parser of its own could accept a line this one
- * rejects, or normalize a field differently, and then a retrieved record
- * would silently disagree with the injected one.
- */
-export function parseSpaceEventLine(raw: string): SpaceEvent | undefined {
-  if (!raw.trim()) return undefined
-  try {
-    return parseSpaceEvent(JSON.parse(raw))
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * Splits a `.jsonl` log file's text into physical lines, dropping the
- * trailing empty string produced by a file ending in a newline — that
- * artifact is not a real physical line, and `readLogEntriesFrom` and
- * `readLogLine` must agree on the same line count and the same line-N text,
- * or a memory-index reference minted by one would read back wrong through
- * the other (issues/021-advanced-memory.md).
- */
-function splitLogLines(text: string): string[] {
-  const lines = text.split(/\r?\n/)
-  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
-  return lines
-}
-
-function readEventsFile(path: string): SpaceEvent[] {
-  return readFileSync(path, 'utf8')
-    .split(/\r?\n/)
-    .flatMap((line) => {
-      const event = parseSpaceEventLine(line)
-      return event ? [event] : []
-    })
-}
-
-function parseSpaceEvent(input: unknown): SpaceEvent {
-  if (!isRecord(input)) throw new Error('invalid Event log entry')
-  const at = stringValue(input['at'])
-  const spaceId = stringValue(input['spaceId'])
-  const type = stringValue(input['type'])
-  const text = stringValue(input['text'])
-  const origin = input['origin']
-  if (!at || !spaceId || !type || !text) throw new Error('invalid Event log entry')
-  if (!isValidOrigin(origin)) {
-    throw new Error('invalid Event log origin')
-  }
-  const payload = isJsonObject(input['payload']) ? input['payload'] : undefined
-  // Dropped, not thrown, when unparseable: the Event log is append-only and
-  // never rewritten (ADR-0003), so a malformed `occurredAt` on one line —
-  // e.g. hand-edited or produced by an older writer — must not make an
-  // otherwise-readable line disappear from the whole file.
-  const occurredAt = normalizeIsoInstant(stringValue(input['occurredAt']))
-  return {
-    at,
-    spaceId,
-    type,
-    text,
-    origin,
-    ...(occurredAt === undefined ? {} : { occurredAt }),
-    ...(payload === undefined ? {} : { payload }),
-  }
-}
-
-function isJsonObject(value: unknown): value is JsonObject {
-  if (!isRecord(value) || Array.isArray(value)) return false
-  return Object.values(value).every(isJsonValue)
-}
-
-function isJsonValue(value: unknown): value is JsonValue {
-  if (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean'
-  ) {
-    return true
-  }
-  if (Array.isArray(value)) return value.every(isJsonValue)
-  return isJsonObject(value)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined
 }
 
 function errorText(error: unknown): string {

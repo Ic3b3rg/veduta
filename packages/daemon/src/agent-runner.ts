@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { canonicalJson } from '@veduta/protocol'
 import type { z } from 'zod'
 import type { Origin, TurnTaint } from './taint.ts'
 
@@ -331,23 +332,6 @@ export const disabledContextPolicy: ContextPolicy = {
  */
 export function computeContextHash(envelope: unknown): string {
   return createHash('sha256').update(canonicalJson(envelope)).digest('hex')
-}
-
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(sortKeysDeep(value))
-}
-
-function sortKeysDeep(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeysDeep)
-  if (value !== null && typeof value === 'object') {
-    const record = value as Record<string, unknown>
-    return Object.fromEntries(
-      Object.keys(record)
-        .sort()
-        .map((key) => [key, sortKeysDeep(record[key])]),
-    )
-  }
-  return value
 }
 
 export class AgentEventBus {

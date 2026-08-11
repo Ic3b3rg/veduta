@@ -12,7 +12,7 @@ import {
   OnboardingStatusSchema,
   type OnboardingStatus,
 } from '@veduta/protocol'
-import { z } from 'zod'
+import { rejectUnexpectedBody } from './fastify-validation.ts'
 import { ImportRefusedError, type ImportConnectionSink } from './import-apply.ts'
 import { sendModelConnectionError } from './model-connection-routes.ts'
 import type { SecretResolver } from './model-routing.ts'
@@ -77,9 +77,6 @@ export interface OnboardingRoutesDeps {
   connections?: ImportConnectionSink
 }
 
-/** A request body that must be empty (or absent) — `.strict()` so an unexpected key is a 400, not silently ignored (issue #19 code review fix). */
-const EmptyBodySchema = z.object({}).strict()
-
 function currentStatus(deps: OnboardingRoutesDeps): OnboardingStatus {
   const status = buildOnboardingStatus({
     rootDir: deps.rootDir,
@@ -90,10 +87,8 @@ function currentStatus(deps: OnboardingRoutesDeps): OnboardingStatus {
     env: deps.env,
     ...(deps.vault === undefined ? {} : { vault: deps.vault }),
   })
-  // Validated before it ever leaves the daemon (code review fix): a status
-  // shape only `buildOnboardingStatus` could get wrong, but a schema
-  // mismatch here is a daemon bug, not something the PWA should ever have to
-  // defend against silently.
+  // A schema mismatch here is a daemon bug, not something the PWA should
+  // have to defend against silently.
   return OnboardingStatusSchema.parse(status)
 }
 
@@ -117,8 +112,8 @@ function migrationImportDeps(deps: OnboardingRoutesDeps): MigrationImportDeps {
 }
 
 /**
- * The one error-mapping seam every onboarding route shares (code
- * review fix): `VaultUnavailableError` (its own dead-end copy) and
+ * The one error-mapping seam every onboarding route shares:
+ * `VaultUnavailableError` (its own dead-end copy) and
  * `ImportRefusedError` (issue 020: a blocked import plan — a
  * conflict `--overwrite` did not clear, a held lock, no vault key material)
  * both map to 409 — a refusal is "fix something first, then retry", the same
@@ -151,14 +146,6 @@ function sendStepError(reply: FastifyReply, error: unknown): FastifyReply {
     return reply.status(error.statusCode ?? 400).send({ error: error.message })
   }
   return reply.status(500).send({ error: 'onboarding step failed unexpectedly' })
-}
-
-/** 400 with the zod issues when `body` is neither `undefined` nor an empty object; `undefined` otherwise. */
-function rejectUnexpectedBody(reply: FastifyReply, body: unknown): FastifyReply | undefined {
-  if (body === undefined) return undefined
-  const parsed = EmptyBodySchema.safeParse(body)
-  if (parsed.success) return undefined
-  return reply.status(400).send({ error: parsed.error.issues })
 }
 
 /**

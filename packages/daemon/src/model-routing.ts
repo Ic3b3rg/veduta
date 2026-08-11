@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import type { ModelRef, ModelTier } from './agent-runner.ts'
 import { backupFile, writeJsonAtomic } from './config-backup.ts'
+import { readJsonFile } from './json-file.ts'
 import { defaultRedactor } from './redaction.ts'
 
 /**
@@ -174,12 +175,7 @@ export function loadRoutingConfig(rootDir: string): RoutingConfig {
   const defaults = defaultRoutingConfig()
   const path = join(rootDir, 'routing.json')
   if (!existsSync(path)) return defaults
-  let raw: unknown
-  try {
-    raw = JSON.parse(readFileSync(path, 'utf8'))
-  } catch (error) {
-    throw new Error(`invalid JSON in routing config ${path}: ${errorText(error)}`)
-  }
+  const raw = readJsonFile(path, { description: 'routing config' })
   const overrides = RoutingOverridesSchema.parse(raw)
   return RoutingConfigSchema.parse({
     tiers: {

@@ -126,7 +126,7 @@ describe('Gateway protocol', () => {
     })
   })
 
-  it('accepts a surface.pinned message for a pin toggle, carrying the bumped freshness (issue 022 review fix)', () => {
+  it('accepts a surface.pinned message for a pin toggle, carrying the bumped freshness', () => {
     const event = SurfacePinnedEventSchema.parse({
       cursor: 4,
       at: '2026-07-03T10:00:00.000Z',
@@ -158,7 +158,7 @@ describe('Gateway protocol', () => {
     ).toBe(false)
   })
 
-  it('rejects a surface.pinned message missing freshness (issue 022 review fix)', () => {
+  it('rejects a surface.pinned message missing freshness', () => {
     expect(
       GatewayServerMessageSchema.safeParse({
         type: 'surface.pinned',

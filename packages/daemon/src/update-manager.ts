@@ -121,7 +121,7 @@ function ackFilePath(home: UpdateHome, id: string): string {
   return join(home.stateDir, `result-acked-${id}`)
 }
 
-/** The notify-dedupe marker (issue #43 review follow-up) — see `ingestResult`/`markNotified`. */
+/** The notify-dedupe marker used by `ingestResult` and `markNotified`. */
 function notifiedFilePath(home: UpdateHome, id: string): string {
   return join(home.stateDir, `result-notified-${id}`)
 }
@@ -493,8 +493,8 @@ export class UpdateManager {
       // is not itself already a terminal apply outcome (`outcomeTone`,
       // `update-surface.ts`) — otherwise a background check failure would
       // clobber the text under a still-showing `applied`/`rolled-back`/
-      // `refused` Badge, contradicting its own tone (issue #43 review
-      // follow-up). When it does overwrite, the Surface refresh is forced to
+      // `refused` Badge, contradicting its own tone. When it does overwrite,
+      // the Surface refresh is forced to
       // the same untrusted origin as the Event, for the same reason: the
       // content now includes feed/error-derived text even though the current
       // rendering never shows it outside a terminal status.
@@ -523,8 +523,8 @@ export class UpdateManager {
    * stage-2 window, or a transaction stuck resuming/failing repeatedly), and
    * an unswept `state/result.json` means the previous transaction's outcome
    * has not yet been durably ingested and archived. Writing a second marker
-   * on top of either is exactly the wedge `issues/043-self-update.md`'s Goal
-   * rules out (issue #43 review follow-up): `update-cli run` would be left
+   * on top of either is exactly the wedge `issues/043-self-update.md` rules
+   * out: `update-cli run` would be left
    * juggling two competing pieces of state, forever re-resuming the stale
    * journal while a fresh marker sits unconsumed, with no SSH-free way out.
    *
@@ -534,8 +534,8 @@ export class UpdateManager {
    * Event is durable, the badge/Surface already reflect it, and
    * `state/result-acked-<id>` proves the ack — so leaving it in place would
    * mean every installation can only ever self-update once, then needs an
-   * external restart to clear it (issue #43 review follow-up: nothing else
-   * ever retires a result outside of `update-cli.ts` starting a *new*
+   * external restart to clear it. Nothing else retires a result outside of
+   * `update-cli.ts` starting a *new*
    * transaction, which this refusal would otherwise prevent from ever
    * happening again). An active journal or an unacked result are still
    * refused exactly as before — `sweepAckedResult` itself never touches
@@ -646,8 +646,8 @@ export class UpdateManager {
   // ---------------------------------------------------------------------
 
   /**
-   * Ingests `state/result.json`, in a strict, crash-safe order (issue #43
-   * review follow-up): (1) append the `update.outcome` event exactly once
+   * Ingests `state/result.json` in a strict, crash-safe order: (1) append
+   * the `update.outcome` event exactly once
    * per result id (deduped against the last two days of the System Space's
    * own Event log, the same bounded read `Heartbeat.metrics()` uses) — (2)
    * fsync the day's Event-log file — (3) notify a badge and patch the
@@ -733,7 +733,7 @@ export class UpdateManager {
       }
     }
 
-    // Idempotent on the same result id (issue #43 review follow-up): a
+    // Idempotent on the same result id: a
     // retry after a failed ack write below must re-ensure the Surface/badge
     // reflect the outcome without ever notifying twice — unlike the Surface
     // patch (a plain idempotent overwrite), `notifications.notify` creates
@@ -830,7 +830,7 @@ export class UpdateManager {
    * (private) uses internally, documented for external readers by
    * `memory-index.ts`'s `EVENT_REF_RE`.
    *
-   * Throws rather than swallowing (issue #43 review follow-up): a missing
+   * Throws rather than swallowing: a missing
    * System Space or a failed fsync both mean the just-appended event's
    * durability cannot be confirmed, and `ingestResult` must treat either the
    * same way — no ack, `result.json` left for the next boot to retry —

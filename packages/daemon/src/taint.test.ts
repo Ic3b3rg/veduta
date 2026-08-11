@@ -2,6 +2,7 @@ import { fromPartial } from '@total-typescript/shoehorn'
 import { describe, expect, it } from 'vitest'
 import type { ToolDef } from './agent-runner.ts'
 import {
+  effectiveToolWriteOrigin,
   gateToolsForOrigins,
   hasUntrusted,
   isUntrusted,
@@ -199,6 +200,18 @@ describe('toolWriteOrigin', () => {
   it('maps trusted turns to trusted:system — an agent tool write is never a user event', () => {
     expect(toolWriteOrigin('trusted:user')).toBe('trusted:system')
     expect(toolWriteOrigin('trusted:system')).toBe('trusted:system')
+  })
+})
+
+describe('effectiveToolWriteOrigin', () => {
+  it('uses live taint added after a turn started', () => {
+    expect(effectiveToolWriteOrigin(['trusted:user', 'untrusted:gmail'], 'trusted:user')).toBe(
+      'untrusted:gmail',
+    )
+  })
+
+  it('attributes an all-trusted Agent write to the daemon', () => {
+    expect(effectiveToolWriteOrigin(['trusted:user'], 'trusted:user')).toBe('trusted:system')
   })
 })
 

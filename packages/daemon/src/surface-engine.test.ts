@@ -125,7 +125,7 @@ describe('Surface engine store', () => {
     expect(store.spacesEngine.contextOrigins('spc-health')).toContain('untrusted:gmail')
   })
 
-  it('derives a Surface tool write origin from the live taint accumulator, not just context.origin (issue 022 review fix: docs/SECURITY.md §3.2, mirrors memory-tools.ts writeOriginFor)', async () => {
+  it('derives a Surface tool write origin from the live taint accumulator, not just context.origin (docs/SECURITY.md §3.2, mirrors memory-tools.ts writeOriginFor)', async () => {
     const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
     store.createSurface(checklistSurface('srf-live-taint', 1), 'agent')
     const tools = store.surfaceTools()
@@ -471,7 +471,7 @@ describe('Surface engine store', () => {
       dispose()
     })
 
-    it('the surface.pinned event carries the bumped freshness, not just pinned (issue 022 review fix: the PWA reducer needs it to move updatedAt/updatedBy off whatever it last observed)', async () => {
+    it('the surface.pinned event carries the bumped freshness, not just pinned (the PWA reducer needs it to move updatedAt/updatedBy off whatever it last observed)', async () => {
       const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
       store.createSurface(checklistSurface('srf-pin-freshness', 1), 'agent')
 
@@ -519,7 +519,7 @@ describe('Surface engine store', () => {
       ).toThrow(SurfaceNotPinnableError)
     })
 
-    it("never hardcodes trusted:user/updatedBy: a tool-driven pin stamps the caller's own origin and updatedBy, with the rendered title neutralized and truncated (issue 022 review fix)", async () => {
+    it("never hardcodes trusted:user/updatedBy: a tool-driven pin stamps the caller's own origin and updatedBy, with the rendered title neutralized and truncated", async () => {
       const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
       const taintedTitle = `<<<evil>>> ${'x'.repeat(250)}`
       store.createSurface(
@@ -838,7 +838,7 @@ describe('Surface engine store', () => {
       expect(outcome.details).toMatchObject({ proposalId: expect.any(Number) })
     })
 
-    it('an untrusted target Surface folds its content_origin into surface.tree_proposal, neutralizing and truncating the interpolated title (issue 022 review fix)', async () => {
+    it('an untrusted target Surface folds its content_origin into surface.tree_proposal, neutralizing and truncating the interpolated title', async () => {
       const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
       const taintedTitle = `<<<evil>>> ${'x'.repeat(250)}`
       store.createSurface(
@@ -893,7 +893,7 @@ describe('Surface engine store', () => {
       expect(store.getTreeProposal(result.proposalId)?.origin).toBe('untrusted:hermes')
     })
 
-    it('a throwing onTreeProposal observer does not escape patchTree, and the proposal is still recorded exactly once (issue 022 review fix)', async () => {
+    it('a throwing onTreeProposal observer does not escape patchTree, and the proposal is still recorded exactly once', async () => {
       const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
       store.createSurface(checklistSurface('srf-proposal-observer-throws', 1), 'agent')
       store.setPinned('srf-proposal-observer-throws', true, {
@@ -959,7 +959,7 @@ describe('Surface engine store', () => {
       expect(events[0]?.origin).toBe('untrusted:hermes')
     })
 
-    it('records templateSpaceId alongside templateId (issue 022 review fix: a Template id is only unique within its own Space, so templateId alone is ambiguous about which Template a reused Surface came from)', async () => {
+    it('records templateSpaceId alongside templateId (a Template id is only unique within its own Space, so templateId alone is ambiguous about which Template a reused Surface came from)', async () => {
       const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
       store.createSurface(agentActionSurface('srf-provenance-space'), 'agent', {
         templateId: 'tpl-tracker-abc123',
@@ -972,7 +972,7 @@ describe('Surface engine store', () => {
       })
     })
 
-    it('a tainted patch_tree re-marks content_origin (issue 022 review fix: content_origin was write-once), so a later agent_path event carries the untrusted origin', async () => {
+    it('a tainted patch_tree re-marks content_origin (content_origin was write-once), so a later agent_path event carries the untrusted origin', async () => {
       const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
       store.createSurface(agentActionSurface('srf-origin-relaundered'), 'agent')
       expect(store.surfaceProvenance('srf-origin-relaundered')).toMatchObject({
@@ -1005,7 +1005,7 @@ describe('Surface engine store', () => {
       expect(events[0]?.origin).toBe('untrusted:gmail')
     })
 
-    it('a state patch from an untrusted turn moves content_origin too, not only a tree patch (issue 022 review fix: content_origin used to move only on a tree patch, missing that a state patch can carry attacker text into Surface state)', async () => {
+    it('a state patch from an untrusted turn moves content_origin too, not only a tree patch (content_origin used to move only on a tree patch, missing that a state patch can carry attacker text into Surface state)', async () => {
       const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
       store.createSurface(checklistSurface('srf-origin-state-tainted', 1), 'agent')
       expect(store.surfaceProvenance('srf-origin-state-tainted')).toMatchObject({
@@ -1023,7 +1023,7 @@ describe('Surface engine store', () => {
       })
     })
 
-    it('a tainted-turn create_surface tool call yields an untrusted content_origin, not the hardcoded trusted:user the tool used to default to (issue 022 review fix)', async () => {
+    it('a tainted-turn create_surface tool call yields an untrusted content_origin, not the hardcoded trusted:user the tool used to default to', async () => {
       const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
       const tools = store.surfaceTools()
 
@@ -1045,7 +1045,7 @@ describe('Surface engine store', () => {
       })
     })
 
-    it('a fast-path tap on an untrusted-content Surface logs an untrusted fast_path event, not a hardcoded trusted:user (issue 022 review fix)', async () => {
+    it('a fast-path tap on an untrusted-content Surface logs an untrusted fast_path event, not a hardcoded trusted:user', async () => {
       const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
       store.createSurface(checklistSurface('srf-fast-tainted', 1), 'agent', {
         contentOrigin: 'untrusted:hermes',

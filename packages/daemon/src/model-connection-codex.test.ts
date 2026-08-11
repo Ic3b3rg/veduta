@@ -9,6 +9,8 @@ import {
   fakeCodexModelEntry,
   fakeCodexModelListResponse,
   fakeCodexSignedOutAccountReadResponse,
+  fakeCodexThreadStartResponse,
+  fakeCodexTurnStartResponse,
   type FakeCodexTransport,
 } from './codex-app-server-fake.ts'
 import { CodexSessionPool, type CodexTransport } from './codex-app-server.ts'
@@ -174,7 +176,7 @@ describe('initializeCodexTransport', () => {
 describe('refresh', () => {
   it('ignores a completion notification carrying another loginId', async () => {
     const transport = createFakeCodexTransport({
-      responses: {},
+      responses: { 'account/read': fakeCodexSignedOutAccountReadResponse() },
       notifications: [
         { method: 'account/login/completed', params: { loginId: 'someone-elses-login' } },
       ],
@@ -189,6 +191,25 @@ describe('refresh', () => {
     })
 
     expect(result).toEqual({ state: 'waiting-for-user' })
+  })
+
+  it('recovers a completed device login from account/read when its notification was missed', async () => {
+    const transport = createFakeCodexTransport({
+      responses: { 'account/read': fakeCodexConnectedAccountReadResponse() },
+    })
+
+    const result = await codexSubscriptionAdapter.refresh(contextWith(transport), {
+      loginId: 'login-1',
+      verificationUrl: 'https://auth.openai.com/codex/device',
+      userCode: 'ABCD-1234',
+      expiresAt: '2026-08-09T10:15:00.000Z',
+      expirySource: 'veduta-default',
+    })
+
+    expect(result).toEqual({ state: 'connected', account: { label: 'ChatGPT Plus' } })
+    expect(transport.requests.find((request) => request.method === 'account/read')?.params).toEqual(
+      { refreshToken: false },
+    )
   })
 
   it('reaches connected after account/login/completed matches the challenge', async () => {
@@ -336,22 +357,53 @@ async function drain(
 }
 
 describe('stream', () => {
-  it('yields text deltas and completes on the turn-completed notification', async () => {
+  it('streams observed agent-message deltas without repeating the completed text', async () => {
     const transport = createFakeCodexTransport({
       responses: {
-        'thread/start': { threadId: 'thread-1' },
-        'turn/start': { turnId: 'turn-1' },
+        'thread/start': { thread: { id: 'thread-1' } },
+        'turn/start': { turn: { id: 'turn-1' } },
       },
       notifications: [
         {
-          method: 'item/updated',
-          params: { threadId: 'thread-1', item: { type: 'agentMessage', delta: 'hel' } },
+          method: 'item/started',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            startedAtMs: 1,
+            item: { id: 'item-1', type: 'agentMessage', text: '' },
+          },
         },
         {
-          method: 'item/updated',
-          params: { threadId: 'thread-1', item: { type: 'agentMessage', delta: 'lo' } },
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'item-1',
+            delta: 'hel',
+          },
         },
-        { method: 'turn/completed', params: { threadId: 'thread-1' } },
+        {
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'item-1',
+            delta: 'lo',
+          },
+        },
+        {
+          method: 'item/completed',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            completedAtMs: 2,
+            item: { id: 'item-1', type: 'agentMessage', text: 'hello' },
+          },
+        },
+        {
+          method: 'turn/completed',
+          params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+        },
       ],
     })
 
@@ -369,22 +421,86 @@ describe('stream', () => {
     expect(transport.requests.some((request) => request.method === 'turn/interrupt')).toBe(false)
   })
 
-  it('drops a reasoning item and forwards only text', async () => {
+  it('ignores the observed user-message echo and keeps the completed text fallback', async () => {
     const transport = createFakeCodexTransport({
       responses: {
-        'thread/start': { threadId: 'thread-1' },
-        'turn/start': { turnId: 'turn-1' },
+        'thread/start': { thread: { id: 'thread-1' } },
+        'turn/start': { turn: { id: 'turn-1' } },
+        'turn/interrupt': {},
       },
       notifications: [
         {
-          method: 'item/updated',
-          params: { threadId: 'thread-1', item: { type: 'reasoning', text: 'let me think' } },
+          method: 'item/started',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            startedAtMs: 1,
+            item: { id: 'user-1', type: 'userMessage', content: [] },
+          },
         },
         {
           method: 'item/completed',
-          params: { threadId: 'thread-1', item: { type: 'agentMessage', text: 'the answer' } },
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            completedAtMs: 2,
+            item: { id: 'user-1', type: 'userMessage', content: [] },
+          },
         },
-        { method: 'turn/completed', params: { threadId: 'thread-1' } },
+        {
+          method: 'item/completed',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            completedAtMs: 3,
+            item: { id: 'agent-1', type: 'agentMessage', text: 'pong' },
+          },
+        },
+        {
+          method: 'turn/completed',
+          params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+        },
+      ],
+    })
+
+    const { deltas, error } = await drain(
+      codexSubscriptionAdapter.stream!(contextWith(transport), subscriptionRequest()),
+    )
+
+    expect(error).toBeUndefined()
+    expect(deltas).toEqual(['pong'])
+    expect(transport.requests.some((request) => request.method === 'turn/interrupt')).toBe(false)
+  })
+
+  it('drops a reasoning item and forwards only text', async () => {
+    const transport = createFakeCodexTransport({
+      responses: {
+        'thread/start': fakeCodexThreadStartResponse(),
+        'turn/start': fakeCodexTurnStartResponse(),
+      },
+      notifications: [
+        {
+          method: 'item/completed',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            completedAtMs: 1,
+            item: { id: 'reasoning-1', type: 'reasoning', text: 'let me think' },
+          },
+        },
+        {
+          method: 'item/completed',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            completedAtMs: 2,
+            item: { id: 'agent-1', type: 'agentMessage', text: 'the answer' },
+          },
+        },
+        {
+          method: 'turn/completed',
+          params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+        },
       ],
     })
 
@@ -399,17 +515,23 @@ describe('stream', () => {
   it('interrupts and refuses on a command-execution item', async () => {
     const transport = createFakeCodexTransport({
       responses: {
-        'thread/start': { threadId: 'thread-1' },
-        'turn/start': { turnId: 'turn-1' },
+        'thread/start': { thread: { id: 'thread-1' } },
+        'turn/start': { turn: { id: 'turn-1' } },
         'turn/interrupt': {},
       },
       notifications: [
         {
-          method: 'item/updated',
+          method: 'item/started',
           params: {
             threadId: 'thread-1',
-            item: { type: 'commandExecution', text: 'rm -rf /' },
+            turnId: 'turn-1',
+            startedAtMs: 1,
+            item: { id: 'item-1', type: 'commandExecution', command: 'rm -rf /' },
           },
+        },
+        {
+          method: 'turn/completed',
+          params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
         },
       ],
     })
@@ -431,16 +553,15 @@ describe('stream', () => {
     ])
     expect(
       transport.requests.find((request) => request.method === 'turn/interrupt')?.params,
-    ).toEqual({ threadId: 'thread-1' })
+    ).toEqual({ threadId: 'thread-1', turnId: 'turn-1' })
   })
 
-  it('sends turn/interrupt and abandons the thread when the turn is already aborted', async () => {
+  it('does not send an invalid turn/interrupt before a turn exists', async () => {
     const controller = new AbortController()
     controller.abort()
     const transport = createFakeCodexTransport({
       responses: {
-        'thread/start': { threadId: 'thread-1' },
-        'turn/interrupt': {},
+        'thread/start': { thread: { id: 'thread-1' } },
       },
     })
 
@@ -453,21 +574,26 @@ describe('stream', () => {
 
     expect(deltas).toEqual([])
     expect(error).toMatchObject({ code: 'unsupported' })
-    // `turn/start` is never reached — no thread reuse, no resume, nothing
-    // to interrupt beyond the one `turn/interrupt` best-effort call.
-    expect(transport.requests.map((request) => request.method)).toEqual([
-      'thread/start',
-      'turn/interrupt',
-    ])
+    // `turn/start` is never reached, so the app-server has no turn id an
+    // interruption request could validly name.
+    expect(transport.requests.map((request) => request.method)).toEqual(['thread/start'])
   })
 
-  it('thread/start carries the confirmed tool-restriction config', async () => {
+  it('uses the capability-compatible 0.146.1 thread/start and turn/start params', async () => {
     const transport = createFakeCodexTransport({
       responses: {
-        'thread/start': { threadId: 'thread-1' },
-        'turn/start': { turnId: 'turn-1' },
+        'thread/start': { thread: { id: 'thread-1' } },
+        'turn/start': (params: unknown) => {
+          expect(params).toMatchObject({ threadId: 'thread-1' })
+          return { turn: { id: 'turn-1' } }
+        },
       },
-      notifications: [{ method: 'turn/completed', params: { threadId: 'thread-1' } }],
+      notifications: [
+        {
+          method: 'turn/completed',
+          params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+        },
+      ],
     })
 
     await drain(codexSubscriptionAdapter.stream!(contextWith(transport), subscriptionRequest()))
@@ -479,8 +605,14 @@ describe('stream', () => {
         approvalPolicy: 'never',
         sandbox: 'read-only',
         config: { web_search: 'disabled', disabled_tools: true },
-        dynamicTools: [],
         cwd: join(ROOT_DIR, 'codex', CONNECTION_ID),
+      },
+    })
+    expect(transport.requests[1]).toEqual({
+      method: 'turn/start',
+      params: {
+        threadId: 'thread-1',
+        input: [{ type: 'text', text: 'You are Veduta.\n\n---\n\nUser:\nhi' }],
       },
     })
   })
@@ -488,23 +620,36 @@ describe('stream', () => {
   it('ignores item notifications for another thread', async () => {
     const transport = createFakeCodexTransport({
       responses: {
-        'thread/start': { threadId: 'thread-1' },
-        'turn/start': { turnId: 'turn-1' },
+        'thread/start': fakeCodexThreadStartResponse(),
+        'turn/start': fakeCodexTurnStartResponse(),
       },
       notifications: [
         {
-          method: 'item/updated',
+          method: 'item/agentMessage/delta',
           params: {
             threadId: 'some-other-thread',
-            item: { type: 'agentMessage', delta: 'nope' },
+            turnId: 'some-other-turn',
+            itemId: 'other-item',
+            delta: 'nope',
           },
         },
         {
-          method: 'item/updated',
-          params: { threadId: 'thread-1', item: { type: 'agentMessage', delta: 'yes' } },
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'agent-1',
+            delta: 'yes',
+          },
         },
-        { method: 'turn/completed', params: { threadId: 'some-other-thread' } },
-        { method: 'turn/completed', params: { threadId: 'thread-1' } },
+        {
+          method: 'turn/completed',
+          params: { threadId: 'some-other-thread', turn: { id: 'some-other-turn' } },
+        },
+        {
+          method: 'turn/completed',
+          params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+        },
       ],
     })
 
@@ -519,15 +664,23 @@ describe('stream', () => {
   it("a device-code poll never consumes a live turn's items", async () => {
     const transport = createFakeCodexTransport({
       responses: {
-        'thread/start': { threadId: 'thread-1' },
-        'turn/start': { turnId: 'turn-1' },
+        'thread/start': fakeCodexThreadStartResponse(),
+        'turn/start': fakeCodexTurnStartResponse(),
       },
       notifications: [
         {
-          method: 'item/updated',
-          params: { threadId: 'thread-1', item: { type: 'agentMessage', text: 'hello' } },
+          method: 'item/completed',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            completedAtMs: 1,
+            item: { id: 'agent-1', type: 'agentMessage', text: 'hello' },
+          },
         },
-        { method: 'turn/completed', params: { threadId: 'thread-1' } },
+        {
+          method: 'turn/completed',
+          params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+        },
       ],
     })
 
@@ -548,7 +701,7 @@ describe('stream', () => {
   it('a failed turn/start releases the notification subscription (the transport returns to idle)', async () => {
     const transport = createFakeCodexTransport({
       responses: {
-        'thread/start': { threadId: 'thread-1' },
+        'thread/start': fakeCodexThreadStartResponse(),
         'turn/start': new Error('the app-server rejected turn/start'),
       },
     })
@@ -572,8 +725,8 @@ describe('stream', () => {
       const controller = new AbortController()
       const transport = createFakeCodexTransport({
         responses: {
-          'thread/start': { threadId: 'thread-1' },
-          'turn/start': { turnId: 'turn-1' },
+          'thread/start': fakeCodexThreadStartResponse(),
+          'turn/start': fakeCodexTurnStartResponse(),
           'turn/interrupt': {},
         },
         // No notification ever arrives — a silent turn: `subscription.next()`
@@ -612,8 +765,8 @@ describe('stream', () => {
     try {
       const transport = createFakeCodexTransport({
         responses: {
-          'thread/start': { threadId: 'thread-1' },
-          'turn/start': { turnId: 'turn-1' },
+          'thread/start': fakeCodexThreadStartResponse(),
+          'turn/start': fakeCodexTurnStartResponse(),
           'turn/interrupt': {},
         },
         // No `turn/completed` ever arrives — the turn bound is what ends this.

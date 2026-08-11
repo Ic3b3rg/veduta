@@ -25,8 +25,8 @@ interface CalendarForm {
 }
 
 /**
- * Non-secret resume defaults (issue 019 review fix): pre-fills whatever the
- * daemon already has on file for this section, and pre-checks/opens a
+ * Non-secret resume defaults prefill whatever the daemon already has on
+ * file for this section, and pre-check/open a
  * section that is already `configured` — the same Hermes discipline as the
  * rest of the wizard, never re-asking for a value already known. Secret
  * fields are never pre-filled; they keep the existing "keep stored"

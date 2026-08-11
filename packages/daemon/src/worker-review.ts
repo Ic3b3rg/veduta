@@ -1,8 +1,9 @@
 import { z } from 'zod'
 import type { ModelRef } from './agent-runner.ts'
+import { stripJsonCodeFence } from './model-output.ts'
 import type { ModelRouter } from './model-routing.ts'
 import { neutralizeDelimiters } from './taint.ts'
-import { stripCodeFence, type WorkerBriefing, type WorkerReport } from './worker-briefing.ts'
+import type { WorkerBriefing, WorkerReport } from './worker-briefing.ts'
 
 /**
  * The adversarial review (issue #17, ADR-0002/ARCHITECTURE §3.6):
@@ -103,7 +104,7 @@ export function buildReviewPrompt(
 function parseVerdict(text: string): { ok: true; verdict: WorkerReviewVerdict } | { ok: false } {
   let json: unknown
   try {
-    json = JSON.parse(stripCodeFence(text))
+    json = JSON.parse(stripJsonCodeFence(text))
   } catch {
     return { ok: false }
   }

@@ -7,7 +7,7 @@ import {
   type Surface,
   type SurfaceTemplate,
 } from '@veduta/protocol'
-import { defineTool, type ToolContext, type ToolDef } from './agent-runner.ts'
+import { defineTool, type ToolDef } from './agent-runner.ts'
 import type { Store } from './store.ts'
 import {
   matchTemplates,
@@ -20,6 +20,7 @@ import {
   type TemplateMatchCandidate,
 } from './templates.ts'
 import {
+  effectiveToolWriteOrigin,
   effectiveOrigin,
   isUntrusted,
   isValidOrigin,
@@ -259,7 +260,7 @@ export class TemplateEngine {
    * the interpolated Template name neutralized and truncated before it is
    * ever rendered back to the Agent (docs/SECURITY.md §3.2). The created
    * Surface's provenance records `templateSpaceId` alongside `templateId`
-   * (issue 022 review fix): a Template id is only unique within its own
+   *: a Template id is only unique within its own
    * Space, so `templateId` alone cannot say which Template a reused Surface
    * actually came from.
    */
@@ -492,7 +493,7 @@ export function templateTools(
       handler(input, context) {
         const spaceId = resolveSpaceId(input.spaceId, options.activeSpaceId)
         const templateSpaceId = input.templateSpaceId ?? spaceId
-        const origin = writeOriginFor(context)
+        const origin = effectiveToolWriteOrigin(context.taint.origins(), context.origin)
         const surface = engine.instantiate({
           templateId: input.templateId,
           templateSpaceId,
@@ -520,7 +521,7 @@ export function templateTools(
       egressDomains: [],
       handler(input, context) {
         const { surface, template } = engine.pin(input.surfaceId, input.pinned, {
-          origin: writeOriginFor(context),
+          origin: effectiveToolWriteOrigin(context.taint.origins(), context.origin),
           updatedBy: 'agent',
         })
         const origins =
@@ -585,7 +586,7 @@ export function gateCreateSurfaceTool(tool: ToolDef, engine: TemplateEngine): To
       if (bestMatch !== undefined && input.justification !== undefined) {
         engine.store.spacesEngine.appendEvent(input.spaceId, {
           type: 'template.regenerated',
-          origin: writeOriginFor(context),
+          origin: effectiveToolWriteOrigin(context.taint.origins(), context.origin),
           text: `Regenerated a Surface instead of reusing Template "${bestMatch.template.id}": ${input.justification}`,
           payload: {
             templateId: bestMatch.template.id,
@@ -652,18 +653,6 @@ function resolveSpaceId(
   const spaceId = inputSpaceId ?? activeSpaceId
   if (!spaceId) throw new Error('active Space is required for this Template tool')
   return spaceId
-}
-
-/**
- * The write origin a Template tool stamps on what it appends, derived from
- * the turn's live taint accumulator rather than `context.origin` alone —
- * the same reasoning `memory-tools.ts`'s `writeOriginFor` documents
- * (docs/SECURITY.md §3.2): a turn that starts trusted but reads an
- * untrusted Template mid-turn (via `list_templates` or the gate's own
- * match) must not have that write launder clean.
- */
-function writeOriginFor(context: ToolContext): Origin {
-  return toolWriteOrigin(effectiveOrigin(context.taint.origins(), context.origin))
 }
 
 /**

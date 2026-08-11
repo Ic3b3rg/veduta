@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { loginWithPasskey, registerPasskey } from './api.ts'
-import { consumeSetupCode, defaultDeviceName } from './pwa-storage.ts'
+import { consumeSetupCode, defaultDeviceName, readSetupCode } from './pwa-storage.ts'
 
 export function AuthGate({
   bootstrapRequired,
@@ -15,7 +15,7 @@ export function AuthGate({
   onAuthenticated: (token: string) => void
   onError: (message: string) => void
 }) {
-  const [oneTimeCode, setOneTimeCode] = useState(() => consumeSetupCode())
+  const [oneTimeCode, setOneTimeCode] = useState(() => readSetupCode())
   const [deviceName, setDeviceName] = useState(defaultDeviceName())
   const [busy, setBusy] = useState(false)
 
@@ -61,7 +61,14 @@ export function AuthGate({
             type="button"
             disabled={busy}
             onClick={() =>
-              run(() => registerPasskey({ oneTimeCode, deviceName: deviceName.trim() }))
+              run(async () => {
+                const session = await registerPasskey({
+                  oneTimeCode,
+                  deviceName: deviceName.trim(),
+                })
+                consumeSetupCode()
+                return session
+              })
             }
           >
             Register passkey

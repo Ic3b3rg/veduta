@@ -81,7 +81,7 @@ const HERMES_ALIASES = ['.hermes']
  */
 export const OPENCLAW_ALIASES = ['.openclaw', '.clawdbot', '.moltbot']
 
-/** A staged directory only counts as present when it actually has something the importer can read (security review — see `resolveLegacyDir`'s doc comment). */
+/** A staged directory is present only when it contains something the importer can read. */
 const STAGED_CONTENT_NAMES = ['SOUL.md', 'USER.md', 'MEMORY.md', 'notes']
 
 function hasStagedContent(dir: string): boolean {

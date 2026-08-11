@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { backupFile, writeJsonAtomic } from './config-backup.ts'
+import { readJsonFile } from './json-file.ts'
 import { SecretRefSchema } from './model-routing.ts'
 import { PreFilterRulesSchema } from './pre-filter.ts'
 import { SOURCE_NAME_RE } from './taint.ts'
@@ -88,15 +89,7 @@ export type IngestionConfig = z.infer<typeof IngestionConfigSchema>
 export function loadIngestionConfig(rootDir: string): IngestionConfig {
   const path = join(rootDir, 'ingestion.json')
   if (!existsSync(path)) return IngestionConfigSchema.parse({})
-  let raw: unknown
-  try {
-    raw = JSON.parse(readFileSync(path, 'utf8'))
-  } catch (error) {
-    throw new Error(
-      `invalid JSON in ingestion config ${path}: ${error instanceof Error ? error.message : String(error)}`,
-    )
-  }
-  return IngestionConfigSchema.parse(raw)
+  return IngestionConfigSchema.parse(readJsonFile(path, { description: 'ingestion config' }))
 }
 
 /**
