@@ -16,6 +16,7 @@ import {
   DynamicToolCallParamsSchema,
   DynamicToolCallResponseSchema,
   DynamicToolCallStartedItemSchema,
+  ErrorNotificationSchema,
   ItemNotificationSchema,
   parseCodexResponse,
   ThreadStartResponseSchema,
@@ -37,6 +38,7 @@ const TOOL_PROTOCOL_VIOLATION_MESSAGE =
   'the Codex turn violated the pinned dynamic-tool protocol; refusing to expose the call to AgentRunner'
 
 const TURN_ABORTED_MESSAGE = 'the Codex turn was aborted before it completed'
+const TURN_FAILED_MESSAGE = 'the Codex provider turn failed without an error message'
 
 /** Bounds one live Codex provider turn, including time spent suspended on a Veduta tool handler. */
 export const CODEX_TURN_TIMEOUT_MS = 600_000
@@ -195,6 +197,11 @@ function terminationError(reason: TurnTermination): Error {
     return new ModelConnectionError('unreachable', TURN_TIMEOUT_MESSAGE)
   }
   return new NonRetryableModelError(TOOL_PROTOCOL_VIOLATION_MESSAGE)
+}
+
+function providerTurnError(message: string | undefined): ModelConnectionError {
+  const sanitized = message === undefined ? '' : sanitizeErrorText(message).trim()
+  return new ModelConnectionError('unreachable', sanitized || TURN_FAILED_MESSAGE)
 }
 
 function armTurnLifecycle(turn: ActiveCodexTurn, signal: AbortSignal | undefined): void {
@@ -423,6 +430,13 @@ async function* continueTurn(
       }
       const frame = outcome.result.value
 
+      if (frame.method === 'error') {
+        const failed = parseCodexResponse(ErrorNotificationSchema, frame.method, frame.params)
+        if (failed.threadId !== turn.threadId || failed.turnId !== turn.turnId) continue
+        if (!failed.willRetry) throw providerTurnError(failed.error.message)
+        continue
+      }
+
       if (frame.method === 'turn/completed') {
         const completed = parseCodexResponse(
           TurnCompletedNotificationSchema,
@@ -430,6 +444,13 @@ async function* continueTurn(
           frame.params,
         )
         if (completed.threadId !== turn.threadId || completed.turn.id !== turn.turnId) continue
+        if (completed.turn.status === 'failed') {
+          throw providerTurnError(completed.turn.error?.message)
+        }
+        if (completed.turn.status === 'interrupted') {
+          throw new ModelConnectionError('unsupported', TURN_ABORTED_MESSAGE)
+        }
+        if (completed.turn.status === 'inProgress') refuseToolProtocolViolation(turn)
         if (
           turn.announcedDynamicCalls.size !== turn.completedCallIds.size ||
           turn.acceptedCallIds.size !== turn.completedCallIds.size ||

@@ -334,10 +334,29 @@ export const AgentMessageDeltaNotificationSchema = z.object({
   delta: z.string(),
 })
 
-/** `turn/completed` notification, CONFIRMED 2026-08-10 against the pinned binary: the completed turn id is nested under `turn.id`. */
+/** Provider failure carried by both `error` and failed `turn/completed` notifications in the pinned protocol. */
+export const TurnErrorSchema = z.object({
+  message: z.string(),
+})
+
+/** `error` notification emitted for one correlated turn. `willRetry` distinguishes an intermediate sampling failure from the terminal provider failure Veduta must surface. */
+export const ErrorNotificationSchema = z.object({
+  threadId: z.string().min(1),
+  turnId: z.string().min(1),
+  error: TurnErrorSchema,
+  willRetry: z.boolean(),
+})
+
+export const TurnStatusSchema = z.enum(['completed', 'interrupted', 'failed', 'inProgress'])
+
+/** `turn/completed` notification, CONFIRMED against the pinned binary: the completed turn id and status are nested under `turn`; a failed turn may repeat its provider error. */
 export const TurnCompletedNotificationSchema = z.object({
   threadId: z.string().min(1),
-  turn: z.object({ id: z.string().min(1) }),
+  turn: z.object({
+    id: z.string().min(1),
+    status: TurnStatusSchema,
+    error: TurnErrorSchema.nullable().optional(),
+  }),
 })
 
 export type InitializeResponse = z.infer<typeof InitializeResponseSchema>
@@ -357,6 +376,9 @@ export type DynamicToolCallResponse = z.infer<typeof DynamicToolCallResponseSche
 export type CodexItem = z.infer<typeof CodexItemSchema>
 export type ItemNotification = z.infer<typeof ItemNotificationSchema>
 export type AgentMessageDeltaNotification = z.infer<typeof AgentMessageDeltaNotificationSchema>
+export type ErrorNotification = z.infer<typeof ErrorNotificationSchema>
+export type TurnError = z.infer<typeof TurnErrorSchema>
+export type TurnStatus = z.infer<typeof TurnStatusSchema>
 export type TurnCompletedNotification = z.infer<typeof TurnCompletedNotificationSchema>
 
 /** A notification frame after the protocol layer has had a chance to recognize its method. An unrecognized method is deliberately NOT parsed — `params` passes through opaque — so a future notification type cannot fail validation on the way to being ignored. */

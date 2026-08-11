@@ -231,6 +231,35 @@ Cancellation used the already-observed interrupt method with both correlation id
 The response result was `{}`. The terminal notification retained the same thread and turn ids and
 reported `turn.status: "interrupted"`.
 
+## Terminal provider failure
+
+A real Local VPS turn on 2026-08-11 reached a selected model that was at capacity. The pinned
+app-server recorded `Selected model is at capacity. Please try a different model.`, emitted an
+`error` notification, then emitted `turn/completed`, without emitting an Agent message. This order
+was confirmed from the app-server's structured event log; no raw provider envelope, credential, or
+account data was retained.
+
+The generated 0.146.1 schema defines the correlated error payload as:
+
+```json
+{
+  "method": "error",
+  "params": {
+    "threadId": "<thread-id>",
+    "turnId": "<turn-id>",
+    "error": { "message": "<provider-error>" },
+    "willRetry": false
+  }
+}
+```
+
+`willRetry: true` is an intermediate failure the app-server intends to retry internally;
+`willRetry: false` is terminal. The generated `Turn` schema requires `status` and permits
+`error` when that status is `failed`, so `turn/completed` independently preserves a terminal
+failure if the preceding notification is unavailable. Production therefore consumes both signals:
+it waits through declared internal retries, surfaces a correlated terminal error, and never treats
+a failed terminal turn with no Agent message as an empty successful answer.
+
 ## Production interpretation
 
 The zod schemas in `packages/daemon/src/codex-app-server-protocol.ts` require every field on which

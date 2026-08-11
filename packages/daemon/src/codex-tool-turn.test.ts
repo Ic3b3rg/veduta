@@ -528,7 +528,7 @@ describe('stream', () => {
     })
     transport.emit({
       method: 'turn/completed',
-      params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
     })
     const result = await resultPromise
 
@@ -562,7 +562,7 @@ describe('stream', () => {
       transport.emit(fixture.startNotification)
       transport.emit({
         method: 'turn/completed',
-        params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+        params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
       })
 
       const result = await resultPromise
@@ -655,7 +655,7 @@ describe('stream', () => {
     })
     transport.emit({
       method: 'turn/completed',
-      params: { threadId: 'thread-b', turn: { id: 'turn-b' } },
+      params: { threadId: 'thread-b', turn: { id: 'turn-b', status: 'completed' } },
     })
     expect(await secondResult).toEqual({ events: [], error: undefined })
 
@@ -969,7 +969,7 @@ describe('stream', () => {
       notifications: [
         {
           method: 'turn/completed',
-          params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+          params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
         },
       ],
     })
@@ -1183,7 +1183,7 @@ describe('stream', () => {
         },
         {
           method: 'turn/completed',
-          params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+          params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
         },
       ],
     })
@@ -1200,6 +1200,114 @@ describe('stream', () => {
     ])
     expect(transport.requests[0]?.params).toMatchObject({ approvalPolicy: 'never' })
     expect(transport.requests.some((request) => request.method === 'turn/interrupt')).toBe(false)
+  })
+
+  it('surfaces a terminal provider error instead of completing with an empty response', async () => {
+    const message = 'Selected model is at capacity. Please try a different model.'
+    const turnError = { message }
+    const transport = createFakeCodexTransport({
+      responses: {
+        'thread/start': fakeCodexThreadStartResponse(),
+        'turn/start': fakeCodexTurnStartResponse(),
+      },
+      notifications: [
+        {
+          method: 'error',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            error: turnError,
+            willRetry: false,
+          },
+        },
+        {
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-1',
+            turn: {
+              id: 'turn-1',
+              status: 'failed',
+              error: turnError,
+              items: [],
+            },
+          },
+        },
+      ],
+    })
+
+    const { deltas, error } = await drain(
+      streamCodexToolTurn(transport, CODEX_HOME, subscriptionRequest()),
+    )
+
+    expect(deltas).toEqual([])
+    expect(error).toMatchObject({ message })
+  })
+
+  it('lets Codex recover from an error notification that declares an internal retry', async () => {
+    const transport = createFakeCodexTransport({
+      responses: {
+        'thread/start': fakeCodexThreadStartResponse(),
+        'turn/start': fakeCodexTurnStartResponse(),
+      },
+      notifications: [
+        {
+          method: 'error',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            error: { message: 'temporary provider failure' },
+            willRetry: true,
+          },
+        },
+        {
+          method: 'item/completed',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            item: { id: 'agent-1', type: 'agentMessage', text: 'recovered' },
+          },
+        },
+        {
+          method: 'turn/completed',
+          params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+        },
+      ],
+    })
+
+    const result = await drain(streamCodexToolTurn(transport, CODEX_HOME, subscriptionRequest()))
+
+    expect(result).toEqual({ deltas: ['recovered'], error: undefined })
+  })
+
+  it('surfaces a failed terminal turn when its preceding error notification was missed', async () => {
+    const message = 'Selected model is at capacity. Please try a different model.'
+    const transport = createFakeCodexTransport({
+      responses: {
+        'thread/start': fakeCodexThreadStartResponse(),
+        'turn/start': fakeCodexTurnStartResponse(),
+      },
+      notifications: [
+        {
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-1',
+            turn: {
+              id: 'turn-1',
+              status: 'failed',
+              error: { message },
+              items: [],
+            },
+          },
+        },
+      ],
+    })
+
+    const { deltas, error } = await drain(
+      streamCodexToolTurn(transport, CODEX_HOME, subscriptionRequest()),
+    )
+
+    expect(deltas).toEqual([])
+    expect(error).toMatchObject({ message })
   })
 
   it('ignores the observed user-message echo and keeps the completed text fallback', async () => {
@@ -1239,7 +1347,7 @@ describe('stream', () => {
         },
         {
           method: 'turn/completed',
-          params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+          params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
         },
       ],
     })
@@ -1280,7 +1388,7 @@ describe('stream', () => {
         },
         {
           method: 'turn/completed',
-          params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+          params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
         },
       ],
     })
@@ -1314,7 +1422,7 @@ describe('stream', () => {
           },
           {
             method: 'turn/completed',
-            params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+            params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
           },
         ],
       })
@@ -1369,7 +1477,7 @@ describe('stream', () => {
       notifications: [
         {
           method: 'turn/completed',
-          params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+          params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
         },
       ],
     })
@@ -1423,11 +1531,14 @@ describe('stream', () => {
         },
         {
           method: 'turn/completed',
-          params: { threadId: 'some-other-thread', turn: { id: 'some-other-turn' } },
+          params: {
+            threadId: 'some-other-thread',
+            turn: { id: 'some-other-turn', status: 'completed' },
+          },
         },
         {
           method: 'turn/completed',
-          params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+          params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
         },
       ],
     })
@@ -1465,7 +1576,7 @@ describe('stream', () => {
         },
         {
           method: 'turn/completed',
-          params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+          params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
         },
       ],
     })
@@ -1500,7 +1611,7 @@ describe('stream', () => {
         },
         {
           method: 'turn/completed',
-          params: { threadId: 'thread-1', turn: { id: 'turn-1' } },
+          params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
         },
       ],
     })

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { z } from 'zod'
 import { describe, expect, it } from 'vitest'
-import { defineTool } from './agent-runner.ts'
+import { defineTool, type AgentEvent } from './agent-runner.ts'
 import {
   createFakeCodexTransport,
   fakeCodexDynamicToolRoundTrip,
@@ -176,6 +176,106 @@ describe('subscription-turn failover (issue #47)', () => {
 
     expect(attemptedModels).toEqual(['sub-conn-1', 'sub-conn-2'])
     expect(events.filter((event) => event.type === 'model.failover')).toHaveLength(1)
+  })
+
+  it('a terminal Codex error fails over instead of completing with an empty response', async () => {
+    const message = 'Selected model is at capacity. Please try a different model.'
+    const transport: ReturnType<typeof createFakeCodexTransport> = createFakeCodexTransport({
+      responses: {
+        'thread/start': fakeCodexThreadStartResponse(),
+        'turn/start': () => {
+          transport.emit({
+            method: 'error',
+            params: {
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              error: { message },
+              willRetry: false,
+            },
+          })
+          transport.emit({
+            method: 'turn/completed',
+            params: {
+              threadId: 'thread-1',
+              turn: {
+                id: 'turn-1',
+                status: 'failed',
+                error: { message },
+                items: [],
+              },
+            },
+          })
+          return fakeCodexTurnStartResponse()
+        },
+      },
+    })
+    const codexRoot = mkdtempSync(join(tmpdir(), 'veduta-codex-provider-error-'))
+    const context = fromPartial<AdapterContext>({
+      connectionId: 'sub-conn-1',
+      rootDir: codexRoot,
+      codexHome: join(codexRoot, 'codex', 'sub-conn-1'),
+      secrets: noKeysResolve,
+      fetchImpl: fromPartial<typeof fetch>({}),
+      now: () => new Date('2026-08-11T10:00:00.000Z'),
+      probe: async () => {},
+      codexTransport: async () => transport,
+    })
+    const attemptedModels: string[] = []
+    const runtimes: ModelConnectionRuntime[] = [
+      {
+        connectionId: 'sub-conn-1',
+        provider: 'openai',
+        transport: 'subscription',
+        stream: (request) => codexSubscriptionAdapter.stream!(context, request),
+      },
+      {
+        connectionId: 'sub-conn-2',
+        provider: 'openai',
+        transport: 'subscription',
+        stream: async function* () {
+          yield { type: 'text-delta' as const, text: 'answered by the fallback' }
+        },
+      },
+    ]
+    const bridge = createProviderBridge({
+      config: twoCandidateConfig(),
+      secrets: noKeysResolve,
+      connections: () => runtimes,
+    })
+    const runner = new PiAgentRunner({
+      sessionStore: freshSessionStore(),
+      resolveModel: bridge.resolveModel,
+      getApiKey: bridge.getApiKey,
+      streamFn: bridge.streamFn,
+      toolParameters: {},
+    })
+    const agentEvents: AgentEvent[] = []
+    runner.on((event) => {
+      agentEvents.push(event)
+    })
+    await runner.start('session-codex-provider-error')
+    const routerEvents: RouterEvent[] = []
+    const router = new ModelRouter({
+      config: twoCandidateConfig(),
+      secrets: noKeysResolve,
+      sleep: async () => {},
+      onEvent: (event) => routerEvents.push(event),
+    })
+
+    try {
+      await router.execute({ purpose: 'chat-turn', origin: 'user' }, (model, attempt) => {
+        attemptedModels.push(model.connectionId ?? model.provider)
+        return runner.prompt('hello', { model, retryOfFailedTurn: attempt > 0 })
+      })
+
+      expect(attemptedModels).toEqual(['sub-conn-1', 'sub-conn-2'])
+      expect(routerEvents.filter((event) => event.type === 'model.failover')).toHaveLength(1)
+      expect(
+        agentEvents.flatMap((event) => (event.type === 'turn-end' ? [event.text] : [])),
+      ).toEqual(['answered by the fallback'])
+    } finally {
+      transport.close()
+    }
   })
 
   it('a Codex protocol refusal after an accepted effect never retries or replays it', async () => {

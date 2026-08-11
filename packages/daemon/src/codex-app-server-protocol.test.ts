@@ -7,6 +7,7 @@ import {
   DynamicToolCallParamsSchema,
   DynamicToolCallResponseSchema,
   DynamicToolCallStartedItemSchema,
+  ErrorNotificationSchema,
   InitializeResponseSchema,
   ItemNotificationSchema,
   LoginStartResponseSchema,
@@ -236,7 +237,48 @@ describe('the inference-seam schemas (issue #47)', () => {
       threadId: 'thread-1',
       turn: { id: 'turn-1', status: 'completed', items: [] },
     })
-    expect(parsed).toEqual({ threadId: 'thread-1', turn: { id: 'turn-1' } })
+    expect(parsed).toEqual({
+      threadId: 'thread-1',
+      turn: { id: 'turn-1', status: 'completed' },
+    })
+  })
+
+  it('parses the pinned terminal error notification without retaining additive detail', () => {
+    const parsed = parseCodexResponse(ErrorNotificationSchema, 'error', {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      error: {
+        message: 'Selected model is at capacity. Please try a different model.',
+        additionalDetails: null,
+        codexErrorInfo: null,
+      },
+      willRetry: false,
+      upstreamAddition: true,
+    })
+
+    expect(parsed).toEqual({
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      error: { message: 'Selected model is at capacity. Please try a different model.' },
+      willRetry: false,
+    })
+  })
+
+  it('preserves a failed terminal status and its provider error', () => {
+    const parsed = parseCodexResponse(TurnCompletedNotificationSchema, 'turn/completed', {
+      threadId: 'thread-1',
+      turn: {
+        id: 'turn-1',
+        status: 'failed',
+        error: { message: 'provider failed', additionalDetails: null },
+        items: [],
+      },
+    })
+
+    expect(parsed).toEqual({
+      threadId: 'thread-1',
+      turn: { id: 'turn-1', status: 'failed', error: { message: 'provider failed' } },
+    })
   })
 
   it('parses the observed agent-message delta envelope', () => {
@@ -282,6 +324,15 @@ describe('the inference-seam schemas (issue #47)', () => {
     })
     expect(parsed.threadId).toBe('thread-1')
     expect(parsed.turn.id).toBe('turn-1')
+  })
+
+  it('rejects a turn/completed notification that omits its terminal status', () => {
+    expect(() =>
+      parseCodexResponse(TurnCompletedNotificationSchema, 'turn/completed', {
+        threadId: 'thread-1',
+        turn: { id: 'turn-1', items: [] },
+      }),
+    ).toThrow(CodexProtocolError)
   })
 
   it('throws CodexProtocolError when an item notification is missing its item', () => {
