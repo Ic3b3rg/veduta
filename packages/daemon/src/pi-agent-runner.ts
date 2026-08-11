@@ -56,32 +56,51 @@ const DEFAULT_USER_ORIGIN: Origin = 'trusted:user'
 /**
  * A `VEDUTA_MESSAGE_ORIGIN` custom entry, as reconstructed from the pi
  * session tree. Never surfaces outside this module: `applyOriginEntries`
- * consumes it and attaches its origin to the next message entry.
+ * consumes it and attaches its provenance to the next message entry.
  */
 export interface OriginMarkerEntry {
   kind: 'origin-marker'
-  origin: Origin
+  origin?: Origin
+  origins?: Origin[]
 }
 
 /** The raw shape `applyOriginEntries` walks: real entries plus origin markers. */
 export type RawSessionEntry = SessionEntry | OriginMarkerEntry
 
+interface OriginEntryData {
+  origin?: Origin
+  origins?: Origin[]
+}
+
 /** Pure encode side of the `VEDUTA_MESSAGE_ORIGIN` custom-entry codec. */
-export function originEntryData(origin: Origin): { origin: Origin } {
-  return { origin }
+export function originEntryData(origin?: Origin, origins?: Origin[]): OriginEntryData {
+  return {
+    ...(origin === undefined ? {} : { origin }),
+    ...(origins === undefined ? {} : { origins }),
+  }
 }
 
 /** Pure decode side; `undefined` for anything that is not a valid origin payload. */
-function parseOriginEntryData(value: unknown): Origin | undefined {
+function parseOriginEntryData(value: unknown): OriginEntryData | undefined {
   if (!isRecord(value)) return undefined
-  const origin = value['origin']
-  return typeof origin === 'string' && isValidOrigin(origin) ? origin : undefined
+  const rawOrigin = value['origin']
+  const rawOrigins = value['origins']
+  const origin = isValidOrigin(rawOrigin) ? rawOrigin : undefined
+  const origins =
+    Array.isArray(rawOrigins) && rawOrigins.length > 0 && rawOrigins.every(isValidOrigin)
+      ? rawOrigins
+      : undefined
+  if (origin === undefined && origins === undefined) return undefined
+  return {
+    ...(origin === undefined ? {} : { origin }),
+    ...(origins === undefined ? {} : { origins }),
+  }
 }
 
 /**
  * Annotates-next reconstruction: a `VEDUTA_MESSAGE_ORIGIN`
  * marker is appended immediately before the message entry it annotates.
- * This walks the raw entry list, attaching each marker's origin to the
+ * This walks the raw entry list, attaching each marker's provenance to the
  * very next entry when that entry is a message, and dropping the marker
  * either way. A marker with no following entry (or whose next entry is
  * not a message — which forking cannot actually produce, since marker and
@@ -90,18 +109,21 @@ function parseOriginEntryData(value: unknown): Origin | undefined {
  */
 export function applyOriginEntries(entries: RawSessionEntry[]): SessionEntry[] {
   const result: SessionEntry[] = []
-  let pendingOrigin: Origin | undefined
+  let pendingProvenance: OriginEntryData | undefined
   for (const entry of entries) {
     if (isOriginMarker(entry)) {
-      pendingOrigin = entry.origin
+      pendingProvenance = {
+        ...(entry.origin === undefined ? {} : { origin: entry.origin }),
+        ...(entry.origins === undefined ? {} : { origins: entry.origins }),
+      }
       continue
     }
-    if (pendingOrigin !== undefined && entry.type === 'message') {
-      result.push({ ...entry, message: { ...entry.message, origin: pendingOrigin } })
-      pendingOrigin = undefined
+    if (pendingProvenance !== undefined && entry.type === 'message') {
+      result.push({ ...entry, message: { ...entry.message, ...pendingProvenance } })
+      pendingProvenance = undefined
       continue
     }
-    pendingOrigin = undefined
+    pendingProvenance = undefined
     result.push(entry)
   }
   return result
@@ -663,15 +685,22 @@ export class PiJsonlSessionStore implements SessionStore {
     if (!entry) throw new Error(`session append did not return entry: ${entryId}`)
     const mapped = fromPiEntry(entry)
     if (!mapped) throw new Error(`session append returned an unsupported entry: ${entryId}`)
-    // The origin marker (if any) was just written by appendToPiSession and
+    // The provenance marker (if any) was just written by appendToPiSession and
     // is already known here — no need to read it back through the marker
     // reconstruction pipeline, which only `load`/`branch` require.
     if (
       append.type === 'message' &&
-      append.message.origin !== undefined &&
+      (append.message.origin !== undefined || append.message.origins !== undefined) &&
       mapped.type === 'message'
     ) {
-      return { ...mapped, message: { ...mapped.message, origin: append.message.origin } }
+      return {
+        ...mapped,
+        message: {
+          ...mapped.message,
+          ...(append.message.origin === undefined ? {} : { origin: append.message.origin }),
+          ...(append.message.origins === undefined ? {} : { origins: append.message.origins }),
+        },
+      }
     }
     return mapped
   }
@@ -713,12 +742,12 @@ export class PiJsonlSessionStore implements SessionStore {
   ): Promise<string> {
     if (append.type === 'message') {
       // Annotates-next: pi's AgentMessage has no metadata
-      // slot, so a non-default origin is recorded as a custom entry
+      // slot, so non-default provenance is recorded as a custom entry
       // immediately before the message it annotates.
-      if (append.message.origin !== undefined) {
+      if (append.message.origin !== undefined || append.message.origins !== undefined) {
         await session.appendCustomEntry(
           VEDUTA_MESSAGE_ORIGIN,
-          originEntryData(append.message.origin),
+          originEntryData(append.message.origin, append.message.origins),
         )
       }
       return session.appendMessage(
@@ -949,8 +978,8 @@ function fromPiEntry(entry: SessionTreeEntry): SessionEntry | undefined {
 /** Like `fromPiEntry`, but also surfaces `VEDUTA_MESSAGE_ORIGIN` markers for `applyOriginEntries`. */
 function fromPiEntryOrMarker(entry: SessionTreeEntry): RawSessionEntry | undefined {
   if (entry.type === 'custom' && entry.customType === VEDUTA_MESSAGE_ORIGIN) {
-    const origin = parseOriginEntryData(entry.data)
-    return origin ? { kind: 'origin-marker', origin } : undefined
+    const provenance = parseOriginEntryData(entry.data)
+    return provenance ? { kind: 'origin-marker', ...provenance } : undefined
   }
   return fromPiEntry(entry)
 }

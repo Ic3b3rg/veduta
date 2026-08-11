@@ -41,11 +41,46 @@ function toolParameters(tool: ToolDef): PiToolParameters {
   // `$schema` is a JSON-Schema-the-document marker, meaningless as one field
   // among a tool call's parameters; drop it before it reaches the provider.
   const { $schema: _schemaMarker, ...schema } = derived
-  const objectSchema = asObjectSchema(inlineJsonSchemaRefs(schema), tool.name)
+  const inlined = inlineJsonSchemaRefs(schema)
+  const objectSchema = asObjectSchema(preserveJsonValueTypes(inlined), tool.name)
   // TypeBox's `TSchema` is a JSON-Schema-shaped object at runtime; this cast
   // is the deliberate seam between zod-derived JSON Schema and pi's TypeBox
   // typing (issue #37) — the single point where that seam is crossed.
   return objectSchema as PiToolParameters
+}
+
+/**
+ * A recursive `JsonValue` becomes an `anyOf` whose first member is a string.
+ * The provider runtime coerces unions while validating tool arguments, so a
+ * valid number can otherwise become a string before the authoritative Zod
+ * schema sees it. An unconstrained JSON-Schema node is the exact safe
+ * provider contract for "any JSON value" and leaves the original primitive
+ * type intact; the ToolDef schema still validates it in `toPiAgentTool`.
+ */
+function preserveJsonValueTypes(schema: Record<string, unknown>): Record<string, unknown> {
+  const visit = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(visit)
+    if (!isRecord(value)) return value
+    if (isJsonValueUnion(value)) {
+      const description = value['description']
+      return typeof description === 'string' ? { description } : {}
+    }
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, visit(entry)]))
+  }
+
+  return visit(schema) as Record<string, unknown>
+}
+
+function isJsonValueUnion(schema: Record<string, unknown>): boolean {
+  const members = schema['anyOf']
+  if (!Array.isArray(members) || members.length !== 6) return false
+  const types = members.flatMap((member) =>
+    isRecord(member) && typeof member['type'] === 'string' ? [member['type']] : [],
+  )
+  return (
+    types.length === 6 &&
+    ['string', 'number', 'boolean', 'null', 'array', 'object'].every((type) => types.includes(type))
+  )
 }
 
 function inlineJsonSchemaRefs(schema: Record<string, unknown>): Record<string, unknown> {

@@ -68,7 +68,12 @@ A single self-hosted process (v1 profile: VPS with a public IP). Exposes HTTPS w
 
 A single agent (one SOUL). Runtime: `@earendil-works/pi-agent-core`, **never imported directly** — wrapped behind `AgentRunner`, normalized events, `ModelRef`, `ToolDef`, `SessionStore` ([ADR-0004](docs/adr/0004-typescript-pi-agent-core.md)). Model routing is per-call: the `triage` tier (cheap) for classification, mechanical updates, event pre-triage; the `reasoning` tier (strong) for reasoning. Cross-provider failover in the router.
 
-The agent's main tools: surfaces (`create_surface`, `patch_state`, `patch_tree`), memory (`write_fact` with the AUDN Curator, `search_log`), scheduler (`arm_timer`, `create_job`), workers (`spawn_worker`), external actions (which go through the trust layer).
+The agent's main tools: focused-Space Surface discovery and authoring (`list_surfaces`,
+`read_surface`, Space-bound `create_surface`, `patch_state`, `patch_tree`), memory (`write_fact`
+with the AUDN Curator, `search_log`), scheduler (`arm_timer`, `create_job`), workers
+(`spawn_worker`), external actions (which go through the trust layer). Surface readers are L0 and
+report stored content origins, so reading untrusted Surface content grows the live turn taint
+before any later action.
 
 ### 3.3 Spaces
 
@@ -80,6 +85,14 @@ A Surface = **a declarative tree of Atoms + typed state + bindings**. Closed cat
 
 - **Fast path**: the daemon mutates the state and logs the event to the Event log — zero LLM, native-app latency. _Memory contract_: the Agent always reads the events before reasoning about a Space.
 - **Agent path**: the action goes to the Agent with an honest wait.
+
+The engine also owns an explicit Space-scoped authorable-reader boundary. Focused turns request a
+stable compact inventory on demand, then read one complete `SurfaceSchema`-validated Surface with
+its stored versions before patching it. Archived, projected FACTS, daemon-owned, and other-Space
+Surfaces are outside that boundary and share one non-disclosing refusal. The focused
+`create_surface` wrapper injects the current Space and delegates to the existing Template gate;
+the raw engine creation operation remains explicitly Space-scoped for daemon and future
+multi-Space callers. Surface inventories are not injected into every assembled context.
 
 Good compositions become **Templates** saved in the Space and reused/patched (visual consistency across regenerations): a tree that has stopped changing — or that the user **pins** — is captured without its data, matched deterministically on intent and Atom signature, and reused instead of regenerated; regenerating over a match requires a justification. A pinned Surface keeps receiving state patches, while a tree change becomes a **Tree proposal** with a preview the user accepts or rejects ([ADR-0012](docs/adr/0012-emergent-templates.md)).
 

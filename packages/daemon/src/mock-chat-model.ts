@@ -1,4 +1,10 @@
-import type { JsonObject, JsonValue, PatchOperation } from '@veduta/protocol'
+import {
+  SurfaceSchema,
+  type JsonObject,
+  type JsonValue,
+  type PatchOperation,
+  type Surface,
+} from '@veduta/protocol'
 import {
   piFauxAssistantMessage,
   piFauxText,
@@ -7,7 +13,6 @@ import {
   type PiAssistantMessage,
   type PiChatContext,
 } from './pi-provider-bridge.ts'
-import type { Store } from './store.ts'
 
 /**
  * The Loopback profile's deterministic model (issue #37): this is the
@@ -21,11 +26,9 @@ import type { Store } from './store.ts'
  * criterion is explicit: "loopback behavior preserved by the mock provider
  * candidate, never through a parallel handler."
  *
- * Reading the `Store` here is acceptable exactly because this is the mock
- * *model*, standing in for what a real model would infer from the assembled
- * turn context (`ARCHITECTURE.md`'s context-assembly flow) — nothing else in
- * the daemon's product code path is allowed to peek at Store state to decide
- * what a model "would have said".
+ * The meal fixture follows the same information boundary as a real Model
+ * connection: it learns Surface identity and state only from model-visible
+ * tool results. It has no Store reference or fixed Surface id.
  */
 
 /** Historical fallback Space (the pre-issue-37 chat stand-ins used the same
@@ -54,9 +57,8 @@ function activeSpaceId(context: PiChatContext): string {
   return match?.[1] ? `spc-${match[1]}` : DEFAULT_SPACE_ID
 }
 
-const MEAL_SURFACE_ID = 'srf-meals'
-
-const MEAL_RE = /\bi\s+ate\s+(.+)$/i
+const MEAL_REQUEST = 'aggiungi ai meals la fesa di tacchino'
+const MEAL_LABEL = 'fesa di tacchino'
 const REMINDER_RE = /\bremind me to\s+(.+?)\s+by\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i
 const SEND_RE = /^send to\s+(\S+)\s*:\s*(.+)$/i
 const TRANSFER_RE = /^transfer\s+([0-9]+(?:\.[0-9]+)?)\s+to\s+(\S+)$/i
@@ -64,7 +66,6 @@ const RESEARCH_RE = /^research\s+(.+)$/i
 const HELP_RE = /help|aiuto/i
 
 export interface MockChatModelOptions {
-  store: Store
   now?: () => Date
 }
 
@@ -89,34 +90,20 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
     const lastUserIndex = findLastIndex(context.messages, isUserMessage)
     if (lastUserIndex === -1) return echoMessage('')
 
-    const toolResultAfter = context.messages
+    const toolResultsAfter = context.messages
       .slice(lastUserIndex + 1)
-      .find((message): message is PiToolResultMessage => isToolResultMessage(message))
-    if (toolResultAfter) return closingMessage(toolResultAfter)
+      .filter((message): message is PiToolResultMessage => isToolResultMessage(message))
 
     const text = userMessageText(context.messages[lastUserIndex] as PiUserMessage).trim()
-    return respondToUserText(text, options.store, now(), activeSpaceId(context))
+    if (text === MEAL_REQUEST) return respondToMealFixture(toolResultsAfter, now())
+
+    const lastToolResult = toolResultsAfter.at(-1)
+    if (lastToolResult) return closingMessage(lastToolResult)
+    return respondToUserText(text, now(), activeSpaceId(context))
   }
 }
 
-function respondToUserText(
-  text: string,
-  store: Store,
-  at: Date,
-  spaceId: string,
-): PiAssistantMessage {
-  const meal = mealFromText(text)
-  if (meal !== undefined) {
-    const surface = store.getSurface(MEAL_SURFACE_ID)
-    if (!surface) return echoMessage(text)
-    const operations = mealPatchOperations(meal, surface.state, at)
-    return toolCallMessage(
-      'patch_state',
-      { surfaceId: MEAL_SURFACE_ID, operations },
-      `Logged: ${meal}.`,
-    )
-  }
-
+function respondToUserText(text: string, at: Date, spaceId: string): PiAssistantMessage {
   const reminder = reminderFromText(text, at)
   if (reminder) {
     return toolCallMessage(
@@ -168,6 +155,90 @@ function respondToUserText(
   return echoMessage(text)
 }
 
+/**
+ * Scripted model journey for issue 42's Local VPS fixture. The exact
+ * sentence selects this deterministic response script; Surface identity and
+ * state still come exclusively from prior tool results in the model context.
+ */
+function respondToMealFixture(results: PiToolResultMessage[], at: Date): PiAssistantMessage {
+  const listResult = results.find((result) => result.toolName === 'list_surfaces')
+  if (!listResult) {
+    return toolCallMessage('list_surfaces', {}, 'Looking for the Meals Surface.')
+  }
+
+  const selected = mealsSummary(toolResultText(listResult))
+  if (!selected) return piFauxAssistantMessage('No authorable Meals Surface was found.')
+
+  const readResult = results.find((result) => result.toolName === 'read_surface')
+  if (!readResult) {
+    return toolCallMessage(
+      'read_surface',
+      { surfaceId: selected.id },
+      'Reading the current Meals state.',
+    )
+  }
+
+  const read = surfaceRead(toolResultText(readResult))
+  if (!read || read.surface.id !== selected.id) {
+    return piFauxAssistantMessage('The Meals Surface could not be read safely.')
+  }
+
+  const patchResult = results.find((result) => result.toolName === 'patch_state')
+  if (patchResult) return closingMessage(patchResult)
+
+  return toolCallMessage(
+    'patch_state',
+    {
+      surfaceId: read.surface.id,
+      operations: mealPatchOperations(MEAL_LABEL, read.surface.state, at),
+    },
+    `Logging: ${MEAL_LABEL}.`,
+  )
+}
+
+interface SurfaceSummary {
+  id: string
+  title: string
+}
+
+function mealsSummary(content: string): SurfaceSummary | undefined {
+  const parsed = parseJson(content)
+  if (!Array.isArray(parsed)) return undefined
+  for (const candidate of parsed) {
+    if (!isRecord(candidate)) continue
+    const id = candidate['id']
+    const title = candidate['title']
+    if (typeof id === 'string' && title === 'Meals') return { id, title }
+  }
+  return undefined
+}
+
+function surfaceRead(
+  content: string,
+): { surface: Surface; version: number; treeVersion: number } | undefined {
+  const parsed = parseJson(content)
+  if (!isRecord(parsed)) return undefined
+  const surface = SurfaceSchema.safeParse(parsed['surface'])
+  const version = parsed['version']
+  const treeVersion = parsed['treeVersion']
+  if (!surface.success || typeof version !== 'number' || typeof treeVersion !== 'number') {
+    return undefined
+  }
+  return { surface: surface.data, version, treeVersion }
+}
+
+function parseJson(content: string): unknown {
+  try {
+    return JSON.parse(content)
+  } catch {
+    return undefined
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 // ---------------------------------------------------------------------------
 // Text-only replies (the pre-issue-37 mock provider's echo logic)
 // ---------------------------------------------------------------------------
@@ -199,16 +270,8 @@ function toolCallMessage(
 }
 
 // ---------------------------------------------------------------------------
-// Parsing (migrated from the pre-issue-37 chat stand-ins, since deleted:
-// this file copies their logic rather than importing it, so it survives
-// that deletion unchanged)
+// Parsing for the other deterministic Loopback fixtures.
 // ---------------------------------------------------------------------------
-
-function mealFromText(text: string): string | undefined {
-  const match = MEAL_RE.exec(text.trim())
-  const meal = match?.[1]?.replace(/[.!?]+$/g, '').trim()
-  return meal || undefined
-}
 
 // Daemon-local wall-clock time: the Surface shows "when I ate", not UTC.
 function timeLabel(at: Date): string {
@@ -283,6 +346,10 @@ function userMessageText(message: PiUserMessage): string {
     .filter(isTextBlock)
     .map((block) => block.text)
     .join('\n')
+}
+
+function toolResultText(message: PiToolResultMessage): string {
+  return message.content.map((block) => (block.type === 'text' ? block.text : '')).join('\n')
 }
 
 function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {

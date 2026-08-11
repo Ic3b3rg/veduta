@@ -15,8 +15,11 @@ import { WorkerBriefingSchema } from './worker-briefing.ts'
  * turn contexts (`fromPartial`, same idiom `scheduler.test.ts`/
  * `outbound-tools.test.ts` use for `ToolContext` fixtures) — no live
  * `PiAgentRunner`/provider needed, since the responder only ever reads
- * `context.messages` and the `Store`.
+ * `context.messages`. Surface state appears only in model-visible tool
+ * results; the responder has no Store reference.
  */
+
+const MEAL_REQUEST = 'aggiungi ai meals la fesa di tacchino'
 
 function userContext(text: string): PiChatContext {
   return fromPartial<PiChatContext>({
@@ -32,23 +35,38 @@ function userContextInSpace(text: string, name: string, slug: string): PiChatCon
   })
 }
 
-function toolResultContext(userText: string, toolName: string): PiChatContext {
+function toolResultContext(
+  userText: string,
+  results: Array<{ toolName: string; content: string }>,
+): PiChatContext {
   return fromPartial<PiChatContext>({
     messages: [
       { role: 'user', content: userText, timestamp: Date.now() },
-      {
-        role: 'assistant',
-        content: [{ type: 'toolCall', id: 'call-1', name: toolName, arguments: {} }],
-        stopReason: 'toolUse',
-      },
-      {
-        role: 'toolResult',
-        toolCallId: 'call-1',
-        toolName,
-        content: [{ type: 'text', text: 'ok' }],
-        isError: false,
-        timestamp: Date.now(),
-      },
+      ...results.flatMap((result, index) => {
+        const toolCallId = `call-${index + 1}`
+        return [
+          {
+            role: 'assistant' as const,
+            content: [
+              {
+                type: 'toolCall' as const,
+                id: toolCallId,
+                name: result.toolName,
+                arguments: {},
+              },
+            ],
+            stopReason: 'toolUse' as const,
+          },
+          {
+            role: 'toolResult' as const,
+            toolCallId,
+            toolName: result.toolName,
+            content: [{ type: 'text' as const, text: result.content }],
+            isError: false,
+            timestamp: Date.now(),
+          },
+        ]
+      }),
     ],
   })
 }
@@ -68,45 +86,125 @@ function textIn(message: PiAssistantMessage): string {
 
 describe('createMockChatResponder', () => {
   it('closes with a stable summary after a tool result (the follow-up model call)', async () => {
-    const store = new Store()
-    const responder = createMockChatResponder({ store })
-    const context = toolResultContext('I ate a pizza', 'patch_state')
+    const responder = createMockChatResponder({})
+    const context = toolResultContext('send to alice@example.com: hello', [
+      { toolName: 'send_message', content: 'ok' },
+    ])
     const reply = await responder(context, { callCount: 1 })
     expect(reply.stopReason).toBe('stop')
-    expect(textIn(reply)).toBe('Done — patch_state completed.')
+    expect(textIn(reply)).toBe('Done — send_message completed.')
   })
 
-  it('logs a meal via patch_state, validating against the real Surface-engine schema', async () => {
-    const store = new Store()
-    const responder = createMockChatResponder({
-      store,
-      now: () => new Date('2026-08-03T12:00:00.000Z'),
-    })
-    const reply = await responder(userContext('I ate a pizza'), { callCount: 0 })
+  it('starts the Italian meal fixture by discovering authorable Surfaces', async () => {
+    const responder = createMockChatResponder({})
+    const reply = await responder(userContext(MEAL_REQUEST), { callCount: 0 })
     expect(reply.stopReason).toBe('toolUse')
 
     const call = toolCallIn(reply)
+    expect(call.name).toBe('list_surfaces')
+    expect(call.arguments).toEqual({})
+  })
+
+  it('reads the Meals id returned by list_surfaces instead of using a fixed id', async () => {
+    const responder = createMockChatResponder({})
+    const context = toolResultContext(MEAL_REQUEST, [
+      {
+        toolName: 'list_surfaces',
+        content: JSON.stringify([
+          {
+            id: 'surface-discovered-from-tool',
+            title: 'Meals',
+            freshness: { updatedAt: '2026-08-03T10:00:00.000Z', updatedBy: 'seed' },
+            pinned: false,
+          },
+        ]),
+      },
+    ])
+
+    const call = toolCallIn(await responder(context, { callCount: 1 }))
+    expect(call.name).toBe('read_surface')
+    expect(call.arguments).toEqual({ surfaceId: 'surface-discovered-from-tool' })
+  })
+
+  it('derives a valid patch from read_surface state and preserves numeric state values', async () => {
+    const store = new Store()
+    const responder = createMockChatResponder({
+      now: () => new Date(2026, 7, 3, 14, 5),
+    })
+    const context = toolResultContext(MEAL_REQUEST, [
+      {
+        toolName: 'list_surfaces',
+        content: JSON.stringify([
+          {
+            id: 'surface-discovered-from-tool',
+            title: 'Meals',
+            freshness: { updatedAt: '2026-08-03T10:00:00.000Z', updatedBy: 'seed' },
+            pinned: false,
+          },
+        ]),
+      },
+      {
+        toolName: 'read_surface',
+        content: JSON.stringify({
+          surface: {
+            id: 'surface-discovered-from-tool',
+            spaceId: 'spc-health',
+            title: 'Meals',
+            tree: { id: 'root', type: 'Box', children: [] },
+            state: {
+              meals: [{ time: '08:10', meal: 'yogurt' }],
+              lastMeal: 'yogurt',
+              mealCount: 7,
+            },
+            freshness: { updatedAt: '2026-08-03T10:00:00.000Z', updatedBy: 'seed' },
+            pinned: false,
+            pinnable: true,
+          },
+          version: 11,
+          treeVersion: 4,
+        }),
+      },
+    ])
+
+    const reply = await responder(context, { callCount: 2 })
+    const call = toolCallIn(reply)
     expect(call.name).toBe('patch_state')
+    expect(call.arguments).toEqual({
+      surfaceId: 'surface-discovered-from-tool',
+      operations: [
+        {
+          target: 'state',
+          op: 'replace',
+          path: '/meals',
+          value: [
+            { time: '14:05', meal: 'fesa di tacchino' },
+            { time: '08:10', meal: 'yogurt' },
+          ],
+        },
+        {
+          target: 'state',
+          op: 'replace',
+          path: '/lastMeal',
+          value: 'fesa di tacchino',
+        },
+        { target: 'state', op: 'replace', path: '/mealCount', value: 8 },
+      ],
+    })
 
     const patchStateSchema = store
       .surfaceTools()
       .find((tool) => tool.name === 'patch_state')!.schema
-    const parsed = patchStateSchema.safeParse(call.arguments)
-    expect(parsed.success).toBe(true)
-    expect(call.arguments).toMatchObject({ surfaceId: 'srf-meals' })
+    expect(patchStateSchema.safeParse(call.arguments).success).toBe(true)
   })
 
-  it('falls back to echo when the meal Surface is missing', async () => {
-    const store = new Store()
-    // Archiving drops the Surface from `getSurface('srf-meals')` (see
-    // `SurfaceEngine.archiveSurface`), simulating a Space with no Meals
-    // Surface without hand-rolling a bare `SpacesEngine`/`SurfaceEngine` pair.
-    store.archiveSurface('srf-meals', 'user')
-    const responder = createMockChatResponder({ store })
-
-    const reply = await responder(userContext('I ate a pizza'), { callCount: 0 })
+  it('reports that no Meals Surface was found when the visible inventory has none', async () => {
+    const responder = createMockChatResponder({})
+    const reply = await responder(
+      toolResultContext(MEAL_REQUEST, [{ toolName: 'list_surfaces', content: '[]' }]),
+      { callCount: 1 },
+    )
     expect(reply.stopReason).toBe('stop')
-    expect(textIn(reply)).toContain('I ate a pizza')
+    expect(textIn(reply)).toContain('Meals Surface')
   })
 
   it('arms a reminder via arm_timer, validating against the real Scheduler schema', async () => {
@@ -118,7 +216,6 @@ describe('createMockChatResponder', () => {
       now: () => new Date('2026-08-03T13:00:00.000Z'),
     })
     const responder = createMockChatResponder({
-      store,
       now: () => new Date('2026-08-03T13:00:00.000Z'),
     })
 
@@ -141,10 +238,7 @@ describe('createMockChatResponder', () => {
   })
 
   it('arms a reminder with the active Space id parsed off the systemPrompt, not the spc-health fallback', async () => {
-    const rootDir = mkdtempSync(join(tmpdir(), 'veduta-mock-chat-model-'))
-    const store = new Store({ rootDir })
     const responder = createMockChatResponder({
-      store,
       now: () => new Date('2026-08-03T13:00:00.000Z'),
     })
 
@@ -160,7 +254,7 @@ describe('createMockChatResponder', () => {
   it('dispatches send_message, validating against the real outbound-tools schema', async () => {
     const store = new Store()
     const transport = createMockOutboundTransport(store.spacesEngine)
-    const responder = createMockChatResponder({ store })
+    const responder = createMockChatResponder({})
 
     const reply = await responder(userContext('send to alice@example.com: pick up milk'), {
       callCount: 0,
@@ -180,7 +274,7 @@ describe('createMockChatResponder', () => {
   it('dispatches transfer_funds, validating against the real outbound-tools schema', async () => {
     const store = new Store()
     const transport = createMockOutboundTransport(store.spacesEngine)
-    const responder = createMockChatResponder({ store })
+    const responder = createMockChatResponder({})
 
     const reply = await responder(userContext('transfer 42.50 to bob'), { callCount: 0 })
     expect(reply.stopReason).toBe('toolUse')
@@ -196,8 +290,7 @@ describe('createMockChatResponder', () => {
   })
 
   it('spawns a Worker for research <topic>, validating against WorkerBriefingSchema', async () => {
-    const store = new Store()
-    const responder = createMockChatResponder({ store })
+    const responder = createMockChatResponder({})
 
     const reply = await responder(userContext('research the best coffee grinders'), {
       callCount: 0,
@@ -217,8 +310,7 @@ describe('createMockChatResponder', () => {
   })
 
   it('answers help/aiuto with a text-only reply', async () => {
-    const store = new Store()
-    const responder = createMockChatResponder({ store })
+    const responder = createMockChatResponder({})
     const reply = await responder(userContext('can you help me?'), { callCount: 0 })
     expect(reply.stopReason).toBe('stop')
     expect(reply.content.some((block) => block.type === 'toolCall')).toBe(false)
@@ -226,8 +318,7 @@ describe('createMockChatResponder', () => {
   })
 
   it('defaults to a deterministic echo for anything else', async () => {
-    const store = new Store()
-    const responder = createMockChatResponder({ store })
+    const responder = createMockChatResponder({})
     const reply = await responder(userContext('what is next?'), { callCount: 0 })
     expect(reply.stopReason).toBe('stop')
     expect(textIn(reply)).toBe('[mock] You said: "what is next?".')

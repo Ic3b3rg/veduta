@@ -54,6 +54,7 @@ Parallelizable: (006,007,008) after 002; (010,011) after 003; (019,020) after 00
 | 038 | [Proactive Agent completions](038-agent-loop-proactive.md)                                      | Proactivity  |
 | 039 | [Worker and full-text Agent runs](039-agent-loop-workers.md)                                    | Proactivity  |
 | 040 | [Agent-path consumer](040-agent-path-consumer.md)                                               | Core         |
+| 042 | [Focused-Space Surface reads and creation](042-surface-read-tools.md)                           | Core         |
 | 043 | [Signed self-update](043-self-update.md)                                                        | Operations   |
 | 046 | [Signed artifact URL](046-signed-artifact-url.md)                                               | Operations   |
 | 047 | [Model connections](047-model-connections.md)                                                   | Adoption     |

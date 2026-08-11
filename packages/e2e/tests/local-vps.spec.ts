@@ -124,16 +124,14 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(page.getByRole('button', { name: 'Focus Groceries' })).toBeVisible()
     })
 
-    await test.step('focus the Health Space, then "I ate a pizza" patches the Meals Surface (AC2)', async () => {
+    await test.step('focus Health, then the Italian meal request discovers, reads, and patches Meals (AC2)', async () => {
       // The Gateway WebSocket connects asynchronously after Home's initial
       // render (app.tsx's `connectGateway`); sending chat before it opens
       // gets silently queued for a later retry instead of reaching the
       // daemon (`sendChat` returns false, app.tsx's `queuedChat`) rather
       // than failing loudly, so wait for the "Live" status pill first --
-      // otherwise this step passes on a stale Surface (the "Type ... pizza"
-      // Caption hint on the Meals Surface already contains the word
-      // "pizza", so a text-visibility check alone cannot tell a real patch
-      // from that static hint).
+      // otherwise this step can pass on a stale Surface if it checks only
+      // static copy rather than the bound state rendered by the Atoms.
       await expect(page.locator('.status-pill.online')).toHaveText('Live')
 
       // Focus the Health Space first (the space-rail button, app.tsx's
@@ -149,15 +147,14 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         .click()
 
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta' })
-      await chatInput.fill('I ate a pizza')
+      await chatInput.fill('aggiungi ai meals la fesa di tacchino')
       await page.getByRole('button', { name: 'Send' }).click()
 
       await expectMealLogged(page)
 
       // The reply itself must reach the chat log, not only the Surface it
       // patched (issue #37, chat-loop.ts's `chat.turn-end`): the mock chat
-      // model's deterministic reply for a logged meal starts with
-      // "Logged: a pizza." (mock-chat-model.ts's `respondToUserText`), and
+      // model's deterministic journey includes the derived patch line, and
       // it must show up exactly once in the rendered chat log, as the
       // assistant's own entry. Not asserted here: the transient streaming
       // affordance (the cursor rendered on an in-flight `chat.turn-delta`) --
@@ -165,7 +162,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       // is no reliable window in which to observe it in this real-browser
       // journey; the manual `pnpm dev` + browser check covers that visually.
       await expect(
-        page.locator('.chat-entry.assistant').filter({ hasText: /Logged: a pizza/ }),
+        page.locator('.chat-entry.assistant').filter({ hasText: /Logging: fesa di tacchino/ }),
       ).toHaveCount(1)
 
       // Event log coverage (ADR-0003): the chat turn's own `patch_state` tool
@@ -173,7 +170,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       // registry, via `SurfaceEngine.patchState`) logs a generic
       // `surface.patch_state` entry naming the Surface it patched -- it does
       // not echo the meal text itself into the Event log (only the Surface
-      // state carries "pizza"), so "about the meal" here means "about the
+      // state carries it), so "about the meal" here means "about the
       // Meals Surface a chat turn just patched".
       const events = await fetchSpaceEvents(page, stack!.origin)
       expect(events.some(isMealPatchEvent)).toBe(true)
@@ -181,9 +178,24 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       // `type: 'turn'` user entry (issue #37, chat-loop.ts's `runTurn`,
       // ADR-0003: the Agent must find user interactions before reasoning
       // about a Space) -- not just the tool call it went on to make.
-      expect(events.some((event) => event.type === 'turn' && event.text === 'I ate a pizza')).toBe(
-        true,
+      const userTurnIndex = events.findIndex(
+        (event) =>
+          event.type === 'turn' &&
+          event.text === 'aggiungi ai meals la fesa di tacchino' &&
+          event.payload?.role === 'user',
       )
+      const patchIndex = events.findIndex(isMealPatchEvent)
+      const assistantTurnIndex = events.findIndex(
+        (event) => event.type === 'turn' && event.payload?.role === 'assistant',
+      )
+      expect(userTurnIndex).toBeGreaterThanOrEqual(0)
+      expect(patchIndex).toBeGreaterThan(userTurnIndex)
+      expect(assistantTurnIndex).toBeGreaterThan(patchIndex)
+      expect(events[assistantTurnIndex]?.payload?.toolCalls?.map((call) => call.toolName)).toEqual([
+        'list_surfaces',
+        'read_surface',
+        'patch_state',
+      ])
     })
 
     await test.step('fast path: toggling a Groceries checkbox changes state with no error', async () => {
@@ -263,21 +275,24 @@ function surfaceCard(page: Page, title: string) {
 /**
  * Asserts the mock chat->Surface demo's meal shows on the Meals Surface.
  * Exact match, first of possibly several (the "Last meal" Stat and the
- * meals Table both render the bare meal string once patched): the Meals
- * Surface's own static hint Caption also contains the substring "a pizza"
- * inside a longer sentence, so a substring match alone could pass even
- * when nothing was actually patched.
+ * meals Table both render the bare meal string once patched). The count and
+ * local wall-clock label prove the summary and prepended row changed too.
  */
 async function expectMealLogged(page: Page): Promise<void> {
-  await expect(
-    surfaceCard(page, 'Meals').getByText('a pizza', { exact: true }).first(),
-  ).toBeVisible()
+  const meals = surfaceCard(page, 'Meals')
+  await expect(meals.getByText('fesa di tacchino', { exact: true }).first()).toBeVisible()
+  await expect(meals.getByText('1', { exact: true })).toBeVisible()
+  await expect(meals.getByText(/^\d{2}:\d{2}$/, { exact: true }).first()).toBeVisible()
 }
 
 /** One entry from `GET /api/spaces/:spaceId/events` (`SpaceEvent`, packages/daemon/src/spaces-engine.ts). */
 interface SpaceEventEntry {
   type: string
   text: string
+  payload?: {
+    role?: string
+    toolCalls?: Array<{ toolName?: string }>
+  }
 }
 
 /**

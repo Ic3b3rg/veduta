@@ -1,9 +1,10 @@
 import type { ToolDef } from './agent-runner.ts'
+import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
 import type { MemoryRetrieval } from './memory-retrieval.ts'
 import { createMemoryTools } from './memory-tools.ts'
 import type { Scheduler } from './scheduler.ts'
 import type { Store } from './store.ts'
-import { gateCreateSurfaceTool, templateTools, type TemplateEngine } from './template-engine.ts'
+import { templateTools, type TemplateEngine } from './template-engine.ts'
 
 /**
  * Everything `chatToolRegistry` (issue #37) needs to build a Space's chat
@@ -38,11 +39,11 @@ export function chatToolRegistry(
 ): (spaceId: string | undefined) => ToolDef[] {
   return (spaceId) => {
     if (spaceId === undefined) return []
-    const surfaceTools = deps.store
-      .surfaceTools()
-      .map((tool) =>
-        tool.name === 'create_surface' ? gateCreateSurfaceTool(tool, deps.templateEngine) : tool,
-      )
+    const surfaceTools = createFocusedSurfaceTools({
+      store: deps.store,
+      templateEngine: deps.templateEngine,
+      spaceId,
+    })
     return [
       ...deps.wrappedOutboundTools,
       ...surfaceTools,

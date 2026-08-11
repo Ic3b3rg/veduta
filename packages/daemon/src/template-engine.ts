@@ -410,7 +410,7 @@ const PinSurfaceSchema = z.object({
  * and a bounded `justification` for regenerating instead of reusing a
  * matching Template.
  */
-const CreateSurfaceGateExtensionSchema = z.object({
+export const CreateSurfaceGateExtensionSchema = z.object({
   intent: z.string().trim().min(1).optional(),
   justification: z.string().trim().min(1).max(JUSTIFICATION_MAX_CHARS).optional(),
 })

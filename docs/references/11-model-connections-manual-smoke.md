@@ -22,20 +22,28 @@ ChatGPT account with device-code login enabled in its security settings.
 4. Confirm the model select lists the `model/list` catalog, select a model, verify — the live
    inference test must pass. Confirm this is the selected ChatGPT connection and no BYOK provider
    key is configured for the run.
-5. Open an existing Space and ask the Agent to create a small Surface with one bound state field.
+5. Open a focused Space with no Agent-authored Surfaces and ask the Agent to create a small Surface
+   with one bound state field. The offered `create_surface` definition must not contain `spaceId`,
+   and the call must create the Surface in the focused Space without supplying one.
    The reply must stream into chat, the protocol-valid Surface must appear live without a page
    refresh, and the obsolete no-tools compatibility note must not be present.
 6. In the same focused Space, ask the Agent to update that field. The turn must call
    `patch_state`; the rendered Atom must update live and the Surface must remain protocol-valid.
-7. Return to global chat and ask it to change that Surface. It must not mutate the Surface: global
+7. Focus Health and send exactly `aggiungi ai meals la fesa di tacchino`. Confirm the turn calls
+   `list_surfaces`, then `read_surface` with the returned Meals id, then `patch_state` derived from
+   the returned state. The PWA must prepend the local-time row, update the last-meal and count
+   summary, and leave the Atom tree unchanged.
+8. Send a natural paraphrase of the same request. Confirm the eligible real Model connection
+   follows the same read-before-write path without an application or configuration change.
+9. Return to global chat and ask it to change that Surface. It must not mutate the Surface: global
    chat still receives no Space tool registry. Inspect the focused Space's session, Surface
    provenance, and Event log and confirm they contain the same tool/result and
    `surface.create`/`surface.patch_state` records as a BYOK run, apart from provider metadata.
-8. Trigger a refresh (`GET /api/model-connections/:id` after 5 idle minutes, or restart the
-   daemon and reconnect) and confirm the connection stays `connected` without re-entering
-   anything.
-9. Disconnect. The UI must state that local credentials were cleared and provider-side sessions
-   may need removal in the OpenAI account settings.
+10. Trigger a refresh (`GET /api/model-connections/:id` after 5 idle minutes, or restart the
+    daemon and reconnect) and confirm the connection stays `connected` without re-entering
+    anything.
+11. Disconnect. The UI must state that local credentials were cleared and provider-side sessions
+    may need removal in the OpenAI account settings.
 
 ### Real-account execution record
 

@@ -20,7 +20,7 @@ import { TrustLayer } from './trust-layer.ts'
 import { WorkerPool } from './worker.ts'
 
 /**
- * `chatToolRegistry` (issue #37) is the single builder both `server.ts` and
+ * `chatToolRegistry` is the single builder both `server.ts` and
  * `tool-parameters.test.ts` build the real chat tool registry through, so a
  * hand-duplicated list in a test can never drift from what the daemon
  * actually wires up (a previous copy in `tool-parameters.test.ts` had
@@ -118,10 +118,12 @@ function buildDeps(): { deps: ChatToolRegistryDeps; dispose: () => void } {
   }
 }
 
-/** The exact tool set `server.ts`'s daemon wires into a Space chat turn (issue #37). */
+/** The exact tool set `server.ts` wires into a focused-Space chat turn. */
 const EXPECTED_SPACE_TOOL_NAMES = [
   'send_message',
   'transfer_funds',
+  'list_surfaces',
+  'read_surface',
   'create_surface',
   'patch_state',
   'patch_tree',
@@ -150,7 +152,7 @@ describe('chatToolRegistry', () => {
     }
   })
 
-  it("offers exactly the issue #37 tool set to a Space turn, matching what createMemoryTools's search_memory/no-search_memory branch would add", () => {
+  it("offers the complete focused-Space tool set once, matching createMemoryTools's search_memory branch", () => {
     const { deps, dispose } = buildDeps()
     try {
       const tools = chatToolRegistry(deps)(ACTIVE_SPACE_ID)

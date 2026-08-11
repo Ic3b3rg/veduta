@@ -12,6 +12,7 @@ import { TurnTaintAccumulator } from './taint.ts'
 import {
   SurfaceEngine,
   SurfaceNotPinnableError,
+  SurfaceReadError,
   type SurfaceEngineEvent,
   type TreeProposal,
 } from './surface-engine.ts'
@@ -31,6 +32,84 @@ describe('Surface engine store', () => {
       treeVersion: 1,
     })
     expect(second.surfaceEventsAfter(0).map((entry) => entry.event.cursor)).toEqual([1])
+  })
+
+  it('lists authorable Surfaces in stable order and reads one with current versions and content origins', async () => {
+    const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+    const space = store.spacesEngine.createSpace({ name: 'Surface Reads' })
+    for (const [id, title, origin] of [
+      ['srf-zulu', 'Zulu', 'trusted:user'],
+      ['srf-alpha-b', 'Alpha', 'untrusted:gmail'],
+      ['srf-alpha-a', 'Alpha', 'trusted:system'],
+    ] as const) {
+      store.createSurface(
+        SurfaceSchema.parse({
+          id,
+          spaceId: space.id,
+          title,
+          tree: { id: 'root', type: 'Box', children: [] },
+          state: { count: 0 },
+          freshness: { updatedAt: fixedNow().toISOString(), updatedBy: 'agent' },
+        }),
+        'agent',
+        { contentOrigin: origin },
+      )
+    }
+    store.patchState(
+      'srf-alpha-a',
+      [{ target: 'state', op: 'replace', path: '/count', value: 1 }],
+      { updatedBy: 'agent' },
+    )
+
+    const inventory = store.listAuthorableSurfaces(space.id)
+    expect(inventory.surfaces).toEqual([
+      expect.objectContaining({ id: 'srf-alpha-a', title: 'Alpha', pinned: false }),
+      expect.objectContaining({ id: 'srf-alpha-b', title: 'Alpha', pinned: false }),
+      expect.objectContaining({ id: 'srf-zulu', title: 'Zulu', pinned: false }),
+    ])
+    expect(
+      inventory.surfaces.every((surface) => !('tree' in surface) && !('state' in surface)),
+    ).toBe(true)
+    expect(inventory.origins).toEqual(['trusted:system', 'untrusted:gmail', 'trusted:user'])
+
+    const read = store.readAuthorableSurface(space.id, 'srf-alpha-a')
+    expect(SurfaceSchema.parse(read.surface)).toEqual(read.surface)
+    expect(read.surface.state).toEqual({ count: 1 })
+    expect(read).toMatchObject({ version: 2, treeVersion: 1, origins: ['trusted:system'] })
+  })
+
+  it('refuses unknown, archived, daemon-owned, projected FACTS, and other-Space reads identically', async () => {
+    const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+    const activeSpace = store.spacesEngine.createSpace({ name: 'Active Reads' })
+    const otherSpace = store.spacesEngine.createSpace({ name: 'Other Reads' })
+    store.createSurface(emptySurface('srf-archived-read', activeSpace.id), 'agent')
+    store.archiveSurface('srf-archived-read', 'agent')
+    store.createSurface(emptySurface('srf-daemon-read', activeSpace.id), 'job', {
+      daemonOwned: true,
+    })
+    store.createSurface(emptySurface('srf-other-read', otherSpace.id), 'agent')
+
+    const rejectedIds = [
+      'srf-missing-read',
+      'srf-archived-read',
+      'srf-daemon-read',
+      store.spacesEngine.factsSurface(activeSpace.id).id,
+      'srf-other-read',
+    ]
+    const messages = rejectedIds.map((surfaceId) => {
+      try {
+        store.readAuthorableSurface(activeSpace.id, surfaceId)
+        throw new Error(`expected ${surfaceId} to be refused`)
+      } catch (error) {
+        expect(error).toBeInstanceOf(SurfaceReadError)
+        if (!(error instanceof Error)) throw error
+        return error.message
+      }
+    })
+
+    expect(new Set(messages).size).toBe(1)
+    expect(messages[0]).not.toMatch(/missing|archived|daemon|facts|other/i)
+    expect(store.listAuthorableSurfaces(activeSpace.id).surfaces).toEqual([])
   })
 
   it('exposes Agent tools for create_surface, patch_state, patch_tree and archive_surface', async () => {
@@ -1201,6 +1280,17 @@ function checklistSurface(id: string, count: number): Surface {
     },
     state: Object.fromEntries(Array.from({ length: count }, (_, index) => [`item${index}`, false])),
     freshness: { updatedAt: fixedNow().toISOString(), updatedBy: 'seed' },
+  })
+}
+
+function emptySurface(id: string, spaceId: string): Surface {
+  return SurfaceSchema.parse({
+    id,
+    spaceId,
+    title: id,
+    tree: { id: 'root', type: 'Box', children: [] },
+    state: {},
+    freshness: { updatedAt: fixedNow().toISOString(), updatedBy: 'agent' },
   })
 }
 

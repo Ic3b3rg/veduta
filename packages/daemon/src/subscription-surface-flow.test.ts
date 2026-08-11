@@ -26,6 +26,7 @@ import {
   type FakeCodexTransport,
 } from './codex-app-server-fake.ts'
 import { createFakeProvider, fakeText, fakeToolCall } from './fake-provider.ts'
+import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
 import { GatewayHub, type GatewaySocket } from './gateway.ts'
 import type { AdapterContext } from './model-connection-adapter.ts'
 import { codexSubscriptionAdapter } from './model-connection-codex.ts'
@@ -38,6 +39,7 @@ import {
 } from './pi-provider-bridge.ts'
 import type { SpaceEvent } from './space-events.ts'
 import { Store } from './store.ts'
+import { TemplateEngine } from './template-engine.ts'
 import { piToolParameters } from './tool-parameters.ts'
 
 const CONNECTION_ID = 'c0ffee00-0000-4000-8000-000000000073'
@@ -47,7 +49,6 @@ const FIXED_NOW = new Date('2026-08-11T10:00:00.000Z')
 
 const createSurfaceInput = {
   id: SURFACE_ID,
-  spaceId: SPACE_ID,
   title: 'Hydration',
   tree: {
     id: 'root',
@@ -68,7 +69,7 @@ const patchStateInput = {
 }
 
 const dynamicToolsParamsSchema = z.object({
-  dynamicTools: z.array(z.object({ name: z.string() })),
+  dynamicTools: z.array(z.object({ name: z.string(), inputSchema: z.unknown() })),
 })
 
 const createdDirs: string[] = []
@@ -287,7 +288,12 @@ async function runSurfaceProvider(
     cwd: tempDir('veduta-subscription-parity-cwd-'),
     sessionsRoot: tempDir('veduta-subscription-parity-sessions-'),
   })
-  const tools = store.surfaceTools()
+  const space = store.spacesEngine.createSpace({ name: 'Empty Authoring' })
+  const tools = createFocusedSurfaceTools({
+    store,
+    templateEngine: new TemplateEngine({ store }),
+    spaceId: space.id,
+  })
   const runner = new PiAgentRunner({
     sessionStore,
     resolveModel: provider.resolveModel,
@@ -299,20 +305,20 @@ async function runSurfaceProvider(
   runner.on((event) => {
     events.push(event)
   })
-  await runner.start(`space:${SPACE_ID}`)
+  await runner.start(`space:${space.id}`)
   await runner.prompt('Create a hydration Surface', {
     model,
     tools,
     origin: 'trusted:user',
-    spaceId: SPACE_ID,
+    spaceId: space.id,
   })
   await runner.prompt('Update its status', {
     model,
     tools,
     origin: 'trusted:user',
-    spaceId: SPACE_ID,
+    spaceId: space.id,
   })
-  const session = await sessionStore.load(`space:${SPACE_ID}`)
+  const session = await sessionStore.load(`space:${space.id}`)
 
   return {
     events: normalizeEvents(events),
@@ -320,7 +326,7 @@ async function runSurfaceProvider(
     surface: SurfaceSchema.parse(store.getSurface(SURFACE_ID)),
     provenance: store.surfaceProvenance(SURFACE_ID),
     eventLog: store
-      .eventLog(SPACE_ID)
+      .eventLog(space.id)
       .filter((event) => event.type === 'surface.create' || event.type === 'surface.patch_state')
       .map(({ type, text, origin, payload }) => ({ type, text, origin, payload })),
   }
@@ -390,6 +396,7 @@ function normalizeSpaceEvent(event: SpaceEvent): unknown {
 async function runChatEventLog(provider: ProviderBridge, model: ModelRef): Promise<unknown[]> {
   const rootDir = tempDir('veduta-subscription-chat-parity-root-')
   const store = new Store({ rootDir, now: () => FIXED_NOW })
+  const templateEngine = new TemplateEngine({ store })
   const router = new ModelRouter({ config: routingConfig(model), rootDir, now: () => FIXED_NOW })
   const chatLoop = createChatLoop({
     store,
@@ -400,7 +407,8 @@ async function runChatEventLog(provider: ProviderBridge, model: ModelRef): Promi
     }),
     bridge: provider,
     isTrustWrapped: () => false,
-    toolsFor: (spaceId) => (spaceId === undefined ? [] : store.surfaceTools()),
+    toolsFor: (spaceId) =>
+      spaceId === undefined ? [] : createFocusedSurfaceTools({ store, templateEngine, spaceId }),
     send: () => undefined,
   })
 
@@ -446,7 +454,12 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
       egressDomains: ['example.com'],
       handler: () => ({ content: 'must not run' }),
     })
-    const focusedTools = [...store.surfaceTools(), blockedAction]
+    const focusedSurfaceTools = createFocusedSurfaceTools({
+      store,
+      templateEngine: new TemplateEngine({ store }),
+      spaceId: SPACE_ID,
+    })
+    const focusedTools = [...focusedSurfaceTools, blockedAction]
     const pendingTurns: Promise<void>[] = []
     const chatLoop: ChatLoop = createChatLoop({
       store,
@@ -513,14 +526,24 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
           .join(''),
       ).toBe('Hydration Surface created.Hydration updated.')
 
-      const dynamicToolNames = transport.requests
+      const dynamicToolDefinitions = transport.requests
         .filter((request) => request.method === 'thread/start')
-        .map((request) =>
-          dynamicToolsParamsSchema.parse(request.params).dynamicTools.map((tool) => tool.name),
-        )
-      const expectedFocusedTools = store.surfaceTools().map((tool) => tool.name)
+        .map((request) => dynamicToolsParamsSchema.parse(request.params).dynamicTools)
+      const dynamicToolNames = dynamicToolDefinitions.map((tools) => tools.map((tool) => tool.name))
+      const expectedFocusedTools = focusedSurfaceTools.map((tool) => tool.name)
       expect(dynamicToolNames).toEqual([expectedFocusedTools, expectedFocusedTools, []])
       expect(dynamicToolNames.flat()).not.toContain('unwrapped_action')
+      for (const definitions of dynamicToolDefinitions.slice(0, 2)) {
+        expect(definitions.filter((tool) => tool.name === 'list_surfaces')).toHaveLength(1)
+        expect(definitions.filter((tool) => tool.name === 'read_surface')).toHaveLength(1)
+        const createSchema = definitions.find((tool) => tool.name === 'create_surface')?.inputSchema
+        expect(isRecord(createSchema)).toBe(true)
+        if (!isRecord(createSchema)) throw new Error('missing create_surface input schema')
+        const properties = createSchema['properties']
+        expect(isRecord(properties)).toBe(true)
+        if (!isRecord(properties)) throw new Error('missing create_surface properties')
+        expect(properties['spaceId']).toBeUndefined()
+      }
 
       expect(router.callLog().map((call) => call.model.connectionId)).toEqual([
         CONNECTION_ID,

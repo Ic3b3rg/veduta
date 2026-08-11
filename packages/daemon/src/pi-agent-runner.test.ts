@@ -48,8 +48,8 @@ import { TurnTaintAccumulator, type Origin } from './taint.ts'
  * `gateToolsForOrigins` with the same effective-origin computation).
  */
 
-function marker(origin: Origin): OriginMarkerEntry {
-  return { kind: 'origin-marker', origin }
+function marker(origin: Origin, origins?: Origin[]): OriginMarkerEntry {
+  return { kind: 'origin-marker', origin, ...(origins === undefined ? {} : { origins }) }
 }
 
 function userMessage(id: string, content: string): SessionEntry {
@@ -86,6 +86,12 @@ describe('originEntryData', () => {
   it('encodes an origin into the custom-entry payload shape', () => {
     expect(originEntryData('untrusted:gmail')).toEqual({ origin: 'untrusted:gmail' })
   })
+
+  it('encodes the complete ToolResult provenance without requiring an untrusted origin', () => {
+    expect(originEntryData(undefined, ['trusted:user', 'trusted:system'])).toEqual({
+      origins: ['trusted:user', 'trusted:system'],
+    })
+  })
 })
 
 describe('applyOriginEntries', () => {
@@ -94,6 +100,23 @@ describe('applyOriginEntries', () => {
     const result = applyOriginEntries(entries)
     expect(result).toHaveLength(1)
     expect(result[0]).toMatchObject({ type: 'message', message: { origin: 'untrusted:gmail' } })
+  })
+
+  it('attaches complete ToolResult provenance to the immediately following message', () => {
+    const entries: RawSessionEntry[] = [
+      marker('untrusted:gmail', ['trusted:user', 'untrusted:gmail']),
+      assistantMessage('m1', 'tool output'),
+    ]
+
+    expect(applyOriginEntries(entries)).toMatchObject([
+      {
+        type: 'message',
+        message: {
+          origin: 'untrusted:gmail',
+          origins: ['trusted:user', 'untrusted:gmail'],
+        },
+      },
+    ])
   })
 
   it('leaves unmarked messages without an origin', () => {
@@ -160,6 +183,31 @@ describe('applyOriginEntries', () => {
     const entries: RawSessionEntry[] = [marker('untrusted:gmail'), modelChange('mc1')]
     const result = applyOriginEntries(entries)
     expect(result).toEqual([modelChange('mc1')])
+  })
+})
+
+describe('PiJsonlSessionStore provenance', () => {
+  it('round-trips full trusted ToolResult origins through the JSONL session', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'veduta-pi-agent-runner-cwd-'))
+    const sessionsRoot = mkdtempSync(join(tmpdir(), 'veduta-pi-agent-runner-sessions-'))
+    const sessionStore = new PiJsonlSessionStore({ cwd, sessionsRoot })
+
+    await sessionStore.append('session-origins', {
+      type: 'message',
+      message: {
+        role: 'tool',
+        content: 'result',
+        at: '2026-07-09T00:00:00.000Z',
+        toolCallId: 'call-1',
+        toolName: 'read_surface',
+        origins: ['trusted:user', 'trusted:system'],
+      },
+    })
+
+    const branch = await sessionStore.load('session-origins')
+    expect(branch.messages).toMatchObject([
+      { role: 'tool', origins: ['trusted:user', 'trusted:system'] },
+    ])
   })
 })
 

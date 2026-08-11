@@ -887,7 +887,7 @@ export function buildServer(options: ServerOptions = {}) {
     config: () => routingState.current(),
     connections: connectionRuntimes,
     secrets,
-    mockResponder: createMockChatResponder({ store, now }),
+    mockResponder: createMockChatResponder({ now }),
   })
   // Issue #47's verify-then-commit selection flow and every adapter's
   // `verify` (`ctx.probe`, `model-connection-adapter.ts`)
@@ -918,7 +918,7 @@ export function buildServer(options: ServerOptions = {}) {
       config: candidateConfig,
       connections: connectionRuntimes,
       secrets,
-      mockResponder: createMockChatResponder({ store, now }),
+      mockResponder: createMockChatResponder({ now }),
     })
     return probeModel(probeBridge, {
       provider: record.provider,

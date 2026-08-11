@@ -94,7 +94,7 @@ export function seedSpaces(): { spaces: Space[]; surfaces: Surface[] } {
         {
           id: 'hint',
           type: 'Caption',
-          props: { text: 'Type "I ate a pizza" in chat to update this Surface.' },
+          props: { text: 'Ask the Agent to add a meal in chat to update this Surface.' },
         },
       ],
     },

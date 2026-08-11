@@ -794,6 +794,16 @@ describe('Store memory contract', () => {
     expect(context).toContain("say you don't know")
     expect(context.toLowerCase()).not.toContain('celery')
   })
+
+  it('does not inject Surface inventory, tree, or state into assembled Space context', async () => {
+    const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+
+    const context = store.assembleSpaceContext('spc-health')
+
+    expect(context).not.toContain('Nothing logged today')
+    expect(context).not.toContain('meal-table')
+    expect(context).not.toContain('Ask the Agent to add a meal')
+  })
 })
 
 function fixedNow(): Date {

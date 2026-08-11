@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
+import { JsonValueSchema } from '@veduta/protocol'
 import { z } from 'zod'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defineTool, type ToolContext, type ToolDef } from './agent-runner.ts'
@@ -184,7 +185,7 @@ describe('piToolParameters', () => {
     }
   })
 
-  it("merges gateCreateSurfaceTool's allOf (a zod intersection) into a single object schema covering every field from all three schemas", () => {
+  it('derives focused Surface parameters with scoped creation and no model-facing Space ids', () => {
     const { tools, dispose } = buildRealRegistry()
     try {
       const parameters = piToolParameters(tools)
@@ -195,14 +196,23 @@ describe('piToolParameters', () => {
         properties: Record<string, unknown>
       }
       expect(schema.type).toBe('object')
-      // Fields from the wrapped create_surface schema itself.
+      // Fields from the focused create_surface wrapper and Template gate.
       expect(schema.properties['id']).toBeDefined()
-      expect(schema.properties['spaceId']).toBeDefined()
       expect(schema.properties['title']).toBeDefined()
       expect(schema.properties['tree']).toBeDefined()
-      // Fields gateCreateSurfaceTool's own extension schemas add.
+      expect(schema.properties['state']).toBeDefined()
       expect(schema.properties['intent']).toBeDefined()
       expect(schema.properties['justification']).toBeDefined()
+      expect(schema.properties['spaceId']).toBeUndefined()
+
+      const listSurfaceParameters = parameters['list_surfaces'] as {
+        properties: Record<string, unknown>
+      }
+      const readSurfaceParameters = parameters['read_surface'] as {
+        properties: Record<string, unknown>
+      }
+      expect(listSurfaceParameters.properties).toEqual({})
+      expect(Object.keys(readSurfaceParameters.properties)).toEqual(['surfaceId'])
     } finally {
       dispose()
     }
@@ -234,6 +244,22 @@ describe('piToolParameters', () => {
     } finally {
       dispose()
     }
+  })
+
+  it('leaves arbitrary JSON values unconstrained so provider validation preserves primitive types', () => {
+    const tool = defineTool({
+      name: 'accept_json',
+      description: 'Accept an arbitrary JSON value.',
+      schema: z.object({ value: JsonValueSchema }),
+      level: 'L0',
+      egressDomains: [],
+      handler: () => ({ content: 'ok' }),
+    })
+
+    const schema = piToolParameters([tool])['accept_json'] as {
+      properties: Record<string, unknown>
+    }
+    expect(schema.properties['value']).toEqual({})
   })
 
   it('throws when the input carries a duplicate tool name', () => {

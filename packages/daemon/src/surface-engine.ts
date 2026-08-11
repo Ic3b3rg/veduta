@@ -100,6 +100,26 @@ export interface SurfaceVersion {
   treeVersion: number
 }
 
+/** The compact, model-facing identity of one Surface the Agent may author. */
+export interface AuthorableSurfaceSummary {
+  id: string
+  title: string
+  freshness: Freshness
+  pinned: boolean
+}
+
+/** A Space-scoped inventory plus the whole-Surface origins of its rendered titles. */
+export interface AuthorableSurfaceInventory {
+  surfaces: AuthorableSurfaceSummary[]
+  origins: Origin[]
+}
+
+/** A complete, validated Surface read with its stored concurrency metadata and origin. */
+export interface AuthorableSurfaceRead extends SurfaceVersion {
+  surface: Surface
+  origins: Origin[]
+}
+
 /**
  * One committed Surface-lifecycle event, as replayed or observed: `kind`
  * selects which protocol schema validated `event`, so callers get a typed
@@ -176,6 +196,18 @@ export class SurfaceNotPinnableError extends Error {
 }
 
 /**
+ * One non-disclosing refusal for every Surface the Agent may not read through
+ * a Space-scoped authoring registry: missing, archived, daemon-owned, or in a
+ * different Space. The message deliberately reveals none of those cases.
+ */
+export class SurfaceReadError extends Error {
+  constructor() {
+    super('Surface is not available for authoring in this Space')
+    this.name = 'SurfaceReadError'
+  }
+}
+
+/**
  * A Surface's provenance: which Template it was instantiated from (if any),
  * the Space that Template lives in, and the origin of its tree/state
  * *content* — distinct from `Freshness`, which tracks who last touched it.
@@ -194,7 +226,7 @@ export interface SurfaceProvenance {
   contentOrigin: Origin
 }
 
-const CreateSurfaceToolInputSchema = z.object({
+export const CreateSurfaceToolInputSchema = z.object({
   id: z.string().min(1),
   spaceId: z.string().min(1),
   title: z.string().min(1),
@@ -301,6 +333,61 @@ export class SurfaceEngine {
     return {
       version: requiredNumber(row, 'version'),
       treeVersion: requiredNumber(row, 'tree_version'),
+    }
+  }
+
+  /**
+   * Active, non-daemon-owned Surfaces the Agent may author in `spaceId`, in
+   * the same stable title/id order used by the ordinary Surface listing.
+   * Projected FACTS never enter this SQLite store, so they cannot appear.
+   */
+  listAuthorableSurfaces(spaceId: string): AuthorableSurfaceInventory {
+    this.requireKnownSpace(spaceId)
+    const rows = this.db
+      .prepare(
+        `select * from surfaces
+         where space_id = ? and archived = 0 and daemon_owned = 0
+         order by title, id`,
+      )
+      .all(spaceId)
+    const origins: Origin[] = []
+    const seenOrigins = new Set<Origin>()
+    const surfaces = rows.map((row) => {
+      const surface = surfaceFromRow(row)
+      const origin = contentOriginFromRow(row)
+      if (!seenOrigins.has(origin)) {
+        seenOrigins.add(origin)
+        origins.push(origin)
+      }
+      return {
+        id: surface.id,
+        title: surface.title,
+        freshness: surface.freshness,
+        pinned: surface.pinned ?? false,
+      }
+    })
+    return { surfaces, origins }
+  }
+
+  /**
+   * Reads exactly one authorable Surface inside `spaceId`. Resolution and all
+   * exclusion checks happen in one scoped query, so every rejected id gets
+   * the same `SurfaceReadError` without exposing content from the row.
+   */
+  readAuthorableSurface(spaceId: string, surfaceId: string): AuthorableSurfaceRead {
+    this.requireKnownSpace(spaceId)
+    const row = this.db
+      .prepare(
+        `select * from surfaces
+         where id = ? and space_id = ? and archived = 0 and daemon_owned = 0`,
+      )
+      .get(surfaceId, spaceId)
+    if (!row) throw new SurfaceReadError()
+    return {
+      surface: surfaceFromRow(row),
+      version: requiredNumber(row, 'version'),
+      treeVersion: requiredNumber(row, 'tree_version'),
+      origins: [contentOriginFromRow(row)],
     }
   }
 
@@ -458,11 +545,10 @@ export class SurfaceEngine {
     if (!row) return undefined
     const templateId = optionalString(row, 'template_id')
     const templateSpaceId = optionalString(row, 'template_space_id')
-    const storedOrigin = requiredString(row, 'content_origin')
     return {
       ...(templateId === undefined ? {} : { templateId }),
       ...(templateSpaceId === undefined ? {} : { templateSpaceId }),
-      contentOrigin: isValidOrigin(storedOrigin) ? storedOrigin : 'trusted:user',
+      contentOrigin: contentOriginFromRow(row),
     }
   }
 
@@ -1311,4 +1397,9 @@ function truncate(value: string, max: number): string {
 
 function statePath(key: string): string {
   return `/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`
+}
+
+function contentOriginFromRow(row: Record<string, unknown>): Origin {
+  const storedOrigin = requiredString(row, 'content_origin')
+  return isValidOrigin(storedOrigin) ? storedOrigin : 'trusted:user'
 }

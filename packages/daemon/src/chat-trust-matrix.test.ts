@@ -2,13 +2,14 @@ import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ApprovalCard, GatewayServerMessage } from '@veduta/protocol'
+import { SurfaceSchema, type ApprovalCard, type GatewayServerMessage } from '@veduta/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
 import { computeContextHash, type ToolContext, type ToolDef } from './agent-runner.ts'
 import { ApprovalSurfaceManager } from './approval-surface.ts'
 import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import { createChatLoop, type ChatLoop } from './chat-loop.ts'
 import { createFakeProvider, fakeText, fakeToolCall } from './fake-provider.ts'
+import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
 import { createMemoryTools } from './memory-tools.ts'
 import { ModelRouter, type RoutingConfig } from './model-routing.ts'
 import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
@@ -16,6 +17,7 @@ import { PiJsonlSessionStore } from './pi-agent-runner.ts'
 import { Store } from './store.ts'
 import { effectiveOrigin, TurnTaintAccumulator, untrustedOrigin, type Origin } from './taint.ts'
 import { canonicalAllowlistParams, isTrustWrapped, TrustLayer } from './trust-layer.ts'
+import { TemplateEngine } from './template-engine.ts'
 
 /**
  * Issue #37's AC2 ("Trust matrix on a live turn"), proved through the real
@@ -25,11 +27,9 @@ import { canonicalAllowlistParams, isTrustWrapped, TrustLayer } from './trust-la
  * inline as part of `buildServer`. This complements
  * trust-acceptance.test.ts (issue #14's own acceptance, proved end-to-end
  * through `buildServer` with the deterministic mock provider): that harness
- * cannot script a turn that calls a read tool and an outbound tool in the
- * same turn, because the mock chat model (`mock-chat-model.ts`) always
- * answers with at most one tool call per user message. Case (b) below needs
- * exactly that multi-step sequence, which only the fake provider's scripted
- * step queue can produce — proof that a turn's mid-turn taint growth (a real
+ * does not expose an arbitrary response script. The cases below need exact
+ * multi-step sequences, which the fake provider's scripted step queue
+ * supplies — proof that a turn's mid-turn taint growth (a real
  * `read_recent` call surfacing an untrusted event, not a hand-seeded
  * `TurnTaint`) gates a later call in the SAME turn, through the actual
  * `PiAgentRunner` sequential tool execution (issue #14's decision matrix
@@ -44,6 +44,7 @@ interface Harness {
   approvalSurfaces: ApprovalSurfaceManager
   fake: ReturnType<typeof createFakeProvider>
   chatLoop: ChatLoop
+  sessionStore: PiJsonlSessionStore
   approvalCards: ApprovalCard[]
   frames: { clientId: string; frame: GatewayServerMessage }[]
   spaceId: string
@@ -99,6 +100,7 @@ function buildHarness(): Harness {
   const wrappedOutboundTools = trust.wrapTools(outboundTools.map(({ tool }) => tool))
   const wrappedSendMessage = wrappedOutboundTools.find((tool) => tool.name === 'send_message')
   if (!wrappedSendMessage) throw new Error('expected wrapTools to return a wrapped send_message')
+  const templateEngine = new TemplateEngine({ store })
 
   const frames: { clientId: string; frame: GatewayServerMessage }[] = []
   const chatLoop = createChatLoop({
@@ -112,6 +114,7 @@ function buildHarness(): Harness {
         ? []
         : [
             ...wrappedOutboundTools,
+            ...createFocusedSurfaceTools({ store, templateEngine, spaceId: sid }),
             ...createMemoryTools(store.spacesEngine, { activeSpaceId: sid }),
           ],
     send: (clientId, frame) => frames.push({ clientId, frame }),
@@ -124,6 +127,7 @@ function buildHarness(): Harness {
     approvalSurfaces,
     fake,
     chatLoop,
+    sessionStore,
     approvalCards,
     frames,
     spaceId,
@@ -306,6 +310,103 @@ describe('chat loop x trust layer — the live-turn trust matrix (issue #37 AC2)
     expect(cardDecision).toBeDefined()
     expect(cardDecision?.effectiveOrigin).toBe(taintedOrigin)
     expect(cardDecision?.trigger?.kind).toBe('chat')
+  })
+
+  it('persists read_surface origins and lets untrusted Surface content card a later allowlisted action while L0 patches stay free', async () => {
+    const h = harness()
+    await seedSendMessageAllowlist(h, 'wife@example.com')
+    h.store.createSurface(
+      SurfaceSchema.parse({
+        id: 'srf-untrusted-read',
+        spaceId: h.spaceId,
+        title: 'Inbox-derived tracker',
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [{ id: 'status', type: 'Stat', binding: 'status', props: { label: 'Status' } }],
+        },
+        state: { status: 'before' },
+        freshness: { updatedAt: new Date().toISOString(), updatedBy: 'agent' },
+      }),
+      'agent',
+      { contentOrigin: untrustedOrigin('gmail'), origin: 'trusted:system' },
+    )
+
+    const cardsBefore = h.approvalCards.length
+    const deliveriesBefore = deliveryCount(h)
+    h.fake.setResponses([
+      { message: fakeToolCall('read_surface', { surfaceId: 'srf-untrusted-read' }) },
+      {
+        message: fakeToolCall('patch_state', {
+          surfaceId: 'srf-untrusted-read',
+          operations: [{ target: 'state', op: 'replace', path: '/status', value: 'after' }],
+        }),
+      },
+      { message: fakeToolCall('send_message', { to: 'wife@example.com', body: 'on my way' }) },
+      { message: fakeText('Updated locally; outbound action awaits approval.') },
+    ])
+    await h.chatLoop.handleChatMessage(
+      chatEvent({ text: 'read the tracker, update it, then tell my wife', spaceId: h.spaceId }),
+    )
+
+    expect(h.store.getSurface('srf-untrusted-read')?.state['status']).toBe('after')
+    expect(h.approvalCards).toHaveLength(cardsBefore + 1)
+    expect(deliveryCount(h)).toBe(deliveriesBefore)
+
+    const branch = await h.sessionStore.load(`space:${h.spaceId}`)
+    const readMessage = branch.messages.find(
+      (message) => message.role === 'tool' && message.toolName === 'read_surface',
+    )
+    expect(readMessage?.origins).toEqual([untrustedOrigin('gmail')])
+    expect(readMessage?.origin).toBe(untrustedOrigin('gmail'))
+    expect(
+      h.trust
+        .auditEntries()
+        .some(
+          (entry) =>
+            entry.kind === 'action.decision' &&
+            entry.toolName === 'send_message' &&
+            entry.decision === 'card' &&
+            entry.originChain?.includes(untrustedOrigin('gmail')),
+        ),
+    ).toBe(true)
+  })
+
+  it('persists trusted read_surface origins while preserving ordinary allowlist execution', async () => {
+    const h = harness()
+    await seedSendMessageAllowlist(h, 'wife@example.com')
+    h.store.createSurface(
+      SurfaceSchema.parse({
+        id: 'srf-trusted-read',
+        spaceId: h.spaceId,
+        title: 'Trusted tracker',
+        tree: { id: 'root', type: 'Box', children: [] },
+        state: { status: 'ready' },
+        freshness: { updatedAt: new Date().toISOString(), updatedBy: 'agent' },
+      }),
+      'agent',
+      { contentOrigin: 'trusted:system', origin: 'trusted:system' },
+    )
+
+    const cardsBefore = h.approvalCards.length
+    const deliveriesBefore = deliveryCount(h)
+    h.fake.setResponses([
+      { message: fakeToolCall('read_surface', { surfaceId: 'srf-trusted-read' }) },
+      { message: fakeToolCall('send_message', { to: 'wife@example.com', body: 'on my way' }) },
+      { message: fakeText('Read and sent.') },
+    ])
+    await h.chatLoop.handleChatMessage(
+      chatEvent({ text: 'read the trusted tracker, then tell my wife', spaceId: h.spaceId }),
+    )
+
+    expect(h.approvalCards).toHaveLength(cardsBefore)
+    expect(deliveryCount(h)).toBe(deliveriesBefore + 1)
+    const branch = await h.sessionStore.load(`space:${h.spaceId}`)
+    const readMessage = branch.messages.find(
+      (message) => message.role === 'tool' && message.toolName === 'read_surface',
+    )
+    expect(readMessage?.origins).toEqual(['trusted:system'])
+    expect(readMessage?.origin).toBeUndefined()
   })
 
   it('an L2 transfer_funds call always cards, even on a fully trusted turn with a matching allowlist rule planted for it', async () => {

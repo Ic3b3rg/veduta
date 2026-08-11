@@ -267,7 +267,7 @@ describe('production auth boundary', () => {
     expect(devices.json()).toMatchObject({ devices: [{ name: 'Silvio iPhone' }] })
   })
 
-  it('drives a meal-logging chat message through the real chat loop (mock candidate) and patches srf-meals, even under production auth with no provider key configured, once the Local VPS development mock control is enabled', async () => {
+  it('discovers, reads, and patches Meals through the real focused-Space loop with the Local VPS mock candidate', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'veduta-meal-mock-'))
     // A bare production-auth `buildServer` call resolves to the `vps`
     // profile (`server.ts`'s default profile derivation), where
@@ -280,17 +280,41 @@ describe('production auth boundary', () => {
       dataDir,
       auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
       profile: 'local-vps',
+      now: () => new Date(2026, 7, 3, 14, 5),
     })
 
+    const before = SurfaceSchema.parse(store.getSurface('srf-meals'))
+    const treeBefore = structuredClone(before.tree)
+    const eventCountBefore = store.eventLog('spc-health').length
     expect(await chatSendProducesMealsPatch(gateway, store, token)).toBe(true)
+
+    const after = SurfaceSchema.parse(store.getSurface('srf-meals'))
+    expect(after.state['meals']).toMatchObject([{ time: '14:05', meal: 'fesa di tacchino' }])
+    expect(after.state['lastMeal']).toBe('fesa di tacchino')
+    expect(after.state['mealCount']).toBe(1)
+    expect(after.tree).toEqual(treeBefore)
 
     // ADR-0003: the Agent must find user interactions before reasoning about
     // a Space, so the turn itself — the user's message and the assistant's
     // reply — lands in the Space's own Event log, not only the Surface patch.
-    const turnEvents = store.eventLog('spc-health').filter((event) => event.type === 'turn')
+    const newEvents = store.eventLog('spc-health').slice(eventCountBefore)
+    expect(newEvents.map((event) => event.type)).toEqual(['turn', 'surface.patch_state', 'turn'])
+    const turnEvents = newEvents.filter((event) => event.type === 'turn')
     expect(turnEvents).toHaveLength(2)
-    expect(turnEvents[0]).toMatchObject({ text: 'I ate a pizza', payload: { role: 'user' } })
-    expect(turnEvents[1]).toMatchObject({ payload: { role: 'assistant' } })
+    expect(turnEvents[0]).toMatchObject({
+      text: 'aggiungi ai meals la fesa di tacchino',
+      payload: { role: 'user' },
+    })
+    expect(turnEvents[1]).toMatchObject({
+      payload: {
+        role: 'assistant',
+        toolCalls: [
+          { toolName: 'list_surfaces' },
+          { toolName: 'read_surface' },
+          { toolName: 'patch_state' },
+        ],
+      },
+    })
   })
 })
 
@@ -316,8 +340,8 @@ describe('AC4: switching mock -> real provider is configuration only (issue 023)
     expect(router.route({ purpose: 'classification', origin: 'user' }).provider).toBe('mock')
 
     // The real chat loop (issue #37) reaches the same loopback behavior
-    // through the mock routing candidate: a meal-logging chat message still
-    // patches srf-meals with no provider key configured anywhere.
+    // through the mock routing candidate: the deterministic meal journey
+    // still patches the discovered Meals Surface with no provider key.
     expect(await chatSendProducesMealsPatch(gateway, store, token)).toBe(true)
   })
 
@@ -2004,13 +2028,10 @@ async function waitForTurnSettled(socket: SchedulerFakeSocket): Promise<void> {
 }
 
 /**
- * Drives an "I ate a pizza" chat.send through the real chat loop (issue
- * #37) over a fresh Gateway connection and reports whether it produced the
- * meals Surface patch: the mock routing candidate's `createMockChatResponder`
- * (mock-chat-model.ts) answers a meal-logging message with a `patch_state`
- * tool call, reproducing the pre-issue-37 chat demo's observable behavior
- * through the real loop instead of a parallel handler. The AC4 tests (issue
- * 023) assert this stays true across a mock->real provider switch.
+ * Drives issue 42's exact Italian fixture through the real focused-Space
+ * chat loop and reports whether its list -> read -> patch journey reached
+ * the existing Surface event stream. The AC4 tests (issue 023) assert this
+ * remains true across a mock->real provider switch.
  */
 async function chatSendProducesMealsPatch(
   gateway: ReturnType<typeof buildServer>['gateway'],
@@ -2020,7 +2041,11 @@ async function chatSendProducesMealsPatch(
   const socket = new SchedulerFakeSocket()
   gateway.connect(socket)
   socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor(), token })
-  socket.receive({ type: 'chat.send', text: 'I ate a pizza', spaceId: 'spc-health' })
+  socket.receive({
+    type: 'chat.send',
+    text: 'aggiungi ai meals la fesa di tacchino',
+    spaceId: 'spc-health',
+  })
 
   await waitForTurnSettled(socket)
 
