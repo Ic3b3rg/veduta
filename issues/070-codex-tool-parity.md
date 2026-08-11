@@ -1,4 +1,4 @@
-# 051 — ChatGPT subscription tool parity through Codex dynamic tools
+# 070 — ChatGPT subscription tool parity through Codex dynamic tools
 
 ## Context
 

@@ -6,7 +6,7 @@ import type {
 } from '@veduta/protocol'
 import type { CodexTransportFactory } from './codex-app-server.ts'
 import { sanitizeErrorText, type SecretResolver } from './model-routing.ts'
-import type { SubscriptionStreamRequest } from './pi-provider-bridge.ts'
+import type { SubscriptionStreamEvent, SubscriptionStreamRequest } from './pi-provider-bridge.ts'
 import type { SecretsVault } from './secrets-vault.ts'
 
 /**
@@ -119,7 +119,10 @@ export interface ModelConnectionAdapter {
    * capability alone is not enough; the adapter must actually implement
    * this verb. Absent on every BYOK/Claude adapter.
    */
-  stream?(ctx: AdapterContext, request: SubscriptionStreamRequest): AsyncIterable<string>
+  stream?(
+    ctx: AdapterContext,
+    request: SubscriptionStreamRequest,
+  ): AsyncIterable<SubscriptionStreamEvent>
 }
 
 export type ModelConnectionErrorCode =

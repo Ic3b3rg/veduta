@@ -3,6 +3,8 @@ import {
   AccountReadResponseSchema,
   AgentMessageDeltaNotificationSchema,
   CodexProtocolError,
+  DynamicToolCallParamsSchema,
+  DynamicToolCallResponseSchema,
   InitializeResponseSchema,
   ItemNotificationSchema,
   LoginStartResponseSchema,
@@ -287,5 +289,56 @@ describe('the inference-seam schemas (issue #47)', () => {
         turnId: 'turn-1',
       }),
     ).toThrow(CodexProtocolError)
+  })
+})
+
+describe('the dynamic-tool schemas (issue #71)', () => {
+  it('parses the observed reverse tool-call request without confusing its correlation fields', () => {
+    const parsed = parseCodexResponse(DynamicToolCallParamsSchema, 'item/tool/call', {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      callId: 'exec-1',
+      namespace: null,
+      tool: 'echo_value',
+      arguments: { value: 'hello' },
+      upstreamAddition: true,
+    })
+
+    expect(parsed).toEqual({
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      callId: 'exec-1',
+      namespace: null,
+      tool: 'echo_value',
+      arguments: { value: 'hello' },
+    })
+  })
+
+  it('rejects a reverse tool-call request with no arguments field', () => {
+    expect(() =>
+      parseCodexResponse(DynamicToolCallParamsSchema, 'item/tool/call', {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        callId: 'exec-1',
+        namespace: null,
+        tool: 'echo_value',
+      }),
+    ).toThrow(CodexProtocolError)
+  })
+
+  it.each([
+    { success: true, text: 'hello' },
+    { success: false, text: 'sanitized tool failure' },
+  ])('parses an observed success=$success tool result', ({ success, text }) => {
+    expect(
+      parseCodexResponse(DynamicToolCallResponseSchema, 'item/tool/call response', {
+        success,
+        contentItems: [{ type: 'inputText', text }],
+        upstreamAddition: true,
+      }),
+    ).toEqual({
+      success,
+      contentItems: [{ type: 'inputText', text }],
+    })
   })
 })

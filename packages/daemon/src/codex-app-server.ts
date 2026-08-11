@@ -24,6 +24,14 @@ export const CODEX_EGRESS_HOSTS = ['auth.openai.com', 'chatgpt.com', 'api.openai
 export const CODEX_BINARY_MISSING_REASON =
   'the Codex app-server binary is not installed: run deploy/codex-setup.sh on the instance (or set VEDUTA_CODEX_BIN to a pinned @openai/codex 0.146.1 binary) — see docs/SECURITY.md'
 
+export type CodexRequestId = string | number
+
+export interface CodexServerRequest {
+  id: CodexRequestId
+  method: string
+  params: unknown
+}
+
 /**
  * The Gateway-owned JSON-RPC seam to one running `codex app-server`
  * process. `request` resolves or rejects one call; two tiers can be
@@ -43,6 +51,14 @@ export const CODEX_BINARY_MISSING_REASON =
 export interface CodexTransport {
   request(method: string, params?: unknown): Promise<unknown>
   /**
+   * An independent live subscription over child-initiated JSON-RPC
+   * requests. Subscribe before starting the operation that may issue one;
+   * unlike notifications, requests are never replayed to a later consumer.
+   */
+  serverRequests(): AsyncIterable<CodexServerRequest>
+  /** Answers one child-initiated request on its original JSON-RPC id. */
+  respond(id: CodexRequestId, result: unknown): Promise<void>
+  /**
    * An INDEPENDENT subscription over every notification frame from now on:
    * it replays a snapshot of the retained ring taken at subscription time,
    * then yields live frames as they arrive. Terminates by throwing
@@ -54,7 +70,7 @@ export interface CodexTransport {
   notifications(): AsyncIterable<{ method: string; params: unknown }>
   /** A non-destructive copy of the retained notification ring (most recent `MAX_RETAINED_NOTIFICATIONS` frames) — never blocks, never consumes a frame a live `notifications()` subscription still needs. */
   recentNotifications(): { method: string; params: unknown }[]
-  /** True when this transport has no in-flight request and no live notification subscription. */
+  /** True when this transport has no in-flight request and no live notification or child-request subscription. */
   idle(): boolean
   close(): void
 }
@@ -119,39 +135,29 @@ interface JsonRpcFrame {
 /** The bounded ring size `createNotificationHub` retains — enough recent history that a late subscription (a fresh `notifications()` call right after a burst of item frames) still sees what already arrived, without retaining an unbounded transcript for a long-lived pooled transport. */
 export const MAX_RETAINED_NOTIFICATIONS = 500
 
-interface NotificationSubscriber {
-  push(frame: { method: string; params: unknown }): void
+interface HubSubscriber<T> {
+  push(frame: T): void
   end(error: ModelConnectionError): void
 }
 
-/**
- * Backs `notifications()` on both the real transport below and
- * `codex-app-server-fake.ts`'s fake (issue #47: notifications used to be
- * one shared buffer that `notifications()` spliced empty on every call, so a
- * second concurrent consumer — a heartbeat poll racing an in-flight chat
- * turn on the same pooled transport — stole frames the other still needed).
- * `retain` appends to a bounded ring and pushes to every live subscriber;
- * nothing a reader does ever removes a frame. `subscribe()` returns an
- * INDEPENDENT iterator: it replays a snapshot of the ring taken at
- * subscription time, then yields live frames as `retain` pushes them, and
- * throws the hub's terminal error (set by `endAll`) instead of hanging
- * forever once the transport exits or closes. A `break`/`return()`/`throw()`
- * on the consumer's `for await` deregisters the subscription.
- */
-export function createNotificationHub(): {
-  retain(frame: { method: string; params: unknown }): void
-  subscribe(): AsyncIterable<{ method: string; params: unknown }>
-  recent(): { method: string; params: unknown }[]
+interface ReplayHub<T> {
+  retain(frame: T): void
+  subscribe(): AsyncIterable<T>
+  recent(): T[]
   subscriberCount(): number
   endAll(error: ModelConnectionError): void
-} {
-  const ring: { method: string; params: unknown }[] = []
-  const subscribers = new Set<NotificationSubscriber>()
+}
+
+function createReplayHub<T>(maxRetained: number): ReplayHub<T> {
+  const ring: T[] = []
+  const subscribers = new Set<HubSubscriber<T>>()
   let terminal: ModelConnectionError | undefined
 
-  function retain(frame: { method: string; params: unknown }): void {
-    ring.push(frame)
-    if (ring.length > MAX_RETAINED_NOTIFICATIONS) ring.shift()
+  function retain(frame: T): void {
+    if (maxRetained > 0) {
+      ring.push(frame)
+      if (ring.length > maxRetained) ring.shift()
+    }
     for (const subscriber of subscribers) subscriber.push(frame)
   }
 
@@ -161,15 +167,19 @@ export function createNotificationHub(): {
     subscribers.clear()
   }
 
-  function subscribe(): AsyncIterable<{ method: string; params: unknown }> {
+  function subscribe(): AsyncIterable<T> {
     return {
       [Symbol.asyncIterator]() {
-        const queue: { method: string; params: unknown }[] = [...ring]
+        const queue: T[] = [...ring]
         let wake: (() => void) | undefined
         let endError: ModelConnectionError | undefined = terminal
         let ended = terminal !== undefined
+        let returned = false
+        let returnValue: unknown
+        let thrown = false
+        let thrownError: unknown
 
-        const subscriber: NotificationSubscriber = {
+        const subscriber: HubSubscriber<T> = {
           push(frame) {
             queue.push(frame)
             wake?.()
@@ -195,6 +205,8 @@ export function createNotificationHub(): {
                 wake = resolve
               })
             }
+            if (returned) return { value: returnValue, done: true as const }
+            if (thrown) throw thrownError
             if (queue.length > 0) {
               return { value: queue.shift()!, done: false }
             }
@@ -204,11 +216,23 @@ export function createNotificationHub(): {
             )
           },
           async return(value?: unknown) {
+            returned = true
+            returnValue = value
+            ended = true
+            queue.length = 0
             deregister()
+            wake?.()
+            wake = undefined
             return { value, done: true as const }
           },
           async throw(error?: unknown) {
+            thrown = true
+            thrownError = error
+            ended = true
+            queue.length = 0
             deregister()
+            wake?.()
+            wake = undefined
             throw error
           },
         }
@@ -223,6 +247,35 @@ export function createNotificationHub(): {
     subscriberCount: () => subscribers.size,
     endAll,
   }
+}
+
+/**
+ * Backs `notifications()` on both the real transport below and
+ * `codex-app-server-fake.ts`'s fake (issue #47: notifications used to be
+ * one shared buffer that `notifications()` spliced empty on every call, so a
+ * second concurrent consumer — a heartbeat poll racing an in-flight chat
+ * turn on the same pooled transport — stole frames the other still needed).
+ * `retain` appends to a bounded ring and pushes to every live subscriber;
+ * nothing a reader does ever removes a frame. `subscribe()` returns an
+ * INDEPENDENT iterator: it replays a snapshot of the ring taken at
+ * subscription time, then yields live frames as `retain` pushes them, and
+ * throws the hub's terminal error (set by `endAll`) instead of hanging
+ * forever once the transport exits or closes. A `break`/`return()`/`throw()`
+ * on the consumer's `for await` deregisters the subscription.
+ */
+export function createNotificationHub(): {
+  retain(frame: { method: string; params: unknown }): void
+  subscribe(): AsyncIterable<{ method: string; params: unknown }>
+  recent(): { method: string; params: unknown }[]
+  subscriberCount(): number
+  endAll(error: ModelConnectionError): void
+} {
+  return createReplayHub(MAX_RETAINED_NOTIFICATIONS)
+}
+
+/** Child-initiated requests are live obligations, never replayable history. */
+export function createServerRequestHub(): ReplayHub<CodexServerRequest> {
+  return createReplayHub(0)
 }
 
 /** Fixed, child-controlled-text-free diagnostics for a JSON-RPC error response (issue #47): the child process's own `error.message` must never reach `ModelConnectionError`, `connections.json`, or the PWA — only a safe string keyed by the standard JSON-RPC error code, with one fallback for anything this table does not name. */
@@ -279,6 +332,7 @@ export function spawnCodexAppServer(options: {
   let nextId = 1
   const pending = new Map<number, PendingRequest>()
   const hub = createNotificationHub()
+  const serverRequestHub = createServerRequestHub()
   let stderrBytes = 0
   let exited = false
   let stdoutBuffer = ''
@@ -301,6 +355,17 @@ export function spawnCodexAppServer(options: {
       // A malformed line from the child is not this transport's to
       // interpret — it is dropped rather than crashing the daemon over a
       // framing glitch in a subprocess whose stderr we already never echo.
+      return
+    }
+    if (
+      typeof frame.method === 'string' &&
+      (typeof frame.id === 'string' || typeof frame.id === 'number')
+    ) {
+      serverRequestHub.retain({
+        id: frame.id,
+        method: frame.method,
+        params: frame.params,
+      })
       return
     }
     if (typeof frame.id === 'number') {
@@ -350,6 +415,7 @@ export function spawnCodexAppServer(options: {
     )
     failAllPending(connectionError)
     hub.endAll(connectionError)
+    serverRequestHub.endAll(connectionError)
   })
 
   // `close` (not `exit`) fires once stdio has fully flushed, so `stderrBytes`
@@ -367,6 +433,7 @@ export function spawnCodexAppServer(options: {
     )
     failAllPending(connectionError)
     hub.endAll(connectionError)
+    serverRequestHub.endAll(connectionError)
   })
 
   async function request(method: string, params?: unknown): Promise<unknown> {
@@ -401,8 +468,31 @@ export function spawnCodexAppServer(options: {
     })
   }
 
+  async function respond(id: CodexRequestId, result: unknown): Promise<void> {
+    if (exited) {
+      throw new ModelConnectionError('unreachable', 'the Codex app-server process is not running')
+    }
+    const frame = { jsonrpc: '2.0', id, result }
+    return new Promise((resolve, reject) => {
+      child.stdin.write(`${JSON.stringify(frame)}\n`, (error) => {
+        if (error) {
+          reject(
+            new ModelConnectionError(
+              'unreachable',
+              `failed to write to codex app-server: ${error.message}`,
+            ),
+          )
+          return
+        }
+        resolve()
+      })
+    })
+  }
+
   function idle(): boolean {
-    return pending.size === 0 && hub.subscriberCount() === 0
+    return (
+      pending.size === 0 && hub.subscriberCount() === 0 && serverRequestHub.subscriberCount() === 0
+    )
   }
 
   function close(): void {
@@ -414,11 +504,14 @@ export function spawnCodexAppServer(options: {
     )
     failAllPending(connectionError)
     hub.endAll(connectionError)
+    serverRequestHub.endAll(connectionError)
     child.kill()
   }
 
   return {
     request,
+    serverRequests: serverRequestHub.subscribe,
+    respond,
     notifications: hub.subscribe,
     recentNotifications: hub.recent,
     idle,
@@ -439,7 +532,7 @@ const DEFAULT_IDLE_MS = 5 * 60_000
  * process instead of spawning a fresh one per call. An entry's idle timer
  * (default 5 minutes, rearmed by every `get()`) does not close the entry
  * outright when it fires — it closes it only when `transport.idle()`
- * reports no in-flight request and no live notification subscription
+ * reports no in-flight request and no live notification or child-request subscription
  * (issue #47: the timer used to close unconditionally, which could kill
  * a transport mid-turn — after which the old shared-buffer `notifications()`
  * would return empty batches forever and the adapter's poll loop would hang

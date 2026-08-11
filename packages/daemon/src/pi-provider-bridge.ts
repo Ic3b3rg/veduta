@@ -103,10 +103,14 @@ export interface ModelConnectionRuntime {
   provider: string
   transport: 'builtin' | 'subscription'
   /** Present only on a `'subscription'`-transport runtime. Absent (or a runtime with none) fails the turn closed — never silently degrades to the builtin/mock path. */
-  stream?: (request: SubscriptionStreamRequest) => AsyncIterable<string>
+  stream?: (request: SubscriptionStreamRequest) => AsyncIterable<SubscriptionStreamEvent>
 }
 
-/** One subscription-transport turn's request (issue #47): the prompt is already the exact `PiChatContext` mapping (`subscription-prompt.ts`) — a subscription adapter never sees pi's structured `Context`. */
+export type SubscriptionStreamEvent =
+  | { type: 'text-delta'; text: string }
+  | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }
+
+/** One subscription-transport model call: provider-neutral prompt, allowed definitions, and normalized output events. */
 export interface SubscriptionStreamRequest {
   modelId: string
   prompt: SubscriptionPrompt
@@ -538,12 +542,12 @@ const SUBSCRIPTION_USAGE: PiUsage = {
  * (issue #47) on `createAssistantMessageEventStream()` — pi-ai's own
  * extension seam (`utils/event-stream.d.ts`'s doc comment: "for use in
  * extensions") — rather than a faux queue: `runtimeStream` is a real,
- * incrementally-arriving async iterable of text deltas (the Codex
- * adapter's `stream`), not a canned response to replay. Emits exactly the
- * event sequence pi's own providers use for a text-only reply: `start` →
- * `text_start` → one `text_delta` per chunk → `text_end` → `done`; any
- * thrown error (including `toSubscriptionPrompt`'s tools refusal reaching
- * this far, or the runtime stream itself failing mid-turn) becomes the
+ * incrementally-arriving async iterable of normalized text/tool-call events
+ * (the Codex adapter's `stream`), not a canned response to replay. Text is
+ * mapped to pi's `text_*` events and a complete normalized tool call to the
+ * matching `toolcall_start` → `toolcall_delta` → `toolcall_end` sequence,
+ * with `stopReason: 'toolUse'`; any thrown error (including malformed tool
+ * arguments or the runtime stream itself failing mid-turn) becomes the
  * `error` event pi's own faux/real providers use, carrying the message on
  * `errorMessage` — never a rejected promise once the stream object exists,
  * matching pi's contract that a provider failure is a resolved turn with
@@ -554,7 +558,7 @@ function streamSubscription(
   model: PiModel,
   prompt: SubscriptionPrompt,
   streamOptions: SimpleStreamOptions | undefined,
-  runtimeStream: (request: SubscriptionStreamRequest) => AsyncIterable<string>,
+  runtimeStream: (request: SubscriptionStreamRequest) => AsyncIterable<SubscriptionStreamEvent>,
 ): PiAssistantMessageEventStream {
   const outer = createAssistantMessageEventStream()
   const base = {
@@ -566,7 +570,6 @@ function streamSubscription(
   } as const
   queueMicrotask(async () => {
     try {
-      let text = ''
       let partial: PiAssistantMessage = {
         role: 'assistant',
         content: [],
@@ -574,24 +577,124 @@ function streamSubscription(
         ...base,
       }
       outer.push({ type: 'start', partial: { ...partial } })
-      outer.push({ type: 'text_start', contentIndex: 0, partial: { ...partial } })
-      for await (const delta of runtimeStream({
+      let activeTextIndex: number | undefined
+      let sawToolCall = false
+      const toolCallIds = new Set<string>()
+
+      const textBlockAt = (contentIndex: number): TextContent => {
+        const block = partial.content[contentIndex]
+        if (block?.type !== 'text') {
+          throw new Error('the subscription stream produced an invalid text block')
+        }
+        return block
+      }
+
+      const endActiveText = () => {
+        if (activeTextIndex === undefined) return
+        const contentIndex = activeTextIndex
+        const block = textBlockAt(contentIndex)
+        outer.push({
+          type: 'text_end',
+          contentIndex,
+          content: block.text,
+          partial: { ...partial },
+        })
+        activeTextIndex = undefined
+      }
+
+      for await (const event of runtimeStream({
         modelId: model.id,
         prompt,
         ...(streamOptions?.signal ? { signal: streamOptions.signal } : {}),
       })) {
-        text += delta
-        partial = { ...partial, content: [{ type: 'text', text }] }
-        outer.push({ type: 'text_delta', contentIndex: 0, delta, partial: { ...partial } })
+        if (event.type === 'text-delta') {
+          if (activeTextIndex === undefined) {
+            activeTextIndex = partial.content.length
+            partial = {
+              ...partial,
+              content: [...partial.content, { type: 'text', text: '' }],
+            }
+            outer.push({
+              type: 'text_start',
+              contentIndex: activeTextIndex,
+              partial: { ...partial },
+            })
+          }
+          const contentIndex = activeTextIndex
+          const block = textBlockAt(contentIndex)
+          partial = {
+            ...partial,
+            content: partial.content.map((content, index) =>
+              index === contentIndex
+                ? { type: 'text' as const, text: block.text + event.text }
+                : content,
+            ),
+          }
+          outer.push({
+            type: 'text_delta',
+            contentIndex,
+            delta: event.text,
+            partial: { ...partial },
+          })
+          continue
+        }
+
+        endActiveText()
+        if (toolCallIds.has(event.toolCallId)) {
+          throw new Error(`subscription repeated tool-call id "${event.toolCallId}"`)
+        }
+        toolCallIds.add(event.toolCallId)
+        sawToolCall = true
+        const contentIndex = partial.content.length
+        const toolCall: PiToolCall = {
+          type: 'toolCall',
+          id: event.toolCallId,
+          name: event.toolName,
+          // The provider contract permits any JSON. pi's static ToolCall
+          // type narrows arguments to an object, but its Agent execution
+          // boundary passes this runtime value to `toPiAgentTool`, whose
+          // ToolDef zod schema is the authoritative validation step.
+          arguments: event.input as PiToolCall['arguments'],
+        }
+        partial = {
+          ...partial,
+          stopReason: 'toolUse',
+          content: [...partial.content, { ...toolCall, arguments: {} }],
+        }
+        outer.push({ type: 'toolcall_start', contentIndex, partial: { ...partial } })
+        outer.push({
+          type: 'toolcall_delta',
+          contentIndex,
+          delta: JSON.stringify(event.input),
+          partial: { ...partial },
+        })
+        partial = {
+          ...partial,
+          content: partial.content.map((content, index) =>
+            index === contentIndex ? toolCall : content,
+          ),
+        }
+        outer.push({
+          type: 'toolcall_end',
+          contentIndex,
+          toolCall,
+          partial: { ...partial },
+        })
       }
-      outer.push({ type: 'text_end', contentIndex: 0, content: text, partial: { ...partial } })
+      endActiveText()
+      if (partial.content.length === 0) {
+        partial = { ...partial, content: [{ type: 'text', text: '' }] }
+        outer.push({ type: 'text_start', contentIndex: 0, partial: { ...partial } })
+        outer.push({ type: 'text_end', contentIndex: 0, content: '', partial: { ...partial } })
+      }
+      const stopReason = sawToolCall ? 'toolUse' : 'stop'
       const finalMessage: PiAssistantMessage = {
         role: 'assistant',
-        content: [{ type: 'text', text }],
-        stopReason: 'stop',
+        content: partial.content,
+        stopReason,
         ...base,
       }
-      outer.push({ type: 'done', reason: 'stop', message: finalMessage })
+      outer.push({ type: 'done', reason: stopReason, message: finalMessage })
       outer.end(finalMessage)
     } catch (error) {
       const finalMessage: PiAssistantMessage = {

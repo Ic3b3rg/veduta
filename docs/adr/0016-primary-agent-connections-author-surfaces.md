@@ -8,6 +8,6 @@ The exactly pinned Codex app-server adapter opts into its experimental `experime
 
 Tool support is an eligibility invariant, not an optional Model connection capability. The `vedutaTools` boolean is removed from the connection contract and PWA: an adapter that cannot satisfy the complete AgentRunner tool contract is unavailable for primary routing rather than represented as a connected-but-degraded method. Explicitly tool-less internal calls are selected by call purpose, never by provider brand or authorization method.
 
-[Issue 051](../../issues/051-codex-tool-parity.md) restores the Codex subscription boundary first; [issue 052](../../issues/052-global-chat-multi-space.md) then removes the separate no-tools restriction from global chat while preserving selective Space context.
+[Issue 070](../../issues/070-codex-tool-parity.md) restores the Codex subscription boundary first; [issue 052](../../issues/052-global-chat-multi-space.md) then removes the separate no-tools restriction from global chat while preserving selective Space context.
 
 Status: accepted

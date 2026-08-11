@@ -25,6 +25,7 @@ import {
 const FAKE_APP_SERVER_SCRIPT = `
 process.stdin.setEncoding('utf8')
 let buffer = ''
+let pendingClientRequest
 process.stdin.on('data', (chunk) => {
   buffer += chunk
   let newlineIndex
@@ -46,6 +47,28 @@ function send(frame) {
 }
 function handle(message) {
   process.stderr.write('diagnostic-noise-that-must-never-be-logged-raw\\n')
+  if (message.method === 'ask-client') {
+    pendingClientRequest = message.id
+    send({
+      jsonrpc: '2.0',
+      id: message.id,
+      method: 'item/tool/call',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        callId: 'call-1',
+        namespace: null,
+        tool: 'echo_value',
+        arguments: { value: 'hello' },
+      },
+    })
+    return
+  }
+  if (message.method === undefined && message.id === pendingClientRequest) {
+    send({ jsonrpc: '2.0', id: pendingClientRequest, result: { clientResult: message.result } })
+    pendingClientRequest = undefined
+    return
+  }
   if (message.method === 'exit-now') {
     process.exit(1)
   }
@@ -146,6 +169,43 @@ describe('spawnCodexAppServer', () => {
     expect(fast).toEqual({ echoedMethod: 'ping', params: { a: 1 } })
   })
 
+  it('keeps a reverse request id separate from an outbound request id and responds on the reverse id', async () => {
+    const root = freshRoot()
+    const transport = spawnFake(join(root, 'codex', 'conn-reverse'))
+    const serverRequests = transport.serverRequests()[Symbol.asyncIterator]()
+
+    const outbound = transport.request('ask-client', {})
+    const reverse = await serverRequests.next()
+
+    expect(reverse).toEqual({
+      done: false,
+      value: {
+        id: 1,
+        method: 'item/tool/call',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+          callId: 'call-1',
+          namespace: null,
+          tool: 'echo_value',
+          arguments: { value: 'hello' },
+        },
+      },
+    })
+
+    await transport.respond(reverse.value.id, {
+      success: true,
+      contentItems: [{ type: 'inputText', text: 'hello' }],
+    })
+    await expect(outbound).resolves.toEqual({
+      clientResult: {
+        success: true,
+        contentItems: [{ type: 'inputText', text: 'hello' }],
+      },
+    })
+    await serverRequests.return?.()
+  })
+
   it('rejects an in-flight request with unreachable when the child exits', async () => {
     const root = freshRoot()
     const transport = spawnFake(join(root, 'codex', 'conn-2'))
@@ -231,6 +291,21 @@ describe('spawnCodexAppServer', () => {
     transport.close()
 
     await expect(pending).rejects.toMatchObject({ code: 'unreachable' })
+  })
+
+  it('returning a subscription settles an already-pending next call', async () => {
+    const transport = createFakeCodexTransport({ responses: {} })
+    const sub = transport.serverRequests()[Symbol.asyncIterator]()
+    const pending = sub.next()
+
+    await sub.return?.()
+
+    const result = await Promise.race([
+      pending,
+      new Promise<'stuck'>((resolve) => setTimeout(() => resolve('stuck'), 10)),
+    ])
+    expect(result).toEqual({ value: undefined, done: true })
+    expect(transport.idle()).toBe(true)
   })
 })
 

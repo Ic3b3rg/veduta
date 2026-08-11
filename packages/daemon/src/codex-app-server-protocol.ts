@@ -6,10 +6,11 @@ import { z } from 'zod'
  * `docs/adr/0014-subscription-inference-boundary.md` amendment). Every
  * shape here is **transcribed** from the pinned `@openai/codex` version
  * `0.146.1` (source commit `9d00bb0`), per the research in
- * `docs/references/11-model-connections-manual-smoke.md` and the "what to
- * build" section of `issues/047-model-connections.md`. It is not generated
- * from the binary — the binary is absent from CI, and generating schemas at
- * build time would break an offline install.
+ * `docs/references/11-model-connections-manual-smoke.md`, the dynamic-tool
+ * capture in `docs/references/13-codex-dynamic-tools-0.146.1.md`, and the
+ * "what to build" section of `issues/071-codex-dynamic-tool-round-trip.md`.
+ * They are checked in rather than generated at build time: the binary is
+ * absent from CI, and generation would break an offline install.
  *
  * `initialize`, `account/login/start`, `account/read`, `model/list`, and —
  * after a successful local device authorization — one complete
@@ -206,15 +207,12 @@ export const ModelListResponseSchema = z.object({
 })
 
 /**
- * `thread/start` response (issue #47,
- * docs/adr/0014-subscription-inference-boundary.md): confirms only the
- * fresh thread's id. CONFIRMED 2026-08-10 against the pinned 0.146.1
+ * `thread/start` response: confirms only the fresh thread's id. CONFIRMED
+ * 2026-08-10 against the pinned 0.146.1
  * binary: the id is nested under `thread.id`, not returned as a top-level
- * `threadId`. The response carries no field this
- * transcription can assert an empty tool set against, so the fail-closed
- * proof that a Codex turn cannot act lives in `model-connection-codex.ts`'s
- * `stream()` instead — a runtime check against every streamed item, not a
- * start-time assertion on this response.
+ * `threadId`. Dynamic definitions are outbound `thread/start` params and
+ * do not echo here; provider-native actions remain guarded at runtime by
+ * `model-connection-codex.ts` inspecting every streamed item.
  */
 export const ThreadStartResponseSchema = z.object({
   thread: z.object({ id: z.string().min(1) }),
@@ -226,6 +224,35 @@ export const TurnStartResponseSchema = z.object({
 })
 
 /**
+ * Params of the child-initiated `item/tool/call` request, observed in a
+ * complete 0.146.1 dynamic-tool turn. The JSON-RPC request id that must be
+ * answered is transport metadata and deliberately does not appear here;
+ * `callId` is the distinct semantic identity persisted by AgentRunner.
+ */
+export const DynamicToolCallParamsSchema = z.object({
+  threadId: z.string().min(1),
+  turnId: z.string().min(1),
+  callId: z.string().min(1),
+  namespace: z.string().nullable().optional(),
+  tool: z.string().min(1),
+  arguments: z.unknown().refine((value) => value !== undefined, {
+    message: 'Required',
+  }),
+})
+
+export const DynamicToolCallOutputContentItemSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('inputText'), text: z.string() }),
+  z.object({ type: z.literal('inputImage'), imageUrl: z.string() }),
+  z.object({ type: z.literal('inputAudio'), audioUrl: z.string() }),
+])
+
+/** Result sent on the reverse JSON-RPC request id so the same Codex turn can continue. */
+export const DynamicToolCallResponseSchema = z.object({
+  success: z.boolean(),
+  contentItems: z.array(DynamicToolCallOutputContentItemSchema),
+})
+
+/**
  * One streamed item, as carried by an `item/started` or `item/completed`
  * notification during a turn (issue #47). CONFIRMED 2026-08-10 against a
  * live 0.146.1 turn; incremental assistant text arrives separately in an
@@ -233,10 +260,11 @@ export const TurnStartResponseSchema = z.object({
  * `type` is the discriminator `model-connection-codex.ts`'s `stream()`
  * switches on: `'agentMessage'` is forwarded as text, `'userMessage'` is
  * the inert echo of Veduta's own input, `'reasoning'` is silently dropped,
- * and ANY other value — a real one this transcription
+ * and `'dynamicToolCall'` is correlated through the separate reverse
+ * `item/tool/call` request. ANY other value — a real one this transcription
  * does not yet name (command execution, patch application, web search, an
  * MCP tool call) or a genuinely unrecognized one — is the runtime-observable
- * proof the turn attempted to act outside plain assistant text, and refuses
+ * proof the turn attempted a provider-native action, and refuses
  * the turn. `.passthrough()` on the item body (rather than `.strict()`) is
  * deliberate: an item type this transcription has not seen a real payload
  * for must still parse — only its `type` matters to the refusal decision,
@@ -249,9 +277,9 @@ export const CodexItemSchema = z
     // also correlates a completed assistant item with its delta envelopes.
     id: z.string().min(1),
     // Observed item type discriminator per 0.146.1 — the values this build
-    // recognizes are `'userMessage'`, `'agentMessage'`, and `'reasoning'`;
-    // every other value (including one this transcription has never
-    // observed) is treated as a tool-shaped item and refuses the turn.
+    // recognizes are `'userMessage'`, `'agentMessage'`, `'reasoning'`, and
+    // `'dynamicToolCall'`; every other value (including one this
+    // transcription has never observed) refuses the turn.
     type: z.string().min(1),
     // Observed field name per 0.146.1 — an `'agentMessage'` item's current
     // or finalized text (`item/started`/`item/completed`).
@@ -259,10 +287,11 @@ export const CodexItemSchema = z
   })
   .passthrough()
 
-/** Recognized non-acting item type values observed against the pinned binary. */
+/** Recognized item type values observed against the pinned binary. */
 export const CODEX_TEXT_ITEM_TYPE = 'agentMessage'
 export const CODEX_USER_ITEM_TYPE = 'userMessage'
 export const CODEX_REASONING_ITEM_TYPE = 'reasoning'
+export const CODEX_DYNAMIC_TOOL_ITEM_TYPE = 'dynamicToolCall'
 
 /** `item/started` or `item/completed` notification, CONFIRMED 2026-08-10: both correlation ids and `item` stay required while timestamp/additive fields are tolerated. */
 export const ItemNotificationSchema = z.object({
@@ -295,6 +324,8 @@ export type CodexModelEntry = z.infer<typeof CodexModelEntrySchema>
 export type ModelListResponse = z.infer<typeof ModelListResponseSchema>
 export type ThreadStartResponse = z.infer<typeof ThreadStartResponseSchema>
 export type TurnStartResponse = z.infer<typeof TurnStartResponseSchema>
+export type DynamicToolCallParams = z.infer<typeof DynamicToolCallParamsSchema>
+export type DynamicToolCallResponse = z.infer<typeof DynamicToolCallResponseSchema>
 export type CodexItem = z.infer<typeof CodexItemSchema>
 export type ItemNotification = z.infer<typeof ItemNotificationSchema>
 export type AgentMessageDeltaNotification = z.infer<typeof AgentMessageDeltaNotificationSchema>

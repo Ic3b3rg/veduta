@@ -11,7 +11,7 @@ navigate into a Space before Veduta can act.
 That makes the global chat conversational rather than global. It also contradicts the day-one
 architecture flow in which a Home request can identify an existing Space, ask when the target is
 ambiguous, propose a new Space when none fits, and then create its Surfaces. **Connection parity**
-([`CONTEXT.md`](../CONTEXT.md), ADR-0016) removes provider-dependent tool cliffs in issue 051; this issue removes the
+([`CONTEXT.md`](../CONTEXT.md), ADR-0016) removes provider-dependent tool cliffs in issue 070; this issue removes the
 remaining location-dependent cliff without introducing a persistent agent per Space.
 
 ## Goal
@@ -87,7 +87,7 @@ current PWA route unchanged while linking to the results.
       off-screen results produce accessible Space/Surface links. Focused-Space chat continues to
       behave as before.
 - [ ] The same scenarios pass with every primary Model connection contract, including the Codex
-      subscription path from issue 051, followed by `pnpm lint`, `pnpm format:check`,
+      subscription path from issue 070, followed by `pnpm lint`, `pnpm format:check`,
       `pnpm typecheck`, `pnpm test`, and `pnpm build`.
 
 ## Out of scope
@@ -100,12 +100,12 @@ current PWA route unchanged while linking to the results.
   creating a shared mutable Event log.
 - Automatically navigating the PWA after an Agent mutation or redesigning Home, chat, or Model
   connection settings.
-- Provider-specific global-chat behavior; issue 051 must make the selected connection capability-
+- Provider-specific global-chat behavior; issue 070 must make the selected connection capability-
   invariant first.
 
 ## Blocked by
 
-[051 — ChatGPT subscription tool parity](051-codex-tool-parity.md). Also builds on completed issues
+[070 — ChatGPT subscription tool parity](070-codex-tool-parity.md). Also builds on completed issues
 [006](006-spaces-engine-memory.md), [009](009-pwa-home-chat.md),
 [014](014-trust-layer.md), [017](017-worker-review.md), and [037](037-agent-loop-chat.md), and on
 [ADR-0002](../docs/adr/0002-single-agent-spaces.md).

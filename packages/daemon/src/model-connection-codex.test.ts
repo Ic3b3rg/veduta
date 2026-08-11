@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   createFakeCodexTransport,
   fakeCodexConnectedAccountReadResponse,
+  fakeCodexDynamicToolRoundTrip,
   fakeCodexInitializeResponse,
   fakeCodexLoginStartResponse,
   fakeCodexModelEntry,
@@ -22,7 +23,7 @@ import {
   initializeCodexTransport,
 } from './model-connection-codex.ts'
 import type { SecretResolver } from './model-routing.ts'
-import type { SubscriptionStreamRequest } from './pi-provider-bridge.ts'
+import type { SubscriptionStreamEvent, SubscriptionStreamRequest } from './pi-provider-bridge.ts'
 
 const CONNECTION_ID = 'c0ffee00-0000-4000-8000-000000000000'
 const ROOT_DIR = '/tmp/veduta-codex-adapter-test'
@@ -140,7 +141,10 @@ describe('initializeCodexTransport', () => {
 
     expect(transport.requests[0]).toEqual({
       method: 'initialize',
-      params: { clientInfo: { name: 'veduta', version: expect.any(String) } },
+      params: {
+        clientInfo: { name: 'veduta', version: expect.any(String) },
+        capabilities: { experimentalApi: true },
+      },
     })
   })
 
@@ -338,25 +342,145 @@ describe('verify', () => {
 function subscriptionRequest(signal?: AbortSignal): SubscriptionStreamRequest {
   return {
     modelId: 'gpt-5-codex',
-    prompt: { systemPrompt: 'You are Veduta.', messages: [{ role: 'user', text: 'hi' }] },
+    prompt: {
+      systemPrompt: 'You are Veduta.',
+      messages: [{ role: 'user', text: 'hi' }],
+      tools: [],
+    },
     ...(signal ? { signal } : {}),
   }
 }
 
 /** Drains a `stream()` generator, collecting every yielded delta; returns the thrown error (if any) instead of letting it escape, so a refusal test can assert both the collected deltas and the error in one place. */
 async function drain(
-  generator: AsyncIterable<string>,
+  generator: AsyncIterable<SubscriptionStreamEvent>,
 ): Promise<{ deltas: string[]; error: unknown }> {
   const deltas: string[] = []
   try {
-    for await (const delta of generator) deltas.push(delta)
+    for await (const event of generator) {
+      if (event.type === 'text-delta') deltas.push(event.text)
+    }
     return { deltas, error: undefined }
   } catch (error) {
     return { deltas, error }
   }
 }
 
+async function drainEvents(generator: AsyncIterable<unknown>): Promise<unknown[]> {
+  const events: unknown[] = []
+  for await (const event of generator) events.push(event)
+  return events
+}
+
 describe('stream', () => {
+  it('round-trips one dynamic tool result through the same Codex turn', async () => {
+    const fixture = fakeCodexDynamicToolRoundTrip()
+    const transport = createFakeCodexTransport({
+      responses: {
+        'thread/start': fakeCodexThreadStartResponse(),
+        'turn/start': fakeCodexTurnStartResponse(),
+      },
+      notifications: [fixture.startNotification],
+      serverRequests: [fixture.serverRequest],
+      notificationsAfterServerResponse: fixture.continuationNotifications,
+    })
+    const ctx = contextWith(transport)
+    const firstRequest: SubscriptionStreamRequest = {
+      modelId: 'gpt-5-codex',
+      prompt: {
+        systemPrompt: 'You are Veduta.',
+        messages: [{ role: 'user', text: 'echo hello' }],
+        tools: [
+          {
+            name: 'echo_value',
+            description: 'Echo a value.',
+            inputSchema: {
+              type: 'object',
+              properties: { value: { type: 'string' } },
+              required: ['value'],
+              additionalProperties: false,
+            },
+          },
+        ],
+      },
+    }
+
+    const firstEvents = await drainEvents(codexSubscriptionAdapter.stream!(ctx, firstRequest))
+
+    expect(firstEvents).toEqual([
+      {
+        type: 'tool-call',
+        toolCallId: 'call-1',
+        toolName: 'echo_value',
+        input: { value: 'hello' },
+      },
+    ])
+    expect(transport.serverResponses).toEqual([])
+    expect(transport.requests[0]).toMatchObject({
+      method: 'thread/start',
+      params: {
+        dynamicTools: [
+          {
+            type: 'function',
+            name: 'echo_value',
+            description: 'Echo a value.',
+            inputSchema: {
+              type: 'object',
+              properties: { value: { type: 'string' } },
+              required: ['value'],
+              additionalProperties: false,
+            },
+          },
+        ],
+      },
+    })
+
+    const secondEvents = await drainEvents(
+      codexSubscriptionAdapter.stream!(ctx, {
+        ...firstRequest,
+        prompt: {
+          ...firstRequest.prompt,
+          messages: [
+            ...firstRequest.prompt.messages,
+            {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'tool-call',
+                  toolCallId: 'call-1',
+                  toolName: 'echo_value',
+                  input: { value: 'hello' },
+                },
+              ],
+            },
+            {
+              role: 'tool',
+              toolCallId: 'call-1',
+              toolName: 'echo_value',
+              text: 'hello',
+              isError: false,
+            },
+          ],
+        },
+      }),
+    )
+
+    expect(secondEvents).toEqual([{ type: 'text-delta', text: 'tool result: hello' }])
+    expect(transport.serverResponses).toEqual([
+      {
+        id: 0,
+        result: {
+          success: true,
+          contentItems: [{ type: 'inputText', text: 'hello' }],
+        },
+      },
+    ])
+    expect(transport.requests.map((request) => request.method)).toEqual([
+      'thread/start',
+      'turn/start',
+    ])
+  })
+
   it('streams observed agent-message deltas without repeating the completed text', async () => {
     const transport = createFakeCodexTransport({
       responses: {
@@ -605,6 +729,7 @@ describe('stream', () => {
         approvalPolicy: 'never',
         sandbox: 'read-only',
         config: { web_search: 'disabled', disabled_tools: true },
+        dynamicTools: [],
         cwd: join(ROOT_DIR, 'codex', CONNECTION_ID),
       },
     })

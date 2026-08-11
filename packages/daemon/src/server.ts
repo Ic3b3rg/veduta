@@ -1159,9 +1159,9 @@ export function buildServer(options: ServerOptions = {}) {
     isTrustWrapped,
     toolsFor: chatToolRegistry,
     send: (clientId, frame) => gateway.sendToClient(clientId, frame),
-    // Issue #47: a ChatGPT/Codex connection answers in text only —
-    // Veduta's own tools are filtered out of a turn routed to it, before
-    // `PiAgentRunner.prompt` ever offers them to pi.
+    // Issue #71 deliberately keeps the existing primary-routing capability
+    // gate while the structured Codex round trip is proven underneath it.
+    // The fail-closed hardening slice removes this temporary filter.
     toolsEnabledForModel: (model) =>
       !(model.connectionId !== undefined && registry.isTextOnly(model.connectionId)),
   })

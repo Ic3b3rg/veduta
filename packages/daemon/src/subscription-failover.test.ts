@@ -75,7 +75,7 @@ describe('subscription-turn failover (issue #47)', () => {
         transport: 'subscription',
         stream: async function* () {
           candidate2Calls.push('called')
-          yield 'this must never run'
+          yield { type: 'text-delta' as const, text: 'this must never run' }
         },
       },
     ]
@@ -131,7 +131,7 @@ describe('subscription-turn failover (issue #47)', () => {
         provider: 'openai',
         transport: 'subscription',
         stream: async function* () {
-          yield 'answered by the fallback'
+          yield { type: 'text-delta' as const, text: 'answered by the fallback' }
         },
       },
     ]

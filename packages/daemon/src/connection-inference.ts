@@ -1,7 +1,11 @@
 import type { ConnectionLifecycleState } from '@veduta/protocol'
 import { ModelConnectionError } from './model-connection-adapter.ts'
 import { NonRetryableModelError } from './model-routing.ts'
-import type { ModelConnectionRuntime, SubscriptionStreamRequest } from './pi-provider-bridge.ts'
+import type {
+  ModelConnectionRuntime,
+  SubscriptionStreamEvent,
+  SubscriptionStreamRequest,
+} from './pi-provider-bridge.ts'
 
 /**
  * The one seam between `ModelConnectionRegistry` and the provider bridge's
@@ -23,7 +27,7 @@ import type { ModelConnectionRuntime, SubscriptionStreamRequest } from './pi-pro
  *   reacting to a failure mid-call;
  * - on an `unauthorized`/`expired` failure mid-turn, marking the connection
  *   `revoked`/`expired` (`registry.noteCallFailure`) and rethrowing as
- *   `NonRetryableModelError`, so `ModelRouter` never fails a text-only
+ *   `NonRetryableModelError`, so `ModelRouter` never fails a
  *   subscription turn over onto a metered fallback (the ADR amendment's
  *   "no implicit subscription → metered BYOK" rule).
  *
@@ -66,9 +70,9 @@ export function createConnectionRuntimes(
 async function* streamWithRecovery(
   registry: RuntimeSourceRegistry,
   connectionId: string,
-  rawStream: (request: SubscriptionStreamRequest) => AsyncIterable<string>,
+  rawStream: (request: SubscriptionStreamRequest) => AsyncIterable<SubscriptionStreamEvent>,
   request: SubscriptionStreamRequest,
-): AsyncGenerator<string, void, void> {
+): AsyncGenerator<SubscriptionStreamEvent, void, void> {
   const state = await registry.ensureFresh(connectionId)
   // `ensureFresh` just ran a real refresh (it returns `undefined` for its
   // own no-op skips — a static-refresh method, or one still inside the

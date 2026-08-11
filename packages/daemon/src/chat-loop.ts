@@ -43,7 +43,7 @@ export interface ChatLoopOptions {
   send: (clientId: string, frame: GatewayServerMessage) => void
   /**
    * Forwarded verbatim into every `PiAgentRunner` this loop constructs
-   * (issue #47: a ChatGPT/Codex connection answers in text only).
+   * (issue #71 retains the existing primary-routing capability gate).
    * `server.ts` supplies `(model) => !(model.connectionId && registry.isTextOnly(model.connectionId))`.
    * Omitted keeps every pre-issue-47 caller and test offering tools exactly
    * as before.

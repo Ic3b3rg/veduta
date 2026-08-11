@@ -1,4 +1,3 @@
-import { ModelConnectionError } from './model-connection-adapter.ts'
 import type {
   PiChatContext,
   PiImageContent,
@@ -8,14 +7,10 @@ import type {
 } from './pi-provider-bridge.ts'
 
 /**
- * The exact `PiChatContext` → text mapping a subscription-transport
- * connection's turn is built from (issue #47,
- * docs/adr/0014-subscription-inference-boundary.md). A subscription
- * connection (Codex today) never receives pi's structured `Context` — it
- * only ever sees rendered text
- * (`renderSubscriptionPrompt`'s single `turn/start` input) — so this module
- * is the ONE place that decides what of a turn's history survives the trip
- * and how. Import boundary: every pi-ai-shaped type here comes from
+ * The provider-neutral `PiChatContext` mapping a subscription transport
+ * receives. It keeps tool definitions, assistant tool calls, and tool
+ * results structured while leaving provider protocol types inside the
+ * adapter. Import boundary: every pi-ai-shaped type here comes from
  * `pi-provider-bridge.ts`'s re-exports, never `@earendil-works/pi-ai`
  * directly (`import-boundary.test.ts`).
  *
@@ -26,39 +21,58 @@ import type {
  *   the literal line `[image omitted: <mimeType>]` — a Codex turn takes
  *   text input only, so an image is declared as dropped, never silently
  *   discarded.
- * - An `AssistantMessage`'s `TextContent`s join with `'\n'`; every
+ * - An `AssistantMessage` keeps ordered text and tool-call blocks; every
  *   `ThinkingContent` is DROPPED (another provider's reasoning is never
- *   replayed as this turn's history); each `ToolCall` renders as
- *   `[tool call: <name>]` — history context only, never an instruction.
+ *   replayed as this turn's history).
  * - A `ToolResultMessage` maps to `{ role: 'tool', toolName, text, isError }`,
  *   `text` being its `TextContent`s joined with `'\n'` (an `ImageContent`
  *   result renders the same `[image omitted: <mimeType>]` line).
- * - `context.tools` is NEVER serialized. A non-empty `tools` array throws —
- *   fail closed, defence in depth behind the runner-level tool filter
- *   (`pi-agent-runner.ts`'s `toolsEnabledForModel`).
+ * - Each allowed pi tool becomes a provider-neutral definition carrying its
+ *   JSON input schema. The Codex adapter alone translates it to
+ *   `dynamicTools`.
  */
 
 export interface SubscriptionPrompt {
   systemPrompt: string
   messages: SubscriptionPromptMessage[]
+  tools: SubscriptionToolDef[]
 }
+
+export interface SubscriptionToolDef {
+  name: string
+  description: string
+  inputSchema: unknown
+}
+
+export type SubscriptionAssistantContent =
+  | { type: 'text'; text: string }
+  | {
+      type: 'tool-call'
+      toolCallId: string
+      toolName: string
+      input: Record<string, unknown>
+    }
 
 export type SubscriptionPromptMessage =
   | { role: 'user'; text: string }
-  | { role: 'assistant'; text: string }
-  | { role: 'tool'; toolName: string; text: string; isError: boolean }
-
-/** Thrown when `context.tools` is non-empty — the exact message a `ModelConnectionError('unsupported', …)` carries. */
-const TOOLS_NOT_SUPPORTED_MESSAGE =
-  'this Model connection answers in text only; refusing a turn that was given Veduta tools'
+  | { role: 'assistant'; content: SubscriptionAssistantContent[] }
+  | {
+      role: 'tool'
+      toolCallId: string
+      toolName: string
+      text: string
+      isError: boolean
+    }
 
 export function toSubscriptionPrompt(context: PiChatContext): SubscriptionPrompt {
-  if (context.tools && context.tools.length > 0) {
-    throw new ModelConnectionError('unsupported', TOOLS_NOT_SUPPORTED_MESSAGE)
-  }
   return {
     systemPrompt: context.systemPrompt ?? '',
     messages: context.messages.map(toSubscriptionPromptMessage),
+    tools: (context.tools ?? []).map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.parameters,
+    })),
   }
 }
 
@@ -69,10 +83,11 @@ function toSubscriptionPromptMessage(
     return { role: 'user', text: userOrToolContentText(message.content) }
   }
   if (message.role === 'assistant') {
-    return { role: 'assistant', text: assistantContentText(message.content) }
+    return { role: 'assistant', content: assistantContent(message.content) }
   }
   return {
     role: 'tool',
+    toolCallId: message.toolCallId,
     toolName: message.toolName,
     text: userOrToolContentText(message.content),
     isError: message.isError,
@@ -87,14 +102,24 @@ function userOrToolContentText(content: string | (PiTextContent | PiImageContent
     .join('\n')
 }
 
-function assistantContentText(content: (PiTextContent | PiThinkingContent | PiToolCall)[]): string {
-  return content
-    .flatMap((block) => {
-      if (block.type === 'text') return [block.text]
-      if (block.type === 'thinking') return [] // dropped, never replayed
-      return [`[tool call: ${block.name}]`]
+function assistantContent(
+  content: (PiTextContent | PiThinkingContent | PiToolCall)[],
+): SubscriptionAssistantContent[] {
+  const result: SubscriptionAssistantContent[] = []
+  for (const block of content) {
+    if (block.type === 'text') {
+      result.push({ type: 'text', text: block.text })
+      continue
+    }
+    if (block.type === 'thinking') continue // dropped, never replayed
+    result.push({
+      type: 'tool-call',
+      toolCallId: block.id,
+      toolName: block.name,
+      input: block.arguments,
     })
-    .join('\n')
+  }
+  return result
 }
 
 /**
@@ -111,7 +136,17 @@ export function renderSubscriptionPrompt(prompt: SubscriptionPrompt): string {
 
 function renderSubscriptionPromptMessage(message: SubscriptionPromptMessage): string {
   if (message.role === 'user') return `User:\n${message.text}`
-  if (message.role === 'assistant') return `Assistant:\n${message.text}`
-  const label = message.isError ? `Tool ${message.toolName} (error)` : `Tool ${message.toolName}`
+  if (message.role === 'assistant') {
+    const text = message.content
+      .map((block) =>
+        block.type === 'text'
+          ? block.text
+          : `[tool call ${block.toolCallId}: ${block.toolName} ${JSON.stringify(block.input)}]`,
+      )
+      .join('\n')
+    return `Assistant:\n${text}`
+  }
+  const tool = `Tool ${message.toolName} [${message.toolCallId}]`
+  const label = message.isError ? `${tool} (error)` : tool
   return `${label}:\n${message.text}`
 }

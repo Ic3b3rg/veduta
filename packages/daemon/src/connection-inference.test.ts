@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createConnectionRuntimes, type RuntimeSourceRegistry } from './connection-inference.ts'
 import { ModelConnectionError } from './model-connection-adapter.ts'
 import { NonRetryableModelError } from './model-routing.ts'
-import type { ModelConnectionRuntime } from './pi-provider-bridge.ts'
+import type { ModelConnectionRuntime, SubscriptionStreamEvent } from './pi-provider-bridge.ts'
 
 /**
  * `createConnectionRuntimes` depends on `RuntimeSourceRegistry` structurally
@@ -32,14 +32,14 @@ function fakeRegistry(
 }
 
 async function collect(
-  stream: AsyncIterable<string>,
-): Promise<{ deltas: string[]; error: unknown }> {
-  const deltas: string[] = []
+  stream: AsyncIterable<SubscriptionStreamEvent>,
+): Promise<{ events: SubscriptionStreamEvent[]; error: unknown }> {
+  const events: SubscriptionStreamEvent[] = []
   try {
-    for await (const delta of stream) deltas.push(delta)
-    return { deltas, error: undefined }
+    for await (const event of stream) events.push(event)
+    return { events, error: undefined }
   } catch (error) {
-    return { deltas, error }
+    return { events, error }
   }
 }
 
@@ -65,18 +65,21 @@ describe('createConnectionRuntimes', () => {
       transport: 'subscription',
       stream: async function* () {
         calls.push('stream')
-        yield 'hello'
+        yield { type: 'text-delta' as const, text: 'hello' }
       },
     }
     const { registry, ensureFreshCalls } = fakeRegistry([runtime])
 
     const [wrapped] = createConnectionRuntimes(registry)()
-    const { deltas, error } = await collect(
-      wrapped!.stream!({ modelId: 'gpt-5-codex', prompt: { systemPrompt: '', messages: [] } }),
+    const { events, error } = await collect(
+      wrapped!.stream!({
+        modelId: 'gpt-5-codex',
+        prompt: { systemPrompt: '', messages: [], tools: [] },
+      }),
     )
 
     expect(error).toBeUndefined()
-    expect(deltas).toEqual(['hello'])
+    expect(events).toEqual([{ type: 'text-delta', text: 'hello' }])
     expect(ensureFreshCalls).toEqual(['codex-conn'])
     expect(calls).toEqual(['stream'])
   })
@@ -89,7 +92,7 @@ describe('createConnectionRuntimes', () => {
       transport: 'subscription',
       stream: async function* () {
         calls.push('stream')
-        yield 'should never run'
+        yield { type: 'text-delta' as const, text: 'should never run' }
       },
     }
     const { registry, noteCallFailureCalls } = fakeRegistry([runtime], {
@@ -97,11 +100,14 @@ describe('createConnectionRuntimes', () => {
     })
 
     const [wrapped] = createConnectionRuntimes(registry)()
-    const { deltas, error } = await collect(
-      wrapped!.stream!({ modelId: 'gpt-5-codex', prompt: { systemPrompt: '', messages: [] } }),
+    const { events, error } = await collect(
+      wrapped!.stream!({
+        modelId: 'gpt-5-codex',
+        prompt: { systemPrompt: '', messages: [], tools: [] },
+      }),
     )
 
-    expect(deltas).toEqual([])
+    expect(events).toEqual([])
     expect(error).toBeInstanceOf(NonRetryableModelError)
     expect((error as Error).message).toContain('expired')
     expect(calls).toEqual([])
@@ -122,11 +128,14 @@ describe('createConnectionRuntimes', () => {
     const { registry, noteCallFailureCalls } = fakeRegistry([runtime])
 
     const [wrapped] = createConnectionRuntimes(registry)()
-    const { deltas, error } = await collect(
-      wrapped!.stream!({ modelId: 'gpt-5-codex', prompt: { systemPrompt: '', messages: [] } }),
+    const { events, error } = await collect(
+      wrapped!.stream!({
+        modelId: 'gpt-5-codex',
+        prompt: { systemPrompt: '', messages: [], tools: [] },
+      }),
     )
 
-    expect(deltas).toEqual([])
+    expect(events).toEqual([])
     expect(error).toBeInstanceOf(NonRetryableModelError)
     expect((error as Error).message).toBe('the provider rejected this credential')
     expect(noteCallFailureCalls).toEqual(['codex-conn'])
@@ -145,7 +154,10 @@ describe('createConnectionRuntimes', () => {
 
     const [wrapped] = createConnectionRuntimes(registry)()
     const { error } = await collect(
-      wrapped!.stream!({ modelId: 'gpt-5-codex', prompt: { systemPrompt: '', messages: [] } }),
+      wrapped!.stream!({
+        modelId: 'gpt-5-codex',
+        prompt: { systemPrompt: '', messages: [], tools: [] },
+      }),
     )
 
     expect(error).toBeInstanceOf(NonRetryableModelError)
@@ -165,7 +177,10 @@ describe('createConnectionRuntimes', () => {
 
     const [wrapped] = createConnectionRuntimes(registry)()
     const { error } = await collect(
-      wrapped!.stream!({ modelId: 'gpt-5-codex', prompt: { systemPrompt: '', messages: [] } }),
+      wrapped!.stream!({
+        modelId: 'gpt-5-codex',
+        prompt: { systemPrompt: '', messages: [], tools: [] },
+      }),
     )
 
     expect(error).toMatchObject({ code: 'unsupported' })

@@ -6,14 +6,19 @@ import {
   ensureCodexHome,
   resolveCodexBinary,
   spawnCodexAppServer,
+  type CodexRequestId,
+  type CodexServerRequest,
   type CodexTransport,
 } from './codex-app-server.ts'
 import {
   AccountReadResponseSchema,
   AgentMessageDeltaNotificationSchema,
+  CODEX_DYNAMIC_TOOL_ITEM_TYPE,
   CODEX_REASONING_ITEM_TYPE,
   CODEX_TEXT_ITEM_TYPE,
   CODEX_USER_ITEM_TYPE,
+  DynamicToolCallParamsSchema,
+  DynamicToolCallResponseSchema,
   InitializeResponseSchema,
   ItemNotificationSchema,
   LoginStartResponseSchema,
@@ -36,7 +41,7 @@ import {
   type RefreshResult,
 } from './model-connection-adapter.ts'
 import { sanitizeErrorText } from './model-routing.ts'
-import type { SubscriptionStreamRequest } from './pi-provider-bridge.ts'
+import type { SubscriptionStreamEvent, SubscriptionStreamRequest } from './pi-provider-bridge.ts'
 import { renderSubscriptionPrompt } from './subscription-prompt.ts'
 import { resolveInstalledVersion } from './version.ts'
 
@@ -58,25 +63,29 @@ import { resolveInstalledVersion } from './version.ts'
  * respawned or reconnected process is version-pinned before any verb ever
  * reaches it, not only the one that happened to run `authorize()` first.
  *
- * `stream` (issue #47's inference seam,
- * docs/adr/0014-subscription-inference-boundary.md) is a fresh
- * `thread/start` + `turn/start` per call — never reused, never resumed —
- * and acquires exactly ONE `transport.notifications()` subscription for the
- * whole turn, before `turn/start` (issue #47): a concurrent
+ * `stream` (issue #71, grounded in
+ * `docs/references/13-codex-dynamic-tools-0.146.1.md`) starts a fresh
+ * `thread/start` + `turn/start` for a new model call. When Codex suspends
+ * that turn on `item/tool/call`, the next Pi model call carries the
+ * structured tool result: this adapter answers the original reverse
+ * JSON-RPC request id and resumes the SAME Codex thread and turn. It
+ * acquires one notification subscription and one child-request subscription
+ * before `turn/start` and keeps both for that provider turn. A concurrent
  * device-code poll on the same pooled transport reads through
  * `recentNotifications()` instead (see `loginCompleted` below) and can
  * never steal a frame this subscription still needs. Every item/turn frame
  * is checked against this call's own `threadId` (and `turnId` when the
  * frame carries one) before being acted on, so a frame from another turn
  * sharing the same pooled transport is ignored rather than misread as this
- * one's. `thread/start` carries the 0.146.1-valid restriction options this
- * transcription could confirm (`approvalPolicy: 'never'`, a read-only
- * sandbox, and disabled web search); the actual
+ * one's. `thread/start` carries the restrictions the 0.146.1 capture
+ * confirmed (`approvalPolicy: 'never'`, a read-only sandbox, disabled web
+ * search, and disabled provider-native tools); the actual
  * fail-closed guarantee is a RUNTIME proof per streamed item, not a
  * start-time assertion (the pinned response carries no tool-set field to
- * assert against): any item that is not plain assistant text, reasoning,
- * or the inert echo of Veduta's own user input triggers `turn/interrupt`,
- * abandons the thread, and refuses. A turn that
+ * assert against): assistant text, reasoning, the inert echo of Veduta's
+ * own user input, and the captured dynamic-tool item are recognized. Any
+ * other item triggers `turn/interrupt`, abandons the thread, and refuses.
+ * A turn that
  * runs longer than `CODEX_TURN_TIMEOUT_MS` is abandoned the same way.
  */
 
@@ -142,7 +151,10 @@ async function getTransport(ctx: AdapterContext): Promise<CodexTransport> {
 
 /** Sends `initialize` and returns the version extracted from its `userAgent` (plus the raw `userAgent` itself, for a mismatch reason to fall back on) — shared by `initializeCodexTransport` (throws on mismatch) and `availability()` (reports it instead). */
 async function requestInitializeVersion(transport: CodexTransport): Promise<CodexInitializeProbe> {
-  const raw = await transport.request('initialize', { clientInfo: clientInfo() })
+  const raw = await transport.request('initialize', {
+    clientInfo: clientInfo(),
+    capabilities: { experimentalApi: true },
+  })
   const { userAgent } = parseCodexResponse(InitializeResponseSchema, 'initialize', raw)
   return { version: codexVersionFromUserAgent(userAgent), userAgent }
 }
@@ -331,122 +343,127 @@ export const CODEX_TURN_TIMEOUT_MS = 600_000
 
 const TURN_TIMEOUT_MESSAGE = `the Codex turn exceeded its ${CODEX_TURN_TIMEOUT_MS / 60_000}-minute bound and was abandoned`
 
-/**
- * Real chat inference through a tool-less turn (issue #47): a fresh
- * `thread/start` + `turn/start` per call, NEVER a `thread/resume` — every
- * call abandons its own thread on completion, interruption, refusal, or a
- * `CODEX_TURN_TIMEOUT_MS` timeout. The fail-closed guarantee is the
- * per-item check inside the notification loop below, not anything asserted
- * on `thread/start`'s response — the pinned 0.146.1 response carries no
- * tool-set field to assert against. Exactly ONE `transport.notifications()`
- * subscription is acquired for the whole turn, before `turn/start` (issue
- * #47) — never re-subscribed mid-loop, so a device-code poll sharing
- * this connection's pooled transport (`loginCompleted`, reading through
- * `recentNotifications()` instead) can never steal a frame this
- * subscription still needs, and every frame this turn does not itself own
- * (a stale frame from an earlier turn on the same pooled transport) is
- * filtered by `threadId`/`turnId` rather than acted on.
- */
-async function* stream(
+type CodexNotificationFrame = { method: string; params: unknown }
+
+interface ActiveCodexTurn {
+  transport: CodexTransport
+  threadId: string
+  turnId: string
+  notifications: AsyncIterator<CodexNotificationFrame>
+  serverRequests: AsyncIterator<CodexServerRequest>
+  nextNotification: Promise<IteratorResult<CodexNotificationFrame>> | undefined
+  nextServerRequest: Promise<IteratorResult<CodexServerRequest>> | undefined
+  streamedItemIds: Set<string>
+  deadline: number
+}
+
+interface PendingDynamicToolTurn {
+  requestId: CodexRequestId
+  turn: ActiveCodexTurn
+}
+
+type SubscriptionToolResult = Extract<
+  SubscriptionStreamRequest['prompt']['messages'][number],
+  { role: 'tool' }
+>
+
+const pendingDynamicToolTurns = new WeakMap<CodexTransport, Map<string, PendingDynamicToolTurn>>()
+
+function pendingTurnsFor(transport: CodexTransport): Map<string, PendingDynamicToolTurn> {
+  const existing = pendingDynamicToolTurns.get(transport)
+  if (existing) return existing
+  const created = new Map<string, PendingDynamicToolTurn>()
+  pendingDynamicToolTurns.set(transport, created)
+  return created
+}
+
+function latestToolResult(request: SubscriptionStreamRequest): SubscriptionToolResult | undefined {
+  const last = request.prompt.messages.at(-1)
+  return last?.role === 'tool' ? last : undefined
+}
+
+async function releaseTurn(turn: ActiveCodexTurn): Promise<void> {
+  await turn.notifications.return?.()
+  await turn.serverRequests.return?.()
+}
+
+async function abandonTurn(turn: ActiveCodexTurn): Promise<void> {
+  try {
+    await turn.transport.request('turn/interrupt', {
+      threadId: turn.threadId,
+      turnId: turn.turnId,
+    })
+  } catch {
+    // Best-effort: the live turn is abandoned even if the child has already
+    // exited or rejected the interrupt.
+  }
+}
+
+async function startTurn(
+  transport: CodexTransport,
   ctx: AdapterContext,
   request: SubscriptionStreamRequest,
-): AsyncGenerator<string, void, void> {
-  const transport = await getTransport(ctx)
-
+): Promise<ActiveCodexTurn> {
   const threadStartRaw = await transport.request('thread/start', {
     model: request.modelId,
-    // The 0.146.1-valid restriction options this transcription could
-    // confirm: never let the app-server auto-approve anything, and keep its
-    // own filesystem sandbox read-only. Neither field's value nor `config`
-    // below is itself the fail-closed guarantee — the
-    // per-item check in the loop below is; every field here is best-effort
-    // defense in depth and the turn must still work if the app-server
-    // ignores any of them.
     approvalPolicy: 'never',
-    // transcription note: field name/value per 0.146.1 — `ThreadStartParams`'
-    // own read-only sandbox enum (`read-only`/`workspace-write`/
-    // `danger-full-access`). Corrected from an earlier `sandboxPolicy: 'readOnly'`
-    // guess: `codex app-server generate-json-schema --experimental` against
-    // a locally installed 0.146.0 binary confirms `ThreadStartParams` names
-    // this field `sandbox`, not `sandboxPolicy` — `sandboxPolicy` is
-    // `TurnStartParams`' own, differently-shaped field. `permissions` (a
-    // named profile id) is deliberately NOT sent alongside `sandbox`: the
-    // same schema documents the two as mutually exclusive on this call.
     sandbox: 'read-only',
-    // transcription note: field name/value per 0.146.1 — `Config.web_search`
-    // (enum `disabled`/`cached`/`indexed`/`live`), confirmed the same way as
-    // `sandbox` above; turns off the app-server's native web-search tool.
-    // `disabled_tools` targets the app-server's remaining default tool set;
-    // this build could not independently confirm its exact value shape, so
-    // it is sent best-effort only — `Config`'s own schema declares
-    // `additionalProperties: true`, so an unrecognized override key is
-    // inert rather than a `thread/start` failure.
     config: { web_search: 'disabled', disabled_tools: true },
-    // Do not send `dynamicTools`, even as `[]`: the pinned 0.146.1 server
-    // rejects that experimental field unless `initialize` opted into its
-    // `experimentalApi` capability. Veduta needs no dynamic tools and does
-    // not widen its protocol capabilities merely to transmit an empty set
-    // (issue #47); the runtime item guard below remains the fail-closed
-    // boundary for every tool-shaped item.
+    dynamicTools: request.prompt.tools.map((tool) => ({
+      type: 'function',
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+    })),
     cwd: ctx.codexHome,
   })
   const {
     thread: { id: threadId },
   } = parseCodexResponse(ThreadStartResponseSchema, 'thread/start', threadStartRaw)
 
-  let turnId: string | undefined
-  const abandonThread = async (): Promise<void> => {
-    if (turnId === undefined) return
-    try {
-      await transport.request('turn/interrupt', { threadId, turnId })
-    } catch {
-      // Best-effort: the thread is abandoned regardless — never reused,
-      // never resumed (thread-per-turn, issue #47).
-    }
-  }
-
   if (request.signal?.aborted) {
-    await abandonThread()
     throw new ModelConnectionError('unsupported', TURN_ABORTED_MESSAGE)
   }
 
-  // Acquired BEFORE `turn/start` (issue #47) so no frame the app-server
-  // emits between `turn/start` and this loop's first read is ever missed —
-  // and never re-acquired below, so this turn's own subscription is the
-  // only reader competing for its frames.
-  const subscription = transport.notifications()[Symbol.asyncIterator]()
-
-  // The try/finally that releases `subscription` starts IMMEDIATELY after
-  // it is acquired (issue #47) — `turn/start` itself is inside it, not
-  // before it: a rejected `turn/start` call, or a response that fails
-  // `parseCodexResponse`, used to leave this subscription open forever
-  // (the transport's own `idle()` never seeing it go away) because the
-  // finally block used to start only after `turn/start` had already
-  // succeeded.
-  let turnTimer: NodeJS.Timeout | undefined
-  let abortListener: (() => void) | undefined
+  const notifications = transport.notifications()[Symbol.asyncIterator]()
+  const serverRequests = transport.serverRequests()[Symbol.asyncIterator]()
   try {
     const turnStartRaw = await transport.request('turn/start', {
       threadId,
       input: [{ type: 'text', text: renderSubscriptionPrompt(request.prompt) }],
     })
-    const parsedTurnStart = parseCodexResponse(TurnStartResponseSchema, 'turn/start', turnStartRaw)
-    const currentTurnId = parsedTurnStart.turn.id
-    turnId = currentTurnId
-    const streamedItemIds = new Set<string>()
+    const {
+      turn: { id: turnId },
+    } = parseCodexResponse(TurnStartResponseSchema, 'turn/start', turnStartRaw)
+    return {
+      transport,
+      threadId,
+      turnId,
+      notifications,
+      serverRequests,
+      nextNotification: undefined,
+      nextServerRequest: undefined,
+      streamedItemIds: new Set<string>(),
+      deadline: Date.now() + CODEX_TURN_TIMEOUT_MS,
+    }
+  } catch (error) {
+    await notifications.return?.()
+    await serverRequests.return?.()
+    throw error
+  }
+}
 
-    const turnTimedOut = new Promise<'timeout'>((resolve) => {
-      turnTimer = setTimeout(() => resolve('timeout'), CODEX_TURN_TIMEOUT_MS)
+async function* continueTurn(
+  turn: ActiveCodexTurn,
+  request: SubscriptionStreamRequest,
+): AsyncGenerator<SubscriptionStreamEvent, void, void> {
+  let handedOff = false
+  let timer: NodeJS.Timeout | undefined
+  let abortListener: (() => void) | undefined
+  try {
+    const timedOut = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), Math.max(0, turn.deadline - Date.now()))
     })
-
-    // Races the abort signal against the notification wait itself (issue
-    // #47), rather than only checking `request.signal?.aborted` at the top
-    // of each loop iteration: a signal that fires while `subscription.next()`
-    // is still pending on a silent turn (no further frame ever arrives) used
-    // to go unnoticed until the NEXT frame woke the loop up, or — absent
-    // one — the full `CODEX_TURN_TIMEOUT_MS` bound. The listener is added
-    // once, here, and removed in the `finally` below regardless of how the
-    // turn ends.
     const aborted = new Promise<'aborted'>((resolve) => {
       if (request.signal === undefined) return
       if (request.signal.aborted) {
@@ -458,27 +475,55 @@ async function* stream(
     })
 
     while (true) {
+      turn.nextNotification ??= turn.notifications.next()
+      turn.nextServerRequest ??= turn.serverRequests.next()
       const outcome = await Promise.race([
-        subscription.next().then((result) => ({ kind: 'frame' as const, result })),
-        turnTimedOut.then(() => ({ kind: 'timeout' as const })),
+        turn.nextNotification.then((result) => ({ kind: 'notification' as const, result })),
+        turn.nextServerRequest.then((result) => ({ kind: 'server-request' as const, result })),
+        timedOut.then(() => ({ kind: 'timeout' as const })),
         aborted.then(() => ({ kind: 'aborted' as const })),
       ])
 
       if (outcome.kind === 'aborted') {
-        await abandonThread()
+        await abandonTurn(turn)
         throw new ModelConnectionError('unsupported', TURN_ABORTED_MESSAGE)
       }
-
       if (outcome.kind === 'timeout') {
-        await abandonThread()
+        await abandonTurn(turn)
         throw new ModelConnectionError('unreachable', TURN_TIMEOUT_MESSAGE)
       }
 
+      if (outcome.kind === 'server-request') {
+        turn.nextServerRequest = undefined
+        if (outcome.result.done) {
+          throw new ModelConnectionError(
+            'unreachable',
+            'the Codex transport ended its server-request stream',
+          )
+        }
+        const frame = outcome.result.value
+        if (frame.method !== 'item/tool/call') {
+          await abandonTurn(turn)
+          throw new ModelConnectionError('unsupported', TOOL_ACTION_REFUSED_MESSAGE)
+        }
+        const call = parseCodexResponse(DynamicToolCallParamsSchema, frame.method, frame.params)
+        if (call.threadId !== turn.threadId || call.turnId !== turn.turnId) continue
+        pendingTurnsFor(turn.transport).set(call.callId, {
+          requestId: frame.id,
+          turn,
+        })
+        handedOff = true
+        yield {
+          type: 'tool-call',
+          toolCallId: call.callId,
+          toolName: call.tool,
+          input: call.arguments,
+        }
+        return
+      }
+
+      turn.nextNotification = undefined
       if (outcome.result.done) {
-        // The subscription's own contract (`codex-app-server.ts`'s
-        // `createNotificationHub`) throws rather than completing normally —
-        // this is unreachable in practice, kept only so the generic
-        // `IteratorResult` type is exhaustively handled.
         throw new ModelConnectionError(
           'unreachable',
           'the Codex transport ended its notification stream',
@@ -489,11 +534,10 @@ async function* stream(
       if (frame.method === 'turn/completed') {
         const completed = parseCodexResponse(
           TurnCompletedNotificationSchema,
-          'turn/completed',
+          frame.method,
           frame.params,
         )
-        if (completed.threadId !== threadId) continue
-        if (completed.turn.id !== currentTurnId) continue
+        if (completed.threadId !== turn.threadId || completed.turn.id !== turn.turnId) continue
         return
       }
 
@@ -503,42 +547,87 @@ async function* stream(
           frame.method,
           frame.params,
         )
-        if (parsed.threadId !== threadId || parsed.turnId !== currentTurnId) continue
-        streamedItemIds.add(parsed.itemId)
-        if (parsed.delta) yield parsed.delta
+        if (parsed.threadId !== turn.threadId || parsed.turnId !== turn.turnId) continue
+        turn.streamedItemIds.add(parsed.itemId)
+        if (parsed.delta) yield { type: 'text-delta', text: parsed.delta }
         continue
       }
 
       if (frame.method === 'item/started' || frame.method === 'item/completed') {
         const parsed = parseCodexResponse(ItemNotificationSchema, frame.method, frame.params)
-        if (parsed.threadId !== threadId) continue
-        if (parsed.turnId !== currentTurnId) continue
+        if (parsed.threadId !== turn.threadId || parsed.turnId !== turn.turnId) continue
         const { item } = parsed
         if (item.type === CODEX_TEXT_ITEM_TYPE) {
-          if (frame.method === 'item/completed' && !streamedItemIds.has(item.id) && item.text) {
-            yield item.text
+          if (
+            frame.method === 'item/completed' &&
+            !turn.streamedItemIds.has(item.id) &&
+            item.text
+          ) {
+            yield { type: 'text-delta', text: item.text }
           }
           continue
         }
-        if (item.type === CODEX_USER_ITEM_TYPE) continue // echo of the request we just sent
-        if (item.type === CODEX_REASONING_ITEM_TYPE) continue // silently dropped, never fatal
-        // Any other item type — command execution, patch application, web
-        // search, an MCP tool call, or a type this build has never seen —
-        // is the runtime-observable proof the turn attempted to act outside
-        // Veduta.
-        await abandonThread()
+        if (
+          item.type === CODEX_USER_ITEM_TYPE ||
+          item.type === CODEX_REASONING_ITEM_TYPE ||
+          item.type === CODEX_DYNAMIC_TOOL_ITEM_TYPE
+        ) {
+          continue
+        }
+        await abandonTurn(turn)
         throw new ModelConnectionError('unsupported', TOOL_ACTION_REFUSED_MESSAGE)
       }
-
-      // An unrelated notification method (e.g. `account/updated`, seen
-      // while a turn happens to be in flight) is ignored here — only
-      // item/turn notifications are this loop's concern.
     }
   } finally {
-    if (turnTimer) clearTimeout(turnTimer)
+    if (timer) clearTimeout(timer)
     if (abortListener) request.signal?.removeEventListener('abort', abortListener)
-    await subscription.return?.()
+    if (!handedOff) await releaseTurn(turn)
   }
+}
+
+/**
+ * Starts a Codex turn or resumes one suspended on a reverse dynamic-tool
+ * request. PiAgentRunner executes the ToolDef between these two model calls;
+ * the adapter only translates that result onto the original JSON-RPC id.
+ */
+async function* stream(
+  ctx: AdapterContext,
+  request: SubscriptionStreamRequest,
+): AsyncGenerator<SubscriptionStreamEvent, void, void> {
+  const transport = await getTransport(ctx)
+  const toolResult = latestToolResult(request)
+  const pending =
+    toolResult === undefined ? undefined : pendingTurnsFor(transport).get(toolResult.toolCallId)
+
+  if (toolResult !== undefined && pending !== undefined) {
+    pendingTurnsFor(transport).delete(toolResult.toolCallId)
+    if (request.signal?.aborted) {
+      await abandonTurn(pending.turn)
+      await releaseTurn(pending.turn)
+      throw new ModelConnectionError('unsupported', TURN_ABORTED_MESSAGE)
+    }
+    const response = parseCodexResponse(DynamicToolCallResponseSchema, 'item/tool/call response', {
+      success: !toolResult.isError,
+      contentItems: [
+        {
+          type: 'inputText',
+          text: toolResult.isError ? sanitizeErrorText(toolResult.text) : toolResult.text,
+        },
+      ],
+    })
+    try {
+      await transport.respond(pending.requestId, response)
+    } catch (error) {
+      await abandonTurn(pending.turn)
+      await releaseTurn(pending.turn)
+      throw error
+    }
+    yield* continueTurn(pending.turn, request)
+    return
+  }
+
+  const turn = await startTurn(transport, ctx, request)
+  yield* continueTurn(turn, request)
 }
 
 export interface CodexAdapterDeps {

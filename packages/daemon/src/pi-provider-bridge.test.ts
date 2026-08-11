@@ -14,6 +14,7 @@ import {
   type MockResponder,
   type ModelConnectionRuntime,
   type PiChatContext,
+  type SubscriptionStreamRequest,
 } from './pi-provider-bridge.ts'
 // `PiModel` is a project type re-exported through `pi-agent-runner.ts`
 // (`import-boundary.test.ts`'s `UNRESTRICTED_FILES`/`TYPE_ONLY_FILES` guard
@@ -518,7 +519,7 @@ describe('createProviderBridge', () => {
         provider: 'openai',
         transport: 'subscription',
         stream: async function* () {
-          yield 'never called'
+          yield { type: 'text-delta' as const, text: 'never called' }
         },
       }
       const bridge = createProviderBridge({
@@ -555,8 +556,8 @@ describe('createProviderBridge', () => {
         provider: 'openai',
         transport: 'subscription',
         stream: async function* () {
-          yield 'hello'
-          yield ' world'
+          yield { type: 'text-delta' as const, text: 'hello' }
+          yield { type: 'text-delta' as const, text: ' world' }
         },
       }
       const bridge = subscriptionBridge(runtime)
@@ -590,7 +591,7 @@ describe('createProviderBridge', () => {
           provider: 'openai',
           transport: 'subscription',
           stream: async function* () {
-            yield 'never reached'
+            yield { type: 'text-delta' as const, text: 'never reached' }
           },
         },
       ]
@@ -613,13 +614,20 @@ describe('createProviderBridge', () => {
       )
     })
 
-    it('a subscription turn refuses a context that carries tools (via toSubscriptionPrompt throw propagation)', async () => {
+    it('maps one normalized subscription tool call onto the Pi tool-call stream contract', async () => {
+      let receivedRequest: SubscriptionStreamRequest | undefined
       const runtime: ModelConnectionRuntime = {
         connectionId: 'codex-conn',
         provider: 'openai',
         transport: 'subscription',
-        stream: async function* () {
-          yield 'should never run'
+        stream: async function* (request) {
+          receivedRequest = request
+          yield {
+            type: 'tool-call' as const,
+            toolCallId: 'call-1',
+            toolName: 'search_memory',
+            input: { query: 'hello' },
+          }
         },
       }
       const bridge = subscriptionBridge(runtime)
@@ -630,13 +638,55 @@ describe('createProviderBridge', () => {
         connectionId: 'codex-conn',
       })
 
-      await expect(
-        bridge.streamFn(
-          model,
-          { messages: [], tools: [{ name: 'search_memory', description: 'x', parameters: {} }] },
-          {},
-        ),
-      ).rejects.toThrow(/answers in text only/)
+      const stream = await bridge.streamFn(
+        model,
+        {
+          messages: [],
+          tools: [
+            {
+              name: 'search_memory',
+              description: 'Search memory.',
+              parameters: {
+                type: 'object',
+                properties: { query: { type: 'string' } },
+                required: ['query'],
+              },
+            },
+          ],
+        },
+        {},
+      )
+      const eventTypes: string[] = []
+      for await (const event of stream) eventTypes.push(event.type)
+      const finalMessage = await stream.result()
+
+      expect(receivedRequest?.prompt.tools).toEqual([
+        {
+          name: 'search_memory',
+          description: 'Search memory.',
+          inputSchema: {
+            type: 'object',
+            properties: { query: { type: 'string' } },
+            required: ['query'],
+          },
+        },
+      ])
+      expect(eventTypes).toEqual([
+        'start',
+        'toolcall_start',
+        'toolcall_delta',
+        'toolcall_end',
+        'done',
+      ])
+      expect(finalMessage.stopReason).toBe('toolUse')
+      expect(finalMessage.content).toEqual([
+        {
+          type: 'toolCall',
+          id: 'call-1',
+          name: 'search_memory',
+          arguments: { query: 'hello' },
+        },
+      ])
     })
 
     it('a NonRetryableModelError from the runtime stream is marked on the error message', async () => {

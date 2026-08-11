@@ -1,9 +1,88 @@
 import { describe, expect, it } from 'vitest'
-import { ModelConnectionError } from './model-connection-adapter.ts'
 import type { PiChatContext } from './pi-provider-bridge.ts'
 import { renderSubscriptionPrompt, toSubscriptionPrompt } from './subscription-prompt.ts'
 
 describe('toSubscriptionPrompt', () => {
+  it('carries allowed definitions and tool call/result identity structurally', () => {
+    const inputSchema = {
+      type: 'object',
+      properties: { value: { type: 'string' } },
+      required: ['value'],
+      additionalProperties: false,
+    }
+    const context: PiChatContext = {
+      systemPrompt: 'You are helpful.',
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'checking' },
+            {
+              type: 'toolCall',
+              id: 'call-1',
+              name: 'echo_value',
+              arguments: { value: 'hello' },
+            },
+          ],
+          api: 'anthropic-messages',
+          provider: 'anthropic',
+          model: 'claude-sonnet-5',
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: 'toolUse',
+          timestamp: 1,
+        },
+        {
+          role: 'toolResult',
+          toolCallId: 'call-1',
+          toolName: 'echo_value',
+          content: [{ type: 'text', text: 'hello' }],
+          isError: false,
+          timestamp: 2,
+        },
+      ],
+      tools: [{ name: 'echo_value', description: 'Echo a value.', parameters: inputSchema }],
+    }
+
+    expect(toSubscriptionPrompt(context)).toEqual({
+      systemPrompt: 'You are helpful.',
+      tools: [
+        {
+          name: 'echo_value',
+          description: 'Echo a value.',
+          inputSchema,
+        },
+      ],
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'checking' },
+            {
+              type: 'tool-call',
+              toolCallId: 'call-1',
+              toolName: 'echo_value',
+              input: { value: 'hello' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          toolCallId: 'call-1',
+          toolName: 'echo_value',
+          text: 'hello',
+          isError: false,
+        },
+      ],
+    })
+  })
+
   it('preserves roles and order and renders a tool result as text', () => {
     const context: PiChatContext = {
       systemPrompt: 'You are helpful.',
@@ -42,14 +121,20 @@ describe('toSubscriptionPrompt', () => {
     expect(prompt.systemPrompt).toBe('You are helpful.')
     expect(prompt.messages).toEqual([
       { role: 'user', text: 'hi there' },
-      { role: 'assistant', text: 'hello back' },
-      { role: 'tool', toolName: 'search_memory', text: 'no results', isError: false },
+      { role: 'assistant', content: [{ type: 'text', text: 'hello back' }] },
+      {
+        role: 'tool',
+        toolCallId: 'call-1',
+        toolName: 'search_memory',
+        text: 'no results',
+        isError: false,
+      },
     ])
   })
 
   it('falls back to an empty systemPrompt when absent', () => {
     const context: PiChatContext = { messages: [] }
-    expect(toSubscriptionPrompt(context)).toEqual({ systemPrompt: '', messages: [] })
+    expect(toSubscriptionPrompt(context)).toEqual({ systemPrompt: '', messages: [], tools: [] })
   })
 
   it('drops assistant thinking blocks and renders tool calls as history markers', () => {
@@ -82,7 +167,18 @@ describe('toSubscriptionPrompt', () => {
     const prompt = toSubscriptionPrompt(context)
 
     expect(prompt.messages).toEqual([
-      { role: 'assistant', text: 'the answer\n[tool call: search_memory]' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'the answer' },
+          {
+            type: 'tool-call',
+            toolCallId: 'call-2',
+            toolName: 'search_memory',
+            input: { q: 'x' },
+          },
+        ],
+      },
     ])
   })
 
@@ -114,30 +210,12 @@ describe('toSubscriptionPrompt', () => {
       { role: 'user', text: 'look at this\n[image omitted: image/png]' },
       {
         role: 'tool',
+        toolCallId: 'call-3',
         toolName: 'read_screenshot',
         text: '[image omitted: image/jpeg]',
         isError: true,
       },
     ])
-  })
-
-  it('throws unsupported when the context still carries tools', () => {
-    const context: PiChatContext = {
-      messages: [],
-      tools: [{ name: 'search_memory', description: 'search', parameters: {} }],
-    }
-
-    expect(() => toSubscriptionPrompt(context)).toThrow(ModelConnectionError)
-    try {
-      toSubscriptionPrompt(context)
-      throw new Error('expected toSubscriptionPrompt to throw')
-    } catch (error) {
-      expect(error).toBeInstanceOf(ModelConnectionError)
-      expect((error as ModelConnectionError).code).toBe('unsupported')
-      expect((error as ModelConnectionError).message).toBe(
-        'this Model connection answers in text only; refusing a turn that was given Veduta tools',
-      )
-    }
   })
 
   it('does not throw for an empty tools array', () => {
@@ -150,12 +228,20 @@ describe('renderSubscriptionPrompt', () => {
   it('matches its snapshot', () => {
     const rendered = renderSubscriptionPrompt({
       systemPrompt: 'You are Veduta.',
+      tools: [],
       messages: [
         { role: 'user', text: 'what is on my calendar today?' },
-        { role: 'assistant', text: 'checking now' },
-        { role: 'tool', toolName: 'search_memory', text: 'no results', isError: false },
+        { role: 'assistant', content: [{ type: 'text', text: 'checking now' }] },
         {
           role: 'tool',
+          toolCallId: 'call-1',
+          toolName: 'search_memory',
+          text: 'no results',
+          isError: false,
+        },
+        {
+          role: 'tool',
+          toolCallId: 'call-2',
           toolName: 'send_email',
           text: 'the account is not connected',
           isError: true,
@@ -174,10 +260,10 @@ describe('renderSubscriptionPrompt', () => {
       Assistant:
       checking now
 
-      Tool search_memory:
+      Tool search_memory [call-1]:
       no results
 
-      Tool send_email (error):
+      Tool send_email [call-2] (error):
       the account is not connected"
     `)
   })

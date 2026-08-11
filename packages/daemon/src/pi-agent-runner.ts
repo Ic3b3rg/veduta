@@ -181,15 +181,13 @@ export interface PiAgentRunnerOptions {
    */
   streamFn?: PiStreamFn
   /**
-   * Filters Veduta's own tools out of a turn when the routed model's
-   * connection cannot run them (issue #47, docs/adr/0014-…: a ChatGPT
-   * subscription connection answers in text only). Applied immediately
-   * after `gateToolsForOrigins` in `prompt()` — the same choke point every
-   * caller of this runner already passes through — so a text-only
-   * connection never sees a taint-cleared tool either. Returning `false`
-   * empties the tool list for that turn; any other result (including
-   * omitting this option entirely) keeps the taint gate's own result
-   * unchanged.
+   * Temporary primary-routing capability gate retained by issue #71 while
+   * the structured Codex adapter path is proven in isolation. Applied
+   * immediately after `gateToolsForOrigins` in `prompt()` — the same choke
+   * point every caller already passes through. Returning `false` empties
+   * the tool list for that turn; any other result (including omitting this
+   * option) keeps the taint gate's own result unchanged. The later
+   * fail-closed hardening slice removes this provider capability gate.
    */
   toolsEnabledForModel?: (model: ModelRef) => boolean
 }
@@ -335,10 +333,10 @@ export class PiAgentRunner implements AgentRunner {
       candidateOrigins,
       this.isToolTrustWrapped,
     )
-    // Issue #47: a connection whose adapter cannot run Veduta's tools
-    // (`vedutaTools: false`, a ChatGPT/Codex connection) never sees them,
-    // regardless of what the taint gate above already cleared — the
-    // capability cliff is about the connection, not the turn's trust level.
+    // Issue #71 keeps the current primary-routing capability gate while
+    // proving the structured Codex adapter path underneath it. A model
+    // rejected here sees no tools regardless of what the taint gate above
+    // cleared; the later fail-closed hardening slice removes this filter.
     const offeredTools = this.toolsEnabledForModel?.(model) === false ? [] : gatedTools
 
     const tools = this.toPiTools(offeredTools)

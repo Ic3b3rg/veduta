@@ -31,6 +31,7 @@ import {
 } from './model-routing.ts'
 import { defaultRedactor } from './redaction.ts'
 import { SecretsVault } from './secrets-vault.ts'
+import type { SubscriptionStreamEvent } from './pi-provider-bridge.ts'
 
 const KEY_MATERIAL = Buffer.from('a test key material, long enough for scrypt')
 
@@ -720,7 +721,7 @@ describe('runtimes (issue #47)', () => {
     const dir = freshRoot()
     const adapter = codexAdapter({
       stream: async function* () {
-        yield 'hello from codex'
+        yield { type: 'text-delta' as const, text: 'hello from codex' }
       },
     })
     const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
@@ -733,14 +734,14 @@ describe('runtimes (issue #47)', () => {
 
     expect(runtime).toMatchObject({ connectionId, provider: 'openai', transport: 'subscription' })
     expect(runtime?.stream).toBeTypeOf('function')
-    const deltas: string[] = []
-    for await (const delta of runtime!.stream!({
+    const events: SubscriptionStreamEvent[] = []
+    for await (const event of runtime!.stream!({
       modelId: 'gpt-5-codex',
-      prompt: { systemPrompt: '', messages: [] },
+      prompt: { systemPrompt: '', messages: [], tools: [] },
     })) {
-      deltas.push(delta)
+      events.push(event)
     }
-    expect(deltas).toEqual(['hello from codex'])
+    expect(events).toEqual([{ type: 'text-delta', text: 'hello from codex' }])
   })
 
   it('a connected adapter implementing stream gets a subscription runtime regardless of method id', async () => {
@@ -750,7 +751,10 @@ describe('runtimes (issue #47)', () => {
     // #47), never keyed off `record.method === 'chatgpt-codex'` specifically.
     const adapter = createFakeAdapter({
       stream: async function* () {
-        yield 'hello from a non-codex subscription adapter'
+        yield {
+          type: 'text-delta' as const,
+          text: 'hello from a non-codex subscription adapter',
+        }
       },
     })
     const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))

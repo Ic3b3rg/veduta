@@ -1,4 +1,10 @@
-import { createNotificationHub, type CodexTransport } from './codex-app-server.ts'
+import {
+  createNotificationHub,
+  createServerRequestHub,
+  type CodexRequestId,
+  type CodexServerRequest,
+  type CodexTransport,
+} from './codex-app-server.ts'
 import type {
   AccountReadResponse,
   CodexModelEntry,
@@ -135,6 +141,101 @@ export function fakeCodexTurnStartResponse(id = 'turn-1'): TurnStartResponse {
   return { turn: { id } }
 }
 
+export interface FakeCodexDynamicToolRoundTripOptions {
+  threadId?: string
+  turnId?: string
+  callId?: string
+  reverseRequestId?: CodexRequestId
+  tool?: string
+  input?: unknown
+  resultText?: string
+  finalText?: string
+  success?: boolean
+}
+
+/** Complete frames observed for one 0.146.1 dynamic-tool call, with only deterministic test values parameterized. */
+export function fakeCodexDynamicToolRoundTrip(options: FakeCodexDynamicToolRoundTripOptions = {}): {
+  startNotification: { method: string; params: unknown }
+  serverRequest: CodexServerRequest
+  continuationNotifications: { method: string; params: unknown }[]
+} {
+  const threadId = options.threadId ?? 'thread-1'
+  const turnId = options.turnId ?? 'turn-1'
+  const callId = options.callId ?? 'call-1'
+  const tool = options.tool ?? 'echo_value'
+  const input = options.input ?? { value: 'hello' }
+  const resultText = options.resultText ?? 'hello'
+  const finalText = options.finalText ?? 'tool result: hello'
+  const success = options.success ?? true
+  return {
+    startNotification: {
+      method: 'item/started',
+      params: {
+        threadId,
+        turnId,
+        startedAtMs: 1,
+        item: {
+          id: callId,
+          type: 'dynamicToolCall',
+          namespace: null,
+          tool,
+          arguments: input,
+          status: 'inProgress',
+          contentItems: null,
+          success: null,
+          durationMs: null,
+        },
+      },
+    },
+    serverRequest: {
+      id: options.reverseRequestId ?? 0,
+      method: 'item/tool/call',
+      params: {
+        threadId,
+        turnId,
+        callId,
+        namespace: null,
+        tool,
+        arguments: input,
+      },
+    },
+    continuationNotifications: [
+      {
+        method: 'item/completed',
+        params: {
+          threadId,
+          turnId,
+          completedAtMs: 2,
+          item: {
+            id: callId,
+            type: 'dynamicToolCall',
+            namespace: null,
+            tool,
+            arguments: input,
+            status: success ? 'completed' : 'failed',
+            contentItems: [{ type: 'inputText', text: resultText }],
+            success,
+            durationMs: 1,
+          },
+        },
+      },
+      {
+        method: 'item/agentMessage/delta',
+        params: {
+          threadId,
+          turnId,
+          itemId: 'agent-1',
+          delta: finalText,
+        },
+      },
+      {
+        method: 'turn/completed',
+        params: { threadId, turn: { id: turnId, status: 'completed' } },
+      },
+    ],
+  }
+}
+
 export interface FakeCodexScript {
   /** One entry per JSON-RPC method this fake answers: a fixed value, a `Promise` that resolves to one (lets a test hold a call open to simulate a busy transport), or a factory computed from the call's params and how many times this method has been called so far (0-indexed) — lets a test script `model/list`'s cursor pagination. Returning (or throwing) an `Error` instance makes the call reject with it. */
   responses: Record<
@@ -143,6 +244,10 @@ export interface FakeCodexScript {
   >
   /** Notifications queued before the transport is ever used — a test rarely needs this; `emit()` covers the live case. */
   notifications?: { method: string; params: unknown }[]
+  /** Child-initiated requests queued for the first live `serverRequests()` subscriber. */
+  serverRequests?: CodexServerRequest[]
+  /** Notifications emitted only after Veduta answers the first child-initiated request. */
+  notificationsAfterServerResponse?: { method: string; params: unknown }[]
 }
 
 export interface FakeCodexTransport extends CodexTransport {
@@ -151,15 +256,44 @@ export interface FakeCodexTransport extends CodexTransport {
   closed: boolean
   /** Queues a notification for every live subscription, and for any future subscription's ring replay. */
   emit(notification: { method: string; params: unknown }): void
+  /** Every response Veduta sent to a child-initiated request, in order. */
+  serverResponses: { id: CodexRequestId; result: unknown }[]
+  /** Pushes one child-initiated request to every current request subscriber. */
+  emitServerRequest(request: CodexServerRequest): void
 }
 
 export function createFakeCodexTransport(script: FakeCodexScript): FakeCodexTransport {
   const requests: { method: string; params: unknown }[] = []
   const callIndex = new Map<string, number>()
   const hub = createNotificationHub()
+  const serverRequestHub = createServerRequestHub()
   for (const notification of script.notifications ?? []) hub.retain(notification)
+  const queuedServerRequests = [...(script.serverRequests ?? [])]
+  const notificationsAfterServerResponse = [...(script.notificationsAfterServerResponse ?? [])]
   let closed = false
   let pendingCount = 0
+  const serverResponses: { id: CodexRequestId; result: unknown }[] = []
+
+  function serverRequests(): AsyncIterable<CodexServerRequest> {
+    const subscription = serverRequestHub.subscribe()
+    return {
+      [Symbol.asyncIterator]() {
+        const iterator = subscription[Symbol.asyncIterator]()
+        for (const request of queuedServerRequests.splice(0)) serverRequestHub.retain(request)
+        return iterator
+      },
+    }
+  }
+
+  async function respond(id: CodexRequestId, result: unknown): Promise<void> {
+    if (closed) {
+      throw new Error('fake Codex transport is closed; cannot answer a server request')
+    }
+    serverResponses.push({ id, result })
+    for (const notification of notificationsAfterServerResponse.splice(0)) {
+      hub.retain(notification)
+    }
+  }
 
   async function request(method: string, params?: unknown): Promise<unknown> {
     if (closed) {
@@ -189,29 +323,41 @@ export function createFakeCodexTransport(script: FakeCodexScript): FakeCodexTran
   }
 
   function idle(): boolean {
-    return pendingCount === 0 && hub.subscriberCount() === 0
+    return (
+      pendingCount === 0 && hub.subscriberCount() === 0 && serverRequestHub.subscriberCount() === 0
+    )
   }
 
   function close(): void {
     if (closed) return
     closed = true
-    hub.endAll(new ModelConnectionError('unreachable', 'the Codex transport was closed'))
+    const error = new ModelConnectionError('unreachable', 'the Codex transport was closed')
+    hub.endAll(error)
+    serverRequestHub.endAll(error)
   }
 
   function emit(notification: { method: string; params: unknown }): void {
     hub.retain(notification)
   }
 
+  function emitServerRequest(request: CodexServerRequest): void {
+    serverRequestHub.retain(request)
+  }
+
   return {
     request,
+    serverRequests,
+    respond,
     notifications: hub.subscribe,
     recentNotifications: hub.recent,
     idle,
     close,
     requests,
+    serverResponses,
     get closed() {
       return closed
     },
     emit,
+    emitServerRequest,
   }
 }
