@@ -208,6 +208,28 @@ describe('createChatLoop', () => {
     expect(spendEntries[0]).toMatchObject({ tier: 'reasoning', usd: 0.05 })
   })
 
+  it('tells a focused model that Event-log writes cannot replace visible Surface mutations', async () => {
+    const h = harness()
+    const spaceId = h.store.listSpaces()[0]!.id
+    let systemPrompt: string | undefined
+    h.fake.setResponses([
+      {
+        factory: (context) => {
+          systemPrompt = context.systemPrompt
+          return fakeText('Understood.')
+        },
+      },
+    ])
+
+    await h.chatLoop.handleChatMessage(chatEvent({ text: 'update the visible card', spaceId }))
+
+    expect(systemPrompt).toContain('list_surfaces')
+    expect(systemPrompt).toContain('read_surface')
+    expect(systemPrompt).toContain('patch_state')
+    expect(systemPrompt).toContain('append_event does not change a Surface')
+    expect(systemPrompt).toContain('Only claim a Surface changed after a successful mutation tool')
+  })
+
   it('an observer failure (send throwing on the first delta) never fails the turn, still delivers later frames, and never triggers failover (issue #37 fix)', async () => {
     const h = harness({ throwOnFirstDelta: true })
     const spaceId = h.store.listSpaces()[0]!.id

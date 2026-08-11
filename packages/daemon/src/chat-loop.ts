@@ -18,7 +18,12 @@ import { piToolParameters } from './tool-parameters.ts'
 const SPACE_CHAT_PREAMBLE =
   "You are Veduta's Agent, answering the user's chat message inside this Space. Use the " +
   'tools available to you for Space work — reading recent events, writing facts, creating ' +
-  'or updating Surfaces, arming timers — rather than only describing what you would do.'
+  'or updating Surfaces, arming timers — rather than only describing what you would do. ' +
+  'When a request refers to information visible in an existing Surface, call list_surfaces, ' +
+  'select the applicable id, call read_surface, and derive patch_state or patch_tree from the ' +
+  'returned Surface. If none fits, use create_surface. append_event does not change a Surface ' +
+  'or its visible state and is never a substitute for a Surface mutation. Only claim a Surface ' +
+  'changed after a successful mutation tool result.'
 
 /**
  * Global chat has no Space to read or write, so this issue's scope

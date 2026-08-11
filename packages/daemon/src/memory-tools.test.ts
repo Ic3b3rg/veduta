@@ -77,6 +77,27 @@ describe('memory tools', () => {
     expect(tools.map((tool) => tool.level)).toEqual(['L0', 'L0', 'L0', 'L0'])
   })
 
+  it('reports that append_event changed only the Event log, not a Surface', async () => {
+    const engine = new SpacesEngine({
+      rootDir: await tempRoot(),
+      now: fixedNow,
+      seed: seedSpaces(),
+    })
+    const appendEvent = requireTool(
+      createMemoryTools(engine, { activeSpaceId: 'spc-health' }),
+      'append_event',
+    )
+
+    const result = await appendEvent.handler(
+      appendEvent.schema.parse({ text: 'Pasto: fesa di tacchino' }),
+      toolContext('append-only', 'trusted:user'),
+    )
+
+    expect(result.content).toBe(
+      'Event appended to the Event log only; no Surface was changed: Pasto: fesa di tacchino',
+    )
+  })
+
   it('stamps a tainted turn origin onto both the FactRecord and the fact.write event, re-tainting future context', async () => {
     const engine = new SpacesEngine({
       rootDir: await tempRoot(),

@@ -174,7 +174,8 @@ export function createMemoryTools(
     }),
     defineTool({
       name: 'append_event',
-      description: 'Append one event to the active Space Event log.',
+      description:
+        'Append one event to the active Space Event log only. This does not change any Surface or visible Surface state; use the Surface tools for that.',
       schema: AppendEventSchema,
       level: 'L0',
       egressDomains: [],
@@ -188,7 +189,10 @@ export function createMemoryTools(
           origin: effectiveToolWriteOrigin(context.taint.origins(), context.origin),
           ...(input.payload === undefined ? {} : { payload: input.payload }),
         })
-        return { content: event.text, details: event }
+        return {
+          content: `Event appended to the Event log only; no Surface was changed: ${event.text}`,
+          details: event,
+        }
       },
     }),
     defineTool({
