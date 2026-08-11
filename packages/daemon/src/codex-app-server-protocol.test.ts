@@ -3,8 +3,10 @@ import {
   AccountReadResponseSchema,
   AgentMessageDeltaNotificationSchema,
   CodexProtocolError,
+  DynamicToolCallCompletedItemSchema,
   DynamicToolCallParamsSchema,
   DynamicToolCallResponseSchema,
+  DynamicToolCallStartedItemSchema,
   InitializeResponseSchema,
   ItemNotificationSchema,
   LoginStartResponseSchema,
@@ -322,6 +324,71 @@ describe('the dynamic-tool schemas (issue #71)', () => {
         callId: 'exec-1',
         namespace: null,
         tool: 'echo_value',
+      }),
+    ).toThrow(CodexProtocolError)
+  })
+
+  it('parses an observed dynamic started item while tolerating additive fields', () => {
+    expect(
+      parseCodexResponse(DynamicToolCallStartedItemSchema, 'item/started', {
+        id: 'call-1',
+        type: 'dynamicToolCall',
+        namespace: null,
+        tool: 'echo_value',
+        arguments: { value: 'hello' },
+        status: 'inProgress',
+        contentItems: null,
+        success: null,
+        futureStatusDetail: { safeToIgnore: true },
+      }),
+    ).toMatchObject({
+      id: 'call-1',
+      type: 'dynamicToolCall',
+      tool: 'echo_value',
+      arguments: { value: 'hello' },
+    })
+  })
+
+  it('rejects a dynamic started item missing its phase fields', () => {
+    expect(() =>
+      parseCodexResponse(DynamicToolCallStartedItemSchema, 'item/started', {
+        id: 'call-1',
+        type: 'dynamicToolCall',
+        namespace: null,
+        tool: 'echo_value',
+        arguments: { value: 'hello' },
+      }),
+    ).toThrow(CodexProtocolError)
+  })
+
+  it.each([
+    { missing: 'status', status: undefined, success: true, contentItems: [] },
+    { missing: 'success', status: 'completed', success: undefined, contentItems: [] },
+    { missing: 'contentItems', status: 'completed', success: true, contentItems: undefined },
+  ])('rejects a dynamic completion missing $missing', ({ status, success, contentItems }) => {
+    expect(() =>
+      parseCodexResponse(DynamicToolCallCompletedItemSchema, 'item/completed', {
+        id: 'call-1',
+        type: 'dynamicToolCall',
+        namespace: null,
+        tool: 'echo_value',
+        arguments: { value: 'hello' },
+        status,
+        success,
+        contentItems,
+      }),
+    ).toThrow(CodexProtocolError)
+  })
+
+  it('rejects dynamic arguments that are not JSON values', () => {
+    expect(() =>
+      parseCodexResponse(DynamicToolCallParamsSchema, 'item/tool/call', {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        callId: 'call-1',
+        namespace: null,
+        tool: 'echo_value',
+        arguments: { value: undefined },
       }),
     ).toThrow(CodexProtocolError)
   })

@@ -6,30 +6,19 @@ import {
   ensureCodexHome,
   resolveCodexBinary,
   spawnCodexAppServer,
-  type CodexRequestId,
-  type CodexServerRequest,
   type CodexTransport,
 } from './codex-app-server.ts'
 import {
   AccountReadResponseSchema,
-  AgentMessageDeltaNotificationSchema,
-  CODEX_DYNAMIC_TOOL_ITEM_TYPE,
-  CODEX_REASONING_ITEM_TYPE,
-  CODEX_TEXT_ITEM_TYPE,
-  CODEX_USER_ITEM_TYPE,
-  DynamicToolCallParamsSchema,
-  DynamicToolCallResponseSchema,
   InitializeResponseSchema,
-  ItemNotificationSchema,
   LoginStartResponseSchema,
   ModelListResponseSchema,
   parseCodexNotification,
   parseCodexResponse,
-  ThreadStartResponseSchema,
-  TurnCompletedNotificationSchema,
-  TurnStartResponseSchema,
   type LoginCompletedNotification,
 } from './codex-app-server-protocol.ts'
+import { streamCodexToolTurn } from './codex-tool-turn.ts'
+export { CODEX_TURN_TIMEOUT_MS } from './codex-tool-turn.ts'
 import {
   ModelConnectionError,
   connectionErrorFrom,
@@ -41,8 +30,7 @@ import {
   type RefreshResult,
 } from './model-connection-adapter.ts'
 import { sanitizeErrorText } from './model-routing.ts'
-import type { SubscriptionStreamEvent, SubscriptionStreamRequest } from './pi-provider-bridge.ts'
-import { renderSubscriptionPrompt } from './subscription-prompt.ts'
+import type { SubscriptionStreamRequest } from './pi-provider-bridge.ts'
 import { resolveInstalledVersion } from './version.ts'
 
 /**
@@ -63,30 +51,9 @@ import { resolveInstalledVersion } from './version.ts'
  * respawned or reconnected process is version-pinned before any verb ever
  * reaches it, not only the one that happened to run `authorize()` first.
  *
- * `stream` (issue #71, grounded in
- * `docs/references/13-codex-dynamic-tools-0.146.1.md`) starts a fresh
- * `thread/start` + `turn/start` for a new model call. When Codex suspends
- * that turn on `item/tool/call`, the next Pi model call carries the
- * structured tool result: this adapter answers the original reverse
- * JSON-RPC request id and resumes the SAME Codex thread and turn. It
- * acquires one notification subscription and one child-request subscription
- * before `turn/start` and keeps both for that provider turn. A concurrent
- * device-code poll on the same pooled transport reads through
- * `recentNotifications()` instead (see `loginCompleted` below) and can
- * never steal a frame this subscription still needs. Every item/turn frame
- * is checked against this call's own `threadId` (and `turnId` when the
- * frame carries one) before being acted on, so a frame from another turn
- * sharing the same pooled transport is ignored rather than misread as this
- * one's. `thread/start` carries the restrictions the 0.146.1 capture
- * confirmed (`approvalPolicy: 'never'`, a read-only sandbox, disabled web
- * search, and disabled provider-native tools); the actual
- * fail-closed guarantee is a RUNTIME proof per streamed item, not a
- * start-time assertion (the pinned response carries no tool-set field to
- * assert against): assistant text, reasoning, the inert echo of Veduta's
- * own user input, and the captured dynamic-tool item are recognized. Any
- * other item triggers `turn/interrupt`, abandons the thread, and refuses.
- * A turn that
- * runs longer than `CODEX_TURN_TIMEOUT_MS` is abandoned the same way.
+ * `stream` delegates issue #71's structured inference seam and issue #72's
+ * fail-closed correlation state to `codex-tool-turn.ts`; this adapter keeps
+ * only Model connection lifecycle and transport acquisition concerns.
  */
 
 const METHOD_DISPLAY_NAME = 'ChatGPT subscription'
@@ -333,301 +300,9 @@ async function revoke(ctx: AdapterContext): Promise<{ providerRevoked: boolean; 
   return { providerRevoked: false, note: REVOKE_NOTE }
 }
 
-const TOOL_ACTION_REFUSED_MESSAGE =
-  'the Codex turn attempted a tool action; refusing to run a turn that could act outside Veduta'
-
-const TURN_ABORTED_MESSAGE = 'the Codex turn was aborted before it completed'
-
-/** How long one `stream()` turn may run before it is abandoned outright (issue #47) — bounds a turn whose app-server process never emits `turn/completed` (a hang, a runaway generation) so a chat request can never wait on it forever. */
-export const CODEX_TURN_TIMEOUT_MS = 600_000
-
-const TURN_TIMEOUT_MESSAGE = `the Codex turn exceeded its ${CODEX_TURN_TIMEOUT_MS / 60_000}-minute bound and was abandoned`
-
-type CodexNotificationFrame = { method: string; params: unknown }
-
-interface ActiveCodexTurn {
-  transport: CodexTransport
-  threadId: string
-  turnId: string
-  notifications: AsyncIterator<CodexNotificationFrame>
-  serverRequests: AsyncIterator<CodexServerRequest>
-  nextNotification: Promise<IteratorResult<CodexNotificationFrame>> | undefined
-  nextServerRequest: Promise<IteratorResult<CodexServerRequest>> | undefined
-  streamedItemIds: Set<string>
-  deadline: number
-}
-
-interface PendingDynamicToolTurn {
-  requestId: CodexRequestId
-  turn: ActiveCodexTurn
-}
-
-type SubscriptionToolResult = Extract<
-  SubscriptionStreamRequest['prompt']['messages'][number],
-  { role: 'tool' }
->
-
-const pendingDynamicToolTurns = new WeakMap<CodexTransport, Map<string, PendingDynamicToolTurn>>()
-
-function pendingTurnsFor(transport: CodexTransport): Map<string, PendingDynamicToolTurn> {
-  const existing = pendingDynamicToolTurns.get(transport)
-  if (existing) return existing
-  const created = new Map<string, PendingDynamicToolTurn>()
-  pendingDynamicToolTurns.set(transport, created)
-  return created
-}
-
-function latestToolResult(request: SubscriptionStreamRequest): SubscriptionToolResult | undefined {
-  const last = request.prompt.messages.at(-1)
-  return last?.role === 'tool' ? last : undefined
-}
-
-async function releaseTurn(turn: ActiveCodexTurn): Promise<void> {
-  await turn.notifications.return?.()
-  await turn.serverRequests.return?.()
-}
-
-async function abandonTurn(turn: ActiveCodexTurn): Promise<void> {
-  try {
-    await turn.transport.request('turn/interrupt', {
-      threadId: turn.threadId,
-      turnId: turn.turnId,
-    })
-  } catch {
-    // Best-effort: the live turn is abandoned even if the child has already
-    // exited or rejected the interrupt.
-  }
-}
-
-async function startTurn(
-  transport: CodexTransport,
-  ctx: AdapterContext,
-  request: SubscriptionStreamRequest,
-): Promise<ActiveCodexTurn> {
-  const threadStartRaw = await transport.request('thread/start', {
-    model: request.modelId,
-    approvalPolicy: 'never',
-    sandbox: 'read-only',
-    config: { web_search: 'disabled', disabled_tools: true },
-    dynamicTools: request.prompt.tools.map((tool) => ({
-      type: 'function',
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-    })),
-    cwd: ctx.codexHome,
-  })
-  const {
-    thread: { id: threadId },
-  } = parseCodexResponse(ThreadStartResponseSchema, 'thread/start', threadStartRaw)
-
-  if (request.signal?.aborted) {
-    throw new ModelConnectionError('unsupported', TURN_ABORTED_MESSAGE)
-  }
-
-  const notifications = transport.notifications()[Symbol.asyncIterator]()
-  const serverRequests = transport.serverRequests()[Symbol.asyncIterator]()
-  try {
-    const turnStartRaw = await transport.request('turn/start', {
-      threadId,
-      input: [{ type: 'text', text: renderSubscriptionPrompt(request.prompt) }],
-    })
-    const {
-      turn: { id: turnId },
-    } = parseCodexResponse(TurnStartResponseSchema, 'turn/start', turnStartRaw)
-    return {
-      transport,
-      threadId,
-      turnId,
-      notifications,
-      serverRequests,
-      nextNotification: undefined,
-      nextServerRequest: undefined,
-      streamedItemIds: new Set<string>(),
-      deadline: Date.now() + CODEX_TURN_TIMEOUT_MS,
-    }
-  } catch (error) {
-    await notifications.return?.()
-    await serverRequests.return?.()
-    throw error
-  }
-}
-
-async function* continueTurn(
-  turn: ActiveCodexTurn,
-  request: SubscriptionStreamRequest,
-): AsyncGenerator<SubscriptionStreamEvent, void, void> {
-  let handedOff = false
-  let timer: NodeJS.Timeout | undefined
-  let abortListener: (() => void) | undefined
-  try {
-    const timedOut = new Promise<'timeout'>((resolve) => {
-      timer = setTimeout(() => resolve('timeout'), Math.max(0, turn.deadline - Date.now()))
-    })
-    const aborted = new Promise<'aborted'>((resolve) => {
-      if (request.signal === undefined) return
-      if (request.signal.aborted) {
-        resolve('aborted')
-        return
-      }
-      abortListener = () => resolve('aborted')
-      request.signal.addEventListener('abort', abortListener)
-    })
-
-    while (true) {
-      turn.nextNotification ??= turn.notifications.next()
-      turn.nextServerRequest ??= turn.serverRequests.next()
-      const outcome = await Promise.race([
-        turn.nextNotification.then((result) => ({ kind: 'notification' as const, result })),
-        turn.nextServerRequest.then((result) => ({ kind: 'server-request' as const, result })),
-        timedOut.then(() => ({ kind: 'timeout' as const })),
-        aborted.then(() => ({ kind: 'aborted' as const })),
-      ])
-
-      if (outcome.kind === 'aborted') {
-        await abandonTurn(turn)
-        throw new ModelConnectionError('unsupported', TURN_ABORTED_MESSAGE)
-      }
-      if (outcome.kind === 'timeout') {
-        await abandonTurn(turn)
-        throw new ModelConnectionError('unreachable', TURN_TIMEOUT_MESSAGE)
-      }
-
-      if (outcome.kind === 'server-request') {
-        turn.nextServerRequest = undefined
-        if (outcome.result.done) {
-          throw new ModelConnectionError(
-            'unreachable',
-            'the Codex transport ended its server-request stream',
-          )
-        }
-        const frame = outcome.result.value
-        if (frame.method !== 'item/tool/call') {
-          await abandonTurn(turn)
-          throw new ModelConnectionError('unsupported', TOOL_ACTION_REFUSED_MESSAGE)
-        }
-        const call = parseCodexResponse(DynamicToolCallParamsSchema, frame.method, frame.params)
-        if (call.threadId !== turn.threadId || call.turnId !== turn.turnId) continue
-        pendingTurnsFor(turn.transport).set(call.callId, {
-          requestId: frame.id,
-          turn,
-        })
-        handedOff = true
-        yield {
-          type: 'tool-call',
-          toolCallId: call.callId,
-          toolName: call.tool,
-          input: call.arguments,
-        }
-        return
-      }
-
-      turn.nextNotification = undefined
-      if (outcome.result.done) {
-        throw new ModelConnectionError(
-          'unreachable',
-          'the Codex transport ended its notification stream',
-        )
-      }
-      const frame = outcome.result.value
-
-      if (frame.method === 'turn/completed') {
-        const completed = parseCodexResponse(
-          TurnCompletedNotificationSchema,
-          frame.method,
-          frame.params,
-        )
-        if (completed.threadId !== turn.threadId || completed.turn.id !== turn.turnId) continue
-        return
-      }
-
-      if (frame.method === 'item/agentMessage/delta') {
-        const parsed = parseCodexResponse(
-          AgentMessageDeltaNotificationSchema,
-          frame.method,
-          frame.params,
-        )
-        if (parsed.threadId !== turn.threadId || parsed.turnId !== turn.turnId) continue
-        turn.streamedItemIds.add(parsed.itemId)
-        if (parsed.delta) yield { type: 'text-delta', text: parsed.delta }
-        continue
-      }
-
-      if (frame.method === 'item/started' || frame.method === 'item/completed') {
-        const parsed = parseCodexResponse(ItemNotificationSchema, frame.method, frame.params)
-        if (parsed.threadId !== turn.threadId || parsed.turnId !== turn.turnId) continue
-        const { item } = parsed
-        if (item.type === CODEX_TEXT_ITEM_TYPE) {
-          if (
-            frame.method === 'item/completed' &&
-            !turn.streamedItemIds.has(item.id) &&
-            item.text
-          ) {
-            yield { type: 'text-delta', text: item.text }
-          }
-          continue
-        }
-        if (
-          item.type === CODEX_USER_ITEM_TYPE ||
-          item.type === CODEX_REASONING_ITEM_TYPE ||
-          item.type === CODEX_DYNAMIC_TOOL_ITEM_TYPE
-        ) {
-          continue
-        }
-        await abandonTurn(turn)
-        throw new ModelConnectionError('unsupported', TOOL_ACTION_REFUSED_MESSAGE)
-      }
-    }
-  } finally {
-    if (timer) clearTimeout(timer)
-    if (abortListener) request.signal?.removeEventListener('abort', abortListener)
-    if (!handedOff) await releaseTurn(turn)
-  }
-}
-
-/**
- * Starts a Codex turn or resumes one suspended on a reverse dynamic-tool
- * request. PiAgentRunner executes the ToolDef between these two model calls;
- * the adapter only translates that result onto the original JSON-RPC id.
- */
-async function* stream(
-  ctx: AdapterContext,
-  request: SubscriptionStreamRequest,
-): AsyncGenerator<SubscriptionStreamEvent, void, void> {
+async function* stream(ctx: AdapterContext, request: SubscriptionStreamRequest) {
   const transport = await getTransport(ctx)
-  const toolResult = latestToolResult(request)
-  const pending =
-    toolResult === undefined ? undefined : pendingTurnsFor(transport).get(toolResult.toolCallId)
-
-  if (toolResult !== undefined && pending !== undefined) {
-    pendingTurnsFor(transport).delete(toolResult.toolCallId)
-    if (request.signal?.aborted) {
-      await abandonTurn(pending.turn)
-      await releaseTurn(pending.turn)
-      throw new ModelConnectionError('unsupported', TURN_ABORTED_MESSAGE)
-    }
-    const response = parseCodexResponse(DynamicToolCallResponseSchema, 'item/tool/call response', {
-      success: !toolResult.isError,
-      contentItems: [
-        {
-          type: 'inputText',
-          text: toolResult.isError ? sanitizeErrorText(toolResult.text) : toolResult.text,
-        },
-      ],
-    })
-    try {
-      await transport.respond(pending.requestId, response)
-    } catch (error) {
-      await abandonTurn(pending.turn)
-      await releaseTurn(pending.turn)
-      throw error
-    }
-    yield* continueTurn(pending.turn, request)
-    return
-  }
-
-  const turn = await startTurn(transport, ctx, request)
-  yield* continueTurn(turn, request)
+  yield* streamCodexToolTurn(transport, ctx.codexHome, request)
 }
 
 export interface CodexAdapterDeps {

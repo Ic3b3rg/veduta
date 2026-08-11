@@ -1,7 +1,18 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fromPartial } from '@total-typescript/shoehorn'
+import { z } from 'zod'
 import { describe, expect, it } from 'vitest'
+import { defineTool } from './agent-runner.ts'
+import {
+  createFakeCodexTransport,
+  fakeCodexDynamicToolRoundTrip,
+  fakeCodexThreadStartResponse,
+  fakeCodexTurnStartResponse,
+} from './codex-app-server-fake.ts'
+import type { AdapterContext } from './model-connection-adapter.ts'
+import { codexSubscriptionAdapter } from './model-connection-codex.ts'
 import { PiAgentRunner, PiJsonlSessionStore } from './pi-agent-runner.ts'
 import { createProviderBridge, type ModelConnectionRuntime } from './pi-provider-bridge.ts'
 import {
@@ -11,6 +22,7 @@ import {
   type RuntimeRoutingConfig,
   type SecretResolver,
 } from './model-routing.ts'
+import { piToolParameters } from './tool-parameters.ts'
 
 /**
  * Integration coverage for preserving the non-retryable classification
@@ -164,5 +176,111 @@ describe('subscription-turn failover (issue #47)', () => {
 
     expect(attemptedModels).toEqual(['sub-conn-1', 'sub-conn-2'])
     expect(events.filter((event) => event.type === 'model.failover')).toHaveLength(1)
+  })
+
+  it('a Codex protocol refusal after an accepted effect never retries or replays it', async () => {
+    const fixture = fakeCodexDynamicToolRoundTrip()
+    const transport = createFakeCodexTransport({
+      responses: {
+        'thread/start': fakeCodexThreadStartResponse(),
+        'turn/start': fakeCodexTurnStartResponse(),
+        'turn/interrupt': {},
+      },
+      notifications: [fixture.startNotification],
+      serverRequests: [fixture.serverRequest],
+      serverResponseStages: [
+        {
+          notifications: [
+            fixture.continuationNotifications[0]!,
+            {
+              method: 'item/started',
+              params: {
+                threadId: 'thread-1',
+                turnId: 'turn-1',
+                item: { id: 'native-1', type: 'webSearch', query: 'must not run' },
+              },
+            },
+          ],
+        },
+      ],
+    })
+    const codexRoot = mkdtempSync(join(tmpdir(), 'veduta-codex-no-retry-'))
+    const context = fromPartial<AdapterContext>({
+      connectionId: 'sub-conn-1',
+      rootDir: codexRoot,
+      codexHome: join(codexRoot, 'codex', 'sub-conn-1'),
+      secrets: noKeysResolve,
+      fetchImpl: fromPartial<typeof fetch>({}),
+      now: () => new Date('2026-08-11T10:00:00.000Z'),
+      probe: async () => {},
+      codexTransport: async () => transport,
+    })
+    let handlerCalls = 0
+    let fallbackCalls = 0
+    const tool = defineTool({
+      name: 'echo_value',
+      description: 'Echo a value.',
+      schema: z.object({ value: z.string() }),
+      level: 'L0',
+      egressDomains: [],
+      handler: ({ value }) => {
+        handlerCalls++
+        return { content: value }
+      },
+    })
+    const runtimes: ModelConnectionRuntime[] = [
+      {
+        connectionId: 'sub-conn-1',
+        provider: 'openai',
+        transport: 'subscription',
+        stream: (request) => codexSubscriptionAdapter.stream!(context, request),
+      },
+      {
+        connectionId: 'sub-conn-2',
+        provider: 'openai',
+        transport: 'subscription',
+        stream: async function* () {
+          fallbackCalls++
+          yield { type: 'text-delta' as const, text: 'must not answer' }
+        },
+      },
+    ]
+    const bridge = createProviderBridge({
+      config: twoCandidateConfig(),
+      secrets: noKeysResolve,
+      connections: () => runtimes,
+    })
+    const runner = new PiAgentRunner({
+      sessionStore: freshSessionStore(),
+      resolveModel: bridge.resolveModel,
+      getApiKey: bridge.getApiKey,
+      streamFn: bridge.streamFn,
+      toolParameters: piToolParameters([tool]),
+    })
+    await runner.start('session-codex-protocol-refusal')
+    const attemptedModels: string[] = []
+    const router = new ModelRouter({
+      config: twoCandidateConfig(),
+      secrets: noKeysResolve,
+      sleep: async () => {},
+    })
+
+    const error = await router
+      .execute({ purpose: 'chat-turn', origin: 'user' }, (model, attempt) => {
+        attemptedModels.push(model.connectionId ?? model.provider)
+        return runner.prompt('echo hello', {
+          model,
+          tools: [tool],
+          retryOfFailedTurn: attempt > 0,
+        })
+      })
+      .catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(NonRetryableModelError)
+    expect(attemptedModels).toEqual(['sub-conn-1'])
+    expect(handlerCalls).toBe(1)
+    expect(fallbackCalls).toBe(0)
+    expect(transport.serverResponses).toHaveLength(1)
+    expect(transport.requests.map((request) => request.method)).toContain('turn/interrupt')
   })
 })

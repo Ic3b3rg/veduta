@@ -1,3 +1,4 @@
+import { isJsonValue } from '@veduta/protocol'
 import { z } from 'zod'
 
 /**
@@ -45,7 +46,11 @@ export class CodexProtocolError extends Error {
 }
 
 /** Parses `raw` against `schema`; a mismatch becomes a `CodexProtocolError` naming the JSON-RPC method, never a guessed shape. */
-export function parseCodexResponse<T>(schema: z.ZodType<T>, method: string, raw: unknown): T {
+export function parseCodexResponse<Schema extends z.ZodTypeAny>(
+  schema: Schema,
+  method: string,
+  raw: unknown,
+): z.output<Schema> {
   const parsed = schema.safeParse(raw)
   if (!parsed.success) {
     throw new CodexProtocolError(
@@ -235,16 +240,37 @@ export const DynamicToolCallParamsSchema = z.object({
   callId: z.string().min(1),
   namespace: z.string().nullable().optional(),
   tool: z.string().min(1),
-  arguments: z.unknown().refine((value) => value !== undefined, {
-    message: 'Required',
-  }),
+  arguments: z.unknown().refine(isJsonValue, { message: 'Expected a JSON value' }),
 })
 
+/** The correlation-bearing fields shared by the observed dynamic `item/started` and `item/completed` payloads. Additive status/timing fields remain compatible. */
 export const DynamicToolCallOutputContentItemSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('inputText'), text: z.string() }),
   z.object({ type: z.literal('inputImage'), imageUrl: z.string() }),
   z.object({ type: z.literal('inputAudio'), audioUrl: z.string() }),
 ])
+
+const DynamicToolCallIdentitySchema = z.object({
+  id: z.string().min(1),
+  type: z.literal('dynamicToolCall'),
+  namespace: z.string().nullable().optional(),
+  tool: z.string().min(1),
+  arguments: z.unknown().refine(isJsonValue, { message: 'Expected a JSON value' }),
+})
+
+/** The required fields observed before the app-server suspends a turn on a reverse dynamic-tool request. */
+export const DynamicToolCallStartedItemSchema = DynamicToolCallIdentitySchema.extend({
+  status: z.literal('inProgress'),
+  contentItems: z.null(),
+  success: z.null(),
+}).passthrough()
+
+/** The required fields observed after Veduta answers a reverse dynamic-tool request. */
+export const DynamicToolCallCompletedItemSchema = DynamicToolCallIdentitySchema.extend({
+  status: z.enum(['completed', 'failed']),
+  contentItems: z.array(DynamicToolCallOutputContentItemSchema),
+  success: z.boolean(),
+}).passthrough()
 
 /** Result sent on the reverse JSON-RPC request id so the same Codex turn can continue. */
 export const DynamicToolCallResponseSchema = z.object({
@@ -325,6 +351,8 @@ export type ModelListResponse = z.infer<typeof ModelListResponseSchema>
 export type ThreadStartResponse = z.infer<typeof ThreadStartResponseSchema>
 export type TurnStartResponse = z.infer<typeof TurnStartResponseSchema>
 export type DynamicToolCallParams = z.infer<typeof DynamicToolCallParamsSchema>
+export type DynamicToolCallStartedItem = z.infer<typeof DynamicToolCallStartedItemSchema>
+export type DynamicToolCallCompletedItem = z.infer<typeof DynamicToolCallCompletedItemSchema>
 export type DynamicToolCallResponse = z.infer<typeof DynamicToolCallResponseSchema>
 export type CodexItem = z.infer<typeof CodexItemSchema>
 export type ItemNotification = z.infer<typeof ItemNotificationSchema>

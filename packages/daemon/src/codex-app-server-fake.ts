@@ -145,9 +145,28 @@ export interface FakeCodexDynamicToolRoundTripOptions {
   threadId?: string
   turnId?: string
   callId?: string
+  startedThreadId?: string
+  startedTurnId?: string
+  requestThreadId?: string
+  requestTurnId?: string
+  requestCallId?: string
   reverseRequestId?: CodexRequestId
+  namespace?: string | null
   tool?: string
   input?: unknown
+  requestNamespace?: string | null
+  requestTool?: string
+  requestInput?: unknown
+  completedCallId?: string
+  completedThreadId?: string
+  completedTurnId?: string
+  completedNamespace?: string | null
+  completedTool?: string
+  completedInput?: unknown
+  completedStatus?: 'completed' | 'failed'
+  completedSuccess?: boolean
+  completedContentItems?: readonly unknown[]
+  omitCompletedField?: 'status' | 'success' | 'contentItems'
   resultText?: string
   finalText?: string
   success?: boolean
@@ -162,22 +181,54 @@ export function fakeCodexDynamicToolRoundTrip(options: FakeCodexDynamicToolRound
   const threadId = options.threadId ?? 'thread-1'
   const turnId = options.turnId ?? 'turn-1'
   const callId = options.callId ?? 'call-1'
+  const startedThreadId = options.startedThreadId ?? threadId
+  const startedTurnId = options.startedTurnId ?? turnId
+  const requestThreadId = options.requestThreadId ?? threadId
+  const requestTurnId = options.requestTurnId ?? turnId
+  const requestCallId = options.requestCallId ?? callId
+  const namespace = options.namespace ?? null
   const tool = options.tool ?? 'echo_value'
   const input = options.input ?? { value: 'hello' }
+  const requestNamespace = options.requestNamespace ?? namespace
+  const requestTool = options.requestTool ?? tool
+  const requestInput = options.requestInput ?? input
+  const completedCallId = options.completedCallId ?? callId
+  const completedThreadId = options.completedThreadId ?? threadId
+  const completedTurnId = options.completedTurnId ?? turnId
+  const completedNamespace = options.completedNamespace ?? namespace
+  const completedTool = options.completedTool ?? tool
+  const completedInput = options.completedInput ?? input
   const resultText = options.resultText ?? 'hello'
   const finalText = options.finalText ?? 'tool result: hello'
   const success = options.success ?? true
+  const completedSuccess = options.completedSuccess ?? success
+  const completedStatus = options.completedStatus ?? (completedSuccess ? 'completed' : 'failed')
+  const completedContentItems = options.completedContentItems ?? [
+    { type: 'inputText', text: resultText },
+  ]
+  const completedItem: Record<string, unknown> = {
+    id: completedCallId,
+    type: 'dynamicToolCall',
+    namespace: completedNamespace,
+    tool: completedTool,
+    arguments: completedInput,
+    status: completedStatus,
+    contentItems: completedContentItems,
+    success: completedSuccess,
+    durationMs: 1,
+  }
+  if (options.omitCompletedField !== undefined) delete completedItem[options.omitCompletedField]
   return {
     startNotification: {
       method: 'item/started',
       params: {
-        threadId,
-        turnId,
+        threadId: startedThreadId,
+        turnId: startedTurnId,
         startedAtMs: 1,
         item: {
           id: callId,
           type: 'dynamicToolCall',
-          namespace: null,
+          namespace,
           tool,
           arguments: input,
           status: 'inProgress',
@@ -191,32 +242,22 @@ export function fakeCodexDynamicToolRoundTrip(options: FakeCodexDynamicToolRound
       id: options.reverseRequestId ?? 0,
       method: 'item/tool/call',
       params: {
-        threadId,
-        turnId,
-        callId,
-        namespace: null,
-        tool,
-        arguments: input,
+        threadId: requestThreadId,
+        turnId: requestTurnId,
+        callId: requestCallId,
+        namespace: requestNamespace,
+        tool: requestTool,
+        arguments: requestInput,
       },
     },
     continuationNotifications: [
       {
         method: 'item/completed',
         params: {
-          threadId,
-          turnId,
+          threadId: completedThreadId,
+          turnId: completedTurnId,
           completedAtMs: 2,
-          item: {
-            id: callId,
-            type: 'dynamicToolCall',
-            namespace: null,
-            tool,
-            arguments: input,
-            status: success ? 'completed' : 'failed',
-            contentItems: [{ type: 'inputText', text: resultText }],
-            success,
-            durationMs: 1,
-          },
+          item: completedItem,
         },
       },
       {
@@ -248,6 +289,11 @@ export interface FakeCodexScript {
   serverRequests?: CodexServerRequest[]
   /** Notifications emitted only after Veduta answers the first child-initiated request. */
   notificationsAfterServerResponse?: { method: string; params: unknown }[]
+  /** Ordered stages emitted after successive child-request responses; each stage preserves notification-before-request wire order. */
+  serverResponseStages?: {
+    notifications?: { method: string; params: unknown }[]
+    serverRequests?: CodexServerRequest[]
+  }[]
 }
 
 export interface FakeCodexTransport extends CodexTransport {
@@ -270,6 +316,7 @@ export function createFakeCodexTransport(script: FakeCodexScript): FakeCodexTran
   for (const notification of script.notifications ?? []) hub.retain(notification)
   const queuedServerRequests = [...(script.serverRequests ?? [])]
   const notificationsAfterServerResponse = [...(script.notificationsAfterServerResponse ?? [])]
+  const serverResponseStages = [...(script.serverResponseStages ?? [])]
   let closed = false
   let pendingCount = 0
   const serverResponses: { id: CodexRequestId; result: unknown }[] = []
@@ -290,9 +337,12 @@ export function createFakeCodexTransport(script: FakeCodexScript): FakeCodexTran
       throw new Error('fake Codex transport is closed; cannot answer a server request')
     }
     serverResponses.push({ id, result })
-    for (const notification of notificationsAfterServerResponse.splice(0)) {
+    const stage = serverResponseStages.shift()
+    const notifications = stage?.notifications ?? notificationsAfterServerResponse.splice(0)
+    for (const notification of notifications) {
       hub.retain(notification)
     }
+    for (const request of stage?.serverRequests ?? []) serverRequestHub.retain(request)
   }
 
   async function request(method: string, params?: unknown): Promise<unknown> {

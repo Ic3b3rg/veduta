@@ -109,7 +109,11 @@ function normalizeSessionEntries(entries: SessionEntry[]): unknown[] {
   })
 }
 
-async function runProvider(model: ModelRef, provider: ProviderBridge): Promise<ProviderOutcome> {
+async function runProvider(
+  model: ModelRef,
+  provider: ProviderBridge,
+  options: { handlerError?: Error } = {},
+): Promise<ProviderOutcome> {
   const sessionStore = new PiJsonlSessionStore({
     cwd: tempDir('veduta-provider-parity-cwd-'),
     sessionsRoot: tempDir('veduta-provider-parity-sessions-'),
@@ -124,6 +128,7 @@ async function runProvider(model: ModelRef, provider: ProviderBridge): Promise<P
     egressDomains: [],
     handler: ({ value }) => {
       handlerCalls++
+      if (options.handlerError) throw options.handlerError
       appendFileSync(effectPath, `${value}\n`)
       return { content: value, details: { echoed: value } }
     },
@@ -168,6 +173,13 @@ function createCodexProvider(options: FakeCodexDynamicToolRoundTripOptions = {})
     serverRequests: [fixture.serverRequest],
     notificationsAfterServerResponse: fixture.continuationNotifications,
   })
+  return createCodexBridge(transport)
+}
+
+function createCodexBridge(transport: FakeCodexTransport): {
+  bridge: ProviderBridge
+  transport: FakeCodexTransport
+} {
   const rootDir = tempDir('veduta-provider-parity-codex-')
   const noSecrets: SecretResolver = { resolve: () => undefined }
   const ctx = fromPartial<AdapterContext>({
@@ -195,6 +207,42 @@ function createCodexProvider(options: FakeCodexDynamicToolRoundTripOptions = {})
       connections: () => [runtime],
     }),
   }
+}
+
+function createSequentialCodexProvider(): {
+  bridge: ProviderBridge
+  transport: FakeCodexTransport
+} {
+  const first = fakeCodexDynamicToolRoundTrip({
+    callId: 'call-1',
+    reverseRequestId: 0,
+    input: { value: 'one' },
+    resultText: 'one',
+  })
+  const second = fakeCodexDynamicToolRoundTrip({
+    callId: 'call-2',
+    reverseRequestId: 1,
+    input: { value: 'two' },
+    resultText: 'two',
+    finalText: 'two calls complete',
+  })
+  return createCodexBridge(
+    createFakeCodexTransport({
+      responses: {
+        'thread/start': fakeCodexThreadStartResponse(),
+        'turn/start': fakeCodexTurnStartResponse(),
+      },
+      notifications: [first.startNotification],
+      serverRequests: [first.serverRequest],
+      serverResponseStages: [
+        {
+          notifications: [first.continuationNotifications[0]!, second.startNotification],
+          serverRequests: [second.serverRequest],
+        },
+        { notifications: second.continuationNotifications },
+      ],
+    }),
+  )
 }
 
 describe('AgentRunner dynamic-tool provider parity', () => {
@@ -237,12 +285,11 @@ describe('AgentRunner dynamic-tool provider parity', () => {
     ])
   })
 
-  it('leaves malformed dynamic arguments for AgentRunner validation', async () => {
+  it('returns a sanitized handler failure and continues to final assistant text', async () => {
     const { bridge, transport } = createCodexProvider({
-      input: 'not-an-object',
       success: false,
-      resultText: 'tool input validation failed',
-      finalText: 'invalid tool input handled',
+      resultText: 'handler failed with sk-***',
+      finalText: 'handler failure handled',
     })
 
     const outcome = await runProvider(
@@ -253,15 +300,16 @@ describe('AgentRunner dynamic-tool provider parity', () => {
         connectionId: 'codex-conn',
       },
       bridge,
+      { handlerError: new Error('handler failed with sk-sensitive-value') },
     )
 
-    expect(outcome.handlerCalls).toBe(0)
+    expect(outcome.handlerCalls).toBe(1)
     expect(outcome.persistedEffect).toBe('')
     expect(outcome.events).toEqual(
       expect.arrayContaining([
-        { type: 'tool-start', toolName: 'echo_value', input: 'not-an-object' },
+        { type: 'tool-start', toolName: 'echo_value', input: { value: 'hello' } },
         expect.objectContaining({ type: 'tool-result', toolName: 'echo_value', isError: true }),
-        { type: 'turn-end', text: 'invalid tool input handled' },
+        { type: 'turn-end', text: 'handler failure handled' },
       ]),
     )
     expect(outcome.sessionEntries).toEqual(
@@ -280,11 +328,37 @@ describe('AgentRunner dynamic-tool provider parity', () => {
           contentItems: [
             {
               type: 'inputText',
-              text: expect.stringContaining('must be object'),
+              text: expect.stringContaining('sk-***'),
             },
           ],
         },
       },
+    ])
+    expect(JSON.stringify(transport.serverResponses)).not.toContain('sk-sensitive-value')
+  })
+
+  it('executes each of two sequential accepted call ids exactly once', async () => {
+    const { bridge, transport } = createSequentialCodexProvider()
+
+    const outcome = await runProvider(
+      {
+        provider: 'openai',
+        modelId: 'gpt-5-codex',
+        tier: 'reasoning',
+        connectionId: 'codex-conn',
+      },
+      bridge,
+    )
+
+    expect(outcome.handlerCalls).toBe(2)
+    expect(outcome.persistedEffect).toBe('one\ntwo\n')
+    expect(outcome.events).toEqual(
+      expect.arrayContaining([{ type: 'turn-end', text: 'two calls complete' }]),
+    )
+    expect(transport.serverResponses.map((response) => response.id)).toEqual([0, 1])
+    expect(transport.requests.map((request) => request.method)).toEqual([
+      'thread/start',
+      'turn/start',
     ])
   })
 })

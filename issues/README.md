@@ -10,7 +10,7 @@ Trust:         014 trust-layer → 015 security-hardening
 Proactivity:   016 heartbeat → 017 worker-review → 018 push-notifications
 Adoption:      019 onboarding-wizard → 020 importer
 Polish:        032 facts-hygiene → 021 advanced-memory → 022 emergent-templates
-Models:        047 model-connections → 070 codex-tool-parity → 071 codex-tool-round-trip
+Models:        047 model-connections → 070 codex-tool-parity → 071 codex-tool-round-trip → 072 codex-tool-turn-hardening
 Access:        048 guided-vps-access-installer → 049 tailnet-access
 Operations:    081 internal-trace-console
 Maintenance:   080 repository-simplification
@@ -71,5 +71,6 @@ Parallelizable: (006,007,008) after 002; (010,011) after 003; (019,020) after 00
 | 090 | [Diagnostic safety, restart, and recovery](090-diagnostic-safety-restart-recovery.md)           | Operations   |
 | 070 | [ChatGPT subscription tool parity](070-codex-tool-parity.md)                                    | Models       |
 | 071 | [Round-trip one Codex dynamic tool](071-codex-dynamic-tool-round-trip.md)                       | Models       |
+| 072 | [Harden Codex tool turns](072-codex-tool-turn-hardening.md)                                     | Models       |
 | 052 | [Global chat multi-Space work](052-global-chat-multi-space.md)                                  | Core         |
 | 080 | [Repository simplification](080-repository-simplification.md)                                   | Maintenance  |
