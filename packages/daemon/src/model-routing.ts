@@ -314,7 +314,7 @@ export class ModelRoutingExhaustedError extends Error {
   }
 }
 
-/** Marks failures that must never fail over (bad key, invalid request). */
+/** Marks turn failures that must never fail over. */
 export class NonRetryableModelError extends Error {
   constructor(message: string) {
     super(message)
@@ -404,11 +404,12 @@ export interface ModelRouterOptions {
   onEvent?: (event: RouterEvent) => void
   isRetryable?: (error: unknown) => boolean
   /**
-   * Fired from `execute`'s catch, before the retry/failover decision, with
-   * the exact `ModelRef` that just failed (issue #47: lets a caller mark a
-   * BYOK connection `failed` on a 401/403 so routing drops it on the next
-   * rebuild). Wrapped in its own try/catch — a misbehaving listener must
-   * never break routing.
+   * Fired for provider failures with the exact `ModelRef` that just failed
+   * (issue #47: lets a caller mark a BYOK connection `failed` on a 401/403
+   * so routing drops it on the next rebuild). A `NonRetryableModelError`
+   * describes a turn-local policy/result already classified by Veduta, not
+   * connection health, so it is never reported here. Wrapped in its own
+   * try/catch — a misbehaving listener must never break routing.
    */
   onCallError?: (model: ModelRef, error: unknown) => void
 }
@@ -489,10 +490,12 @@ export class ModelRouter {
       } catch (error) {
         const reason = sanitizeErrorText(error)
         this.logCall(request, model, 'error', reason)
-        try {
-          this.onCallError?.(model, error)
-        } catch {
-          // A misbehaving listener must never break routing (issue #47).
+        if (!(error instanceof NonRetryableModelError)) {
+          try {
+            this.onCallError?.(model, error)
+          } catch {
+            // A misbehaving listener must never break routing (issue #47).
+          }
         }
         if (!this.isRetryable(error)) throw error
         lastError = error

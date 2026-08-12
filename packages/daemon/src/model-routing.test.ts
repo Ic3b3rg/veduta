@@ -498,6 +498,41 @@ describe('onCallError', () => {
 
     expect(result).toBe('still ok')
   })
+
+  it('does not report a turn-local non-retryable failure as a Model connection failure', async () => {
+    const calls: unknown[] = []
+    const router = testRouter({
+      onCallError: (_model, error) => calls.push(error),
+    })
+
+    await expect(
+      router.execute({ purpose: 'chat-turn', origin: 'user' }, async () => {
+        throw new NonRetryableModelError(
+          'the Codex turn attempted a tool action; refusing to run a turn that could act outside Veduta',
+        )
+      }),
+    ).rejects.toThrow('outside Veduta')
+
+    expect(calls).toEqual([])
+  })
+
+  it('still reports a provider authentication failure to the Model connection listener', async () => {
+    const calls: unknown[] = []
+    const router = testRouter({
+      onCallError: (_model, error) => calls.push(error),
+    })
+    const unauthorized = Object.assign(new Error('provider rejected the credential'), {
+      status: 401,
+    })
+
+    await expect(
+      router.execute({ purpose: 'chat-turn', origin: 'user' }, async () => {
+        throw unauthorized
+      }),
+    ).rejects.toThrow('provider rejected the credential')
+
+    expect(calls).toEqual([unauthorized])
+  })
 })
 
 describe('Model connections routing (issue #47)', () => {

@@ -241,6 +241,15 @@ export function createProviderBridge(options: ProviderBridgeOptions): ProviderBr
     // (from its own `model/list` catalog, not pi-ai's) never has to exist
     // in pi-ai's catalog.
     const runtime = model.connectionId === undefined ? undefined : findRuntime(model.connectionId)
+    if (
+      model.connectionId !== undefined &&
+      options.connections !== undefined &&
+      runtime === undefined
+    ) {
+      throw new NonRetryableModelError(
+        `Model connection "${model.connectionId}" is not available; open Model connections and retry it`,
+      )
+    }
     if (runtime?.transport === 'subscription') {
       return stampConnection(
         subscriptionModelDescriptor(runtime, model.modelId),

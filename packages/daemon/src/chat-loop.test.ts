@@ -44,6 +44,8 @@ function buildHarness(
   options: {
     reasoningCandidates?: number
     reasoningModelIds?: string[]
+    now?: () => Date
+    timeZone?: string
     /**
      * Issue #37 fix: makes `send` throw on the FIRST `chat.turn-delta` frame
      * only, simulating a delivery/accounting failure inside the runner's
@@ -120,6 +122,8 @@ function buildHarness(
       }
       frames.push({ clientId, frame })
     },
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.timeZone ? { timeZone: options.timeZone } : {}),
   })
 
   return {
@@ -151,6 +155,8 @@ describe('createChatLoop', () => {
   function harness(options?: {
     reasoningCandidates?: number
     reasoningModelIds?: string[]
+    now?: () => Date
+    timeZone?: string
     throwOnFirstDelta?: boolean
   }): Harness {
     const built = buildHarness(options)
@@ -208,8 +214,11 @@ describe('createChatLoop', () => {
     expect(spendEntries[0]).toMatchObject({ tier: 'reasoning', usd: 0.05 })
   })
 
-  it('tells a focused model that Event-log writes cannot replace visible Surface mutations', async () => {
-    const h = harness()
+  it('gives a focused model the clock, tool boundary, and complete Surface-update contract', async () => {
+    const h = harness({
+      now: () => new Date('2026-08-11T17:53:00.000Z'),
+      timeZone: 'Europe/Rome',
+    })
     const spaceId = h.store.listSpaces()[0]!.id
     let systemPrompt: string | undefined
     h.fake.setResponses([
@@ -228,6 +237,14 @@ describe('createChatLoop', () => {
     expect(systemPrompt).toContain('patch_state')
     expect(systemPrompt).toContain('append_event does not change a Surface')
     expect(systemPrompt).toContain('Only claim a Surface changed after a successful mutation tool')
+    expect(systemPrompt).toContain('identify every Surface in this Space affected by the message')
+    expect(systemPrompt).toContain('update every dependent state field')
+    expect(systemPrompt).toContain('Do not stop after the first applicable Surface or state field')
+    expect(systemPrompt).toContain(
+      'Current user-local date and time: 2026-08-11 19:53 (Europe/Rome)',
+    )
+    expect(systemPrompt).toContain('Use only the Veduta tools explicitly provided in this turn')
+    expect(systemPrompt).toContain('Never call provider-native shell')
   })
 
   it('an observer failure (send throwing on the first delta) never fails the turn, still delivers later frames, and never triggers failover (issue #37 fix)', async () => {

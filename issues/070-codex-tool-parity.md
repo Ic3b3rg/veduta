@@ -94,7 +94,8 @@ provenance, and UI behavior as BYOK.
       trust matrix.
 - [ ] **Native tools remain impossible:** command, filesystem patch, web-search, MCP, unknown tool,
       malformed dynamic call, and capability drift fixtures all interrupt and fail closed without
-      executing an effect or silently retrying through another credential.
+      executing an effect or silently retrying through another credential. These turn-local
+      refusals never change the selected Model connection's lifecycle or force reauthorization.
 - [ ] **No degraded mode:** `vedutaTools`, `isTextOnly`, `toolsEnabledForModel`, and the PWA's
       text-only notice no longer exist. An adapter that cannot complete the structured contract is
       not eligible for primary routing.

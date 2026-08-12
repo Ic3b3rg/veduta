@@ -9,6 +9,7 @@ import type { ProviderBridge } from './pi-provider-bridge.ts'
 import { ABSTENTION_RULE } from './spaces-engine.ts'
 import type { Store } from './store.ts'
 import { effectiveOrigin, type Origin } from './taint.ts'
+import { zonedParts } from './timezone.ts'
 import { piToolParameters } from './tool-parameters.ts'
 
 /**
@@ -19,11 +20,18 @@ const SPACE_CHAT_PREAMBLE =
   "You are Veduta's Agent, answering the user's chat message inside this Space. Use the " +
   'tools available to you for Space work — reading recent events, writing facts, creating ' +
   'or updating Surfaces, arming timers — rather than only describing what you would do. ' +
-  'When a request refers to information visible in an existing Surface, call list_surfaces, ' +
-  'select the applicable id, call read_surface, and derive patch_state or patch_tree from the ' +
-  'returned Surface. If none fits, use create_surface. append_event does not change a Surface ' +
-  'or its visible state and is never a substitute for a Surface mutation. Only claim a Surface ' +
-  'changed after a successful mutation tool result.'
+  'When a request can affect Surface content, call list_surfaces and identify every Surface in ' +
+  'this Space affected by the message. Call read_surface for each applicable Surface, then derive ' +
+  'patch_state or patch_tree from what was returned. For each applicable Surface, update every ' +
+  'dependent state field needed to keep its visible content internally consistent, including ' +
+  'summaries, counts, histories, and progress values. Do not stop after the first applicable ' +
+  'Surface or state field. If none fits, use create_surface. append_event does not change a ' +
+  'Surface or its visible state and is never a substitute for a Surface mutation. Only claim a ' +
+  'Surface changed after a successful mutation tool result.'
+
+const TOOL_BOUNDARY =
+  'Use only the Veduta tools explicitly provided in this turn. Never call provider-native shell, ' +
+  'command, filesystem, web, MCP, or any other tool not supplied by Veduta.'
 
 /**
  * Global chat has no Space to read or write, so this issue's scope
@@ -46,6 +54,9 @@ export interface ChatLoopOptions {
   /** The Space's tool registry, or `[]` for global chat (issue #37: no tools until a Space is chosen). */
   toolsFor: (spaceId: string | undefined) => ToolDef[]
   send: (clientId: string, frame: GatewayServerMessage) => void
+  /** Clock and global user timezone injected into every turn's context. */
+  now?: () => Date
+  timeZone?: string
   /**
    * Forwarded verbatim into every `PiAgentRunner` this loop constructs.
    * Issue #73 expands the existing compatibility gate so hardened Codex
@@ -91,6 +102,8 @@ function finalTextOf(segments: string[], lastTurnEndText: string | undefined): s
 }
 
 export function createChatLoop(options: ChatLoopOptions): ChatLoop {
+  const now = options.now ?? (() => new Date())
+  const timeZone = options.timeZone ?? 'UTC'
   const runners = new Map<string, PiAgentRunner>()
   // One turn in flight per session id, because PiAgentRunner holds mutable
   // turn state (issue #37): the fullTextChain idiom (server.ts), keyed per
@@ -135,11 +148,18 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
     systemPrompt: string
     contextOrigins: Origin[]
   } {
+    const { year, month, day, hour, minute } = zonedParts(timeZone, now())
+    const twoDigits = (value: number): string => String(value).padStart(2, '0')
+    const clock =
+      `Current user-local date and time: ${year}-${twoDigits(month)}-${twoDigits(day)} ` +
+      `${twoDigits(hour)}:${twoDigits(minute)} (${timeZone}).`
     if (spaceId !== undefined) {
       return {
         systemPrompt: [
           options.store.assembleSpaceContext(spaceId),
           ABSTENTION_RULE,
+          clock,
+          TOOL_BOUNDARY,
           SPACE_CHAT_PREAMBLE,
         ].join('\n\n'),
         contextOrigins: options.store.spacesEngine.contextOrigins(spaceId),
@@ -154,6 +174,8 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
       `# SOUL\n\n${docs.soul.trim()}`,
       `# USER\n\n${docs.user.trim()}`,
       `# Spaces\n\n${spaceLines || 'No Spaces yet.'}`,
+      clock,
+      TOOL_BOUNDARY,
       GLOBAL_CHAT_PREAMBLE,
     ].join('\n\n')
     return { systemPrompt, contextOrigins: [] }

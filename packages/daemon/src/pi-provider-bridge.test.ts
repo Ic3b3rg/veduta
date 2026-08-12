@@ -539,6 +539,25 @@ describe('createProviderBridge', () => {
       expect(model.provider).toBe('openai')
       expect(model.id).toBe('gpt-5-codex')
     })
+
+    it('fails closed when a connection-bound model no longer has a live runtime', () => {
+      const bridge = createProviderBridge({
+        config,
+        secrets: noKeysResolve,
+        connections: () => [],
+      })
+
+      const resolve = () =>
+        bridge.resolveModel({
+          provider: 'openai',
+          modelId: 'gpt-5.6-luna',
+          tier: 'reasoning',
+          connectionId: 'codex-conn',
+        })
+
+      expect(resolve).toThrow(NonRetryableModelError)
+      expect(resolve).toThrow(/Model connection "codex-conn" is not available/)
+    })
   })
 
   describe('streamFn (subscription connections, issue #47)', () => {

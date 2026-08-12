@@ -1156,6 +1156,8 @@ export function buildServer(options: ServerOptions = {}) {
     router,
     sessionStore: chatSessionStore,
     bridge,
+    now,
+    timeZone: memoryConfig.timezone,
     isTrustWrapped,
     toolsFor: chatToolRegistry,
     send: (clientId, frame) => gateway.sendToClient(clientId, frame),

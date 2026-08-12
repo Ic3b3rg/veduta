@@ -29,12 +29,15 @@ seam while keeping its current focused-Space model-facing contract narrow.
 
 ## Goal
 
-Inside a focused Space, the Agent can discover an applicable Surface, read exactly the declarative
-tree and typed state that back its visible UI, and then author a protocol-valid change through the
-existing Surface tools. When no Surface fits, it can create one without knowing or supplying the
-focused Space id. Reads preserve content origins so live taint continues to govern later actions.
-Natural-language interpretation stays with the selected model; the Gateway gains no
-Surface-specific command grammar or intent parser.
+Inside a focused Space, the Agent can discover every applicable Surface, read exactly the
+declarative trees and typed state that back their visible UI, and then author protocol-valid
+changes through the existing Surface tools. A single message may update multiple fields in one
+Surface and multiple applicable Surfaces in that Space; every displayed summary, count, history,
+or progress field that depends on the new information stays internally consistent. When no
+Surface fits, the Agent can create one without knowing or supplying the focused Space id. Reads
+preserve content origins so live taint continues to govern later actions. Natural-language
+interpretation stays with the selected model; the Gateway gains no Surface-specific command
+grammar or intent parser.
 
 ## What to build
 
@@ -74,6 +77,11 @@ Surface-specific command grammar or intent parser.
   schemas remain derived through the normal `ToolDef` path. Every eligible primary Model
   connection receives the same contract; no provider adapter executes or filters these tools
   specially.
+- Tell focused turns to use the inventory as a complete affected-set check: read and update every
+  applicable Surface in the current Space, and update every dependent bound state field needed to
+  keep each Surface's visible content internally consistent. Do not add domain-specific dependency
+  formulas to the Gateway; interpretation and patch construction remain model work over the
+  model-visible trees and state.
 - Do not add a Surface inventory to `SpacesEngine.assembleContext`. The Agent pays the context and
   origin cost only after choosing to call a reader.
 - Keep current mutation concurrency semantics: `patch_state` remains last-write-wins and gains no
@@ -95,6 +103,11 @@ Surface-specific command grammar or intent parser.
       calls `list_surfaces`, selects a returned id, calls `read_surface`, and emits a valid
       `patch_state` derived from the returned state. The resulting Surface validates through
       `SurfaceSchema` and reaches the PWA through the existing Surface event stream.
+- [ ] **Complete focused-Space update:** a message affecting multiple bound fields in one Surface
+      updates all dependent visible values, and a message affecting two Surfaces in the focused
+      Space reads and patches both before claiming completion. The Agent does not stop after the
+      first matching title or first state operation; no domain-specific parser or fixed Surface id
+      is added.
 - [ ] **Create without guessing scope:** in a focused Space with no Agent-authored Surfaces, a
       deterministic provider receives a `create_surface` schema with no `spaceId`, calls it without
       one, and creates a protocol-valid Surface in that Space. Supplying an extra id for another

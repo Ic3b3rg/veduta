@@ -14,6 +14,12 @@ The Agent may inspect and change routing among already-authorized Model connecti
 
 The Gateway refreshes credentials automatically and may fail over only to another connection the user has already authorized and enabled for fallback. It never crosses implicitly from a subscription to metered BYOK and never hides an unavailable real connection by answering through the mock provider. When no permitted connection can serve a turn, the turn stops with a visible reconnection action; every provider change is surfaced and recorded.
 
+Only an authentication, credential-refresh, or provider-transport failure may change a Model
+connection's lifecycle. A turn-local validation, trust, or provider-native-tool refusal fails that
+turn but leaves the connection connected: reauthorization cannot repair a rejected Agent action.
+A connection-bound model whose live runtime is absent fails closed as unavailable and is never
+reinterpreted through pi-ai's built-in model catalog.
+
 ## Amendments
 
 **Issue 047 narrows the boundary to inference-only adapters and places each initial adapter against it.**
