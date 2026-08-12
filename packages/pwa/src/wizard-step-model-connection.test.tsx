@@ -26,7 +26,6 @@ const anthropicApiKeyMethod = {
     authorization: 'api-key' as const,
     refresh: 'static' as const,
     revocation: 'local-only' as const,
-    vedutaTools: true,
     metered: true,
   },
   available: true,

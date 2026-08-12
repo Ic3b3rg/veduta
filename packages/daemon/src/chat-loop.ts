@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { GatewayServerMessage } from '@veduta/protocol'
-import type { ModelRef, SessionStore, ToolDef } from './agent-runner.ts'
+import type { SessionStore, ToolDef } from './agent-runner.ts'
 import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import type { ModelRouter } from './model-routing.ts'
 import { sanitizeErrorText } from './model-routing.ts'
@@ -57,16 +57,6 @@ export interface ChatLoopOptions {
   /** Clock and global user timezone injected into every turn's context. */
   now?: () => Date
   timeZone?: string
-  /**
-   * Forwarded verbatim into every `PiAgentRunner` this loop constructs.
-   * Issue #73 expands the existing compatibility gate so hardened Codex
-   * turns receive tools; issue #79 removes the seam after every AgentRunner
-   * category reaches parity.
-   * `server.ts` supplies `(model) => !(model.connectionId && registry.isTextOnly(model.connectionId))`.
-   * Omitted keeps every pre-issue-47 caller and test offering tools exactly
-   * as before.
-   */
-  toolsEnabledForModel?: (model: ModelRef) => boolean
 }
 
 export interface ChatLoop {
@@ -135,9 +125,6 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
       streamFn: options.bridge.streamFn,
       toolParameters: piToolParameters(options.toolsFor(spaceId)),
       isToolTrustWrapped: options.isTrustWrapped,
-      ...(options.toolsEnabledForModel
-        ? { toolsEnabledForModel: options.toolsEnabledForModel }
-        : {}),
     })
     await runner.start(sessionId)
     runners.set(sessionId, runner)

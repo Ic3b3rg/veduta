@@ -129,7 +129,6 @@ export function createByokAdapter(provider: ByokProvider): ModelConnectionAdapte
       authorization: 'api-key',
       refresh: 'static',
       revocation: 'local-only',
-      vedutaTools: true,
       metered: true,
     },
     availability,

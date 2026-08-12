@@ -61,7 +61,6 @@ function fakeDeviceAdapter(
       authorization: 'device-code',
       refresh: 'automatic',
       revocation: 'provider',
-      vedutaTools: false,
       metered: false,
     },
     availability: async () => ({ available: true }),

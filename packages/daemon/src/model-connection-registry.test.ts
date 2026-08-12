@@ -59,7 +59,6 @@ function createFakeAdapter(
       authorization: 'api-key',
       refresh: 'static',
       revocation: 'local-only',
-      vedutaTools: true,
       metered: true,
     },
     availability: async () => ({ available: true }),
@@ -106,7 +105,6 @@ describe('mutation queue', () => {
         authorization: 'device-code',
         refresh: 'automatic',
         revocation: 'provider',
-        vedutaTools: false,
         metered: false,
       },
     })
@@ -152,7 +150,6 @@ describe('verify', () => {
         authorization: 'device-code',
         refresh: 'automatic',
         revocation: 'provider',
-        vedutaTools: false,
         metered: false,
       },
       verify: (ctx, modelId) => ctx.probe(modelId),
@@ -184,7 +181,6 @@ describe('refresh singleflight', () => {
         authorization: 'device-code',
         refresh: 'automatic',
         revocation: 'provider',
-        vedutaTools: false,
         metered: false,
       },
       authorize: async () => ({
@@ -274,7 +270,6 @@ describe('device challenge', () => {
         authorization: 'device-code',
         refresh: 'automatic',
         revocation: 'provider',
-        vedutaTools: false,
         metered: false,
       },
       authorize: async () => ({
@@ -673,7 +668,6 @@ describe('authorize', () => {
         authorization: 'device-code',
         refresh: 'automatic',
         revocation: 'provider',
-        vedutaTools: false,
         metered: false,
       },
     })
@@ -710,7 +704,6 @@ describe('runtimes (issue #47)', () => {
         authorization: 'device-code',
         refresh: 'automatic',
         revocation: 'provider',
-        vedutaTools: false,
         metered: false,
       },
       ...overrides,
@@ -795,41 +788,6 @@ describe('runtimes (issue #47)', () => {
   })
 })
 
-describe('isTextOnly (issue #47)', () => {
-  it('is true for a connected chatgpt-codex connection', async () => {
-    const dir = freshRoot()
-    const adapter = createFakeAdapter({
-      methodId: 'chatgpt-codex',
-      providerName: 'openai',
-      capabilities: {
-        authorization: 'device-code',
-        refresh: 'automatic',
-        revocation: 'provider',
-        vedutaTools: false,
-        metered: false,
-      },
-    })
-    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
-    const created = await registry.create({ method: 'chatgpt-codex' })
-    const connectionId = created.connections[0]?.id
-    if (!connectionId) throw new Error('test setup failed')
-
-    expect(registry.isTextOnly(connectionId)).toBe(true)
-  })
-
-  it('is false for a BYOK connection and for an id with no matching record', async () => {
-    const dir = freshRoot()
-    const adapter = createFakeAdapter()
-    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
-    const created = await registry.create({ method: 'anthropic-api-key' })
-    const connectionId = created.connections[0]?.id
-    if (!connectionId) throw new Error('test setup failed')
-
-    expect(registry.isTextOnly(connectionId)).toBe(false)
-    expect(registry.isTextOnly('no-such-connection')).toBe(false)
-  })
-})
-
 describe('ensureFresh (issue #47)', () => {
   it('returns the post-refresh lifecycle state', async () => {
     const dir = freshRoot()
@@ -840,7 +798,6 @@ describe('ensureFresh (issue #47)', () => {
         authorization: 'device-code',
         refresh: 'automatic',
         revocation: 'provider',
-        vedutaTools: false,
         metered: false,
       },
       refresh: async () => ({ state: 'expired', reason: 'the refresh token is gone' }),
@@ -997,7 +954,6 @@ describe('applyRefreshResult compare-and-swap (issue #47)', () => {
         authorization: 'device-code',
         refresh: 'automatic',
         revocation: 'provider',
-        vedutaTools: false,
         metered: false,
       },
       authorize: async () => {
@@ -1088,7 +1044,6 @@ describe('refresh singleflight challenge identity (issue #47)', () => {
         authorization: 'device-code',
         refresh: 'automatic',
         revocation: 'provider',
-        vedutaTools: false,
         metered: false,
       },
       authorize: async () => {

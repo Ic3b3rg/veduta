@@ -225,7 +225,7 @@ function AddConnectionForm({
   )
 }
 
-/** One stored connection: its editable label, lifecycle copy and action, fallback toggle, Remove, the text-only note for a `vedutaTools: false` method, and (while `waiting-for-user`) the device-code block. */
+/** One stored connection: its editable label, lifecycle copy and action, fallback toggle, Remove, and (while `waiting-for-user`) the device-code block. */
 function ConnectionCard({
   connection,
   method,
@@ -314,13 +314,6 @@ function ConnectionCard({
         />
         {' Allow as fallback'}
       </label>
-
-      {method?.capabilities.vedutaTools === false && (
-        <p className="wizard-help-note">
-          Answers in text only — Veduta tools such as memory search are not available through this
-          connection.
-        </p>
-      )}
 
       {challenge !== undefined && (
         <div className="model-connection-device-code">

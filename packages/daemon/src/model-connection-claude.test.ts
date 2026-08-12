@@ -18,7 +18,6 @@ describe('claudeSubscriptionAdapter', () => {
       authorization: 'none',
       refresh: 'automatic',
       revocation: 'provider',
-      vedutaTools: true,
       metered: true,
     })
   })

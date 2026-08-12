@@ -202,16 +202,6 @@ export interface PiAgentRunnerOptions {
    * back to its compat `streamSimple`.
    */
   streamFn?: PiStreamFn
-  /**
-   * Temporary primary-routing compatibility gate expanded by issue #73 so
-   * the hardened Codex adapter receives the same gated tools as BYOK. Applied
-   * immediately after `gateToolsForOrigins` in `prompt()` — the same choke
-   * point every caller already passes through. Returning `false` empties
-   * the tool list for that turn; any other result (including omitting this
-   * option) keeps the taint gate's own result unchanged. Issue #79 removes
-   * this provider capability gate after all AgentRunner categories migrate.
-   */
-  toolsEnabledForModel?: (model: ModelRef) => boolean
 }
 
 export class PiAgentRunner implements AgentRunner {
@@ -226,7 +216,6 @@ export class PiAgentRunner implements AgentRunner {
   private readonly getApiKey:
     ((provider: string) => Promise<string | undefined> | string | undefined) | undefined
   private readonly streamFn: PiStreamFn | undefined
-  private readonly toolsEnabledForModel: ((model: ModelRef) => boolean) | undefined
   private sessionId: string | undefined = undefined
   private currentModel: ModelRef | undefined = undefined
   private agent: Agent | undefined = undefined
@@ -294,7 +283,6 @@ export class PiAgentRunner implements AgentRunner {
     this.isToolTrustWrapped = options.isToolTrustWrapped
     this.getApiKey = options.getApiKey
     this.streamFn = options.streamFn
-    this.toolsEnabledForModel = options.toolsEnabledForModel
   }
 
   async start(sessionId: string): Promise<void> {
@@ -350,17 +338,9 @@ export class PiAgentRunner implements AgentRunner {
     this.currentTurnInput = input
     this.currentSpaceId = options.spaceId
     this.currentTrigger = options.trigger
-    const gatedTools = gateToolsForOrigins(
-      options.tools ?? [],
-      candidateOrigins,
-      this.isToolTrustWrapped,
+    const tools = this.toPiTools(
+      gateToolsForOrigins(options.tools ?? [], candidateOrigins, this.isToolTrustWrapped),
     )
-    // Issue #73 expands this compatibility gate for hardened Codex turns.
-    // A model rejected here still sees no tools regardless of what the
-    // taint gate above cleared; issue #79 removes this filter.
-    const offeredTools = this.toolsEnabledForModel?.(model) === false ? [] : gatedTools
-
-    const tools = this.toPiTools(offeredTools)
     const contextPolicy = options.contextPolicy ?? this.defaultContextPolicy
     if (!this.agent) {
       // Retry-safe contract (issue #37): when `userMessageAppended` is true,

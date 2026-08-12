@@ -9,17 +9,14 @@ import {
   defineTool,
   disabledContextPolicy,
   type ContextPolicy,
-  type ModelRef,
   type SessionEntry,
   type SessionMessage,
 } from './agent-runner.ts'
-import { createFakeProvider } from './fake-provider.ts'
 import {
   applyOriginEntries,
   branchMessagesForPrompt,
   originEntryData,
   piMessageTokens,
-  PiAgentRunner,
   PiJsonlSessionStore,
   toPiAgentTool,
   transformPiContext,
@@ -476,128 +473,5 @@ describe('toPiAgentTool', () => {
 
     expect(recorded).toEqual([])
     expect(taint.origins()).toEqual(['trusted:user'])
-  })
-})
-
-describe('PiAgentRunner tool gating (issue #47)', () => {
-  it('offers no tools to a model whose connection reports vedutaTools false', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'veduta-pi-agent-runner-cwd-'))
-    const sessionsRoot = mkdtempSync(join(tmpdir(), 'veduta-pi-agent-runner-sessions-'))
-    const sessionStore = new PiJsonlSessionStore({ cwd, sessionsRoot })
-    const fake = createFakeProvider()
-
-    // `context.tools` is exactly what pi-agent-core's own `Agent.state`
-    // forwards into every stream call (`agent.js`'s `createContextSnapshot`)
-    // — reading it back here is the only way to observe what
-    // `PiAgentRunner.prompt` actually offered, short of a live provider.
-    let seenToolNames: string[] | undefined
-    fake.setResponses([
-      {
-        factory: (context) => {
-          seenToolNames = (context.tools ?? []).map((tool) => tool.name)
-          return {
-            role: 'assistant',
-            content: [{ type: 'text', text: 'ok' }],
-            api: 'fake',
-            provider: 'fake',
-            model: 'fake-model',
-            usage: {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-              totalTokens: 0,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-            },
-            stopReason: 'stop',
-            timestamp: Date.now(),
-          }
-        },
-      },
-    ])
-
-    const tool = defineTool({
-      name: 'search_memory',
-      description: 'search the memory index',
-      schema: z.object({}),
-      level: 'L0',
-      egressDomains: [],
-      handler: () => ({ content: 'ok' }),
-    })
-
-    const model: ModelRef = {
-      provider: 'fake',
-      modelId: 'fake-model',
-      tier: 'reasoning',
-      connectionId: 'codex-conn',
-    }
-    const runner = new PiAgentRunner({
-      sessionStore,
-      resolveModel: fake.resolveModel,
-      getApiKey: fake.getApiKey,
-      streamFn: fake.streamFn,
-      toolParameters: { search_memory: fromPartial<PiToolParameters>({}) },
-      toolsEnabledForModel: (candidate) => candidate.connectionId !== 'codex-conn',
-    })
-    await runner.start('session-1')
-    await runner.prompt('hello', { model, tools: [tool] })
-
-    expect(seenToolNames).toEqual([])
-  })
-
-  it('still offers the gated tools to a model whose connection allows them', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'veduta-pi-agent-runner-cwd-'))
-    const sessionsRoot = mkdtempSync(join(tmpdir(), 'veduta-pi-agent-runner-sessions-'))
-    const sessionStore = new PiJsonlSessionStore({ cwd, sessionsRoot })
-    const fake = createFakeProvider()
-
-    let seenToolNames: string[] | undefined
-    fake.setResponses([
-      {
-        factory: (context) => {
-          seenToolNames = (context.tools ?? []).map((tool) => tool.name)
-          return {
-            role: 'assistant',
-            content: [{ type: 'text', text: 'ok' }],
-            api: 'fake',
-            provider: 'fake',
-            model: 'fake-model',
-            usage: {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-              totalTokens: 0,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-            },
-            stopReason: 'stop',
-            timestamp: Date.now(),
-          }
-        },
-      },
-    ])
-
-    const tool = defineTool({
-      name: 'search_memory',
-      description: 'search the memory index',
-      schema: z.object({}),
-      level: 'L0',
-      egressDomains: [],
-      handler: () => ({ content: 'ok' }),
-    })
-
-    const model: ModelRef = { provider: 'fake', modelId: 'fake-model', tier: 'reasoning' }
-    const runner = new PiAgentRunner({
-      sessionStore,
-      resolveModel: fake.resolveModel,
-      getApiKey: fake.getApiKey,
-      streamFn: fake.streamFn,
-      toolParameters: { search_memory: fromPartial<PiToolParameters>({}) },
-      toolsEnabledForModel: (candidate) => candidate.connectionId !== 'codex-conn',
-    })
-    await runner.start('session-1')
-    await runner.prompt('hello', { model, tools: [tool] })
-
-    expect(seenToolNames).toEqual(['search_memory'])
   })
 })

@@ -1161,11 +1161,6 @@ export function buildServer(options: ServerOptions = {}) {
     isTrustWrapped,
     toolsFor: chatToolRegistry,
     send: (clientId, frame) => gateway.sendToClient(clientId, frame),
-    // Issue #73 expands the existing compatibility gate for the hardened
-    // Codex dynamic-tool adapter. Issue #79 removes this temporary filter
-    // once every AgentRunner category reaches provider parity.
-    toolsEnabledForModel: (model) =>
-      !(model.connectionId !== undefined && registry.isTextOnly(model.connectionId)),
   })
   chatTurnHandler = (event) => {
     void chatLoop.handleChatMessage(event)

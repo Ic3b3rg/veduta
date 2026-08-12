@@ -31,7 +31,6 @@ function emptySnapshot(): ModelConnectionsSnapshot {
           authorization: 'api-key',
           refresh: 'static',
           revocation: 'local-only',
-          vedutaTools: true,
           metered: true,
         },
         available: true,

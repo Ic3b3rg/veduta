@@ -106,7 +106,6 @@ function connectedChatgptSubscriptionSnapshot(): ModelConnectionsSnapshot {
           authorization: 'device-code',
           refresh: 'automatic',
           revocation: 'provider',
-          vedutaTools: true,
           metered: false,
         },
         available: true,

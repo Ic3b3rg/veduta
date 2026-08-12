@@ -98,8 +98,6 @@ export const ModelConnectionCapabilitiesSchema = z
     authorization: z.enum(['api-key', 'device-code', 'none']),
     refresh: z.enum(['automatic', 'static']),
     revocation: z.enum(['provider', 'local-only']),
-    /** Temporary compatibility capability: whether Veduta's own ToolDefs may be offered to a turn on this connection (issue #73; removed with this gate in issue #79). */
-    vedutaTools: z.boolean(),
     /** Metered spend is possible on this method (BYOK, or a subscription with usage credits). */
     metered: z.boolean(),
   })

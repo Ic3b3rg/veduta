@@ -966,21 +966,6 @@ export class ModelConnectionRegistry {
   }
 
   /**
-   * Sync (issue #47): `PiAgentRunner`'s `toolsEnabledForModel` gate runs on
-   * every `prompt()` call, so it cannot await a mutation-queue read — this
-   * reads `connections.json` directly, the same way `deriveDisplaySelection`
-   * already does outside the queue for a read-only lookup. `false`
-   * (tools allowed) for any id with no matching record: a stale/removed
-   * connection is the router's problem to refuse, not this gate's.
-   */
-  isTextOnly(connectionId: string): boolean {
-    const file = loadConnectionsConfig(this.rootDir)
-    const record = file.connections.find((candidate) => candidate.id === connectionId)
-    if (!record) return false
-    return !this.findAdapter(record.method).capabilities.vedutaTools
-  }
-
-  /**
    * Boot-time normalization (ADR-0014 amendment): any state a restart could
    * have interrupted mid-flight is never trusted — it is moved to `failed`
    * with a reason the user can act on, and any in-memory challenge for it is

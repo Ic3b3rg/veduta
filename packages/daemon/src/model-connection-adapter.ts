@@ -23,8 +23,6 @@ export interface ModelConnectionCapabilities {
   authorization: 'api-key' | 'device-code' | 'none'
   refresh: 'automatic' | 'static'
   revocation: 'provider' | 'local-only'
-  /** Whether Veduta's own ToolDefs may be offered to a turn on this connection. */
-  vedutaTools: boolean
   /** Metered spend is possible on this method (BYOK, or a subscription with usage credits). */
   metered: boolean
 }
@@ -115,9 +113,8 @@ export interface ModelConnectionAdapter {
    * Only for methods whose inference does not go through pi-ai's builtin
    * catalog (issue #47: Codex). `ModelConnectionRegistry.runtimes()` reads
    * this off the adapter to decide whether a `connected` connection can be
-   * a `'subscription'`-transport runtime at all — a `vedutaTools: false`
-   * capability alone is not enough; the adapter must actually implement
-   * this verb. Absent on every BYOK/Claude adapter.
+   * a `'subscription'`-transport runtime at all; the adapter must actually
+   * implement this verb. Absent on every BYOK/Claude adapter.
    */
   stream?(
     ctx: AdapterContext,

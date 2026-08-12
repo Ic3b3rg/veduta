@@ -469,8 +469,6 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
       isTrustWrapped: () => false,
       toolsFor: (spaceId) => (spaceId === undefined ? [] : focusedTools),
       send: (clientId, frame) => gateway.sendToClient(clientId, frame),
-      toolsEnabledForModel: (model) =>
-        model.connectionId !== CONNECTION_ID || codexSubscriptionAdapter.capabilities.vedutaTools,
     })
     const gateway = new GatewayHub(store, {
       onChatTurn: (event) => {

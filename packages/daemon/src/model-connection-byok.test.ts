@@ -55,7 +55,6 @@ describe('createByokAdapter', () => {
       authorization: 'api-key',
       refresh: 'static',
       revocation: 'local-only',
-      vedutaTools: true,
       metered: true,
     })
 

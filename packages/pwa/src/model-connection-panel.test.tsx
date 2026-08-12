@@ -19,7 +19,6 @@ const anthropicApiKeyMethod: ModelConnectionMethod = {
     authorization: 'api-key',
     refresh: 'static',
     revocation: 'local-only',
-    vedutaTools: true,
     metered: true,
   },
   available: true,
@@ -34,7 +33,6 @@ const claudeSubscriptionMethod: ModelConnectionMethod = {
     authorization: 'none',
     refresh: 'static',
     revocation: 'local-only',
-    vedutaTools: true,
     metered: true,
   },
   available: false,
@@ -51,21 +49,9 @@ const chatgptCodexMethod: ModelConnectionMethod = {
     authorization: 'device-code',
     refresh: 'automatic',
     revocation: 'provider',
-    vedutaTools: true,
     metered: false,
   },
   available: true,
-}
-
-const connectedChatgptConnection: ModelConnection = {
-  id: 'c1c1c1c1-0000-4000-8000-000000000001',
-  method: 'chatgpt-codex',
-  provider: 'openai',
-  label: 'OpenAI',
-  state: 'connected',
-  stateAt: '2026-08-09T00:00:00.000Z',
-  enabledForFallback: false,
-  createdAt: '2026-08-09T00:00:00.000Z',
 }
 
 function baseSnapshot(overrides: Partial<ModelConnectionsSnapshot> = {}): ModelConnectionsSnapshot {
@@ -238,47 +224,6 @@ describe('ModelConnectionPanel', () => {
     const optionLabels = [...modelSelect.options].map((option) => option.textContent)
     expect(optionLabels).toContain('Claude model A')
     expect(optionLabels).not.toContain('Codex model B')
-  })
-
-  it('a connection without Veduta tools renders the compatibility note', () => {
-    const noToolsMethod: ModelConnectionMethod = {
-      ...chatgptCodexMethod,
-      capabilities: { ...chatgptCodexMethod.capabilities, vedutaTools: false },
-    }
-
-    render(
-      <ModelConnectionPanel
-        snapshot={baseSnapshot({
-          methods: [noToolsMethod],
-          connections: [connectedChatgptConnection],
-        })}
-        busy={false}
-        error={null}
-        {...noop}
-      />,
-    )
-
-    expect(
-      screen.getByText(
-        'Answers in text only — Veduta tools such as memory search are not available through this connection.',
-      ),
-    ).toBeDefined()
-  })
-
-  it('does not render the obsolete no-tools note for the ChatGPT subscription method', () => {
-    render(
-      <ModelConnectionPanel
-        snapshot={baseSnapshot({
-          methods: [chatgptCodexMethod],
-          connections: [connectedChatgptConnection],
-        })}
-        busy={false}
-        error={null}
-        {...noop}
-      />,
-    )
-
-    expect(screen.queryByText(/veduta tools such as memory search are not available/i)).toBeNull()
   })
 
   it('the development mock checkbox renders only when the snapshot reports mockControlAvailable', () => {

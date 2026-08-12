@@ -29,7 +29,6 @@ export const claudeSubscriptionAdapter: ModelConnectionAdapter = {
     authorization: 'none',
     refresh: 'automatic',
     revocation: 'provider',
-    vedutaTools: true,
     metered: true,
   },
   async availability() {
