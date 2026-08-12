@@ -712,7 +712,7 @@ export function buildServer(options: ServerOptions = {}) {
   // slot, assigned its real behavior once both sides exist a few lines
   // below; `const` everywhere else keeps `routingState`/`router`/`bridge`
   // themselves un-reassignable. `onRoutingChangedSlot`'s default is a
-  // deliberate no-op: `registry.normalizeInFlightStatesOnBoot()` immediately
+  // deliberate no-op: `registry.normalizeStatesOnBoot()` immediately
   // below can call it once, harmlessly, before the real callback is wired —
   // the very next lines rebuild `routingState`/`router` from the
   // now-normalized file regardless.
@@ -812,7 +812,7 @@ export function buildServer(options: ServerOptions = {}) {
       }
     },
   })
-  registry.normalizeInFlightStatesOnBoot()
+  registry.normalizeStatesOnBoot()
   // Wraps `registry.runtimes()`'s raw subscription sources with the
   // pre-inference freshness check and the revoked/expired →
   // `NonRetryableModelError` mapping (issue #47,

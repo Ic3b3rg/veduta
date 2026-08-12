@@ -19,6 +19,8 @@ connection's lifecycle. A turn-local validation, trust, or provider-native-tool 
 turn but leaves the connection connected: reauthorization cannot repair a rejected Agent action.
 A connection-bound model whose live runtime is absent fails closed as unavailable and is never
 reinterpreted through pi-ai's built-in model catalog.
+On boot, the Gateway repairs legacy Codex records whose stored failure reason identifies one of
+these turn-local refusals; genuine authentication, refresh, and transport failures remain intact.
 
 ## Amendments
 

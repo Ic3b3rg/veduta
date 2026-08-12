@@ -33,13 +33,24 @@ import {
   type RefreshResult,
 } from './model-connection-adapter.ts'
 import type { CodexTransport } from './codex-app-server.ts'
-import { loadRoutingConfig, saveRoutingConfig, type SecretResolver } from './model-routing.ts'
+import {
+  loadRoutingConfig,
+  NonRetryableModelError,
+  saveRoutingConfig,
+  type SecretResolver,
+} from './model-routing.ts'
 import type { ModelConnectionRuntime, SubscriptionStreamRequest } from './pi-provider-bridge.ts'
 import type { SecretsVault } from './secrets-vault.ts'
 
 /** The interrupted-authorization reason every persisted in-flight state is normalized to on boot (issue #47, ADR-0014 amendment). */
 const INTERRUPTED_AUTHORIZATION_REASON =
   'authorization was interrupted by a daemon restart; start it again'
+
+/** Frozen messages written as connection failures before turn-local errors were excluded from health tracking. */
+const MISCLASSIFIED_CODEX_TURN_FAILURE_REASONS = new Set([
+  'the Codex turn attempted a tool action; refusing to run a turn that could act outside Veduta',
+  'the Codex turn violated the pinned dynamic-tool protocol; refusing to expose the call to AgentRunner',
+])
 
 const IN_FLIGHT_STATES: readonly ConnectionLifecycleState[] = [
   'authorizing',
@@ -904,12 +915,16 @@ export class ModelConnectionRegistry {
    * `undefined` for the no-op case) so a caller can react to a
    * revoked/expired transition — `server.ts`'s reconnect system notice
    * (issue #47) and `connection-inference.ts`'s own `noteCallFailure` call
-   * both read this.
+   * both read this. A `NonRetryableModelError` was already classified at
+   * the boundary that created it, so it is a no-op here even if a caller
+   * bypasses the router's equivalent guard (ADR-0014).
    */
   async noteCallFailure(
     idOrProvider: string,
     error: unknown,
   ): Promise<ConnectionLifecycleState | undefined> {
+    if (error instanceof NonRetryableModelError) return undefined
+
     return this.queue(() => {
       const file = loadConnectionsConfig(this.rootDir)
       const record = file.connections.find((candidate) => candidate.id === idOrProvider)
@@ -966,16 +981,27 @@ export class ModelConnectionRegistry {
   }
 
   /**
-   * Boot-time normalization (ADR-0014 amendment): any state a restart could
-   * have interrupted mid-flight is never trusted — it is moved to `failed`
-   * with a reason the user can act on, and any in-memory challenge for it is
-   * dropped (a restart already lost that material). Synchronous and called
-   * once, before anything else touches the registry.
+   * Boot-time normalization (ADR-0014 amendment): interrupted in-flight
+   * states fail visibly, while Codex turn-local refusals misclassified by an
+   * older daemon return to `connected`. Synchronous and called once before
+   * anything else touches the registry.
    */
-  normalizeInFlightStatesOnBoot(): void {
+  normalizeStatesOnBoot(): void {
     const file = loadConnectionsConfig(this.rootDir)
     let changed = false
     const connections = file.connections.map((record) => {
+      if (
+        record.method === 'chatgpt-codex' &&
+        record.state === 'failed' &&
+        record.stateReason !== undefined &&
+        MISCLASSIFIED_CODEX_TURN_FAILURE_REASONS.has(record.stateReason)
+      ) {
+        changed = true
+        return withState(record, {
+          state: 'connected',
+          stateAt: this.now().toISOString(),
+        })
+      }
       if (!IN_FLIGHT_STATES.includes(record.state)) return record
       changed = true
       this.challenges.delete(record.id)

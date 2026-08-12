@@ -27,6 +27,7 @@ import {
   defaultRoutingConfig,
   envSecretResolver,
   loadRoutingConfig,
+  NonRetryableModelError,
   saveRoutingConfig,
 } from './model-routing.ts'
 import { defaultRedactor } from './redaction.ts'
@@ -233,7 +234,7 @@ describe('create', () => {
   })
 })
 
-describe('normalizeInFlightStatesOnBoot', () => {
+describe('normalizeStatesOnBoot', () => {
   it('moves waiting-for-user to failed with the interrupted-authorization reason', () => {
     const dir = freshRoot()
     const record: ModelConnectionRecord = {
@@ -251,13 +252,59 @@ describe('normalizeInFlightStatesOnBoot', () => {
 
     const adapter = createFakeAdapter({ methodId: 'chatgpt-codex', providerName: 'openai' })
     const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
-    registry.normalizeInFlightStatesOnBoot()
+    registry.normalizeStatesOnBoot()
 
     const updated = loadConnectionsConfig(dir).connections[0]
     expect(updated?.state).toBe('failed')
     expect(updated?.stateReason).toBe(
       'authorization was interrupted by a daemon restart; start it again',
     )
+  })
+
+  it('recovers a Codex connection failed by a turn-local refusal without recovering real failures', () => {
+    const dir = freshRoot()
+    const turnRefusal: ModelConnectionRecord = {
+      id: 'aaaaaaaa-0000-4000-8000-000000000000',
+      method: 'chatgpt-codex',
+      provider: 'openai',
+      label: 'ChatGPT · Subscription',
+      state: 'failed',
+      stateAt: '2026-08-09T09:01:00.000Z',
+      stateReason:
+        'the Codex turn attempted a tool action; refusing to run a turn that could act outside Veduta',
+      lastRefreshAt: '2026-08-09T09:00:45.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T09:00:00.000Z',
+    }
+    const providerFailure: ModelConnectionRecord = {
+      ...turnRefusal,
+      id: 'bbbbbbbb-0000-4000-8000-000000000000',
+      stateReason: 'the provider credential was rejected',
+    }
+    const protocolRefusal: ModelConnectionRecord = {
+      ...turnRefusal,
+      id: 'cccccccc-0000-4000-8000-000000000000',
+      stateReason:
+        'the Codex turn violated the pinned dynamic-tool protocol; refusing to expose the call to AgentRunner',
+    }
+    saveConnectionsConfig(dir, {
+      version: 1,
+      connections: [turnRefusal, protocolRefusal, providerFailure],
+      mockEnabled: false,
+    })
+
+    const adapter = createFakeAdapter({ methodId: 'chatgpt-codex', providerName: 'openai' })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+    registry.normalizeStatesOnBoot()
+
+    const [recoveredToolRefusal, recoveredProtocolRefusal, unchanged] =
+      loadConnectionsConfig(dir).connections
+    expect(recoveredToolRefusal?.state).toBe('connected')
+    expect(recoveredToolRefusal?.stateReason).toBeUndefined()
+    expect(recoveredProtocolRefusal?.state).toBe('connected')
+    expect(recoveredProtocolRefusal?.stateReason).toBeUndefined()
+    expect(unchanged?.state).toBe('failed')
+    expect(unchanged?.stateReason).toBe('the provider credential was rejected')
   })
 })
 
@@ -363,6 +410,36 @@ describe('noteCallFailure', () => {
 
     await expect(registry.noteCallFailure('nobody-here', new Error('x'))).resolves.toBeUndefined()
     await withCallback.noteCallFailure('nobody-here', new Error('x'))
+    expect(calls).toEqual([])
+  })
+
+  it('does not change connection health for a turn-local failure', async () => {
+    const dir = freshRoot()
+    const record: ModelConnectionRecord = {
+      id: 'aaaaaaaa-0000-4000-8000-000000000000',
+      method: 'chatgpt-codex',
+      provider: 'openai',
+      label: 'ChatGPT · Subscription',
+      state: 'connected',
+      stateAt: '2026-08-09T09:00:00.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T09:00:00.000Z',
+    }
+    saveConnectionsConfig(dir, { version: 1, connections: [record], mockEnabled: false })
+    const calls: [string, string][] = []
+    const registry = new ModelConnectionRegistry(
+      baseOptions(dir, [], {
+        onCallFailure: (id, state) => calls.push([id, state]),
+      }),
+    )
+
+    const state = await registry.noteCallFailure(
+      record.id,
+      new NonRetryableModelError('a Surface mutation was refused'),
+    )
+
+    expect(state).toBeUndefined()
+    expect(loadConnectionsConfig(dir).connections[0]).toEqual(record)
     expect(calls).toEqual([])
   })
 
