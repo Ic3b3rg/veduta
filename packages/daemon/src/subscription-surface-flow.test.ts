@@ -10,13 +10,7 @@ import {
 } from '@veduta/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import {
-  defineTool,
-  type AgentEvent,
-  type ModelRef,
-  type SessionEntry,
-  type SessionMessage,
-} from './agent-runner.ts'
+import { defineTool, type AgentEvent, type ModelRef } from './agent-runner.ts'
 import { createChatLoop, type ChatLoop } from './chat-loop.ts'
 import {
   createFakeCodexTransport,
@@ -37,7 +31,11 @@ import {
   type ModelConnectionRuntime,
   type ProviderBridge,
 } from './pi-provider-bridge.ts'
-import type { SpaceEvent } from './space-events.ts'
+import {
+  normalizeAgentEvents,
+  normalizeSessionEntries,
+  normalizeSpaceEvent,
+} from './provider-parity-test-support.ts'
 import { Store } from './store.ts'
 import { TemplateEngine } from './template-engine.ts'
 import { piToolParameters } from './tool-parameters.ts'
@@ -215,67 +213,6 @@ interface SurfaceProviderOutcome {
   eventLog: unknown[]
 }
 
-function normalizeEvents(events: AgentEvent[]): unknown[] {
-  const normalized: unknown[] = []
-  let text = ''
-  const flushText = () => {
-    if (text === '') return
-    normalized.push({ type: 'text-delta', text })
-    text = ''
-  }
-
-  for (const event of events) {
-    if (event.type === 'text-delta') {
-      text += event.text
-      continue
-    }
-    flushText()
-    if (event.type === 'tool-start') {
-      normalized.push({ type: event.type, toolName: event.toolName, input: event.input })
-      continue
-    }
-    if (event.type === 'tool-result') {
-      normalized.push({
-        type: event.type,
-        toolName: event.toolName,
-        content: event.content,
-        details: event.details,
-        isError: event.isError,
-      })
-      continue
-    }
-    if (event.type === 'turn-end') {
-      normalized.push({ type: event.type, text: event.text, origins: event.origins })
-      continue
-    }
-    normalized.push(event)
-  }
-  flushText()
-  return normalized
-}
-
-function normalizeMessage(message: SessionMessage): unknown {
-  return {
-    role: message.role,
-    content: message.content,
-    ...(message.toolName === undefined ? {} : { toolName: message.toolName }),
-    ...(message.details === undefined ? {} : { details: message.details }),
-    ...(message.isError === undefined ? {} : { isError: message.isError }),
-    ...(message.origin === undefined ? {} : { origin: message.origin }),
-    ...(message.origins === undefined ? {} : { origins: message.origins }),
-  }
-}
-
-function normalizeSessionEntries(entries: SessionEntry[]): unknown[] {
-  return entries.map((entry) => {
-    if (entry.type === 'message') {
-      return { type: entry.type, message: normalizeMessage(entry.message) }
-    }
-    if (entry.type === 'model-change') return { type: entry.type }
-    return { type: entry.type, summary: entry.summary, details: entry.details }
-  })
-}
-
 async function runSurfaceProvider(
   provider: ProviderBridge,
   model: ModelRef,
@@ -321,7 +258,7 @@ async function runSurfaceProvider(
   const session = await sessionStore.load(`space:${space.id}`)
 
   return {
-    events: normalizeEvents(events),
+    events: normalizeAgentEvents(events, { includeTurnOrigins: true }),
     sessionEntries: normalizeSessionEntries(session.entries),
     surface: SurfaceSchema.parse(store.getSurface(SURFACE_ID)),
     provenance: store.surfaceProvenance(SURFACE_ID),
@@ -372,25 +309,6 @@ function scriptedNativeProvider(): ProviderBridge {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function normalizeSpaceEvent(event: SpaceEvent): unknown {
-  const toolCalls = event.payload?.['toolCalls']
-  const payload = Array.isArray(toolCalls)
-    ? {
-        ...event.payload,
-        toolCalls: toolCalls.map((call) =>
-          isRecord(call) ? { toolName: call['toolName'] } : call,
-        ),
-      }
-    : event.payload
-
-  return {
-    type: event.type,
-    text: event.text,
-    origin: event.origin,
-    ...(payload === undefined ? {} : { payload }),
-  }
 }
 
 async function runChatEventLog(provider: ProviderBridge, model: ModelRef): Promise<unknown[]> {

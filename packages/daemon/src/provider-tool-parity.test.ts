@@ -4,13 +4,7 @@ import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { z } from 'zod'
 import { afterEach, describe, expect, it } from 'vitest'
-import {
-  defineTool,
-  type AgentEvent,
-  type ModelRef,
-  type SessionEntry,
-  type SessionMessage,
-} from './agent-runner.ts'
+import { defineTool, type AgentEvent, type ModelRef } from './agent-runner.ts'
 import {
   createFakeCodexTransport,
   fakeCodexDynamicToolRoundTrip,
@@ -29,6 +23,7 @@ import {
   type ModelConnectionRuntime,
   type ProviderBridge,
 } from './pi-provider-bridge.ts'
+import { normalizeAgentEvents, normalizeSessionEntries } from './provider-parity-test-support.ts'
 import { piToolParameters } from './tool-parameters.ts'
 
 const createdDirs: string[] = []
@@ -48,65 +43,6 @@ interface ProviderOutcome {
   sessionEntries: unknown[]
   handlerCalls: number
   persistedEffect: string
-}
-
-function normalizeEvents(events: AgentEvent[]): unknown[] {
-  const normalized: unknown[] = []
-  let text = ''
-  const flushText = () => {
-    if (text === '') return
-    normalized.push({ type: 'text-delta', text })
-    text = ''
-  }
-
-  for (const event of events) {
-    if (event.type === 'text-delta') {
-      text += event.text
-      continue
-    }
-    flushText()
-    if (event.type === 'tool-start') {
-      normalized.push({ type: event.type, toolName: event.toolName, input: event.input })
-      continue
-    }
-    if (event.type === 'tool-result') {
-      normalized.push({
-        type: event.type,
-        toolName: event.toolName,
-        content: event.content,
-        details: event.details,
-        isError: event.isError,
-      })
-      continue
-    }
-    if (event.type === 'turn-end') {
-      normalized.push({ type: event.type, text: event.text })
-      continue
-    }
-    normalized.push(event)
-  }
-  flushText()
-  return normalized
-}
-
-function normalizeMessage(message: SessionMessage): unknown {
-  return {
-    role: message.role,
-    content: message.content,
-    ...(message.toolName === undefined ? {} : { toolName: message.toolName }),
-    ...(message.details === undefined ? {} : { details: message.details }),
-    ...(message.isError === undefined ? {} : { isError: message.isError }),
-  }
-}
-
-function normalizeSessionEntries(entries: SessionEntry[]): unknown[] {
-  return entries.map((entry) => {
-    if (entry.type === 'message') {
-      return { type: entry.type, message: normalizeMessage(entry.message) }
-    }
-    if (entry.type === 'model-change') return { type: entry.type }
-    return { type: entry.type, summary: entry.summary, details: entry.details }
-  })
 }
 
 async function runProvider(
@@ -151,7 +87,7 @@ async function runProvider(
   const branch = await sessionStore.load('provider-parity')
 
   return {
-    events: normalizeEvents(events),
+    events: normalizeAgentEvents(events),
     sessionEntries: normalizeSessionEntries(branch.entries),
     handlerCalls,
     persistedEffect: existsSync(effectPath) ? readFileSync(effectPath, 'utf8') : '',
