@@ -1,20 +1,15 @@
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { rmSync } from 'node:fs'
 import { SurfaceSchema, type ApprovalCard, type Surface } from '@veduta/protocol'
-import {
-  computeContextHash,
-  type AgentEvent,
-  type ToolContext,
-  type ToolDef,
-} from './agent-runner.ts'
+import { computeContextHash, type ToolContext, type ToolDef } from './agent-runner.ts'
 import { ApprovalSurfaceManager } from './approval-surface.ts'
 import type { FakeCodexTransport } from './codex-app-server-fake.ts'
 import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
 import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
-import { PiAgentRunner, PiJsonlSessionStore } from './pi-agent-runner.ts'
+import { PiJsonlSessionStore } from './pi-agent-runner.ts'
 import {
   modelForConnectionMethod,
+  parityTempDir,
+  runProviderParityTurn,
   scriptedByokProvider,
   scriptedSubscriptionTransport,
   subscriptionProvider,
@@ -30,7 +25,6 @@ import {
 import { Store } from './store.ts'
 import { effectiveOrigin, TurnTaintAccumulator, untrustedDataBlock } from './taint.ts'
 import { TemplateEngine } from './template-engine.ts'
-import { piToolParameters } from './tool-parameters.ts'
 import { canonicalAllowlistParams, isTrustWrapped, TrustLayer } from './trust-layer.ts'
 import { TrustStore } from './trust-store.ts'
 import type { AuditEntry } from './trust-contracts.ts'
@@ -79,7 +73,7 @@ interface TrustHarness {
 function buildHarness(): TrustHarness {
   const directories: string[] = []
   const store = new Store({
-    rootDir: tempDir(directories, 'veduta-provider-trust-root-'),
+    rootDir: parityTempDir(directories, 'veduta-provider-trust-root-'),
     now: () => FIXED_NOW,
   })
   store.createSurface(untrustedSurface(), 'agent', {
@@ -126,8 +120,8 @@ function buildHarness(): TrustHarness {
     approvalSurfaces,
     approvalCards,
     sessionStore: new PiJsonlSessionStore({
-      cwd: tempDir(directories, 'veduta-provider-trust-cwd-'),
-      sessionsRoot: tempDir(directories, 'veduta-provider-trust-sessions-'),
+      cwd: parityTempDir(directories, 'veduta-provider-trust-cwd-'),
+      sessionsRoot: parityTempDir(directories, 'veduta-provider-trust-sessions-'),
     }),
     tools: [...wrappedOutboundTools, ...focusedSurfaceTools],
     sendMessage: requireTool(wrappedOutboundTools, 'send_message'),
@@ -137,12 +131,6 @@ function buildHarness(): TrustHarness {
       for (const directory of directories) rmSync(directory, { recursive: true, force: true })
     },
   }
-}
-
-function tempDir(directories: string[], prefix: string): string {
-  const directory = mkdtempSync(join(tmpdir(), prefix))
-  directories.push(directory)
-  return directory
 }
 
 function untrustedSurface(): Surface {
@@ -301,7 +289,7 @@ export async function runTrustParityScenario(
         ? scriptedByokProvider(script.calls, script.finalText)
         : subscriptionProvider({
             connectionId: CONNECTION_ID,
-            rootDir: tempDir(harness.directories, 'veduta-provider-trust-codex-'),
+            rootDir: parityTempDir(harness.directories, 'veduta-provider-trust-codex-'),
             now: FIXED_NOW,
             transport: (transport = scriptedSubscriptionTransport(
               script.calls,
@@ -309,26 +297,20 @@ export async function runTrustParityScenario(
               'trust',
             )),
           })
-    const runner = new PiAgentRunner({
+    const events = await runProviderParityTurn({
+      provider,
       sessionStore: harness.sessionStore,
-      resolveModel: provider.resolveModel,
-      getApiKey: provider.getApiKey,
-      streamFn: provider.streamFn,
-      toolParameters: piToolParameters(harness.tools),
-      isToolTrustWrapped: isTrustWrapped,
-    })
-    const events: AgentEvent[] = []
-    runner.on((event) => {
-      events.push(event)
-    })
-    await runner.start('provider-trust-parity')
-    await runner.prompt(script.input, {
+      sessionId: 'provider-trust-parity',
+      input: script.input,
       model: modelForConnectionMethod(method, CONNECTION_ID),
       tools: harness.tools,
-      origin: 'trusted:user',
-      contextOrigins: harness.store.spacesEngine.contextOrigins(SPACE_ID),
-      spaceId: SPACE_ID,
-      trigger: { kind: 'chat', summary: script.input },
+      isToolTrustWrapped: isTrustWrapped,
+      promptOptions: {
+        origin: 'trusted:user',
+        contextOrigins: harness.store.spacesEngine.contextOrigins(SPACE_ID),
+        spaceId: SPACE_ID,
+        trigger: { kind: 'chat', summary: script.input },
+      },
     })
 
     const deliveriesBeforeResolution = deliveryCount(harness.store) - deliveriesStart

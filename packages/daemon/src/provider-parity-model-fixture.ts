@@ -1,6 +1,14 @@
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
-import type { ModelRef } from './agent-runner.ts'
+import type {
+  AgentEvent,
+  AgentPromptOptions,
+  ModelRef,
+  SessionStore,
+  ToolDef,
+} from './agent-runner.ts'
 import {
   createFakeCodexTransport,
   fakeCodexDynamicToolRoundTrip,
@@ -12,11 +20,13 @@ import { createFakeProvider, fakeText, fakeToolCall } from './fake-provider.ts'
 import type { AdapterContext } from './model-connection-adapter.ts'
 import { codexSubscriptionAdapter } from './model-connection-codex.ts'
 import { defaultRoutingConfig, type SecretResolver } from './model-routing.ts'
+import { PiAgentRunner, type PiAgentRunnerOptions } from './pi-agent-runner.ts'
 import {
   createProviderBridge,
   type ModelConnectionRuntime,
   type ProviderBridge,
 } from './pi-provider-bridge.ts'
+import { piToolParameters } from './tool-parameters.ts'
 
 export type ModelConnectionMethod = 'byok' | 'chatgpt-subscription'
 
@@ -24,6 +34,51 @@ export interface ScriptedToolCall {
   toolName: string
   input: Record<string, unknown>
   resultText: string
+}
+
+interface ProviderParityTurnOptions {
+  provider: ProviderBridge
+  sessionStore: SessionStore
+  sessionId: string
+  input: string
+  model: ModelRef
+  tools: ToolDef[]
+  promptOptions?: Omit<AgentPromptOptions, 'model' | 'tools'>
+  isToolTrustWrapped?: PiAgentRunnerOptions['isToolTrustWrapped']
+}
+
+/** Runs one deterministic parity scenario through the sole AgentRunner tool boundary. */
+export async function runProviderParityTurn(
+  options: ProviderParityTurnOptions,
+): Promise<AgentEvent[]> {
+  const runner = new PiAgentRunner({
+    sessionStore: options.sessionStore,
+    resolveModel: options.provider.resolveModel,
+    getApiKey: options.provider.getApiKey,
+    streamFn: options.provider.streamFn,
+    toolParameters: piToolParameters(options.tools),
+    ...(options.isToolTrustWrapped === undefined
+      ? {}
+      : { isToolTrustWrapped: options.isToolTrustWrapped }),
+  })
+  const events: AgentEvent[] = []
+  runner.on((event) => {
+    events.push(event)
+  })
+  await runner.start(options.sessionId)
+  await runner.prompt(options.input, {
+    model: options.model,
+    tools: options.tools,
+    ...options.promptOptions,
+  })
+  return events
+}
+
+/** Creates one disposable directory and registers it for fixture cleanup. */
+export function parityTempDir(directories: string[], prefix: string): string {
+  const directory = mkdtempSync(join(tmpdir(), prefix))
+  directories.push(directory)
+  return directory
 }
 
 export function scriptedByokProvider(calls: ScriptedToolCall[], finalText: string): ProviderBridge {

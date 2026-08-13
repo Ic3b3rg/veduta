@@ -10,7 +10,7 @@ Trust:         014 trust-layer → 015 security-hardening
 Proactivity:   016 heartbeat → 017 worker-review → 018 push-notifications
 Adoption:      019 onboarding-wizard → 020 importer
 Polish:        032 facts-hygiene → 021 advanced-memory → 022 emergent-templates
-Models:        047 model-connections → 070 codex-tool-parity → 071 codex-tool-round-trip → 072 codex-tool-turn-hardening → 073 chatgpt-surface-authoring → 074 chatgpt-trust-parity
+Models:        047 model-connections → 070 codex-tool-parity → 071 codex-tool-round-trip → 072 codex-tool-turn-hardening → 073 chatgpt-surface-authoring → 074 chatgpt-trust-parity → 075 chatgpt-space-memory
 Access:        048 guided-vps-access-installer → 049 tailnet-access
 Operations:    081 internal-trace-console
 Maintenance:   080 repository-simplification
@@ -75,5 +75,6 @@ Parallelizable: (006,007,008) after 002; (010,011) after 003; (019,020) after 00
 | 072 | [Harden Codex tool turns](072-codex-tool-turn-hardening.md)                                     | Models       |
 | 073 | [ChatGPT subscription Surface authoring](073-chatgpt-subscription-surface-authoring.md)         | Models       |
 | 074 | [ChatGPT subscription trust parity](074-chatgpt-subscription-trust-parity.md)                   | Models       |
+| 075 | [ChatGPT subscription Space memory](075-chatgpt-subscription-space-memory.md)                   | Models       |
 | 052 | [Global chat multi-Space work](052-global-chat-multi-space.md)                                  | Core         |
 | 080 | [Repository simplification](080-repository-simplification.md)                                   | Maintenance  |
