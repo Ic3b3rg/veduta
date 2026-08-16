@@ -6,7 +6,10 @@ import { DatabaseSync } from 'node:sqlite'
 import { fromPartial } from '@total-typescript/shoehorn'
 import {
   GatewayServerMessageSchema,
+  MoveSurfaceResultSchema,
+  PinSurfaceResultSchema,
   SurfaceSchema,
+  SurfaceSnapshotSchema,
   type GatewayServerMessage,
   type Surface,
 } from '@veduta/protocol'
@@ -1635,6 +1638,52 @@ describe('memory engines wiring (issues/021-advanced-memory.md)', () => {
 })
 
 describe('POST /api/surfaces/:id/pin (issues/022-emergent-templates.md)', () => {
+  it('returns and snapshots the canonical newest-first lifecycle order (issue #108)', async () => {
+    const { app, store } = buildServer()
+    store.createSurface(templateTestSurface('srf-order-a-older'), 'agent')
+    store.createSurface(templateTestSurface('srf-order-z-newer'), 'agent')
+
+    const orderedIds = async () => {
+      const snapshot = await app.inject({ method: 'GET', url: '/api/spaces' })
+      const body = snapshot.json() as {
+        spaces: { id: string; surfaces: { id: string }[] }[]
+      }
+      return (
+        body.spaces
+          .find((space) => space.id === 'spc-health')
+          ?.surfaces.map((surface) => surface.id)
+          .filter((id) => id.startsWith('srf-order-')) ?? []
+      )
+    }
+
+    expect(await orderedIds()).toEqual(['srf-order-z-newer', 'srf-order-a-older'])
+
+    const pin = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-order-a-older/pin',
+      payload: { pinned: true },
+    })
+    expect(pin.statusCode).toBe(200)
+    const pinResult = PinSurfaceResultSchema.parse(pin.json())
+    expect(pinResult.changed).toBe(true)
+    expect(pinResult.order.pinnedSurfaceIds[0]).toBe('srf-order-a-older')
+    expect(await orderedIds()).toEqual(['srf-order-a-older', 'srf-order-z-newer'])
+
+    const unpin = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-order-a-older/pin',
+      payload: { pinned: false },
+    })
+    expect(unpin.statusCode).toBe(200)
+    expect(PinSurfaceResultSchema.parse(unpin.json()).changed).toBe(true)
+    expect(await orderedIds()).toEqual(['srf-order-a-older', 'srf-order-z-newer'])
+
+    store.archiveSurface('srf-order-a-older', 'agent')
+    expect(await orderedIds()).toEqual(['srf-order-z-newer'])
+
+    await app.close()
+  })
+
   it('pins a Surface: 200, reflected in GET /api/spaces, and broadcast as surface.pinned', async () => {
     const { app, store, gateway } = buildServer()
     const socket = new SchedulerFakeSocket()
@@ -1647,7 +1696,8 @@ describe('POST /api/surfaces/:id/pin (issues/022-emergent-templates.md)', () => 
       payload: { pinned: true },
     })
     expect(res.statusCode).toBe(200)
-    expect((res.json() as { surface: Surface }).surface.pinned).toBe(true)
+    const result = PinSurfaceResultSchema.parse(res.json())
+    expect(result.surface.pinned).toBe(true)
 
     const snapshot = await app.inject({ method: 'GET', url: '/api/spaces' })
     const body = snapshot.json() as { spaces: { surfaces: { id: string; pinned: boolean }[] }[] }
@@ -1661,7 +1711,8 @@ describe('POST /api/surfaces/:id/pin (issues/022-emergent-templates.md)', () => 
         (frame) =>
           frame.type === 'surface.pinned' &&
           frame.event.surfaceId === 'srf-groceries' &&
-          frame.event.pinned === true,
+          frame.event.pinned === true &&
+          JSON.stringify(frame.event.order) === JSON.stringify(result.order),
       ),
     ).toBe(true)
   })
@@ -1681,6 +1732,101 @@ describe('POST /api/surfaces/:id/pin (issues/022-emergent-templates.md)', () => 
     })
     expect(res.statusCode).toBe(200)
     expect((res.json() as { surface: Surface }).surface.pinned).toBe(false)
+  })
+
+  it('does not impose a numeric Pin limit', async () => {
+    const { app, store } = buildServer()
+    const surfaceIds = Array.from({ length: 8 }, (_, index) => `srf-unlimited-pin-${index}`)
+    for (const surfaceId of surfaceIds) {
+      store.createSurface(templateTestSurface(surfaceId), 'agent')
+    }
+
+    for (const surfaceId of surfaceIds) {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/surfaces/${surfaceId}/pin`,
+        payload: { pinned: true },
+      })
+      expect(response.statusCode).toBe(200)
+      expect(PinSurfaceResultSchema.parse(response.json()).changed).toBe(true)
+    }
+
+    expect(
+      store
+        .surfaceOrder('spc-health')
+        .pinnedSurfaceIds.filter((surfaceId) => surfaceId.startsWith('srf-unlimited-pin-')),
+    ).toEqual([...surfaceIds].reverse())
+
+    await app.close()
+  })
+
+  it('treats repeated Pin and Unpin as strict no-ops with no durable or realtime side effects', async () => {
+    const { app, store, gateway } = buildServer()
+    const pin = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-groceries/pin',
+      payload: { pinned: true },
+    })
+    expect(PinSurfaceResultSchema.parse(pin.json()).changed).toBe(true)
+
+    const socket = new SchedulerFakeSocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+    const sentBefore = socket.sent.length
+    const pinnedBefore = store.getSurface('srf-groceries')
+    const versionBefore = store.getSurfaceVersion('srf-groceries')
+    const cursorBefore = store.latestSurfaceCursor()
+    const orderBefore = store.surfaceOrder('spc-health')
+    const eventsBefore = store.eventLog('spc-health')
+    const templatesBefore = store.spacesEngine.listTemplates('spc-health')
+
+    const repeatedPin = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-groceries/pin',
+      payload: { pinned: true },
+    })
+
+    const repeatedPinResult = PinSurfaceResultSchema.parse(repeatedPin.json())
+    expect(repeatedPinResult).toMatchObject({ changed: false, surface: pinnedBefore })
+    expect(repeatedPinResult.order).toEqual(orderBefore)
+    expect(store.getSurfaceVersion('srf-groceries')).toEqual(versionBefore)
+    expect(store.latestSurfaceCursor()).toBe(cursorBefore)
+    expect(store.eventLog('spc-health')).toEqual(eventsBefore)
+    expect(store.spacesEngine.listTemplates('spc-health')).toEqual(templatesBefore)
+    expect(socket.sent).toHaveLength(sentBefore)
+
+    const unpin = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-groceries/pin',
+      payload: { pinned: false },
+    })
+    expect(PinSurfaceResultSchema.parse(unpin.json()).changed).toBe(true)
+    const unpinnedBefore = store.getSurface('srf-groceries')
+    const unpinVersionBefore = store.getSurfaceVersion('srf-groceries')
+    const unpinCursorBefore = store.latestSurfaceCursor()
+    const unpinOrderBefore = store.surfaceOrder('spc-health')
+    const unpinEventsBefore = store.eventLog('spc-health')
+    const unpinTemplatesBefore = store.spacesEngine.listTemplates('spc-health')
+    const sentAfterUnpin = socket.sent.length
+
+    const repeatedUnpin = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-groceries/pin',
+      payload: { pinned: false },
+    })
+
+    expect(PinSurfaceResultSchema.parse(repeatedUnpin.json())).toEqual({
+      changed: false,
+      surface: unpinnedBefore,
+      order: unpinOrderBefore,
+    })
+    expect(store.getSurfaceVersion('srf-groceries')).toEqual(unpinVersionBefore)
+    expect(store.latestSurfaceCursor()).toBe(unpinCursorBefore)
+    expect(store.eventLog('spc-health')).toEqual(unpinEventsBefore)
+    expect(store.spacesEngine.listTemplates('spc-health')).toEqual(unpinTemplatesBefore)
+    expect(socket.sent).toHaveLength(sentAfterUnpin)
+
+    await app.close()
   })
 
   it('returns 404 for an unknown Surface', async () => {
@@ -1735,6 +1881,221 @@ describe('POST /api/surfaces/:id/pin (issues/022-emergent-templates.md)', () => 
       headers: { authorization: `Bearer ${token}` },
     })
     expect(allowed.statusCode).toBe(200)
+  })
+})
+
+describe('POST /api/spaces/:spaceId/surfaces/:surfaceId/move (issue #108)', () => {
+  it('moves one step against the latest Gateway order and returns a live/replayable authoritative result', async () => {
+    const { app, store, gateway } = buildServer()
+    for (const id of ['srf-move-a', 'srf-move-b', 'srf-move-c']) {
+      store.createSurface(templateTestSurface(id), 'agent')
+    }
+    const cursorBefore = store.latestSurfaceCursor()
+    const eventCountBefore = store.eventLog('spc-health').length
+    const live = new SchedulerFakeSocket()
+    gateway.connect(live)
+    live.receive({ type: 'hello', surfaceCursor: cursorBefore })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/spaces/spc-health/surfaces/srf-move-b/move',
+      payload: { direction: 'up' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    const result = MoveSurfaceResultSchema.parse(response.json())
+    expect(result.order.regularSurfaceIds.filter((id) => id.startsWith('srf-move-'))).toEqual([
+      'srf-move-b',
+      'srf-move-c',
+      'srf-move-a',
+    ])
+    expect(store.eventLog('spc-health')).toHaveLength(eventCountBefore + 1)
+    expect(store.eventLog('spc-health').at(-1)).toMatchObject({
+      type: 'surface.move',
+      origin: 'trusted:user',
+      payload: { surfaceId: 'srf-move-b', direction: 'up' },
+    })
+    expect(live.sent.at(-1)).toMatchObject({
+      type: 'surface.moved',
+      event: { surfaceId: 'srf-move-b', direction: 'up', order: result.order },
+    })
+
+    const replay = new SchedulerFakeSocket()
+    gateway.connect(replay)
+    replay.receive({ type: 'hello', surfaceCursor: cursorBefore })
+    expect(replay.sent).toContainEqual(live.sent.at(-1))
+
+    await app.close()
+  })
+
+  it('rejects unknown, archived, cross-Space, boundary, and malformed Moves without side effects', async () => {
+    const { app, store, gateway } = buildServer()
+    store.createSurface(templateTestSurface('srf-invalid-a'), 'agent')
+    store.createSurface(templateTestSurface('srf-invalid-b'), 'agent')
+    store.createSurface(templateTestSurface('srf-invalid-archived'), 'agent')
+    store.archiveSurface('srf-invalid-archived', 'agent')
+    const otherSpace = store.spacesEngine.createSpace({ name: 'Other order' })
+    store.createSurface(
+      SurfaceSchema.parse({
+        ...templateTestSurface('srf-invalid-other'),
+        spaceId: otherSpace.id,
+      }),
+      'agent',
+    )
+    const socket = new SchedulerFakeSocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+    const cursorBefore = store.latestSurfaceCursor()
+    const orderBefore = store.surfaceOrder('spc-health')
+    const eventsBefore = store.eventLog('spc-health')
+    const sentBefore = socket.sent.length
+
+    const requests = await Promise.all([
+      app.inject({
+        method: 'POST',
+        url: '/api/spaces/spc-health/surfaces/srf-invalid-missing/move',
+        payload: { direction: 'up' },
+      }),
+      app.inject({
+        method: 'POST',
+        url: '/api/spaces/spc-health/surfaces/srf-invalid-archived/move',
+        payload: { direction: 'up' },
+      }),
+      app.inject({
+        method: 'POST',
+        url: `/api/spaces/spc-health/surfaces/srf-invalid-other/move`,
+        payload: { direction: 'up' },
+      }),
+      app.inject({
+        method: 'POST',
+        url: '/api/spaces/spc-health/surfaces/srf-invalid-b/move',
+        payload: { direction: 'up' },
+      }),
+      app.inject({
+        method: 'POST',
+        url: '/api/spaces/spc-health/surfaces/srf-invalid-a/move',
+        payload: { direction: 'sideways' },
+      }),
+    ])
+
+    expect(requests.map((response) => response.statusCode)).toEqual([404, 404, 409, 409, 400])
+    expect(store.latestSurfaceCursor()).toBe(cursorBefore)
+    expect(store.surfaceOrder('spc-health')).toEqual(orderBefore)
+    expect(store.eventLog('spc-health')).toEqual(eventsBefore)
+    expect(socket.sent).toHaveLength(sentBefore)
+
+    await app.close()
+  })
+
+  it('serializes concurrent relative Moves into one canonical order', async () => {
+    const { app, store } = buildServer()
+    for (const id of ['srf-concurrent-a', 'srf-concurrent-b', 'srf-concurrent-c']) {
+      store.createSurface(templateTestSurface(id), 'agent')
+    }
+    const cursorBefore = store.latestSurfaceCursor()
+
+    const [moveA, moveC] = await Promise.all([
+      app.inject({
+        method: 'POST',
+        url: '/api/spaces/spc-health/surfaces/srf-concurrent-a/move',
+        payload: { direction: 'up' },
+      }),
+      app.inject({
+        method: 'POST',
+        url: '/api/spaces/spc-health/surfaces/srf-concurrent-c/move',
+        payload: { direction: 'down' },
+      }),
+    ])
+
+    expect([moveA.statusCode, moveC.statusCode]).toEqual([200, 200])
+    const results = [
+      MoveSurfaceResultSchema.parse(moveA.json()),
+      MoveSurfaceResultSchema.parse(moveC.json()),
+    ]
+    const final = store
+      .surfaceOrder('spc-health')
+      .regularSurfaceIds.filter((id) => id.startsWith('srf-concurrent-'))
+    expect([
+      ['srf-concurrent-a', 'srf-concurrent-c', 'srf-concurrent-b'],
+      ['srf-concurrent-b', 'srf-concurrent-a', 'srf-concurrent-c'],
+    ]).toContainEqual(final)
+    expect(store.latestSurfaceCursor()).toBe(cursorBefore + 2)
+    expect(new Set(results.map((result) => result.order.cursor)).size).toBe(2)
+    expect(
+      results
+        .sort((left, right) => right.order.cursor - left.order.cursor)[0]
+        ?.order.regularSurfaceIds.filter((id) => id.startsWith('srf-concurrent-')),
+    ).toEqual(final)
+
+    await app.close()
+  })
+
+  it('backfills and preserves manual order across Gateway restarts through HTTP', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-surface-order-upgrade-'))
+    const first = buildServer({ dataDir })
+    first.store.createSurface(templateTestSurface('srf-upgrade-a'), 'agent')
+    first.store.createSurface(templateTestSurface('srf-upgrade-b'), 'agent')
+    await first.app.close()
+
+    const rawDb = new DatabaseSync(join(dataDir, 'surfaces.sqlite'))
+    rawDb.exec('delete from surface_order_items; delete from surface_order_state;')
+    rawDb.close()
+
+    const orderedIds = async (app: ReturnType<typeof buildServer>['app']) => {
+      const response = await app.inject({ method: 'GET', url: '/api/spaces' })
+      expect(response.statusCode).toBe(200)
+      const snapshot = SurfaceSnapshotSchema.parse(response.json())
+      return (
+        snapshot.spaces
+          .find((space) => space.id === 'spc-health')
+          ?.surfaces.map((surface) => surface.id)
+          .filter((surfaceId) => surfaceId.startsWith('srf-upgrade-')) ?? []
+      )
+    }
+
+    const second = buildServer({ dataDir })
+    expect(await orderedIds(second.app)).toEqual(['srf-upgrade-b', 'srf-upgrade-a'])
+    const move = await second.app.inject({
+      method: 'POST',
+      url: '/api/spaces/spc-health/surfaces/srf-upgrade-a/move',
+      payload: { direction: 'up' },
+    })
+    expect(move.statusCode).toBe(200)
+    expect(
+      MoveSurfaceResultSchema.parse(move.json()).order.regularSurfaceIds.filter((surfaceId) =>
+        surfaceId.startsWith('srf-upgrade-'),
+      ),
+    ).toEqual(['srf-upgrade-a', 'srf-upgrade-b'])
+    await second.app.close()
+
+    const third = buildServer({ dataDir })
+    expect(await orderedIds(third.app)).toEqual(['srf-upgrade-a', 'srf-upgrade-b'])
+    await third.app.close()
+  })
+
+  it('requires an authenticated passkey session in the production profile', async () => {
+    const { auth, token } = await readyAuthStore()
+    const { app, store } = buildServer({
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+    })
+    store.createSurface(templateTestSurface('srf-auth-a'), 'agent')
+    store.createSurface(templateTestSurface('srf-auth-b'), 'agent')
+
+    const denied = await app.inject({
+      method: 'POST',
+      url: '/api/spaces/spc-health/surfaces/srf-auth-a/move',
+      payload: { direction: 'up' },
+    })
+    const allowed = await app.inject({
+      method: 'POST',
+      url: '/api/spaces/spc-health/surfaces/srf-auth-a/move',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { direction: 'up' },
+    })
+
+    expect(denied.statusCode).toBe(401)
+    expect(allowed.statusCode).toBe(200)
+    await app.close()
   })
 })
 

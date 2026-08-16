@@ -106,28 +106,6 @@ export function persistQueuedFastActions(entries: QueuedFastAction[]): void {
   localStorage.setItem(FAST_ACTION_QUEUE_KEY, JSON.stringify(entries))
 }
 
-export function persistSurfaceOrders(orders: Record<string, string[]>): void {
-  localStorage.setItem(SURFACE_ORDER_KEY, JSON.stringify(orders))
-}
-
-export function readSurfaceOrders(): Record<string, string[]> {
-  const raw = localStorage.getItem(SURFACE_ORDER_KEY)
-  if (!raw) return {}
-  try {
-    const parsed = JSON.parse(raw)
-    if (!isRecord(parsed)) return {}
-    return Object.fromEntries(
-      Object.entries(parsed).flatMap(([spaceId, value]) =>
-        Array.isArray(value) && value.every((id) => typeof id === 'string')
-          ? [[spaceId, value]]
-          : [],
-      ),
-    )
-  } catch {
-    return {}
-  }
-}
-
 function readArray(key: string): unknown[] {
   const raw = localStorage.getItem(key)
   if (!raw) return []

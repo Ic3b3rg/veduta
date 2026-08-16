@@ -5,6 +5,7 @@ import {
   SurfaceTemplateIdSchema,
   type ChatTurnCorrelation,
   type JsonObject,
+  type SurfaceOrder,
   type Surface,
   type SurfaceTemplate,
 } from '@veduta/protocol'
@@ -84,6 +85,8 @@ export interface TemplateEngineOptions {
 
 export interface PinResult {
   surface: Surface
+  changed: boolean
+  order: SurfaceOrder
   template?: SurfaceTemplate
 }
 
@@ -195,10 +198,13 @@ export class TemplateEngine {
     pinned: boolean,
     options: { origin: Origin; updatedBy: 'user' | 'agent' },
   ): PinResult {
-    const surface = this.store.setPinned(surfaceId, pinned, options)
-    if (!pinned) return { surface }
+    const mutation = this.store.setPinnedWithOrder(surfaceId, pinned, options)
+    const { surface, changed, order } = mutation
+    if (!changed || !pinned) return { surface, changed, order }
     const template = this.saveTemplateFromSurface(surface, surface.spaceId, 'pin', new Map())
-    return template === undefined ? { surface } : { surface, template }
+    return template === undefined
+      ? { surface, changed, order }
+      : { surface, changed, order, template }
   }
 
   /**

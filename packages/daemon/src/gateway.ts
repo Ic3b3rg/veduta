@@ -368,6 +368,7 @@ function surfaceEventFrame(event: SurfaceEngineEvent): GatewayServerMessage {
   }
   if (event.kind === 'archived') return { type: 'surface.archived', event: event.event }
   if (event.kind === 'pinned') return { type: 'surface.pinned', event: event.event }
+  if (event.kind === 'moved') return { type: 'surface.moved', event: event.event }
   return { type: 'surface.patch', event: event.event }
 }
 

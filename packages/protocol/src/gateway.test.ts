@@ -3,8 +3,13 @@ import {
   ApprovalCardSchema,
   GatewayClientMessageSchema,
   GatewayServerMessageSchema,
+  MoveSurfaceRequestSchema,
+  MoveSurfaceResultSchema,
+  PinSurfaceResultSchema,
   SurfaceArchivedEventSchema,
   SurfaceCreatedEventSchema,
+  SurfaceMovedEventSchema,
+  SurfaceOrderSchema,
   SurfacePatchEventSchema,
   SurfacePinnedEventSchema,
 } from './index.ts'
@@ -104,6 +109,7 @@ describe('Gateway protocol', () => {
       at: '2026-07-03T10:00:00.000Z',
       spaceId: 'spc-health',
       surface,
+      order: testOrder(2, [], ['srf-groceries']),
     })
 
     expect(GatewayServerMessageSchema.parse({ type: 'surface.created', event })).toEqual({
@@ -125,6 +131,7 @@ describe('Gateway protocol', () => {
         state: {},
         freshness: { updatedAt: '2026-07-03T10:00:00.000Z', updatedBy: 'agent' },
       },
+      order: testOrder(2, [], ['srf-groceries']),
     })
     const frame = {
       type: 'surface.created' as const,
@@ -153,6 +160,7 @@ describe('Gateway protocol', () => {
       at: '2026-07-03T10:00:00.000Z',
       spaceId: 'spc-health',
       surfaceId: 'srf-groceries',
+      order: testOrder(3),
     })
 
     expect(GatewayServerMessageSchema.parse({ type: 'surface.archived', event })).toEqual({
@@ -169,6 +177,7 @@ describe('Gateway protocol', () => {
       surfaceId: 'srf-groceries',
       pinned: true,
       freshness: { updatedAt: '2026-07-03T10:00:00.000Z', updatedBy: 'user' },
+      order: testOrder(4, ['srf-groceries']),
     })
 
     expect(GatewayServerMessageSchema.parse({ type: 'surface.pinned', event })).toEqual({
@@ -188,6 +197,7 @@ describe('Gateway protocol', () => {
           spaceId: 'spc-health',
           surfaceId: 'srf-groceries',
           freshness: { updatedAt: '2026-07-03T10:00:00.000Z', updatedBy: 'user' },
+          order: testOrder(4, ['srf-groceries']),
         },
       }).success,
     ).toBe(false)
@@ -203,6 +213,75 @@ describe('Gateway protocol', () => {
           spaceId: 'spc-health',
           surfaceId: 'srf-groceries',
           pinned: true,
+          order: testOrder(4, ['srf-groceries']),
+        },
+      }).success,
+    ).toBe(false)
+  })
+
+  it('validates authoritative per-Space order and relative Move contracts', () => {
+    const order = SurfaceOrderSchema.parse({
+      cursor: 5,
+      spaceId: 'spc-health',
+      pinnedSurfaceIds: ['srf-plan'],
+      regularSurfaceIds: ['srf-meals', 'srf-groceries'],
+    })
+    const event = SurfaceMovedEventSchema.parse({
+      cursor: 5,
+      at: '2026-07-03T10:00:00.000Z',
+      spaceId: 'spc-health',
+      surfaceId: 'srf-groceries',
+      direction: 'up',
+      order,
+    })
+
+    expect(GatewayServerMessageSchema.parse({ type: 'surface.moved', event })).toEqual({
+      type: 'surface.moved',
+      event,
+    })
+    expect(MoveSurfaceRequestSchema.parse({ direction: 'down' })).toEqual({ direction: 'down' })
+    expect(MoveSurfaceResultSchema.parse({ changed: true, order })).toEqual({
+      changed: true,
+      order,
+    })
+    expect(
+      PinSurfaceResultSchema.parse({
+        changed: false,
+        surface: {
+          id: 'srf-plan',
+          spaceId: 'spc-health',
+          title: 'Plan',
+          tree: { id: 'root', type: 'Box' },
+          state: {},
+          freshness: { updatedAt: '2026-07-03T10:00:00.000Z', updatedBy: 'user' },
+          pinned: true,
+        },
+        order,
+      }).changed,
+    ).toBe(false)
+  })
+
+  it('rejects duplicate membership and mismatched order event cursors or Spaces', () => {
+    expect(
+      SurfaceOrderSchema.safeParse({
+        cursor: 5,
+        spaceId: 'spc-health',
+        pinnedSurfaceIds: ['srf-plan'],
+        regularSurfaceIds: ['srf-plan'],
+      }).success,
+    ).toBe(false)
+    expect(
+      SurfaceMovedEventSchema.safeParse({
+        cursor: 6,
+        at: '2026-07-03T10:00:00.000Z',
+        spaceId: 'spc-health',
+        surfaceId: 'srf-plan',
+        direction: 'sideways',
+        order: {
+          cursor: 5,
+          spaceId: 'spc-other',
+          pinnedSurfaceIds: ['srf-plan'],
+          regularSurfaceIds: [],
         },
       }).success,
     ).toBe(false)
@@ -303,3 +382,16 @@ describe('Gateway protocol', () => {
     ).toBe(false)
   })
 })
+
+function testOrder(
+  cursor: number,
+  pinnedSurfaceIds: string[] = [],
+  regularSurfaceIds: string[] = [],
+) {
+  return {
+    cursor,
+    spaceId: 'spc-health',
+    pinnedSurfaceIds,
+    regularSurfaceIds,
+  }
+}

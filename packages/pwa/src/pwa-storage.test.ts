@@ -6,14 +6,12 @@ import {
   CHAT_HISTORY_LIMIT,
   CHAT_QUEUE_KEY,
   FAST_ACTION_QUEUE_KEY,
-  SURFACE_ORDER_KEY,
   consumeSetupCode,
   persistChatHistory,
   readChatHistory,
   readQueuedChat,
   readQueuedFastActions,
   readSetupCode,
-  readSurfaceOrders,
 } from './pwa-storage.ts'
 
 beforeEach(() => {
@@ -71,20 +69,10 @@ describe('persisted PWA state', () => {
     expect(readQueuedFastActions()).toHaveLength(1)
   })
 
-  it('keeps only per-Space arrays of Surface ids', () => {
-    localStorage.setItem(
-      SURFACE_ORDER_KEY,
-      JSON.stringify({ 'spc-home': ['srf-a', 'srf-b'], broken: [1], scalar: 'srf-c' }),
-    )
-    expect(readSurfaceOrders()).toEqual({ 'spc-home': ['srf-a', 'srf-b'] })
-  })
-
   it('fails closed on corrupt JSON', () => {
     localStorage.setItem(CHAT_QUEUE_KEY, '{')
     localStorage.setItem(FAST_ACTION_QUEUE_KEY, '{')
-    localStorage.setItem(SURFACE_ORDER_KEY, '{')
     expect(readQueuedChat()).toEqual([])
     expect(readQueuedFastActions()).toEqual([])
-    expect(readSurfaceOrders()).toEqual({})
   })
 })

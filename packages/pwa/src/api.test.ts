@@ -11,6 +11,7 @@ import {
   fetchSpaces,
   freshnessLabel,
   optimisticFastSurface,
+  moveSurface,
   pinSurface,
   previewLegacyImport,
   runLegacyImport,
@@ -178,10 +179,16 @@ function buildSurface(overrides: Partial<Surface> = {}): Surface {
 }
 
 describe('pinSurface', () => {
-  it('posts { pinned } to /api/surfaces/:id/pin with the auth header and parses the returned Surface', async () => {
+  it('posts { pinned } and parses the authoritative mutation result', async () => {
     const surface = buildSurface({ pinned: true })
+    const order = {
+      cursor: 7,
+      spaceId: 'spc-health',
+      pinnedSurfaceIds: ['srf-meals'],
+      regularSurfaceIds: [],
+    }
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
-      return new Response(JSON.stringify({ surface }), { status: 200 })
+      return new Response(JSON.stringify({ surface, changed: true, order }), { status: 200 })
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -195,7 +202,7 @@ describe('pinSurface', () => {
     expect(init?.method).toBe('POST')
     expect(JSON.parse(init?.body as string)).toEqual({ pinned: true })
     expect(init?.headers).toMatchObject({ authorization: 'Bearer test-token' })
-    expect(result).toEqual(surface)
+    expect(result).toEqual({ surface, changed: true, order })
   })
 
   it('rejects with a readable message on a non-2xx response', async () => {
@@ -205,6 +212,35 @@ describe('pinSurface', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(pinSurface('srf-meals', true)).rejects.toThrow('Surface is not pinnable')
+  })
+})
+
+describe('moveSurface', () => {
+  it('posts one relative direction and parses the authoritative order', async () => {
+    const resultBody = {
+      changed: true,
+      order: {
+        cursor: 8,
+        spaceId: 'spc-health',
+        pinnedSurfaceIds: [],
+        regularSurfaceIds: ['srf-b', 'srf-a'],
+      },
+    }
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      return new Response(JSON.stringify(resultBody), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await moveSurface('spc-health', 'srf-b', 'up', 'test-token')
+
+    const call = fetchMock.mock.calls[0]
+    if (call === undefined) throw new Error('fetch was not called')
+    const [path, init] = call
+    expect(path).toBe('/api/spaces/spc-health/surfaces/srf-b/move')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(init?.body as string)).toEqual({ direction: 'up' })
+    expect(init?.headers).toMatchObject({ authorization: 'Bearer test-token' })
+    expect(result).toEqual(resultBody)
   })
 })
 
@@ -439,6 +475,7 @@ function connectWithFakeSocket(handlerOverrides: Partial<GatewayHandlers>) {
     onSurfaceCreated: vi.fn(),
     onSurfaceArchived: vi.fn(),
     onSurfacePinned: vi.fn(),
+    onSurfaceMoved: vi.fn(),
     onChatMessage: vi.fn(),
     onChatTurnStart: vi.fn(),
     onChatTurnDelta: vi.fn(),
@@ -477,6 +514,12 @@ describe('connectGateway chat.turn-* dispatch', () => {
           tree: { id: 'root', type: 'Box' },
           state: {},
           freshness: { updatedAt: '2026-08-16T10:00:00.000Z', updatedBy: 'agent' },
+        },
+        order: {
+          cursor: 1,
+          spaceId: 'spc-home',
+          pinnedSurfaceIds: [],
+          regularSurfaceIds: ['srf-created'],
         },
       },
       initiatingTurn: { clientId: 'pwa-1', turnId: 'turn-1' },

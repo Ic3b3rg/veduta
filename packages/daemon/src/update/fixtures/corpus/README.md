@@ -32,10 +32,12 @@ every one of them still parses.
   of one of these rows on the Gateway's hello replay killed the boot with
   the data otherwise intact). Read via the row-reader tolerance in
   `surface-engine.ts`, never via a loosened protocol schema.
-- `surface-event-*-current.json` — the current shape for every
-  `surface_events` kind (`patch`, `pinned`, `created`, `archived`), so the
-  corpus also proves the ordinary path keeps working, not just the
-  tolerated one.
+- `surface-event-*-current.json` — the shape current before Gateway-owned
+  Surface ordering. It remains frozen and readable through the lifecycle
+  order fallback.
+- `surface-event-*-order-v1.json` — the Gateway-owned ordering shape for
+  lifecycle events (`created`, `pinned`, `moved`, `archived`), including the
+  complete authoritative order carried over the wire.
 - `space-event-log.jsonl` — three lines for the Space Event log: a
   current-shaped `SpaceEvent`, a minimal legacy-shaped one (missing the
   optional `occurredAt`/`payload` fields), and one line of garbage. The

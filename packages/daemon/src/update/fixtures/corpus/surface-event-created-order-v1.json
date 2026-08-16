@@ -1,0 +1,28 @@
+{
+  "cursor": 7,
+  "at": "2026-08-16T09:00:00.000Z",
+  "spaceId": "spc-order-v1",
+  "surfaceId": "srf-order-created",
+  "kind": "created",
+  "event": {
+    "cursor": 7,
+    "at": "2026-08-16T09:00:00.000Z",
+    "spaceId": "spc-order-v1",
+    "surface": {
+      "id": "srf-order-created",
+      "spaceId": "spc-order-v1",
+      "title": "Ordered Surface",
+      "tree": { "id": "root", "type": "Box" },
+      "state": {},
+      "freshness": { "updatedAt": "2026-08-16T09:00:00.000Z", "updatedBy": "agent" },
+      "pinned": false,
+      "pinnable": true
+    },
+    "order": {
+      "cursor": 7,
+      "spaceId": "spc-order-v1",
+      "pinnedSurfaceIds": [],
+      "regularSurfaceIds": ["srf-order-created"]
+    }
+  }
+}

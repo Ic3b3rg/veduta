@@ -1,7 +1,6 @@
-import type { Surface } from '@veduta/protocol'
+import type { Surface, SurfaceMoveDirection } from '@veduta/protocol'
 import { freshnessLabel, type SpaceWithSurfaces } from './api.ts'
 import { AttentionBadge } from './attention-badge.tsx'
-import { mergeSurfaceOrder } from './home-state.ts'
 import type { QueuedFastAction } from './pwa-storage.ts'
 import { SurfaceCard } from './surface-card.tsx'
 
@@ -11,7 +10,6 @@ export function SpaceSection({
   focused,
   focusedSurfaceId,
   surfaceCreationFeedbackKeys,
-  surfaceOrder,
   onFocus,
   onMoveSurface,
   onPatched,
@@ -25,22 +23,19 @@ export function SpaceSection({
   focused: boolean
   focusedSurfaceId: string | undefined
   surfaceCreationFeedbackKeys: Record<string, string>
-  surfaceOrder: string[]
   onFocus: (space: SpaceWithSurfaces, surface?: Surface) => void
-  onMoveSurface: (space: SpaceWithSurfaces, surfaceId: string, offset: -1 | 1) => void
+  onMoveSurface: (
+    space: SpaceWithSurfaces,
+    surfaceId: string,
+    direction: SurfaceMoveDirection,
+  ) => void
   onPatched: (surface: Surface) => void
   onQueueFastAction: (action: QueuedFastAction) => void
   onTogglePin: (surface: Surface, pinned: boolean) => void
   onSurfaceCreationFeedbackShown: (surfaceId: string, feedbackKey: string) => void
   onError: (message: string) => void
 }) {
-  const ids = mergeSurfaceOrder(
-    space.surfaces.map((surface) => surface.id),
-    surfaceOrder,
-  )
-  const surfaces = ids
-    .map((id) => space.surfaces.find((surface) => surface.id === id))
-    .filter((surface): surface is Surface => Boolean(surface))
+  const surfaces = space.surfaces
 
   return (
     <section
@@ -68,8 +63,8 @@ export function SpaceSection({
             canMoveUp={index > 0}
             canMoveDown={index < surfaces.length - 1}
             onFocus={() => onFocus(space, surface)}
-            onMoveUp={() => onMoveSurface(space, surface.id, -1)}
-            onMoveDown={() => onMoveSurface(space, surface.id, 1)}
+            onMoveUp={() => onMoveSurface(space, surface.id, 'up')}
+            onMoveDown={() => onMoveSurface(space, surface.id, 'down')}
             onPatched={onPatched}
             onQueueFastAction={onQueueFastAction}
             onTogglePin={(pinned) => onTogglePin(surface, pinned)}

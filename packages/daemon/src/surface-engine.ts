@@ -8,8 +8,10 @@ import {
   PatchSchema,
   SurfaceArchivedEventSchema,
   SurfaceCreatedEventSchema,
+  SurfaceMovedEventSchema,
   SurfacePatchEventSchema,
   SurfacePinnedEventSchema,
+  SurfaceOrderSchema,
   SurfaceSchema,
   applySurfacePatch,
   findAtom,
@@ -24,8 +26,11 @@ import {
   type Surface,
   type SurfaceArchivedEvent,
   type SurfaceCreatedEvent,
+  type SurfaceMovedEvent,
+  type SurfaceMoveDirection,
   type SurfacePatchEvent,
   type SurfacePinnedEvent,
+  type SurfaceOrder,
 } from '@veduta/protocol'
 import { z } from 'zod'
 import { defineTool, type ToolDef } from './agent-runner.ts'
@@ -67,6 +72,16 @@ export interface SurfaceMutation {
   event: SurfacePatchEvent
   duplicate: boolean
 }
+
+export interface SurfacePinMutation {
+  surface: Surface
+  changed: boolean
+  order: SurfaceOrder
+}
+
+type CommittedSurfacePinMutation =
+  | { surface: Surface; changed: false; order: SurfaceOrder }
+  | { surface: Surface; changed: true; order: SurfaceOrder; event: SurfacePinnedEvent }
 
 /**
  * `patchTree`'s result when the target Surface is pinned and the caller did
@@ -131,6 +146,7 @@ export type SurfaceEngineEvent =
   | { kind: 'created'; event: SurfaceCreatedEvent; initiatingTurn?: ChatTurnCorrelation }
   | { kind: 'archived'; event: SurfaceArchivedEvent }
   | { kind: 'pinned'; event: SurfacePinnedEvent }
+  | { kind: 'moved'; event: SurfaceMovedEvent }
 
 export interface QueuedAgentTurn {
   id: string
@@ -193,6 +209,18 @@ export class SurfaceNotPinnableError extends Error {
   constructor(readonly surfaceId: string) {
     super(`Surface ${surfaceId} is daemon-owned or unknown and cannot be pinned`)
     this.name = 'SurfaceNotPinnableError'
+  }
+}
+
+export type SurfaceMoveErrorCode = 'unavailable' | 'wrong_space' | 'boundary'
+
+export class SurfaceMoveError extends Error {
+  constructor(
+    readonly code: SurfaceMoveErrorCode,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'SurfaceMoveError'
   }
 }
 
@@ -314,18 +342,47 @@ export class SurfaceEngine {
     this.appendSpaceEvent = options.appendSpaceEvent
     initializeSurfaceSchema(this.db)
     if (this.surfaceCount() === 0) this.seed(options.seed ?? [])
+    this.initializeSurfaceOrders()
   }
 
   listSurfaces(spaceId?: string): Surface[] {
     const rows =
       spaceId === undefined
-        ? this.db.prepare('select * from surfaces where archived = 0 order by title, id').all()
+        ? this.db
+            .prepare(
+              `select surfaces.* from surfaces
+               left join surface_order_items on surface_order_items.surface_id = surfaces.id
+               where surfaces.archived = 0
+               order by surfaces.space_id,
+                 case surface_order_items.group_name
+                   when 'pinned' then 0
+                   when 'regular' then 1
+                   else 2
+                 end,
+                 surface_order_items.position,
+                 surfaces.id`,
+            )
+            .all()
         : this.db
             .prepare(
-              'select * from surfaces where archived = 0 and space_id = ? order by title, id',
+              `select surfaces.* from surfaces
+               left join surface_order_items on surface_order_items.surface_id = surfaces.id
+               where surfaces.archived = 0 and surfaces.space_id = ?
+               order by case surface_order_items.group_name
+                   when 'pinned' then 0
+                   when 'regular' then 1
+                   else 2
+                 end,
+                 surface_order_items.position,
+                 surfaces.id`,
             )
             .all(spaceId)
     return rows.map(surfaceFromRow)
+  }
+
+  surfaceOrder(spaceId: string): SurfaceOrder {
+    this.requireKnownSpace(spaceId)
+    return this.readSurfaceOrder(spaceId)
   }
 
   getSurface(id: string): Surface | undefined {
@@ -412,9 +469,9 @@ export class SurfaceEngine {
   }
 
   /**
-   * Observe every committed Surface-lifecycle event (patch, created,
-   * archived) exactly once, after its SQLite write transaction commits.
-   * The Gateway subscribes once, centrally, so nothing double-broadcasts.
+   * Observe every committed Surface event exactly once after its SQLite
+   * write transaction commits. The Gateway subscribes once, centrally, so
+   * nothing double-broadcasts.
    */
   onSurfaceEvent(observer: (event: SurfaceEngineEvent) => void): () => void {
     this.surfaceEventObservers.add(observer)
@@ -446,6 +503,7 @@ export class SurfaceEngine {
     // write origin, never a flat `'trusted:user'`.
     const contentOrigin = options?.contentOrigin ?? options?.origin ?? 'trusted:user'
     const event = this.runWrite(() => {
+      const currentOrder = this.ensureSurfaceOrder(surface.spaceId)
       const existing = this.db.prepare('select id from surfaces where id = ?').get(surface.id)
       if (existing) throw new Error(`Surface already exists: ${surface.id}`)
       this.insertSurface(surface, {
@@ -467,7 +525,15 @@ export class SurfaceEngine {
         origin: options?.origin ?? 'trusted:system',
         payload: { surfaceId: surface.id },
       })
-      return this.insertCreatedEvent(surface)
+      const cursor = this.latestSurfaceCursor() + 1
+      const order = this.writeSurfaceOrder(
+        surface.spaceId,
+        currentOrder.pinnedSurfaceIds,
+        [surface.id, ...currentOrder.regularSurfaceIds],
+        cursor,
+      )
+      const createdEvent = this.insertCreatedEvent(surface, order)
+      return createdEvent
     })
     this.notifySurfaceEvent({
       kind: 'created',
@@ -500,11 +566,15 @@ export class SurfaceEngine {
     surfaceId: string,
     pinned: boolean,
     options: { origin: Origin; updatedBy: 'user' | 'agent' | 'job' },
-  ): Surface {
+  ): SurfacePinMutation {
     this.assertPinnable(surfaceId)
-    const result = this.runWrite(() => {
+    const result = this.runWrite<CommittedSurfacePinMutation>(() => {
       const current = this.getSurface(surfaceId)
       if (!current) throw new SurfaceNotPinnableError(surfaceId)
+      const currentOrder = this.ensureSurfaceOrder(current.spaceId)
+      if (current.pinned === pinned) {
+        return { surface: current, changed: false, order: currentOrder }
+      }
       const stamped = this.stampSurface({ ...current, pinned }, options.updatedBy)
       this.db
         .prepare(
@@ -523,10 +593,80 @@ export class SurfaceEngine {
         origin: eventOrigin,
         payload: { surfaceId, pinned },
       })
-      return { surface: stamped, event: this.insertPinnedEvent(stamped, pinned) }
+      const withoutTarget = {
+        pinned: currentOrder.pinnedSurfaceIds.filter((id) => id !== surfaceId),
+        regular: currentOrder.regularSurfaceIds.filter((id) => id !== surfaceId),
+      }
+      const cursor = this.latestSurfaceCursor() + 1
+      const order = this.writeSurfaceOrder(
+        stamped.spaceId,
+        pinned ? [surfaceId, ...withoutTarget.pinned] : withoutTarget.pinned,
+        pinned ? withoutTarget.regular : [surfaceId, ...withoutTarget.regular],
+        cursor,
+      )
+      const event = this.insertPinnedEvent(stamped, pinned, order)
+      return { surface: stamped, changed: true, order, event }
     })
-    this.notifySurfaceEvent({ kind: 'pinned', event: result.event })
-    return result.surface
+    if (result.changed) this.notifySurfaceEvent({ kind: 'pinned', event: result.event })
+    return { surface: result.surface, changed: result.changed, order: result.order }
+  }
+
+  moveSurface(spaceId: string, surfaceId: string, direction: SurfaceMoveDirection): SurfaceOrder {
+    const result = this.runWrite(() => {
+      const row = this.db
+        .prepare(
+          'select space_id, archived, pinned, title, content_origin from surfaces where id = ?',
+        )
+        .get(surfaceId)
+      if (!row || requiredNumber(row, 'archived') !== 0) {
+        throw new SurfaceMoveError('unavailable', 'Surface is not available for ordering')
+      }
+      if (requiredString(row, 'space_id') !== spaceId) {
+        throw new SurfaceMoveError('wrong_space', 'Surface does not belong to the requested Space')
+      }
+
+      const currentOrder = this.ensureSurfaceOrder(spaceId)
+      const pinned = requiredNumber(row, 'pinned') === 1
+      const group = pinned
+        ? [...currentOrder.pinnedSurfaceIds]
+        : [...currentOrder.regularSurfaceIds]
+      const index = group.indexOf(surfaceId)
+      const nextIndex = index + (direction === 'up' ? -1 : 1)
+      if (index < 0 || nextIndex < 0 || nextIndex >= group.length) {
+        throw new SurfaceMoveError(
+          'boundary',
+          `Surface cannot move ${direction} within its current group`,
+        )
+      }
+      ;[group[index], group[nextIndex]] = [group[nextIndex]!, group[index]!]
+
+      const at = this.nowIso()
+      const cursor = this.latestSurfaceCursor() + 1
+      const order = this.writeSurfaceOrder(
+        spaceId,
+        pinned ? group : currentOrder.pinnedSurfaceIds,
+        pinned ? currentOrder.regularSurfaceIds : group,
+        cursor,
+      )
+      const title = truncate(
+        neutralizeDelimiters(requiredString(row, 'title')),
+        PIN_EVENT_TITLE_MAX_CHARS,
+      )
+      const storedContentOrigin = requiredString(row, 'content_origin')
+      this.appendSpaceEvent(spaceId, {
+        at,
+        type: 'surface.move',
+        text: `Moved Surface "${title}" ${direction}`,
+        origin: isValidOrigin(storedContentOrigin)
+          ? effectiveOrigin([storedContentOrigin, 'trusted:user'], 'trusted:user')
+          : 'trusted:user',
+        payload: { surfaceId, direction },
+      })
+      const event = this.insertMovedEvent({ cursor, at, spaceId, surfaceId, direction, order })
+      return { order, event }
+    })
+    this.notifySurfaceEvent({ kind: 'moved', event: result.event })
+    return result.order
   }
 
   /**
@@ -645,6 +785,7 @@ export class SurfaceEngine {
     const surface = this.requireActiveSurface(surfaceId)
     const archived = this.stampSurface(surface, updatedBy)
     const event = this.runWrite(() => {
+      const currentOrder = this.ensureSurfaceOrder(surface.spaceId)
       this.db
         .prepare(
           `update surfaces
@@ -659,7 +800,15 @@ export class SurfaceEngine {
         origin: origin ?? 'trusted:system',
         payload: { surfaceId },
       })
-      return this.insertArchivedEvent(archived)
+      const cursor = this.latestSurfaceCursor() + 1
+      const order = this.writeSurfaceOrder(
+        surface.spaceId,
+        currentOrder.pinnedSurfaceIds.filter((id) => id !== surfaceId),
+        currentOrder.regularSurfaceIds.filter((id) => id !== surfaceId),
+        cursor,
+      )
+      const archivedEvent = this.insertArchivedEvent(archived, order)
+      return archivedEvent
     })
     this.notifySurfaceEvent({ kind: 'archived', event })
     return archived
@@ -1116,32 +1265,38 @@ export class SurfaceEngine {
     return event
   }
 
-  private insertCreatedEvent(surface: Surface): SurfaceCreatedEvent {
-    const cursor = this.latestSurfaceCursor() + 1
+  private insertCreatedEvent(surface: Surface, order: SurfaceOrder): SurfaceCreatedEvent {
+    const cursor = order.cursor
     const event = SurfaceCreatedEventSchema.parse({
       cursor,
       at: surface.freshness.updatedAt,
       spaceId: surface.spaceId,
       surface,
+      order,
     })
     this.insertEventRow(cursor, event.at, event.spaceId, surface.id, 'created', event)
     return event
   }
 
-  private insertArchivedEvent(surface: Surface): SurfaceArchivedEvent {
-    const cursor = this.latestSurfaceCursor() + 1
+  private insertArchivedEvent(surface: Surface, order: SurfaceOrder): SurfaceArchivedEvent {
+    const cursor = order.cursor
     const event = SurfaceArchivedEventSchema.parse({
       cursor,
       at: surface.freshness.updatedAt,
       spaceId: surface.spaceId,
       surfaceId: surface.id,
+      order,
     })
     this.insertEventRow(cursor, event.at, event.spaceId, surface.id, 'archived', event)
     return event
   }
 
-  private insertPinnedEvent(surface: Surface, pinned: boolean): SurfacePinnedEvent {
-    const cursor = this.latestSurfaceCursor() + 1
+  private insertPinnedEvent(
+    surface: Surface,
+    pinned: boolean,
+    order: SurfaceOrder,
+  ): SurfacePinnedEvent {
+    const cursor = order.cursor
     const event = SurfacePinnedEventSchema.parse({
       cursor,
       at: surface.freshness.updatedAt,
@@ -1153,8 +1308,15 @@ export class SurfaceEngine {
       // `updatedBy` off whatever it last observed, and would render a pin as
       // current while everything else about the Surface still looks stale.
       freshness: surface.freshness,
+      order,
     })
     this.insertEventRow(cursor, event.at, event.spaceId, surface.id, 'pinned', event)
+    return event
+  }
+
+  private insertMovedEvent(input: SurfaceMovedEvent): SurfaceMovedEvent {
+    const event = SurfaceMovedEventSchema.parse(input)
+    this.insertEventRow(event.cursor, event.at, event.spaceId, event.surfaceId, 'moved', event)
     return event
   }
 
@@ -1163,7 +1325,7 @@ export class SurfaceEngine {
     at: string,
     spaceId: string,
     surfaceId: string,
-    kind: 'patch' | 'created' | 'archived' | 'pinned',
+    kind: 'patch' | 'created' | 'archived' | 'pinned' | 'moved',
     event: unknown,
   ): void {
     this.db
@@ -1372,6 +1534,144 @@ export class SurfaceEngine {
     return row ? requiredNumber(row, 'count') : 0
   }
 
+  private initializeSurfaceOrders(): void {
+    const spaceIds = this.db
+      .prepare('select distinct space_id from surfaces')
+      .all()
+      .map((row) => requiredString(row, 'space_id'))
+    if (spaceIds.length === 0) return
+    this.runWrite(() => {
+      for (const spaceId of spaceIds) this.ensureSurfaceOrder(spaceId)
+    })
+  }
+
+  private ensureSurfaceOrder(spaceId: string): SurfaceOrder {
+    const state = this.db
+      .prepare('select cursor from surface_order_state where space_id = ?')
+      .get(spaceId)
+    if (state) return this.readSurfaceOrder(spaceId)
+
+    const surfaces = this.db
+      .prepare('select id, pinned from surfaces where space_id = ? and archived = 0')
+      .all(spaceId)
+      .map((row) => ({
+        id: requiredString(row, 'id'),
+        pinned: requiredNumber(row, 'pinned') === 1,
+      }))
+    const pinnedRanks = new Map<string, number>()
+    const regularRanks = new Map<string, number>()
+    for (const row of this.db
+      .prepare(
+        `select cursor, surface_id, kind, event_json from surface_events
+         where space_id = ? and kind in ('created', 'pinned')
+         order by cursor desc`,
+      )
+      .all(spaceId)) {
+      const cursor = requiredNumber(row, 'cursor')
+      const surfaceId = requiredString(row, 'surface_id')
+      const kind = requiredString(row, 'kind')
+      if (kind === 'created' && !regularRanks.has(surfaceId)) {
+        regularRanks.set(surfaceId, cursor)
+        continue
+      }
+      if (kind !== 'pinned') continue
+      const json = JSON.parse(requiredString(row, 'event_json')) as { pinned?: unknown }
+      if (json.pinned === true && !pinnedRanks.has(surfaceId)) pinnedRanks.set(surfaceId, cursor)
+      if (json.pinned === false && !regularRanks.has(surfaceId)) regularRanks.set(surfaceId, cursor)
+    }
+
+    const pinnedSurfaceIds = surfaces
+      .filter((surface) => surface.pinned)
+      .map((surface) => surface.id)
+      .sort((left, right) => compareBackfillRank(left, right, pinnedRanks))
+    const regularSurfaceIds = surfaces
+      .filter((surface) => !surface.pinned)
+      .map((surface) => surface.id)
+      .sort((left, right) => compareBackfillRank(left, right, regularRanks))
+    return this.writeSurfaceOrder(
+      spaceId,
+      pinnedSurfaceIds,
+      regularSurfaceIds,
+      this.latestSurfaceCursor(),
+    )
+  }
+
+  private readSurfaceOrder(spaceId: string): SurfaceOrder {
+    const state = this.db
+      .prepare('select cursor from surface_order_state where space_id = ?')
+      .get(spaceId)
+    const cursor = state ? requiredNumber(state, 'cursor') : this.latestSurfaceCursor()
+    const rows = this.db
+      .prepare(
+        `select surface_id, group_name from surface_order_items
+         where space_id = ? order by group_name, position`,
+      )
+      .all(spaceId)
+    return SurfaceOrderSchema.parse({
+      cursor,
+      spaceId,
+      pinnedSurfaceIds: rows
+        .filter((row) => requiredString(row, 'group_name') === 'pinned')
+        .map((row) => requiredString(row, 'surface_id')),
+      regularSurfaceIds: rows
+        .filter((row) => requiredString(row, 'group_name') === 'regular')
+        .map((row) => requiredString(row, 'surface_id')),
+    })
+  }
+
+  private writeSurfaceOrder(
+    spaceId: string,
+    pinnedSurfaceIds: string[],
+    regularSurfaceIds: string[],
+    cursor: number,
+  ): SurfaceOrder {
+    const order = SurfaceOrderSchema.parse({
+      cursor,
+      spaceId,
+      pinnedSurfaceIds,
+      regularSurfaceIds,
+    })
+    this.assertCompleteSurfaceOrder(order)
+    this.db.prepare('delete from surface_order_items where space_id = ?').run(spaceId)
+    const insert = this.db.prepare(
+      `insert into surface_order_items (surface_id, space_id, group_name, position)
+       values (?, ?, ?, ?)`,
+    )
+    order.pinnedSurfaceIds.forEach((surfaceId, position) => {
+      insert.run(surfaceId, spaceId, 'pinned', position)
+    })
+    order.regularSurfaceIds.forEach((surfaceId, position) => {
+      insert.run(surfaceId, spaceId, 'regular', position)
+    })
+    this.db
+      .prepare(
+        `insert into surface_order_state (space_id, cursor) values (?, ?)
+         on conflict(space_id) do update set cursor = excluded.cursor`,
+      )
+      .run(spaceId, cursor)
+    return order
+  }
+
+  private assertCompleteSurfaceOrder(order: SurfaceOrder): void {
+    const active = this.db
+      .prepare('select id, pinned from surfaces where space_id = ? and archived = 0')
+      .all(order.spaceId)
+    const expected = new Map(
+      active.map((row) => [requiredString(row, 'id'), requiredNumber(row, 'pinned') === 1]),
+    )
+    const ordered = new Map<string, boolean>()
+    order.pinnedSurfaceIds.forEach((id) => ordered.set(id, true))
+    order.regularSurfaceIds.forEach((id) => ordered.set(id, false))
+    if (expected.size !== ordered.size) {
+      throw new Error(`incomplete authoritative Surface order for Space ${order.spaceId}`)
+    }
+    for (const [surfaceId, pinned] of expected) {
+      if (ordered.get(surfaceId) !== pinned) {
+        throw new Error(`invalid authoritative Surface group for ${surfaceId}`)
+      }
+    }
+  }
+
   private seed(surfaces: Surface[]): void {
     if (surfaces.length === 0) return
     this.runWrite(() => {
@@ -1415,4 +1715,19 @@ function statePath(key: string): string {
 function contentOriginFromRow(row: Record<string, unknown>): Origin {
   const storedOrigin = requiredString(row, 'content_origin')
   return isValidOrigin(storedOrigin) ? storedOrigin : 'trusted:user'
+}
+
+function compareBackfillRank(
+  left: string,
+  right: string,
+  ranks: ReadonlyMap<string, number>,
+): number {
+  const leftRank = ranks.get(left)
+  const rightRank = ranks.get(right)
+  if (leftRank !== undefined && rightRank !== undefined && leftRank !== rightRank) {
+    return rightRank - leftRank
+  }
+  if (leftRank !== undefined && rightRank === undefined) return -1
+  if (leftRank === undefined && rightRank !== undefined) return 1
+  return left < right ? -1 : left > right ? 1 : 0
 }

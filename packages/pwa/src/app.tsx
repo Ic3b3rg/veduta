@@ -4,6 +4,9 @@ import type {
   GatewayServerMessage,
   OnboardingStatus,
   Surface,
+  SurfaceMoveDirection,
+  SurfaceOrder,
+  SurfaceSnapshot,
 } from '@veduta/protocol'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { dismissCardsForSurface } from './approval-cards.tsx'
@@ -15,6 +18,7 @@ import {
   fetchSpaces,
   invokeFastAction,
   markSpaceAttentionSeen,
+  moveSurface as requestSurfaceMove,
   pinSurface,
   type GatewayConnection,
   type SpaceWithSurfaces,
@@ -31,14 +35,14 @@ import {
 import {
   applyBufferedSurfaceStreamEvents,
   applySpaceAttention,
+  applySurfaceOrderToSpaces,
   applySurfaceStreamEvent,
   cachedSnapshot,
   mergeSpaceAttention,
-  mergeSurfaceOrder,
-  moveSurfaceId,
   parseSurfaceDeepLink,
   saveSnapshot,
   surfaceDeepLink,
+  surfaceOrderForStreamEvent,
   type SurfaceStreamEvent,
 } from './home-state.ts'
 import { HomeScreen } from './home-screen.tsx'
@@ -48,16 +52,15 @@ import {
   CHAT_HISTORY_LIMIT,
   HOME_CACHE_KEY,
   INSTALL_DISMISSED_KEY,
+  SURFACE_ORDER_KEY,
   isStandalone,
   persistChatHistory,
   persistQueuedChat,
   persistQueuedFastActions,
-  persistSurfaceOrders,
   queuedChatEntry,
   readChatHistory,
   readQueuedChat,
   readQueuedFastActions,
-  readSurfaceOrders,
   type BrowserInstallPromptEvent,
   type QueuedFastAction,
 } from './pwa-storage.ts'
@@ -73,7 +76,6 @@ export function App() {
   const [approvalCards, setApprovalCards] = useState<ApprovalCard[]>([])
   const [queuedChat, setQueuedChat] = useState(readQueuedChat)
   const [queuedFastActions, setQueuedFastActions] = useState(readQueuedFastActions)
-  const [surfaceOrders, setSurfaceOrders] = useState<Record<string, string[]>>(readSurfaceOrders)
   const [authToken, setAuthToken] = useState<string | undefined>(
     () => localStorage.getItem(AUTH_TOKEN_KEY) ?? undefined,
   )
@@ -109,6 +111,11 @@ export function App() {
   const gatewayRef = useRef<GatewayConnection | null>(null)
   const spacesRef = useRef<SpaceWithSurfaces[]>(cachedHome?.spaces ?? [])
   const surfaceCursorRef = useRef(cachedHome?.surfaceCursor ?? 0)
+  const surfaceOrderCursorsRef = useRef<Record<string, number>>(
+    Object.fromEntries(
+      (cachedHome?.spaces ?? []).map((space) => [space.id, cachedHome?.surfaceCursor ?? 0]),
+    ),
+  )
   const streamingTurnsRef = useRef<Map<string, StreamingTurn>>(new Map())
   // Last clientId this tab was assigned by the Gateway (issue 037), sent
   // back on the next reconnect hello so the daemon re-binds the same
@@ -161,7 +168,6 @@ export function App() {
   useEffect(() => persistChatHistory(chatEntries), [chatEntries])
   useEffect(() => persistQueuedChat(queuedChat), [queuedChat])
   useEffect(() => persistQueuedFastActions(queuedFastActions), [queuedFastActions])
-  useEffect(() => persistSurfaceOrders(surfaceOrders), [surfaceOrders])
 
   const replaceSurface = useCallback(
     (updated: Surface) => {
@@ -177,6 +183,47 @@ export function App() {
     [replaceSpaces],
   )
 
+  const acceptCanonicalSnapshot = useCallback(
+    (snapshot: SurfaceSnapshot) => {
+      localStorage.removeItem(SURFACE_ORDER_KEY)
+      surfaceOrderCursorsRef.current = Object.fromEntries(
+        snapshot.spaces.map((space) => [space.id, snapshot.surfaceCursor]),
+      )
+      replaceSpaces(snapshot.spaces, snapshot.surfaceCursor)
+    },
+    [replaceSpaces],
+  )
+
+  const applyConfirmedSurfaceOrder = useCallback(
+    (order: SurfaceOrder, updatedSurface?: Surface) => {
+      const currentOrderCursor = surfaceOrderCursorsRef.current[order.spaceId] ?? 0
+      if (order.cursor < currentOrderCursor) return
+      const withUpdatedSurface =
+        updatedSurface === undefined
+          ? spacesRef.current
+          : spacesRef.current.map((space) => ({
+              ...space,
+              surfaces: space.surfaces.map((surface) =>
+                surface.id === updatedSurface.id ? updatedSurface : surface,
+              ),
+            }))
+      const result = applySurfaceOrderToSpaces(withUpdatedSurface, order)
+      if (!result.applied) {
+        setError(`authoritative Surface order for Space ${order.spaceId} could not be applied`)
+        return
+      }
+      surfaceOrderCursorsRef.current = {
+        ...surfaceOrderCursorsRef.current,
+        [order.spaceId]: order.cursor,
+      }
+      // An HTTP mutation response is not a replay checkpoint: it may race
+      // earlier events for another Space, so keep the global cursor where
+      // the ordered WebSocket stream last advanced it.
+      replaceSpaces(result.spaces)
+    },
+    [replaceSpaces],
+  )
+
   // Pin toggle (issue 022): no optimistic flip -- `SurfaceCard` renders
   // `surface.pinned` straight from the snapshot, so the toggle keeps
   // showing the server's last known state until the request resolves
@@ -186,10 +233,10 @@ export function App() {
   const togglePin = useCallback(
     (surface: Surface, pinned: boolean) => {
       pinSurface(surface.id, pinned, authToken)
-        .then(replaceSurface)
+        .then((result) => applyConfirmedSurfaceOrder(result.order, result.surface))
         .catch((e: Error) => setError(`"${surface.title}" pin failed: ${e.message}`))
     },
-    [authToken, replaceSurface],
+    [applyConfirmedSurfaceOrder, authToken],
   )
 
   const queueFastAction = useCallback((action: QueuedFastAction) => {
@@ -215,6 +262,10 @@ export function App() {
         const buffered = bufferedStreamEventsRef.current
         bufferedStreamEventsRef.current = []
         refetchingRef.current = false
+        localStorage.removeItem(SURFACE_ORDER_KEY)
+        surfaceOrderCursorsRef.current = Object.fromEntries(
+          snapshot.spaces.map((space) => [space.id, snapshot.surfaceCursor]),
+        )
 
         // Revision-wins (home-state.ts): a space.attention frame may have
         // landed on spacesRef.current while this refetch was in flight —
@@ -225,6 +276,18 @@ export function App() {
           snapshot.surfaceCursor,
           buffered,
         )
+        const unresolved = new Set(replay.unresolved)
+        for (const streamEvent of buffered) {
+          if (unresolved.has(streamEvent) || streamEvent.event.cursor <= snapshot.surfaceCursor) {
+            continue
+          }
+          const order = surfaceOrderForStreamEvent(streamEvent)
+          if (!order) continue
+          surfaceOrderCursorsRef.current[order.spaceId] = Math.max(
+            surfaceOrderCursorsRef.current[order.spaceId] ?? 0,
+            order.cursor,
+          )
+        }
         replaceSpaces(replay.spaces, replay.cursor)
         for (const unresolved of replay.unresolved) {
           setError(surfaceStreamEventErrorMessage(unresolved))
@@ -250,13 +313,24 @@ export function App() {
       }
 
       try {
+        const order = surfaceOrderForStreamEvent(streamEvent)
+        if (order && order.cursor < (surfaceOrderCursorsRef.current[order.spaceId] ?? 0)) {
+          replaceSpaces(
+            spacesRef.current,
+            Math.max(surfaceCursorRef.current, streamEvent.event.cursor),
+          )
+          return
+        }
         const result = applySurfaceStreamEvent(spacesRef.current, streamEvent)
         if (!result.applied) {
           bufferedStreamEventsRef.current.push(streamEvent)
           refetchAndReplay()
           return
         }
-        replaceSpaces(result.spaces, streamEvent.event.cursor)
+        if (order) {
+          surfaceOrderCursorsRef.current[order.spaceId] = order.cursor
+        }
+        replaceSpaces(result.spaces, Math.max(surfaceCursorRef.current, streamEvent.event.cursor))
       } catch (e) {
         setError(e instanceof Error ? e.message : 'failed to apply Surface event')
       }
@@ -339,6 +413,9 @@ export function App() {
         onSurfacePinned(event) {
           handleSurfaceStreamEvent({ type: 'surface.pinned', event })
         },
+        onSurfaceMoved(event) {
+          handleSurfaceStreamEvent({ type: 'surface.moved', event })
+        },
         onChatMessage(message) {
           appendChatEntry(message.message)
         },
@@ -372,7 +449,7 @@ export function App() {
       })
       .then((snapshot) => {
         if (!snapshot) return
-        replaceSpaces(snapshot.spaces, snapshot.surfaceCursor)
+        acceptCanonicalSnapshot(snapshot)
         startGateway()
       })
       .catch((e: Error) => {
@@ -408,6 +485,7 @@ export function App() {
     handleSurfaceCreatedMessage,
     appendChatEntry,
     applyIncomingTurnFrame,
+    acceptCanonicalSnapshot,
     authToken,
     replaceSpaces,
     refetchAndReplay,
@@ -583,13 +661,15 @@ export function App() {
     setFocusChatToken((value) => value + 1)
   }
 
-  const moveSurface = (space: SpaceWithSurfaces, surfaceId: string, offset: -1 | 1) => {
-    const ids = mergeSurfaceOrder(
-      space.surfaces.map((surface) => surface.id),
-      surfaceOrders[space.id] ?? [],
-    )
-    const nextOrder = moveSurfaceId(ids, surfaceId, offset)
-    setSurfaceOrders({ ...surfaceOrders, [space.id]: nextOrder })
+  const moveSurface = (
+    space: SpaceWithSurfaces,
+    surfaceId: string,
+    direction: SurfaceMoveDirection,
+  ) => {
+    const surface = space.surfaces.find((candidate) => candidate.id === surfaceId)
+    requestSurfaceMove(space.id, surfaceId, direction, authToken)
+      .then((result) => applyConfirmedSurfaceOrder(result.order))
+      .catch((e: Error) => setError(`"${surface?.title ?? surfaceId}" move failed: ${e.message}`))
   }
 
   const queuedCount = queuedChat.length + queuedFastActions.length
@@ -687,7 +767,6 @@ export function App() {
       focusedSpace={focusedSpace}
       focusedSurfaceId={focusedSurfaceId}
       surfaceCreationFeedbackKeys={surfaceCreationFeedbackKeys}
-      surfaceOrders={surfaceOrders}
       approvalCards={approvalCards}
       chatEntries={chatEntries}
       streamingEntries={Array.from(streamingTurns.values(), (turn) => ({
@@ -729,5 +808,7 @@ function surfaceStreamEventErrorMessage(streamEvent: SurfaceStreamEvent): string
       return `archived unknown Surface: ${streamEvent.event.surfaceId}`
     case 'surface.pinned':
       return `pin update for unknown Surface: ${streamEvent.event.surfaceId}`
+    case 'surface.moved':
+      return `Move result could not be applied for Surface: ${streamEvent.event.surfaceId}`
   }
 }

@@ -40,6 +40,20 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
       event_cursor integer not null references surface_events(cursor)
     );
 
+    create table if not exists surface_order_state (
+      space_id text primary key,
+      cursor integer not null
+    );
+
+    create table if not exists surface_order_items (
+      surface_id text primary key references surfaces(id),
+      space_id text not null,
+      group_name text not null check (group_name in ('pinned', 'regular')),
+      position integer not null check (position >= 0)
+    );
+    create unique index if not exists surface_order_items_space_group_position
+      on surface_order_items (space_id, group_name, position);
+
     create table if not exists agent_turns (
       id integer primary key autoincrement,
       at text not null,

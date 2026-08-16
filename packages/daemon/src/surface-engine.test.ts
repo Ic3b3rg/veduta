@@ -1266,6 +1266,109 @@ describe('Surface engine store', () => {
       })
     })
   })
+
+  describe('Gateway-owned Surface order migration (issue #108)', () => {
+    it('backfills once from Surface events, uses stable fallbacks, excludes archived Surfaces, and preserves manual order across restarts', async () => {
+      const rootDir = await tempRoot()
+      const first = new Store({ rootDir, now: fixedNow })
+      const otherSpace = first.spacesEngine.createSpace({ name: 'Other ordering' })
+
+      for (const id of [
+        'srf-backfill-regular-old',
+        'srf-backfill-regular-new',
+        'srf-backfill-pin-old',
+        'srf-backfill-pin-new',
+        'srf-backfill-unpinned-recent',
+        'srf-backfill-fallback-ä',
+        'srf-backfill-fallback-z',
+        'srf-backfill-archived',
+      ]) {
+        first.createSurface(checklistSurface(id, 1), 'agent')
+      }
+      first.setPinned('srf-backfill-pin-old', true, {
+        origin: 'trusted:user',
+        updatedBy: 'user',
+      })
+      first.setPinned('srf-backfill-pin-new', true, {
+        origin: 'trusted:user',
+        updatedBy: 'user',
+      })
+      first.setPinned('srf-backfill-unpinned-recent', true, {
+        origin: 'trusted:user',
+        updatedBy: 'user',
+      })
+      first.setPinned('srf-backfill-unpinned-recent', false, {
+        origin: 'trusted:user',
+        updatedBy: 'user',
+      })
+      first.archiveSurface('srf-backfill-archived', 'agent')
+      first.createSurface(
+        SurfaceSchema.parse({
+          ...checklistSurface('srf-backfill-other-space', 1),
+          spaceId: otherSpace.id,
+        }),
+        'agent',
+      )
+
+      const cursorBeforeBackfill = first.latestSurfaceCursor()
+      const healthEventsBeforeBackfill = first.eventLog('spc-health')
+      const rawDb = new DatabaseSync(join(rootDir, 'surfaces.sqlite'))
+      rawDb.exec(`
+        delete from surface_order_items;
+        delete from surface_order_state;
+        delete from surface_events
+          where surface_id in ('srf-backfill-fallback-ä', 'srf-backfill-fallback-z');
+      `)
+      rawDb.close()
+
+      const second = new Store({ rootDir, now: fixedNow })
+      const healthOrder = second
+        .snapshot()
+        .spaces.find((space) => space.id === 'spc-health')
+        ?.surfaces.map((surface) => surface.id)
+        .filter((id) => id.startsWith('srf-backfill-'))
+      const otherOrder = second
+        .snapshot()
+        .spaces.find((space) => space.id === otherSpace.id)
+        ?.surfaces.map((surface) => surface.id)
+        .filter((id) => id.startsWith('srf-backfill-'))
+
+      expect(healthOrder).toEqual([
+        'srf-backfill-pin-new',
+        'srf-backfill-pin-old',
+        'srf-backfill-unpinned-recent',
+        'srf-backfill-regular-new',
+        'srf-backfill-regular-old',
+        'srf-backfill-fallback-z',
+        'srf-backfill-fallback-ä',
+      ])
+      expect(otherOrder).toEqual(['srf-backfill-other-space'])
+      expect(healthOrder).not.toContain('srf-backfill-archived')
+      expect(second.latestSurfaceCursor()).toBeLessThanOrEqual(cursorBeforeBackfill)
+      expect(second.eventLog('spc-health')).toEqual(healthEventsBeforeBackfill)
+
+      second.moveSurface('spc-health', 'srf-backfill-regular-old', 'up')
+      const manuallyOrdered = second.surfaceOrder('spc-health')
+      const third = new Store({ rootDir, now: fixedNow })
+
+      expect(third.surfaceOrder('spc-health')).toEqual(manuallyOrdered)
+      expect(
+        third
+          .snapshot()
+          .spaces.find((space) => space.id === 'spc-health')
+          ?.surfaces.map((surface) => surface.id)
+          .filter((id) => id.startsWith('srf-backfill-')),
+      ).toEqual([
+        'srf-backfill-pin-new',
+        'srf-backfill-pin-old',
+        'srf-backfill-unpinned-recent',
+        'srf-backfill-regular-old',
+        'srf-backfill-regular-new',
+        'srf-backfill-fallback-z',
+        'srf-backfill-fallback-ä',
+      ])
+    })
+  })
 })
 
 function fixedNow(): Date {

@@ -1,4 +1,9 @@
-import { ActionInvocationSchema } from '@veduta/protocol'
+import {
+  ActionInvocationSchema,
+  MoveSurfaceRequestSchema,
+  MoveSurfaceResultSchema,
+  PinSurfaceResultSchema,
+} from '@veduta/protocol'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
@@ -7,7 +12,7 @@ import type { NotificationCenter } from './notification-center.ts'
 import type { PushStore } from './push-store.ts'
 import { extractBearer, type ServerAuthOptions } from './server-auth.ts'
 import { SurfaceActionError, type Store } from './store.ts'
-import { SurfaceNotPinnableError } from './surface-engine.ts'
+import { SurfaceMoveError, SurfaceNotPinnableError } from './surface-engine.ts'
 import { appendSystemSurface } from './system-space.ts'
 import type { TemplateEngine } from './template-engine.ts'
 import { usageSurface } from './usage-surface.ts'
@@ -87,14 +92,29 @@ export function registerSpaceSurfaceRoutes(
       return reply.status(404).send({ error: `unknown Surface: ${surfaceId}` })
     }
     try {
-      const { surface } = templateEngine.pin(surfaceId, parsed.data.pinned, {
+      const { surface, changed, order } = templateEngine.pin(surfaceId, parsed.data.pinned, {
         origin: 'trusted:user',
         updatedBy: 'user',
       })
-      return { surface }
+      return PinSurfaceResultSchema.parse({ surface, changed, order })
     } catch (error) {
       if (error instanceof SurfaceNotPinnableError) {
         return reply.status(409).send({ error: error.message })
+      }
+      throw error
+    }
+  })
+
+  app.post('/api/spaces/:spaceId/surfaces/:surfaceId/move', (request, reply) => {
+    const { spaceId, surfaceId } = request.params as { spaceId: string; surfaceId: string }
+    const parsed = MoveSurfaceRequestSchema.safeParse(request.body)
+    if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
+    try {
+      const order = store.moveSurface(spaceId, surfaceId, parsed.data.direction)
+      return MoveSurfaceResultSchema.parse({ changed: true, order })
+    } catch (error) {
+      if (error instanceof SurfaceMoveError) {
+        return reply.status(error.code === 'unavailable' ? 404 : 409).send({ error: error.message })
       }
       throw error
     }

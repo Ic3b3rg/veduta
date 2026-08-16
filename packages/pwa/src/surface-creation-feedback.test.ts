@@ -24,6 +24,12 @@ function createdMessage(
         state: {},
         freshness: { updatedAt: '2026-08-16T10:00:00.000Z', updatedBy: 'agent' },
       },
+      order: {
+        cursor: 1,
+        spaceId: 'spc-health',
+        pinnedSurfaceIds: [],
+        regularSurfaceIds: [id],
+      },
     }),
     ...(initiatingTurn === undefined ? {} : { initiatingTurn }),
   }

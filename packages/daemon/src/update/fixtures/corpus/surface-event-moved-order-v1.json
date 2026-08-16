@@ -1,0 +1,20 @@
+{
+  "cursor": 9,
+  "at": "2026-08-16T09:02:00.000Z",
+  "spaceId": "spc-order-v1",
+  "surfaceId": "srf-order-created",
+  "kind": "moved",
+  "event": {
+    "cursor": 9,
+    "at": "2026-08-16T09:02:00.000Z",
+    "spaceId": "spc-order-v1",
+    "surfaceId": "srf-order-created",
+    "direction": "up",
+    "order": {
+      "cursor": 9,
+      "spaceId": "spc-order-v1",
+      "pinnedSurfaceIds": ["srf-order-created", "srf-order-peer"],
+      "regularSurfaceIds": []
+    }
+  }
+}

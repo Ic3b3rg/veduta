@@ -7,6 +7,52 @@ import { FreshnessSchema, SurfaceSchema } from './surface.ts'
 
 export const GatewayCursorSchema = z.number().int().nonnegative()
 
+const SurfaceIdSchema = z.string().min(1)
+
+/**
+ * One authoritative per-Space arrangement produced by the Gateway. The
+ * cursor identifies the accepted ordering mutation that produced it; both
+ * groups contain ids exactly once, so duplicate HTTP/WebSocket delivery can
+ * be applied idempotently without a browser-authored merge.
+ */
+export const SurfaceOrderSchema = z
+  .object({
+    cursor: GatewayCursorSchema,
+    spaceId: z.string().min(1),
+    pinnedSurfaceIds: z.array(SurfaceIdSchema),
+    regularSurfaceIds: z.array(SurfaceIdSchema),
+  })
+  .superRefine((order, ctx) => {
+    const seen = new Set<string>()
+    for (const [group, ids] of [
+      ['pinnedSurfaceIds', order.pinnedSurfaceIds],
+      ['regularSurfaceIds', order.regularSurfaceIds],
+    ] as const) {
+      ids.forEach((id, index) => {
+        if (seen.has(id)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [group, index],
+            message: `Surface ${id} appears more than once in the authoritative order`,
+          })
+        }
+        seen.add(id)
+      })
+    }
+  })
+
+export const SurfaceMoveDirectionSchema = z.enum(['up', 'down'])
+export const MoveSurfaceRequestSchema = z.object({ direction: SurfaceMoveDirectionSchema })
+export const MoveSurfaceResultSchema = z.object({
+  changed: z.literal(true),
+  order: SurfaceOrderSchema,
+})
+export const PinSurfaceResultSchema = z.object({
+  changed: z.boolean(),
+  surface: SurfaceSchema,
+  order: SurfaceOrderSchema,
+})
+
 export const SpaceWithSurfacesSchema = SpaceSchema.extend({
   surfaces: z.array(SurfaceSchema),
   attention: z.number().int().min(0).default(0),
@@ -46,19 +92,25 @@ export const ApprovalCardSchema = z.object({
   expiresAt: z.string().datetime(),
 })
 
-export const SurfaceCreatedEventSchema = z.object({
-  cursor: GatewayCursorSchema,
-  at: z.string().datetime(),
-  spaceId: z.string().min(1),
-  surface: SurfaceSchema,
-})
+export const SurfaceCreatedEventSchema = z
+  .object({
+    cursor: GatewayCursorSchema,
+    at: z.string().datetime(),
+    spaceId: z.string().min(1),
+    surface: SurfaceSchema,
+    order: SurfaceOrderSchema,
+  })
+  .superRefine(refineMatchingEventOrder('creation'))
 
-export const SurfaceArchivedEventSchema = z.object({
-  cursor: GatewayCursorSchema,
-  at: z.string().datetime(),
-  spaceId: z.string().min(1),
-  surfaceId: z.string().min(1),
-})
+export const SurfaceArchivedEventSchema = z
+  .object({
+    cursor: GatewayCursorSchema,
+    at: z.string().datetime(),
+    spaceId: z.string().min(1),
+    surfaceId: z.string().min(1),
+    order: SurfaceOrderSchema,
+  })
+  .superRefine(refineMatchingEventOrder('archival'))
 
 /**
  * Identifies the PWA client and logical chat turn that initiated a live
@@ -70,19 +122,55 @@ export const ChatTurnCorrelationSchema = z.object({
   turnId: z.string().min(1),
 })
 
-export const SurfacePinnedEventSchema = z.object({
-  cursor: GatewayCursorSchema,
-  at: z.string().datetime(),
-  spaceId: z.string().min(1),
-  surfaceId: z.string().min(1),
-  pinned: z.boolean(),
-  // The bumped freshness `setPinned` persists: without
-  // it, a client applying this event in place had no way to move its own
-  // `updatedAt`/`updatedBy` off whatever it last observed, and rendered a pin
-  // as current while the rest of the Surface still looked stale. Mirrors
-  // `SurfacePatchEventSchema`'s own `freshness` field.
-  freshness: FreshnessSchema,
-})
+export const SurfacePinnedEventSchema = z
+  .object({
+    cursor: GatewayCursorSchema,
+    at: z.string().datetime(),
+    spaceId: z.string().min(1),
+    surfaceId: z.string().min(1),
+    pinned: z.boolean(),
+    // The bumped freshness `setPinned` persists: without
+    // it, a client applying this event in place had no way to move its own
+    // `updatedAt`/`updatedBy` off whatever it last observed, and rendered a pin
+    // as current while the rest of the Surface still looked stale. Mirrors
+    // `SurfacePatchEventSchema`'s own `freshness` field.
+    freshness: FreshnessSchema,
+    order: SurfaceOrderSchema,
+  })
+  .superRefine(refineMatchingEventOrder('Pin'))
+
+export const SurfaceMovedEventSchema = z
+  .object({
+    cursor: GatewayCursorSchema,
+    at: z.string().datetime(),
+    spaceId: z.string().min(1),
+    surfaceId: SurfaceIdSchema,
+    direction: SurfaceMoveDirectionSchema,
+    order: SurfaceOrderSchema,
+  })
+  .superRefine(refineMatchingEventOrder('Move'))
+
+function refineMatchingEventOrder(label: string) {
+  return (
+    event: { cursor: number; spaceId: string; order: SurfaceOrder },
+    ctx: z.RefinementCtx,
+  ): void => {
+    if (event.order.cursor !== event.cursor) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['order', 'cursor'],
+        message: `authoritative order cursor must match the ${label} event cursor`,
+      })
+    }
+    if (event.order.spaceId !== event.spaceId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['order', 'spaceId'],
+        message: `authoritative order Space must match the ${label} event Space`,
+      })
+    }
+  }
+}
 
 // Turn-lifecycle frames for the streamed Agent chat turn (issue #37): a turn
 // opens with `chat.turn-start`, streams its answer as zero or more
@@ -166,6 +254,10 @@ export const GatewayServerMessageSchema = z.discriminatedUnion('type', [
     event: SurfacePinnedEventSchema,
   }),
   z.object({
+    type: z.literal('surface.moved'),
+    event: SurfaceMovedEventSchema,
+  }),
+  z.object({
     type: z.literal('chat.message'),
     message: ChatMessageSchema,
   }),
@@ -194,12 +286,18 @@ export const GatewayServerMessageSchema = z.discriminatedUnion('type', [
 ])
 
 export type GatewayCursor = z.infer<typeof GatewayCursorSchema>
+export type SurfaceOrder = z.infer<typeof SurfaceOrderSchema>
+export type SurfaceMoveDirection = z.infer<typeof SurfaceMoveDirectionSchema>
+export type MoveSurfaceRequest = z.infer<typeof MoveSurfaceRequestSchema>
+export type MoveSurfaceResult = z.infer<typeof MoveSurfaceResultSchema>
+export type PinSurfaceResult = z.infer<typeof PinSurfaceResultSchema>
 export type SpaceWithSurfaces = z.infer<typeof SpaceWithSurfacesSchema>
 export type SurfaceSnapshot = z.infer<typeof SurfaceSnapshotSchema>
 export type SurfacePatchEvent = z.infer<typeof SurfacePatchEventSchema>
 export type SurfaceCreatedEvent = z.infer<typeof SurfaceCreatedEventSchema>
 export type SurfaceArchivedEvent = z.infer<typeof SurfaceArchivedEventSchema>
 export type SurfacePinnedEvent = z.infer<typeof SurfacePinnedEventSchema>
+export type SurfaceMovedEvent = z.infer<typeof SurfaceMovedEventSchema>
 export type ChatTurnCorrelation = z.infer<typeof ChatTurnCorrelationSchema>
 export type ChatTurnStartMessage = z.infer<typeof ChatTurnStartMessageSchema>
 export type ChatTurnDeltaMessage = z.infer<typeof ChatTurnDeltaMessageSchema>

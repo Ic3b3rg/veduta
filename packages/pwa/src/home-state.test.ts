@@ -8,11 +8,10 @@ import {
   applySurfaceCreatedToSpaces,
   applySurfacePatchToSpaces,
   applySurfacePinnedToSpaces,
+  applySurfaceOrderToSpaces,
   applySurfaceStreamEvent,
   cachedSnapshot,
   mergeSpaceAttention,
-  mergeSurfaceOrder,
-  moveSurfaceId,
   parseSurfaceDeepLink,
   saveSnapshot,
   surfaceDeepLink,
@@ -64,14 +63,31 @@ describe('Surface deep links', () => {
 })
 
 describe('Surface order', () => {
-  it('keeps saved order, drops stale ids and appends new Surfaces once', () => {
-    expect(mergeSurfaceOrder(['a', 'b', 'c'], ['c', 'missing', 'a', 'a'])).toEqual(['c', 'a', 'b'])
-  })
+  it('applies the Gateway order exactly and retains snapshot-only projected Surfaces afterward', () => {
+    const pinned = SurfaceSchema.parse({
+      ...testSurface('srf-pinned', 'spc-health', '2026-07-10T12:00:00.000Z'),
+      pinned: true,
+    })
+    const regular = testSurface('srf-regular', 'spc-health', '2026-07-10T12:00:00.000Z')
+    const projected = SurfaceSchema.parse({
+      ...testSurface('srf-facts', 'spc-health', '2026-07-10T12:00:00.000Z'),
+      pinnable: false,
+    })
+    const spaces = [testSpace('spc-health', [regular, projected, pinned])]
 
-  it('moves ids within bounds without duplicating them', () => {
-    expect(moveSurfaceId(['a', 'b', 'c'], 'b', -1)).toEqual(['b', 'a', 'c'])
-    expect(moveSurfaceId(['a', 'b', 'c'], 'b', 1)).toEqual(['a', 'c', 'b'])
-    expect(moveSurfaceId(['a', 'b', 'c'], 'a', -1)).toEqual(['a', 'b', 'c'])
+    const result = applySurfaceOrderToSpaces(spaces, {
+      cursor: 8,
+      spaceId: 'spc-health',
+      pinnedSurfaceIds: ['srf-pinned'],
+      regularSurfaceIds: ['srf-regular'],
+    })
+
+    expect(result.applied).toBe(true)
+    expect(result.spaces[0]?.surfaces.map((surface) => surface.id)).toEqual([
+      'srf-pinned',
+      'srf-regular',
+      'srf-facts',
+    ])
   })
 })
 
@@ -103,6 +119,10 @@ describe('cachedSnapshot', () => {
     saveSnapshot(storage, 'home', snapshot)
 
     expect(cachedSnapshot(storage, 'home')).toEqual(snapshot)
+
+    storage.setItem('home', JSON.stringify(snapshot))
+    expect(cachedSnapshot(storage, 'home')).toBeUndefined()
+
     storage.setItem('home', '{"surfaceCursor":"wrong"}')
     expect(cachedSnapshot(storage, 'home')).toBeUndefined()
   })
@@ -118,6 +138,7 @@ describe('applySurfaceCreatedToSpaces', () => {
       at: '2026-07-10T12:00:00.000Z',
       spaceId: 'spc-health',
       surface,
+      order: testOrder(1, [], ['srf-meals']),
     })
 
     expect(result.applied).toBe(true)
@@ -134,6 +155,7 @@ describe('applySurfaceCreatedToSpaces', () => {
       at: '2026-07-10T12:05:00.000Z',
       spaceId: 'spc-health',
       surface: replacement,
+      order: testOrder(2, [], ['srf-meals']),
     })
 
     expect(result.applied).toBe(true)
@@ -149,6 +171,7 @@ describe('applySurfaceCreatedToSpaces', () => {
       at: '2026-07-10T12:00:00.000Z',
       spaceId: 'spc-other',
       surface,
+      order: testOrder(1, [], ['srf-meals'], 'spc-other'),
     })
 
     expect(result.applied).toBe(false)
@@ -166,13 +189,14 @@ describe('applySurfaceArchivedToSpaces', () => {
       at: '2026-07-10T12:10:00.000Z',
       spaceId: 'spc-health',
       surfaceId: 'srf-meals',
+      order: testOrder(2),
     })
 
     expect(result.applied).toBe(true)
     expect(result.spaces[0]?.surfaces).toEqual([])
   })
 
-  it('reports not applied when the Surface is not in that Space', () => {
+  it('applies an authoritative duplicate archive without fabricating a Surface', () => {
     const spaces = [testSpace('spc-health', [])]
 
     const result = applySurfaceArchivedToSpaces(spaces, {
@@ -180,9 +204,11 @@ describe('applySurfaceArchivedToSpaces', () => {
       at: '2026-07-10T12:10:00.000Z',
       spaceId: 'spc-health',
       surfaceId: 'srf-missing',
+      order: testOrder(2),
     })
 
-    expect(result.applied).toBe(false)
+    expect(result.applied).toBe(true)
+    expect(result.spaces).toEqual(spaces)
   })
 })
 
@@ -214,6 +240,7 @@ describe('applySurfacePinnedToSpaces', () => {
         surfaceId: 'srf-meals',
         pinned: true,
         freshness: { updatedAt: '2026-07-10T12:05:00.000Z', updatedBy: 'user' },
+        order: testOrder(4, ['srf-meals']),
       },
     }
     const spaces = [testSpace('spc-health', [surface])]
@@ -243,6 +270,7 @@ describe('applySurfacePinnedToSpaces', () => {
       surfaceId: 'srf-ghost',
       pinned: true,
       freshness: { updatedAt: '2026-07-10T12:05:00.000Z', updatedBy: 'user' },
+      order: testOrder(4, ['srf-ghost']),
     })
 
     expect(result.applied).toBe(false)
@@ -262,6 +290,7 @@ describe('applySurfacePinnedToSpaces', () => {
         surfaceId: 'srf-meals',
         pinned: true,
         freshness: { updatedAt: '2026-07-10T12:06:00.000Z', updatedBy: 'user' },
+        order: testOrder(5, ['srf-meals']),
       },
     })
 
@@ -290,6 +319,7 @@ describe('applyBufferedSurfaceStreamEvents', () => {
           at: '2026-07-10T12:02:00.000Z',
           spaceId: 'spc-health',
           surface: surfaceB,
+          order: testOrder(7, [], ['srf-b']),
         },
       },
       {
@@ -299,6 +329,7 @@ describe('applyBufferedSurfaceStreamEvents', () => {
           at: '2026-07-10T12:00:00.000Z',
           spaceId: 'spc-health',
           surface: surfaceA,
+          order: testOrder(3, [], ['srf-a']),
         },
       },
     ]
@@ -320,6 +351,7 @@ describe('applyBufferedSurfaceStreamEvents', () => {
           at: '2026-07-10T12:03:00.000Z',
           spaceId: 'spc-other',
           surfaceId: 'srf-ghost',
+          order: testOrder(9, [], [], 'spc-other'),
         },
       },
     ]
@@ -338,7 +370,13 @@ describe('applySurfaceStreamEvent', () => {
 
     const created = applySurfaceStreamEvent(spaces, {
       type: 'surface.created',
-      event: { cursor: 1, at: '2026-07-10T12:00:00.000Z', spaceId: 'spc-health', surface },
+      event: {
+        cursor: 1,
+        at: '2026-07-10T12:00:00.000Z',
+        spaceId: 'spc-health',
+        surface,
+        order: testOrder(1, [], ['srf-meals']),
+      },
     })
     expect(created.applied).toBe(true)
 
@@ -349,10 +387,34 @@ describe('applySurfaceStreamEvent', () => {
         at: '2026-07-10T12:01:00.000Z',
         spaceId: 'spc-health',
         surfaceId: 'srf-meals',
+        order: testOrder(2),
       },
     })
     expect(archived.applied).toBe(true)
     expect(archived.spaces[0]?.surfaces).toEqual([])
+  })
+
+  it('dispatches a surface.moved event by applying only its authoritative order', () => {
+    const first = testSurface('srf-first', 'spc-health', '2026-07-10T12:00:00.000Z')
+    const second = testSurface('srf-second', 'spc-health', '2026-07-10T12:00:00.000Z')
+
+    const moved = applySurfaceStreamEvent([testSpace('spc-health', [first, second])], {
+      type: 'surface.moved',
+      event: {
+        cursor: 3,
+        at: '2026-07-10T12:01:00.000Z',
+        spaceId: 'spc-health',
+        surfaceId: 'srf-second',
+        direction: 'up',
+        order: testOrder(3, [], ['srf-second', 'srf-first']),
+      },
+    })
+
+    expect(moved.applied).toBe(true)
+    expect(moved.spaces[0]?.surfaces.map((surface) => surface.id)).toEqual([
+      'srf-second',
+      'srf-first',
+    ])
   })
 })
 
@@ -423,6 +485,15 @@ describe('mergeSpaceAttention', () => {
     expect(merged).toEqual(fresh)
   })
 })
+
+function testOrder(
+  cursor: number,
+  pinnedSurfaceIds: string[] = [],
+  regularSurfaceIds: string[] = [],
+  spaceId = 'spc-health',
+) {
+  return { cursor, spaceId, pinnedSurfaceIds, regularSurfaceIds }
+}
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>()

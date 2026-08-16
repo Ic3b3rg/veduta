@@ -383,8 +383,14 @@ describe('GatewayHub Surface sync', () => {
     expect(created).toHaveLength(1)
     expect(created[0]).toMatchObject({
       type: 'surface.created',
-      event: { spaceId: 'spc-health', surface: { id: 'srf-agent-action' } },
+      event: {
+        spaceId: 'spc-health',
+        surface: { id: 'srf-agent-action' },
+        order: { regularSurfaceIds: expect.arrayContaining(['srf-agent-action']) },
+      },
     })
+    if (created[0]?.type !== 'surface.created') throw new Error('missing created Surface frame')
+    expect(created[0].event.order.cursor).toBe(created[0].event.cursor)
   })
 
   it('broadcasts exact initiating-turn correlation live to every client but omits it from replay', () => {
@@ -443,6 +449,12 @@ describe('GatewayHub Surface sync', () => {
       type: 'surface.archived',
       event: { surfaceId: 'srf-agent-action' },
     })
+    if (archived[0]?.type !== 'surface.archived') throw new Error('missing archived Surface frame')
+    expect([
+      ...archived[0].event.order.pinnedSurfaceIds,
+      ...archived[0].event.order.regularSurfaceIds,
+    ]).not.toContain('srf-agent-action')
+    expect(archived[0].event.order.cursor).toBe(archived[0].event.cursor)
   })
 
   it('replays created and archived events in cursor order after reconnect', () => {
@@ -467,6 +479,12 @@ describe('GatewayHub Surface sync', () => {
         .filter((frame) => frame.type === 'surface.created' || frame.type === 'surface.archived')
         .map((frame) => frame.type),
     ).toEqual(['surface.created', 'surface.archived'])
+    const lifecycle = reconnected.sent.filter(
+      (frame) => frame.type === 'surface.created' || frame.type === 'surface.archived',
+    )
+    expect(lifecycle.map((frame) => frame.event.order.cursor)).toEqual(
+      lifecycle.map((frame) => frame.event.cursor),
+    )
   })
 })
 

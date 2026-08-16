@@ -3,9 +3,12 @@ import {
   SurfaceSnapshotSchema,
   type SurfaceArchivedEvent,
   type SurfaceCreatedEvent,
+  type SurfaceMovedEvent,
+  type SurfaceOrder,
   type SurfacePatchEvent,
   type SurfacePinnedEvent,
   type SurfaceSnapshot,
+  type Surface,
 } from '@veduta/protocol'
 import type { SpaceWithSurfaces } from './api.ts'
 
@@ -27,38 +30,16 @@ export function parseSurfaceDeepLink(pathname: string): SurfaceDeepLink | undefi
   }
 }
 
-export function mergeSurfaceOrder(surfaceIds: string[], savedOrder: string[]): string[] {
-  const known = new Set(surfaceIds)
-  const seen = new Set<string>()
-  const ordered: string[] = []
-
-  for (const id of savedOrder) {
-    if (!known.has(id) || seen.has(id)) continue
-    ordered.push(id)
-    seen.add(id)
-  }
-
-  for (const id of surfaceIds) {
-    if (seen.has(id)) continue
-    ordered.push(id)
-  }
-
-  return ordered
-}
-
-export function moveSurfaceId(surfaceIds: string[], surfaceId: string, offset: -1 | 1): string[] {
-  const index = surfaceIds.indexOf(surfaceId)
-  const nextIndex = index + offset
-  if (index < 0 || nextIndex < 0 || nextIndex >= surfaceIds.length) return surfaceIds
-
-  const next = [...surfaceIds]
-  const [removed] = next.splice(index, 1)
-  next.splice(nextIndex, 0, removed!)
-  return next
-}
+const CANONICAL_HOME_CACHE_AUTHORITY = 'gateway-surface-order-v1'
 
 export function saveSnapshot(storage: Storage, key: string, snapshot: SurfaceSnapshot): void {
-  storage.setItem(key, JSON.stringify(SurfaceSnapshotSchema.parse(snapshot)))
+  storage.setItem(
+    key,
+    JSON.stringify({
+      ...SurfaceSnapshotSchema.parse(snapshot),
+      surfaceOrderAuthority: CANONICAL_HOME_CACHE_AUTHORITY,
+    }),
+  )
 }
 
 export function cachedSnapshot(storage: Storage, key: string): SurfaceSnapshot | undefined {
@@ -66,7 +47,9 @@ export function cachedSnapshot(storage: Storage, key: string): SurfaceSnapshot |
   if (!raw) return undefined
 
   try {
-    const parsed = SurfaceSnapshotSchema.safeParse(JSON.parse(raw))
+    const json = JSON.parse(raw) as { surfaceOrderAuthority?: unknown }
+    if (json.surfaceOrderAuthority !== CANONICAL_HOME_CACHE_AUTHORITY) return undefined
+    const parsed = SurfaceSnapshotSchema.safeParse(json)
     return parsed.success ? parsed.data : undefined
   } catch {
     return undefined
@@ -84,6 +67,7 @@ export type SurfaceStreamEvent =
   | { type: 'surface.created'; event: SurfaceCreatedEvent }
   | { type: 'surface.archived'; event: SurfaceArchivedEvent }
   | { type: 'surface.pinned'; event: SurfacePinnedEvent }
+  | { type: 'surface.moved'; event: SurfaceMovedEvent }
 
 export interface SurfaceStreamApplyResult {
   spaces: SpaceWithSurfaces[]
@@ -92,6 +76,12 @@ export interface SurfaceStreamApplyResult {
 
 export function surfaceStreamEventCursor(streamEvent: SurfaceStreamEvent): number {
   return streamEvent.event.cursor
+}
+
+export function surfaceOrderForStreamEvent(
+  streamEvent: SurfaceStreamEvent,
+): SurfaceOrder | undefined {
+  return streamEvent.type === 'surface.patch' ? undefined : streamEvent.event.order
 }
 
 export function applySurfacePatchToSpaces(
@@ -114,10 +104,10 @@ export function applySurfaceCreatedToSpaces(
   spaces: SpaceWithSurfaces[],
   event: SurfaceCreatedEvent,
 ): SurfaceStreamApplyResult {
-  let applied = false
+  let foundSpace = false
   const next = spaces.map((space) => {
     if (space.id !== event.spaceId) return space
-    applied = true
+    foundSpace = true
     const exists = space.surfaces.some((surface) => surface.id === event.surface.id)
     return {
       ...space,
@@ -128,21 +118,21 @@ export function applySurfaceCreatedToSpaces(
         : [...space.surfaces, event.surface],
     }
   })
-  return { spaces: next, applied }
+  return foundSpace ? applySurfaceOrderToSpaces(next, event.order) : { spaces, applied: false }
 }
 
 export function applySurfaceArchivedToSpaces(
   spaces: SpaceWithSurfaces[],
   event: SurfaceArchivedEvent,
 ): SurfaceStreamApplyResult {
-  let applied = false
+  let foundSpace = false
   const next = spaces.map((space) => {
     if (space.id !== event.spaceId) return space
+    foundSpace = true
     const filtered = space.surfaces.filter((surface) => surface.id !== event.surfaceId)
-    if (filtered.length !== space.surfaces.length) applied = true
     return { ...space, surfaces: filtered }
   })
-  return { spaces: next, applied }
+  return foundSpace ? applySurfaceOrderToSpaces(next, event.order) : { spaces, applied: false }
 }
 
 /** A `surface.pinned` event flips `pinned` on the matching Surface in place
@@ -155,16 +145,58 @@ export function applySurfacePinnedToSpaces(
   spaces: SpaceWithSurfaces[],
   event: SurfacePinnedEvent,
 ): SurfaceStreamApplyResult {
+  let foundSurface = false
+  const next = spaces.map((space) => {
+    if (space.id !== event.spaceId) return space
+    return {
+      ...space,
+      surfaces: space.surfaces.map((surface) => {
+        if (surface.id !== event.surfaceId) return surface
+        foundSurface = true
+        return { ...surface, pinned: event.pinned, freshness: event.freshness }
+      }),
+    }
+  })
+  return foundSurface ? applySurfaceOrderToSpaces(next, event.order) : { spaces, applied: false }
+}
+
+/**
+ * Applies only the Gateway-authored ids. Read-time projected Surfaces (for
+ * example FACTS or usage) are not rows in the durable order table, so they
+ * retain their snapshot order after the authoritative durable groups.
+ */
+export function applySurfaceOrderToSpaces(
+  spaces: SpaceWithSurfaces[],
+  order: SurfaceOrder,
+): SurfaceStreamApplyResult {
   let applied = false
-  const next = spaces.map((space) => ({
-    ...space,
-    surfaces: space.surfaces.map((surface) => {
-      if (surface.id !== event.surfaceId) return surface
-      applied = true
-      return { ...surface, pinned: event.pinned, freshness: event.freshness }
-    }),
-  }))
-  return { spaces: next, applied }
+  const next = spaces.map((space) => {
+    if (space.id !== order.spaceId) return space
+    const byId = new Map(space.surfaces.map((surface) => [surface.id, surface]))
+    const ordered: Surface[] = []
+
+    for (const surfaceId of order.pinnedSurfaceIds) {
+      const surface = byId.get(surfaceId)
+      if (!surface || !surface.pinned) return space
+      ordered.push(surface)
+    }
+    for (const surfaceId of order.regularSurfaceIds) {
+      const surface = byId.get(surfaceId)
+      if (!surface || surface.pinned) return space
+      ordered.push(surface)
+    }
+
+    const authoritativeIds = new Set([...order.pinnedSurfaceIds, ...order.regularSurfaceIds])
+    applied = true
+    return {
+      ...space,
+      surfaces: [
+        ...ordered,
+        ...space.surfaces.filter((surface) => !authoritativeIds.has(surface.id)),
+      ],
+    }
+  })
+  return { spaces: applied ? next : spaces, applied }
 }
 
 export function applySurfaceStreamEvent(
@@ -180,6 +212,8 @@ export function applySurfaceStreamEvent(
       return applySurfaceArchivedToSpaces(spaces, streamEvent.event)
     case 'surface.pinned':
       return applySurfacePinnedToSpaces(spaces, streamEvent.event)
+    case 'surface.moved':
+      return applySurfaceOrderToSpaces(spaces, streamEvent.event.order)
   }
 }
 

@@ -1,4 +1,4 @@
-import type { ApprovalCard, ChatMessage, Surface } from '@veduta/protocol'
+import type { ApprovalCard, ChatMessage, Surface, SurfaceMoveDirection } from '@veduta/protocol'
 import { ApprovalCards } from './approval-cards.tsx'
 import type { SpaceWithSurfaces } from './api.ts'
 import { AttentionBadge } from './attention-badge.tsx'
@@ -21,7 +21,6 @@ interface HomeScreenProps {
   focusedSpace: SpaceWithSurfaces | undefined
   focusedSurfaceId: string | undefined
   surfaceCreationFeedbackKeys: Record<string, string>
-  surfaceOrders: Record<string, string[]>
   approvalCards: ApprovalCard[]
   chatEntries: ChatMessage[]
   streamingEntries: { turnId: string; text: string }[]
@@ -29,7 +28,11 @@ interface HomeScreenProps {
   onOpenModelConnections: () => void
   onInstallDone: () => void
   onFocusSpace: (space: SpaceWithSurfaces, surface?: Surface) => void
-  onMoveSurface: (space: SpaceWithSurfaces, surfaceId: string, offset: -1 | 1) => void
+  onMoveSurface: (
+    space: SpaceWithSurfaces,
+    surfaceId: string,
+    direction: SurfaceMoveDirection,
+  ) => void
   onSurfacePatched: (surface: Surface) => void
   onQueueFastAction: (action: QueuedFastAction) => void
   onTogglePin: (surface: Surface, pinned: boolean) => void
@@ -52,7 +55,6 @@ export function HomeScreen({
   focusedSpace,
   focusedSurfaceId,
   surfaceCreationFeedbackKeys,
-  surfaceOrders,
   approvalCards,
   chatEntries,
   streamingEntries,
@@ -127,7 +129,6 @@ export function HomeScreen({
               focused={space.id === focusedSpace?.id}
               focusedSurfaceId={focusedSurfaceId}
               surfaceCreationFeedbackKeys={surfaceCreationFeedbackKeys}
-              surfaceOrder={surfaceOrders[space.id] ?? []}
               onFocus={onFocusSpace}
               onMoveSurface={onMoveSurface}
               onPatched={onSurfacePatched}

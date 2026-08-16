@@ -5,6 +5,7 @@
 // exhaustive coverage in their own colocated tests.
 import {
   SurfaceCreatedEventSchema,
+  SurfaceMovedEventSchema,
   SurfacePatchEventSchema,
   type AuthStatus,
   type ModelConnectionsSnapshot,
@@ -14,7 +15,7 @@ import { fromPartial } from '@total-typescript/shoehorn'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ApiModule from './api.ts'
-import { AUTH_TOKEN_KEY, HOME_CACHE_KEY } from './pwa-storage.ts'
+import { AUTH_TOKEN_KEY, HOME_CACHE_KEY, SURFACE_ORDER_KEY } from './pwa-storage.ts'
 
 let scrollIntoView: ReturnType<typeof vi.fn>
 
@@ -26,6 +27,7 @@ vi.mock('./api.ts', async (importOriginal) => {
     fetchSpaces: vi.fn(),
     fetchOnboardingStatus: vi.fn(),
     connectGateway: vi.fn(() => ({ close: vi.fn(), sendChat: vi.fn(() => false) })),
+    moveSurface: vi.fn(),
     fetchModelConnections: vi.fn(),
   }
 })
@@ -38,6 +40,7 @@ import {
   fetchModelConnections,
   fetchOnboardingStatus,
   fetchSpaces,
+  moveSurface,
 } from './api.ts'
 
 // jsdom has no matchMedia implementation; `pwa-storage.ts#isStandalone` (read
@@ -166,6 +169,135 @@ async function renderConnectedEmptyHealth(clientId: string) {
 }
 
 describe('App', () => {
+  it('renders the canonical Gateway snapshot and removes obsolete browser-local Surface order', async () => {
+    localStorage.setItem(
+      SURFACE_ORDER_KEY,
+      JSON.stringify({ 'spc-health': ['srf-second', 'srf-first'] }),
+    )
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
+    vi.mocked(fetchSpaces).mockResolvedValue({
+      surfaceCursor: 4,
+      spaces: [
+        {
+          id: 'spc-health',
+          slug: 'health',
+          name: 'Health',
+          archived: false,
+          attention: 0,
+          attentionRevision: 0,
+          surfaces: [
+            {
+              id: 'srf-first',
+              spaceId: 'spc-health',
+              title: 'Gateway first',
+              tree: { id: 'root', type: 'Box' },
+              state: {},
+              freshness: { updatedAt: '2026-08-16T10:00:00.000Z', updatedBy: 'agent' },
+              pinned: true,
+              pinnable: true,
+            },
+            {
+              id: 'srf-second',
+              spaceId: 'spc-health',
+              title: 'Gateway second',
+              tree: { id: 'root', type: 'Box' },
+              state: {},
+              freshness: { updatedAt: '2026-08-16T10:00:00.000Z', updatedBy: 'agent' },
+              pinned: false,
+              pinnable: true,
+            },
+          ],
+        },
+      ],
+    })
+    vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+      fromPartial<OnboardingStatus>({ required: false, completed: true }),
+    )
+    vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
+
+    render(<App />)
+
+    const focusButtons = await screen.findAllByRole('button', { name: /^Focus Gateway/ })
+    expect(focusButtons.map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Focus Gateway first',
+      'Focus Gateway second',
+    ])
+    expect(localStorage.getItem(SURFACE_ORDER_KEY)).toBeNull()
+  })
+
+  it('does not let a stale Move HTTP response overwrite a newer live order', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
+    vi.mocked(fetchSpaces).mockResolvedValue({
+      surfaceCursor: 10,
+      spaces: [
+        {
+          id: 'spc-health',
+          slug: 'health',
+          name: 'Health',
+          archived: false,
+          attention: 0,
+          attentionRevision: 0,
+          surfaces: [
+            appSurface('srf-first', 'Gateway first'),
+            appSurface('srf-second', 'Gateway second'),
+          ],
+        },
+      ],
+    })
+    vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+      fromPartial<OnboardingStatus>({ required: false, completed: true }),
+    )
+    vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
+    let resolveMove: ((value: Awaited<ReturnType<typeof moveSurface>>) => void) | undefined
+    vi.mocked(moveSurface).mockReturnValue(
+      new Promise((resolve) => {
+        resolveMove = resolve
+      }),
+    )
+
+    render(<App />)
+    await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+    fireEvent.click(await screen.findByRole('button', { name: 'Move Gateway first down' }))
+    const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
+    if (!handlers) throw new Error('Gateway handlers were not registered')
+
+    act(() => {
+      handlers.onSurfaceMoved(
+        SurfaceMovedEventSchema.parse({
+          cursor: 12,
+          at: '2026-08-16T10:02:00.000Z',
+          spaceId: 'spc-health',
+          surfaceId: 'srf-first',
+          direction: 'up',
+          order: {
+            cursor: 12,
+            spaceId: 'spc-health',
+            pinnedSurfaceIds: [],
+            regularSurfaceIds: ['srf-first', 'srf-second'],
+          },
+        }),
+      )
+    })
+    await act(async () => {
+      resolveMove?.({
+        changed: true,
+        order: {
+          cursor: 11,
+          spaceId: 'spc-health',
+          pinnedSurfaceIds: [],
+          regularSurfaceIds: ['srf-second', 'srf-first'],
+        },
+      })
+      await Promise.resolve()
+    })
+
+    expect(
+      screen
+        .getAllByRole('button', { name: /^Focus Gateway/ })
+        .map((button) => button.getAttribute('aria-label')),
+    ).toEqual(['Focus Gateway first', 'Focus Gateway second'])
+  })
+
   it('renders a selected-subscription Surface, streamed confirmation, and follow-up patch live', async () => {
     vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
     vi.mocked(fetchSpaces).mockResolvedValue({
@@ -220,6 +352,7 @@ describe('App', () => {
         pinned: false,
         pinnable: true,
       },
+      order: createdOrder(1, 'srf-hydration'),
     })
 
     act(() => {
@@ -284,6 +417,7 @@ describe('App', () => {
         state: {},
         freshness: { updatedAt: '2026-08-16T10:00:00.000Z', updatedBy: 'agent' },
       },
+      order: createdOrder(1, 'srf-weekly-groceries'),
     })
     const correlatedMessage = {
       type: 'surface.created' as const,
@@ -336,6 +470,7 @@ describe('App', () => {
             state: {},
             freshness: { updatedAt: '2026-08-16T10:00:00.000Z', updatedBy: 'agent' },
           },
+          order: createdOrder(1, 'srf-reduced'),
         }),
       })
     })
@@ -447,3 +582,25 @@ describe('App', () => {
     expect(await screen.findByLabelText('Spaces')).toBeDefined()
   })
 })
+
+function createdOrder(cursor: number, surfaceId: string) {
+  return {
+    cursor,
+    spaceId: 'spc-health',
+    pinnedSurfaceIds: [],
+    regularSurfaceIds: [surfaceId],
+  }
+}
+
+function appSurface(id: string, title: string) {
+  return {
+    id,
+    spaceId: 'spc-health',
+    title,
+    tree: { id: 'root' as const, type: 'Box' as const },
+    state: {},
+    freshness: { updatedAt: '2026-08-16T10:00:00.000Z', updatedBy: 'agent' as const },
+    pinned: false,
+    pinnable: true,
+  }
+}

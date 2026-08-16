@@ -5,6 +5,7 @@ import {
   type PatchOperation,
   type Space,
   type Surface,
+  type SurfaceMoveDirection,
   type SurfaceSnapshot,
   type ActionInvocation,
 } from '@veduta/protocol'
@@ -21,6 +22,7 @@ import {
   type QueuedAgentTurn,
   type SurfaceEngineEvent,
   type SurfaceMutation,
+  type SurfacePinMutation,
   type SurfaceProvenance,
   type SurfaceVersion,
   type TreeProposal,
@@ -138,9 +140,9 @@ export class Store {
   }
 
   /**
-   * Observe every committed Surface-lifecycle event (patch, created,
-   * archived) exactly once, after it commits. The Gateway is the sole
-   * subscriber in production: one central broadcast, never a manual one.
+   * Observe every committed Surface event exactly once after it commits.
+   * The Gateway is the sole subscriber in production: one central
+   * broadcast, never a manual one.
    */
   onSurfaceEvent(observer: (event: SurfaceEngineEvent) => void): () => void {
     return this.surfaceEngine.onSurfaceEvent(observer)
@@ -273,7 +275,23 @@ export class Store {
     pinned: boolean,
     options: { origin: Origin; updatedBy: 'user' | 'agent' | 'job' },
   ): Surface {
+    return this.surfaceEngine.setPinned(surfaceId, pinned, options).surface
+  }
+
+  setPinnedWithOrder(
+    surfaceId: string,
+    pinned: boolean,
+    options: { origin: Origin; updatedBy: 'user' | 'agent' | 'job' },
+  ): SurfacePinMutation {
     return this.surfaceEngine.setPinned(surfaceId, pinned, options)
+  }
+
+  surfaceOrder(spaceId: string) {
+    return this.surfaceEngine.surfaceOrder(spaceId)
+  }
+
+  moveSurface(spaceId: string, surfaceId: string, direction: SurfaceMoveDirection) {
+    return this.surfaceEngine.moveSurface(spaceId, surfaceId, direction)
   }
 
   /** Active, non-daemon-owned Surfaces whose tree has not changed since `beforeIso`. */

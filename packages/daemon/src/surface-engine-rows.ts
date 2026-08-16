@@ -4,6 +4,7 @@ import {
   PatchOperationSchema,
   SurfaceArchivedEventSchema,
   SurfaceCreatedEventSchema,
+  SurfaceMovedEventSchema,
   SurfacePatchEventSchema,
   SurfacePinnedEventSchema,
   SurfaceSchema,
@@ -38,7 +39,11 @@ export function surfaceFromRow(row: Record<string, unknown>): Surface {
  */
 export function surfaceEngineEventFromRow(row: Record<string, unknown>): SurfaceEngineEvent {
   const kind = requiredString(row, 'kind')
-  const json = JSON.parse(requiredString(row, 'event_json'))
+  const rawJson = JSON.parse(requiredString(row, 'event_json'))
+  const json =
+    kind === 'created' || kind === 'archived' || kind === 'pinned'
+      ? withOrderFallback(rawJson)
+      : rawJson
   if (kind === 'created') return { kind: 'created', event: SurfaceCreatedEventSchema.parse(json) }
   if (kind === 'archived') {
     return { kind: 'archived', event: SurfaceArchivedEventSchema.parse(json) }
@@ -49,7 +54,31 @@ export function surfaceEngineEventFromRow(row: Record<string, unknown>): Surface
   if (kind === 'pinned') {
     return { kind: 'pinned', event: SurfacePinnedEventSchema.parse(withFreshnessFallback(json)) }
   }
+  if (kind === 'moved') {
+    return { kind: 'moved', event: SurfaceMovedEventSchema.parse(json) }
+  }
   throw new Error(`unknown surface_events kind: ${kind}`)
+}
+
+/**
+ * Surface lifecycle rows written before Gateway-owned ordering have no
+ * authoritative order payload. A fresh canonical snapshot is the upgrade
+ * boundary; replay keeps those historical rows readable with an empty,
+ * no-op order while all newly written rows remain strict on the wire.
+ */
+function withOrderFallback(json: unknown): unknown {
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) return json
+  if ('order' in json || !('cursor' in json) || !('spaceId' in json)) return json
+  const record = json as Record<string, unknown>
+  return {
+    ...record,
+    order: {
+      cursor: record['cursor'],
+      spaceId: record['spaceId'],
+      pinnedSurfaceIds: [],
+      regularSurfaceIds: [],
+    },
+  }
 }
 
 /**

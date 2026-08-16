@@ -1,4 +1,6 @@
 import {
+  MoveSurfaceResultSchema,
+  PinSurfaceResultSchema,
   SurfaceSnapshotSchema,
   SurfaceSchema,
   type AtomNode,
@@ -6,6 +8,9 @@ import {
   type JsonValue,
   type Surface,
   type SurfaceSnapshot,
+  type MoveSurfaceResult,
+  type PinSurfaceResult,
+  type SurfaceMoveDirection,
 } from '@veduta/protocol'
 import { z } from 'zod'
 import { authHeaders, getJson, postJson } from './api-http.ts'
@@ -21,8 +26,6 @@ const SpaceAttentionSeenResponseSchema = z.object({
   count: z.number().int().min(0),
   revision: z.number().int().min(0),
 })
-
-const PinSurfaceResponseSchema = z.object({ surface: SurfaceSchema })
 
 export type SurfaceActionResponse = z.infer<typeof SurfaceActionResponseSchema>
 
@@ -49,9 +52,23 @@ export async function pinSurface(
   surfaceId: string,
   pinned: boolean,
   token?: string,
-): Promise<Surface> {
+): Promise<PinSurfaceResult> {
   const body = await postJson(`/api/surfaces/${surfaceId}/pin`, { pinned }, token)
-  return PinSurfaceResponseSchema.parse(body).surface
+  return PinSurfaceResultSchema.parse(body)
+}
+
+export async function moveSurface(
+  spaceId: string,
+  surfaceId: string,
+  direction: SurfaceMoveDirection,
+  token?: string,
+): Promise<MoveSurfaceResult> {
+  const body = await postJson(
+    `/api/spaces/${spaceId}/surfaces/${surfaceId}/move`,
+    { direction },
+    token,
+  )
+  return MoveSurfaceResultSchema.parse(body)
 }
 
 export async function invokeFastAction(

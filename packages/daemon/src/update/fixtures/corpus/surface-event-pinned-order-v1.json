@@ -1,0 +1,21 @@
+{
+  "cursor": 8,
+  "at": "2026-08-16T09:01:00.000Z",
+  "spaceId": "spc-order-v1",
+  "surfaceId": "srf-order-created",
+  "kind": "pinned",
+  "event": {
+    "cursor": 8,
+    "at": "2026-08-16T09:01:00.000Z",
+    "spaceId": "spc-order-v1",
+    "surfaceId": "srf-order-created",
+    "pinned": true,
+    "freshness": { "updatedAt": "2026-08-16T09:01:00.000Z", "updatedBy": "user" },
+    "order": {
+      "cursor": 8,
+      "spaceId": "spc-order-v1",
+      "pinnedSurfaceIds": ["srf-order-created"],
+      "regularSurfaceIds": []
+    }
+  }
+}

@@ -27,7 +27,7 @@ interface SurfaceEventCorpusRow {
   at: string
   spaceId: string
   surfaceId: string
-  kind: 'patch' | 'created' | 'archived' | 'pinned'
+  kind: 'patch' | 'created' | 'archived' | 'pinned' | 'moved'
   event: unknown
 }
 
@@ -38,6 +38,10 @@ const SURFACE_EVENT_CORPUS_FILES = [
   'surface-event-pinned-current.json',
   'surface-event-created-current.json',
   'surface-event-archived-current.json',
+  'surface-event-created-order-v1.json',
+  'surface-event-pinned-order-v1.json',
+  'surface-event-moved-order-v1.json',
+  'surface-event-archived-order-v1.json',
 ] as const
 
 function readCorpusJson(name: string): SurfaceEventCorpusRow {
@@ -56,6 +60,7 @@ function frameFor(event: SurfaceEngineEvent): GatewayServerMessage {
   if (event.kind === 'created') return { type: 'surface.created', event: event.event }
   if (event.kind === 'archived') return { type: 'surface.archived', event: event.event }
   if (event.kind === 'pinned') return { type: 'surface.pinned', event: event.event }
+  if (event.kind === 'moved') return { type: 'surface.moved', event: event.event }
   return { type: 'surface.patch', event: event.event }
 }
 
