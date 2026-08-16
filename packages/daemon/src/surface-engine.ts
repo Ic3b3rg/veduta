@@ -96,7 +96,7 @@ export interface TreeProposalRecorded {
   surfaceId: string
 }
 
-export type TreeProposalStatus = 'pending' | 'accepted' | 'rejected'
+export type TreeProposalStatus = 'pending' | 'accepted' | 'rejected' | 'stale'
 
 /** A recorded Tree proposal, as read by `listTreeProposals`/`getTreeProposal`. */
 export interface TreeProposal {
@@ -109,6 +109,7 @@ export interface TreeProposal {
   status: TreeProposalStatus
   createdAt: string
   resolvedAt?: string
+  resolvedBy?: 'trusted:user'
 }
 
 export interface SurfaceVersion {
@@ -740,14 +741,20 @@ export class SurfaceEngine {
    * `TreeProposalSurfaceManager`) is responsible for actually applying an
    * `accepted` proposal via `patchTree`'s `bypassPin`.
    */
-  resolveTreeProposal(id: number, status: 'accepted' | 'rejected'): TreeProposal | undefined {
+  resolveTreeProposal(
+    id: number,
+    status: 'accepted' | 'rejected' | 'stale',
+    actor: 'trusted:user',
+  ): TreeProposal | undefined {
+    if (actor !== 'trusted:user') throw new Error('Tree proposal resolution requires trusted:user')
     const resolvedAt = this.nowIso()
     return this.runWrite(() => {
       const result = this.db
         .prepare(
-          `update tree_proposals set status = ?, resolved_at = ? where id = ? and status = 'pending'`,
+          `update tree_proposals set status = ?, resolved_at = ?, resolved_by = ?
+           where id = ? and status = 'pending'`,
         )
-        .run(status, resolvedAt, id)
+        .run(status, resolvedAt, actor, id)
       if (Number(result.changes) !== 1) return undefined
       return this.getTreeProposal(id)
     })
@@ -771,7 +778,7 @@ export class SurfaceEngine {
     return this.runWrite(() => {
       const result = this.db
         .prepare(
-          `update tree_proposals set status = 'pending', resolved_at = null
+          `update tree_proposals set status = 'pending', resolved_at = null, resolved_by = null
            where id = ? and status = 'accepted'`,
         )
         .run(id)

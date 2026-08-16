@@ -332,6 +332,34 @@ export class TrustStore {
       .map(approvalRowFromRow)
   }
 
+  /**
+   * Rows that represent an explicit user choice, excluding L1 calls that
+   * ran immediately through an allowlist. A pending/rejected/expired row can
+   * only have originated from a card; approved/indeterminate card rows keep
+   * their attached Surface id after archival.
+   */
+  listUserDecisionRows(): ApprovalRow[] {
+    return this.db
+      .prepare(
+        `select * from pending_approvals
+         where status in ('pending', 'rejected', 'expired') or surface_id is not null
+         order by created_at, id`,
+      )
+      .all()
+      .map(approvalRowFromRow)
+  }
+
+  getUserDecisionRow(id: string): ApprovalRow | undefined {
+    const row = this.db
+      .prepare(
+        `select * from pending_approvals
+         where id = ?
+           and (status in ('pending', 'rejected', 'expired') or surface_id is not null)`,
+      )
+      .get(id)
+    return row ? approvalRowFromRow(row) : undefined
+  }
+
   listByStatus(status: ApprovalStatus): ApprovalRow[] {
     return this.db
       .prepare(`select * from pending_approvals where status = ?`)

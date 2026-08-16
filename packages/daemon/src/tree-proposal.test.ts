@@ -332,7 +332,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     expect(managerErrors).toHaveLength(0)
   })
 
-  it('refuses a stale proposal (target tree patched via bypassPin after recording): the card shows the message, the proposal stays pending, the tree is unchanged by the proposal', async () => {
+  it('terminalizes a stale proposal without applying it and shows the refusal on its card', async () => {
     const { cardSurfaceId, proposalId, expectedTreeVersion } = pinAndPropose('srf-target-stale', 2)
 
     // Someone else applies a different tree change on the pinned target in
@@ -348,9 +348,12 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     pressDecision(cardSurfaceId, DECISION_ACCEPT_KEY)
     await manager.flush()
 
-    // Refused: proposal stays pending, the tree still only carries the
-    // bypass change, never the stale proposal's own operation.
-    expect(store.getTreeProposal(proposalId)?.status).toBe('pending')
+    // Refused: the proposal is durably stale, and the tree still only
+    // carries the bypass change, never the stale proposal's own operation.
+    expect(store.getTreeProposal(proposalId)).toMatchObject({
+      status: 'stale',
+      resolvedBy: 'trusted:user',
+    })
     const target = store.getSurface('srf-target-stale')
     expect(target?.tree.children?.map((node) => node.id)).toEqual(['node-0', 'node-1', 'note'])
     expect(findNode(target!.tree, 'note')?.props?.['text']).toBe('someone else got here first')
@@ -478,7 +481,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
       // Simulate `resolve()` having claimed the row `accepted` right before a
       // crash, before `patchTree` ever ran: the target's tree/treeVersion are
       // still exactly what they were when the proposal was recorded.
-      const claimed = store.resolveTreeProposal(result.proposalId, 'accepted')
+      const claimed = store.resolveTreeProposal(result.proposalId, 'accepted', 'trusted:user')
       expect(claimed?.status).toBe('accepted')
       expect(store.getSurfaceVersion(id)?.treeVersion).toBe(version.treeVersion)
 

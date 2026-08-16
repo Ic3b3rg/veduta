@@ -9,6 +9,7 @@ import {
   fieldStateKey,
   RESERVED_DECISION_KEYS,
   type AllowlistRule,
+  type ApprovalDecisionRecord,
   type ApprovalCardModel,
   type ApprovalCardPort,
   type AuditEntry,
@@ -53,6 +54,7 @@ import {
 
 export type {
   AllowlistRule,
+  ApprovalDecisionRecord,
   ApprovalCardModel,
   ApprovalCardPort,
   ApprovalStatus,
@@ -543,6 +545,45 @@ export class TrustLayer {
         { approval, card, ...(row.surfaceId !== undefined ? { surfaceId: row.surfaceId } : {}) },
       ]
     })
+  }
+
+  /** Every durable approval that required an explicit user choice, including terminal truth. */
+  listApprovalDecisions(): ApprovalDecisionRecord[] {
+    return this.store.listUserDecisionRows().map((row) => this.approvalDecisionFromRow(row))
+  }
+
+  /** Exact-id counterpart to `listApprovalDecisions`; auto-allowed effects are deliberately absent. */
+  getApprovalDecision(id: string): ApprovalDecisionRecord | undefined {
+    const row = this.store.getUserDecisionRow(id)
+    return row ? this.approvalDecisionFromRow(row) : undefined
+  }
+
+  private approvalDecisionFromRow(row: ApprovalRow): ApprovalDecisionRecord {
+    const entry = this.registry.get(row.toolName)
+    let title = `${row.level} approval for ${row.toolName}`
+    if (entry) {
+      try {
+        const candidate = entry.meta.title(JSON.parse(row.inputJson) as unknown).trim()
+        if (candidate.length > 0) title = candidate
+      } catch {
+        // A legacy/corrupt input must not make the common decision query fail;
+        // the fixed fallback reveals no prepared payload.
+      }
+    }
+    const outcome = this.store.terminalOutcomeFor(row.id)
+    return {
+      id: row.id,
+      title,
+      toolName: row.toolName,
+      level: row.level,
+      status: row.status,
+      ...(outcome === undefined ? {} : { outcome }),
+      ...(row.spaceId === undefined ? {} : { spaceId: row.spaceId }),
+      ...(row.surfaceId === undefined ? {} : { surfaceId: row.surfaceId }),
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+      ...(row.decisionAt === undefined ? {} : { decisionAt: row.decisionAt }),
+    }
   }
 
   /**

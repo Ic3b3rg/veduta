@@ -30,6 +30,30 @@ export {
 } from './surface.ts'
 export { SpaceSchema, type Space } from './space.ts'
 export {
+  PendingDecisionKindSchema,
+  PendingDecisionResolutionSchema,
+  PendingDecisionStateSchema,
+  PendingDecisionOutcomeSchema,
+  PendingDecisionScopeSchema,
+  PendingDecisionSchema,
+  PendingDecisionListSchema,
+  PendingDecisionResolveRequestSchema,
+  PendingDecisionResolveResultSchema,
+  formatPendingDecisionId,
+  parsePendingDecisionId,
+  pendingDecisionNativeId,
+  type PendingDecisionKind,
+  type PendingDecisionResolution,
+  type PendingDecisionState,
+  type PendingDecisionOutcome,
+  type PendingDecisionScope,
+  type PendingDecision,
+  type PendingDecisionList,
+  type PendingDecisionResolveRequest,
+  type PendingDecisionResolveResult,
+  type ParsedPendingDecisionId,
+} from './pending-decision.ts'
+export {
   PatchSchema,
   PatchOperationSchema,
   ActionInvocationSchema,

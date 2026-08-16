@@ -481,11 +481,83 @@ describe('UpdateManager.runCheck', () => {
 })
 
 describe('UpdateManager.applyUpdate', () => {
+  it('persists a verified offer as the same pending decision across manager restart', async () => {
+    manager.register()
+    serveRelease(defaultRelease({ version: '1.1.0', notes: 'Bug fixes' }))
+    await manager.runCheck('manual')
+
+    expect(manager.listUpdateDecisions()).toEqual([
+      expect.objectContaining({
+        version: '1.1.0',
+        status: 'pending',
+        createdAt: now().toISOString(),
+      }),
+    ])
+
+    manager.dispose()
+    manager = buildManager()
+    expect(manager.getUpdateDecision('1.1.0')).toMatchObject({
+      version: '1.1.0',
+      status: 'pending',
+    })
+  })
+
+  it('does not resurrect a terminal offer when the feed later returns to the same version', async () => {
+    manager.register()
+    serveRelease(defaultRelease({ version: '1.1.0' }))
+    await manager.runCheck('manual')
+    serveRelease(defaultRelease({ version: '1.2.0' }))
+    await manager.runCheck('manual')
+    expect(manager.getUpdateDecision('1.1.0')).toMatchObject({ status: 'stale' })
+
+    serveRelease(defaultRelease({ version: '1.1.0' }))
+    const outcome = await manager.runCheck('manual')
+
+    expect(outcome).toBe('offer-already-decided:1.1.0')
+    expect(manager.getUpdateDecision('1.1.0')).toMatchObject({ status: 'stale' })
+    expect(
+      findNode(store.getSurface(UPDATE_SURFACE_ID)!.tree, 'update-apply-button'),
+    ).toBeUndefined()
+    expect(notifications).toHaveLength(2)
+  })
+
+  it('coalesces competing exact-version apply requests into one marker, event, and exit', async () => {
+    manager.register()
+    serveRelease(defaultRelease({ version: '1.1.0' }))
+    await manager.runCheck('manual')
+
+    const [first, second] = await Promise.all([
+      manager.resolveUpdateDecision('1.1.0', 'trusted:user'),
+      manager.resolveUpdateDecision('1.1.0', 'trusted:user'),
+    ])
+
+    expect(first).toEqual(second)
+    expect(first.status).toBe('resolving')
+    expect(scheduleExitCalls).toBe(1)
+    expect(
+      store.eventLog(SYSTEM_SPACE_ID).filter((event) => event.type === 'update.apply'),
+    ).toHaveLength(1)
+  })
+
+  it('refuses an exact offer id as stale when re-check now verifies a different version', async () => {
+    manager.register()
+    serveRelease(defaultRelease({ version: '1.1.0' }))
+    await manager.runCheck('manual')
+    serveRelease(defaultRelease({ version: '1.2.0' }))
+
+    const stale = await manager.resolveUpdateDecision('1.1.0', 'trusted:user')
+
+    expect(stale).toMatchObject({ status: 'stale', resolvedBy: 'trusted:user' })
+    expect(manager.getUpdateDecision('1.2.0')).toMatchObject({ status: 'pending' })
+    expect(existsSync(join(resolveUpdateHome(updateHomeDir).stateDir, 'marker.json'))).toBe(false)
+    expect(scheduleExitCalls).toBe(0)
+  })
+
   it('re-verifies, writes a schema-valid marker, moves the Surface to updating, and schedules the exit', async () => {
     manager.register()
     serveRelease(defaultRelease({ version: '1.1.0', dataVersion: 1 }))
 
-    await manager.applyUpdate()
+    await manager.applyUpdate('trusted:user')
 
     const home = resolveUpdateHome(updateHomeDir)
     const markerPath = join(home.stateDir, 'marker.json')
@@ -512,7 +584,7 @@ describe('UpdateManager.applyUpdate', () => {
     await manager.runCheck('manual') // records the offer at 1.1.0
     serveRelease(defaultRelease({ version: '1.0.0' })) // the feed no longer offers anything newer
 
-    await manager.applyUpdate()
+    await manager.applyUpdate('trusted:user')
 
     const home = resolveUpdateHome(updateHomeDir)
     expect(existsSync(join(home.stateDir, 'marker.json'))).toBe(false)
@@ -527,7 +599,7 @@ describe('UpdateManager.applyUpdate', () => {
     mkdirSync(home.stateDir, { recursive: true })
     writeFileSync(join(home.stateDir, 'update-state.json'), JSON.stringify({ phase: 'migrating' }))
 
-    await manager.applyUpdate()
+    await manager.applyUpdate('trusted:user')
 
     expect(existsSync(join(home.stateDir, 'marker.json'))).toBe(false)
     expect(scheduleExitCalls).toBe(0)
@@ -554,7 +626,7 @@ describe('UpdateManager.applyUpdate', () => {
     }
     writeFileSync(join(home.stateDir, 'result.json'), JSON.stringify(result))
 
-    await manager.applyUpdate()
+    await manager.applyUpdate('trusted:user')
 
     expect(existsSync(join(home.stateDir, 'marker.json'))).toBe(false)
     expect(scheduleExitCalls).toBe(0)
@@ -581,7 +653,7 @@ describe('UpdateManager.applyUpdate', () => {
     writeFileSync(join(home.stateDir, `result-acked-${priorResult.id}`), '')
 
     serveRelease(defaultRelease({ version: '1.1.0' }))
-    await manager.applyUpdate()
+    await manager.applyUpdate('trusted:user')
 
     // The acked result is archived, not left behind to block this (or any
     // future) apply forever.
@@ -595,7 +667,7 @@ describe('UpdateManager.applyUpdate', () => {
   it('two consecutive updates in a row succeed at the manager level: apply, boot-ingest+ack, apply again', async () => {
     manager.register()
     serveRelease(defaultRelease({ version: '1.1.0' }))
-    await manager.applyUpdate()
+    await manager.applyUpdate('trusted:user')
 
     const home = resolveUpdateHome(updateHomeDir)
     expect(existsSync(join(home.stateDir, 'marker.json'))).toBe(true)
@@ -627,7 +699,7 @@ describe('UpdateManager.applyUpdate', () => {
     // must not be permanently blocked by the first update's own (now fully
     // acked) result.
     serveRelease(defaultRelease({ version: '1.2.0' }))
-    await booted.applyUpdate()
+    await booted.applyUpdate('trusted:user')
 
     expect(existsSync(join(home.stateDir, 'result.json'))).toBe(false)
     expect(existsSync(join(home.stateDir, 'marker.json'))).toBe(true)
@@ -844,6 +916,7 @@ describe('UpdateManager boot-time result ingestion', () => {
     await vi.waitFor(() => {
       expect(existsSync(join(home.stateDir, `result-acked-${result.id}`))).toBe(true)
     })
+    expect(booted.getUpdateDecision('1.1.0')?.outcomeOrigin).toBe(untrustedOrigin('update-feed'))
 
     const event = store
       .eventLog(SYSTEM_SPACE_ID)

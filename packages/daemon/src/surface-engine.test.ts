@@ -878,11 +878,11 @@ describe('Surface engine store', () => {
       )
       if (!('proposed' in result)) throw new Error('expected a Tree proposal')
 
-      const first = store.resolveTreeProposal(result.proposalId, 'accepted')
+      const first = store.resolveTreeProposal(result.proposalId, 'accepted', 'trusted:user')
       expect(first?.status).toBe('accepted')
       expect(first?.resolvedAt).toBeDefined()
 
-      const second = store.resolveTreeProposal(result.proposalId, 'accepted')
+      const second = store.resolveTreeProposal(result.proposalId, 'accepted', 'trusted:user')
       expect(second).toBeUndefined()
     })
 

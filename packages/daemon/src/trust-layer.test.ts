@@ -784,6 +784,73 @@ describe('listPending / attachSurfaceId', () => {
   })
 })
 
+describe('approval decision read model', () => {
+  it('keeps the same safe pending and terminal truth across restart', async () => {
+    const layer = createLayer()
+    const tool = sendMessageTool()
+    layer.register(tool, sendMessageMeta)
+    await callWrapped(
+      layer,
+      tool,
+      { to: 'alice@example.com', body: 'private body' },
+      toolContext({ spaceId: 'spc-test' }),
+    )
+    const surfaceId = port.onlySurfaceId()
+    const effectId = port.surfaces.get(surfaceId)?.approval.id as string
+
+    expect(layer.listApprovalDecisions()).toEqual([
+      expect.objectContaining({
+        id: effectId,
+        title: 'Send message to alice@example.com',
+        status: 'pending',
+        surfaceId,
+      }),
+    ])
+    expect(layer.listApprovalDecisions()[0]).not.toHaveProperty('input')
+
+    await layer.resolve(effectId, 'reject')
+    expect(layer.getApprovalDecision(effectId)).toMatchObject({
+      status: 'rejected',
+      outcome: 'rejected',
+    })
+    layer.dispose()
+
+    const reopened = createLayer()
+    reopened.register(sendMessageTool(), sendMessageMeta)
+    expect(reopened.getApprovalDecision(effectId)).toMatchObject({
+      id: effectId,
+      status: 'rejected',
+      outcome: 'rejected',
+    })
+  })
+
+  it('excludes effects executed automatically through an allowlist', async () => {
+    const layer = createLayer()
+    const tool = sendMessageTool()
+    layer.register(tool, sendMessageMeta)
+
+    await callWrapped(
+      layer,
+      tool,
+      { to: 'alice@example.com', body: 'first' },
+      toolContext({ spaceId: 'spc-test', toolCallId: 'call-card' }),
+    )
+    const surfaceId = port.onlySurfaceId()
+    const approvalId = port.surfaces.get(surfaceId)?.approval.id as string
+    port.setField(surfaceId, DECISION_ALLOWLIST_CHECKBOX_KEY, true)
+    await layer.resolve(approvalId, 'approve')
+
+    await callWrapped(
+      layer,
+      tool,
+      { to: 'alice@example.com', body: 'automatic' },
+      toolContext({ spaceId: 'spc-test', toolCallId: 'call-automatic' }),
+    )
+
+    expect(layer.listApprovalDecisions().map((decision) => decision.id)).toEqual([approvalId])
+  })
+})
+
 describe('hasPendingCardSurface', () => {
   /** Directly inserts a pending row with a `null` surface_id — simulates `createCard()` crashing before `setSurfaceId` runs. */
   function insertNullSurfaceRow(layer: TrustLayer, id: string): void {

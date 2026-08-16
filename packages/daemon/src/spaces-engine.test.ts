@@ -67,11 +67,59 @@ describe('SpacesEngine layout and lifecycle', () => {
 
     expect(engine.listSpaces()).toEqual([])
 
-    const space = engine.confirmSpaceProposal(proposal.id)
+    const space = engine.confirmSpaceProposal(proposal.id, 'trusted:user')
 
     expect(space).toMatchObject({ slug: 'home', name: 'Home', archived: false })
     expect(engine.listSpaces().map((created) => created.slug)).toEqual(['home'])
     expect(engine.searchLog(space.id, 'Confirmed Space proposal')).toHaveLength(1)
+  })
+
+  it('persists Space proposals and their terminal user decision across restart', async () => {
+    const rootDir = await tempRoot()
+    const first = new SpacesEngine({ rootDir, now: fixedNow })
+    const proposal = first.proposeSpace({
+      name: 'Home',
+      reason: 'User asked to track household routines.',
+    })
+
+    const reopened = new SpacesEngine({ rootDir, now: fixedNow })
+    expect(reopened.getSpaceProposal(proposal.id)).toMatchObject({
+      id: proposal.id,
+      status: 'pending',
+    })
+
+    const accepted = reopened.resolveSpaceProposal(proposal.id, 'accept', 'trusted:user')
+    const replayed = reopened.resolveSpaceProposal(proposal.id, 'reject', 'trusted:user')
+
+    expect(accepted).toMatchObject({
+      status: 'accepted',
+      resolvedBy: 'trusted:user',
+      spaceId: 'spc-home',
+    })
+    expect(replayed).toEqual(accepted)
+    expect(reopened.listSpaces().filter((space) => space.id === 'spc-home')).toHaveLength(1)
+    expect(reopened.searchLog('spc-home', 'Confirmed Space proposal')).toHaveLength(1)
+
+    const terminal = new SpacesEngine({ rootDir, now: fixedNow })
+    expect(terminal.getSpaceProposal(proposal.id)).toEqual(accepted)
+    expect(terminal.listSpaces().filter((space) => space.id === 'spc-home')).toHaveLength(1)
+    expect(terminal.searchLog('spc-home', 'Confirmed Space proposal')).toHaveLength(1)
+  })
+
+  it('records a rejected Space proposal without creating a Space and never replays it', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const proposal = engine.proposeSpace({ name: 'Travel', reason: 'A possible life area.' })
+
+    const rejected = engine.resolveSpaceProposal(proposal.id, 'reject', 'trusted:user')
+    const replayed = engine.resolveSpaceProposal(proposal.id, 'accept', 'trusted:user')
+
+    expect(rejected).toMatchObject({ status: 'rejected', resolvedBy: 'trusted:user' })
+    expect(replayed).toEqual(rejected)
+    expect(engine.getSpace('spc-travel')).toBeUndefined()
+    expect(new SpacesEngine({ rootDir, now: fixedNow }).getSpaceProposal(proposal.id)).toEqual(
+      rejected,
+    )
   })
 
   it('merges two Spaces and archives the source Space without deleting it', async () => {

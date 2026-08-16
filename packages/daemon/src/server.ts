@@ -10,6 +10,7 @@ import Fastify from 'fastify'
 import { z } from 'zod'
 import type { ModelRef } from './agent-runner.ts'
 import { AllowlistSurfaceManager } from './allowlist-surface.ts'
+import { ApprovalPendingDecisionAdapter } from './approval-pending-decision.ts'
 import { ApprovalSurfaceManager } from './approval-surface.ts'
 import { ProgressiveAuthLockout } from './auth-rate-limit.ts'
 import { AuditSurfaceManager } from './audit-surface.ts'
@@ -70,6 +71,8 @@ import { NotificationSettingsSurfaceManager } from './notification-settings-surf
 import { loadNotificationsConfig } from './notifications-config.ts'
 import { registerOnboardingRoutes } from './onboarding-routes.ts'
 import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
+import { registerPendingDecisionRoutes } from './pending-decision-routes.ts'
+import { PendingDecisionService } from './pending-decision-service.ts'
 import { PiJsonlSessionStore } from './pi-agent-runner.ts'
 import { createProviderBridge, isBuiltinModel, probeModel } from './pi-provider-bridge.ts'
 import { registerPushRoutes } from './push-routes.ts'
@@ -88,15 +91,18 @@ import {
 import { WatchManager } from './watch-renewal.ts'
 import { registerAuthRoutes, registerRequestAuth, type ServerAuthOptions } from './server-auth.ts'
 import { registerSpaceSurfaceRoutes } from './space-surface-routes.ts'
+import { SpacePendingDecisionAdapter } from './space-pending-decision.ts'
 import { createSpawnWorkerTool } from './spawn-worker-tool.ts'
 import { registerStaticRoutes } from './static-routes.ts'
 import { Store } from './store.ts'
 import { ensureSystemSpace } from './system-space.ts'
 import { TemplateEngine } from './template-engine.ts'
+import { TreePendingDecisionAdapter } from './tree-pending-decision.ts'
 import { TreeProposalSurfaceManager } from './tree-proposal.ts'
 import { isTrustWrapped, TrustLayer } from './trust-layer.ts'
 import { ensureDataVersion } from './update/data-version.ts'
 import { UpdateManager } from './update-manager.ts'
+import { UpdatePendingDecisionAdapter } from './update-pending-decision.ts'
 import { resolveInstalledVersion } from './version.ts'
 import { ensureVapidKeys, WebPushTransport, type PushTransport } from './web-push-transport.ts'
 import { WorkerPool } from './worker.ts'
@@ -675,16 +681,17 @@ export function buildServer(options: ServerOptions = {}) {
   const treeProposals = new TreeProposalSurfaceManager({ store })
 
   // Boot recovery: overdue pending rows expire, interrupted
-  // `executing` rows re-run through the same effectId. Fire-and-forget,
-  // same reasoning as `ingestion.recoverAtBoot()` below — nothing else
-  // waits on it, and a failure here must never take the daemon down. A
+  // `executing` rows re-run through the same effectId. It stays off the
+  // general boot path and a failure never takes the daemon down; only the
+  // common Pending decision read/resolve boundary waits for its settled
+  // result, so it cannot publish pre-recovery state. A
   // click on a persisted card is correct the instant the store can be read
   // (`handleFastMutation` resolves against `trust.hasPendingCardSurface`,
   // never an in-memory cache), so this ordering is not a correctness
   // requirement any more — kept because `approvalSurfaces.start()` must
   // still never repair a Surface for a row `recoverAtBoot()` is about to
   // expire or mark indeterminate.
-  trust
+  const decisionRecovery = trust
     .start()
     .then(() => approvalSurfaces.start())
     .then(() => treeProposals.start())
@@ -1043,6 +1050,7 @@ export function buildServer(options: ServerOptions = {}) {
   const updatePinningEnv = process.env['VEDUTA_UPDATE_PINNING']
   let updateManager: UpdateManager | undefined
   let updateFeedHost: string | undefined
+  let updateRecovery: Promise<void> = Promise.resolve()
   if (updateHomeEnv && updatePinningEnv && existsSync(updatePinningEnv)) {
     try {
       const pinning = UpdatePinningSchema.parse(JSON.parse(readFileSync(updatePinningEnv, 'utf8')))
@@ -1065,7 +1073,9 @@ export function buildServer(options: ServerOptions = {}) {
         },
       })
       updateManager.register()
-      updateManager.start()
+      updateRecovery = updateManager.start().catch((error) => {
+        console.error('self-update: boot result ingestion failed', error)
+      })
     } catch (error) {
       // A present-but-unparseable pinning file is a misconfiguration, not a
       // boot-blocking failure: self-update stays unwired, exactly as if the
@@ -1078,6 +1088,16 @@ export function buildServer(options: ServerOptions = {}) {
       updateFeedHost = undefined
     }
   }
+
+  const pendingDecisions = new PendingDecisionService({
+    adapters: [
+      new ApprovalPendingDecisionAdapter(trust),
+      new TreePendingDecisionAdapter(store, treeProposals),
+      new SpacePendingDecisionAdapter(store.spacesEngine),
+      ...(updateManager === undefined ? [] : [new UpdatePendingDecisionAdapter(updateManager)]),
+    ],
+    ready: Promise.all([decisionRecovery, updateRecovery]),
+  })
 
   notificationSettings.start()
   notificationCenter.start()
@@ -1344,6 +1364,7 @@ export function buildServer(options: ServerOptions = {}) {
     templateEngine,
   })
   registerPushRoutes(app, { auth, pushStore, vapid })
+  registerPendingDecisionRoutes(app, { service: pendingDecisions })
 
   // Onboarding wizard routes (issue #19): registered directly on `app`,
   // same as every route above, so the production `onRequest` auth hook
@@ -1435,6 +1456,7 @@ export function buildServer(options: ServerOptions = {}) {
     ingestion,
     watchManager,
     trust,
+    pendingDecisions,
     approvalSurfaces,
     allowlistSurfaces,
     auditSurfaces,

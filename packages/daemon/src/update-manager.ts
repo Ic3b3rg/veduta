@@ -9,6 +9,7 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import {
+  formatPendingDecisionId,
   ReleaseMetadataSchema,
   UpdateManifestSchema,
   UpdateMarkerSchema,
@@ -28,6 +29,7 @@ import type { SpaceEvent } from './spaces-engine.ts'
 import type { FastMutationNotice, Store } from './store.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { untrustedOrigin, type Origin } from './taint.ts'
+import { UpdateDecisionStore, type UpdateDecisionRecord } from './update-decisions.ts'
 import { writeJsonAtomic } from './update/update-atomic.ts'
 import { checkMonotonic, verifyReleaseChain } from './update/minisign.ts'
 import { readDataVersion } from './update/data-version.ts'
@@ -258,6 +260,8 @@ export class UpdateManager {
 
   private currentView: UpdateSurfaceView
   private verifiedOffer: VerifiedOffer | undefined
+  private readonly updateDecisions: UpdateDecisionStore
+  private applyInFlight: Promise<UpdateDecisionRecord | undefined> | undefined
   private disposeFastMutation: (() => void) | undefined
   private pollTimer: NodeJS.Timeout | undefined
 
@@ -274,7 +278,29 @@ export class UpdateManager {
     this.pinning = UpdatePinningSchema.parse(
       JSON.parse(readFileSync(options.config.pinningPath, 'utf8')),
     )
-    this.currentView = { currentVersion: this.installedVersion, status: 'idle' }
+    this.updateDecisions = new UpdateDecisionStore({ stateDir: this.home.stateDir, now: this.now })
+    this.currentView = this.viewFromLatestDecision()
+  }
+
+  listUpdateDecisions(): UpdateDecisionRecord[] {
+    return this.updateDecisions.list()
+  }
+
+  getUpdateDecision(version: string): UpdateDecisionRecord | undefined {
+    return this.updateDecisions.get(version)
+  }
+
+  async resolveUpdateDecision(
+    version: string,
+    actor: 'trusted:user',
+  ): Promise<UpdateDecisionRecord> {
+    if (actor !== 'trusted:user') throw new Error('update resolution requires trusted:user')
+    const existing = this.updateDecisions.get(version)
+    if (!existing) throw new Error(`unknown verified update offer: ${version}`)
+    const result = await this.applyUpdate(actor, version)
+    const current = result ?? this.updateDecisions.get(version)
+    if (!current) throw new Error(`verified update offer disappeared: ${version}`)
+    return current
   }
 
   /**
@@ -309,10 +335,10 @@ export class UpdateManager {
    * will publish once its own health window closes. Neither file existing
    * means this daemon did not boot as part of an update transaction at all.
    */
-  start(): void {
+  async start(): Promise<void> {
     const result = resultFilePath(this.home)
     if (existsSync(result)) {
-      void this.ingestResult(result)
+      await this.ingestResult(result)
       return
     }
     if (!existsSync(journalFilePath(this.home))) return
@@ -335,6 +361,40 @@ export class UpdateManager {
     this.clearPollTimer()
   }
 
+  private viewFromLatestDecision(): UpdateSurfaceView {
+    const latest = this.updateDecisions.latest()
+    if (!latest) return { currentVersion: this.installedVersion, status: 'idle' }
+    return this.viewFromDecision(latest)
+  }
+
+  private viewFromDecision(decision: UpdateDecisionRecord): UpdateSurfaceView {
+    if (decision.status === 'pending') {
+      return {
+        currentVersion: this.installedVersion,
+        status: 'update-available',
+        available: decision.available,
+      }
+    }
+    if (decision.status === 'resolving') {
+      return {
+        currentVersion: this.installedVersion,
+        status: 'updating',
+        available: decision.available,
+      }
+    }
+    const status =
+      decision.status === 'applied'
+        ? 'applied'
+        : decision.status === 'rolled-back'
+          ? 'rolled-back'
+          : 'refused'
+    return {
+      currentVersion: this.installedVersion,
+      status,
+      outcomeDetail: decision.outcomeDetail ?? updateDecisionOutcomeText(decision),
+    }
+  }
+
   private clearPollTimer(): void {
     if (this.pollTimer) {
       clearInterval(this.pollTimer)
@@ -353,8 +413,11 @@ export class UpdateManager {
       return
     }
     if (notice.stateKey === UPDATE_APPLY_STATE_KEY) {
+      const expectedVersion = this.listUpdateDecisions()
+        .filter((decision) => decision.status === 'pending')
+        .at(-1)?.version
       queueMicrotask(() => {
-        this.applyUpdate()
+        this.applyUpdate('trusted:user', expectedVersion)
           .catch((error: unknown) => console.error('update-manager: apply failed', error))
           .finally(() => this.resetFastActionKey(UPDATE_APPLY_STATE_KEY))
       })
@@ -420,7 +483,11 @@ export class UpdateManager {
       const nowIso = this.now().toISOString()
       const isNewer = compareVersions(metadata.version, this.installedVersion) > 0
       if (!isNewer) {
-        this.currentView = { ...this.currentView, lastCheckedAt: nowIso }
+        this.updateDecisions.markPendingOffersStale(nowIso)
+        this.currentView =
+          this.currentView.status === 'update-available'
+            ? { currentVersion: this.installedVersion, status: 'idle', lastCheckedAt: nowIso }
+            : { ...this.currentView, lastCheckedAt: nowIso }
         this.refreshSurface()
         return 'no-update-available'
       }
@@ -433,15 +500,22 @@ export class UpdateManager {
         installedDataVersion,
       })
 
+      const available = {
+        version: metadata.version,
+        notes: metadata.notes,
+        migratesData: metadata.dataVersion > installedDataVersion,
+      }
+      const decision = this.updateDecisions.recordVerifiedOffer(available, nowIso)
+      if (decision.status !== 'pending') {
+        this.currentView = { ...this.viewFromDecision(decision), lastCheckedAt: nowIso }
+        this.refreshSurface()
+        return `offer-already-decided:${metadata.version}`
+      }
       this.verifiedOffer = { manifest, metadata }
       this.currentView = {
         currentVersion: this.installedVersion,
         status: 'update-available',
-        available: {
-          version: metadata.version,
-          notes: metadata.notes,
-          migratesData: metadata.dataVersion > installedDataVersion,
-        },
+        available,
         lastCheckedAt: nowIso,
       }
       this.refreshSurface()
@@ -541,7 +615,29 @@ export class UpdateManager {
    * refused exactly as before — `sweepAckedResult` itself never touches
    * either.
    */
-  async applyUpdate(): Promise<void> {
+  async applyUpdate(
+    actor: 'trusted:user',
+    expectedVersion?: string,
+  ): Promise<UpdateDecisionRecord | undefined> {
+    if (actor !== 'trusted:user') throw new Error('update resolution requires trusted:user')
+    if (this.applyInFlight) return this.applyInFlight
+    const work = this.applyUpdateOnce(expectedVersion, actor)
+    this.applyInFlight = work
+    try {
+      return await work
+    } finally {
+      if (this.applyInFlight === work) this.applyInFlight = undefined
+    }
+  }
+
+  private async applyUpdateOnce(
+    expectedVersion: string | undefined,
+    actor: 'trusted:user',
+  ): Promise<UpdateDecisionRecord | undefined> {
+    const expectedBeforeCheck =
+      expectedVersion === undefined ? undefined : this.updateDecisions.get(expectedVersion)
+    if (expectedBeforeCheck && expectedBeforeCheck.status !== 'pending') return expectedBeforeCheck
+
     sweepAckedResult(this.home)
 
     if (existsSync(journalFilePath(this.home)) || existsSync(resultFilePath(this.home))) {
@@ -551,15 +647,45 @@ export class UpdateManager {
         outcomeDetail: 'an update is already in progress',
       }
       this.refreshSurface()
-      return
+      if (!expectedBeforeCheck) return undefined
+      const nowIso = this.now().toISOString()
+      return this.updateDecisions.refuse(
+        expectedBeforeCheck.version,
+        actor,
+        nowIso,
+        'an update is already in progress',
+      )
     }
 
     await this.runCheck('manual')
-    if (!this.verifiedOffer) return
+    if (!this.verifiedOffer) {
+      if (expectedVersion === undefined) return undefined
+      return this.updateDecisions.attributeTerminal(
+        expectedVersion,
+        actor,
+        this.now().toISOString(),
+        'the verified offer could not be confirmed at resolution time',
+      )
+    }
     const { manifest, metadata } = this.verifiedOffer
+    const targetVersion = expectedVersion ?? metadata.version
+    if (metadata.version !== targetVersion) {
+      return this.updateDecisions.attributeTerminal(
+        targetVersion,
+        actor,
+        this.now().toISOString(),
+        'the verified offer could not be confirmed at resolution time',
+      )
+    }
+    const pending = this.updateDecisions.get(targetVersion)
+    if (!pending) throw new Error(`verified update offer has no decision record: ${targetVersion}`)
+    if (pending.status !== 'pending') return pending
+
+    const requestedAt = this.now().toISOString()
+    const resolving = this.updateDecisions.claim(targetVersion, actor, requestedAt)
 
     const marker: UpdateMarker = UpdateMarkerSchema.parse({
-      requestedAt: this.now().toISOString(),
+      requestedAt,
       release: manifest.release,
       releaseSig: manifest.releaseSig,
       signingKey: manifest.signingKey,
@@ -575,12 +701,17 @@ export class UpdateManager {
       // discipline: the scheduler's condition rule must never be
       // self-satisfiable by a daemon write, and neither should this).
       origin: 'trusted:user',
+      payload: {
+        version: metadata.version,
+        pendingDecisionId: formatPendingDecisionId('update-offer', metadata.version),
+      },
     })
 
     this.currentView = { ...this.currentView, status: 'updating' }
     this.refreshSurface()
 
     this.config.scheduleExit()
+    return resolving
   }
 
   private resetFastActionKey(key: string): void {
@@ -596,7 +727,8 @@ export class UpdateManager {
   }
 
   private ensureSurface(): void {
-    if (!this.store.getSurface(UPDATE_SURFACE_ID)) this.refreshSurface()
+    if (this.store.getSurface(UPDATE_SURFACE_ID)) return
+    this.refreshSurface(this.updateDecisions.latest()?.outcomeOrigin)
   }
 
   /**
@@ -709,6 +841,7 @@ export class UpdateManager {
           origin,
           payload: {
             resultId: result.id,
+            toVersion: result.toVersion,
             outcome: result.outcome,
             reason: result.reason,
             ...(result.failedStage === undefined ? {} : { failedStage: result.failedStage }),
@@ -731,6 +864,16 @@ export class UpdateManager {
         )
         return
       }
+    }
+
+    try {
+      this.recordUpdateResult(result)
+    } catch (error) {
+      console.error(
+        'update-manager: failed to persist Pending decision outcome; result.json left in place for the next boot to retry',
+        error,
+      )
+      return
     }
 
     // Idempotent on the same result id: a
@@ -790,6 +933,13 @@ export class UpdateManager {
     } finally {
       closeSync(fd)
     }
+  }
+
+  private recordUpdateResult(result: UpdateResult): void {
+    this.updateDecisions.recordResult(
+      result,
+      result.reason.length > 0 ? untrustedOrigin('update-feed') : 'trusted:system',
+    )
   }
 
   /** Atomic-create (never overwrites) + fsync file and directory — the durable acknowledgment `sweepAckedResult` waits for before retiring `result.json`. */
@@ -864,4 +1014,12 @@ function outcomeStatus(outcome: UpdateResult['outcome']): UpdateSurfaceView['sta
 function outcomeDetail(result: UpdateResult): string {
   if (result.outcome === 'success') return `Updated to ${result.toVersion}`
   return result.reason || result.failedStage || result.outcome
+}
+
+function updateDecisionOutcomeText(decision: UpdateDecisionRecord): string {
+  if (decision.status === 'applied') return `Updated to ${decision.version}`
+  if (decision.status === 'rolled-back') return `Update to ${decision.version} rolled back`
+  if (decision.status === 'stale') return `Update offer ${decision.version} is no longer current`
+  if (decision.status === 'failed') return `Update to ${decision.version} failed`
+  return `Update to ${decision.version} was refused`
 }

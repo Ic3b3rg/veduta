@@ -82,6 +82,26 @@ export interface PendingApprovalRecord {
   surfaceId?: string
 }
 
+/**
+ * Safe read model for an approval that genuinely required a user choice.
+ * Prepared input and audit detail stay inside the trust layer; callers only
+ * receive the title already intended for the Approval card plus durable
+ * lifecycle metadata.
+ */
+export interface ApprovalDecisionRecord {
+  id: string
+  title: string
+  toolName: string
+  level: 'L1' | 'L2'
+  status: ApprovalStatus
+  outcome?: AuditOutcome
+  spaceId?: string
+  surfaceId?: string
+  createdAt: string
+  expiresAt: string
+  decisionAt?: string
+}
+
 /** Card-model data computed once at card-creation time (checkbox eligibility). */
 export interface ApprovalCardModel {
   title: string

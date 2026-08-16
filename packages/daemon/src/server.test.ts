@@ -7,6 +7,8 @@ import { fromPartial } from '@total-typescript/shoehorn'
 import {
   GatewayServerMessageSchema,
   MoveSurfaceResultSchema,
+  PendingDecisionListSchema,
+  PendingDecisionResolveResultSchema,
   PinSurfaceResultSchema,
   SurfaceSchema,
   SurfaceSnapshotSchema,
@@ -126,6 +128,74 @@ describe('GET /api/spaces', () => {
   })
 })
 
+describe('Pending decision HTTP integration', () => {
+  it('resolves one durable Space proposal exactly once and recovers terminal truth', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-pending-decisions-'))
+    const first = buildServer({ dataDir })
+    const proposal = first.store.spacesEngine.proposeSpace({
+      name: 'Home',
+      reason: 'Household routines.',
+    })
+    const decisionId = `space-proposal:${proposal.id}`
+
+    const listed = PendingDecisionListSchema.parse(
+      (await first.app.inject({ method: 'GET', url: '/api/pending-decisions' })).json(),
+    )
+    expect(listed.decisions).toEqual([
+      expect.objectContaining({ id: decisionId, state: 'pending' }),
+    ])
+
+    const accepted = PendingDecisionResolveResultSchema.parse(
+      (
+        await first.app.inject({
+          method: 'POST',
+          url: `/api/pending-decisions/${encodeURIComponent(decisionId)}/resolve`,
+          payload: { resolution: 'accept' },
+        })
+      ).json(),
+    )
+    expect(accepted).toMatchObject({
+      decision: {
+        id: decisionId,
+        state: 'terminal',
+        outcome: 'accepted',
+        resolvedBy: 'trusted:user',
+      },
+      replayed: false,
+    })
+
+    const replayed = PendingDecisionResolveResultSchema.parse(
+      (
+        await first.app.inject({
+          method: 'POST',
+          url: `/api/pending-decisions/${encodeURIComponent(decisionId)}/resolve`,
+          payload: { resolution: 'reject' },
+        })
+      ).json(),
+    )
+    expect(replayed).toMatchObject({
+      decision: { outcome: 'accepted' },
+      replayed: true,
+    })
+    expect(
+      first.store.spacesEngine.listSpaces().filter((space) => space.id === 'spc-home'),
+    ).toHaveLength(1)
+    await first.app.close()
+
+    const second = buildServer({ dataDir })
+    const recovered = PendingDecisionListSchema.parse(
+      (await second.app.inject({ method: 'GET', url: '/api/pending-decisions' })).json(),
+    )
+    expect(recovered.decisions).toEqual([
+      expect.objectContaining({ id: decisionId, state: 'terminal', outcome: 'accepted' }),
+    ])
+    expect(
+      second.store.spacesEngine.listSpaces().filter((space) => space.id === 'spc-home'),
+    ).toHaveLength(1)
+    await second.app.close()
+  })
+})
+
 describe('production auth boundary', () => {
   it('keeps PWA assets public but requires passkey sessions for application API routes', async () => {
     const pwaDistDir = await mkdtemp(join(tmpdir(), 'veduta-pwa-'))
@@ -155,6 +225,19 @@ describe('production auth boundary', () => {
     expect(denied.statusCode).toBe(401)
     expect(denied.headers['strict-transport-security']).toContain('max-age=')
 
+    expect((await app.inject({ method: 'GET', url: '/api/pending-decisions' })).statusCode).toBe(
+      401,
+    )
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/pending-decisions/approval%3Amissing/resolve',
+          payload: { resolution: 'approve' },
+        })
+      ).statusCode,
+    ).toBe(401)
+
     const allowed = await app.inject({
       method: 'GET',
       url: '/api/spaces',
@@ -165,6 +248,14 @@ describe('production auth boundary', () => {
       'health',
       'system',
     ])
+
+    const pendingDecisions = await app.inject({
+      method: 'GET',
+      url: '/api/pending-decisions',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(pendingDecisions.statusCode).toBe(200)
+    expect(PendingDecisionListSchema.parse(pendingDecisions.json())).toEqual({ decisions: [] })
   })
 
   it('lets the Gateway WebSocket upgrade past the Bearer hook (per-connection auth instead)', async () => {

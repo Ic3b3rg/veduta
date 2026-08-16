@@ -211,6 +211,11 @@ export interface TreeProposalSurfaceManagerOptions {
   onError?: (error: unknown) => void
 }
 
+export interface TreeProposalResolutionResult {
+  proposal: TreeProposal
+  refusal?: 'stale' | 'failed'
+}
+
 /**
  * Observes `store.onTreeProposal` to build the preview card, and
  * `store.onFastMutation` for Accept/Reject clicks on the cards it created —
@@ -325,6 +330,16 @@ export class TreeProposalSurfaceManager {
     return this.resolutions.flush()
   }
 
+  /** Alternative authenticated channel into the same workflow authority as the Decision Surface. */
+  resolveDecision(
+    proposalId: number,
+    decision: 'accept' | 'reject',
+    actor: 'trusted:user',
+  ): Promise<TreeProposalResolutionResult> {
+    if (actor !== 'trusted:user') throw new Error('Tree proposal resolution requires trusted:user')
+    return this.resolve(proposalId, treeProposalSurfaceId(proposalId), decision, actor)
+  }
+
   /**
    * Builds and persists the preview card for a newly recorded proposal.
    * Never throws: a `createSurface` failure (e.g. the deterministic id
@@ -385,16 +400,20 @@ export class TreeProposalSurfaceManager {
     const proposal = this.store.getTreeProposal(proposalId)
     if (!proposal || proposal.status !== 'pending') return
     const decision = notice.stateKey === DECISION_ACCEPT_KEY ? 'accept' : 'reject'
-    this.resolutions.enqueue(() => this.resolve(proposalId, notice.surfaceId, decision))
+    this.resolutions.enqueue(async () => {
+      await this.resolve(proposalId, notice.surfaceId, decision, 'trusted:user')
+    })
   }
 
   private async resolve(
     proposalId: number,
     cardSurfaceId: string,
     decision: 'accept' | 'reject',
-  ): Promise<void> {
+    actor: 'trusted:user',
+  ): Promise<TreeProposalResolutionResult> {
     const proposal = this.store.getTreeProposal(proposalId)
-    if (!proposal || proposal.status !== 'pending') return // resolved by a racing click already
+    if (!proposal) throw new Error(`tree proposal: unknown proposal #${proposalId}`)
+    if (proposal.status !== 'pending') return { proposal } // resolved by a racing click already
 
     // `surface.tree_proposal_accepted`/`_rejected` interpolate the target's
     // own `surfaceId`, which is attacker-influenceable for a Surface built
@@ -409,8 +428,10 @@ export class TreeProposalSurfaceManager {
     const targetId = truncate(neutralizeDelimiters(proposal.surfaceId), TARGET_FIELD_MAX_CHARS)
 
     if (decision === 'reject') {
-      const resolved = this.store.resolveTreeProposal(proposalId, 'rejected')
-      if (!resolved) return
+      const resolved = this.store.resolveTreeProposal(proposalId, 'rejected', actor)
+      if (!resolved) {
+        return { proposal: this.store.getTreeProposal(proposalId) ?? proposal }
+      }
       this.store.spacesEngine.appendEvent(proposal.spaceId, {
         type: 'surface.tree_proposal_rejected',
         text: `Rejected a proposed tree change for Surface "${targetId}"`,
@@ -418,19 +439,26 @@ export class TreeProposalSurfaceManager {
         payload: { surfaceId: proposal.surfaceId, proposalId },
       })
       this.archive(cardSurfaceId)
-      return
+      return { proposal: resolved }
     }
 
     const currentVersion = this.store.getSurfaceVersion(proposal.surfaceId)
     if (!currentVersion || currentVersion.treeVersion !== proposal.expectedTreeVersion) {
       // Stale: the target's tree moved since this proposal was recorded.
-      // Refuse visibly and reset the pressed decision key so a fixed-up
-      // proposal (there is none automatically — the Agent would have to
-      // re-propose) does not leave the button stuck at `true`. The
-      // proposal itself stays `pending` — `resolveTreeProposal` is never
-      // called on this path.
+      // Terminalize the exact proposal so every channel sees the same
+      // truthful outcome. A fixed-up change requires a new proposal.
+      const stale = this.store.resolveTreeProposal(proposalId, 'stale', actor)
+      if (!stale) {
+        return { proposal: this.store.getTreeProposal(proposalId) ?? proposal }
+      }
       this.refuseAccept(cardSurfaceId, STALE_PROPOSAL_MESSAGE, { resetDecision: true })
-      return
+      this.store.spacesEngine.appendEvent(proposal.spaceId, {
+        type: 'surface.tree_proposal_stale',
+        text: `Refused a stale tree change for Surface "${targetId}"`,
+        origin: resolutionEventOrigin,
+        payload: { surfaceId: proposal.surfaceId, proposalId },
+      })
+      return { proposal: stale, refusal: 'stale' }
     }
 
     // Claim the row *before* applying, not after: this is the exactly-once
@@ -442,8 +470,10 @@ export class TreeProposalSurfaceManager {
     // and resolving after was rejected: that ordering would let two
     // already-enqueued Accept clicks both still observe `pending` and both
     // apply the patch before either claimed the row.
-    const claimed = this.store.resolveTreeProposal(proposalId, 'accepted')
-    if (!claimed) return
+    const claimed = this.store.resolveTreeProposal(proposalId, 'accepted', actor)
+    if (!claimed) {
+      return { proposal: this.store.getTreeProposal(proposalId) ?? proposal }
+    }
 
     try {
       this.store.patchTree(proposal.surfaceId, proposal.operations, {
@@ -470,7 +500,10 @@ export class TreeProposalSurfaceManager {
       this.onError(error)
       this.store.reopenTreeProposal(proposalId)
       this.refuseAccept(cardSurfaceId, APPLY_FAILED_MESSAGE, { resetDecision: true })
-      return
+      return {
+        proposal: this.store.getTreeProposal(proposalId) ?? proposal,
+        refusal: 'failed',
+      }
     }
 
     this.store.spacesEngine.appendEvent(proposal.spaceId, {
@@ -480,6 +513,7 @@ export class TreeProposalSurfaceManager {
       payload: { surfaceId: proposal.surfaceId, proposalId },
     })
     this.archive(cardSurfaceId)
+    return { proposal: this.store.getTreeProposal(proposalId) ?? claimed }
   }
 
   /** Patches the card's refusal Caption, optionally resetting the Accept decision key back to `false`. */

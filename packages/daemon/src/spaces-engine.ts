@@ -50,19 +50,17 @@ import {
   type AppendSpaceEventInput,
   type SpaceEvent,
 } from './space-events.ts'
+import {
+  SpaceProposalConflictError,
+  SpaceProposalStore,
+  type SpaceProposal,
+} from './space-proposals.ts'
 import type { Origin } from './taint.ts'
 import { normalizeIsoInstant } from './timezone.ts'
 
 export { parseSpaceEventLine, renderEventForContext }
 export type { AppendSpaceEventInput, SpaceEvent }
-
-export interface SpaceProposal {
-  id: string
-  name: string
-  slug: string
-  reason: string
-  createdAt: string
-}
+export type { SpaceProposal } from './space-proposals.ts'
 
 export interface SpacesEngineOptions {
   rootDir?: string
@@ -111,14 +109,20 @@ export const TIMER_RULE =
 export class SpacesEngine {
   readonly rootDir: string
   private readonly now: () => Date
-  private readonly proposals = new Map<string, SpaceProposal>()
-  private nextProposalId = 1
+  private readonly proposals: SpaceProposalStore
   private readonly memoryWriteObservers = new Set<(notice: MemoryWriteNotice) => void>()
 
   constructor(options: SpacesEngineOptions = {}) {
     this.rootDir = options.rootDir ?? defaultDataDir()
     this.now = options.now ?? (() => new Date())
     this.ensureBaseLayout()
+    this.proposals = new SpaceProposalStore({
+      rootDir: this.rootDir,
+      now: this.now,
+      accept: (proposal) => {
+        this.ensureProposedSpace(proposal)
+      },
+    })
     if (options.seed && this.listAllSpaces().length === 0) this.seed(options.seed)
   }
 
@@ -160,29 +164,43 @@ export class SpacesEngine {
   }
 
   proposeSpace(input: { name: string; reason: string }): SpaceProposal {
-    const proposal = {
-      id: `space-proposal-${this.nextProposalId}`,
+    const slug = this.uniqueSlug(slugify(input.name))
+    return this.proposals.create({
       name: input.name.trim(),
-      slug: this.uniqueSlug(slugify(input.name)),
+      slug,
+      spaceId: `spc-${slug}`,
       reason: input.reason.trim(),
-      createdAt: this.nowIso(),
-    }
-    this.nextProposalId += 1
-    this.proposals.set(proposal.id, proposal)
-    return proposal
+    })
   }
 
-  confirmSpaceProposal(proposalId: string): Space {
-    const proposal = this.proposals.get(proposalId)
-    if (!proposal) throw new Error(`unknown Space proposal: ${proposalId}`)
-    this.proposals.delete(proposalId)
-    const space = this.createSpace({ name: proposal.name, slug: proposal.slug })
-    this.appendEvent(space.id, {
-      type: 'lifecycle',
-      text: `Confirmed Space proposal "${proposal.name}": ${proposal.reason}`,
-      origin: 'trusted:user',
-    })
+  confirmSpaceProposal(proposalId: string, actor: 'trusted:user'): Space {
+    const proposal = this.resolveSpaceProposal(proposalId, 'accept', actor)
+    if (proposal.status !== 'accepted') {
+      throw new Error(`Space proposal ${proposalId} could not be accepted (${proposal.status})`)
+    }
+    const space = this.getSpace(proposal.spaceId)
+    if (!space) throw new Error(`accepted Space proposal ${proposalId} has no Space`)
     return space
+  }
+
+  rejectSpaceProposal(proposalId: string, actor: 'trusted:user'): SpaceProposal {
+    return this.resolveSpaceProposal(proposalId, 'reject', actor)
+  }
+
+  listSpaceProposals(): SpaceProposal[] {
+    return this.proposals.list()
+  }
+
+  getSpaceProposal(proposalId: string): SpaceProposal | undefined {
+    return this.proposals.get(proposalId)
+  }
+
+  resolveSpaceProposal(
+    proposalId: string,
+    resolution: 'accept' | 'reject',
+    actor: 'trusted:user',
+  ): SpaceProposal {
+    return this.proposals.resolve(proposalId, resolution, actor)
   }
 
   archiveSpace(spaceId: string): Space {
@@ -717,6 +735,38 @@ export class SpacesEngine {
     for (const surface of seed.surfaces) this.saveSurface(surface)
   }
 
+  private ensureProposedSpace(proposal: SpaceProposal): Space {
+    const space = SpaceSchema.parse({
+      id: proposal.spaceId,
+      slug: proposal.slug,
+      name: proposal.name,
+      archived: false,
+    })
+    const existing = this.getSpace(space.id)
+    if (existing && (existing.slug !== space.slug || existing.name !== space.name)) {
+      throw new SpaceProposalConflictError(
+        `Space proposal ${proposal.id} conflicts with existing Space ${space.id}`,
+      )
+    }
+
+    // Re-running initializeSpace repairs a partially initialized directory;
+    // writeIfMissing keeps its mutable documents intact.
+    this.initializeSpace(space)
+    const alreadyRecorded = this.readAllEvents(space.id).some(
+      (event) => event.type === 'lifecycle' && event.payload?.['spaceProposalId'] === proposal.id,
+    )
+    if (!alreadyRecorded) {
+      this.appendEvent(space.id, {
+        at: proposal.decisionAt ?? this.nowIso(),
+        type: 'lifecycle',
+        text: `Confirmed Space proposal "${proposal.name}": ${proposal.reason}`,
+        origin: 'trusted:user',
+        payload: { spaceProposalId: proposal.id },
+      })
+    }
+    return space
+  }
+
   private initializeSpace(space: Space, instructions?: string): void {
     const parsed = SpaceSchema.parse(space)
     mkdirSync(this.spacePath(parsed), { recursive: true })
@@ -835,7 +885,10 @@ export class SpacesEngine {
 
   private uniqueSlug(baseSlug: string): string {
     const base = baseSlug || 'space'
-    const existing = new Set(this.listAllSpaces().map((space) => space.slug))
+    const existing = new Set([
+      ...this.listAllSpaces().map((space) => space.slug),
+      ...this.proposals.reservedSlugs(),
+    ])
     if (!existing.has(base)) return base
     for (let index = 2; ; index += 1) {
       const candidate = `${base}-${index}`

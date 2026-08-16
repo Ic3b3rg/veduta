@@ -98,11 +98,20 @@ function withFreshnessFallback(json: unknown): unknown {
 
 export function treeProposalFromRow(row: Record<string, unknown>): TreeProposal {
   const status = requiredString(row, 'status')
-  if (status !== 'pending' && status !== 'accepted' && status !== 'rejected') {
+  if (
+    status !== 'pending' &&
+    status !== 'accepted' &&
+    status !== 'rejected' &&
+    status !== 'stale'
+  ) {
     throw new Error(`unknown tree_proposals status: ${status}`)
   }
   const storedOrigin = requiredString(row, 'origin')
   const resolvedAt = optionalString(row, 'resolved_at')
+  const resolvedBy = optionalString(row, 'resolved_by')
+  if (resolvedBy !== undefined && resolvedBy !== 'trusted:user') {
+    throw new Error(`unknown tree_proposals resolved_by: ${resolvedBy}`)
+  }
   return {
     id: requiredNumber(row, 'id'),
     surfaceId: requiredString(row, 'surface_id'),
@@ -115,6 +124,7 @@ export function treeProposalFromRow(row: Record<string, unknown>): TreeProposal 
     status,
     createdAt: requiredString(row, 'created_at'),
     ...(resolvedAt === undefined ? {} : { resolvedAt }),
+    ...(resolvedBy === undefined ? {} : { resolvedBy }),
   }
 }
 

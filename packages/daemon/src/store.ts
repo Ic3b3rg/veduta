@@ -315,8 +315,12 @@ export class Store {
   }
 
   /** Resolves a `pending` Tree proposal exactly once; see `SurfaceEngine.resolveTreeProposal`. */
-  resolveTreeProposal(id: number, status: 'accepted' | 'rejected'): TreeProposal | undefined {
-    return this.surfaceEngine.resolveTreeProposal(id, status)
+  resolveTreeProposal(
+    id: number,
+    status: 'accepted' | 'rejected' | 'stale',
+    actor: 'trusted:user',
+  ): TreeProposal | undefined {
+    return this.surfaceEngine.resolveTreeProposal(id, status, actor)
   }
 
   /** Puts an `accepted` Tree proposal back to `pending`; see `SurfaceEngine.reopenTreeProposal`. */

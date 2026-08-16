@@ -75,7 +75,8 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
       origin text not null,
       status text not null default 'pending',
       created_at text not null,
-      resolved_at text
+      resolved_at text,
+      resolved_by text check (resolved_by is null or resolved_by = 'trusted:user')
     );
     create index if not exists tree_proposals_surface_status
       on tree_proposals (surface_id, status);
@@ -93,4 +94,10 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
   ensureSqliteColumn(db, 'surfaces', 'template_id', 'text')
   ensureSqliteColumn(db, 'surfaces', 'template_space_id', 'text')
   ensureSqliteColumn(db, 'surfaces', 'content_origin', "text not null default 'trusted:user'")
+  ensureSqliteColumn(db, 'tree_proposals', 'resolved_by', 'text')
+  db.exec(`
+    update tree_proposals
+    set resolved_by = 'trusted:user'
+    where status in ('accepted', 'rejected') and resolved_by is null
+  `)
 }
