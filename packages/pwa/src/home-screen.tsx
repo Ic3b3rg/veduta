@@ -20,6 +20,7 @@ interface HomeScreenProps {
   spaces: SpaceWithSurfaces[]
   focusedSpace: SpaceWithSurfaces | undefined
   focusedSurfaceId: string | undefined
+  surfaceCreationFeedbackKeys: Record<string, string>
   surfaceOrders: Record<string, string[]>
   approvalCards: ApprovalCard[]
   chatEntries: ChatMessage[]
@@ -32,6 +33,7 @@ interface HomeScreenProps {
   onSurfacePatched: (surface: Surface) => void
   onQueueFastAction: (action: QueuedFastAction) => void
   onTogglePin: (surface: Surface, pinned: boolean) => void
+  onSurfaceCreationFeedbackShown: (surfaceId: string, feedbackKey: string) => void
   onError: (message: string) => void
   onApprovalCardsChange: (cards: ApprovalCard[]) => void
   onSend: (message: string) => boolean
@@ -49,6 +51,7 @@ export function HomeScreen({
   spaces,
   focusedSpace,
   focusedSurfaceId,
+  surfaceCreationFeedbackKeys,
   surfaceOrders,
   approvalCards,
   chatEntries,
@@ -61,6 +64,7 @@ export function HomeScreen({
   onSurfacePatched,
   onQueueFastAction,
   onTogglePin,
+  onSurfaceCreationFeedbackShown,
   onError,
   onApprovalCardsChange,
   onSend,
@@ -122,12 +126,14 @@ export function HomeScreen({
               authToken={authToken}
               focused={space.id === focusedSpace?.id}
               focusedSurfaceId={focusedSurfaceId}
+              surfaceCreationFeedbackKeys={surfaceCreationFeedbackKeys}
               surfaceOrder={surfaceOrders[space.id] ?? []}
               onFocus={onFocusSpace}
               onMoveSurface={onMoveSurface}
               onPatched={onSurfacePatched}
               onQueueFastAction={onQueueFastAction}
               onTogglePin={onTogglePin}
+              onSurfaceCreationFeedbackShown={onSurfaceCreationFeedbackShown}
               onError={onError}
             />
           ))}

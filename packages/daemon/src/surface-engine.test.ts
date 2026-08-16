@@ -164,6 +164,38 @@ describe('Surface engine store', () => {
     expect(store.listSurfaces('spc-health').map((surface) => surface.id)).not.toContain('srf-water')
   })
 
+  it('adds chat correlation to a live create_surface notification without persisting it for replay', async () => {
+    const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+    const observed: SurfaceEngineEvent[] = []
+    store.onSurfaceEvent((event) => observed.push(event))
+    const createSurface = store.surfaceTools().find((tool) => tool.name === 'create_surface')
+    if (!createSurface) throw new Error('missing tool: create_surface')
+
+    await createSurface.handler(
+      createSurface.schema.parse({
+        id: 'srf-correlated-create',
+        spaceId: 'spc-health',
+        title: 'Correlated create',
+        tree: { id: 'root', type: 'Box', children: [] },
+        state: {},
+      }),
+      fromPartial<ToolContext>({
+        toolCallId: 'call-correlated-create',
+        origin: 'trusted:user',
+        taint: new TurnTaintAccumulator(['trusted:user']),
+        initiatingTurn: { clientId: 'pwa-1', turnId: 'trn-1' },
+      }),
+    )
+
+    expect(observed).toHaveLength(1)
+    expect(observed[0]).toMatchObject({
+      kind: 'created',
+      initiatingTurn: { clientId: 'pwa-1', turnId: 'trn-1' },
+      event: { surface: { id: 'srf-correlated-create' } },
+    })
+    expect(store.surfaceEventsAfter(0)[0]).not.toHaveProperty('initiatingTurn')
+  })
+
   it('declares every Surface tool L0 (daemon-internal, no outbound effect)', async () => {
     const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
     const tools = store.surfaceTools()

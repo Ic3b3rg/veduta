@@ -304,6 +304,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
               contextOrigins,
               ...spaceField,
               trigger: { kind: 'chat', summary: event.text },
+              initiatingTurn: { clientId: event.clientId, turnId },
               retryOfFailedTurn: attempt > 0,
             })
           },

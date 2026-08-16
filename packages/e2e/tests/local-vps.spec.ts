@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stack.ts'
 
 /**
@@ -33,6 +33,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
   test.setTimeout(15 * 60_000)
 
   let stack: LocalVpsStack | undefined
+  let observerContext: BrowserContext | undefined
   const context = await browser.newContext()
   const page = await context.newPage()
 
@@ -214,6 +215,82 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       expect(events.some(isGroceriesToggleEvent)).toBe(true)
     })
 
+    await test.step('chat-created Surface is revealed only in the initiating browser context', async () => {
+      const groceries = surfaceCard(page, 'Groceries')
+      await groceries.getByRole('button', { name: 'Pin Groceries' }).click()
+      await expect(groceries.getByRole('button', { name: 'Pinned Groceries' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      )
+
+      await page.setViewportSize({ width: 720, height: 500 })
+      observerContext = await browser.newContext({
+        storageState: await context.storageState(),
+        viewport: { width: 720, height: 500 },
+      })
+      const observerPage = await observerContext.newPage()
+      await observerPage.goto(stack!.origin)
+      await expect(observerPage.locator('.status-pill.online')).toHaveText('Live')
+      await expect(observerPage.getByRole('button', { name: 'Focus Groceries' })).toBeVisible()
+
+      await Promise.all([
+        page.evaluate(() => window.scrollTo(0, 0)),
+        observerPage.evaluate(() => window.scrollTo(0, 0)),
+      ])
+
+      const initiatingUrl = page.url()
+      const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
+      await chatInput.fill('create Weekly groceries from the Groceries Template')
+      await expect(chatInput).toBeFocused()
+      await chatInput.press('Enter')
+
+      const initiatingCard = surfaceCard(page, 'Weekly groceries')
+      const observerCard = surfaceCard(observerPage, 'Weekly groceries')
+      await expect(initiatingCard).toHaveClass(/creation-highlight/, { timeout: 2_000 })
+      await expect(observerCard).toBeAttached()
+      await expect(observerCard).not.toHaveClass(/creation-highlight/)
+
+      const observerCardTop = await observerCard.evaluate(
+        (card) => card.getBoundingClientRect().top,
+      )
+      expect(observerCardTop).toBeGreaterThan(500)
+      expect(await observerPage.evaluate(() => window.scrollY)).toBe(0)
+
+      await expect
+        .poll(() => page.evaluate(() => window.scrollY), { timeout: 3_000 })
+        .toBeGreaterThan(0)
+      await expect
+        .poll(
+          () =>
+            initiatingCard.evaluate((card) => {
+              const bounds = card.getBoundingClientRect()
+              return Math.abs(bounds.top + bounds.height / 2 - window.innerHeight / 2)
+            }),
+          { timeout: 3_000 },
+        )
+        .toBeLessThan(80)
+
+      await expect(chatInput).toBeFocused()
+      await expect(
+        initiatingCard.getByRole('button', { name: 'Focus Weekly groceries' }),
+      ).toHaveAttribute('aria-pressed', 'false')
+      await expect(
+        page.getByRole('complementary', { name: 'Spaces' }).getByRole('button', { name: 'Health' }),
+      ).toHaveClass(/selected/)
+      expect(page.url()).toBe(initiatingUrl)
+
+      await expect(initiatingCard).not.toHaveClass(/creation-highlight/, { timeout: 3_000 })
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await page.reload()
+      await expect(page.locator('.status-pill.online')).toHaveText('Live')
+      await expect(surfaceCard(page, 'Weekly groceries')).toBeAttached()
+      await expect(surfaceCard(page, 'Weekly groceries')).not.toHaveClass(/creation-highlight/)
+      expect(await page.evaluate(() => window.scrollY)).toBe(0)
+
+      await observerContext.close()
+      observerContext = undefined
+    })
+
     await test.step('restart persistence (AC3): stop, start a NEW runner on the same base dir/port', async () => {
       await stack!.stop()
       const restarted = await startLocalVpsStack({
@@ -231,7 +308,9 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         timeout: 30_000,
       })
       await expectMealLogged(page)
-      await expect(page.getByRole('checkbox', { name: 'Milk' })).toBeChecked()
+      await expect(
+        surfaceCard(page, 'Groceries').getByRole('checkbox', { name: 'Milk' }),
+      ).toBeChecked()
 
       // AC1, restated: still production auth after a full stop/restart on
       // the same base dir, not just right after registration.
@@ -259,6 +338,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expectMealLogged(page)
     })
   } finally {
+    await observerContext?.close()
     await stack?.stop()
     if (stack) await cleanupStackDirs(stack)
     await context.close()

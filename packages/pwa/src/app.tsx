@@ -1,4 +1,10 @@
-import type { ApprovalCard, ChatMessage, OnboardingStatus, Surface } from '@veduta/protocol'
+import type {
+  ApprovalCard,
+  ChatMessage,
+  GatewayServerMessage,
+  OnboardingStatus,
+  Surface,
+} from '@veduta/protocol'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { dismissCardsForSurface } from './approval-cards.tsx'
 import {
@@ -56,6 +62,7 @@ import {
   type QueuedFastAction,
 } from './pwa-storage.ts'
 import { syncPush } from './push.ts'
+import { useSurfaceCreationFeedback } from './surface-creation-feedback.ts'
 import './app.css'
 
 export function App() {
@@ -86,6 +93,11 @@ export function App() {
   )
   const [focusChatToken, setFocusChatToken] = useState(0)
   const [streamingTurns, setStreamingTurns] = useState<Map<string, StreamingTurn>>(new Map())
+  const {
+    feedbackKeys: surfaceCreationFeedbackKeys,
+    registerLiveCreation,
+    acknowledge: acknowledgeSurfaceCreationFeedback,
+  } = useSurfaceCreationFeedback()
   // Which full-page view is showing (issue #47): a minimal view switch, not
   // a router -- Home is the only view with the topbar/space-rail/chat shell,
   // and `model-connections` is a standalone screen reached from the
@@ -252,6 +264,14 @@ export function App() {
     [refetchAndReplay, replaceSpaces],
   )
 
+  const handleSurfaceCreatedMessage = useCallback(
+    (message: Extract<GatewayServerMessage, { type: 'surface.created' }>) => {
+      registerLiveCreation(message, clientIdRef.current, streamingTurnsRef.current)
+      handleSurfaceStreamEvent({ type: 'surface.created', event: message.event })
+    },
+    [handleSurfaceStreamEvent, registerLiveCreation],
+  )
+
   useEffect(() => {
     const onBeforeInstallPrompt = (event: Event) => {
       event.preventDefault()
@@ -310,8 +330,8 @@ export function App() {
         onSurfacePatch(event) {
           handleSurfaceStreamEvent({ type: 'surface.patch', event })
         },
-        onSurfaceCreated(event) {
-          handleSurfaceStreamEvent({ type: 'surface.created', event })
+        onSurfaceCreated(message) {
+          handleSurfaceCreatedMessage(message)
         },
         onSurfaceArchived(event) {
           handleSurfaceStreamEvent({ type: 'surface.archived', event })
@@ -385,6 +405,7 @@ export function App() {
     }
   }, [
     handleSurfaceStreamEvent,
+    handleSurfaceCreatedMessage,
     appendChatEntry,
     applyIncomingTurnFrame,
     authToken,
@@ -665,6 +686,7 @@ export function App() {
       spaces={spaces}
       focusedSpace={focusedSpace}
       focusedSurfaceId={focusedSurfaceId}
+      surfaceCreationFeedbackKeys={surfaceCreationFeedbackKeys}
       surfaceOrders={surfaceOrders}
       approvalCards={approvalCards}
       chatEntries={chatEntries}
@@ -683,6 +705,7 @@ export function App() {
       onSurfacePatched={replaceSurface}
       onQueueFastAction={queueFastAction}
       onTogglePin={togglePin}
+      onSurfaceCreationFeedbackShown={acknowledgeSurfaceCreationFeedback}
       onError={setError}
       onApprovalCardsChange={setApprovalCards}
       onSend={(message) => {

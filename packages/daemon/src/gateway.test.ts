@@ -387,6 +387,46 @@ describe('GatewayHub Surface sync', () => {
     })
   })
 
+  it('broadcasts exact initiating-turn correlation live to every client but omits it from replay', () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store)
+    const first = new FakeGatewaySocket()
+    const second = new FakeGatewaySocket()
+    gateway.connect(first)
+    gateway.connect(second)
+    const cursorBefore = store.latestSurfaceCursor()
+    first.receive({ type: 'hello', clientId: 'pwa-1', surfaceCursor: cursorBefore })
+    second.receive({ type: 'hello', clientId: 'pwa-2', surfaceCursor: cursorBefore })
+
+    store.createSurface(agentActionSurface(), 'agent', {
+      initiatingTurn: { clientId: 'pwa-1', turnId: 'trn-1' },
+    })
+
+    for (const socket of [first, second]) {
+      const created = socket.sent.find(
+        (frame) =>
+          frame.type === 'surface.created' && frame.event.surface.id === 'srf-agent-action',
+      )
+      expect(created).toMatchObject({
+        type: 'surface.created',
+        initiatingTurn: { clientId: 'pwa-1', turnId: 'trn-1' },
+      })
+    }
+
+    const reconnected = new FakeGatewaySocket()
+    gateway.connect(reconnected)
+    reconnected.receive({
+      type: 'hello',
+      clientId: 'pwa-reconnected',
+      surfaceCursor: cursorBefore,
+    })
+    const replayed = reconnected.sent.find(
+      (frame) => frame.type === 'surface.created' && frame.event.surface.id === 'srf-agent-action',
+    )
+    expect(replayed).toBeDefined()
+    expect(replayed).not.toHaveProperty('initiatingTurn')
+  })
+
   it('broadcasts exactly one surface.archived message when a Surface is archived', () => {
     const store = new Store()
     store.createSurface(agentActionSurface(), 'agent')

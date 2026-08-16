@@ -1,5 +1,6 @@
 import { renderNode } from '@veduta/catalog'
 import type { AtomNode, JsonValue, Surface } from '@veduta/protocol'
+import { useEffect, useRef, useState } from 'react'
 import {
   fastActionIdempotencyKey,
   freshnessLabel,
@@ -14,6 +15,7 @@ export function SurfaceCard({
   surface,
   token,
   selected,
+  creationFeedbackKey,
   canMoveUp,
   canMoveDown,
   onFocus,
@@ -22,11 +24,13 @@ export function SurfaceCard({
   onPatched,
   onQueueFastAction,
   onTogglePin,
+  onCreationFeedbackShown,
   onError,
 }: {
   surface: Surface
   token?: string | undefined
   selected: boolean
+  creationFeedbackKey?: string | undefined
   canMoveUp: boolean
   canMoveDown: boolean
   onFocus: () => void
@@ -35,9 +39,36 @@ export function SurfaceCard({
   onPatched: (s: Surface) => void
   onQueueFastAction: (action: QueuedFastAction) => void
   onTogglePin: (pinned: boolean) => void
+  onCreationFeedbackShown: (feedbackKey: string) => void
   onError: (message: string) => void
 }) {
   const theme = useCatalogTheme()
+  const cardRef = useRef<HTMLElement>(null)
+  const handledCreationFeedbackRef = useRef<string | undefined>(undefined)
+  const [creationHighlighted, setCreationHighlighted] = useState(false)
+
+  useEffect(() => {
+    if (
+      creationFeedbackKey === undefined ||
+      handledCreationFeedbackRef.current === creationFeedbackKey
+    ) {
+      return
+    }
+    const card = cardRef.current
+    if (!card) return
+
+    handledCreationFeedbackRef.current = creationFeedbackKey
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    card.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' })
+    setCreationHighlighted(true)
+    onCreationFeedbackShown(creationFeedbackKey)
+  }, [creationFeedbackKey, onCreationFeedbackShown])
+
+  useEffect(() => {
+    if (!creationHighlighted) return
+    const timeout = window.setTimeout(() => setCreationHighlighted(false), 2_000)
+    return () => window.clearTimeout(timeout)
+  }, [creationHighlighted])
   const dispatch = (node: AtomNode, actionName: string, value?: JsonValue) => {
     const action = node.actions?.find((a) => a.name === actionName)
     if (!action) {
@@ -84,7 +115,16 @@ export function SurfaceCard({
   }
 
   return (
-    <article className={selected ? 'surface-card selected' : 'surface-card'}>
+    <article
+      ref={cardRef}
+      className={[
+        'surface-card',
+        selected ? 'selected' : '',
+        creationHighlighted ? 'creation-highlight' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
       <div className="surface-toolbar">
         <button
           type="button"

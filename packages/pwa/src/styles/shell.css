@@ -229,6 +229,29 @@
   outline-offset: 4px;
 }
 
+.surface-card.creation-highlight {
+  animation: surface-creation-highlight 2s ease-out;
+  outline: 3px solid var(--accent);
+  outline-offset: 4px;
+}
+
+@keyframes surface-creation-highlight {
+  0%,
+  40% {
+    outline-color: var(--accent);
+  }
+  100% {
+    outline-color: var(--accent-soft);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surface-card.creation-highlight {
+    animation: none;
+    outline-color: var(--accent);
+  }
+}
+
 .surface-toolbar {
   align-items: center;
   display: flex;

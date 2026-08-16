@@ -10,24 +10,28 @@ export function SpaceSection({
   authToken,
   focused,
   focusedSurfaceId,
+  surfaceCreationFeedbackKeys,
   surfaceOrder,
   onFocus,
   onMoveSurface,
   onPatched,
   onQueueFastAction,
   onTogglePin,
+  onSurfaceCreationFeedbackShown,
   onError,
 }: {
   space: SpaceWithSurfaces
   authToken: string | undefined
   focused: boolean
   focusedSurfaceId: string | undefined
+  surfaceCreationFeedbackKeys: Record<string, string>
   surfaceOrder: string[]
   onFocus: (space: SpaceWithSurfaces, surface?: Surface) => void
   onMoveSurface: (space: SpaceWithSurfaces, surfaceId: string, offset: -1 | 1) => void
   onPatched: (surface: Surface) => void
   onQueueFastAction: (action: QueuedFastAction) => void
   onTogglePin: (surface: Surface, pinned: boolean) => void
+  onSurfaceCreationFeedbackShown: (surfaceId: string, feedbackKey: string) => void
   onError: (message: string) => void
 }) {
   const ids = mergeSurfaceOrder(
@@ -60,6 +64,7 @@ export function SpaceSection({
             surface={surface}
             token={authToken}
             selected={surface.id === focusedSurfaceId}
+            creationFeedbackKey={surfaceCreationFeedbackKeys[surface.id]}
             canMoveUp={index > 0}
             canMoveDown={index < surfaces.length - 1}
             onFocus={() => onFocus(space, surface)}
@@ -68,6 +73,9 @@ export function SpaceSection({
             onPatched={onPatched}
             onQueueFastAction={onQueueFastAction}
             onTogglePin={(pinned) => onTogglePin(surface, pinned)}
+            onCreationFeedbackShown={(feedbackKey) =>
+              onSurfaceCreationFeedbackShown(surface.id, feedbackKey)
+            }
             onError={onError}
           />
         ))}

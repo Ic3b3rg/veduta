@@ -16,6 +16,7 @@ import {
   findDeclaredAgentAction,
   type ActionInvocation,
   type AtomNode,
+  type ChatTurnCorrelation,
   type Freshness,
   type JsonObject,
   type JsonValue,
@@ -127,7 +128,7 @@ export interface AuthorableSurfaceRead extends SurfaceVersion {
  */
 export type SurfaceEngineEvent =
   | { kind: 'patch'; event: SurfacePatchEvent }
-  | { kind: 'created'; event: SurfaceCreatedEvent }
+  | { kind: 'created'; event: SurfaceCreatedEvent; initiatingTurn?: ChatTurnCorrelation }
   | { kind: 'archived'; event: SurfaceArchivedEvent }
   | { kind: 'pinned'; event: SurfacePinnedEvent }
 
@@ -251,6 +252,11 @@ type CreateSurfaceInput = z.infer<typeof CreateSurfaceToolInputSchema>
 
 export interface CreateSurfaceOptions {
   origin?: Origin
+  /**
+   * Live PWA turn that requested this creation. It is attached only to the
+   * post-commit notification and is never written into `surface_events`.
+   */
+  initiatingTurn?: ChatTurnCorrelation
   /**
    * Marks the created Surface as owned by the daemon itself (approval
    * cards, trust admin Surfaces), not by the Agent: `patchState`/
@@ -463,7 +469,11 @@ export class SurfaceEngine {
       })
       return this.insertCreatedEvent(surface)
     })
-    this.notifySurfaceEvent({ kind: 'created', event })
+    this.notifySurfaceEvent({
+      kind: 'created',
+      event,
+      ...(options?.initiatingTurn === undefined ? {} : { initiatingTurn: options.initiatingTurn }),
+    })
     return surface
   }
 
@@ -833,6 +843,9 @@ export class SurfaceEngine {
         handler: (input, context) => {
           const surface = this.createSurface(input, 'agent', {
             origin: effectiveToolWriteOrigin(context.taint.origins(), context.origin),
+            ...(context.initiatingTurn === undefined
+              ? {}
+              : { initiatingTurn: context.initiatingTurn }),
           })
           return { content: `created Surface ${surface.id}`, details: { surface } }
         },

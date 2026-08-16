@@ -1,3 +1,4 @@
+import type { ChatTurnCorrelation } from '@veduta/protocol'
 import {
   AgentEventBus,
   computeContextHash,
@@ -65,6 +66,7 @@ export class MockAgentRunner implements AgentRunner {
   private currentTurnInput = ''
   private currentSpaceId: string | undefined = undefined
   private currentTrigger: TriggerRef | undefined = undefined
+  private currentInitiatingTurn: ChatTurnCorrelation | undefined = undefined
 
   /** The tools admitted to the most recent `prompt()` call, after the taint gate. */
   lastGatedTools: ToolDef[] = []
@@ -113,6 +115,7 @@ export class MockAgentRunner implements AgentRunner {
     this.currentTurnInput = input
     this.currentSpaceId = options.spaceId
     this.currentTrigger = options.trigger
+    this.currentInitiatingTurn = options.initiatingTurn
     this.lastGatedTools = gateToolsForOrigins(
       options.tools ?? [],
       candidateOrigins,
@@ -175,6 +178,9 @@ export class MockAgentRunner implements AgentRunner {
       contextHash: this.contextHash,
       ...(this.currentSpaceId === undefined ? {} : { spaceId: this.currentSpaceId }),
       ...(this.currentTrigger === undefined ? {} : { trigger: this.currentTrigger }),
+      ...(this.currentInitiatingTurn === undefined
+        ? {}
+        : { initiatingTurn: this.currentInitiatingTurn }),
     }
     const result = await tool.handler(parsed, context)
     if (result.origins && result.origins.length > 0) {

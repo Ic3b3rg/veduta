@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { ToolContext, ToolDef } from './agent-runner.ts'
 import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
 import { Store } from './store.ts'
+import type { SurfaceEngineEvent } from './surface-engine.ts'
 import { TemplateEngine } from './template-engine.ts'
 import { TurnTaintAccumulator } from './taint.ts'
 import { piToolParameters } from './tool-parameters.ts'
@@ -175,6 +176,16 @@ describe('createFocusedSurfaceTools', () => {
       updatedBy: 'user',
     })
     if (!template) throw new Error('expected the pinned Surface to save a Template')
+    const observed: SurfaceEngineEvent[] = []
+    store.onSurfaceEvent((event) => observed.push(event))
+    const initiatingContext = fromPartial<ToolContext>({
+      toolCallId: 'correlated-direct-create',
+      origin: 'trusted:user',
+      origins: ['trusted:user'],
+      taint: new TurnTaintAccumulator(['trusted:user']),
+      contextHash: 'focused-surface-tools-test',
+      initiatingTurn: { clientId: 'pwa-direct', turnId: 'trn-direct' },
+    })
 
     const createSurface = toolNamed(tools, 'create_surface')
     const candidate = {
@@ -191,20 +202,27 @@ describe('createFocusedSurfaceTools', () => {
     }
     const refusal = await createSurface.handler(
       createSurface.schema.parse(candidate),
-      trustedContext,
+      initiatingContext,
     )
     expect(refusal.content).toContain(template.id)
     expect(refusal.content).toContain(space.id)
     expect(store.getSurface(candidate.id)).toBeUndefined()
+    expect(observed).toEqual([])
 
     await createSurface.handler(
       createSurface.schema.parse({
         ...candidate,
         justification: 'This Surface needs an independently evolving composition.',
       }),
-      trustedContext,
+      initiatingContext,
     )
     expect(store.getSurface(candidate.id)).toMatchObject({ spaceId: space.id })
+    expect(observed).toHaveLength(1)
+    expect(observed[0]).toMatchObject({
+      kind: 'created',
+      initiatingTurn: { clientId: 'pwa-direct', turnId: 'trn-direct' },
+      event: { surface: { id: candidate.id } },
+    })
     expect(
       store
         .eventLog(space.id)

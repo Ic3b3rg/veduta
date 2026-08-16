@@ -461,6 +461,37 @@ function deliver(socket: ReturnType<typeof fakeWebSocket>, frame: unknown): void
 }
 
 describe('connectGateway chat.turn-* dispatch', () => {
+  it('dispatches the complete surface.created frame so live correlation is not discarded', () => {
+    const onSurfaceCreated = vi.fn()
+    const { socket } = connectWithFakeSocket({ onSurfaceCreated })
+    const frame = {
+      type: 'surface.created',
+      event: {
+        cursor: 1,
+        at: '2026-08-16T10:00:00.000Z',
+        spaceId: 'spc-home',
+        surface: {
+          id: 'srf-created',
+          spaceId: 'spc-home',
+          title: 'Created',
+          tree: { id: 'root', type: 'Box' },
+          state: {},
+          freshness: { updatedAt: '2026-08-16T10:00:00.000Z', updatedBy: 'agent' },
+        },
+      },
+      initiatingTurn: { clientId: 'pwa-1', turnId: 'turn-1' },
+    }
+
+    deliver(socket, frame)
+
+    expect(onSurfaceCreated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'surface.created',
+        initiatingTurn: { clientId: 'pwa-1', turnId: 'turn-1' },
+      }),
+    )
+  })
+
   it('dispatches chat.turn-start to onChatTurnStart', () => {
     const onChatTurnStart = vi.fn()
     const { socket } = connectWithFakeSocket({ onChatTurnStart })

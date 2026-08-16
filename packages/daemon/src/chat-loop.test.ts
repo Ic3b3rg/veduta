@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import type { GatewayServerMessage } from '@veduta/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { defineTool, type ToolDef } from './agent-runner.ts'
+import { defineTool, type ToolContext, type ToolDef } from './agent-runner.ts'
 import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import { createChatLoop, type ChatLoop } from './chat-loop.ts'
 import {
@@ -33,6 +33,7 @@ interface Harness {
   chatLoop: ChatLoop
   frames: { clientId: string; frame: GatewayServerMessage }[]
   toolExecutions: { name: string; input: unknown }[]
+  toolContexts: ToolContext[]
   toolsForCalls: (string | undefined)[]
   sessionStore: PiJsonlSessionStore
   /** `<rootDir>` the `Store` and `ModelRouter` both persist under — used to read `usage/<date>.jsonl` back for AC1's spend-attribution tail. */
@@ -87,14 +88,16 @@ function buildHarness(
   const sessionStore = new PiJsonlSessionStore({ cwd, sessionsRoot })
 
   const toolExecutions: { name: string; input: unknown }[] = []
+  const toolContexts: ToolContext[] = []
   const testTool: ToolDef = defineTool({
     name: 'test_tool',
     description: 'a test tool with an observable side effect',
     schema: z.object({ value: z.string() }),
     level: 'L0',
     egressDomains: [],
-    handler: (input) => {
+    handler: (input, context) => {
       toolExecutions.push({ name: 'test_tool', input })
+      toolContexts.push(context)
       return { content: 'tool ok' }
     },
   })
@@ -133,6 +136,7 @@ function buildHarness(
     chatLoop,
     frames,
     toolExecutions,
+    toolContexts,
     toolsForCalls,
     sessionStore,
     rootDir,
@@ -320,6 +324,27 @@ describe('createChatLoop', () => {
     expect(h.frames.at(-1)!.frame).toMatchObject({
       type: 'chat.turn-end',
       message: { role: 'assistant', text: 'done' },
+    })
+  })
+
+  it('provides the initiating PWA client and Gateway turn id to every chat tool call', async () => {
+    const h = harness()
+    const spaceId = h.store.listSpaces()[0]!.id
+    h.fake.setResponses([
+      { message: fakeToolCall('test_tool', { value: 'x' }) },
+      { message: fakeText('done') },
+    ])
+
+    await h.chatLoop.handleChatMessage(
+      chatEvent({ clientId: 'pwa-initiator', text: 'create it', spaceId }),
+    )
+
+    const start = h.frames.find(({ frame }) => frame.type === 'chat.turn-start')?.frame
+    if (!start || start.type !== 'chat.turn-start') throw new Error('expected a turn start')
+    expect(h.toolContexts).toHaveLength(1)
+    expect(h.toolContexts[0]?.initiatingTurn).toEqual({
+      clientId: 'pwa-initiator',
+      turnId: start.turnId,
     })
   })
 

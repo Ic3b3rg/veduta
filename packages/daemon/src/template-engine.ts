@@ -3,6 +3,7 @@ import {
   AtomNodeSchema,
   JsonObjectSchema,
   SurfaceTemplateIdSchema,
+  type ChatTurnCorrelation,
   type JsonObject,
   type Surface,
   type SurfaceTemplate,
@@ -95,6 +96,8 @@ export interface InstantiateTemplateInput {
   state?: JsonObject
   /** The turn's origin, so an imported Template's untrusted mark cannot be laundered clean. */
   origin: Origin
+  /** Live PWA chat correlation, omitted for every background creation path. */
+  initiatingTurn?: ChatTurnCorrelation
 }
 
 /** A `matchTemplates` hit with the id of the Space the Template lives in. */
@@ -291,6 +294,7 @@ export class TemplateEngine {
       templateSpaceId: input.templateSpaceId,
       contentOrigin,
       origin: writeOrigin,
+      ...(input.initiatingTurn === undefined ? {} : { initiatingTurn: input.initiatingTurn }),
     })
 
     this.store.spacesEngine.appendEvent(input.spaceId, {
@@ -502,6 +506,9 @@ export function templateTools(
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.state === undefined ? {} : { state: input.state }),
           origin,
+          ...(context.initiatingTurn === undefined
+            ? {}
+            : { initiatingTurn: context.initiatingTurn }),
         })
         const contentOrigin = engine.store.surfaceProvenance(surface.id)?.contentOrigin ?? origin
         return {

@@ -8,6 +8,7 @@ import { createMockOutboundTransport, createOutboundTools } from './outbound-too
 import type { PiAssistantMessage, PiChatContext } from './pi-provider-bridge.ts'
 import { Scheduler } from './scheduler.ts'
 import { Store } from './store.ts'
+import { TemplateEngine, templateTools } from './template-engine.ts'
 import { WorkerBriefingSchema } from './worker-briefing.ts'
 
 /**
@@ -20,6 +21,7 @@ import { WorkerBriefingSchema } from './worker-briefing.ts'
  */
 
 const MEAL_REQUEST = 'aggiungi ai meals la fesa di tacchino'
+const TEMPLATE_SURFACE_REQUEST = 'create Weekly groceries from the Groceries Template'
 
 function userContext(text: string): PiChatContext {
   return fromPartial<PiChatContext>({
@@ -205,6 +207,47 @@ describe('createMockChatResponder', () => {
     )
     expect(reply.stopReason).toBe('stop')
     expect(textIn(reply)).toContain('Meals Surface')
+  })
+
+  it('starts the Local VPS Template fixture by finding the Groceries Template', async () => {
+    const responder = createMockChatResponder({})
+    const reply = await responder(userContext(TEMPLATE_SURFACE_REQUEST), { callCount: 0 })
+
+    expect(reply.stopReason).toBe('toolUse')
+    const call = toolCallIn(reply)
+    expect(call.name).toBe('list_templates')
+    expect(call.arguments).toEqual({ intent: 'Groceries' })
+  })
+
+  it('instantiates the Template identity returned by list_templates through the real tool schema', async () => {
+    const store = new Store()
+    const space = store.spacesEngine.createSpace({ name: 'Health' })
+    const engine = new TemplateEngine({ store })
+    const responder = createMockChatResponder({})
+    const context = toolResultContext(TEMPLATE_SURFACE_REQUEST, [
+      {
+        toolName: 'list_templates',
+        content:
+          'tpl-groceries-0123456789abcdef (Space spc-health) score=1.20 — "Groceries" ' +
+          'intent="Groceries" signature="Box:1|Checkbox:1" dataProps=[]',
+      },
+    ])
+
+    const reply = await responder(context, { callCount: 1 })
+    expect(reply.stopReason).toBe('toolUse')
+    const call = toolCallIn(reply)
+    expect(call.name).toBe('create_surface_from_template')
+    expect(call.arguments).toEqual({
+      templateId: 'tpl-groceries-0123456789abcdef',
+      templateSpaceId: 'spc-health',
+      surfaceId: 'srf-weekly-groceries',
+      title: 'Weekly groceries',
+    })
+
+    const createFromTemplateSchema = templateTools(engine, { activeSpaceId: space.id }).find(
+      (tool) => tool.name === 'create_surface_from_template',
+    )!.schema
+    expect(createFromTemplateSchema.safeParse(call.arguments).success).toBe(true)
   })
 
   it('arms a reminder via arm_timer, validating against the real Scheduler schema', async () => {

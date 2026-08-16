@@ -359,7 +359,13 @@ export class GatewayHub {
 
 /** The one place a `SurfaceEngineEvent` becomes a Gateway server frame, shared by hello replay and the live broadcast. */
 function surfaceEventFrame(event: SurfaceEngineEvent): GatewayServerMessage {
-  if (event.kind === 'created') return { type: 'surface.created', event: event.event }
+  if (event.kind === 'created') {
+    return {
+      type: 'surface.created',
+      event: event.event,
+      ...(event.initiatingTurn === undefined ? {} : { initiatingTurn: event.initiatingTurn }),
+    }
+  }
   if (event.kind === 'archived') return { type: 'surface.archived', event: event.event }
   if (event.kind === 'pinned') return { type: 'surface.pinned', event: event.event }
   return { type: 'surface.patch', event: event.event }

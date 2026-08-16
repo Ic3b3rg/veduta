@@ -6,6 +6,7 @@ import { SurfaceSchema, type Surface } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import type { ToolContext, ToolDef } from './agent-runner.ts'
 import { Store } from './store.ts'
+import type { SurfaceEngineEvent } from './surface-engine.ts'
 import {
   gateCreateSurfaceTool,
   templateTools,
@@ -172,6 +173,47 @@ describe('TemplateEngine', () => {
       // `'trusted:system'`: an ordinary trusted reuse of a trusted Template
       // is an honest user-facing composition (docs/adr/0012-emergent-templates.md).
       expect(reused.origins).toEqual(['trusted:user'])
+    })
+
+    it('preserves the initiating chat turn when create_surface_from_template emits its live creation', async () => {
+      const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+      const sourceSpace = store.spacesEngine.createSpace({ name: 'Template Source' })
+      const targetSpace = store.spacesEngine.createSpace({ name: 'Template Target' })
+      const engine = new TemplateEngine({ store, now: fixedNow })
+      store.createSurface(trackerSurface('srf-template-source', sourceSpace.id), 'agent')
+      const { template } = engine.pin('srf-template-source', true, {
+        origin: 'trusted:user',
+        updatedBy: 'user',
+      })
+      if (!template) throw new Error('expected a Template')
+      const observed: SurfaceEngineEvent[] = []
+      store.onSurfaceEvent((event) => observed.push(event))
+
+      const createFromTemplate = findTool(
+        templateTools(engine, { activeSpaceId: targetSpace.id }),
+        'create_surface_from_template',
+      )
+      await createFromTemplate.handler(
+        createFromTemplate.schema.parse({
+          templateId: template.id,
+          templateSpaceId: sourceSpace.id,
+          surfaceId: 'srf-template-correlated',
+        }),
+        fromPartial<ToolContext>({
+          toolCallId: 'call-template-correlated',
+          origin: 'trusted:user',
+          origins: ['trusted:user'],
+          taint: new TurnTaintAccumulator(['trusted:user']),
+          initiatingTurn: { clientId: 'pwa-2', turnId: 'trn-2' },
+        }),
+      )
+
+      expect(observed).toHaveLength(1)
+      expect(observed[0]).toMatchObject({
+        kind: 'created',
+        initiatingTurn: { clientId: 'pwa-2', turnId: 'trn-2' },
+        event: { surface: { id: 'srf-template-correlated' } },
+      })
     })
 
     it('lets create_surface proceed with a justification and appends template.regenerated', async () => {

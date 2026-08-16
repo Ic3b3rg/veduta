@@ -59,6 +59,7 @@ function activeSpaceId(context: PiChatContext): string {
 
 const MEAL_REQUEST = 'aggiungi ai meals la fesa di tacchino'
 const MEAL_LABEL = 'fesa di tacchino'
+const TEMPLATE_SURFACE_REQUEST = 'create Weekly groceries from the Groceries Template'
 const REMINDER_RE = /\bremind me to\s+(.+?)\s+by\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i
 const SEND_RE = /^send to\s+(\S+)\s*:\s*(.+)$/i
 const TRANSFER_RE = /^transfer\s+([0-9]+(?:\.[0-9]+)?)\s+to\s+(\S+)$/i
@@ -96,11 +97,51 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
 
     const text = userMessageText(context.messages[lastUserIndex] as PiUserMessage).trim()
     if (text === MEAL_REQUEST) return respondToMealFixture(toolResultsAfter, now())
+    if (text === TEMPLATE_SURFACE_REQUEST) {
+      return respondToTemplateSurfaceFixture(toolResultsAfter)
+    }
 
     const lastToolResult = toolResultsAfter.at(-1)
     if (lastToolResult) return closingMessage(lastToolResult)
     return respondToUserText(text, now(), activeSpaceId(context))
   }
+}
+
+function respondToTemplateSurfaceFixture(results: PiToolResultMessage[]): PiAssistantMessage {
+  const listResult = results.find((result) => result.toolName === 'list_templates')
+  if (!listResult) {
+    return toolCallMessage(
+      'list_templates',
+      { intent: 'Groceries' },
+      'Looking for the Groceries Template.',
+    )
+  }
+
+  const template = templateLocation(toolResultText(listResult))
+  if (!template) return piFauxAssistantMessage('No matching Groceries Template was found.')
+
+  const creationResult = results.find(
+    (result) => result.toolName === 'create_surface_from_template',
+  )
+  if (creationResult) return closingMessage(creationResult)
+
+  return toolCallMessage(
+    'create_surface_from_template',
+    {
+      templateId: template.templateId,
+      templateSpaceId: template.spaceId,
+      surfaceId: 'srf-weekly-groceries',
+      title: 'Weekly groceries',
+    },
+    'Creating Weekly groceries from the Groceries Template.',
+  )
+}
+
+function templateLocation(content: string): { templateId: string; spaceId: string } | undefined {
+  const match = /^(tpl-[a-z0-9][a-z0-9-]{0,63}) \(Space ([^)\r\n]+)\)(?:\s|$)/m.exec(content)
+  const templateId = match?.[1]
+  const spaceId = match?.[2]
+  return templateId === undefined || spaceId === undefined ? undefined : { templateId, spaceId }
 }
 
 function respondToUserText(text: string, at: Date, spaceId: string): PiAssistantMessage {

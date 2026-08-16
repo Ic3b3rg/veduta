@@ -112,6 +112,41 @@ describe('Gateway protocol', () => {
     })
   })
 
+  it('preserves an exact initiating chat turn only on the live surface.created frame', () => {
+    const event = SurfaceCreatedEventSchema.parse({
+      cursor: 2,
+      at: '2026-07-03T10:00:00.000Z',
+      spaceId: 'spc-health',
+      surface: {
+        id: 'srf-groceries',
+        spaceId: 'spc-health',
+        title: 'Groceries',
+        tree: { id: 'root', type: 'Box' },
+        state: {},
+        freshness: { updatedAt: '2026-07-03T10:00:00.000Z', updatedBy: 'agent' },
+      },
+    })
+    const frame = {
+      type: 'surface.created' as const,
+      event,
+      initiatingTurn: { clientId: 'pwa-1', turnId: 'trn-1' },
+    }
+
+    expect(GatewayServerMessageSchema.parse(frame)).toEqual(frame)
+    expect(
+      GatewayServerMessageSchema.safeParse({
+        ...frame,
+        initiatingTurn: { turnId: 'trn-1' },
+      }).success,
+    ).toBe(false)
+    expect(
+      GatewayServerMessageSchema.safeParse({
+        ...frame,
+        initiatingTurn: { clientId: 'pwa-1' },
+      }).success,
+    ).toBe(false)
+  })
+
   it('accepts a surface.archived message for a retired Surface', () => {
     const event = SurfaceArchivedEventSchema.parse({
       cursor: 3,

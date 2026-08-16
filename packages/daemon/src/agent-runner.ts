@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { canonicalJson } from '@veduta/protocol'
+import { canonicalJson, type ChatTurnCorrelation } from '@veduta/protocol'
 import type { z } from 'zod'
 import type { Origin, TurnTaint } from './taint.ts'
 
@@ -110,6 +110,11 @@ export interface AgentPromptOptions {
   spaceId?: string
   /** What caused this turn (threaded into `ToolContext.trigger`). */
   trigger?: TriggerRef
+  /**
+   * The PWA client and Gateway turn that initiated this prompt, when it came
+   * from live chat. Background and replayed work intentionally omit it.
+   */
+  initiatingTurn?: ChatTurnCorrelation
 }
 
 export interface AgentRunner {
@@ -164,6 +169,8 @@ export interface ToolContext {
   spaceId?: string
   /** What caused this turn — chat, an external event, an automation, or a follow-up agent turn. */
   trigger?: TriggerRef
+  /** Live PWA chat correlation, absent for Agent-driven and background turns. */
+  initiatingTurn?: ChatTurnCorrelation
   /**
    * sha256 of the canonical model-visible context envelope for the
    * immediately preceding model inference: proof of

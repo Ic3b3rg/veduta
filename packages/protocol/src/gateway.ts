@@ -60,6 +60,16 @@ export const SurfaceArchivedEventSchema = z.object({
   surfaceId: z.string().min(1),
 })
 
+/**
+ * Identifies the PWA client and logical chat turn that initiated a live
+ * operation. This is delivery metadata, not durable Surface state: replayed
+ * events intentionally omit it so reconnects cannot repeat local feedback.
+ */
+export const ChatTurnCorrelationSchema = z.object({
+  clientId: z.string().min(1),
+  turnId: z.string().min(1),
+})
+
 export const SurfacePinnedEventSchema = z.object({
   cursor: GatewayCursorSchema,
   at: z.string().datetime(),
@@ -145,6 +155,7 @@ export const GatewayServerMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('surface.created'),
     event: SurfaceCreatedEventSchema,
+    initiatingTurn: ChatTurnCorrelationSchema.optional(),
   }),
   z.object({
     type: z.literal('surface.archived'),
@@ -189,6 +200,7 @@ export type SurfacePatchEvent = z.infer<typeof SurfacePatchEventSchema>
 export type SurfaceCreatedEvent = z.infer<typeof SurfaceCreatedEventSchema>
 export type SurfaceArchivedEvent = z.infer<typeof SurfaceArchivedEventSchema>
 export type SurfacePinnedEvent = z.infer<typeof SurfacePinnedEventSchema>
+export type ChatTurnCorrelation = z.infer<typeof ChatTurnCorrelationSchema>
 export type ChatTurnStartMessage = z.infer<typeof ChatTurnStartMessageSchema>
 export type ChatTurnDeltaMessage = z.infer<typeof ChatTurnDeltaMessageSchema>
 export type ChatTurnEndMessage = z.infer<typeof ChatTurnEndMessageSchema>

@@ -10,6 +10,7 @@ import {
   type StreamFn,
 } from '@earendil-works/pi-agent-core'
 import { NodeExecutionEnv } from '@earendil-works/pi-agent-core/node'
+import type { ChatTurnCorrelation } from '@veduta/protocol'
 import {
   AgentEventBus,
   buildSessionBranch,
@@ -240,6 +241,7 @@ export class PiAgentRunner implements AgentRunner {
   private currentSystemPrompt: string | undefined = undefined
   private currentSpaceId: string | undefined = undefined
   private currentTrigger: TriggerRef | undefined = undefined
+  private currentInitiatingTurn: ChatTurnCorrelation | undefined = undefined
   /**
    * Hash of the model-visible context for the immediately preceding
    * inference, recomputed by the always-installed
@@ -338,6 +340,7 @@ export class PiAgentRunner implements AgentRunner {
     this.currentTurnInput = input
     this.currentSpaceId = options.spaceId
     this.currentTrigger = options.trigger
+    this.currentInitiatingTurn = options.initiatingTurn
     const tools = this.toPiTools(
       gateToolsForOrigins(options.tools ?? [], candidateOrigins, this.isToolTrustWrapped),
     )
@@ -499,6 +502,9 @@ export class PiAgentRunner implements AgentRunner {
       ...(signal ? { signal } : {}),
       ...(this.currentSpaceId === undefined ? {} : { spaceId: this.currentSpaceId }),
       ...(this.currentTrigger === undefined ? {} : { trigger: this.currentTrigger }),
+      ...(this.currentInitiatingTurn === undefined
+        ? {}
+        : { initiatingTurn: this.currentInitiatingTurn }),
     }
   }
 

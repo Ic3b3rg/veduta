@@ -16,6 +16,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ApiModule from './api.ts'
 import { AUTH_TOKEN_KEY, HOME_CACHE_KEY } from './pwa-storage.ts'
 
+let scrollIntoView: ReturnType<typeof vi.fn>
+
 vi.mock('./api.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>()
   return {
@@ -42,6 +44,11 @@ import {
 // at mount to decide whether to show the install guide) calls it
 // unconditionally.
 beforeEach(() => {
+  scrollIntoView = vi.fn()
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: scrollIntoView,
+  })
   vi.stubGlobal(
     'matchMedia',
     vi.fn().mockReturnValue({
@@ -129,6 +136,35 @@ function connectedChatgptSubscriptionSnapshot(): ModelConnectionsSnapshot {
   }
 }
 
+async function renderConnectedEmptyHealth(clientId: string) {
+  vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
+  vi.mocked(fetchSpaces).mockResolvedValue({
+    surfaceCursor: 0,
+    spaces: [
+      {
+        id: 'spc-health',
+        slug: 'health',
+        name: 'Health',
+        archived: false,
+        attention: 0,
+        attentionRevision: 0,
+        surfaces: [],
+      },
+    ],
+  })
+  vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+    fromPartial<OnboardingStatus>({ required: false, completed: true }),
+  )
+  vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
+
+  render(<App />)
+  await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+  const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
+  if (!handlers) throw new Error('Gateway handlers were not registered')
+  await act(async () => handlers.onHello(0, clientId))
+  return handlers
+}
+
 describe('App', () => {
   it('renders a selected-subscription Surface, streamed confirmation, and follow-up patch live', async () => {
     vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
@@ -187,7 +223,7 @@ describe('App', () => {
     })
 
     act(() => {
-      handlers.onSurfaceCreated(created)
+      handlers.onSurfaceCreated({ type: 'surface.created', event: created })
       handlers.onChatTurnStart({
         type: 'chat.turn-start',
         turnId: 'turn-create',
@@ -229,6 +265,86 @@ describe('App', () => {
     expect(await screen.findByText('On track')).toBeDefined()
     expect(screen.queryByText('Needs water')).toBeNull()
     expect(screen.getByText('Hydration Surface created.')).toBeDefined()
+  })
+
+  it('centres and highlights a correlated chat-created Surface once without changing focus, route, or selection', async () => {
+    const handlers = await renderConnectedEmptyHealth('pwa-initiator')
+    const chatInput = screen.getByRole<HTMLInputElement>('textbox', { name: 'Message Veduta' })
+    chatInput.focus()
+
+    const created = SurfaceCreatedEventSchema.parse({
+      cursor: 1,
+      at: '2026-08-16T10:00:00.000Z',
+      spaceId: 'spc-health',
+      surface: {
+        id: 'srf-weekly-groceries',
+        spaceId: 'spc-health',
+        title: 'Weekly groceries',
+        tree: { id: 'root', type: 'Box', children: [] },
+        state: {},
+        freshness: { updatedAt: '2026-08-16T10:00:00.000Z', updatedBy: 'agent' },
+      },
+    })
+    const correlatedMessage = {
+      type: 'surface.created' as const,
+      event: created,
+      initiatingTurn: { clientId: 'pwa-initiator', turnId: 'turn-create' },
+    }
+
+    act(() => {
+      handlers.onChatTurnStart({
+        type: 'chat.turn-start',
+        turnId: 'turn-create',
+        spaceId: 'spc-health',
+      })
+      handlers.onSurfaceCreated(correlatedMessage)
+    })
+
+    const focusButton = await screen.findByRole('button', { name: 'Focus Weekly groceries' })
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' })
+    expect(focusButton.closest('article')?.classList.contains('creation-highlight')).toBe(true)
+    expect(focusButton.getAttribute('aria-pressed')).toBe('false')
+    expect(document.activeElement).toBe(chatInput)
+    expect(location.pathname).toBe('/')
+  })
+
+  it('uses immediate positioning and a non-animated visible highlight for reduced motion', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockReturnValue({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    )
+    const handlers = await renderConnectedEmptyHealth('pwa-reduced')
+    act(() => {
+      handlers.onChatTurnStart({ type: 'chat.turn-start', turnId: 'turn-reduced' })
+      handlers.onSurfaceCreated({
+        type: 'surface.created',
+        initiatingTurn: { clientId: 'pwa-reduced', turnId: 'turn-reduced' },
+        event: SurfaceCreatedEventSchema.parse({
+          cursor: 1,
+          at: '2026-08-16T10:00:00.000Z',
+          spaceId: 'spc-health',
+          surface: {
+            id: 'srf-reduced',
+            spaceId: 'spc-health',
+            title: 'Reduced motion',
+            tree: { id: 'root', type: 'Box' },
+            state: {},
+            freshness: { updatedAt: '2026-08-16T10:00:00.000Z', updatedBy: 'agent' },
+          },
+        }),
+      })
+    })
+
+    const focusButton = await screen.findByRole('button', { name: 'Focus Reduced motion' })
+    await waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'center' }),
+    )
+    expect(focusButton.closest('article')?.classList.contains('creation-highlight')).toBe(true)
   })
 
   it('renders the status-unavailable screen instead of Home when the onboarding status fetch fails on a production session', async () => {
