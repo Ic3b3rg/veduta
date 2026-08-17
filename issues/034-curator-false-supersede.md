@@ -57,6 +57,6 @@ issue. Recorded in [ADR-0011](../docs/adr/0011-disposable-hybrid-index.md).
 - The refinement case has a decided, tested behaviour rather than an accidental one.
 - `packages/daemon/src/facts.test.ts` covers each of the four.
 
-## Dependencies
+## Blocked by
 
-006, 021
+None — builds on completed issues #6 and #21.

@@ -55,6 +55,6 @@ both under budgets, caps, and the same audit trail, with keyless profiles unchan
   reaches only the requesting client.
 - With zero keys, `pnpm dev` and the e2e suite are unchanged.
 
-## Dependencies
+## Blocked by
 
-013, 017, 021, 037
+None — builds on completed issues #13, #17, #21, and #37.

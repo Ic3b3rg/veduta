@@ -132,3 +132,14 @@ None — builds on completed issues [004](004-gateway.md), [005](005-auth-tls-pa
 [009](009-pwa-home-chat.md), [015](015-security-hardening.md), and
 [037](037-agent-loop-chat.md), and on
 [ADR-0017](../docs/adr/0017-bounded-local-diagnostics.md).
+
+## Implementation tickets
+
+- #82 through #90.
+
+## Parent completion criteria
+
+- [ ] Issues #82 through #90 are complete.
+- [ ] The hidden console provides the bounded, redacted, restart-safe diagnostic path specified
+      here without becoming canonical product state.
+- [ ] The full repository gate and diagnostic recovery evidence are green.

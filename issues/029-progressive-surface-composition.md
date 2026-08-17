@@ -48,6 +48,7 @@ within the existing tree + patch protocol.
 - Every new protocol shape is zod-validated; malformed pending or fill payloads render as
   visible fallbacks, never crash and never disappear
 
-## Dependencies
+## Blocked by
 
-002, 007, 008 (motion polish lands with [issue 028](028-surface-motion.md))
+None — builds on completed issues #2, #7, and #8. Motion polish remains in #28 but does not block
+the protocol-valid progressive composition contract.

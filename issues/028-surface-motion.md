@@ -40,6 +40,6 @@ rest of the Surface stays still.
 - With `prefers-reduced-motion: reduce`, Surfaces render instantly with no entrance or shimmer
 - `packages/protocol` is untouched; every timing comes from a design-system motion token
 
-## Dependencies
+## Blocked by
 
-008
+None — builds on completed issue #8.

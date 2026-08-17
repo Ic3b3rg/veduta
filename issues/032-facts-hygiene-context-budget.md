@@ -52,6 +52,6 @@ A Space's injected FACTS projection is bounded and deterministic, no valid fact 
 - Over `hard`, `write_fact` returns an explicit error and never truncates the injected copy; a size-reducing update and Noop are still accepted over cap; a pre-existing over-cap file boots with a warning and stays functional.
 - Budget check measures the rendered projection and is sub-millisecond (O(projection length), no tokenizer); boundary tests cover exactly-hard, hard+1, Noop, size-reducing update, pre-existing over-cap, one huge superseded entry, nested event payloads, and read→write mid-turn taint.
 
-## Dependencies
+## Blocked by
 
-6. (Enables the budget compaction in 021, which demotes valid facts to dormant; 021 depends on this issue.)
+None — builds on completed issues #6 and #21.

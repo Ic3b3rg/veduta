@@ -118,9 +118,19 @@ provenance, and UI behavior as BYOK.
   relaxing the exact app-server version pin.
 - Adding another subscription provider or changing Claude subscription availability.
 
+## Implementation tickets
+
+- #71 through #76 — completed dynamic-tool transport, Surface, trust, memory, and Template slices.
+- #77 — Automation parity after the focused Automation contract in #93.
+- #78 — Worker parity after real Worker execution in #39.
+- #79 — removal of the temporary capability seam after all parity slices.
+
+## Parent completion criteria
+
+- [ ] Issues #71 through #79 are complete.
+- [ ] Every primary Model connection satisfies one shared AgentRunner tool contract.
+- [ ] The full repository gate and provider-parity suites are green.
+
 ## Blocked by
 
-None — builds on completed issues [003](003-agent-runner-wrapper.md),
-[014](014-trust-layer.md), [037](037-agent-loop-chat.md), [039](039-agent-loop-workers.md), and
-[047](047-model-connections.md), and on
-[ADR-0016](../docs/adr/0016-primary-agent-connections-author-surfaces.md).
+- #39

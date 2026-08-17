@@ -34,6 +34,6 @@ Non-Google mailboxes push mail events with the same latency and discipline as Gm
 - A dropped connection reconnects with backoff; 3 consecutive failures alert the user once
 - Credentials never appear in logs, the Event log, or LLM context
 
-## Dependencies
+## Blocked by
 
-012
+None — builds on completed issue #12.

@@ -67,6 +67,6 @@ while keyless profiles keep today's deterministic behavior via the mock candidat
   marker written, and the following run distills the same window successfully.
 - With zero keys, `pnpm dev` behavior and the full e2e suite are unchanged.
 
-## Dependencies
+## Blocked by
 
-011, 012, 013, 016, 021, 037
+None — builds on completed issues #11, #12, #13, #16, #21, and #37.

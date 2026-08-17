@@ -54,6 +54,6 @@ the UI from click to outcome.
 - With zero keys the mock candidate answers the queued turn deterministically; e2e suite
   covers the happy path.
 
-## Dependencies
+## Blocked by
 
-007, 037
+None — builds on completed issues #7 and #37.

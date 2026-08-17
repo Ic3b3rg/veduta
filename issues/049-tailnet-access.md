@@ -85,4 +85,4 @@ application port and no manual Tailscale configuration.
 
 ## Blocked by
 
-[048 — Guided VPS installer with Tunnel and Public access](048-guided-vps-access-installer.md).
+- #48
