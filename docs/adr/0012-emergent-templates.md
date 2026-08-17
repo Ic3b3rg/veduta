@@ -78,6 +78,57 @@ The preview itself is an ordinary daemon-owned Surface with fast-path Accept/Rej
 like an approval card. The trust layer was deliberately _not_ reused: trust levels classify actions
 that leave the daemon ([ADR-0007](0007-trust-levels.md)), and a tree patch never does.
 
+## Pinned prominence is shared state
+
+A Pin is also persistent visual priority, not only a tree lock. Each Space presents a separate
+pinned group before its regular Surfaces. A newly pinned Surface enters first (last pinned, first
+shown), and manual movement can reorder Surfaces within that group but cannot move one across the
+group boundary; only Pin and Unpin make that transition. Unpin places the Surface first in the
+regular group. Both transitions are strictly idempotent: requesting Pin for an already pinned
+Surface or Unpin for an already regular Surface is a no-op, with no Event, freshness update, or
+reordering. Position changes belong only to Move. The PWA renders a labelled Pinned section only
+while that group is non-empty, with the regular Surfaces section following it whenever that group is
+non-empty too. Empty groups do not occupy layout space or render drop targets; only a wholly empty
+Space renders the existing No Surfaces state. The pinned group
+has no numeric limit: Pin also protects composition, so presentation density cannot make that
+capability arbitrarily unavailable. Manual Move up/down controls operate only within their current
+group and disable at its boundaries; drag-and-drop is a separate presentation enhancement, not part
+of this ordering contract.
+
+Surface ordering belongs wholly to the Gateway as two ordered groups per Space, and both groups
+converge across clients and reloads. Splitting ownership — pinned order in the Gateway but regular
+order in the PWA's local preference — was rejected: Pin and Unpin cross that boundary, so the same
+accepted action could otherwise produce different positions on different devices. Keeping all
+ordering in the browser was rejected too: a fresh client could not recover
+last-pinned-first-shown order. Manual reordering sends a relative Move within one group rather than
+replacing an entire ordered list; the Gateway serializes those commands against its current order,
+so clients cannot silently overwrite one another's arrangements. Pin, Unpin, and Move are not queued
+while a client is offline: the PWA keeps the last Gateway-confirmed order, reports the action as
+unavailable, and lets the user retry after reconnecting. In particular, replaying a relative Move
+later against a materially different shared order would make its result surprising. While an online
+Pin, Unpin, or Move is pending, the PWA keeps the last confirmed order and disables the affected
+control against duplicate input. It applies only the Gateway-confirmed result; a rejected action
+leaves the order unchanged and reports the error. A newly created regular Surface enters first in
+the regular group,
+immediately after the pinned group, so successful creation is visible without outranking a Pin. If
+that creation belongs to a chat turn initiated by the current tab, only that tab scrolls to and
+briefly highlights the new Surface; other clients apply the shared order without moving their
+viewport. That initiating relationship must be explicit turn/client correlation, never inferred
+from timing or from whichever turn happens to be active when `surface.created` arrives. Every
+accepted Pin still updates every client, but only the tab in which the user directly pressed Pin
+scrolls the moved Surface to the viewport centre and briefly highlights it. A local chat-created
+Surface receives the same treatment in its initiating tab. Motion is smooth unless the user prefers
+reduced motion, in which case positioning is immediate and the highlight does not animate. Agent,
+remote-client, and replayed Pin events reorder without hijacking the viewport. Unpin moves the
+Surface without scroll or highlight.
+
+An existing installation that has no Gateway order backfills it from its durable Surface Event
+stream, never from whichever browser connects first. Currently pinned Surfaces are ordered by their
+latest accepted Pin, newest first; regular Surfaces are ordered by their latest creation or Unpin,
+newest first, with a stable identifier fallback where legacy history is incomplete. Browser-local
+orders are deliberately discarded after the authoritative snapshot arrives: they may disagree
+across devices, so none can be promoted to shared truth without an arbitrary winner.
+
 ## An imported bundle is untrusted content
 
 A bundle is a file written by another installation — attacker-reachable text, like the material
@@ -145,8 +196,10 @@ substantive change a human is being asked to approve.
 ## Consequences
 
 - `Surface` gains `pinned` and `pinnable`, both defaulted, and the Gateway gains a replayable
-  `surface.pinned` event: a pin is state every client must converge on, not something a later GET
-  happens to reveal.
+  `surface.pinned` event: pin membership and pinned order are state every client must converge on,
+  not something a later GET happens to reveal or each browser may order independently.
+- Per-Space Surface ordering moves from a PWA-local preference to Gateway-owned pinned and regular
+  groups; snapshots, replay, and live updates expose one authoritative arrangement.
 - Daemon-owned Surfaces and the projected FACTS Surface are `pinnable: false`; the client never offers
   a toggle the daemon would refuse.
 - The Agent-facing tools (`list_templates`, `create_surface_from_template`, `pin_surface`, and the
