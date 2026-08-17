@@ -9,3 +9,7 @@ Status: accepted
 - Whenever the Agent learns a deadline it must arm a timer (`arm_timer` tool), not entrust it to the next sweep.
 - Timers/jobs are **visible Automations** in the Space, switchable off by the user ("the plus of having a UI").
 - Notification discipline: silent → badge → push, per-Space budget, freshness metadata on every Surface.
+- An In-app notification is durable outcome navigation, not an interruption tier. Meaningful
+  recurring dashboard outcomes may create one without incrementing a Space attention badge,
+  consuming push budget, or writing an unsolicited assistant chat message; see
+  [ADR-0021](0021-space-owned-automation-outcomes.md).

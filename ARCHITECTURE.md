@@ -105,7 +105,7 @@ LLM polling every 30 minutes is beaten on cost _and accuracy_ ([ref. 05](docs/re
 3. **Non-LLM pre-filters**: rules, embedding similarity, optionally a lightweight classifier. Milliseconds.
 4. **LLM cascade on the residue** (triage → reasoning) + **safety-net Heartbeat 1-2x/day** for fuzzy conditions.
 
-Notification discipline: silent update → badge on the Space → push (the bar: "would a good human assistant interrupt?"), per-Space interruption budgets, freshness metadata on every Surface. Non-urgent notifications queue up for idle moments.
+Notification discipline: silent update → badge on the Space → push (the bar: "would a good human assistant interrupt?"), per-Space interruption budgets, freshness metadata on every Surface. Non-urgent notifications queue up for idle moments. Meaningful recurring dashboard outcomes instead update their linked Surface and create a durable In-app notification inside the owning Space; they never manufacture global chat, badge, or browser-push traffic ([ADR-0021](docs/adr/0021-space-owned-automation-outcomes.md)).
 
 ### 3.6 Workers and review
 
@@ -140,6 +140,14 @@ sequenceDiagram
 ### Incoming mail (external event)
 
 Gmail webhook → deterministic pre-filter (newsletter? discard) → **quarantined reader** (cheap LLM with no tools, validated structured output) → if relevant, the structured event enters the Agent's context marked untrusted → the Agent updates Surfaces (L0, free); if it wants to reply to the mail (L1), it prepares the **approval card** — always, because the turn contains untrusted content.
+
+### Monitoring a public website
+
+Confirmed Website monitor → bounded conditional read from approved hosts → quarantined extraction
+of relevant same-site candidates → isolated full-text processing when needed → schema-valid update
+of one linked Surface → coalesced In-app notification in the same Space. Raw pages never enter the
+primary Agent's context, and a new host requires a new Pending decision
+([ADR-0022](docs/adr/0022-goal-directed-website-monitors.md)).
 
 ## 5. Stack
 

@@ -43,6 +43,20 @@ The ChatGPT Model connection spawns a `codex app-server` child process that make
 
 HMAC-validated webhooks (Hermes pattern); automatic, monitored renewal of Gmail/Calendar watches; per-source rate limiting; event deduplication; events that fail schema validation are discarded and logged, never "interpreted".
 
+### 3.6 Website monitors
+
+A Website monitor authorizes one explicit set of HTTPS hosts, monitoring goal, frequency, owning
+Space, and target Surface through a Pending decision. Authorization is scoped to that Automation;
+it never becomes a general egress allowlist entry. Redirects and discovered links may use only the
+approved host set. A new host creates a new Pending decision before any request is made.
+
+Every request is manually redirected, deadline-, byte-, document-, and rate-bounded, and checked
+against DNS and private-network destinations on every hop. The first slice accepts only public
+HTML and RSS/Atom content: no credentials, authenticated sessions, paywalls, PDFs, media, or
+attachments. Raw responses go only to the tool-less quarantined reader and isolated full-text
+flow; the primary Agent receives schema-validated structured outcomes and never provider-native
+browsing or web-search tools. See [ADR-0022](adr/0022-goal-directed-website-monitors.md).
+
 ## 4. Secrets
 
 API keys and OAuth tokens live in an **encrypted secrets vault** (key derived at boot); the agent and its contexts see only opaque references (`secret://provider/anthropic`), resolved by the trust layer at call time. No secret ever appears in LLM context, logs, the Event log, or plaintext backups. Import from OpenClaw/Hermes: secrets migrated only with an explicit flag (discipline learned from studying the repos).

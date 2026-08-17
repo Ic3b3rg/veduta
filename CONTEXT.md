@@ -108,6 +108,18 @@ _Avoid_: provider mode, text-only mode, degraded connection
 A job or timer created by the Agent but visible to and switchable off by the user in the Space. Includes the one-shot timers armed on learned deadlines.
 _Avoid_: hidden cron, internal job
 
+**Automation outcome**:
+The user-relevant result of an Automation occurrence: a meaningful change, failure, recovery, or required decision. Routine checks with no change advance freshness but are not outcomes.
+_Avoid_: scheduled briefing, polling message
+
+**Automation run history**:
+The bounded, user-facing sequence of an Automation's meaningful outcomes and errors. Routine checks appear only through freshness, while the append-only Event log remains the complete provenance.
+_Avoid_: Activity, chat history, Event log
+
+**Website monitor**:
+A recurring Automation that applies a user-confirmed monitoring goal to public content on an approved set of hosts and writes structured outcomes to one Surface in the same Space. It discovers relevant same-site pages through quarantined reading; it is not general web search.
+_Avoid_: browser agent, scraper, web search
+
 **Heartbeat**:
 A low-frequency periodic wake-up (1-2 times/day) that acts as a safety net for fuzzy conditions not expressible as events or timers. It is not the engine of proactivity.
 _Avoid_: main polling, tick loop
@@ -164,6 +176,10 @@ _Avoid_: dreaming (OpenClaw term)
 **Pending decision**:
 A daemon-owned request for one explicit user choice, identified durably and resolved exactly once. Its Surface, notification, and chat affordances are channels to the same decision.
 _Avoid_: chat confirmation, model approval
+
+**In-app notification**:
+A durable, dismissible attention item shown inside its owning Space and deep-linked to the affected Surface. It is distinct from a Space attention badge, browser push, and assistant chat message.
+_Avoid_: push notification, chat notice, badge
 
 **Trust level**:
 An action's capability class: L0 free (inside the daemon), L1 approval-first (toward the outside, relaxable per type), L2 never automatic (money above a threshold, destructive).
