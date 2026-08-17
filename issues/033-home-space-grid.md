@@ -16,7 +16,7 @@ Make the Home an at-a-glance **grid of all active Spaces** (user life-areas firs
 
 ## Tasks
 
-- **Home (`/`) = a grid of Space cards**, no Surfaces. Each card shows: name, Surface count, freshness ("fresh 1m ago"), an attention badge, and a **reserved slot for a future Space description** (empty for now). Deterministic order: user Spaces first, then a visually secondary **"System"** group (System and any future system Spaces) at the end.
+- **Home (`/`) = a grid of Space cards**, no Surfaces. Each card shows: name, Surface count, freshness ("fresh 1m ago"), an attention badge, and a **reserved slot for a future Space description** (empty for now). Deterministic order: user Spaces first, then a visually secondary **"System"** group containing the one canonical System Space at the end.
 - **Declarative client routing**: introduce React Router (`react-router-dom`) and replace the routing responsibilities currently split between `view`, `focusedSpaceId`/`focusedSurfaceId`, `parseSurfaceDeepLink`, `history.pushState`, and the `popstate` listener. Define one route table for `/`, `/setup`, `/app/settings/models`, `/app/space/:spaceSlug`, and `/app/space/:spaceSlug/surface/:surfaceId`. Route params are the source of truth for the open Space/Surface; Agent-maintained Surface content never defines application routes.
 - **Route guards and navigation sources**: preserve the existing passkey and onboarding gates around protected routes, navigate from setup to `/` when onboarding completes, and route clicks, Back controls, browser back/forward, direct loads, and service-worker notification messages through the router API. Keep the daemon's existing SPA shell behavior (`/`, `/setup`, and `/app/*` serve `index.html`); this remains a PWA-only change.
 - **Routing decision record**: add a short ADR recording why the growing fixed PWA shell now uses React Router instead of extending the hand-written history/state machinery, including the URL-source-of-truth rule and the boundary between fixed routes and data-driven Surfaces.
@@ -49,6 +49,21 @@ Make the Home an at-a-glance **grid of all active Spaces** (user life-areas firs
 - The onboarding wizard (issue 019).
 - Server-side rendering or server-side route ownership — Fastify continues to serve the same PWA shell for `/`, `/setup`, and `/app/*`.
 
-## Dependencies
+## Implementation tickets
 
-009
+- #64 — declarative fixed-shell routing.
+- #65 — routed Space and Surface drill-down.
+- #66 — at-a-glance Home grid.
+- #67 — Pending decisions in Home and the owning Space.
+- #68 — new Surface activity on Space cards.
+- #69 — complete narrow-viewport journey.
+
+## Parent completion criteria
+
+- [ ] Issues #64 through #69 are complete.
+- [ ] The full Home-to-Space journey satisfies this specification on desktop and narrow viewports.
+- [ ] The full repository gate and the owning browser E2E are green.
+
+## Blocked by
+
+None — builds on completed issue #9; implementation starts at #64.
