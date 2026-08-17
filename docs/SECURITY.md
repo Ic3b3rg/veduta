@@ -43,6 +43,13 @@ The ChatGPT Model connection spawns a `codex app-server` child process that make
 
 HMAC-validated webhooks (Hermes pattern); automatic, monitored renewal of Gmail/Calendar watches; per-source rate limiting; event deduplication; events that fail schema validation are discarded and logged, never "interpreted".
 
+Non-Google mail uses a configured, TLS-only IMAP IDLE adapter. Its host is checked against the
+active egress policy before credentials are resolved, credentials remain `secret://` references at
+rest and are redacted after resolution, protocol logging is disabled, and only four selected,
+bounded headers enter the durable event queue. Veduta owns rate-bounded catch-up, reconnect, health
+alerts, and the atomic UID cursor; the protocol-client boundary is recorded in
+[ADR-0023](adr/0023-imap-idle-client.md).
+
 ### 3.6 Website monitors
 
 A Website monitor authorizes one explicit set of HTTPS hosts, monitoring goal, frequency, owning

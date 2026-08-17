@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import type { ExternalEvent } from './external-event.ts'
+import type { ExternalEvent, ExternalEventBatch } from './external-event.ts'
 import type { SecretResolver } from './model-routing.ts'
 
 /**
@@ -85,14 +85,6 @@ export interface GoogleSourceOptions {
   tokens: GoogleTokenProvider
   fetchFn?: FetchLike
   now?: () => Date
-}
-
-export interface FetchStageResult {
-  events: ExternalEvent[]
-  /** Persist atomically with the batch: the checkpoint for the next fetch. */
-  nextCursor: string
-  /** The provider cursor was unusable; the baseline was re-established. */
-  reset?: boolean
 }
 
 const GMAIL_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
@@ -221,7 +213,7 @@ export class GmailSource {
    * cursor (Gmail keeps history ~a week) re-baselines instead of failing
    * forever; the gap is reported so the user hears about it.
    */
-  async fetchNewMessages(cursor: string | undefined): Promise<FetchStageResult> {
+  async fetchNewMessages(cursor: string | undefined): Promise<ExternalEventBatch> {
     if (cursor === undefined) return this.baseline(false)
 
     const messageIds: string[] = []
@@ -249,7 +241,7 @@ export class GmailSource {
     return { events, nextCursor: latestHistoryId }
   }
 
-  private async baseline(reset: boolean): Promise<FetchStageResult> {
+  private async baseline(reset: boolean): Promise<ExternalEventBatch> {
     const profile = GmailProfileSchema.parse(await this.request('GET', `${GMAIL_BASE}/profile`))
     return { events: [], nextCursor: profile.historyId, ...(reset ? { reset: true } : {}) }
   }
@@ -398,7 +390,7 @@ export class CalendarSource {
   async fetchChangedEvents(
     calendarId: string,
     cursor: string | undefined,
-  ): Promise<FetchStageResult> {
+  ): Promise<ExternalEventBatch> {
     const sweepStart = this.now().toISOString()
     if (cursor === undefined) return { events: [], nextCursor: sweepStart }
 

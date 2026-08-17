@@ -34,6 +34,14 @@ export const ExternalEventSchema = z.object({
 
 export type ExternalEvent = z.infer<typeof ExternalEventSchema>
 
+/** One provider checkpoint committed atomically with every event it covers. */
+export interface ExternalEventBatch {
+  events: ExternalEvent[]
+  nextCursor: string
+  /** The provider cursor was unusable; the baseline was re-established. */
+  reset?: boolean
+}
+
 /**
  * What `onAccepted` hands to the quarantined reader (issue #13): the
  * surviving event plus its durable queue row. This is the seam — nothing

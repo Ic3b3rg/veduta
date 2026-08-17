@@ -2,8 +2,13 @@ import { createHash } from 'node:crypto'
 import { JsonObjectSchema, type JsonObject } from '@veduta/protocol'
 import { z } from 'zod'
 import { EventQueue, type QueuedEvent } from './event-queue.ts'
-import { ExternalEventSchema, type ExternalEvent, type ReaderHandoff } from './external-event.ts'
-import { decodeGmailPush, type FetchStageResult } from './google-sources.ts'
+import {
+  ExternalEventSchema,
+  type ExternalEvent,
+  type ExternalEventBatch,
+  type ReaderHandoff,
+} from './external-event.ts'
+import { decodeGmailPush } from './google-sources.ts'
 import type { IngestionConfig, IngestionSource } from './ingestion-config.ts'
 import { envSecretResolver, type SecretResolver } from './model-routing.ts'
 import { evaluatePreFilter, type SimilarityHook } from './pre-filter.ts'
@@ -17,7 +22,7 @@ import { verifyWebhook, type VerifyInput } from './webhook-verify.ts'
  * reader seam (`onAccepted`, issue #13); the Agent only ever sees a
  * content-free acceptance notice in the Space's Event log.
  */
-export type FetchStage = (cursor: string | undefined) => Promise<FetchStageResult>
+export type FetchStage = (cursor: string | undefined) => Promise<ExternalEventBatch>
 
 export interface EventIngestionOptions {
   rootDir: string
@@ -40,6 +45,12 @@ export interface WebhookResponse {
   status: number
   body: JsonObject
   retryAfterSeconds?: number
+}
+
+export interface AdapterBatchOutcome {
+  queued: number
+  accepted: number
+  rateLimited?: true
 }
 
 /** Generic webhook payload: already event-shaped, one event per request. */
@@ -98,6 +109,11 @@ export class EventIngestion {
     // Unknown sources get no rejection counter: an unauthenticated flood
     // of invented names must not grow state (SECURITY.md §3.5).
     if (!source) return { status: 401, body: { error: 'unknown or unverified source' } }
+    // IMAP is an outbound, long-lived authenticated transport. It has no
+    // public webhook endpoint and must never fall through to push auth.
+    if (source.adapter === 'imap-idle') {
+      return { status: 401, body: { error: 'unknown or unverified source' } }
+    }
 
     const verified = verifyWebhook(source.verification, source.secret, this.secrets, input)
     if (!verified.ok) {
@@ -136,6 +152,28 @@ export class EventIngestion {
     for (const row of this.queue.undeliveredAccepted()) {
       await this.deliver(row)
     }
+  }
+
+  /**
+   * Authenticated source-adapter seam for long-lived transports such as
+   * IMAP IDLE. The batch and its checkpoint commit together before the
+   * ordinary deterministic pre-filter and quarantined-reader handoff run.
+   */
+  async ingestAdapterBatch(
+    sourceName: string,
+    result: ExternalEventBatch,
+  ): Promise<AdapterBatchOutcome> {
+    const source = this.config.sources[sourceName]
+    if (!source || source.adapter !== 'imap-idle') {
+      throw new Error(`unknown IMAP ingestion source: ${sourceName}`)
+    }
+    if (!this.store.getSpace(source.spaceId)) {
+      throw new Error(`ingestion source "${sourceName}" targets an unknown Space`)
+    }
+    if (result.events.length > this.queue.remainingQuota(sourceName, source.ratePerMinute)) {
+      return { queued: 0, accepted: 0, rateLimited: true }
+    }
+    return this.ingestFetchedBatch(sourceName, source, result)
   }
 
   private async handleGenericWebhook(
@@ -237,19 +275,38 @@ export class EventIngestion {
     if (!stage) {
       return { status: 500, body: { error: `no fetch stage wired for source "${sourceName}"` } }
     }
-    let result: FetchStageResult
+    let result: ExternalEventBatch
     try {
       result = await stage(this.queue.cursor(sourceName))
     } catch {
       return { status: 500, body: { error: 'fetch stage failed; expecting redelivery' } }
     }
+    const outcome = await this.ingestFetchedBatch(sourceName, source, result)
+    return {
+      status: 200,
+      body: { outcome: 'fetched', queued: outcome.queued, accepted: outcome.accepted },
+    }
+  }
+
+  private async ingestFetchedBatch(
+    sourceName: string,
+    source: IngestionSource,
+    result: ExternalEventBatch,
+  ): Promise<AdapterBatchOutcome> {
     if (result.reset) {
       this.onNotice?.(
         `Event source "${sourceName}" lost its provider cursor; there may be a gap in ingested events.`,
       )
     }
+    const events = result.events.map((event) => {
+      const parsed = ExternalEventSchema.parse(event)
+      if (parsed.source !== sourceName) {
+        throw new Error(`event source "${parsed.source}" does not match adapter "${sourceName}"`)
+      }
+      return parsed
+    })
     const outcomes = this.queue.ingestBatch(
-      result.events.map((event) => ({ event, spaceId: source.spaceId })),
+      events.map((event) => ({ event, spaceId: source.spaceId })),
       { source: sourceName, value: result.nextCursor },
     )
     let accepted = 0
@@ -258,7 +315,7 @@ export class EventIngestion {
       const decided = await this.decideAndDeliver(outcome.queueId, source)
       if (decided.status === 'accepted') accepted += 1
     }
-    return { status: 200, body: { outcome: 'fetched', queued: outcomes.length, accepted } }
+    return { queued: outcomes.length, accepted }
   }
 
   private async decideAndDeliver(queueId: number, source: IngestionSource): Promise<QueuedEvent> {

@@ -25,6 +25,7 @@
     "@veduta/protocol": "workspace:*",
     "acme-client": "^5.4.0",
     "fastify": "^5.4.0",
+    "imapflow": "1.6.5",
     "undici": "^7.10.0",
     "web-push": "^3.6.7",
     "zod": "^3.25.0",

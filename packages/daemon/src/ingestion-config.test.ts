@@ -109,6 +109,54 @@ describe('loadIngestionConfig', () => {
       }),
     ).toThrow(/calendar-push sources need/)
   })
+
+  it('parses an IMAP IDLE source with TLS and secret references', () => {
+    const parsed = IngestionConfigSchema.parse({
+      sources: {
+        'personal-mail': {
+          adapter: 'imap-idle',
+          spaceId: 'spc-home',
+          imap: {
+            host: 'imap.example.com',
+            usernameRef: 'secret://vault/imap-user',
+            passwordRef: 'secret://vault/imap-password',
+          },
+        },
+      },
+    })
+
+    expect(parsed.sources['personal-mail']).toEqual({
+      adapter: 'imap-idle',
+      spaceId: 'spc-home',
+      ratePerMinute: 60,
+      filters: PreFilterRulesSchema.parse({}),
+      imap: {
+        host: 'imap.example.com',
+        port: 993,
+        authMethod: 'AUTH=PLAIN',
+        usernameRef: 'secret://vault/imap-user',
+        passwordRef: 'secret://vault/imap-password',
+      },
+    })
+  })
+
+  it('rejects plaintext IMAP credentials', () => {
+    expect(() =>
+      IngestionConfigSchema.parse({
+        sources: {
+          mail: {
+            adapter: 'imap-idle',
+            spaceId: 'spc-home',
+            imap: {
+              host: 'imap.example.com',
+              usernameRef: 'anna@example.com',
+              passwordRef: 'hunter2',
+            },
+          },
+        },
+      }),
+    ).toThrow(/secret:\/\//)
+  })
 })
 
 describe('saveIngestionConfig', () => {

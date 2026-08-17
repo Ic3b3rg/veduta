@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -17,6 +18,7 @@ import {
 } from '@veduta/protocol'
 import { describe, expect, it, vi } from 'vitest'
 import { AuthStore, type PasskeyRelyingParty, type StoredPasskey } from './auth-store.ts'
+import type { ImapClient } from './imap-idle.ts'
 import { NoAvailableModelError, loadRoutingConfig, saveRoutingConfig } from './model-routing.ts'
 import { NOTIFICATION_SETTINGS_SURFACE_ID } from './notification-settings-surface.ts'
 import { NotificationsConfigSchema, saveNotificationsConfig } from './notifications-config.ts'
@@ -1135,6 +1137,95 @@ describe('event ingestion wiring (issue #12)', () => {
     }
     expect(sawLockout).toBe(true)
     await app.close()
+  })
+
+  it('starts configured IMAP IDLE sources without external network access', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-imap-server-'))
+    process.env['VEDUTA_TEST_IMAP_USER'] = 'anna@example.com'
+    process.env['VEDUTA_TEST_IMAP_PASSWORD'] = 'imap-test-password'
+    await writeFile(
+      join(dataDir, 'ingestion.json'),
+      JSON.stringify({
+        sources: {
+          'personal-mail': {
+            adapter: 'imap-idle',
+            spaceId: 'spc-health',
+            imap: {
+              host: 'imap.example.com',
+              usernameRef: 'secret://env/VEDUTA_TEST_IMAP_USER',
+              passwordRef: 'secret://env/VEDUTA_TEST_IMAP_PASSWORD',
+            },
+          },
+        },
+      }),
+    )
+    const emitter = new EventEmitter()
+    let uidNext = 1
+    const client = fromPartial<ImapClient>({
+      capabilities: new Map([['IDLE', true]]),
+      connect: vi.fn(async () => {}),
+      close: vi.fn(() => {}),
+      mailboxOpen: vi.fn(async () =>
+        fromPartial({ path: 'INBOX', uidValidity: 42n, uidNext: 1, exists: 0 }),
+      ),
+      status: vi.fn(async () => fromPartial({ path: 'INBOX', uidValidity: 42n, uidNext })),
+      fetchAll: vi.fn(async () => [
+        fromPartial({
+          seq: 1,
+          uid: 1,
+          headers: Buffer.from(
+            'From: Sender <sender@example.com>\r\nSubject: IMAP integration proof\r\n\r\n',
+          ),
+        }),
+      ]),
+      on: emitter.on.bind(emitter),
+    })
+    const clientFactory = vi.fn(() => client)
+    const consoleError = vi.spyOn(console, 'error')
+
+    try {
+      const { app, egress, imapSources, store } = buildServer({
+        dataDir,
+        imapClientFactory: clientFactory,
+      })
+      await vi.waitFor(() => expect(client.connect).toHaveBeenCalledOnce())
+
+      expect(clientFactory).toHaveBeenCalledWith(
+        'personal-mail',
+        expect.objectContaining({
+          secure: true,
+          auth: expect.objectContaining({
+            user: 'anna@example.com',
+            pass: 'imap-test-password',
+          }),
+        }),
+      )
+      expect(imapSources).toHaveLength(1)
+      expect(imapSources[0]?.health()).toMatchObject({ consecutiveFailures: 0, alerted: false })
+      expect(egress.allowedHosts()).toContain('imap.example.com')
+
+      uidNext = 2
+      emitter.emit('exists', { path: 'INBOX', count: 1, prevCount: 0 })
+      await vi.waitFor(() =>
+        expect(
+          store.eventLog('spc-health').some((event) => event.type === 'ingestion.accept'),
+        ).toBe(true),
+      )
+      const durableAndAgentVisible = JSON.stringify({
+        events: store.eventLog('spc-health'),
+        context: store.assembleSpaceContext('spc-health'),
+        console: consoleError.mock.calls,
+      })
+      expect(durableAndAgentVisible).not.toContain('anna@example.com')
+      expect(durableAndAgentVisible).not.toContain('imap-test-password')
+
+      await app.close()
+      expect(client.close).toHaveBeenCalled()
+    } finally {
+      consoleError.mockRestore()
+      delete process.env['VEDUTA_TEST_IMAP_USER']
+      delete process.env['VEDUTA_TEST_IMAP_PASSWORD']
+    }
   })
 })
 

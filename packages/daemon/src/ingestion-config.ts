@@ -14,17 +14,21 @@ import { SOURCE_NAME_RE } from './taint.ts'
  * by default: every ingress into the daemon is an explicit user decision
  * (every event source is a new perimeter, SECURITY.md §7).
  */
-export const IngestionSourceSchema = z.object({
+const CommonIngestionSourceShape = {
+  /** The Space whose Event log records accepted-event notices. */
+  spaceId: z.string().min(1),
+  ratePerMinute: z.number().int().positive().max(600).default(60),
+  filters: PreFilterRulesSchema.default(PreFilterRulesSchema.parse({})),
+}
+
+const PushIngestionSourceSchema = z.object({
+  ...CommonIngestionSourceShape,
   /** How inbound pushes authenticate (webhook-verify.ts). */
   verification: z.enum(['hmac', 'query-token', 'channel-token']),
   /** Shared secret as a `secret://` reference, never plaintext. */
   secret: SecretRefSchema,
-  /** The Space whose Event log records accepted-event notices. */
-  spaceId: z.string().min(1),
   /** How the raw push becomes ExternalEvents. */
   adapter: z.enum(['webhook', 'gmail-push', 'calendar-push']).default('webhook'),
-  ratePerMinute: z.number().int().positive().max(600).default(60),
-  filters: PreFilterRulesSchema.default(PreFilterRulesSchema.parse({})),
   /** Required by the gmail-push adapter. */
   gmail: z
     .object({
@@ -50,7 +54,27 @@ export const IngestionSourceSchema = z.object({
       refreshTokenRef: SecretRefSchema,
     })
     .optional(),
+  imap: z.undefined().optional(),
 })
+
+const ImapIdleSourceSchema = z.object({
+  ...CommonIngestionSourceShape,
+  adapter: z.literal('imap-idle'),
+  imap: z.object({
+    host: z.string().min(1),
+    port: z.number().int().positive().max(65_535).default(993),
+    authMethod: z.enum(['LOGIN', 'AUTH=LOGIN', 'AUTH=PLAIN']).default('AUTH=PLAIN'),
+    usernameRef: SecretRefSchema,
+    passwordRef: SecretRefSchema,
+  }),
+  verification: z.undefined().optional(),
+  secret: z.undefined().optional(),
+  gmail: z.undefined().optional(),
+  calendar: z.undefined().optional(),
+  google: z.undefined().optional(),
+})
+
+export const IngestionSourceSchema = z.union([PushIngestionSourceSchema, ImapIdleSourceSchema])
 
 export type IngestionSource = z.infer<typeof IngestionSourceSchema>
 

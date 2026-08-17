@@ -2,6 +2,7 @@ import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
 import { UpdatePinningSchema } from '@veduta/protocol'
 import type { FastifyInstance } from 'fastify'
+import type { ImapFlowOptions } from 'imapflow'
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -37,6 +38,7 @@ import { CalendarSource, GmailSource, GoogleTokenProvider } from './google-sourc
 import { loadHeartbeatConfig } from './heartbeat-config.ts'
 import { HeartbeatSurfaceManager } from './heartbeat-surface.ts'
 import { Heartbeat } from './heartbeat.ts'
+import { ImapIdleSource, type ImapClient } from './imap-idle.ts'
 import { loadIngestionConfig } from './ingestion-config.ts'
 import { registerIngestionRoutes } from './ingestion-routes.ts'
 import { loadMemoryConfig } from './memory-config.ts'
@@ -128,6 +130,8 @@ export interface ServerOptions {
    * generated-or-loaded VAPID keypair.
    */
   pushTransport?: PushTransport
+  /** Injectable IMAP boundary for scripted, socket-free integration tests. */
+  imapClientFactory?: (source: string, options: ImapFlowOptions) => ImapClient
   /**
    * The execution profile this daemon is running under (issue 023,
    * `docs/adr/0009-local-vps-profile.md`), identifying which onboarding
@@ -327,6 +331,10 @@ function connectionLabel(rootDir: string, model: ModelRef): string {
 
 const EgressConfigSchema = z.object({ allow: z.array(z.string()) })
 
+function imapsOrigin(host: string): string {
+  return `imaps://${host.includes(':') ? `[${host}]` : host}`
+}
+
 /**
  * Builds the process-wide egress allowlist (issue #15, docs/SECURITY.md
  * §3.4) from everything the daemon is actually configured to reach:
@@ -341,6 +349,7 @@ export function assembleEgressPolicy(input: {
   rootDir: string
   providers: readonly string[]
   googleHosts?: readonly string[]
+  integrationHosts?: readonly string[]
   acmeDirectoryUrl?: string
   toolDomains: readonly string[]
   extraAllow?: readonly string[]
@@ -361,6 +370,7 @@ export function assembleEgressPolicy(input: {
     policy.allow(host)
   }
   if (input.googleHosts) policy.allow(input.googleHosts)
+  if (input.integrationHosts) policy.allow(input.integrationHosts)
   if (input.acmeDirectoryUrl) {
     let acmeHost: string
     try {
@@ -1206,22 +1216,28 @@ export function buildServer(options: ServerOptions = {}) {
   // deduped, pre-filtered events with zero LLM calls. Survivors hand off
   // to the quarantined reader (issue #13) via `onAccepted`.
   const ingestionConfig = loadIngestionConfig(store.spacesEngine.rootDir)
+  const recordIngestionAlert = (
+    sourceName: string,
+    message: string,
+    eventType: 'ingestion.watch-alert' | 'ingestion.connection-alert',
+  ) => {
+    gateway.broadcastSystemNotice(message)
+    const spaceId = ingestionConfig.sources[sourceName]?.spaceId
+    if (spaceId && store.getSpace(spaceId)) {
+      store.spacesEngine.appendEvent(spaceId, {
+        type: eventType,
+        text: message,
+        origin: 'trusted:system',
+        payload: { source: sourceName },
+        at: now().toISOString(),
+      })
+    }
+  }
   const watchManager = new WatchManager({
     rootDir: store.spacesEngine.rootDir,
     now,
-    onAlert: (sourceName, message) => {
-      gateway.broadcastSystemNotice(message)
-      const spaceId = ingestionConfig.sources[sourceName]?.spaceId
-      if (spaceId && store.getSpace(spaceId)) {
-        store.spacesEngine.appendEvent(spaceId, {
-          type: 'ingestion.watch-alert',
-          text: message,
-          origin: 'trusted:system',
-          payload: { source: sourceName },
-          at: now().toISOString(),
-        })
-      }
-    },
+    onAlert: (sourceName, message) =>
+      recordIngestionAlert(sourceName, message, 'ingestion.watch-alert'),
   })
   const fetchStages: Record<string, FetchStage> = {}
   const gmailSources: Record<string, GmailSource> = {}
@@ -1433,6 +1449,9 @@ export function buildServer(options: ServerOptions = {}) {
     ...(Object.values(ingestionConfig.sources).some((source) => Boolean(source.google))
       ? { googleHosts: ['oauth2.googleapis.com', 'www.googleapis.com'] }
       : {}),
+    integrationHosts: Object.values(ingestionConfig.sources)
+      .filter((source) => source.adapter === 'imap-idle')
+      .map((source) => source.imap.host),
     toolDomains: outboundTools.flatMap(({ tool }) => tool.egressDomains),
     ...(extraAllowHosts.length > 0 ? { extraAllow: extraAllowHosts } : {}),
     // The loopback (mock) profile and the test suite talk to loopback
@@ -1446,6 +1465,36 @@ export function buildServer(options: ServerOptions = {}) {
   })
   if (options.egress?.enforce === true) installEgressEnforcement(egress)
 
+  const imapSources: ImapIdleSource[] = []
+  for (const [sourceName, source] of Object.entries(ingestionConfig.sources)) {
+    if (source.adapter !== 'imap-idle') continue
+    const injectedClientFactory = options.imapClientFactory
+    const imapSource = new ImapIdleSource({
+      rootDir: store.spacesEngine.rootDir,
+      source: sourceName,
+      settings: source.imap,
+      secrets,
+      now,
+      maxBatchSize: source.ratePerMinute,
+      cursor: () => ingestion.queue.cursor(sourceName),
+      onBatch: (batch) => ingestion.ingestAdapterBatch(sourceName, batch),
+      onAlert: (failedSource, message) =>
+        recordIngestionAlert(failedSource, message, 'ingestion.connection-alert'),
+      beforeConnect: (host) => egress.check(imapsOrigin(host)),
+      ...(injectedClientFactory === undefined
+        ? {}
+        : {
+            clientFactory: (clientOptions: ImapFlowOptions) =>
+              injectedClientFactory(sourceName, clientOptions),
+          }),
+    })
+    imapSources.push(imapSource)
+    void imapSource.start()
+  }
+  app.addHook('onClose', async () => {
+    for (const source of imapSources) source.stop()
+  })
+
   return {
     app,
     store,
@@ -1455,6 +1504,7 @@ export function buildServer(options: ServerOptions = {}) {
     scheduler,
     ingestion,
     watchManager,
+    imapSources,
     trust,
     pendingDecisions,
     approvalSurfaces,

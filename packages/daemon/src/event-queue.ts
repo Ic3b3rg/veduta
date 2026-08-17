@@ -146,6 +146,11 @@ export class EventQueue {
     return this.attemptsInWindow(source) >= ratePerMinute
   }
 
+  /** Slots left in the source's rolling per-minute ingestion window. */
+  remainingQuota(source: string, ratePerMinute: number): number {
+    return Math.max(0, ratePerMinute - this.attemptsInWindow(source))
+  }
+
   /** Apply a pre-filter verdict to a pending event, durably, with its reason. */
   decide(
     queueId: number,

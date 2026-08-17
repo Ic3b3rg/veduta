@@ -225,6 +225,48 @@ describe('EventIngestion', () => {
     expect(pipeline.queue.getEvent(2)?.discardReason).toBe('newsletter')
   })
 
+  it('ingests an authenticated IMAP batch through the shared pre-filter seam', async () => {
+    const pipeline = ingestion({
+      mail: {
+        adapter: 'imap-idle',
+        spaceId: 'spc-health',
+        ratePerMinute: 1,
+        filters: { allowSenders: ['anna@example.com'] },
+        imap: {
+          host: 'imap.example.com',
+          usernameRef: 'secret://env/IMAP_USER',
+          passwordRef: 'secret://env/IMAP_PASSWORD',
+        },
+      },
+    })
+    const events: ExternalEvent[] = [
+      {
+        source: 'mail',
+        kind: 'email',
+        externalId: '42:7',
+        type: 'message.received',
+        sender: 'anna@example.com',
+        subject: 'Dinner',
+      },
+    ]
+
+    const outcome = await pipeline.ingestAdapterBatch('mail', {
+      events,
+      nextCursor: 'imap:v1:42:7',
+    })
+
+    expect(outcome).toEqual({ queued: 1, accepted: 1 })
+    expect(pipeline.queue.cursor('mail')).toBe('imap:v1:42:7')
+    expect(handoffs[0]?.event).toEqual(events[0])
+
+    const limited = await pipeline.ingestAdapterBatch('mail', {
+      events: [{ ...events[0]!, externalId: '42:8' }],
+      nextCursor: 'imap:v1:42:8',
+    })
+    expect(limited).toEqual({ queued: 0, accepted: 0, rateLimited: true })
+    expect(pipeline.queue.cursor('mail')).toBe('imap:v1:42:7')
+  })
+
   it('rejects a gmail push for a foreign subscription', async () => {
     const pipeline = ingestion(
       {
