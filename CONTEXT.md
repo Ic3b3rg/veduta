@@ -10,6 +10,10 @@ A self-hosted personal agent with a home-first interface: persistent Surfaces pe
 Namespace for a life area (Health, Work, Home...): holds dedicated memory, Surfaces, and Automations. Created with user confirmation, archived, never deleted.
 _Avoid_: division, project, area agent, workspace
 
+**System Space**:
+The one always-active, Gateway-owned Space for Veduta's own status and controls, separate from user-created life-area Spaces. Every visible Surface there is daemon-owned durable living state; the Agent cannot create ordinary Surfaces or write Space memory there.
+_Avoid_: admin page, settings dashboard, system workspace
+
 **Surface**:
 Persistent UI unit inside a Space: a declarative tree of Atoms bound to typed state. It is _living state_, not a response.
 _Avoid_: canvas, artifact, widget (ambiguous), dashboard (reserved for Home)
@@ -31,7 +35,7 @@ A composition of Atoms saved in a Space and reused/patched instead of being rege
 _Avoid_: blueprint, predefined widget
 
 **Pin**:
-The user's "I like this Surface as it is": the Surface's tree is locked. The Agent keeps patching the state; a tree change becomes a Tree proposal. Reversible, and it also saves the composition as a Template.
+The user's "keep this Surface stable and prominent": the Surface belongs to a separate, shared pinned group at the top of its Space; the newest pin appears first, the user may reorder within that group, and removing the pin places the Surface first in the regular group. Its tree is locked while state keeps updating, a tree change becomes a Tree proposal, and the reversible pin also saves the composition as a Template.
 _Avoid_: lock (alone), freeze, favourite
 
 **Tree proposal**:
@@ -65,7 +69,7 @@ A local execution profile that exercises the same product flows as the VPS profi
 _Avoid_: dev mode, staging (unless it is a remote shared environment), production mode
 
 **Agent**:
-The system's single main LLM loop. One identity (SOUL); it selectively works across one or more Space contexts, not per-Space personalities.
+The system's single main LLM loop. One identity (SOUL), including one global user-chosen name; it selectively works across one or more Space contexts, not per-Space personalities. Its name may differ from Veduta, which remains the product name.
 _Avoid_: orchestrator, firstmate, main assistant
 
 **Worker**:
@@ -131,11 +135,19 @@ The append-only stream of a Space's events (from the fast path and from turns). 
 _Avoid_: history, diary
 
 **INSTRUCTIONS**:
-A Space's character: tone, constraints, what not to do. Per-Space.
+A user-controlled Space's character: tone, constraints, what not to do. It specializes how the single Agent behaves there without creating a separate identity; product-owned rules remain separate.
 _Avoid_: space SOUL, division prompt
 
 **SOUL**:
-The Agent's personality, single and global.
+The Agent's user-controlled global identity: name, personality, baseline tone, and global character preferences. It applies across every Space; product-owned rules remain separate.
+
+**Character change**:
+A persistent, user-initiated replacement of exactly one character document: either `SOUL.md` or one Space's `INSTRUCTIONS.md`. The Agent splits a multi-scope request into independent changes, then presents each target and complete diff as a Pending decision; acceptance applies it atomically only while its starting revision is current. It affects context assembled after the authoritative resolution, never a model call already in progress.
+_Avoid_: temporary personality, personality overlay, self-evolution
+
+**Identity onboarding**:
+The optional, one-time invitation included in the Agent's first global-chat response while `SOUL.md` is still pristine; it never starts an autonomous turn or blocks a substantive first request. It asks how the Agent should be named and what kind of presence it should be, then uses the ordinary Character-change proposal and confirmation flow. Skipping or ignoring it keeps the default identity and never prompts again; an imported or already-customized identity bypasses it.
+_Avoid_: profile setup, personality wizard, onboarding form
 
 **USER**:
 The user's cross-cutting profile, injected into every context.
@@ -149,12 +161,16 @@ _Avoid_: dreaming (OpenClaw term)
 
 ### Trust and channels
 
+**Pending decision**:
+A daemon-owned request for one explicit user choice, identified durably and resolved exactly once. Its Surface, notification, and chat affordances are channels to the same decision.
+_Avoid_: chat confirmation, model approval
+
 **Trust level**:
 An action's capability class: L0 free (inside the daemon), L1 approval-first (toward the outside, relaxable per type), L2 never automatic (money above a threshold, destructive).
 
 **Approval card**:
-The Surface with which the Agent presents an L1+ action, already prepared, editable, with explicit approval.
-_Avoid_: chat confirmation, yes/no prompt
+The Surface for a Pending decision over an L1+ action, already prepared and editable before approval.
+_Avoid_: yes/no prompt
 
 **Untrusted content**:
 Any content of external origin (mail, web pages, webhooks). Marked as data, never as instructions; it cannot trigger L1+ actions without an Approval card.
