@@ -183,7 +183,7 @@ function MotionAtom({
     if (!element || prefersReducedMotion() || typeof element.animate !== 'function') return
 
     const tokens = tokensFor(ctx.theme)
-    const animation = element.animate(updateFeedbackKeyframes(tokens), {
+    const animation = element.animate(updateFeedbackKeyframes(tokens, renderedOpacity(element)), {
       duration: tokens.motion.updateFeedbackDurationMs,
       easing: tokens.motion.entranceEasing,
     })
@@ -226,15 +226,37 @@ function entranceKeyframes(tokens: CatalogTokens): Keyframe[] {
   ]
 }
 
-function updateFeedbackKeyframes(tokens: CatalogTokens): Keyframe[] {
+function updateFeedbackKeyframes(tokens: CatalogTokens, opacity: number): Keyframe[] {
+  const fadeEndOffset = Math.min(
+    1,
+    tokens.motion.entranceDurationMs / tokens.motion.updateFeedbackDurationMs,
+  )
   return [
-    { outline: `0 solid ${tokens.color.accent}`, outlineOffset: '0' },
     {
+      opacity: 0,
+      outline: `0 solid ${tokens.color.accent}`,
+      outlineOffset: '0',
+      offset: 0,
+    },
+    {
+      opacity,
       outline: `${tokens.space.xs}px solid ${tokens.color.accent}`,
       outlineOffset: `${tokens.space.xs}px`,
+      offset: fadeEndOffset,
     },
-    { outline: `0 solid ${tokens.color.accent}`, outlineOffset: `${tokens.space.sm}px` },
+    {
+      opacity,
+      outline: `0 solid ${tokens.color.accent}`,
+      outlineOffset: `${tokens.space.sm}px`,
+      offset: 1,
+    },
   ]
+}
+
+function renderedOpacity(element: Element): number {
+  if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return 1
+  const opacity = Number.parseFloat(window.getComputedStyle(element).opacity)
+  return Number.isFinite(opacity) ? opacity : 1
 }
 
 function prefersReducedMotion(): boolean {
