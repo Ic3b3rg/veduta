@@ -10,6 +10,11 @@ function expectedKeysFor(theme: CatalogTheme): string[] {
   return [
     ...Object.keys(catalogTokens[theme].color).map((key) => `--catalog-color-${kebabCase(key)}`),
     '--catalog-font-family',
+    '--catalog-motion-fast',
+    '--catalog-motion-entrance-duration',
+    '--catalog-motion-entrance-easing',
+    '--catalog-motion-stagger-interval',
+    '--catalog-motion-update-feedback-duration',
   ]
 }
 
@@ -38,6 +43,11 @@ describe('cssVariablesFor', () => {
         expect(variables[`--catalog-color-${kebabCase(key)}`]).toBe(value)
       }
       expect(variables['--catalog-font-family']).toBe(catalogTokens[theme].font.family)
+      expect(variables['--catalog-motion-fast']).toBe('120ms ease')
+      expect(variables['--catalog-motion-entrance-duration']).toBe('240ms')
+      expect(variables['--catalog-motion-entrance-easing']).toBe('cubic-bezier(0.22, 1, 0.36, 1)')
+      expect(variables['--catalog-motion-stagger-interval']).toBe('45ms')
+      expect(variables['--catalog-motion-update-feedback-duration']).toBe('720ms')
     })
   }
 })

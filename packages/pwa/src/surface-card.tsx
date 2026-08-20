@@ -9,6 +9,7 @@ import {
   optimisticFastSurface,
 } from './api.ts'
 import type { QueuedFastAction } from './pwa-storage.ts'
+import type { SurfaceUpdateFeedback } from './surface-motion.ts'
 import { useCatalogTheme } from './theme.ts'
 
 export function SurfaceCard({
@@ -16,6 +17,7 @@ export function SurfaceCard({
   token,
   selected,
   creationFeedbackKey,
+  updateFeedback,
   canMoveUp,
   canMoveDown,
   onFocus,
@@ -31,6 +33,7 @@ export function SurfaceCard({
   token?: string | undefined
   selected: boolean
   creationFeedbackKey?: string | undefined
+  updateFeedback?: SurfaceUpdateFeedback | undefined
   canMoveUp: boolean
   canMoveDown: boolean
   onFocus: () => void
@@ -165,7 +168,12 @@ export function SurfaceCard({
           </button>
         )}
       </div>
-      {renderNode(surface.tree, { state: surface.state, dispatch, theme })}
+      {renderNode(surface.tree, {
+        state: surface.state,
+        dispatch,
+        theme,
+        ...(updateFeedback ? { motion: { update: updateFeedback } } : {}),
+      })}
       <div className="freshness">
         updated {freshnessLabel(surface.freshness.updatedAt)} by {surface.freshness.updatedBy}
       </div>

@@ -1,10 +1,13 @@
 import { createRoot } from 'react-dom/client'
 import { App } from './app.tsx'
 import { installCatalogTokens } from './catalog-tokens.ts'
+import { MotionShowcasePage } from './motion-showcase.tsx'
 
 installCatalogTokens()
 
-createRoot(document.getElementById('root')!).render(<App />)
+createRoot(document.getElementById('root')!).render(
+  location.pathname === '/showcase/motion' ? <MotionShowcasePage /> : <App />,
+)
 
 // Dev is excluded: a cache-first worker would serve Vite's transformed
 // modules stale and break hot reload. Dev also unregisters any worker left

@@ -3,6 +3,7 @@ import { freshnessLabel, type SpaceWithSurfaces } from './api.ts'
 import { AttentionBadge } from './attention-badge.tsx'
 import type { QueuedFastAction } from './pwa-storage.ts'
 import { SurfaceCard } from './surface-card.tsx'
+import type { SurfaceUpdateFeedback } from './surface-motion.ts'
 
 export function SpaceSection({
   space,
@@ -10,6 +11,7 @@ export function SpaceSection({
   focused,
   focusedSurfaceId,
   surfaceCreationFeedbackKeys,
+  surfaceUpdateFeedbacks,
   onFocus,
   onMoveSurface,
   onPatched,
@@ -23,6 +25,7 @@ export function SpaceSection({
   focused: boolean
   focusedSurfaceId: string | undefined
   surfaceCreationFeedbackKeys: Record<string, string>
+  surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback>
   onFocus: (space: SpaceWithSurfaces, surface?: Surface) => void
   onMoveSurface: (
     space: SpaceWithSurfaces,
@@ -60,6 +63,7 @@ export function SpaceSection({
             token={authToken}
             selected={surface.id === focusedSurfaceId}
             creationFeedbackKey={surfaceCreationFeedbackKeys[surface.id]}
+            updateFeedback={surfaceUpdateFeedbacks[surface.id]}
             canMoveUp={index > 0}
             canMoveDown={index < surfaces.length - 1}
             onFocus={() => onFocus(space, surface)}
