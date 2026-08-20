@@ -27,8 +27,36 @@ An open source, self-hosted, **home-first** personal agent: the primary interfac
 5. **Event-driven proactivity: push events + one-shot timers + pre-filters; Heartbeat only as a safety net** — [ADR-0005](docs/adr/0005-event-driven-proactivity.md)
 6. **File-based memory: files are the truth, indexes are disposable** — [ADR-0006](docs/adr/0006-file-based-memory.md)
 7. **Three trust levels + dual context for external content** — [ADR-0007](docs/adr/0007-trust-levels.md)
-8. **VPS-first, passkeys, BYOK; PWA as the primary client, messengers as thin Bridges** — [ADR-0008](docs/adr/0008-vps-passkey-byok.md)
+8. **VPS-first, passkeys, and Gateway-owned Model connections; PWA as the primary client, messengers as thin Bridges** — [ADR-0008](docs/adr/0008-vps-passkey-byok.md) and [ADR-0014](docs/adr/0014-subscription-inference-boundary.md)
 9. **A Local VPS profile keeps `pnpm dev` a lightweight loopback profile while still letting core production flows be rehearsed locally** — [ADR-0009](docs/adr/0009-local-vps-profile.md)
+
+## Model connections
+
+The Gateway routes model calls through a **Model connection**, using either a provider subscription
+or BYOK:
+
+- **ChatGPT subscription** uses managed device authorization through an exactly pinned
+  `codex app-server` child. The adapter carries allowed `ToolDef` calls through Codex
+  `dynamicTools`; Veduta's `AgentRunner` still validates and executes every tool, applies trust
+  rules, writes the Event log, and owns Surface changes.
+- **BYOK** supports Anthropic, OpenAI, and OpenRouter API keys through the same connection lifecycle.
+
+Claude subscription remains visible but unavailable until Anthropic publishes or approves a
+third-party subscription contract; Anthropic BYOK remains supported. The
+[real-account smoke](docs/references/11-model-connections-manual-smoke.md) confirms ChatGPT
+authorization, model selection, inference, and Surface creation and patching without an API key.
+Automation, Worker, and final Connection parity remain open under
+[issue 070](issues/070-codex-tool-parity.md), specifically
+[077](issues/077-chatgpt-subscription-automations.md),
+[078](issues/078-chatgpt-subscription-workers.md), and
+[079](issues/079-primary-connection-parity.md).
+
+The durable boundaries live in
+[ADR-0014](docs/adr/0014-subscription-inference-boundary.md) and
+[ADR-0016](docs/adr/0016-primary-agent-connections-author-surfaces.md); see the
+[security contract](docs/SECURITY.md) and the
+[pinned protocol capture](docs/references/13-codex-dynamic-tools-0.146.1.md) for operational and
+protocol details.
 
 ## Development
 
