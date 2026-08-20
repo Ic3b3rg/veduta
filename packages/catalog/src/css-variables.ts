@@ -16,6 +16,12 @@ export function cssVariablesFor(theme: CatalogTheme): Record<string, string> {
   }
 
   variables['--catalog-font-family'] = tokens.font.family
+  variables['--catalog-motion-fast'] = tokens.motion.fast
+  variables['--catalog-motion-entrance-duration'] = `${tokens.motion.entranceDurationMs}ms`
+  variables['--catalog-motion-entrance-easing'] = tokens.motion.entranceEasing
+  variables['--catalog-motion-stagger-interval'] = `${tokens.motion.staggerIntervalMs}ms`
+  variables['--catalog-motion-update-feedback-duration'] =
+    `${tokens.motion.updateFeedbackDurationMs}ms`
 
   return variables
 }

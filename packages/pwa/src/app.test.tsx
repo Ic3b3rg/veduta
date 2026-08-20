@@ -15,9 +15,15 @@ import { fromPartial } from '@total-typescript/shoehorn'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ApiModule from './api.ts'
+import {
+  installMotionBrowser,
+  restoreMotionBrowser,
+  type MotionAnimationCall,
+} from './motion-test-browser.ts'
 import { AUTH_TOKEN_KEY, HOME_CACHE_KEY, SURFACE_ORDER_KEY } from './pwa-storage.ts'
 
 let scrollIntoView: ReturnType<typeof vi.fn>
+let atomAnimations: MotionAnimationCall[]
 
 vi.mock('./api.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>()
@@ -47,19 +53,12 @@ import {
 // at mount to decide whether to show the install guide) calls it
 // unconditionally.
 beforeEach(() => {
+  atomAnimations = installMotionBrowser(false).calls
   scrollIntoView = vi.fn()
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
     value: scrollIntoView,
   })
-  vi.stubGlobal(
-    'matchMedia',
-    vi.fn().mockReturnValue({
-      matches: false,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-    }),
-  )
 })
 
 afterEach(() => {
@@ -67,7 +66,7 @@ afterEach(() => {
   localStorage.clear()
   window.history.replaceState({}, '', '/')
   vi.clearAllMocks()
-  vi.unstubAllGlobals()
+  restoreMotionBrowser()
 })
 
 function authStatus(overrides: Partial<AuthStatus> = {}): AuthStatus {
@@ -373,6 +372,7 @@ describe('App', () => {
     expect(await screen.findByRole('button', { name: 'Focus Hydration' })).toBeDefined()
     expect(screen.getByText('Needs water')).toBeDefined()
     expect(screen.getByText('Hydration Surface created.')).toBeDefined()
+    atomAnimations.length = 0
 
     const patch = SurfacePatchEventSchema.parse({
       cursor: 2,
@@ -398,6 +398,8 @@ describe('App', () => {
     expect(await screen.findByText('On track')).toBeDefined()
     expect(screen.queryByText('Needs water')).toBeNull()
     expect(screen.getByText('Hydration Surface created.')).toBeDefined()
+    expect(atomAnimations.map(({ nodeId }) => nodeId)).toEqual(['status'])
+    expect(atomAnimations[0]?.options.duration).toBe(720)
   })
 
   it('centres and highlights a correlated chat-created Surface once without changing focus, route, or selection', async () => {

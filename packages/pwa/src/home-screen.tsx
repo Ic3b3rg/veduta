@@ -8,6 +8,7 @@ import { InstallButton } from './install-button.tsx'
 import { NotificationBell } from './notification-bell.tsx'
 import type { BrowserInstallPromptEvent, QueuedFastAction } from './pwa-storage.ts'
 import { SpaceSection } from './space-section.tsx'
+import type { SurfaceUpdateFeedback } from './surface-motion.ts'
 
 interface HomeScreenProps {
   authMode: 'dev' | 'production' | undefined
@@ -21,6 +22,7 @@ interface HomeScreenProps {
   focusedSpace: SpaceWithSurfaces | undefined
   focusedSurfaceId: string | undefined
   surfaceCreationFeedbackKeys: Record<string, string>
+  surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback>
   approvalCards: ApprovalCard[]
   chatEntries: ChatMessage[]
   streamingEntries: { turnId: string; text: string }[]
@@ -55,6 +57,7 @@ export function HomeScreen({
   focusedSpace,
   focusedSurfaceId,
   surfaceCreationFeedbackKeys,
+  surfaceUpdateFeedbacks,
   approvalCards,
   chatEntries,
   streamingEntries,
@@ -129,6 +132,7 @@ export function HomeScreen({
               focused={space.id === focusedSpace?.id}
               focusedSurfaceId={focusedSurfaceId}
               surfaceCreationFeedbackKeys={surfaceCreationFeedbackKeys}
+              surfaceUpdateFeedbacks={surfaceUpdateFeedbacks}
               onFocus={onFocusSpace}
               onMoveSurface={onMoveSurface}
               onPatched={onSurfacePatched}

@@ -66,6 +66,7 @@ import {
 } from './pwa-storage.ts'
 import { syncPush } from './push.ts'
 import { useSurfaceCreationFeedback } from './surface-creation-feedback.ts'
+import { affectedAtomIdsForPatch, type SurfaceUpdateFeedback } from './surface-motion.ts'
 import './app.css'
 
 export function App() {
@@ -95,6 +96,9 @@ export function App() {
   )
   const [focusChatToken, setFocusChatToken] = useState(0)
   const [streamingTurns, setStreamingTurns] = useState<Map<string, StreamingTurn>>(new Map())
+  const [surfaceUpdateFeedbacks, setSurfaceUpdateFeedbacks] = useState<
+    Record<string, SurfaceUpdateFeedback>
+  >({})
   const {
     feedbackKeys: surfaceCreationFeedbackKeys,
     registerLiveCreation,
@@ -313,6 +317,10 @@ export function App() {
       }
 
       try {
+        const previousSurface =
+          streamEvent.type === 'surface.patch'
+            ? findSurface(spacesRef.current, streamEvent.event.patch.surfaceId)
+            : undefined
         const order = surfaceOrderForStreamEvent(streamEvent)
         if (order && order.cursor < (surfaceOrderCursorsRef.current[order.spaceId] ?? 0)) {
           replaceSpaces(
@@ -329,6 +337,22 @@ export function App() {
         }
         if (order) {
           surfaceOrderCursorsRef.current[order.spaceId] = order.cursor
+        }
+        if (streamEvent.type === 'surface.patch' && previousSurface) {
+          const nextSurface = findSurface(result.spaces, streamEvent.event.patch.surfaceId)
+          if (nextSurface) {
+            const atomIds = affectedAtomIdsForPatch(
+              previousSurface,
+              nextSurface,
+              streamEvent.event.patch.operations,
+            )
+            if (atomIds.length > 0) {
+              setSurfaceUpdateFeedbacks((current) => ({
+                ...current,
+                [nextSurface.id]: { key: String(streamEvent.event.cursor), atomIds },
+              }))
+            }
+          }
         }
         replaceSpaces(result.spaces, Math.max(surfaceCursorRef.current, streamEvent.event.cursor))
       } catch (e) {
@@ -767,6 +791,7 @@ export function App() {
       focusedSpace={focusedSpace}
       focusedSurfaceId={focusedSurfaceId}
       surfaceCreationFeedbackKeys={surfaceCreationFeedbackKeys}
+      surfaceUpdateFeedbacks={surfaceUpdateFeedbacks}
       approvalCards={approvalCards}
       chatEntries={chatEntries}
       streamingEntries={Array.from(streamingTurns.values(), (turn) => ({
@@ -796,6 +821,10 @@ export function App() {
       }}
     />
   )
+}
+
+function findSurface(spaces: SpaceWithSurfaces[], surfaceId: string): Surface | undefined {
+  return spaces.flatMap((space) => space.surfaces).find((surface) => surface.id === surfaceId)
 }
 
 function surfaceStreamEventErrorMessage(streamEvent: SurfaceStreamEvent): string {

@@ -37,7 +37,19 @@ export interface CatalogTokens {
   }
   motion: {
     fast: string
+    entranceDurationMs: number
+    entranceEasing: string
+    staggerIntervalMs: number
+    updateFeedbackDurationMs: number
   }
+}
+
+const motionTokens: CatalogTokens['motion'] = {
+  fast: '120ms ease',
+  entranceDurationMs: 240,
+  entranceEasing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+  staggerIntervalMs: 45,
+  updateFeedbackDurationMs: 720,
 }
 
 export const catalogTokens: Record<CatalogTheme, CatalogTokens> = {
@@ -68,7 +80,7 @@ export const catalogTokens: Record<CatalogTheme, CatalogTokens> = {
       lg: 18,
       xl: 24,
     },
-    motion: { fast: '120ms ease' },
+    motion: motionTokens,
   },
   dark: {
     mode: 'dark',
@@ -97,7 +109,7 @@ export const catalogTokens: Record<CatalogTheme, CatalogTokens> = {
       lg: 18,
       xl: 24,
     },
-    motion: { fast: '120ms ease' },
+    motion: motionTokens,
   },
 }
 
