@@ -24,10 +24,13 @@ flowchart TB
         TG["Messenger Bridges\n(Telegram/WhatsApp, post-v1)"]
     end
 
-    subgraph Daemon["Gateway daemon (VPS, TypeScript)"]
+    subgraph Daemon["Gateway runtime (VPS)"]
         GW["Gateway\nWS + HTTP, ChannelAdapter[]"]
         SE["Surface engine\nAtom tree + typed state\ndeterministic fast path"]
         AL["Agent loop (wrapped pi-agent-core)\nsingle SOUL, triage/reasoning routing"]
+        MC["Model connections\nregistry + routing"]
+        BYOK["BYOK adapters\nAPI-key inference"]
+        CODEX["Codex App Server\nexactly pinned child process\nChatGPT subscription"]
         SCH["Scheduler\none-shot timers, jobs, heartbeat 1-2x/day"]
         ING["Event ingestion\nwebhooks, Gmail/Calendar watch, IMAP IDLE\ndeterministic pre-filters + quarantined reader"]
         MEM["Spaces\nFACTS.md · Event log · INSTRUCTIONS.md\n+ global USER.md, SOUL.md"]
@@ -36,7 +39,7 @@ flowchart TB
     end
 
     subgraph Esterno["Outside world"]
-        LLM["LLM providers (BYOK)\nAnthropic / OpenAI / OpenRouter"]
+        LLM["External model services\nAnthropic / OpenAI / OpenRouter / ChatGPT"]
         SRC["Event sources\nGmail, Calendar, webhooks"]
         ACT["External actions\nmail, messages, purchases"]
     end
@@ -47,7 +50,11 @@ flowchart TB
     GW --> AL
     SE <-->|"state + events"| MEM
     AL <--> MEM
-    AL <-->|"per-call, failover"| LLM
+    AL <-->|"per-call ModelRef + normalized events"| MC
+    MC <-->|"BYOK"| BYOK
+    MC <-->|"stdio JSON-RPC + dynamicTools"| CODEX
+    BYOK <-->|"provider APIs"| LLM
+    CODEX <-->|"device auth + inference"| LLM
     AL --> WK
     WK --> MEM
     SRC --> ING
@@ -62,11 +69,39 @@ flowchart TB
 
 ### 3.1 Gateway daemon
 
-A single self-hosted process (v1 profile: VPS with a public IP). Exposes HTTPS with automatic ACME; authentication via **passkeys/WebAuthn** and device pairing via QR. Talks to clients through the `ChannelAdapter` interface: in v1 the only adapter is the PWA (WebSocket + web push); messenger Bridges are additive post-v1 modules ([ADR-0008](docs/adr/0008-vps-passkey-byok.md)).
+A single self-hosted Gateway deployment (v1 profile: VPS with a public IP), centred on a TypeScript
+daemon. It exposes HTTPS with automatic ACME; authentication uses **passkeys/WebAuthn** and device
+pairing via QR. It talks to clients through the `ChannelAdapter` interface: in v1 the only adapter
+is the PWA (WebSocket + web push); messenger Bridges are additive post-v1 modules
+([ADR-0008](docs/adr/0008-vps-passkey-byok.md)). A ChatGPT subscription Model connection also
+starts the exactly pinned Codex App Server child shown above; BYOK connections remain inside the
+daemon process.
 
 ### 3.2 Agent loop
 
 A single agent (one SOUL). Runtime: `@earendil-works/pi-agent-core`, **never imported directly** — wrapped behind `AgentRunner`, normalized events, `ModelRef`, `ToolDef`, `SessionStore` ([ADR-0004](docs/adr/0004-typescript-pi-agent-core.md)). Model routing is per-call: the `triage` tier (cheap) for classification, mechanical updates, event pre-triage; the `reasoning` tier (strong) for reasoning. Cross-provider failover in the router.
+
+Each `ModelRef` resolves through the Gateway-owned Model connection registry. BYOK adapters call
+Anthropic, OpenAI, or OpenRouter with user-supplied API keys. The ChatGPT subscription adapter
+instead controls an exactly pinned `codex app-server` child over stdio JSON-RPC for managed device
+authorization, model discovery, and inference. Claude subscription stays visibly unavailable until
+Anthropic publishes or approves a third-party contract; Anthropic BYOK remains available
+([ADR-0014](docs/adr/0014-subscription-inference-boundary.md)).
+
+Every adapter supplies inference only. On the Codex path, the adapter maps allowed `ToolDef`
+definitions, calls, and results through `dynamicTools`; `AgentRunner` remains the only owner of
+validation and handler execution, trust decisions, Event log writes, and Surface changes.
+Codex-native command execution, patches, web search, MCP, and approvals remain disabled
+([ADR-0016](docs/adr/0016-primary-agent-connections-author-surfaces.md),
+[security contract](docs/SECURITY.md)). The
+[real-account smoke](docs/references/11-model-connections-manual-smoke.md) verifies authorization,
+inference, and Surface creation and patching without BYOK; the
+[protocol capture](docs/references/13-codex-dynamic-tools-0.146.1.md) records the pinned boundary.
+Automation, Worker, and final Connection parity remain tracked by
+[issue 070](issues/070-codex-tool-parity.md) and its open
+[077](issues/077-chatgpt-subscription-automations.md),
+[078](issues/078-chatgpt-subscription-workers.md), and
+[079](issues/079-primary-connection-parity.md) slices.
 
 The agent's main tools: focused-Space Surface discovery and authoring (`list_surfaces`,
 `read_surface`, Space-bound `create_surface`, `patch_state`, `patch_tree`), memory (`write_fact`

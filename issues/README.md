@@ -18,6 +18,7 @@ Access:        048 guided-vps-access-installer → 049 tailnet-access
 Models:        047 model-connections → 070 codex-tool-parity parent
                071 round-trip → 072 hardening → 073 Surface authoring → 074 trust → 075 memory → 076 Templates
                (073,093) → 077 Automations; (039,073) → 078 Workers; (074,075,076,077,078) → 079 parity
+               119 Model connection docs discoverability
 Operations:    081 trace-console parent → 082 retained-logs → 083 chat-activity → 084 complete-turn
                084 → 085 fast-path; 083 → (086,087); (082,083) → 088; 082 → 089; (084–089) → 090
 Automations:   091 outcome-delivery → 092 external-monitoring; 093 focused-tools → 077 parity; 094 paused recurrence
@@ -137,3 +138,4 @@ blocker is closed.
 | 115 | [Living Connected devices System Surface](115-persist-connected-devices-system-surface.md)           | Core         |
 | 116 | [Gateway-owned System Space authoring](116-system-space-gateway-owned-authoring.md)                  | Core         |
 | 117 | [Synthetic System Surface projection retirement](117-retire-synthetic-system-surface-projections.md) | Core         |
+| 119 | [Model connection docs discoverability](119-model-connection-docs-discoverability.md)                | Models       |
