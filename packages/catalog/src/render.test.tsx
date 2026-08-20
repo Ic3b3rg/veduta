@@ -98,7 +98,7 @@ describe('renderNode', () => {
     expect(animate).not.toHaveBeenCalled()
   })
 
-  it('marks only the updated Atom region and restarts feedback only for a new patch key', () => {
+  it('fades and marks only the updated Atom region, once per patch key', () => {
     const motionBrowser = installMotionBrowser(false)
     const view = render(renderNode(tree, { state: { milk: true }, dispatch: vi.fn() }))
 
@@ -117,9 +117,16 @@ describe('renderNode', () => {
       duration: 720,
     })
     expect(motionBrowser.calls.at(-1)?.keyframes).toEqual([
-      { outline: '0 solid #246b58', outlineOffset: '0' },
-      { outline: '4px solid #246b58', outlineOffset: '4px' },
-      { outline: '0 solid #246b58', outlineOffset: '8px' },
+      { opacity: 0, outline: '0 solid #246b58', outlineOffset: '0', offset: 0 },
+      {
+        opacity: 1,
+        outline: '4px solid #246b58',
+        outlineOffset: '4px',
+        offset:
+          catalogTokens.light.motion.entranceDurationMs /
+          catalogTokens.light.motion.updateFeedbackDurationMs,
+      },
+      { opacity: 1, outline: '0 solid #246b58', outlineOffset: '8px', offset: 1 },
     ])
 
     view.rerender(
@@ -175,6 +182,31 @@ describe('renderNode', () => {
         easing: catalogTokens.light.motion.entranceEasing,
       },
     ])
+  })
+
+  it('fades an updated region back to its own rendered opacity', () => {
+    const motionBrowser = installMotionBrowser(false)
+    const hiddenTransitionTree = AtomNodeSchema.parse({
+      ...tree,
+      children: (tree.children ?? []).map((child) =>
+        child.id === 'weird' ? { ...child, props: { visible: false } } : child,
+      ),
+    })
+    const view = render(
+      renderNode(hiddenTransitionTree, { state: { milk: true }, dispatch: vi.fn() }),
+    )
+
+    view.rerender(
+      renderNode(hiddenTransitionTree, {
+        state: { milk: true },
+        dispatch: vi.fn(),
+        motion: { update: { key: 'patch-hidden', atomIds: ['weird'] } },
+      }),
+    )
+
+    const keyframes = motionBrowser.calls.at(-1)?.keyframes
+    if (!Array.isArray(keyframes)) throw new Error('array keyframes are required')
+    expect(keyframes.map(({ opacity }) => opacity)).toEqual([0, 0.4, 0.4])
   })
 
   it('does not replay entrance when a persistent Atom moves between parents', () => {
