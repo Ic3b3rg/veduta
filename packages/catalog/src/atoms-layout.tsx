@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { align, propBoolean, spacing } from './atom-helpers.ts'
+import { align, motionContent, propBoolean, spacing } from './atom-helpers.ts'
 import { surfaceStyle } from './atom-styles.ts'
 import { tokensFor } from './design-system.ts'
 import type { AtomProps } from './types.ts'
@@ -76,13 +76,16 @@ export function DividerAtom({ ctx }: AtomProps): ReactNode {
   )
 }
 
-export function TransitionAtom({ node, ctx, children }: AtomProps): ReactNode {
-  const tokens = tokensFor(ctx.theme)
+export function TransitionAtom({ node, children }: AtomProps): ReactNode {
+  const visible = propBoolean(node.props, 'visible', true)
   return (
     <div
+      {...motionContent('content', {
+        mode: 'previous-opacity',
+        signature: `visible:${visible}`,
+      })}
       style={{
-        opacity: propBoolean(node.props, 'visible', true) ? 1 : 0.4,
-        transition: `opacity ${tokens.motion.fast}`,
+        opacity: visible ? 1 : 0.4,
       }}
     >
       {children}

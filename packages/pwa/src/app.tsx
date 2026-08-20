@@ -120,6 +120,7 @@ export function App() {
       (cachedHome?.spaces ?? []).map((space) => [space.id, cachedHome?.surfaceCursor ?? 0]),
     ),
   )
+  const fastFeedbackSequenceRef = useRef(0)
   const streamingTurnsRef = useRef<Map<string, StreamingTurn>>(new Map())
   // Last clientId this tab was assigned by the Gateway (issue 037), sent
   // back on the next reconnect hello so the daemon re-binds the same
@@ -174,7 +175,17 @@ export function App() {
   useEffect(() => persistQueuedFastActions(queuedFastActions), [queuedFastActions])
 
   const replaceSurface = useCallback(
-    (updated: Surface) => {
+    (updated: Surface, affectedAtomIds?: readonly string[]) => {
+      if (affectedAtomIds && affectedAtomIds.length > 0) {
+        fastFeedbackSequenceRef.current += 1
+        setSurfaceUpdateFeedbacks((current) => ({
+          ...current,
+          [updated.id]: {
+            key: `fast:${fastFeedbackSequenceRef.current}`,
+            atomIds: affectedAtomIds,
+          },
+        }))
+      }
       replaceSpaces(
         spacesRef.current.map((space) => ({
           ...space,

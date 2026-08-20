@@ -5,6 +5,7 @@ import {
   boundedNumber,
   choicesFrom,
   findAction,
+  motionContent,
   optionalText,
   propBoolean,
   text,
@@ -26,12 +27,13 @@ export function CheckboxAtom({ node, ctx }: AtomProps): ReactNode {
   return (
     <label style={inlineControlStyle(tokens)}>
       <input
+        {...motionContent('value')}
         type="checkbox"
         checked={checked}
         onChange={() => action && ctx.dispatch(node, action.name, !checked)}
         style={{ minHeight: 20, minWidth: 20 }}
       />
-      <span>{text(node.props?.['label'])}</span>
+      <span {...motionContent('label')}>{text(node.props?.['label'])}</span>
     </label>
   )
 }
@@ -42,6 +44,7 @@ export function ButtonAtom({ node, ctx }: AtomProps): ReactNode {
   const disabled = propBoolean(node.props, 'disabled', false)
   return (
     <button
+      {...motionContent('content')}
       type="button"
       disabled={disabled}
       onClick={() => action && ctx.dispatch(node, action.name, actionValue(action))}
@@ -58,8 +61,11 @@ export function DatePickerAtom({ node, ctx }: AtomProps): ReactNode {
   const action = findAction(node, ['change', 'select', 'set'])
   return (
     <label style={fieldStyle(tokens)}>
-      <span style={labelStyle(tokens)}>{text(node.props?.['label'])}</span>
+      <span {...motionContent('label')} style={labelStyle(tokens)}>
+        {text(node.props?.['label'])}
+      </span>
       <input
+        {...motionContent('value')}
         aria-label={text(node.props?.['label'])}
         type="date"
         value={value}
@@ -76,15 +82,22 @@ export function SelectAtom({ node, ctx }: AtomProps): ReactNode {
   const action = findAction(node, ['change', 'select', 'set'])
   return (
     <label style={fieldStyle(tokens)}>
-      <span style={labelStyle(tokens)}>{text(node.props?.['label'])}</span>
+      <span {...motionContent('label')} style={labelStyle(tokens)}>
+        {text(node.props?.['label'])}
+      </span>
       <select
+        {...motionContent('value', { signature: `value:${value}` })}
         aria-label={text(node.props?.['label'])}
         value={value}
         onChange={(event) => action && ctx.dispatch(node, action.name, event.currentTarget.value)}
         style={controlStyle(tokens)}
       >
         {choicesFrom(node.props?.['options']).map((choice) => (
-          <option key={choice.value} value={choice.value}>
+          <option
+            key={choice.value}
+            {...motionContent(`option:${choice.value}`)}
+            value={choice.value}
+          >
             {choice.label}
           </option>
         ))}
@@ -100,10 +113,16 @@ export function RadioGroupAtom({ node, ctx }: AtomProps): ReactNode {
   const name = `${node.id}-radio`
   return (
     <fieldset style={{ border: 0, display: 'grid', gap: tokens.space.sm, margin: 0, padding: 0 }}>
-      <legend style={labelStyle(tokens)}>{text(node.props?.['label'])}</legend>
+      <legend {...motionContent('label')} style={labelStyle(tokens)}>
+        {text(node.props?.['label'])}
+      </legend>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: tokens.space.sm }}>
         {choicesFrom(node.props?.['options']).map((choice) => (
-          <label key={choice.value} style={inlineControlStyle(tokens)}>
+          <label
+            key={choice.value}
+            {...motionContent(`option:${choice.value}`)}
+            style={inlineControlStyle(tokens)}
+          >
             <input
               type="radio"
               name={name}
@@ -126,8 +145,11 @@ export function InputAtom({ node, ctx }: AtomProps): ReactNode {
   const action = findAction(node, ['change', 'input', 'set'])
   return (
     <label style={fieldStyle(tokens)}>
-      <span style={labelStyle(tokens)}>{text(node.props?.['label'])}</span>
+      <span {...motionContent('label')} style={labelStyle(tokens)}>
+        {text(node.props?.['label'])}
+      </span>
       <input
+        {...motionContent('value')}
         aria-label={text(node.props?.['label'])}
         type={optionalText(node.props?.['inputType']) ?? 'text'}
         placeholder={optionalText(node.props?.['placeholder'])}
@@ -145,8 +167,11 @@ export function TextareaAtom({ node, ctx }: AtomProps): ReactNode {
   const action = findAction(node, ['change', 'input', 'set'])
   return (
     <label style={fieldStyle(tokens)}>
-      <span style={labelStyle(tokens)}>{text(node.props?.['label'])}</span>
+      <span {...motionContent('label')} style={labelStyle(tokens)}>
+        {text(node.props?.['label'])}
+      </span>
       <textarea
+        {...motionContent('value')}
         aria-label={text(node.props?.['label'])}
         placeholder={optionalText(node.props?.['placeholder'])}
         value={value}

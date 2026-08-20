@@ -106,11 +106,17 @@ function MotionNode({
   ctx,
   siblingIndex,
   shouldAnimateEntrance,
+  inheritedContentUpdateKey,
 }: AtomProps & {
   siblingIndex: number
   shouldAnimateEntrance: (atomId: string) => boolean
+  inheritedContentUpdateKey?: string
 }): ReactNode {
   const Renderer = renderers[node.type] ?? UnknownAtom
+  const regionUpdateKey = ctx.motion?.update?.atomIds.includes(node.id)
+    ? ctx.motion.update.key
+    : undefined
+  const contentUpdateKey = regionUpdateKey ?? inheritedContentUpdateKey
   const children = (node.children ?? []).map((child, index) => (
     <MotionNode
       key={child.id}
@@ -118,6 +124,7 @@ function MotionNode({
       ctx={ctx}
       siblingIndex={index}
       shouldAnimateEntrance={shouldAnimateEntrance}
+      {...(contentUpdateKey === undefined ? {} : { inheritedContentUpdateKey: contentUpdateKey })}
     />
   ))
   return (
@@ -127,6 +134,8 @@ function MotionNode({
       Renderer={Renderer}
       siblingIndex={siblingIndex}
       shouldAnimateEntrance={shouldAnimateEntrance}
+      regionUpdateKey={regionUpdateKey}
+      contentUpdateKey={contentUpdateKey}
     >
       {children}
     </MotionAtom>
@@ -139,11 +148,15 @@ function MotionAtom({
   Renderer,
   siblingIndex,
   shouldAnimateEntrance,
+  regionUpdateKey,
+  contentUpdateKey,
   children,
 }: AtomProps & {
   Renderer: AtomRenderer
   siblingIndex: number
   shouldAnimateEntrance: (atomId: string) => boolean
+  regionUpdateKey: string | undefined
+  contentUpdateKey: string | undefined
 }): ReactNode {
   const motionId = useId()
   const entranceRef = useRef({
@@ -152,10 +165,10 @@ function MotionAtom({
     siblingIndex,
     tokens: tokensFor(ctx.theme),
   })
-  const updateKey = ctx.motion?.update?.atomIds.includes(node.id)
-    ? ctx.motion.update.key
-    : undefined
-  const previousUpdateKeyRef = useRef<string | undefined>(undefined)
+  const previousRegionUpdateKeyRef = useRef<string | undefined>(undefined)
+  const previousContentUpdateKeyRef = useRef<string | undefined>(undefined)
+  const previousContentRef = useRef<ReadonlyMap<string, MotionContentState> | undefined>(undefined)
+  const activeUpdateAnimationsRef = useRef<Animation[]>([])
 
   useLayoutEffect(() => {
     const entrance = entranceRef.current
@@ -165,7 +178,7 @@ function MotionAtom({
     if (!element || prefersReducedMotion() || typeof element.animate !== 'function') return
 
     const { siblingIndex: index, tokens } = entrance
-    const animation = element.animate(entranceKeyframes(tokens), {
+    const animation = element.animate(entranceKeyframes(tokens, renderedOpacity(element)), {
       delay: index * tokens.motion.staggerIntervalMs,
       duration: tokens.motion.entranceDurationMs,
       easing: tokens.motion.entranceEasing,
@@ -175,20 +188,65 @@ function MotionAtom({
   }, [motionId])
 
   useLayoutEffect(() => {
-    const previousUpdateKey = previousUpdateKeyRef.current
-    previousUpdateKeyRef.current = updateKey
-    if (updateKey === undefined || updateKey === previousUpdateKey) return
+    return () => {
+      for (const animation of activeUpdateAnimationsRef.current) animation.cancel()
+    }
+  }, [])
 
+  useLayoutEffect(() => {
     const element = motionElement(motionId)
-    if (!element || prefersReducedMotion() || typeof element.animate !== 'function') return
+    if (!element) return
+
+    const currentContent = motionContentSnapshots(element)
+    const previousRegionUpdateKey = previousRegionUpdateKeyRef.current
+    previousRegionUpdateKeyRef.current = regionUpdateKey
+    const previousContentUpdateKey = previousContentUpdateKeyRef.current
+    previousContentUpdateKeyRef.current = contentUpdateKey
+    const previousContent = previousContentRef.current
+    previousContentRef.current = contentStates(currentContent)
+    const shouldAnimateRegion =
+      regionUpdateKey !== undefined && regionUpdateKey !== previousRegionUpdateKey
+    const shouldAnimateContent =
+      contentUpdateKey !== undefined && contentUpdateKey !== previousContentUpdateKey
+    if (!shouldAnimateRegion && !shouldAnimateContent) return
+
+    for (const animation of activeUpdateAnimationsRef.current) animation.cancel()
+    activeUpdateAnimationsRef.current = []
+    if (prefersReducedMotion() || typeof element.animate !== 'function') return
 
     const tokens = tokensFor(ctx.theme)
-    const animation = element.animate(updateFeedbackKeyframes(tokens, renderedOpacity(element)), {
-      duration: tokens.motion.updateFeedbackDurationMs,
-      easing: tokens.motion.entranceEasing,
+    if (shouldAnimateRegion) {
+      activeUpdateAnimationsRef.current.push(
+        element.animate(updateFeedbackKeyframes(tokens), {
+          duration: tokens.motion.updateFeedbackDurationMs,
+          easing: tokens.motion.entranceEasing,
+        }),
+      )
+    }
+    if (!shouldAnimateContent || !previousContent) return
+
+    const changedContent = currentContent.filter(
+      ({ key, signature }) => previousContent.get(key)?.signature !== signature,
+    )
+    const outermostChangedContent = outermostContent(changedContent)
+    outermostChangedContent.forEach(({ element: content, key }, index) => {
+      if (typeof content.animate !== 'function') return
+      const previousOpacity = previousContent.get(key)?.opacity
+      const startOpacity =
+        content.getAttribute('data-veduta-motion-content-mode') === 'previous-opacity' &&
+        previousOpacity !== undefined
+          ? previousOpacity
+          : 0
+      activeUpdateAnimationsRef.current.push(
+        content.animate(contentFadeKeyframes(startOpacity, renderedOpacity(content)), {
+          delay: index * tokens.motion.staggerIntervalMs,
+          duration: tokens.motion.entranceDurationMs,
+          easing: tokens.motion.entranceEasing,
+          fill: 'backwards',
+        }),
+      )
     })
-    return () => animation.cancel()
-  }, [ctx.theme, motionId, updateKey])
+  })
 
   const rendered = Renderer({ node, ctx, children })
   if (!isValidElement<MotionElementProps>(rendered)) return rendered
@@ -219,33 +277,29 @@ function collect(node: AtomNode, ids: Set<string>): void {
   for (const child of node.children ?? []) collect(child, ids)
 }
 
-function entranceKeyframes(tokens: CatalogTokens): Keyframe[] {
+function entranceKeyframes(tokens: CatalogTokens, opacity: number): Keyframe[] {
   return [
     { opacity: 0, transform: `translateY(${tokens.space.sm}px)` },
-    { opacity: 1, transform: 'translateY(0)' },
+    { opacity, transform: 'translateY(0)' },
   ]
 }
 
-function updateFeedbackKeyframes(tokens: CatalogTokens, opacity: number): Keyframe[] {
-  const fadeEndOffset = Math.min(
-    1,
-    tokens.motion.entranceDurationMs / tokens.motion.updateFeedbackDurationMs,
-  )
+function updateFeedbackKeyframes(tokens: CatalogTokens): Keyframe[] {
   return [
     {
-      opacity: 0,
       outline: `0 solid ${tokens.color.accent}`,
       outlineOffset: '0',
       offset: 0,
     },
     {
-      opacity,
       outline: `${tokens.space.xs}px solid ${tokens.color.accent}`,
       outlineOffset: `${tokens.space.xs}px`,
-      offset: fadeEndOffset,
+      offset: Math.min(
+        1,
+        tokens.motion.entranceDurationMs / tokens.motion.updateFeedbackDurationMs,
+      ),
     },
     {
-      opacity,
       outline: `0 solid ${tokens.color.accent}`,
       outlineOffset: `${tokens.space.sm}px`,
       offset: 1,
@@ -253,7 +307,82 @@ function updateFeedbackKeyframes(tokens: CatalogTokens, opacity: number): Keyfra
   ]
 }
 
+function contentFadeKeyframes(startOpacity: number, opacity: number): Keyframe[] {
+  return [{ opacity: startOpacity }, { opacity }]
+}
+
+interface MotionContentSnapshot {
+  element: Element
+  key: string
+  signature: string
+  opacity: number
+}
+
+interface MotionContentState {
+  signature: string
+  opacity: number
+}
+
+/** Content snapshots are in DOM pre-order, so the latest outer boundary owns later descendants. */
+function outermostContent(snapshots: MotionContentSnapshot[]): MotionContentSnapshot[] {
+  const outermost: MotionContentSnapshot[] = []
+  for (const snapshot of snapshots) {
+    if (!outermost.at(-1)?.element.contains(snapshot.element)) outermost.push(snapshot)
+  }
+  return outermost
+}
+
+function motionContentSnapshots(root: Element): MotionContentSnapshot[] {
+  const elements: Element[] = []
+  collectOwnedMotionContent(root, root, elements)
+  return elements.map((element, index) => ({
+    element,
+    key: scopedContentKey(element, index),
+    signature: contentSignature(element),
+    opacity: renderedOpacity(element),
+  }))
+}
+
+function collectOwnedMotionContent(root: Element, element: Element, content: Element[]): void {
+  if (element !== root && element.hasAttribute('data-veduta-atom-id')) return
+  if (element.getAttribute('data-veduta-motion-content') === 'true') content.push(element)
+  for (const child of element.children) collectOwnedMotionContent(root, child, content)
+}
+
+function scopedContentKey(element: Element, index: number): string {
+  const atomId = element.closest('[data-veduta-atom-id]')?.getAttribute('data-veduta-atom-id')
+  const contentKey = element.getAttribute('data-veduta-motion-content-key') ?? String(index)
+  return `${atomId ?? 'unscoped'}:${contentKey}`
+}
+
+function contentStates(
+  snapshots: MotionContentSnapshot[],
+): ReadonlyMap<string, MotionContentState> {
+  return new Map(snapshots.map(({ key, signature, opacity }) => [key, { signature, opacity }]))
+}
+
+function contentSignature(element: Element): string {
+  const explicitSignature = element.getAttribute('data-veduta-motion-content-signature')
+  if (explicitSignature !== null) return explicitSignature
+  const controls = [element, ...element.querySelectorAll('input, select, textarea')]
+    .flatMap((candidate) => {
+      if (candidate instanceof HTMLInputElement) {
+        return [`input:${candidate.type}:${candidate.value}:${candidate.checked}`]
+      }
+      if (candidate instanceof HTMLSelectElement) {
+        return [`select:${candidate.value}:${candidate.selectedIndex}`]
+      }
+      if (candidate instanceof HTMLTextAreaElement) return [`textarea:${candidate.value}`]
+      return []
+    })
+    .join('|')
+  return `${element.outerHTML}|${controls}`
+}
+
 function renderedOpacity(element: Element): number {
+  const inlineOpacity =
+    element instanceof HTMLElement ? Number.parseFloat(element.style.opacity) : Number.NaN
+  if (Number.isFinite(inlineOpacity)) return inlineOpacity
   if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return 1
   const opacity = Number.parseFloat(window.getComputedStyle(element).opacity)
   return Number.isFinite(opacity) ? opacity : 1
