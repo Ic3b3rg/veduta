@@ -33,6 +33,7 @@ vi.mock('./api.ts', async (importOriginal) => {
     fetchSpaces: vi.fn(),
     fetchOnboardingStatus: vi.fn(),
     connectGateway: vi.fn(() => ({ close: vi.fn(), sendChat: vi.fn(() => false) })),
+    invokeFastAction: vi.fn(),
     moveSurface: vi.fn(),
     fetchModelConnections: vi.fn(),
   }
@@ -46,6 +47,7 @@ import {
   fetchModelConnections,
   fetchOnboardingStatus,
   fetchSpaces,
+  invokeFastAction,
   moveSurface,
 } from './api.ts'
 
@@ -398,8 +400,239 @@ describe('App', () => {
     expect(await screen.findByText('On track')).toBeDefined()
     expect(screen.queryByText('Needs water')).toBeNull()
     expect(screen.getByText('Hydration Surface created.')).toBeDefined()
-    expect(atomAnimations.map(({ nodeId }) => nodeId)).toEqual(['status'])
-    expect(atomAnimations[0]?.options.duration).toBe(720)
+    expect(atomAnimations.map(({ nodeId }) => nodeId)).toEqual(['status', 'status'])
+    expect(atomAnimations[0]).toMatchObject({
+      contentKey: null,
+      targetTag: 'DIV',
+      options: { duration: 720 },
+    })
+    expect(hasOpacityKeyframe(atomAnimations[0]!.keyframes)).toBe(false)
+    expect(atomAnimations[1]).toMatchObject({
+      contentKey: 'value',
+      targetTag: 'DIV',
+      targetText: 'On track',
+      options: { duration: 240 },
+    })
+    expect(hasOpacityKeyframe(atomAnimations[1]!.keyframes)).toBe(true)
+  })
+
+  it('fades the content added by the exact Meals chat patch without hiding Atom containers', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
+    vi.mocked(fetchSpaces).mockResolvedValue({
+      surfaceCursor: 0,
+      spaces: [
+        {
+          id: 'spc-health',
+          slug: 'health',
+          name: 'Health',
+          archived: false,
+          attention: 0,
+          attentionRevision: 0,
+          surfaces: [
+            {
+              id: 'srf-meals',
+              spaceId: 'spc-health',
+              title: 'Meals',
+              tree: {
+                id: 'root',
+                type: 'Box',
+                children: [
+                  { id: 'title', type: 'Title', props: { text: 'Meals' } },
+                  {
+                    id: 'summary',
+                    type: 'Row',
+                    children: [
+                      {
+                        id: 'meal-count',
+                        type: 'Stat',
+                        binding: 'mealCount',
+                        props: { label: 'Today' },
+                      },
+                      {
+                        id: 'last-meal',
+                        type: 'Stat',
+                        binding: 'lastMeal',
+                        props: { label: 'Last meal' },
+                      },
+                    ],
+                  },
+                  {
+                    id: 'meal-table',
+                    type: 'Table',
+                    binding: 'meals',
+                    props: { columns: ['time', 'meal'] },
+                  },
+                  {
+                    id: 'hint',
+                    type: 'Caption',
+                    props: { text: 'Ask the Agent to add a meal in chat to update this Surface.' },
+                  },
+                ],
+              },
+              state: { meals: [], lastMeal: 'Nothing logged today', mealCount: 0 },
+              freshness: { updatedAt: '2026-08-11T10:00:00.000Z', updatedBy: 'seed' },
+              pinned: false,
+              pinnable: true,
+            },
+          ],
+        },
+      ],
+    })
+    vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+      fromPartial<OnboardingStatus>({ required: false, completed: true }),
+    )
+    vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
+
+    render(<App />)
+
+    expect(await screen.findByRole('button', { name: 'Focus Meals' })).toBeDefined()
+    await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+    const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
+    if (!handlers) throw new Error('Gateway handlers were not registered')
+    atomAnimations.length = 0
+
+    act(() => {
+      handlers.onSurfacePatch(
+        SurfacePatchEventSchema.parse({
+          cursor: 1,
+          at: '2026-08-11T13:00:00.000Z',
+          spaceId: 'spc-health',
+          patch: {
+            surfaceId: 'srf-meals',
+            operations: [
+              {
+                target: 'state',
+                op: 'replace',
+                path: '/meals',
+                value: [{ time: '13:00', meal: 'fesa di tacchino' }],
+              },
+              {
+                target: 'state',
+                op: 'replace',
+                path: '/lastMeal',
+                value: 'fesa di tacchino',
+              },
+              { target: 'state', op: 'replace', path: '/mealCount', value: 1 },
+            ],
+          },
+          freshness: { updatedAt: '2026-08-11T13:00:00.000Z', updatedBy: 'agent' },
+        }),
+      )
+    })
+
+    expect(await screen.findAllByText('fesa di tacchino')).toHaveLength(2)
+    expect(screen.getAllByText('1').length).toBeGreaterThan(0)
+    const contentFades = atomAnimations.filter(({ keyframes }) => hasOpacityKeyframe(keyframes))
+    expect(
+      contentFades.map(({ nodeId, contentKey, targetTag, targetText, options }) => ({
+        nodeId,
+        contentKey,
+        targetTag,
+        targetText,
+        duration: options.duration,
+      })),
+    ).toEqual([
+      {
+        nodeId: 'meal-count',
+        contentKey: 'value',
+        targetTag: 'DIV',
+        targetText: '1',
+        duration: 240,
+      },
+      {
+        nodeId: 'last-meal',
+        contentKey: 'value',
+        targetTag: 'DIV',
+        targetText: 'fesa di tacchino',
+        duration: 240,
+      },
+      {
+        nodeId: 'meal-table',
+        contentKey: expect.stringMatching(/^row:/),
+        targetTag: 'TR',
+        targetText: '13:00fesa di tacchino',
+        duration: 240,
+      },
+    ])
+    const regionFeedback = atomAnimations.filter(({ keyframes }) => !hasOpacityKeyframe(keyframes))
+    expect(regionFeedback.map(({ nodeId }) => nodeId)).toEqual([
+      'meal-count',
+      'last-meal',
+      'meal-table',
+    ])
+    expect(regionFeedback.every(({ options }) => options.duration === 720)).toBe(true)
+    expect(regionFeedback.every(({ contentKey }) => contentKey === null)).toBe(true)
+    expect(
+      atomAnimations.some(({ nodeId }) => ['root', 'title', 'summary', 'hint'].includes(nodeId)),
+    ).toBe(false)
+  })
+
+  it('fades an interactive Atom value on its optimistic fast-path update', async () => {
+    const groceries = {
+      id: 'srf-groceries',
+      spaceId: 'spc-health',
+      title: 'Groceries',
+      tree: {
+        id: 'root',
+        type: 'Box' as const,
+        children: [
+          {
+            id: 'milk',
+            type: 'Checkbox' as const,
+            binding: 'milk',
+            props: { label: 'Milk' },
+            actions: [{ name: 'toggle', path: 'fast' as const, stateKey: 'milk', payload: {} }],
+          },
+        ],
+      },
+      state: { milk: false },
+      freshness: { updatedAt: '2026-08-20T10:00:00.000Z', updatedBy: 'seed' as const },
+      pinned: false,
+      pinnable: true,
+    }
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
+    vi.mocked(fetchSpaces).mockResolvedValue({
+      surfaceCursor: 0,
+      spaces: [
+        {
+          id: 'spc-health',
+          slug: 'health',
+          name: 'Health',
+          archived: false,
+          attention: 0,
+          attentionRevision: 0,
+          surfaces: [groceries],
+        },
+      ],
+    })
+    vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+      fromPartial<OnboardingStatus>({ required: false, completed: true }),
+    )
+    vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
+    vi.mocked(invokeFastAction).mockResolvedValue({
+      ...groceries,
+      state: { milk: true },
+      freshness: { updatedAt: '2026-08-20T10:00:01.000Z', updatedBy: 'user' },
+    })
+
+    render(<App />)
+    const checkbox = await screen.findByRole<HTMLInputElement>('checkbox', { name: 'Milk' })
+    atomAnimations.length = 0
+
+    fireEvent.click(checkbox)
+
+    await waitFor(() => expect(checkbox.checked).toBe(true))
+    expect(
+      atomAnimations.map(({ nodeId, contentKey, targetTag, options }) => ({
+        nodeId,
+        contentKey,
+        targetTag,
+        duration: options.duration,
+      })),
+    ).toEqual([
+      { nodeId: 'milk', contentKey: null, targetTag: 'LABEL', duration: 720 },
+      { nodeId: 'milk', contentKey: 'value', targetTag: 'INPUT', duration: 240 },
+    ])
   })
 
   it('centres and highlights a correlated chat-created Surface once without changing focus, route, or selection', async () => {
@@ -605,4 +838,8 @@ function appSurface(id: string, title: string) {
     pinned: false,
     pinnable: true,
   }
+}
+
+function hasOpacityKeyframe(keyframes: Keyframe[] | PropertyIndexedKeyframes): boolean {
+  return Array.isArray(keyframes) && keyframes.some(({ opacity }) => opacity !== undefined)
 }

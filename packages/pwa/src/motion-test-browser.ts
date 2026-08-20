@@ -4,6 +4,9 @@ const originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'anim
 
 export interface MotionAnimationCall {
   nodeId: string
+  contentKey: string | null
+  targetTag: string
+  targetText: string
   keyframes: Keyframe[] | PropertyIndexedKeyframes
   options: KeyframeAnimationOptions
 }
@@ -25,7 +28,13 @@ export function installMotionBrowser(reducedMotion: boolean) {
   ) {
     if (!options || typeof options === 'number') throw new Error('motion options are required')
     calls.push({
-      nodeId: this.getAttribute('data-veduta-atom-id') ?? '',
+      nodeId:
+        this.getAttribute('data-veduta-atom-id') ??
+        this.closest('[data-veduta-atom-id]')?.getAttribute('data-veduta-atom-id') ??
+        '',
+      contentKey: this.getAttribute('data-veduta-motion-content-key'),
+      targetTag: this.tagName,
+      targetText: this.textContent ?? '',
       keyframes,
       options,
     })

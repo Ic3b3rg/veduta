@@ -12,6 +12,18 @@ import type { RenderContext } from './types.ts'
 type Choice = { label: string; value: string }
 type DataPoint = { label: string; value: number }
 
+export interface MotionContentAttributes {
+  'data-veduta-motion-content': 'true'
+  'data-veduta-motion-content-key': string
+  'data-veduta-motion-content-mode'?: 'previous-opacity'
+  'data-veduta-motion-content-signature'?: string
+}
+
+interface MotionContentOptions {
+  mode?: MotionContentAttributes['data-veduta-motion-content-mode']
+  signature?: string
+}
+
 export const text = (value: unknown): string =>
   typeof value === 'string' ? value : String(value ?? '')
 
@@ -114,6 +126,37 @@ export function dataPoints(value: unknown): DataPoint[] {
   return []
 }
 
+/** Marks the smallest meaningful rendered content boundary inside an Atom. */
+export function motionContent(
+  key: string,
+  options: MotionContentOptions = {},
+): MotionContentAttributes {
+  return {
+    'data-veduta-motion-content': 'true',
+    'data-veduta-motion-content-key': key,
+    ...(options.mode === undefined ? {} : { 'data-veduta-motion-content-mode': options.mode }),
+    ...(options.signature === undefined
+      ? {}
+      : { 'data-veduta-motion-content-signature': options.signature }),
+  }
+}
+
+/** Marks a repeated item whose identity stays stable while its nested fields change. */
+export function motionCollectionItem(key: string): MotionContentAttributes {
+  return motionContent(key, { signature: key })
+}
+
+/** Stable, duplicate-safe keys for repeated JSON content such as Table rows. */
+export function motionItemKeys(values: readonly unknown[]): string[] {
+  const occurrences = new Map<string, number>()
+  return values.map((value) => {
+    const identity = motionIdentity(value)
+    const occurrence = occurrences.get(identity) ?? 0
+    occurrences.set(identity, occurrence + 1)
+    return `${identity}:${occurrence}`
+  })
+}
+
 export function toneColor(tokens: CatalogTokens, tone: string | undefined): string {
   if (tone === 'success' || tone === 'enabled' || tone === 'done') return tokens.color.success
   if (tone === 'warning' || tone === 'pending') return tokens.color.warning
@@ -140,4 +183,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isJsonObject(value: unknown): value is JsonObject {
   if (!isRecord(value)) return false
   return Object.values(value).every(isJsonValue)
+}
+
+function motionIdentity(value: unknown): string {
+  if (isRecord(value)) {
+    const explicitIdentity = value['id'] ?? value['key']
+    if (typeof explicitIdentity === 'string' || typeof explicitIdentity === 'number') {
+      return `id:${String(explicitIdentity)}`
+    }
+  }
+  return stableJson(value)
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value) ?? String(value)
 }

@@ -9,7 +9,7 @@ import {
   optimisticFastSurface,
 } from './api.ts'
 import type { QueuedFastAction } from './pwa-storage.ts'
-import type { SurfaceUpdateFeedback } from './surface-motion.ts'
+import { affectedAtomIdsForStateKey, type SurfaceUpdateFeedback } from './surface-motion.ts'
 import { useCatalogTheme } from './theme.ts'
 
 export function SurfaceCard({
@@ -39,7 +39,7 @@ export function SurfaceCard({
   onFocus: () => void
   onMoveUp: () => void
   onMoveDown: () => void
-  onPatched: (s: Surface) => void
+  onPatched: (surface: Surface, affectedAtomIds?: readonly string[]) => void
   onQueueFastAction: (action: QueuedFastAction) => void
   onTogglePin: (pinned: boolean) => void
   onCreationFeedbackShown: (feedbackKey: string) => void
@@ -93,7 +93,13 @@ export function SurfaceCard({
         actionName,
         value,
       })
-      onPatched(optimisticFastSurface(surface, node, actionName, value))
+      const optimistic = optimisticFastSurface(surface, node, actionName, value)
+      onPatched(
+        optimistic,
+        action.stateKey === undefined
+          ? [node.id]
+          : affectedAtomIdsForStateKey(optimistic.tree, action.stateKey),
+      )
       invokeFastAction(surface.id, node.id, actionName, value, token, idempotencyKey)
         .then(onPatched)
         .catch((e: Error) => {

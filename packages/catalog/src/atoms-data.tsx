@@ -3,6 +3,9 @@ import {
   boundValue,
   dataPoints,
   humanLabel,
+  motionCollectionItem,
+  motionContent,
+  motionItemKeys,
   optionalText,
   tableColumns,
   tableRows,
@@ -15,6 +18,7 @@ import type { AtomProps } from './types.ts'
 export function TableAtom({ node, ctx }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const rows = tableRows(boundValue(node, ctx) ?? node.props?.['rows'])
+  const rowKeys = motionItemKeys(rows)
   const columns = tableColumns(node.props?.['columns'], rows)
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -29,7 +33,12 @@ export function TableAtom({ node, ctx }: AtomProps): ReactNode {
         <thead>
           <tr>
             {columns.map((column) => (
-              <th key={column} scope="col" style={tableHeaderStyle(tokens)}>
+              <th
+                key={column}
+                {...motionContent(`column:${column}`)}
+                scope="col"
+                style={tableHeaderStyle(tokens)}
+              >
                 {humanLabel(column)}
               </th>
             ))}
@@ -37,9 +46,16 @@ export function TableAtom({ node, ctx }: AtomProps): ReactNode {
         </thead>
         <tbody>
           {rows.map((row, rowIndex) => (
-            <tr key={rowIndex}>
+            <tr
+              key={rowKeys[rowIndex]}
+              {...motionCollectionItem(`row:${rowKeys[rowIndex] ?? rowIndex}`)}
+            >
               {columns.map((column) => (
-                <td key={column} style={tableCellStyle(tokens)}>
+                <td
+                  key={column}
+                  {...motionContent(`cell:${rowKeys[rowIndex] ?? rowIndex}:${column}`)}
+                  style={tableCellStyle(tokens)}
+                >
                   {text(row[column])}
                 </td>
               ))}
@@ -58,6 +74,7 @@ export function ImageAtom({ node, ctx }: AtomProps): ReactNode {
   if (!src) {
     return (
       <div
+        {...motionContent('content')}
         role="img"
         aria-label={alt || 'Image placeholder'}
         style={{
@@ -75,6 +92,7 @@ export function ImageAtom({ node, ctx }: AtomProps): ReactNode {
   }
   return (
     <img
+      {...motionContent('content')}
       alt={alt}
       src={src}
       style={{
@@ -107,6 +125,7 @@ export function ChartAtom({ node, ctx }: AtomProps): ReactNode {
       {points.map((point) => (
         <div
           key={point.label}
+          {...motionContent(`point:${point.label}`)}
           style={{
             alignItems: 'center',
             display: 'flex',

@@ -32,7 +32,7 @@ export function SpaceSection({
     surfaceId: string,
     direction: SurfaceMoveDirection,
   ) => void
-  onPatched: (surface: Surface) => void
+  onPatched: (surface: Surface, affectedAtomIds?: readonly string[]) => void
   onQueueFastAction: (action: QueuedFastAction) => void
   onTogglePin: (surface: Surface, pinned: boolean) => void
   onSurfaceCreationFeedbackShown: (surfaceId: string, feedbackKey: string) => void

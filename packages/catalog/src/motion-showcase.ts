@@ -40,12 +40,45 @@ export const catalogMotionShowcaseSurface: Surface = SurfaceSchema.parse({
         props: { label: 'Weekly progress' },
       },
       {
+        id: 'motion-activity',
+        type: 'Table',
+        binding: 'activity',
+        props: { columns: ['item', 'status'] },
+      },
+      {
+        id: 'motion-acknowledged',
+        type: 'Checkbox',
+        binding: 'acknowledged',
+        props: { label: 'Acknowledge update' },
+        actions: [{ name: 'toggle', path: 'fast', stateKey: 'acknowledged' }],
+      },
+      {
+        id: 'motion-transition',
+        type: 'Transition',
+        props: { visible: false },
+        children: [
+          {
+            id: 'motion-transition-copy',
+            type: 'Text',
+            props: { text: 'Nested detail stays mounted.' },
+          },
+        ],
+      },
+      {
         id: 'motion-caption',
         type: 'Caption',
-        props: { text: 'Only the Status region changes in the update example.' },
+        props: {
+          text: 'The update changes scalar, collection, interactive, and nested Atom content.',
+        },
       },
     ],
   },
-  state: { status: 'Waiting', nextCheck: 'Friday', progress: 0.55 },
+  state: {
+    status: 'Waiting',
+    nextCheck: 'Friday',
+    progress: 0.55,
+    activity: [{ id: 'scan', item: 'Scan inbox', status: 'Waiting' }],
+    acknowledged: false,
+  },
   freshness: { updatedAt: '2026-08-20T10:00:00.000Z', updatedBy: 'seed' },
 })

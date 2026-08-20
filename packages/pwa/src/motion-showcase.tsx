@@ -13,11 +13,28 @@ export function MotionShowcasePage() {
   const [theme, setTheme] = useState<CatalogTheme>('light')
   const [entranceKey, setEntranceKey] = useState(0)
   const [updateKey, setUpdateKey] = useState(0)
+  const isUpdated = updateKey % 2 === 1
   const updatedSurface = SurfaceSchema.parse({
     ...catalogMotionShowcaseSurface,
+    tree: {
+      ...catalogMotionShowcaseSurface.tree,
+      children: catalogMotionShowcaseSurface.tree.children?.map((node) =>
+        node.id === 'motion-transition'
+          ? { ...node, props: { ...node.props, visible: isUpdated } }
+          : node,
+      ),
+    },
     state: {
       ...catalogMotionShowcaseSurface.state,
-      status: updateKey % 2 === 0 ? 'Waiting' : 'Ready',
+      status: isUpdated ? 'Ready' : 'Waiting',
+      progress: isUpdated ? 0.78 : 0.55,
+      activity: isUpdated
+        ? [
+            { id: 'review', item: 'Review update', status: 'Ready' },
+            { id: 'scan', item: 'Scan inbox', status: 'Waiting' },
+          ]
+        : [{ id: 'scan', item: 'Scan inbox', status: 'Waiting' }],
+      acknowledged: isUpdated,
     },
   })
 
@@ -63,7 +80,9 @@ export function MotionShowcasePage() {
           <div className="motion-showcase-entry-heading">
             <div>
               <h2 id="update-title">Region-scoped update</h2>
-              <p>The Status Atom receives feedback while its sibling stays still.</p>
+              <p>
+                Changed Atom content fades in while labels, containers, and siblings stay still.
+              </p>
             </div>
             <button type="button" onClick={() => setUpdateKey((current) => current + 1)}>
               Apply region update
@@ -74,7 +93,16 @@ export function MotionShowcasePage() {
             theme={theme}
             update={
               updateKey > 0
-                ? { key: `showcase-${updateKey}`, atomIds: ['motion-status'] }
+                ? {
+                    key: `showcase-${updateKey}`,
+                    atomIds: [
+                      'motion-status',
+                      'motion-progress',
+                      'motion-activity',
+                      'motion-acknowledged',
+                      'motion-transition',
+                    ],
+                  }
                 : undefined
             }
           />

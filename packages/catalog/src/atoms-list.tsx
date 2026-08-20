@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { actionValue, boundValue, findAction, text } from './atom-helpers.ts'
+import { actionValue, boundValue, findAction, motionContent, text } from './atom-helpers.ts'
 import { bodyTextStyle, listItemStyle, switchKnobStyle, switchStyle } from './atom-styles.ts'
 import { BadgeAtom } from './atoms-content.tsx'
 import { tokensFor } from './design-system.ts'
@@ -11,11 +11,12 @@ export function ListItemAtom({ node, ctx }: AtomProps): ReactNode {
   const content = (
     <>
       <div style={{ minWidth: 0 }}>
-        <div style={{ ...bodyTextStyle(tokens), fontWeight: 650 }}>
+        <div {...motionContent('label')} style={{ ...bodyTextStyle(tokens), fontWeight: 650 }}>
           {text(node.props?.['label'])}
         </div>
         {node.props?.['detail'] ? (
           <div
+            {...motionContent('detail')}
             style={{
               ...bodyTextStyle(tokens),
               color: tokens.color.textMuted,
@@ -51,8 +52,11 @@ export function AutomationAtom({ node, ctx }: AtomProps): ReactNode {
   return (
     <div style={listItemStyle(tokens)}>
       <div style={{ minWidth: 0 }}>
-        <div style={{ ...bodyTextStyle(tokens), fontWeight: 650 }}>{label}</div>
+        <div {...motionContent('label')} style={{ ...bodyTextStyle(tokens), fontWeight: 650 }}>
+          {label}
+        </div>
         <div
+          {...motionContent('schedule')}
           style={{
             ...bodyTextStyle(tokens),
             color: tokens.color.textMuted,
@@ -63,6 +67,7 @@ export function AutomationAtom({ node, ctx }: AtomProps): ReactNode {
         </div>
       </div>
       <button
+        {...motionContent('value')}
         type="button"
         role="switch"
         aria-checked={enabled}
@@ -80,6 +85,7 @@ export function UnknownAtom({ node, ctx }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
   return (
     <em
+      {...motionContent('content')}
       data-testid="unknown-atom"
       style={{
         color: tokens.color.danger,
