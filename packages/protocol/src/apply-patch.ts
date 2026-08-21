@@ -22,7 +22,11 @@ export function applySurfacePatch(surface: Surface, patch: Patch): Surface {
 /** Apply a replayable Gateway patch event, including Surface freshness metadata. */
 export function applySurfacePatchEvent(surface: Surface, event: SurfacePatchEvent): Surface {
   const patched = applySurfacePatch(surface, event.patch)
-  return parseSurface({ ...patched, freshness: event.freshness })
+  return parseSurface({
+    ...patched,
+    freshness: event.freshness,
+    ...(event.validity === undefined ? {} : { validity: event.validity }),
+  })
 }
 
 function applyOperation(target: unknown, operation: PatchOperation): void {

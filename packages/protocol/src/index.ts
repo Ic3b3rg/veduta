@@ -34,12 +34,18 @@ export {
 export {
   SurfaceSchema,
   FreshnessSchema,
+  RelativeTimeValiditySchema,
+  RelativeTimeWindowSchema,
   SurfaceValidationError,
   parseSurface,
   formatSurfaceIssues,
   collectNodeBindingRefs,
+  surfaceRelativeTimeStatus,
   type Surface,
   type Freshness,
+  type RelativeTimeValidity,
+  type RelativeTimeWindow,
+  type SurfaceRelativeTimeStatus,
   type NodeBindingRef,
 } from './surface.ts'
 export { SpaceSchema, type Space } from './space.ts'

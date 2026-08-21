@@ -3,7 +3,7 @@ import { AuthSessionTokenSchema } from './auth.ts'
 import { ChatClientMessageSchema, ChatMessageSchema } from './chat.ts'
 import { ActionInvocationSchema, PatchSchema } from './patch.ts'
 import { SpaceSchema } from './space.ts'
-import { FreshnessSchema, SurfaceSchema } from './surface.ts'
+import { FreshnessSchema, RelativeTimeValiditySchema, SurfaceSchema } from './surface.ts'
 
 export const GatewayCursorSchema = z.number().int().nonnegative()
 
@@ -70,6 +70,8 @@ export const SurfacePatchEventSchema = z.object({
   spaceId: z.string().min(1),
   patch: PatchSchema,
   freshness: FreshnessSchema,
+  /** Present when this patch established or refreshed a relative-time projection window. */
+  validity: RelativeTimeValiditySchema.optional(),
 })
 
 export const PresenceStatusSchema = z.enum(['online', 'away'])

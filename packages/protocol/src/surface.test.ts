@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { ActionSchema, SurfaceSchema, SurfaceValidationError, parseSurface } from './index.ts'
+import {
+  ActionSchema,
+  SurfaceSchema,
+  SurfaceValidationError,
+  parseSurface,
+  surfaceRelativeTimeStatus,
+} from './index.ts'
 
 const shoppingChecklistWithChart = {
   id: 'srf-groceries',
@@ -95,6 +101,69 @@ describe('SurfaceSchema', () => {
     })
     expect(parsed.pinned).toBe(true)
     expect(parsed.pinnable).toBe(false)
+  })
+
+  it('normalizes occurrence instants and exposes current-window status without guessing legacy dates', () => {
+    const surface = SurfaceSchema.parse({
+      ...shoppingChecklistWithChart,
+      state: {
+        ...shoppingChecklistWithChart.state,
+        records: [
+          { id: 'dated', occurredAt: '2026-08-20T12:00:00+02:00', amount: 12 },
+          { id: 'legacy', amount: 7 },
+        ],
+        todayRows: [{ id: 'dated', occurredAt: '2026-08-20T10:00:00.000Z', amount: 12 }],
+        todayCount: 1,
+      },
+      validity: {
+        kind: 'relative-time',
+        timeZone: 'Europe/Rome',
+        window: 'day',
+        startsAt: '2026-08-19T22:00:00.000Z',
+        expiresAt: '2026-08-20T22:00:00.000Z',
+        source: { stateKey: 'records', occurredAtKey: 'occurredAt' },
+        projectionStateKeys: ['todayRows', 'todayCount'],
+      },
+    })
+
+    expect(surface.state['records']).toEqual([
+      { id: 'dated', occurredAt: '2026-08-20T10:00:00.000Z', amount: 12 },
+      { id: 'legacy', amount: 7 },
+    ])
+    expect(surfaceRelativeTimeStatus(surface, new Date('2026-08-20T12:00:00.000Z'))).toEqual({
+      status: 'current',
+      undatedRecords: 1,
+      caveat:
+        '1 source record has no occurrence date and is excluded from this relative-time view.',
+    })
+    expect(surfaceRelativeTimeStatus(surface, new Date('2026-08-20T22:00:00.000Z'))).toEqual({
+      status: 'expired',
+      undatedRecords: 1,
+      caveat:
+        '1 source record has no occurrence date and is excluded from this relative-time view.',
+    })
+  })
+
+  it('rejects a parseable but non-ISO occurrence time', () => {
+    const result = SurfaceSchema.safeParse({
+      ...shoppingChecklistWithChart,
+      state: {
+        ...shoppingChecklistWithChart.state,
+        records: [{ occurredAt: 'August 20, 2026' }],
+        todayRows: [],
+      },
+      validity: {
+        kind: 'relative-time',
+        timeZone: 'Europe/Rome',
+        window: 'day',
+        startsAt: '2026-08-19T22:00:00.000Z',
+        expiresAt: '2026-08-20T22:00:00.000Z',
+        source: { stateKey: 'records' },
+        projectionStateKeys: ['todayRows'],
+      },
+    })
+
+    expect(result.success).toBe(false)
   })
 })
 

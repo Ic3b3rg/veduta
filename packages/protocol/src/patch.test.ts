@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { PatchSchema, SurfaceSchema, applySurfacePatch, type Surface } from './index.ts'
+import {
+  PatchSchema,
+  SurfacePatchEventSchema,
+  SurfaceSchema,
+  applySurfacePatch,
+  applySurfacePatchEvent,
+  type Surface,
+} from './index.ts'
 
 describe('PatchSchema', () => {
   it('accepts JSON-Patch-like operations for Surface state and tree nodes', () => {
@@ -128,5 +135,39 @@ describe('applySurfacePatch', () => {
     })
 
     expect(patched.tree.children?.map((child) => child.id)).toEqual(['milk', 'note'])
+  })
+
+  it('applies refreshed relative-time validity from a replayable patch event', () => {
+    const relative = SurfaceSchema.parse({
+      ...surface,
+      state: { ...surface.state, records: [], todayRows: [] },
+      validity: {
+        kind: 'relative-time',
+        timeZone: 'Europe/Rome',
+        window: 'day',
+        startsAt: '2026-08-19T22:00:00.000Z',
+        expiresAt: '2026-08-20T22:00:00.000Z',
+        source: { stateKey: 'records', occurredAtKey: 'occurredAt' },
+        projectionStateKeys: ['todayRows'],
+      },
+    })
+    const validity = {
+      ...relative.validity!,
+      startsAt: '2026-08-20T22:00:00.000Z',
+      expiresAt: '2026-08-21T22:00:00.000Z',
+    }
+    const event = SurfacePatchEventSchema.parse({
+      cursor: 2,
+      at: '2026-08-21T08:00:00.000Z',
+      spaceId: relative.spaceId,
+      patch: {
+        surfaceId: relative.id,
+        operations: [{ target: 'state', op: 'replace', path: '/todayRows', value: [] }],
+      },
+      freshness: { updatedAt: '2026-08-21T08:00:00.000Z', updatedBy: 'agent' },
+      validity,
+    })
+
+    expect(applySurfacePatchEvent(relative, event).validity).toEqual(validity)
   })
 })
