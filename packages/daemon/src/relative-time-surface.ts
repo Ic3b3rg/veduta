@@ -1,6 +1,7 @@
 import {
   RelativeTimeValiditySchema,
   RelativeTimeWindowSchema,
+  SurfaceSchema,
   type RelativeTimeValidity,
   type PatchOperation,
   type JsonObject,
@@ -162,6 +163,7 @@ export interface RelativeTimeSeedUpgradeDescriptor {
 export function relativeTimeSeedUpgradePatch(
   persisted: Surface,
   descriptor: RelativeTimeSeedUpgradeDescriptor,
+  options: { timeZone: string; now: Date },
 ): RelativeTimeSeedUpgradePatch | undefined {
   const contract = RelativeTimeAuthoringSchema.parse(descriptor.relativeTime)
   if (
@@ -188,9 +190,14 @@ export function relativeTimeSeedUpgradePatch(
       value: sourceRecords,
     },
   ]
+  const candidateState: JsonObject = {
+    ...persisted.state,
+    [sourceKey]: sourceRecords,
+  }
   for (const key of contract.projectionStateKeys) {
     const defaultValue = descriptor.projectionDefaults[key]
     if (defaultValue === undefined) return undefined
+    candidateState[key] = defaultValue
     operations.push({
       target: 'state',
       op: Object.prototype.hasOwnProperty.call(persisted.state, key) ? 'replace' : 'add',
@@ -198,6 +205,13 @@ export function relativeTimeSeedUpgradePatch(
       value: defaultValue,
     })
   }
+
+  const candidate = SurfaceSchema.safeParse({
+    ...persisted,
+    state: candidateState,
+    validity: buildRelativeTimeValidity(contract, options.timeZone, options.now),
+  })
+  if (!candidate.success) return undefined
 
   return {
     relativeTime: contract,

@@ -175,4 +175,63 @@ describe('runMigrations', () => {
     ).toEqual([])
     migratedStore.close()
   })
+
+  it('refuses a v1 Surface whose customized tree is incompatible with the relative-time contract', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'veduta-relative-time-migration-tree-'))
+    await writeFile(join(rootDir, 'memory.json'), JSON.stringify({ timezone: 'Europe/Rome' }))
+    const legacyStore = new Store({
+      rootDir,
+      now: () => new Date('2026-08-20T12:00:00.000Z'),
+      timeZone: 'Europe/Rome',
+    })
+    legacyStore.setPinned('srf-meals', true, {
+      origin: 'trusted:user',
+      updatedBy: 'user',
+    })
+    const originalMeals = legacyStore.getSurface('srf-meals')!
+    const cursorBefore = legacyStore.latestSurfaceCursor()
+    const eventLogBefore = legacyStore.eventLog('spc-health')
+    legacyStore.close()
+
+    const legacyState = {
+      meals: [{ time: '20:00', meal: 'pasta' }],
+      lastMeal: 'pasta',
+      mealCount: 1,
+      legacyTotal: 1,
+    }
+    const legacyTree = {
+      ...originalMeals.tree,
+      children: [
+        ...(originalMeals.tree.children ?? []),
+        {
+          id: 'legacy-total',
+          type: 'Stat',
+          binding: 'legacyTotal',
+          props: { label: 'Legacy total' },
+        },
+      ],
+    }
+    const db = new DatabaseSync(join(rootDir, 'surfaces.sqlite'))
+    db.prepare(
+      `update surfaces
+       set tree_json = ?, state_json = ?, validity_json = null, updated_at = ?, updated_by = 'seed'
+       where id = 'srf-meals'`,
+    ).run(JSON.stringify(legacyTree), JSON.stringify(legacyState), '2026-08-20T12:00:00.000Z')
+    db.exec('alter table surfaces drop column validity_json')
+    db.close()
+    stampDataVersion(rootDir, 1)
+
+    expect(() => runMigrations(rootDir, { from: 1, to: 2 })).not.toThrow()
+    expect(readDataVersion(rootDir)).toBe(2)
+
+    const migratedStore = new Store({ rootDir, timeZone: 'Europe/Rome' })
+    const meals = migratedStore.getSurface('srf-meals')!
+    expect(meals.tree).toEqual(legacyTree)
+    expect(meals.state).toEqual(legacyState)
+    expect(meals.validity).toBeUndefined()
+    expect(meals.pinned).toBe(true)
+    expect(migratedStore.latestSurfaceCursor()).toBe(cursorBefore)
+    expect(migratedStore.eventLog('spc-health')).toEqual(eventLogBefore)
+    migratedStore.close()
+  })
 })

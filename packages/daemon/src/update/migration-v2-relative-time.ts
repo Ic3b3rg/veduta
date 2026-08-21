@@ -61,7 +61,10 @@ export function migrateV2RelativeTimeSurfaceValidity(rootDir: string): void {
       const persisted = surfaceEngine.getSurface(descriptor.surfaceId)
       if (persisted === undefined || spacesEngine.getSpace(persisted.spaceId) === undefined)
         continue
-      const upgrade = relativeTimeSeedUpgradePatch(persisted, descriptor)
+      const upgrade = relativeTimeSeedUpgradePatch(persisted, descriptor, {
+        timeZone,
+        now: now(),
+      })
       if (upgrade === undefined) continue
       surfaceEngine.patchState(persisted.id, upgrade.operations, {
         updatedBy: 'job',
