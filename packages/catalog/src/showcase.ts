@@ -18,7 +18,12 @@ export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
       {
         id: 'showcase-pending',
         type: 'Pending',
-        props: { variant: 'text', label: 'Next recommendation', lines: 2 },
+        props: {
+          variant: 'text',
+          label: 'Next recommendation',
+          lines: 2,
+          startedAt: new Date().toISOString(),
+        },
       },
       {
         id: 'showcase-text',

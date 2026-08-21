@@ -59,6 +59,8 @@ export const MAX_PENDING_SLOT_TIMEOUT_MS = 120_000
 
 const PendingAtomSharedPropsSchema = z.object({
   label: z.string().trim().min(1).max(120).optional(),
+  /** Server-owned start of this slot's bounded composition window. */
+  startedAt: z.string().datetime().optional(),
   timeoutMs: z
     .number()
     .int()

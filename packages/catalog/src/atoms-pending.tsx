@@ -24,6 +24,9 @@ export function PendingAtom({ node, ctx }: AtomProps): ReactNode {
   if (!parsed.success) {
     return <PendingFallback label={optionalText(node.props?.['label'])} tokens={tokens} />
   }
+  if (parsed.data.startedAt === undefined) {
+    return <PendingFallback label={parsed.data.label} tokens={tokens} />
+  }
 
   return (
     <div style={{ minWidth: 0, width: '100%' }}>
@@ -33,13 +36,13 @@ export function PendingAtom({ node, ctx }: AtomProps): ReactNode {
 }
 
 function PendingSlot({ props, tokens }: { props: PendingAtomProps; tokens: CatalogTokens }) {
-  const [timedOut, setTimedOut] = useState(false)
-  const timeoutMs = props.timeoutMs ?? DEFAULT_PENDING_SLOT_TIMEOUT_MS
+  const [timedOut, setTimedOut] = useState(() => pendingTimeRemaining(props) === 0)
 
   useEffect(() => {
-    const timeout = globalThis.setTimeout(() => setTimedOut(true), timeoutMs)
+    const remainingMs = pendingTimeRemaining(props)
+    const timeout = globalThis.setTimeout(() => setTimedOut(true), remainingMs)
     return () => globalThis.clearTimeout(timeout)
-  }, [timeoutMs])
+  }, [props])
 
   if (timedOut) return <PendingFallback label={props.label} tokens={tokens} />
   return skeletonFor(props, tokens)
@@ -47,7 +50,14 @@ function PendingSlot({ props, tokens }: { props: PendingAtomProps; tokens: Catal
 
 function pendingSlotKey(props: PendingAtomProps): string {
   const size = props.variant === 'text' ? props.lines : props.variant === 'list' ? props.rows : 0
-  return `${props.variant}:${props.label ?? ''}:${props.timeoutMs ?? ''}:${size ?? ''}`
+  return `${props.variant}:${props.label ?? ''}:${props.startedAt ?? ''}:${props.timeoutMs ?? ''}:${size ?? ''}`
+}
+
+function pendingTimeRemaining(props: PendingAtomProps): number {
+  if (props.startedAt === undefined) return 0
+  const timeoutMs = props.timeoutMs ?? DEFAULT_PENDING_SLOT_TIMEOUT_MS
+  const elapsedMs = Math.max(0, Date.now() - Date.parse(props.startedAt))
+  return Math.max(0, timeoutMs - elapsedMs)
 }
 
 function skeletonFor(props: PendingAtomProps, tokens: CatalogTokens): ReactNode {

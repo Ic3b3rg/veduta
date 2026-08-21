@@ -19,6 +19,32 @@ Mapping:
 
 The compatibility target is conceptual: agents can produce structured UI actions and components, while Veduta keeps persistence, validation, and rendering under the local protocol.
 
+## Issue 029 progressive composition
+
+Progressive composition is a usage pattern inside the existing Surface contract, not a second
+streaming format. The Agent creates the complete layout with typed `Pending` leaf Atoms, then
+replaces each leaf with a separate versioned tree patch as content becomes ready. A replacement
+preserves the Atom id so the catalog applies entrance motion only to that region.
+
+The daemon owns the start of each Pending window. On creation, or when a patch inserts a Pending
+subtree, it stamps `props.startedAt` with its own clock; a supplied value is overwritten. The
+catalog computes the remaining time from that persisted timestamp and `timeoutMs`, so reloads and
+remounts cannot restart an ordinary composition window. An unstamped or malformed Pending Atom is
+shown immediately as a visible unavailable state. `startedAt` remains optional in the input schema
+so Agent tool calls can omit server-owned metadata before the daemon validates and persists the
+canonical tree.
+
+Tree patches still replace and validate the complete Surface value. The catalog therefore
+memoizes unchanged Atom subtrees by their rendered inputs (tree data, bound state, theme, relevant
+motion update, and action dispatch). This preserves correctness for interactive or state-bound
+regions while preventing already-filled siblings from rendering again during later fills. A stable
+dispatch proxy forwards interactions to the latest host callback, so an unchanged interactive
+region does not need to render merely because its host closure changed.
+
+The rejected alternative remains a node-stream parser: it would duplicate validation and trust
+boundaries without improving the user-visible result. A mount-relative timer was also rejected
+because remounting could keep a skeleton alive indefinitely.
+
 ## Considered Options
 
 - Free-form generated HTML/JSX in a sandbox: rejected for v1 — not diffable, inconsistent, hallucination-prone. It returns post-v1 only as a sandboxed escape hatch for the long tail.

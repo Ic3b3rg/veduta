@@ -199,6 +199,33 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       ])
     })
 
+    await test.step('progressive composition publishes layout first, fills independently, then falls back (issue 029)', async () => {
+      const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
+      await chatInput.fill('show progressive surface demo')
+      await page.getByRole('button', { name: 'Send' }).click()
+
+      const progressive = surfaceCard(page, 'Progressive trip plan')
+      await expect(progressive.getByRole('status')).toHaveCount(5, { timeout: 1_100 })
+      await expect(progressive).not.toContainText('A four-day coastal route')
+
+      const summary = progressive.getByText('A four-day coastal route', { exact: false })
+      await expect(summary).toBeVisible({ timeout: 3_000 })
+      await summary.evaluate((node) => node.setAttribute('data-e2e-resolved', 'summary'))
+
+      await expect(progressive.getByText('286 km', { exact: true })).toBeVisible({ timeout: 3_000 })
+      await expect(progressive.getByText('Day 4', { exact: true })).toBeVisible({ timeout: 3_000 })
+      await expect(progressive.getByText('Camogli', { exact: true })).toBeVisible({
+        timeout: 3_000,
+      })
+      await expect(summary).toHaveAttribute('data-e2e-resolved', 'summary')
+
+      await expect(progressive.getByRole('alert')).toHaveText('Route preview unavailable', {
+        timeout: 5_000,
+      })
+      await expect(progressive.getByRole('status')).toHaveCount(0)
+      await expect(summary).toHaveAttribute('data-e2e-resolved', 'summary')
+    })
+
     await test.step('fast path: toggling a Groceries checkbox changes state with no error', async () => {
       const milk = page.getByRole('checkbox', { name: 'Milk' })
       await expect(milk).not.toBeChecked()

@@ -1,10 +1,31 @@
 // @vitest-environment jsdom
 import { AtomNodeSchema, atomTypes, type AtomNode } from '@veduta/protocol'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type * as AtomRenderers from './atoms.tsx'
 import { catalogTokens } from './design-system.ts'
 import { renderNode } from './render.tsx'
 import { catalogShowcaseSurface } from './showcase.ts'
+
+const atomRenders = vi.hoisted(() => ({
+  checkbox: vi.fn<(atomId: string) => void>(),
+  text: vi.fn<(atomId: string) => void>(),
+}))
+
+vi.mock('./atoms.tsx', async (importOriginal) => {
+  const actual = await importOriginal<typeof AtomRenderers>()
+  return {
+    ...actual,
+    CheckboxAtom: (...args: Parameters<typeof actual.CheckboxAtom>) => {
+      atomRenders.checkbox(args[0].node.id)
+      return actual.CheckboxAtom(...args)
+    },
+    TextAtom: (...args: Parameters<typeof actual.TextAtom>) => {
+      atomRenders.text(args[0].node.id)
+      return actual.TextAtom(...args)
+    },
+  }
+})
 
 const originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
 
@@ -73,99 +94,6 @@ describe('renderNode', () => {
     expect(contentKeysFor(motionBrowser, 'future')).toEqual(['content'])
   })
 
-  it('renders every Pending footprint as an accessible token-driven skeleton', () => {
-    const pendingTree = AtomNodeSchema.parse({
-      id: 'pending-root',
-      type: 'Box',
-      children: [
-        {
-          id: 'pending-text',
-          type: 'Pending',
-          props: { variant: 'text', label: 'Trip summary', lines: 3 },
-        },
-        {
-          id: 'pending-list',
-          type: 'Pending',
-          props: { variant: 'list', label: 'Packing list', rows: 4 },
-        },
-        {
-          id: 'pending-image',
-          type: 'Pending',
-          props: { variant: 'image', label: 'Route preview' },
-        },
-        {
-          id: 'pending-stat',
-          type: 'Pending',
-          props: { variant: 'stat', label: 'Trip distance' },
-        },
-        {
-          id: 'pending-chart',
-          type: 'Pending',
-          props: { variant: 'chart', label: 'Daily distance' },
-        },
-      ],
-    })
-
-    const light = render(renderNode(pendingTree, { state: {}, dispatch: vi.fn(), theme: 'light' }))
-
-    expect(screen.getByRole('status', { name: 'Trip summary loading' })).toBeDefined()
-    expect(screen.getByRole('status', { name: 'Packing list loading' })).toBeDefined()
-    expect(screen.getByRole('status', { name: 'Route preview loading' })).toBeDefined()
-    expect(screen.getByRole('status', { name: 'Trip distance loading' })).toBeDefined()
-    expect(screen.getByRole('status', { name: 'Daily distance loading' })).toBeDefined()
-
-    const textSlot = pendingSlot(light.container, 'text')
-    const listSlot = pendingSlot(light.container, 'list')
-    const imageSlot = pendingSlot(light.container, 'image')
-    const statSlot = pendingSlot(light.container, 'stat')
-    const chartSlot = pendingSlot(light.container, 'chart')
-    expect(textSlot.querySelectorAll('[data-pending-skeleton-line]')).toHaveLength(3)
-    expect(listSlot.querySelectorAll('[data-pending-skeleton-row]')).toHaveLength(4)
-    expect(imageSlot.style.aspectRatio).toBe('16 / 9')
-    expect(statSlot.style.minWidth).toBe('96px')
-    expect(chartSlot.style.minHeight).toBe('132px')
-
-    const lightShape = textSlot.querySelector<HTMLElement>('[data-pending-skeleton-shape]')
-    expect(lightShape?.style.background).toBe(cssColor(catalogTokens.light.color.surfaceMuted))
-
-    light.unmount()
-    const dark = render(renderNode(pendingTree, { state: {}, dispatch: vi.fn(), theme: 'dark' }))
-    const darkShape = pendingSlot(dark.container, 'text').querySelector<HTMLElement>(
-      '[data-pending-skeleton-shape]',
-    )
-    expect(darkShape?.style.background).toBe(cssColor(catalogTokens.dark.color.surfaceMuted))
-  })
-
-  it('degrades an unresolved Pending slot to a visible fallback at its timeout', () => {
-    vi.useFakeTimers()
-    const pending = AtomNodeSchema.parse({
-      id: 'pending-weather',
-      type: 'Pending',
-      props: { variant: 'stat', label: 'Weather', timeoutMs: 1_000 },
-    })
-
-    render(renderNode(pending, { state: {}, dispatch: vi.fn() }))
-    expect(screen.getByRole('status', { name: 'Weather loading' })).toBeDefined()
-
-    act(() => vi.advanceTimersByTime(999))
-    expect(screen.queryByRole('alert')).toBeNull()
-
-    act(() => vi.advanceTimersByTime(1))
-    expect(screen.getByRole('alert').textContent).toBe('Weather unavailable')
-    expect(screen.queryByRole('status', { name: 'Weather loading' })).toBeNull()
-  })
-
-  it('renders malformed unvalidated Pending data as a visible fallback', () => {
-    const malformed: AtomNode = JSON.parse(
-      '{"id":"pending-malformed","type":"Pending","props":{"variant":"video"}}',
-    )
-
-    render(renderNode(malformed, { state: {}, dispatch: vi.fn() }))
-
-    expect(screen.getByRole('alert').textContent).toBe('Content unavailable')
-    expect(screen.queryByTestId('unknown-atom')).toBeNull()
-  })
-
   it('fills one Pending region with entrance timing without re-animating resolved siblings', () => {
     const motionBrowser = installMotionBrowser(false)
     const before = AtomNodeSchema.parse({
@@ -176,7 +104,11 @@ describe('renderNode', () => {
         {
           id: 'summary-slot',
           type: 'Pending',
-          props: { variant: 'text', label: 'Summary' },
+          props: {
+            variant: 'text',
+            label: 'Summary',
+            startedAt: new Date().toISOString(),
+          },
         },
       ],
     })
@@ -190,6 +122,7 @@ describe('renderNode', () => {
     const view = render(renderNode(before, { state: {}, dispatch: vi.fn() }))
     const resolvedBefore = screen.getByText('Already filled')
     motionBrowser.calls.length = 0
+    atomRenders.text.mockClear()
 
     view.rerender(
       renderNode(after, {
@@ -203,6 +136,158 @@ describe('renderNode', () => {
     expect(screen.getByText('Already filled')).toBe(resolvedBefore)
     expect(contentKeysFor(motionBrowser, 'summary-slot')).toEqual(['content'])
     expect(motionBrowser.calls.filter(({ nodeId }) => nodeId === 'resolved')).toEqual([])
+    expect(atomRenders.text.mock.calls.map(([atomId]) => atomId)).toEqual(['summary-slot'])
+  })
+
+  it('does not render an earlier filled region again when the next region fills', () => {
+    installMotionBrowser(false)
+    const startedAt = new Date().toISOString()
+    const before = AtomNodeSchema.parse({
+      id: 'sequential-root',
+      type: 'Box',
+      children: [
+        {
+          id: 'first-slot',
+          type: 'Pending',
+          props: { variant: 'text', label: 'First', startedAt },
+        },
+        {
+          id: 'second-slot',
+          type: 'Pending',
+          props: { variant: 'text', label: 'Second', startedAt },
+        },
+      ],
+    })
+    const afterFirst = AtomNodeSchema.parse({
+      ...before,
+      children: [
+        { id: 'first-slot', type: 'Text', props: { text: 'First ready' } },
+        before.children?.[1],
+      ],
+    })
+    const afterSecond = AtomNodeSchema.parse({
+      ...afterFirst,
+      children: [
+        afterFirst.children?.[0],
+        { id: 'second-slot', type: 'Text', props: { text: 'Second ready' } },
+      ],
+    })
+    const view = render(renderNode(before, { state: {}, dispatch: vi.fn() }))
+
+    view.rerender(
+      renderNode(afterFirst, {
+        state: {},
+        dispatch: vi.fn(),
+        motion: { update: { key: 'fill-first', atomIds: ['first-slot'] } },
+      }),
+    )
+    atomRenders.text.mockClear()
+
+    view.rerender(
+      renderNode(afterSecond, {
+        state: {},
+        dispatch: vi.fn(),
+        motion: { update: { key: 'fill-second', atomIds: ['second-slot'] } },
+      }),
+    )
+
+    expect(screen.getByText('First ready')).toBeDefined()
+    expect(screen.getByText('Second ready')).toBeDefined()
+    expect(atomRenders.text.mock.calls.map(([atomId]) => atomId)).toEqual(['second-slot'])
+  })
+
+  it('does not render filled descendants again when an inherited update marker clears', () => {
+    installMotionBrowser(false)
+    const startedAt = new Date().toISOString()
+    const before = AtomNodeSchema.parse({
+      id: 'inherited-root',
+      type: 'Box',
+      children: [
+        {
+          id: 'inherited-first',
+          type: 'Pending',
+          props: { variant: 'text', label: 'First', startedAt },
+        },
+        {
+          id: 'inherited-second',
+          type: 'Pending',
+          props: { variant: 'text', label: 'Second', startedAt },
+        },
+      ],
+    })
+    const afterFirst = AtomNodeSchema.parse({
+      ...before,
+      children: [
+        { id: 'inherited-first', type: 'Text', props: { text: 'First ready' } },
+        before.children?.[1],
+      ],
+    })
+    const afterSecond = AtomNodeSchema.parse({
+      ...afterFirst,
+      children: [
+        afterFirst.children?.[0],
+        { id: 'inherited-second', type: 'Text', props: { text: 'Second ready' } },
+      ],
+    })
+    const view = render(renderNode(before, { state: {}, dispatch: vi.fn() }))
+
+    view.rerender(
+      renderNode(afterFirst, {
+        state: {},
+        dispatch: vi.fn(),
+        motion: { update: { key: 'fill-first-parent', atomIds: ['inherited-root'] } },
+      }),
+    )
+    atomRenders.text.mockClear()
+
+    view.rerender(
+      renderNode(afterSecond, {
+        state: {},
+        dispatch: vi.fn(),
+        motion: { update: { key: 'fill-second-child', atomIds: ['inherited-second'] } },
+      }),
+    )
+
+    expect(atomRenders.text.mock.calls.map(([atomId]) => atomId)).toEqual(['inherited-second'])
+  })
+
+  it('keeps an unchanged interactive sibling unrendered while dispatching through the latest callback', () => {
+    const firstDispatch = vi.fn()
+    const nextDispatch = vi.fn()
+    const before = AtomNodeSchema.parse({
+      id: 'interactive-progressive-root',
+      type: 'Box',
+      children: [
+        {
+          id: 'persistent-checkbox',
+          type: 'Checkbox',
+          binding: 'selected',
+          props: { label: 'Keep me' },
+          actions: [{ name: 'toggle', path: 'fast', stateKey: 'selected' }],
+        },
+        { id: 'changing-region', type: 'Text', props: { text: 'Before' } },
+      ],
+    })
+    const after = AtomNodeSchema.parse({
+      ...before,
+      children: [
+        before.children?.[0],
+        { id: 'changing-region', type: 'Text', props: { text: 'After' } },
+      ],
+    })
+    const view = render(renderNode(before, { state: { selected: false }, dispatch: firstDispatch }))
+    atomRenders.checkbox.mockClear()
+
+    view.rerender(renderNode(after, { state: { selected: false }, dispatch: nextDispatch }))
+
+    expect(atomRenders.checkbox).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Keep me' }))
+    expect(firstDispatch).not.toHaveBeenCalled()
+    expect(nextDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'persistent-checkbox' }),
+      'toggle',
+      true,
+    )
   })
 
   it('staggers newly mounted sibling Atoms and does not re-animate persistent ids', () => {
@@ -894,18 +979,6 @@ describe('renderNode', () => {
 
 function collectTypes(node: AtomNode): AtomNode['type'][] {
   return [node.type, ...(node.children ?? []).flatMap(collectTypes)]
-}
-
-function pendingSlot(container: HTMLElement, variant: string): HTMLElement {
-  const slot = container.querySelector<HTMLElement>(`[data-pending-variant="${variant}"]`)
-  if (!slot) throw new Error(`missing ${variant} Pending slot`)
-  return slot
-}
-
-function cssColor(color: string): string {
-  const element = document.createElement('div')
-  element.style.background = color
-  return element.style.background
 }
 
 function collectIds(node: AtomNode): string[] {

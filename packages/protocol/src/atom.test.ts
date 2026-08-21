@@ -15,13 +15,14 @@ describe('Pending Atom protocol', () => {
     { variant: 'stat' },
     { variant: 'chart' },
   ])('accepts a schema-validated $variant footprint', (props) => {
+    const startedAt = '2026-08-21T12:00:00.000Z'
     expect(
       AtomNodeSchema.parse({
         id: `pending-${props.variant}`,
         type: 'Pending',
-        props: { ...props, label: `${props.variant} content`, timeoutMs: 30_000 },
+        props: { ...props, label: `${props.variant} content`, timeoutMs: 30_000, startedAt },
       }),
-    ).toMatchObject({ type: 'Pending', props })
+    ).toMatchObject({ type: 'Pending', props: { ...props, startedAt } })
   })
 
   it('publishes the complete footprint catalog and bounded timeout contract', () => {
@@ -39,6 +40,7 @@ describe('Pending Atom protocol', () => {
     { variant: 'list', rows: 0 },
     { variant: 'list', rows: 9 },
     { variant: 'stat', rows: 3 },
+    { variant: 'stat', startedAt: 'not-a-date' },
     { variant: 'chart', timeoutMs: MIN_PENDING_SLOT_TIMEOUT_MS - 1 },
     { variant: 'chart', timeoutMs: MAX_PENDING_SLOT_TIMEOUT_MS + 1 },
   ])('rejects malformed Pending props %#', (props) => {

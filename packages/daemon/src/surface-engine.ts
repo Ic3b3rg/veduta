@@ -1172,8 +1172,12 @@ export class SurfaceEngine {
     operations: PatchOperation[],
     updatedBy: SurfaceWriteActor,
   ): { patch: z.infer<typeof PatchSchema>; patched: Surface } {
-    const patch = PatchSchema.parse({ surfaceId, operations })
-    const patched = this.stampSurface(applySurfacePatch(current, patch), updatedBy)
+    const updatedAt = this.nowIso()
+    const patch = PatchSchema.parse({
+      surfaceId,
+      operations: stampPendingPatchOperations(operations, updatedAt),
+    })
+    const patched = this.stampSurface(applySurfacePatch(current, patch), updatedBy, updatedAt)
     return { patch, patched }
   }
 
@@ -1384,10 +1388,12 @@ export class SurfaceEngine {
     updatedBy: SurfaceWriteActor,
     daemonOwned: boolean,
   ): Surface {
+    const updatedAt = this.nowIso()
     return SurfaceSchema.parse({
       ...input,
+      tree: stampPendingAtoms(input.tree, updatedAt),
       freshness: {
-        updatedAt: this.nowIso(),
+        updatedAt,
         updatedBy,
       },
       // A Surface is never born pinned — only `setPinned`, after creation,
@@ -1399,11 +1405,15 @@ export class SurfaceEngine {
     })
   }
 
-  private stampSurface(surface: Surface, updatedBy: SurfaceWriteActor): Surface {
+  private stampSurface(
+    surface: Surface,
+    updatedBy: SurfaceWriteActor,
+    updatedAt = this.nowIso(),
+  ): Surface {
     return SurfaceSchema.parse({
       ...surface,
       freshness: {
-        updatedAt: this.nowIso(),
+        updatedAt,
         updatedBy,
       },
     })
@@ -1715,6 +1725,25 @@ function assertPatchTarget(operations: PatchOperation[], target: 'state' | 'tree
   if (wrongTarget) {
     throw new Error(`${target} patch cannot include ${wrongTarget.target} operation`)
   }
+}
+
+function stampPendingPatchOperations(
+  operations: PatchOperation[],
+  startedAt: string,
+): PatchOperation[] {
+  return operations.map((operation) =>
+    operation.target === 'tree' && (operation.op === 'add' || operation.op === 'replace')
+      ? { ...operation, value: stampPendingAtoms(operation.value, startedAt) }
+      : operation,
+  )
+}
+
+function stampPendingAtoms(node: AtomNode, startedAt: string): AtomNode {
+  if (node.type === 'Pending') {
+    return { ...node, props: { ...node.props, startedAt } }
+  }
+  if (node.children === undefined) return node
+  return { ...node, children: node.children.map((child) => stampPendingAtoms(child, startedAt)) }
 }
 
 function truncate(value: string, max: number): string {

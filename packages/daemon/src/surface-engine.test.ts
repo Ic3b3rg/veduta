@@ -200,9 +200,21 @@ describe('Surface engine store', () => {
 
     expect(store.getSurfaceVersion('srf-progressive-tools')?.treeVersion).toBe(1)
     expect(store.getSurface('srf-progressive-tools')?.tree.children).toMatchObject([
-      { id: 'progressive-summary', type: 'Pending' },
-      { id: 'progressive-stat', type: 'Pending' },
-      { id: 'progressive-route', type: 'Pending' },
+      {
+        id: 'progressive-summary',
+        type: 'Pending',
+        props: { startedAt: fixedNow().toISOString() },
+      },
+      {
+        id: 'progressive-stat',
+        type: 'Pending',
+        props: { startedAt: fixedNow().toISOString() },
+      },
+      {
+        id: 'progressive-route',
+        type: 'Pending',
+        props: { startedAt: fixedNow().toISOString() },
+      },
     ])
 
     await runTool(tools, 'patch_tree', {
@@ -279,6 +291,56 @@ describe('Surface engine store', () => {
       '/children/1',
     ])
     expect(store.getSurfaceVersion('srf-progressive-tools')?.treeVersion).toBe(3)
+  })
+
+  it('owns the persisted Pending start time for both creation and later tree insertion', async () => {
+    let now = new Date('2026-08-21T12:00:00.000Z')
+    const store = new Store({ rootDir: await tempRoot(), now: () => now })
+    const tools = store.surfaceTools()
+
+    await runTool(tools, 'create_surface', {
+      id: 'srf-pending-clock',
+      spaceId: 'spc-health',
+      title: 'Pending clock',
+      tree: {
+        id: 'root',
+        type: 'Box',
+        children: [
+          {
+            id: 'initial-slot',
+            type: 'Pending',
+            props: { variant: 'text', startedAt: '2099-01-01T00:00:00.000Z' },
+          },
+        ],
+      },
+      state: {},
+    })
+
+    expect(store.getSurface('srf-pending-clock')?.tree.children?.[0]?.props?.['startedAt']).toBe(
+      now.toISOString(),
+    )
+
+    now = new Date('2026-08-21T12:00:05.000Z')
+    await runTool(tools, 'patch_tree', {
+      surfaceId: 'srf-pending-clock',
+      expectedTreeVersion: 1,
+      operations: [
+        {
+          target: 'tree',
+          op: 'replace',
+          path: '/children/0',
+          value: {
+            id: 'replacement-slot',
+            type: 'Pending',
+            props: { variant: 'chart', startedAt: '2099-01-01T00:00:00.000Z' },
+          },
+        },
+      ],
+    })
+
+    expect(store.getSurface('srf-pending-clock')?.tree.children?.[0]?.props?.['startedAt']).toBe(
+      now.toISOString(),
+    )
   })
 
   it('adds chat correlation to a live create_surface notification without persisting it for replay', async () => {
