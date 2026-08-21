@@ -32,15 +32,18 @@ flowchart TB
         BYOK["BYOK adapters\nAPI-key inference"]
         CODEX["Codex App Server\nexactly pinned child process\nChatGPT subscription"]
         SCH["Scheduler\none-shot timers, jobs, heartbeat 1-2x/day"]
-        ING["Event ingestion\nwebhooks, Gmail/Calendar watch, IMAP IDLE\ndeterministic pre-filters + quarantined reader"]
+        ING["Event ingestion\nwebhooks + Calendar watch\ndeterministic pre-filters + quarantined reader"]
+        EXEC["General execution tool\nexternal CLIs, APIs, setup commands\nAgentRunner-owned + audited"]
+        MBX["Passive Mailbox connections\nnative Gmail + Himalaya Skill\npull-based access"]
         MEM["Spaces\nFACTS.md · Event log · INSTRUCTIONS.md\n+ global USER.md, SOUL.md"]
-        SEC["Trust layer\nL0/L1/L2, approval cards,\negress allowlist, secrets vault, audit log"]
+        SEC["Layered trust\ntyped-tool gates + Approval policy,\nsecrets vault + command/effect audit"]
         WK["Ephemeral Workers\nbriefing + budget + separate review"]
     end
 
     subgraph Esterno["Outside world"]
         LLM["External model services\nAnthropic / OpenAI / OpenRouter / ChatGPT"]
-        SRC["Event sources\nGmail, Calendar, webhooks"]
+        SRC["Event sources\nCalendar, webhooks"]
+        MAIL["Personal mailboxes\nGmail, IMAP + SMTP"]
         ACT["External actions\nmail, messages, purchases"]
     end
 
@@ -56,13 +59,18 @@ flowchart TB
     BYOK <-->|"provider APIs"| LLM
     CODEX <-->|"device auth + inference"| LLM
     AL --> WK
+    AL --> EXEC
     WK --> MEM
     SRC --> ING
     ING -->|"only filtered, structured events"| AL
+    AL -->|"explicit request or due Automation"| MBX
+    EXEC -->|"direct CLI/API work"| MBX
+    MBX <-->|"bounded provider operation"| MAIL
     SCH --> AL
-    AL -->|"L1+ actions"| SEC
+    AL -->|"typed L1+ actions + policy"| SEC
     SEC -->|"approval card"| PWA
-    SEC -->|"only after approval/allowlist"| ACT
+    SEC -->|"typed effect after approval/allowlist"| ACT
+    EXEC -->|"Skill-led effect + audit"| ACT
 ```
 
 ## 3. The components
@@ -106,9 +114,19 @@ Automation, Worker, and final Connection parity remain tracked by
 The agent's main tools: focused-Space Surface discovery and authoring (`list_surfaces`,
 `read_surface`, Space-bound `create_surface`, `patch_state`, `patch_tree`), memory (`write_fact`
 with the AUDN Curator, `search_log`), scheduler (`arm_timer`, `create_job`), workers
-(`spawn_worker`), external actions (which go through the trust layer). Surface readers are L0 and
-report stored content origins, so reading untrusted Surface content grows the live turn taint
-before any later action.
+(`spawn_worker`), typed external actions, and a Veduta-owned general execution tool. The latter may
+run external CLIs, APIs, and setup commands through `AgentRunner`; it is distinct from—and does not
+enable—provider-native command execution. Surface readers are L0 and report stored content origins,
+so reading untrusted Surface content grows the live turn taint before any later action.
+
+Feature-specific, first-party **Skills** give the Agent reusable procedures without changing which
+tools the current turn already has. Interactive turns expose eligible metadata and let the Agent
+load one or more relevant Skills autonomously; confirmed Automations preload their compatible Skill
+set deterministically. A Skill may teach typed tools, direct CLI/API use, and supported dependency
+setup. v1 packages contain concise Markdown plus focused one-hop references; first-party executable
+support files enter in v1.1. The general execution tool is intentionally broad, so Approval and
+Automation scope are official Agent behavior and audit contracts rather than a universal semantic
+sandbox for arbitrary commands ([ADR-0026](docs/adr/0026-skills-may-drive-general-tool-execution.md)).
 
 ### 3.3 Spaces
 
@@ -135,12 +153,21 @@ Good compositions become **Templates** saved in the Space and reused/patched (vi
 
 LLM polling every 30 minutes is beaten on cost _and accuracy_ ([ref. 05](docs/references/05-proactivity-architectures.md)):
 
-1. **Push events** (near-zero cost, reaction in seconds): Gmail/Calendar watch, IMAP IDLE, HMAC-validated webhooks.
+1. **Push events** (near-zero cost, reaction in seconds): Calendar watch and HMAC-validated webhooks whose continuous delivery was explicitly configured.
 2. **One-shot timers**: every learned deadline/habit arms a timer that checks a condition at the deadline. They replace the periodic "is anything stale?". Visible as Automations.
 3. **Non-LLM pre-filters**: rules, embedding similarity, optionally a lightweight classifier. Milliseconds.
 4. **LLM cascade on the residue** (triage → reasoning) + **safety-net Heartbeat 1-2x/day** for fuzzy conditions.
 
 Notification discipline: silent update → badge on the Space → push (the bar: "would a good human assistant interrupt?"), per-Space interruption budgets, freshness metadata on every Surface. Non-urgent notifications queue up for idle moments. Meaningful recurring dashboard outcomes instead update their linked Surface and create a durable In-app notification inside the owning Space; they never manufacture global chat, badge, or browser-push traffic ([ADR-0021](docs/adr/0021-space-owned-automation-outcomes.md)).
+
+A personal Mailbox is deliberately outside push ingestion. Its Gateway-wide connection stays
+passive until a focused user request or a due occurrence of a confirmed Automation resolves an
+explicit Mailbox scope. A Gmail Skill uses native Gmail operations; a Himalaya Skill teaches the
+Agent to operate generic IMAP/SMTP accounts directly through the general execution tool. Search,
+summary, and Automation preserve unread state; an Explicit mail read marks only the selected
+message read. Results converge on Space-owned Mailbox Surfaces rather than an inbox clone or a
+provider-neutral command layer ([ADR-0024](docs/adr/0024-pull-based-personal-mailbox.md),
+[ADR-0026](docs/adr/0026-skills-may-drive-general-tool-execution.md)).
 
 ### 3.6 Workers and review
 
@@ -148,7 +175,13 @@ Ephemeral Workers only for tasks that are (a) parallelizable and read-heavy, (b)
 
 ### 3.7 Trust layer
 
-Three levels (L0 free / L1 approval-first with a relaxable allowlist / L2 never automatic) + the untrusted content rule + quarantined reader + egress allowlist + secrets vault + audit log. Details in [SECURITY.md](docs/SECURITY.md) ([ADR-0007](docs/adr/0007-trust-levels.md)).
+Three levels (L0 free / L1 approval-first with a relaxable allowlist / L2 never automatic),
+origin tracking, the quarantined reader, secrets handling, and audit remain the policy for official
+Agent behavior. Typed product tools enforce their declared gates in code. The general execution
+tool is broader: its commands and outcomes are traced and official Skills follow the same policy,
+but Veduta does not claim complete semantic mediation of arbitrary shell behavior. Details in
+[SECURITY.md](docs/SECURITY.md) ([ADR-0007](docs/adr/0007-trust-levels.md),
+[ADR-0026](docs/adr/0026-skills-may-drive-general-tool-execution.md)).
 
 ## 4. Key flows
 
@@ -172,9 +205,16 @@ sequenceDiagram
 
 "Milk" checkbox → the daemon mutates the Surface state and appends `2026-07-03: checked off milk` to the Event log. **No LLM call.** On the next turn ("what's missing?") the Agent reads the events and answers correctly.
 
-### Incoming mail (external event)
+### Explicit mailbox work
 
-Gmail webhook → deterministic pre-filter (newsletter? discard) → **quarantined reader** (cheap LLM with no tools, validated structured output) → if relevant, the structured event enters the Agent's context marked untrusted → the Agent updates Surfaces (L0, free); if it wants to reply to the mail (L1), it prepares the **approval card** — always, because the turn contains untrusted content.
+“Summarize today's unread newsletters” in a focused Space → the Agent resolves the account, query,
+time window, read-state filter, and result bound → it autonomously loads the first-party Mailbox
+Skill plus the relevant connector Skill → Gmail uses native operations or Himalaya runs directly
+through the general execution tool → Untrusted provider output is bounded and summarized → the
+Agent responds with concise text and a query-labelled Mailbox Surface. Opening one result starts a
+new interaction, retrieves the body transiently, and marks only that message read. A reply becomes
+an editable **Approval card**; after approval, the Agent sends it in the provider thread and
+reports the verified outcome.
 
 ### Monitoring a public website
 

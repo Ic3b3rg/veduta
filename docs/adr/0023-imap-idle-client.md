@@ -38,4 +38,6 @@ exchange for a maintained parser at a hostile wire boundary. A hand-written TLS 
 IMAP state machine, polling in place of IDLE, cleartext/optional TLS, and storing credentials or raw
 message bodies in ingestion state are rejected.
 
-Status: accepted
+Status: superseded for personal mail by
+[ADR-0024](0024-pull-based-personal-mailbox.md). This file remains the historical record of the
+implementation that shipped under issue #25.

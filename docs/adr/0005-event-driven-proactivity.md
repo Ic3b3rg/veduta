@@ -1,6 +1,6 @@
 # Event-driven proactivity: events + timers + pre-filters; heartbeat only as a safety net
 
-The competitor baseline (heartbeat polling every 30 minutes with LLM triage) is beaten on cost **and accuracy**: replacing the LLM in the wake-up decision with classification over structured events improves F1 by +16.7 points and is 4-83x faster (arXiv:2605.30152); cascade patterns cut 90-98% of calls (FrugalGPT, ProAgent). We adopt the principle **"events and timers first, polling as a last resort"**: (1) push events (Gmail/Calendar watch, IMAP IDLE, webhooks); (2) one-shot timers armed on every learned deadline/habit; (3) non-LLM pre-filters; (4) a triage→reasoning cascade only on the residue, with the Heartbeat reduced to 1-2 sweeps/day for fuzzy conditions. Evidence: `docs/references/05-proactivity-architectures.md`.
+The competitor baseline (heartbeat polling every 30 minutes with LLM triage) is beaten on cost **and accuracy**: replacing the LLM in the wake-up decision with classification over structured events improves F1 by +16.7 points and is 4-83x faster (arXiv:2605.30152); cascade patterns cut 90-98% of calls (FrugalGPT, ProAgent). We adopt the principle **"events and timers first, polling as a last resort"**: (1) explicitly authorized push events (Calendar watch and webhooks); (2) one-shot timers armed on every learned deadline/habit; (3) non-LLM pre-filters; (4) a triage→reasoning cascade only on the residue, with the Heartbeat reduced to 1-2 sweeps/day for fuzzy conditions. Evidence: `docs/references/05-proactivity-architectures.md`.
 
 Status: accepted
 
@@ -13,3 +13,7 @@ Status: accepted
   recurring dashboard outcomes may create one without incrementing a Space attention badge,
   consuming push budget, or writing an unsolicited assistant chat message; see
   [ADR-0021](0021-space-owned-automation-outcomes.md).
+- A connected personal mailbox is not an event source. Mail is accessed only for an explicit
+  request or due occurrence of a confirmed Automation, per
+  [ADR-0024](0024-pull-based-personal-mailbox.md). This replaces the original Gmail Watch and IMAP
+  IDLE examples without weakening the events-first rule for Calendar and webhooks.

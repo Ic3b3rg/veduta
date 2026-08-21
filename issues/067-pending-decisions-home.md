@@ -26,6 +26,13 @@ the snapshot catches up; it is never attributed to an unrelated Space.
 
 Preserve decision presentation in chat, while #98 owns natural-language selection and resolution.
 
+When a user-initiated chat turn creates a Pending decision, the initiating PWA tab must reveal the
+exact Decision Surface as soon as it renders: position it in the viewport and briefly highlight it
+without requiring the user to search Home. The relationship must use explicit turn, client, and
+decision correlation. Other tabs, reconnect/replay, initial snapshots, proactive work, and
+background decision creation render the same durable state without moving their viewport. Reveal
+is presentation only: it neither resolves the decision nor moves keyboard focus.
+
 ## Architectural boundary
 
 The strip, summary, counts, quick actions, and `Review` navigation are fixed-shell components.
@@ -34,6 +41,10 @@ or client-side implementations of trust, Tree proposal, Space proposal, or updat
 
 The validated Decision Surface remains the complete review/edit experience. A shell quick action
 uses the prepared payload unchanged and cannot create an allowlist rule.
+
+Initiating-tab reveal follows the same local-only presentation boundary as chat-created Surface
+feedback: it changes no route-independent business state, Surface order, decision state, or other
+client's viewport.
 
 ## Acceptance criteria
 
@@ -44,6 +55,12 @@ uses the prepared payload unchanged and cannot create an allowlist rule.
 - [ ] Opening a Space shows only its Pending-decision notifications above its Surfaces.
 - [ ] `Review` navigates to and focuses the exact Decision Surface from Home, Space, and chat
       notification presentations.
+- [ ] A Pending decision created by the current tab's user-initiated chat turn positions and briefly
+      highlights the exact Decision Surface once it renders, including a Tree proposal produced by
+      a pinned Surface's `patch_tree` call.
+- [ ] The initiating relationship is explicit and one-shot: remote clients, duplicate delivery,
+      reconnect/replay, initial snapshots, proactive work, jobs, Automations, and Workers never
+      move or highlight a viewport.
 - [ ] Expanded notifications expose every allowed quick resolution with an accessible, specific
       label and invoke the exact common Pending-decision id.
 - [ ] Quick actions work for L1, L2, and every other registered decision kind, preserve prepared
@@ -67,3 +84,4 @@ uses the prepared payload unchanged and cannot create an allowlist rule.
 - Natural-language decision selection and ambiguity handling (#98).
 - Editing prepared decision fields directly in the compact notification.
 - Replacing the validated Decision Surface.
+- Auto-revealing decisions that were not created by a user-initiated turn in the current tab.

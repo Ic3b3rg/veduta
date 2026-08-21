@@ -1,5 +1,10 @@
 # 025 — IMAP IDLE fallback for non-Google mailboxes
 
+> Historical implementation note: this specification records what issue #25 originally shipped.
+> [ADR-0024](../docs/adr/0024-pull-based-personal-mailbox.md) and issues #120–#127 supersede
+> always-on IMAP IDLE with passive, on-demand access through the Himalaya Skill and Veduta's
+> general execution tool.
+
 ## Context
 
 Issue [012](./012-event-ingestion.md) shipped event ingestion with the generic HMAC webhook

@@ -1,5 +1,10 @@
 # 012 — Event ingestion: webhooks, Gmail/Calendar, pre-filters
 
+> Historical implementation note: this specification records what issue #12 originally shipped.
+> [ADR-0024](../docs/adr/0024-pull-based-personal-mailbox.md) and issues #120–#127 supersede its
+> Gmail-mail Watch behavior with passive, pull-based Mailbox access. Calendar Watch and generic
+> webhook ingestion remain active.
+
 ## Context
 
 [ADR-0005](../docs/adr/0005-event-driven-proactivity.md) levels 0 and 2. Security in [SECURITY.md §3.5](../docs/SECURITY.md).

@@ -128,4 +128,8 @@ not rich content embedded in chat and not domain-specific Gateway logic.
 
 ## Blocked by
 
-None — builds on completed issues #7, #8, #22, #37, #42, and #73.
+- #134 — every relative-time Surface projection must be grounded in occurrence-dated source data
+  and the user's local calendar before a “today” analytical result can be truthful. Meals is only
+  the representative fixture.
+
+Builds on completed issues #7, #8, #22, #37, #42, and #73.

@@ -13,16 +13,20 @@ Intelligence:  010 model-routing → 011 scheduler → 012 event-ingestion → 0
 Trust:         014 trust-layer → 015 security-hardening
 Proactivity:   016 heartbeat → 017 worker-review → 018 push-notifications
 Adoption:      019 onboarding-wizard → 020 importer
-Polish:        032 facts-hygiene; 021 advanced-memory → 022 emergent-templates
+Polish:        021 advanced-memory → 022 emergent-templates
+Memory:        032 parent; 128 Unicode → (129 FACTS persistence, 131 superseded, 132 Event budget)
+               (034,129) → 130 watermarks; (091,100,113,130) → 133 health
 Access:        048 guided-vps-access-installer → 049 tailnet-access
 Models:        047 model-connections → 070 codex-tool-parity parent
                071 round-trip → 072 hardening → 073 Surface authoring → 074 trust → 075 memory → 076 Templates
                (073,093) → 077 Automations; (039,073) → 078 Workers; (074,075,076,077,078) → 079 parity
-               119 Model connection docs discoverability
+               118 Codex thread retention cleanup; 119 Model connection docs discoverability
 Operations:    081 trace-console parent → 082 retained-logs → 083 chat-activity → 084 complete-turn
                084 → 085 fast-path; 083 → (086,087); (082,083) → 088; 082 → 089; (084–089) → 090
 Automations:   091 outcome-delivery → 092 external-monitoring; 093 focused-tools → 077 parity; 094 paused recurrence
-Surfaces:      042 focused-read-tools → 095 visible-space-answers
+Mailbox:       120 quiesce → 121 passive Gmail → 122 Gmail Skill/search → 123 Himalaya general execution → 124 open → 125 reply
+               (123,077,084,086,091,097) → 126 Mailbox Automations; (121,123) → 127 remove Watch/IDLE
+Surfaces:      042 focused-read-tools → 134 relative-time views → 095 visible-space-answers
 Decisions:     096 contract → 097 outcomes → (067 Home, 098 chat)
 Character:     099 parent; 100 policy → 101 migration; (101,098) → 102 identity → (103 Space → 105 undo, 104 onboarding)
 Ordering:      106 parent → 108 canonical-order → (109 groups, 110 mutations, 111 reveal) → 112 recovery
@@ -138,4 +142,20 @@ blocker is closed.
 | 115 | [Living Connected devices System Surface](115-persist-connected-devices-system-surface.md)           | Core         |
 | 116 | [Gateway-owned System Space authoring](116-system-space-gateway-owned-authoring.md)                  | Core         |
 | 117 | [Synthetic System Surface projection retirement](117-retire-synthetic-system-surface-projections.md) | Core         |
+| 118 | [Codex thread retention cleanup](118-codex-thread-retention-cleanup.md)                              | Models       |
 | 119 | [Model connection docs discoverability](119-model-connection-docs-discoverability.md)                | Models       |
+| 120 | [Stop ambient personal-mail access](120-stop-ambient-personal-mail-access.md)                        | Proactivity  |
+| 121 | [Passive Gmail Mailbox connection](121-passive-gmail-mailbox-connection.md)                          | Adoption     |
+| 122 | [Gmail Mailbox Skill search and summary](122-gmail-mailbox-skill-search-summary.md)                  | Intelligence |
+| 123 | [Himalaya Skill and general execution](123-himalaya-skill-general-execution.md)                      | Adoption     |
+| 124 | [Transient mail open and mark read](124-transient-mail-open-mark-read.md)                            | Trust        |
+| 125 | [Approved threaded mail reply](125-approved-threaded-mail-reply.md)                                  | Trust        |
+| 126 | [Exact-scope Mailbox Automations](126-exact-scope-mailbox-automations.md)                            | Proactivity  |
+| 127 | [Remove mail Watch ingestion](127-remove-mail-watch-ingestion.md)                                    | Core         |
+| 128 | [Durable-memory Unicode sanitation](128-sanitize-forbidden-unicode.md)                               | Trust        |
+| 129 | [Secret-safe atomic FACTS writes](129-secret-safe-atomic-facts-writes.md)                            | Trust        |
+| 130 | [FACTS high and hard watermarks](130-facts-high-hard-watermarks.md)                                  | Polish       |
+| 131 | [Bounded superseded FACTS tail](131-bounded-superseded-facts-tail.md)                                | Polish       |
+| 132 | [Event context and tool-result budget](132-event-context-tool-result-budget.md)                      | Polish       |
+| 133 | [System Space memory health](133-system-space-memory-health.md)                                      | Core         |
+| 134 | [Relative-time Surface views](134-relative-time-surface-views.md)                                    | Core         |
