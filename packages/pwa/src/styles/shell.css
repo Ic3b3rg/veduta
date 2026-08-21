@@ -235,6 +235,32 @@
   outline-offset: 4px;
 }
 
+.surface-card.relative-time-expired {
+  border-left: 3px solid var(--warning-border);
+  padding-left: 10px;
+}
+
+.relative-time-notice {
+  border: 1px solid;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 8px 10px;
+}
+
+.relative-time-notice.expired {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+  font-weight: 600;
+}
+
+.relative-time-notice.caveat {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text-soft);
+}
+
 @keyframes surface-creation-highlight {
   0%,
   40% {

@@ -1,4 +1,9 @@
-import { SurfaceSchema, SurfaceSnapshotSchema, type Surface } from '@veduta/protocol'
+import {
+  SurfacePatchEventSchema,
+  SurfaceSchema,
+  SurfaceSnapshotSchema,
+  type Surface,
+} from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import type { SpaceWithSurfaces } from './api.ts'
 import {
@@ -225,6 +230,68 @@ describe('applySurfacePatchToSpaces', () => {
     })
 
     expect(result.applied).toBe(false)
+  })
+
+  it('applies and caches refreshed relative-time validity from the realtime patch', () => {
+    const surface = SurfaceSchema.parse({
+      ...testSurface('srf-relative', 'spc-health', '2026-08-20T10:00:00.000Z'),
+      state: {
+        records: [{ occurredAt: '2026-08-20T09:00:00.000Z', item: 'Walk' }],
+        todayRows: [{ item: 'Walk' }],
+        todayCount: 1,
+      },
+      validity: {
+        kind: 'relative-time',
+        timeZone: 'Europe/Rome',
+        window: 'day',
+        startsAt: '2026-08-19T22:00:00.000Z',
+        expiresAt: '2026-08-20T22:00:00.000Z',
+        source: { stateKey: 'records' },
+        projectionStateKeys: ['todayRows', 'todayCount'],
+      },
+    })
+    const event = SurfacePatchEventSchema.parse({
+      cursor: 8,
+      at: '2026-08-21T08:00:00.000Z',
+      spaceId: 'spc-health',
+      patch: {
+        surfaceId: surface.id,
+        operations: [
+          {
+            target: 'state',
+            op: 'replace',
+            path: '/records',
+            value: [
+              { occurredAt: '2026-08-21T07:00:00.000Z', item: 'Read' },
+              { occurredAt: '2026-08-20T09:00:00.000Z', item: 'Walk' },
+            ],
+          },
+          { target: 'state', op: 'replace', path: '/todayRows', value: [{ item: 'Read' }] },
+          { target: 'state', op: 'replace', path: '/todayCount', value: 1 },
+        ],
+      },
+      freshness: { updatedAt: '2026-08-21T08:00:00.000Z', updatedBy: 'agent' },
+      validity: {
+        ...surface.validity,
+        startsAt: '2026-08-20T22:00:00.000Z',
+        expiresAt: '2026-08-21T22:00:00.000Z',
+      },
+    })
+
+    const result = applySurfacePatchToSpaces([testSpace('spc-health', [surface])], event)
+    const patched = result.spaces[0]!.surfaces[0]!
+    expect(patched.validity).toEqual(event.validity)
+    expect(patched.state['todayRows']).toEqual([{ item: 'Read' }])
+
+    const storage = new MemoryStorage()
+    const snapshot = SurfaceSnapshotSchema.parse({
+      surfaceCursor: event.cursor,
+      spaces: result.spaces,
+    })
+    saveSnapshot(storage, 'relative-home', snapshot)
+    expect(cachedSnapshot(storage, 'relative-home')?.spaces[0]?.surfaces[0]?.validity).toEqual(
+      event.validity,
+    )
   })
 })
 

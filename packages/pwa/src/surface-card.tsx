@@ -1,5 +1,11 @@
 import { renderNode } from '@veduta/catalog'
-import type { AtomNode, JsonValue, Surface } from '@veduta/protocol'
+import {
+  surfaceRelativeTimeStatus,
+  type AtomNode,
+  type JsonValue,
+  type Surface,
+  type SurfaceRelativeTimeStatus,
+} from '@veduta/protocol'
 import { useEffect, useRef, useState } from 'react'
 import {
   fastActionIdempotencyKey,
@@ -49,6 +55,7 @@ export function SurfaceCard({
   const cardRef = useRef<HTMLElement>(null)
   const handledCreationFeedbackRef = useRef<string | undefined>(undefined)
   const [creationHighlighted, setCreationHighlighted] = useState(false)
+  const relativeTime = useRelativeTimeStatus(surface)
 
   useEffect(() => {
     if (
@@ -130,6 +137,7 @@ export function SurfaceCard({
         'surface-card',
         selected ? 'selected' : '',
         creationHighlighted ? 'creation-highlight' : '',
+        relativeTime?.status === 'expired' ? 'relative-time-expired' : '',
       ]
         .filter(Boolean)
         .join(' ')}
@@ -174,6 +182,16 @@ export function SurfaceCard({
           </button>
         )}
       </div>
+      {relativeTime?.status === 'expired' && (
+        <div className="relative-time-notice expired" role="status">
+          This relative-time view expired. Values below are preserved but are not current.
+        </div>
+      )}
+      {relativeTime?.caveat && (
+        <div className="relative-time-notice caveat" role="note">
+          {relativeTime.caveat}
+        </div>
+      )}
       {renderNode(surface.tree, {
         state: surface.state,
         dispatch,
@@ -185,4 +203,39 @@ export function SurfaceCard({
       </div>
     </article>
   )
+}
+
+const MAX_TIMEOUT_MS = 2_147_483_647
+
+/** Re-evaluates a cached Surface at its next validity boundary, even if no Gateway event arrives. */
+function useRelativeTimeStatus(surface: Surface): SurfaceRelativeTimeStatus | undefined {
+  const startsAt = surface.validity?.startsAt
+  const expiresAt = surface.validity?.expiresAt
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (startsAt === undefined || expiresAt === undefined) return
+    const startsAtMs = Date.parse(startsAt)
+    const expiresAtMs = Date.parse(expiresAt)
+    let timeout: number | undefined
+
+    const refreshAtBoundary = () => {
+      const current = Date.now()
+      setNow(current)
+      const nextBoundary =
+        current < startsAtMs ? startsAtMs : current < expiresAtMs ? expiresAtMs : 0
+      if (nextBoundary === 0) return
+      timeout = window.setTimeout(
+        refreshAtBoundary,
+        Math.min(nextBoundary - current, MAX_TIMEOUT_MS),
+      )
+    }
+
+    refreshAtBoundary()
+    return () => {
+      if (timeout !== undefined) window.clearTimeout(timeout)
+    }
+  }, [expiresAt, startsAt])
+
+  return surfaceRelativeTimeStatus(surface, new Date(now))
 }
