@@ -82,7 +82,7 @@ export class Store {
   constructor(options: StoreOptions = {}) {
     this.now = options.now ?? (() => new Date())
     const timeZone = options.timeZone ?? 'UTC'
-    const seed = seedSpaces({ now: this.now, timeZone })
+    const seed = seedSpaces({ relativeTimeNow: this.now, timeZone })
     this.spacesEngine = new SpacesEngine({
       now: this.now,
       seed: { spaces: seed.spaces, surfaces: [] },

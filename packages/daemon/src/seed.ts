@@ -8,12 +8,12 @@ import { buildRelativeTimeValidity } from './relative-time-surface.ts'
  * fast actions and freshness. Validated at boot — the daemon refuses
  * to start with an invalid seed rather than render garbage.
  */
-export function seedSpaces(options: { now?: () => Date; timeZone?: string } = {}): {
+export function seedSpaces(options: { relativeTimeNow?: () => Date; timeZone?: string } = {}): {
   spaces: Space[]
   surfaces: Surface[]
 } {
-  const seededAt = (options.now ?? (() => new Date()))()
-  const updatedAt = seededAt.toISOString()
+  const relativeTimeNow = (options.relativeTimeNow ?? (() => new Date()))()
+  const updatedAt = () => new Date().toISOString()
   const timeZone = options.timeZone ?? 'UTC'
   const health = SpaceSchema.parse({
     id: 'spc-health',
@@ -48,7 +48,7 @@ export function seedSpaces(options: { now?: () => Date; timeZone?: string } = {}
       ],
     },
     state: { currentKg: 82.3, targetKg: 77, progress: 0.25 },
-    freshness: { updatedAt, updatedBy: 'seed' },
+    freshness: { updatedAt: updatedAt(), updatedBy: 'seed' },
   })
 
   const groceries = SurfaceSchema.parse({
@@ -70,7 +70,7 @@ export function seedSpaces(options: { now?: () => Date; timeZone?: string } = {}
       ],
     },
     state: { milk: false, eggs: false, spinach: true, chicken: false },
-    freshness: { updatedAt, updatedBy: 'seed' },
+    freshness: { updatedAt: updatedAt(), updatedBy: 'seed' },
   })
 
   const meals = SurfaceSchema.parse({
@@ -109,7 +109,7 @@ export function seedSpaces(options: { now?: () => Date; timeZone?: string } = {}
       lastMeal: 'Nothing logged today',
       mealCount: 0,
     },
-    freshness: { updatedAt, updatedBy: 'seed' },
+    freshness: { updatedAt: updatedAt(), updatedBy: 'seed' },
     validity: buildRelativeTimeValidity(
       {
         window: 'day',
@@ -117,7 +117,7 @@ export function seedSpaces(options: { now?: () => Date; timeZone?: string } = {}
         projectionStateKeys: ['meals', 'lastMeal', 'mealCount'],
       },
       timeZone,
-      seededAt,
+      relativeTimeNow,
     ),
   })
 
