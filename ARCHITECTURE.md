@@ -157,6 +157,16 @@ persisted window expires, including after a reload. No streaming format or secon
 involved ([ADR-0003](docs/adr/0003-declarative-atoms.md),
 [issue 029](issues/029-progressive-surface-composition.md)).
 
+Relative calendar views also stay inside the Surface contract. An optional `validity` descriptor
+names a separate durable source array, its effective-occurrence field, every projected state key,
+the global user timezone, and the Gateway-derived start/expiry instants. The Agent preserves source
+history and patches every projection together; the Gateway rejects partial projection updates and
+normalizes occurrence instants. At the expiry boundary, readers report the view as expired and the
+PWA changes to a visible expired state on its own timer, without inventing a domain event or waiting
+for a Heartbeat. Undated legacy source records remain durable but are excluded with a visible caveat
+([ADR-0003](docs/adr/0003-declarative-atoms.md),
+[issue 134](issues/134-relative-time-surface-views.md)).
+
 Good compositions become **Templates** saved in the Space and reused/patched (visual consistency across regenerations): a tree that has stopped changing — or that the user **pins** — is captured without its data, matched deterministically on intent and Atom signature, and reused instead of regenerated; regenerating over a match requires a justification. A pinned Surface keeps receiving state patches, while a tree change becomes a **Tree proposal** with a preview the user accepts or rejects ([ADR-0012](docs/adr/0012-emergent-templates.md)).
 
 ### 3.5 Proactivity (4 tiers, by increasing cost)

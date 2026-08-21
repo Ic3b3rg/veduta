@@ -15,6 +15,8 @@ import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stac
  *   AC2 - passkey auth + a core chat flow (meal logging) updates a Surface.
  *   AC3 - restarting the stack preserves auth, the Meals entry, and the
  *         Groceries checkbox state.
+ *   Issue #134 - the Meals projection carries explicit relative-time validity,
+ *                a durable occurrence-dated source record, and no expired UI.
  *
  * Also covers the Space Event log (ADR-0003: every fast-path mutation
  * appends to it) via `GET /api/spaces/spc-health/events` -- both right
@@ -152,6 +154,33 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await page.getByRole('button', { name: 'Send' }).click()
 
       await expectMealLogged(page)
+
+      const mealsSurface = await fetchSurface(page, stack!.origin, 'srf-meals')
+      expect(mealsSurface.validity).toMatchObject({
+        kind: 'relative-time',
+        window: 'day',
+        source: { stateKey: 'mealRecords', occurredAtKey: 'occurredAt' },
+        projectionStateKeys: ['meals', 'lastMeal', 'mealCount'],
+      })
+      const sourceRecords = mealsSurface.state['mealRecords']
+      const projectedMeals = mealsSurface.state['meals']
+      expect(Array.isArray(sourceRecords)).toBe(true)
+      expect(Array.isArray(projectedMeals)).toBe(true)
+      const sourceRecord = (sourceRecords as Array<Record<string, unknown>>)[0]
+      const projectedMeal = (projectedMeals as Array<Record<string, unknown>>)[0]
+      expect(sourceRecord).toMatchObject({ meal: 'fesa di tacchino' })
+      expect(projectedMeal).toMatchObject({ meal: 'fesa di tacchino' })
+      expect(projectedMeal?.['occurredAt']).toBe(sourceRecord?.['occurredAt'])
+      expect(typeof sourceRecord?.['occurredAt']).toBe('string')
+      expect(Date.parse(sourceRecord?.['occurredAt'] as string)).toBeGreaterThanOrEqual(
+        Date.parse(mealsSurface.validity!.startsAt),
+      )
+      expect(Date.parse(sourceRecord?.['occurredAt'] as string)).toBeLessThan(
+        Date.parse(mealsSurface.validity!.expiresAt),
+      )
+      await expect(surfaceCard(page, 'Meals').locator('.relative-time-notice.expired')).toHaveCount(
+        0,
+      )
 
       // The reply itself must reach the chat log, not only the Surface it
       // patched (issue #37, chat-loop.ts's `chat.turn-end`): the mock chat
@@ -335,6 +364,10 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         timeout: 30_000,
       })
       await expectMealLogged(page)
+      expect((await fetchSurface(page, stack.origin, 'srf-meals')).validity).toMatchObject({
+        kind: 'relative-time',
+        source: { stateKey: 'mealRecords', occurredAtKey: 'occurredAt' },
+      })
       await expect(
         surfaceCard(page, 'Groceries').getByRole('checkbox', { name: 'Milk' }),
       ).toBeChecked()
@@ -416,6 +449,38 @@ async function fetchSpaceEvents(page: Page, origin: string): Promise<SpaceEventE
   expect(response.ok()).toBe(true)
   const body = (await response.json()) as { events: SpaceEventEntry[] }
   return body.events
+}
+
+interface SnapshotSurface {
+  id: string
+  state: Record<string, unknown>
+  validity?: {
+    kind: string
+    window: string
+    startsAt: string
+    expiresAt: string
+    source: { stateKey: string; occurredAtKey: string }
+    projectionStateKeys: string[]
+  }
+}
+
+/** Reads a Surface through the same authenticated Home snapshot endpoint used by the PWA. */
+async function fetchSurface(
+  page: Page,
+  origin: string,
+  surfaceId: string,
+): Promise<SnapshotSurface> {
+  const token = await page.evaluate(() => localStorage.getItem('veduta.authToken'))
+  const response = await page.request.get(`${origin}/api/spaces`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  })
+  expect(response.ok()).toBe(true)
+  const body = (await response.json()) as {
+    spaces: Array<{ surfaces: SnapshotSurface[] }>
+  }
+  const surface = body.spaces.flatMap((space) => space.surfaces).find(({ id }) => id === surfaceId)
+  if (!surface) throw new Error(`snapshot did not contain Surface ${surfaceId}`)
+  return surface
 }
 
 /** The Event log entry the mock chat->Surface demo's meal patch produces (`SurfaceEngine.patchState`). */

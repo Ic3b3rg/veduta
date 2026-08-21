@@ -45,6 +45,32 @@ The rejected alternative remains a node-stream parser: it would duplicate valida
 boundaries without improving the user-visible result. A mount-relative timer was also rejected
 because remounting could keep a skeleton alive indefinitely.
 
+## Issue 134 relative calendar views
+
+A Surface whose visible state means “today”, “this week”, or “this month” declares that meaning in
+an optional, generic `validity` descriptor. The descriptor identifies a durable source array, the
+source record's effective-occurrence field (default `occurredAt`), the projected state keys, and a
+calendar window. The Gateway supplies the global user timezone and absolute `startsAt`/`expiresAt`
+bounds; models never author those authoritative values. Event log time remains the time Veduta
+recorded the mutation, while `occurredAt` is when the real-world fact happened.
+
+Source records and visible projections stay separate. A write that touches the source or any
+projection must update every declared projection in the same validated patch, so the view cannot
+claim a fresh window with stale dependent fields. Older records remain in the source array. Legacy
+records without an occurrence time also remain durable, but readers exclude them from the relative
+projection and expose a caveat instead of guessing a date.
+
+Validity is persisted and carried by replayable Surface patch events. Focused readers compute its
+status against the injected clock, while the PWA schedules the next start/expiry boundary locally;
+therefore a cached view visibly expires even if no Gateway event arrives. A subsequent coherent
+state patch refreshes the bounds from the same global timezone. Pin continues to lock only the Atom
+tree, so state and validity can advance together.
+
+Rejected alternatives were title/field-name heuristics, a Surface query language, domain-specific
+meal logic in the protocol or catalog, storing only the current projection, and generating fake
+domain events or Heartbeats at midnight. Each would either hide semantics, lose history, duplicate a
+query engine, or make correctness depend on unrelated background activity.
+
 ## Considered Options
 
 - Free-form generated HTML/JSX in a sandbox: rejected for v1 — not diffable, inconsistent, hallucination-prone. It returns post-v1 only as a sandboxed escape hatch for the long tail.
