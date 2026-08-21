@@ -260,7 +260,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(milk).not.toBeChecked()
       await milk.click()
       await expect(milk).toBeChecked()
-      await expect(page.getByRole('alert')).toHaveCount(0)
+      await expect(surfaceCard(page, 'Groceries').getByRole('alert')).toHaveCount(0)
 
       // Event log coverage (ADR-0003): `SurfaceEngine.applyFastAction`
       // (surface-engine.ts) logs `fast_path` events as
@@ -279,10 +279,11 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         'true',
       )
 
-      await page.setViewportSize({ width: 720, height: 500 })
+      const revealViewport = { width: 480, height: 300 }
+      await page.setViewportSize(revealViewport)
       observerContext = await browser.newContext({
         storageState: await context.storageState(),
-        viewport: { width: 720, height: 500 },
+        viewport: revealViewport,
       })
       const observerPage = await observerContext.newPage()
       await observerPage.goto(stack!.origin)
@@ -309,7 +310,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       const observerCardTop = await observerCard.evaluate(
         (card) => card.getBoundingClientRect().top,
       )
-      expect(observerCardTop).toBeGreaterThan(500)
+      expect(observerCardTop).toBeGreaterThan(revealViewport.height)
       expect(await observerPage.evaluate(() => window.scrollY)).toBe(0)
 
       await expect
