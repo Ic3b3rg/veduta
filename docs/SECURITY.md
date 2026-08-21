@@ -1,6 +1,9 @@
 # Security and trust model
 
-> Hardened by explicit request: external content is the primary attack vector of an event-driven personal agent. Core principle (Simon Willison's "lethal trifecta"): **never combine in the same context (1) private data, (2) untrusted content, (3) exfiltration capability**. The entire architecture below exists to ensure the trifecta never comes true.
+> External content is the primary attack vector of an event-driven personal Agent. Typed product
+> paths structurally reduce Simon Willison's "lethal trifecta"; the general execution path trades a
+> universal capability sandbox for Agent flexibility. This document distinguishes enforced
+> boundaries from official Skill policy instead of claiming they are equivalent.
 
 ## 1. Threat model
 
@@ -15,33 +18,59 @@
 ## 2. Trust levels (action capabilities)
 
 - **L0 — free**: everything that stays inside the daemon (surfaces, memory, jobs, notifications to the user). Never requires confirmation.
-- **L1 — approval-first**: every outbound action (email, messages to third parties, transactions) is born **blocked**. The agent prepares the action and presents an **approval card**: content already prepared, _editable_, with explicit approval. The user can loosen this per type/recipient (revocable allowlist, managed from a dedicated surface — the exec-approvals pattern from Hermes/OpenClaw).
-- **L2 — never automatic**, not even with an allowlist: money above a configured threshold, mass deletions, credential management.
+- **L1 — approval-first**: the Agent prepares an outbound action (email, messages to third parties, transactions) and presents an **approval card**: content already prepared, _editable_, with explicit approval. Typed product tools block execution until resolution. Official Skills must follow the same sequence when using general execution, but an arbitrary command is not claimed to be structurally unbypassable. The user can loosen this per type/recipient through a revocable allowlist.
+- **L2 — never automatic**, not even with an allowlist: money above a configured threshold, mass deletions, credential management. Typed product tools enforce this structurally; official Skills must not perform an L2 command through general execution, whose semantics the runtime cannot prove.
 
 ## 3. Defenses on external content (the hardened measures)
 
 ### 3.1 Quarantined reader (Dual-LLM / CaMeL-lite pattern)
 
-Raw external text **never enters the main agent's context**. Every external event goes through a cheap LLM call, **with no tools at all**, that extracts schema-validated structured data (sender, subject, classified intent, entities, deadlines). Only the structured output — not the text — reaches the agent. An instruction injected into the email can at most corrupt data fields, not steer the agent that holds the tools.
+Unsolicited events and unattended extraction go through a cheap LLM call, **with no tools at all**,
+that produces schema-validated structured data (sender, subject, classified intent, entities,
+deadlines). Interactive tasks and direct CLI/API work may instead bring required external text into
+the main Agent's current context. It stays marked Untrusted, bounded, and subject to the feature's
+persistence rules; the official Skill treats it as data rather than instructions.
 References: CaMeL (DeepMind, arXiv:2503.18813); Willison, "The Dual LLM pattern" and "The lethal trifecta".
 
 ### 3.2 Taint tracking and gating
 
-Every context item carries its origin (`trusted: user | system | untrusted: <source>`). Hard rule, enforced by the trust layer (code, not prompt): **a turn whose context contains untrusted content cannot execute L1+ actions without an approval card, even if the allowlist would permit it**. Allowlists apply only to actions born from direct user requests.
+Every context item carries its origin (`trusted: user | system | untrusted: <source>`). Typed L1+
+tools enforce the Approval rule in code. For a direct command, the Agent and its first-party Skill
+must pause for the same Approval card and the Trace records whether that procedure was followed;
+Veduta does not claim semantic command inspection as a hard boundary. Allowlists apply only to
+actions born from direct user requests.
 
 ### 3.3 When the full text is needed
 
-If the user explicitly asks "read me the email", the text enters a turn marked untrusted, with delimiters and a spotlighting instruction — and the gating from 3.2 stays active. Convenience never disables gating.
+If the user explicitly asks "read me the email", the text enters a turn marked Untrusted, with
+delimiters and a spotlighting instruction. Typed-tool gating and general-execution policy from 3.2
+continue to apply.
 
 ### 3.4 Egress allowlist (network, not prompt)
 
-The daemon can contact **only declared hosts**: configured LLM providers, endpoints of active integrations, push service. Every tool declares the domains it uses; everything else is denied at the network level. A successful injection still has nowhere to exfiltrate to.
+Typed network tools contact only their declared hosts. The general execution tool inherits the
+self-hosted process's network reach and cannot honestly promise the same per-command host allowlist;
+operators who need that boundary enforce it at the container or host firewall. Official Skills
+declare and test their expected destinations, and command Trace makes unexpected execution visible.
 
 The ChatGPT Model connection spawns a `codex app-server` child process that makes its own outbound connections (`auth.openai.com`, `chatgpt.com`, `api.openai.com`); the daemon's dispatcher cannot intercept them, the same class of exception as the web-push delivery path. The daemon never logs the child's stderr or payloads — only structured one-line diagnostics with byte counts. An operator who enforces egress at the host firewall must allow those hosts for the ChatGPT connection method, and may block them to disable it. OS-level sandboxing of the child process is out of scope for issue 047; the residual filesystem exposure is accepted and the child runs with a reduced environment from its own empty `CODEX_HOME` directory.
 
 ### 3.5 Hardened ingestion
 
-HMAC-validated webhooks (Hermes pattern); automatic, monitored renewal of Gmail/Calendar watches; per-source rate limiting; event deduplication; events that fail schema validation are discarded and logged, never "interpreted".
+HMAC-validated webhooks (Hermes pattern); automatic, monitored renewal of explicitly configured
+Calendar watches; per-source rate limiting; event deduplication; events that fail schema validation
+are discarded and logged, never "interpreted".
+
+A personal Mailbox connection is passive. No Gmail Watch, IMAP IDLE, inbox scan, or message fetch
+runs because the connection exists, the Gateway boots, or a maintenance sweep occurs. Provider
+message access requires an explicit user request or due occurrence of a confirmed Automation with
+a resolved Mailbox scope. A Gmail Skill uses native OAuth/API operations. A Himalaya Skill may
+detect, install, configure, and invoke a compatible external CLI directly through general
+execution; credentials remain outside model context in the vault, keyring, or credential file.
+Search, summary, and Automation reads preserve unread state. Raw mail is Untrusted and transient;
+only schema-validated Mail summaries persist. See
+[ADR-0024](adr/0024-pull-based-personal-mailbox.md) and
+[ADR-0026](adr/0026-skills-may-drive-general-tool-execution.md).
 
 ### 3.6 Website monitors
 
@@ -65,7 +94,7 @@ One documented deviation: the ChatGPT Model connection's OAuth credentials are o
 
 ## 5. Audit and limits
 
-- **Append-only audit log** of every L1+ action and every approval/allowlist change: who/what triggered it (including a hash of the context), what was sent, outcome. Visible as a surface.
+- **Append-only audit log** of every typed L1+ action, approval/allowlist change, and general-execution call: who/what triggered it (including a hash of the context), the redacted command or effect, and its outcome. Visible as a Surface.
 - Daily **spend cap** per model tier and per worker (budget in the briefing); a circuit breaker that shuts off proactivity above the threshold and notifies.
 - Cap on worker iterations (5-8), explicit termination, schema-validated output.
 
@@ -90,7 +119,7 @@ One documented deviation: the ChatGPT Model connection's OAuth credentials are o
 
 ## 7. Continuous verification
 
-- **Injection test suite in CI**: a corpus of malicious emails/webhooks (exfiltration, escalation, nested instructions) that must produce zero ungated L1+ actions. Every bypass found becomes a test.
+- **Injection test suite in CI**: a corpus of malicious emails/webhooks (exfiltration, escalation, nested instructions) that typed tools must reject and first-party Skills must handle without unapproved L1+ commands. Every behavioral or structural bypass found becomes a test.
 - All Worker output is treated as untrusted (`untrusted:worker`) and quarantined; a mandatory adversarial review in a separate context refutes/corrects **high-risk** Worker outputs (flagged in the briefing) before delivery into the Space.
 - Threat model revisited on every new integration (every event source is a new perimeter).
 

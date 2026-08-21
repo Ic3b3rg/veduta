@@ -31,12 +31,13 @@ A developer/power user who already self-hosts (or can spin up a VPS), today a di
 
 ### In
 
-- Complete daemon skeleton: agent loop (single, triage/reasoning routing, BYOK), Spaces (3-layer memory + validated writes), surface engine (tree+state+bindings, fast/agent path), scheduler (one-shot timers, jobs, safety-net Heartbeat), event ingestion (webhooks, Gmail/Calendar, pre-filters, quarantined reader)
+- Complete Gateway skeleton: single Agent loop with Model connections, Spaces (3-layer memory + validated writes), Surface engine (tree+state+bindings, fast/Agent path), scheduler (one-shot timers, jobs, safety-net Heartbeat), explicitly authorized event ingestion (webhooks, Calendar, pre-filters, quarantined reader), a general execution tool, and passive personal Mailbox connections (native Gmail plus Skill-driven Himalaya)
+- First-party Skills added alongside the features that need them: strict Agent Skills documents, progressively loaded, able to guide typed tools, direct CLI/API use, and dependency setup while every durable UI result remains a validated Surface
 - **A generic system from day one**: no privileged domain. The Home shows all Spaces; each user uses them as they wish (diet, work, gym, all together)
 - Atom catalog: ChatKit set (~24) + `Progress`, `Stat`, `ListItem`, `Automation`; emergent Templates
 - PWA: Home, global chat (which focuses when opening a Space), approval cards, web push, passkeys
 - Onboarding wizard in the PWA (stage protocol) + importers from OpenClaw and Hermes
-- Complete trust layer (L0/L1/L2, untrusted content, egress allowlist, vault, audit)
+- Layered trust controls (L0/L1/L2 policy, untrusted-content handling, typed-tool gates, vault, command/effect audit) with the general execution path's explicitly documented residual risk
 
 ### Out (painfully, but out)
 

@@ -1,5 +1,12 @@
 # 025 — IMAP IDLE fallback for non-Google mailboxes
 
+> Historical implementation note: issue #25 was completed on
+> [`archive/025-imap-idle-fallback`](https://github.com/Ic3b3rg/veduta/tree/archive/025-imap-idle-fallback)
+> but never merged into `main` or shipped. [ADR-0024](../docs/adr/0024-pull-based-personal-mailbox.md)
+> and issues #120–#127 supersede that off-main design with passive, on-demand access through the
+> Himalaya Skill and Veduta's general execution tool. The archive remains recovery and
+> conflict-resolution input for #123/#127.
+
 ## Context
 
 Issue [012](./012-event-ingestion.md) shipped event ingestion with the generic HMAC webhook

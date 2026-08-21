@@ -105,8 +105,16 @@ The product invariant that changing provider, model, or authorization method lea
 _Avoid_: provider mode, text-only mode, degraded connection
 
 **Automation**:
-A job or timer created by the Agent but visible to and switchable off by the user in the Space. Includes the one-shot timers armed on learned deadlines.
+A user-confirmed, Space-owned rule that runs from confirmation onward as trigger → operation → result. The confirmed instruction defines the operation's scope, filters, and time window, including any source history it should inspect; no additional default operation is implied. It is visible and switchable off in the Space, and includes one-shot timers armed on learned deadlines.
 _Avoid_: hidden cron, internal job
+
+**Skill**:
+A product-owned, versioned procedure that teaches the Agent how to perform one kind of work with the tools available to the current turn. It may guide typed tools, direct CLI/API use, and supported dependency setup; in an interactive turn the Agent selects it autonomously, while a confirmed Automation preloads its associated Skill set. Loading it grants no additional tool or credential, and its ordinary outcome is text plus validated Surface work rather than implementation detail.
+_Avoid_: tool, plugin, Automation, persona
+
+**General execution tool**:
+A Veduta-owned Agent tool for directly operating external CLIs, APIs, and setup commands. It enters through AgentRunner and is available consistently across eligible Model connections; it is not a provider-native shell or a domain-specific adapter. Its breadth makes command semantics an Agent policy and audit concern rather than a universally typed capability boundary.
+_Avoid_: provider shell, unrestricted provider tool
 
 **Automation outcome**:
 The user-relevant result of an Automation occurrence: a meaningful change, failure, recovery, or required decision. Routine checks with no change advance freshness but are not outcomes.
@@ -182,18 +190,39 @@ A durable, dismissible attention item shown inside its owning Space and deep-lin
 _Avoid_: push notification, chat notice, badge
 
 **Trust level**:
-An action's capability class: L0 free (inside the daemon), L1 approval-first (toward the outside, relaxable per type), L2 never automatic (money above a threshold, destructive).
+An action's product-policy class: L0 free (inside the daemon), L1 approval-first (toward the outside, relaxable per type), L2 never automatic (money above a threshold, destructive). Typed product tools enforce the class structurally; official Skills apply it behaviorally when using the general execution tool.
 
 **Approval card**:
 The Surface for a Pending decision over an L1+ action, already prepared and editable before approval.
 _Avoid_: yes/no prompt
 
 **Untrusted content**:
-Any content of external origin (mail, web pages, webhooks). Marked as data, never as instructions; it cannot trigger L1+ actions without an Approval card.
+Any content of external origin (mail, web pages, webhooks). Marked as data, never as instructions. Typed tools gate its downstream effects; official Skills must require an Approval card before it contributes to an L1+ command through general execution.
 _Avoid_: user input (which is a different thing)
 
 **Quarantined reader**:
-A cheap, tool-less LLM call that turns Untrusted content into schema-validated structured data. Raw external text never enters the Agent's context.
+A cheap, tool-less LLM call that turns Untrusted content into schema-validated structured data for unsolicited events and unattended extraction. Explicit interactive work or direct external-tool use may instead bring bounded raw content into the current Agent turn with its origin preserved.
+
+**Mailbox assistant**:
+The user-connected mailbox capability that lets the Agent work with mail only for an explicit user request or an explicitly confirmed Automation. Connecting a mailbox never causes background checking, import, reading, summarization, Surface updates, or notifications; provider message access occurs only while serving that request or a due Automation occurrence. A mailbox Automation authorizes exactly the mail operation in its confirmed instruction and adds no implicit query or backlog. Every mail request or Automation, and all of its outcomes, belongs to exactly one Space; the same mailbox connection may be used by multiple Spaces, but no result or memory crosses between them automatically. V1 provides polished Surface flows for search, summary, Explicit mail read, and user-approved threaded reply. Other operations available through an external tool may still be performed for an explicit chat request, but have no dedicated v1 Surface action or product guarantee. Mail work stays assistive rather than becoming a Bridge, autonomous email bot, or inbox replica.
+_Avoid_: email Bridge, mail bot, inbox replacement
+
+**Mailbox connection**:
+A Gateway-wide, passive authorization to access one provider mailbox. It may be named in the explicit scope of mail work owned by different Spaces, but owns no Surface, memory, notification, or Automation itself.
+_Avoid_: Space mailbox, synchronized inbox
+
+**Mailbox scope**:
+The resolved boundary of explicitly authorized mail work: the target mailbox or mailboxes, provider query such as folders or labels, time window, read-state filter, result bound, and permitted mutations that matter to the request. It must be unambiguous from the instruction and current context before provider access; the Agent clarifies material gaps rather than silently widening the search.
+_Avoid_: default inbox sync, implicit mailbox scan
+
+**Mail summary**:
+The durable, schema-validated projection produced by explicitly authorized mail work: provider message and thread identity, selected headers, priority, and quarantined summary, never the raw body or attachments. Raw content is processed transiently and fetched again only when later authorized work needs it.
+
+**Explicit mail read**:
+A user action in a Mailbox Surface or chat that transiently retrieves one message's raw content and marks that message read at its provider. In v1, mailbox searches, summaries, and Automation outputs leave provider read state unchanged unless the user opens a message explicitly.
+
+**Mailbox Surface**:
+A declarative Surface in a Space that presents durable mail results such as search metadata, summaries, or an editable reply draft; raw message content is displayed only for a transient explicit mail read. It is a snapshot labelled with its query and last check, and changes only through an explicit refresh interaction or its linked Automation. It may be produced by a user-requested Agent response or serve as the persistent output of a mailbox Automation; recurring occurrences update the same linked Surface instead of creating one per run. It is not an inbox replica: its actions start new Agent interactions, while provider thread identity is retained internally and sending remains governed by an Approval card.
 
 **Gateway**:
 The self-hosted daemon: serves the PWA, owns sessions, Spaces, the scheduler, event ingestion.
