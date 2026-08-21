@@ -32,6 +32,42 @@ describe('PatchSchema', () => {
 
     expect(result.success).toBe(false)
   })
+
+  it('validates Pending nodes carried by tree patches', () => {
+    const valid = PatchSchema.safeParse({
+      surfaceId: 'srf-progressive',
+      operations: [
+        {
+          target: 'tree',
+          op: 'replace',
+          path: '/children/0',
+          value: {
+            id: 'summary',
+            type: 'Pending',
+            props: { variant: 'text', lines: 2, timeoutMs: 30_000 },
+          },
+        },
+      ],
+    })
+    const malformed = PatchSchema.safeParse({
+      surfaceId: 'srf-progressive',
+      operations: [
+        {
+          target: 'tree',
+          op: 'replace',
+          path: '/children/0',
+          value: {
+            id: 'summary',
+            type: 'Pending',
+            props: { variant: 'text', lines: 0 },
+          },
+        },
+      ],
+    })
+
+    expect(valid.success).toBe(true)
+    expect(malformed.success).toBe(false)
+  })
 })
 
 describe('applySurfacePatch', () => {

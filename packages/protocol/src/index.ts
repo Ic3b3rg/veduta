@@ -16,7 +16,21 @@ export {
   type PairingCode,
   type WebAuthnOptionsEnvelope,
 } from './auth.ts'
-export { atomTypes, AtomTypeSchema, AtomNodeSchema, type AtomType, type AtomNode } from './atom.ts'
+export {
+  atomTypes,
+  AtomTypeSchema,
+  AtomNodeSchema,
+  pendingSlotVariants,
+  PendingSlotVariantSchema,
+  PendingAtomPropsSchema,
+  MIN_PENDING_SLOT_TIMEOUT_MS,
+  DEFAULT_PENDING_SLOT_TIMEOUT_MS,
+  MAX_PENDING_SLOT_TIMEOUT_MS,
+  type AtomType,
+  type AtomNode,
+  type PendingSlotVariant,
+  type PendingAtomProps,
+} from './atom.ts'
 export {
   SurfaceSchema,
   FreshnessSchema,
