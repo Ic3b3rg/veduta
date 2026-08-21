@@ -1,3 +1,5 @@
+import type { RelativeTimeWindow } from '@veduta/protocol'
+
 /**
  * Global user-timezone helpers (issue #21). Time-aware memory queries ("what
  * did I weigh at the start of June?") and the nightly Reflection's firing
@@ -241,4 +243,39 @@ export function startOfZonedDay(
 /** Midnight of the first day of the given zoned calendar month, as a UTC instant. */
 export function startOfZonedMonth(zone: string, year: number, month: number): Date {
   return zonedTimeToUtc(zone, { year, month, day: 1, hour: 0, minute: 0 })
+}
+
+export interface RelativeTimeWindowBounds {
+  startsAt: Date
+  expiresAt: Date
+}
+
+/**
+ * Resolves the current user-local calendar window to absolute instants.
+ * Calendar-field arithmetic deliberately flows back through the shared
+ * zoned conversion, so DST gaps/overlaps and a host in another timezone do
+ * not turn a local day into a fixed 24-hour duration.
+ */
+export function relativeTimeWindowBounds(
+  zone: string,
+  now: Date,
+  window: RelativeTimeWindow,
+): RelativeTimeWindowBounds {
+  const local = zonedParts(assertTimeZone(zone), now)
+
+  if (window === 'month') {
+    return {
+      startsAt: startOfZonedMonth(zone, local.year, local.month),
+      expiresAt: startOfZonedMonth(zone, local.year, local.month + 1),
+    }
+  }
+
+  const weekday = new Date(Date.UTC(local.year, local.month - 1, local.day)).getUTCDay()
+  const daysSinceMonday = (weekday + 6) % 7
+  const startDay = window === 'week' ? local.day - daysSinceMonday : local.day
+  const endDay = startDay + (window === 'week' ? 7 : 1)
+  return {
+    startsAt: startOfZonedDay(zone, { year: local.year, month: local.month, day: startDay }),
+    expiresAt: startOfZonedDay(zone, { year: local.year, month: local.month, day: endDay }),
+  }
 }

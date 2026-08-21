@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   assertTimeZone,
+  relativeTimeWindowBounds,
   startOfZonedDay,
   startOfZonedMonth,
   zonedParts,
@@ -103,5 +104,38 @@ describe('startOfZonedMonth', () => {
     expect(startOfZonedMonth('Pacific/Kiritimati', 2026, 1)).toEqual(
       startOfZonedDay('Pacific/Kiritimati', { year: 2026, month: 1, day: 1 }),
     )
+  })
+})
+
+describe('relativeTimeWindowBounds', () => {
+  it('anchors a day to the user timezone when the host clock date differs', () => {
+    expect(
+      relativeTimeWindowBounds('Pacific/Kiritimati', new Date('2026-01-01T12:00:00.000Z'), 'day'),
+    ).toEqual({
+      startsAt: new Date('2026-01-01T10:00:00.000Z'),
+      expiresAt: new Date('2026-01-02T10:00:00.000Z'),
+    })
+  })
+
+  it('uses 23- and 25-hour calendar days across Europe/Rome DST transitions', () => {
+    const spring = relativeTimeWindowBounds(
+      'Europe/Rome',
+      new Date('2026-03-29T12:00:00.000Z'),
+      'day',
+    )
+    const fall = relativeTimeWindowBounds(
+      'Europe/Rome',
+      new Date('2026-10-25T12:00:00.000Z'),
+      'day',
+    )
+
+    expect(spring).toEqual({
+      startsAt: new Date('2026-03-28T23:00:00.000Z'),
+      expiresAt: new Date('2026-03-29T22:00:00.000Z'),
+    })
+    expect(fall).toEqual({
+      startsAt: new Date('2026-10-24T22:00:00.000Z'),
+      expiresAt: new Date('2026-10-25T23:00:00.000Z'),
+    })
   })
 })
