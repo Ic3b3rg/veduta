@@ -4,6 +4,7 @@ import {
   type RelativeTimeValidity,
   type PatchOperation,
   type JsonObject,
+  type Surface,
 } from '@veduta/protocol'
 import { z } from 'zod'
 import { relativeTimeWindowBounds } from './timezone.ts'
@@ -136,6 +137,78 @@ export function relativeTimeSourceRecords(
     if (instant >= startsAt && instant < expiresAt) current.push(record)
   }
   return { current, undated }
+}
+
+export interface RelativeTimeSeedUpgradePatch {
+  relativeTime: RelativeTimeAuthoring
+  operations: PatchOperation[]
+}
+
+/**
+ * Builds the one-time, domain-neutral patch for a persisted seed Surface that
+ * predates its relative-time contract. Exactly one array projection may act
+ * as the legacy source; ambiguity is refused instead of guessing. Visible
+ * projections reset to the current seed defaults while every legacy record
+ * remains durable and undated in the new source.
+ */
+export function relativeTimeSeedUpgradePatch(
+  persisted: Surface,
+  currentSeed: Surface,
+): RelativeTimeSeedUpgradePatch | undefined {
+  const validity = currentSeed.validity
+  if (
+    persisted.id !== currentSeed.id ||
+    persisted.spaceId !== currentSeed.spaceId ||
+    persisted.validity !== undefined ||
+    validity === undefined
+  ) {
+    return undefined
+  }
+
+  const sourceKey = validity.source.stateKey
+  const storedSource = persisted.state[sourceKey]
+  let sourceRecords: JsonObject[]
+  if (Array.isArray(storedSource)) {
+    if (!storedSource.every(isJsonObject)) return undefined
+    sourceRecords = storedSource
+  } else if (storedSource === undefined) {
+    const candidates = validity.projectionStateKeys
+      .map((key) => persisted.state[key])
+      .filter((value): value is JsonObject[] => Array.isArray(value) && value.every(isJsonObject))
+    if (candidates.length !== 1) return undefined
+    sourceRecords = candidates[0]!
+  } else {
+    return undefined
+  }
+
+  const operations: PatchOperation[] = []
+  if (storedSource === undefined) {
+    operations.push({
+      target: 'state',
+      op: 'add',
+      path: statePath(sourceKey),
+      value: sourceRecords,
+    })
+  }
+  for (const key of validity.projectionStateKeys) {
+    const defaultValue = currentSeed.state[key]
+    if (defaultValue === undefined) return undefined
+    operations.push({
+      target: 'state',
+      op: Object.prototype.hasOwnProperty.call(persisted.state, key) ? 'replace' : 'add',
+      path: statePath(key),
+      value: defaultValue,
+    })
+  }
+
+  return {
+    relativeTime: authoringContractFromValidity(validity),
+    operations,
+  }
+}
+
+function statePath(key: string): string {
+  return `/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`
 }
 
 function isJsonObject(value: unknown): value is JsonObject {

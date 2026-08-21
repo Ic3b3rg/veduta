@@ -153,6 +153,10 @@ export class Store {
     return this.surfaceEngine.onSurfaceEvent(observer)
   }
 
+  close(): void {
+    this.surfaceEngine.close()
+  }
+
   /**
    * Observe every newly recorded Tree proposal exactly once, after it
    * commits. `TreeProposalSurfaceManager` is the sole subscriber in

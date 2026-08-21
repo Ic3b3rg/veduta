@@ -513,6 +513,10 @@ export class SurfaceEngine {
     return () => this.treeProposalObservers.delete(observer)
   }
 
+  close(): void {
+    this.db.close()
+  }
+
   createSurface(
     input: Surface | CreateSurfaceInput,
     updatedBy: SurfaceWriteActor,

@@ -66,6 +66,12 @@ therefore a cached view visibly expires even if no Gateway event arrives. A subs
 state patch refreshes the bounds from the same global timezone. Pin continues to lock only the Atom
 tree, so state and validity can advance together.
 
+Data version 2 adds the persisted validity column and reconciles earlier persisted seed Surfaces
+through the same validated state-patch and Event paths. The reconciliation is driven only by the
+current seed contract and Surface identity: when the old state has exactly one array projection, its
+object records become undated source records and every current projection resets to the seed's empty
+defaults. Ambiguous legacy shapes are refused rather than classified by a title or field-name guess.
+
 Rejected alternatives were title/field-name heuristics, a Surface query language, domain-specific
 meal logic in the protocol or catalog, storing only the current projection, and generating fake
 domain events or Heartbeats at midnight. Each would either hide semantics, lose history, duplicate a

@@ -8,7 +8,7 @@ export { readDataVersion, stampDataVersion } from './data-version-marker.ts'
  * The data schema version this build expects. Bumped whenever a new entry
  * is appended to `MIGRATIONS` (`migrations.ts`).
  */
-export const CURRENT_DATA_VERSION = 1
+export const CURRENT_DATA_VERSION = 2
 
 export interface EnsureDataVersionResult {
   action: 'stamped-fresh' | 'bootstrapped' | 'ok'

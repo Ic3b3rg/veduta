@@ -88,7 +88,7 @@ describe('ensureDataVersion', () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'veduta-ensure-bootstrap-'))
     // Simulates a data root that predates issue #43: real files, no
     // data-version.json marker at all.
-    await writeFile(join(rootDir, 'surfaces.sqlite'), 'pretend-sqlite-bytes')
+    await writeFile(join(rootDir, 'legacy-data'), 'pre-versioned-root')
 
     const result = ensureDataVersion(rootDir)
 

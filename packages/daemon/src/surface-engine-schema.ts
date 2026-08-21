@@ -95,7 +95,6 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
   ensureSqliteColumn(db, 'surfaces', 'template_id', 'text')
   ensureSqliteColumn(db, 'surfaces', 'template_space_id', 'text')
   ensureSqliteColumn(db, 'surfaces', 'content_origin', "text not null default 'trusted:user'")
-  ensureSqliteColumn(db, 'surfaces', 'validity_json', 'text')
   ensureSqliteColumn(db, 'tree_proposals', 'resolved_by', 'text')
   db.exec(`
     update tree_proposals
