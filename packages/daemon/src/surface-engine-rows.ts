@@ -16,6 +16,7 @@ import { optionalString, requiredNumber, requiredString } from './sqlite-rows.ts
 import { isValidOrigin } from './taint.ts'
 
 export function surfaceFromRow(row: Record<string, unknown>): Surface {
+  const validity = optionalString(row, 'validity_json')
   return SurfaceSchema.parse({
     id: requiredString(row, 'id'),
     spaceId: requiredString(row, 'space_id'),
@@ -30,6 +31,7 @@ export function surfaceFromRow(row: Record<string, unknown>): Surface {
     // Daemon-owned Surfaces are never pinnable, so clients do not render a
     // toggle for a mutation the daemon would refuse.
     pinnable: requiredNumber(row, 'daemon_owned') === 0,
+    ...(validity === undefined ? {} : { validity: JSON.parse(validity) }),
   })
 }
 

@@ -12,6 +12,7 @@ import {
 import type { ToolDef } from './agent-runner.ts'
 import type { FactsDocument } from './facts.ts'
 import { seedSpaces } from './seed.ts'
+import type { RelativeTimeAuthoring } from './relative-time-surface.ts'
 import type { Origin } from './taint.ts'
 import { SpacesEngine, type FactSearchHit, type SpaceEvent } from './spaces-engine.ts'
 import {
@@ -33,6 +34,8 @@ import {
 export interface StoreOptions {
   rootDir?: string
   now?: () => Date
+  /** Global user timezone used by every relative-time Surface projection. */
+  timeZone?: string
 }
 
 export type SurfaceActionResult =
@@ -78,7 +81,8 @@ export class Store {
 
   constructor(options: StoreOptions = {}) {
     this.now = options.now ?? (() => new Date())
-    const seed = seedSpaces()
+    const timeZone = options.timeZone ?? 'UTC'
+    const seed = seedSpaces({ now: this.now, timeZone })
     this.spacesEngine = new SpacesEngine({
       now: this.now,
       seed: { spaces: seed.spaces, surfaces: [] },
@@ -88,6 +92,7 @@ export class Store {
     this.surfaceEngine = new SurfaceEngine({
       rootDir: this.spacesEngine.rootDir,
       now: this.now,
+      timeZone,
       seed: persistedSurfaces.length > 0 ? persistedSurfaces : seed.surfaces,
       hasSpace: (spaceId) => Boolean(this.spacesEngine.getSpace(spaceId)),
       appendSpaceEvent: (spaceId, input) => this.spacesEngine.appendEvent(spaceId, input),
@@ -227,7 +232,11 @@ export class Store {
   patchState(
     surfaceId: string,
     operations: PatchOperation[],
-    options: { updatedBy: 'agent' | 'user' | 'job'; origin?: Origin },
+    options: {
+      updatedBy: 'agent' | 'user' | 'job'
+      origin?: Origin
+      relativeTime?: RelativeTimeAuthoring
+    },
   ): SurfaceMutation {
     return this.surfaceEngine.patchState(surfaceId, operations, options)
   }

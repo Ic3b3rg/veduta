@@ -19,6 +19,12 @@ import {
   progressiveFillSteps,
   progressiveSurfaceInput,
 } from './progressive-surface-fixture.ts'
+import {
+  authoringContractFromValidity,
+  buildRelativeTimeValidity,
+  relativeTimeSourceRecords,
+} from './relative-time-surface.ts'
+import { zonedParts } from './timezone.ts'
 
 /**
  * The Loopback profile's deterministic model (issue #37): this is the
@@ -74,6 +80,8 @@ const HELP_RE = /help|aiuto/i
 
 export interface MockChatModelOptions {
   now?: () => Date
+  /** Global user timezone, shared with the real chat context and Surface engine. */
+  timeZone?: string
   /** Delay between demo fills; tests inject zero while the Loopback profile stays observable. */
   progressiveDelayMs?: number
 }
@@ -94,6 +102,7 @@ type PiUserContentBlock = PiUserContentArray[number]
  */
 export function createMockChatResponder(options: MockChatModelOptions): MockResponder {
   const now = options.now ?? (() => new Date())
+  const timeZone = options.timeZone ?? 'UTC'
   const progressiveDelayMs = Math.max(
     0,
     options.progressiveDelayMs ?? DEFAULT_PROGRESSIVE_FILL_DELAY_MS,
@@ -108,7 +117,7 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
       .filter((message): message is PiToolResultMessage => isToolResultMessage(message))
 
     const text = userMessageText(context.messages[lastUserIndex] as PiUserMessage).trim()
-    if (text === MEAL_REQUEST) return respondToMealFixture(toolResultsAfter, now())
+    if (text === MEAL_REQUEST) return respondToMealFixture(toolResultsAfter, now(), timeZone)
     if (text === TEMPLATE_SURFACE_REQUEST) {
       return respondToTemplateSurfaceFixture(toolResultsAfter)
     }
@@ -277,7 +286,11 @@ function respondToUserText(text: string, at: Date, spaceId: string): PiAssistant
  * sentence selects this deterministic response script; Surface identity and
  * state still come exclusively from prior tool results in the model context.
  */
-function respondToMealFixture(results: PiToolResultMessage[], at: Date): PiAssistantMessage {
+function respondToMealFixture(
+  results: PiToolResultMessage[],
+  at: Date,
+  timeZone: string,
+): PiAssistantMessage {
   const listResult = results.find((result) => result.toolName === 'list_surfaces')
   if (!listResult) {
     return toolCallMessage('list_surfaces', {}, 'Looking for the Meals Surface.')
@@ -303,11 +316,18 @@ function respondToMealFixture(results: PiToolResultMessage[], at: Date): PiAssis
   const patchResult = results.find((result) => result.toolName === 'patch_state')
   if (patchResult) return closingMessage(patchResult)
 
+  const operations = mealPatchOperations(MEAL_LABEL, read.surface, at, timeZone)
+  if (!operations) {
+    return piFauxAssistantMessage(
+      'The Meals Surface has no relative-time source contract, so I did not guess which records belong to today.',
+    )
+  }
+
   return toolCallMessage(
     'patch_state',
     {
       surfaceId: read.surface.id,
-      operations: mealPatchOperations(MEAL_LABEL, read.surface.state, at),
+      operations,
     },
     `Logging: ${MEAL_LABEL}.`,
   )
@@ -390,22 +410,73 @@ function toolCallMessage(
 // Parsing for the other deterministic Loopback fixtures.
 // ---------------------------------------------------------------------------
 
-// Daemon-local wall-clock time: the Surface shows "when I ate", not UTC.
-function timeLabel(at: Date): string {
-  return at.toTimeString().slice(0, 5)
+function timeLabel(at: Date, timeZone: string): string {
+  const { hour, minute } = zonedParts(timeZone, at)
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
 }
 
-function mealPatchOperations(meal: string, state: JsonObject, at: Date): PatchOperation[] {
-  const existing = Array.isArray(state['meals']) ? state['meals'].filter(isJsonObject) : []
-  const meals = [{ time: timeLabel(at), meal }, ...existing].slice(0, 20)
-  // Counted apart from the display list, which is truncated to 20 entries.
-  const count = typeof state['mealCount'] === 'number' ? state['mealCount'] + 1 : meals.length
+function mealPatchOperations(
+  meal: string,
+  surface: Surface,
+  at: Date,
+  timeZone: string,
+): PatchOperation[] | undefined {
+  const storedValidity = surface.validity
+  if (!storedValidity) return undefined
+  const source = surface.state[storedValidity.source.stateKey]
+  if (!Array.isArray(source)) return undefined
+
+  const record = { occurredAt: at.toISOString(), time: timeLabel(at, timeZone), meal }
+  const records = [record, ...source.filter(isJsonObject)]
+  const validity = buildRelativeTimeValidity(
+    authoringContractFromValidity(storedValidity),
+    timeZone,
+    at,
+  )
+  const current = relativeTimeSourceRecords(
+    { ...surface.state, [storedValidity.source.stateKey]: records },
+    validity,
+  ).current.sort((left, right) =>
+    String(right[storedValidity.source.occurredAtKey]).localeCompare(
+      String(left[storedValidity.source.occurredAtKey]),
+    ),
+  )
+  const currentMeals = current
+    .filter((entry) => typeof entry['meal'] === 'string')
+    .map((entry) => {
+      const occurredAt = String(entry[storedValidity.source.occurredAtKey])
+      return {
+        occurredAt,
+        time:
+          typeof entry['time'] === 'string'
+            ? entry['time']
+            : timeLabel(new Date(occurredAt), timeZone),
+        meal: entry['meal']!,
+      }
+    })
+  const meals = currentMeals.slice(0, 20)
+  const latest = meals[0]
 
   return [
+    {
+      target: 'state',
+      op: 'replace',
+      path: statePath(storedValidity.source.stateKey),
+      value: records,
+    },
     { target: 'state', op: 'replace', path: '/meals', value: meals },
-    { target: 'state', op: 'replace', path: '/lastMeal', value: meal },
-    { target: 'state', op: 'replace', path: '/mealCount', value: count },
+    {
+      target: 'state',
+      op: 'replace',
+      path: '/lastMeal',
+      value: typeof latest?.['meal'] === 'string' ? latest['meal'] : 'Nothing logged today',
+    },
+    { target: 'state', op: 'replace', path: '/mealCount', value: currentMeals.length },
   ]
+}
+
+function statePath(key: string): string {
+  return `/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`
 }
 
 function isJsonObject(value: JsonValue): value is JsonObject {

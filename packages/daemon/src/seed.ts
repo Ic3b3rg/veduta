@@ -1,5 +1,6 @@
 import type { Space, Surface } from '@veduta/protocol'
 import { SpaceSchema, SurfaceSchema } from '@veduta/protocol'
+import { buildRelativeTimeValidity } from './relative-time-surface.ts'
 
 /**
  * Dev-profile seed data: the Home must never be empty on first run
@@ -7,9 +8,13 @@ import { SpaceSchema, SurfaceSchema } from '@veduta/protocol'
  * fast actions and freshness. Validated at boot — the daemon refuses
  * to start with an invalid seed rather than render garbage.
  */
-const now = () => new Date().toISOString()
-
-export function seedSpaces(): { spaces: Space[]; surfaces: Surface[] } {
+export function seedSpaces(options: { now?: () => Date; timeZone?: string } = {}): {
+  spaces: Space[]
+  surfaces: Surface[]
+} {
+  const seededAt = (options.now ?? (() => new Date()))()
+  const updatedAt = seededAt.toISOString()
+  const timeZone = options.timeZone ?? 'UTC'
   const health = SpaceSchema.parse({
     id: 'spc-health',
     slug: 'health',
@@ -43,7 +48,7 @@ export function seedSpaces(): { spaces: Space[]; surfaces: Surface[] } {
       ],
     },
     state: { currentKg: 82.3, targetKg: 77, progress: 0.25 },
-    freshness: { updatedAt: now(), updatedBy: 'seed' },
+    freshness: { updatedAt, updatedBy: 'seed' },
   })
 
   const groceries = SurfaceSchema.parse({
@@ -65,7 +70,7 @@ export function seedSpaces(): { spaces: Space[]; surfaces: Surface[] } {
       ],
     },
     state: { milk: false, eggs: false, spinach: true, chicken: false },
-    freshness: { updatedAt: now(), updatedBy: 'seed' },
+    freshness: { updatedAt, updatedBy: 'seed' },
   })
 
   const meals = SurfaceSchema.parse({
@@ -98,8 +103,22 @@ export function seedSpaces(): { spaces: Space[]; surfaces: Surface[] } {
         },
       ],
     },
-    state: { meals: [], lastMeal: 'Nothing logged today', mealCount: 0 },
-    freshness: { updatedAt: now(), updatedBy: 'seed' },
+    state: {
+      mealRecords: [],
+      meals: [],
+      lastMeal: 'Nothing logged today',
+      mealCount: 0,
+    },
+    freshness: { updatedAt, updatedBy: 'seed' },
+    validity: buildRelativeTimeValidity(
+      {
+        window: 'day',
+        source: { stateKey: 'mealRecords', occurredAtKey: 'occurredAt' },
+        projectionStateKeys: ['meals', 'lastMeal', 'mealCount'],
+      },
+      timeZone,
+      seededAt,
+    ),
   })
 
   return { spaces: [health], surfaces: [goal, groceries, meals] }

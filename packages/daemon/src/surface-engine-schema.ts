@@ -21,7 +21,8 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
       tree_updated_at text not null default '',
       template_id text,
       template_space_id text,
-      content_origin text not null default 'trusted:user'
+      content_origin text not null default 'trusted:user',
+      validity_json text
     );
     create index if not exists surfaces_space_active
       on surfaces (space_id, archived, title);
@@ -94,6 +95,7 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
   ensureSqliteColumn(db, 'surfaces', 'template_id', 'text')
   ensureSqliteColumn(db, 'surfaces', 'template_space_id', 'text')
   ensureSqliteColumn(db, 'surfaces', 'content_origin', "text not null default 'trusted:user'")
+  ensureSqliteColumn(db, 'surfaces', 'validity_json', 'text')
   ensureSqliteColumn(db, 'tree_proposals', 'resolved_by', 'text')
   db.exec(`
     update tree_proposals

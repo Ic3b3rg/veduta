@@ -65,6 +65,7 @@ export function createFocusedSurfaceTools(options: FocusedSurfaceToolsOptions): 
           surface: read.surface,
           version: read.version,
           treeVersion: read.treeVersion,
+          ...(read.relativeTime === undefined ? {} : { relativeTime: read.relativeTime }),
         }
         return {
           content: renderStoredJson(modelRead, read.origins, 'surface'),

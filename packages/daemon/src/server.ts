@@ -422,9 +422,11 @@ export function buildServer(options: ServerOptions = {}) {
   // out of `buildServer` — `index.ts`'s top-level `start().catch` prints it
   // and exits 1, never a partially-booted daemon.
   const dataVersionGate = ensureDataVersion(dataDir)
+  const memoryConfig = loadMemoryConfig(dataDir)
   const store = new Store({
     now,
     rootDir: dataDir,
+    timeZone: memoryConfig.timezone,
   })
   // The secrets resolver for the whole daemon (issue #15): the vault
   // when configured and openable, `secret://env/...` alone otherwise, with
@@ -454,7 +456,6 @@ export function buildServer(options: ServerOptions = {}) {
   // shape as the trust layer's own boot recovery below. The index itself
   // subscribes to `spacesEngine.onMemoryWrite` in its own constructor, so
   // nothing here has to refresh it again after this point.
-  const memoryConfig = loadMemoryConfig(store.spacesEngine.rootDir)
   const memoryIndex = openMemoryIndex(store.spacesEngine.rootDir, store.spacesEngine, now)
   try {
     memoryIndex.reconcile()
@@ -894,7 +895,7 @@ export function buildServer(options: ServerOptions = {}) {
     config: () => routingState.current(),
     connections: connectionRuntimes,
     secrets,
-    mockResponder: createMockChatResponder({ now }),
+    mockResponder: createMockChatResponder({ now, timeZone: memoryConfig.timezone }),
   })
   // Issue #47's verify-then-commit selection flow and every adapter's
   // `verify` (`ctx.probe`, `model-connection-adapter.ts`)
@@ -925,7 +926,7 @@ export function buildServer(options: ServerOptions = {}) {
       config: candidateConfig,
       connections: connectionRuntimes,
       secrets,
-      mockResponder: createMockChatResponder({ now }),
+      mockResponder: createMockChatResponder({ now, timeZone: memoryConfig.timezone }),
     })
     return probeModel(probeBridge, {
       provider: record.provider,

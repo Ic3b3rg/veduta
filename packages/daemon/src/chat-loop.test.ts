@@ -248,6 +248,10 @@ describe('createChatLoop', () => {
     expect(systemPrompt).toContain('replace each Pending Atom in place with a separate patch_tree')
     expect(systemPrompt).toContain('A newly created Surface starts at tree version 1')
     expect(systemPrompt).toContain('Never leave a Pending Atom unresolved after composition fails')
+    expect(systemPrompt).toContain('declare relativeTime when creating it')
+    expect(systemPrompt).toContain('give every new source record an ISO occurredAt')
+    expect(systemPrompt).toContain('update every declared projectionStateKey in the same patch')
+    expect(systemPrompt).toContain('never present an expired projection as current')
     expect(systemPrompt).toContain(
       'Current user-local date and time: 2026-08-11 19:53 (Europe/Rome)',
     )

@@ -18,10 +18,14 @@ afterEach(() => {
   for (const dir of createdDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-function harness() {
+function harness(options: { now?: () => Date; timeZone?: string } = {}) {
   const rootDir = mkdtempSync(join(tmpdir(), 'veduta-focused-surface-tools-'))
   createdDirs.push(rootDir)
-  const store = new Store({ rootDir, now: () => new Date('2026-08-11T10:00:00.000Z') })
+  const store = new Store({
+    rootDir,
+    now: options.now ?? (() => new Date('2026-08-11T10:00:00.000Z')),
+    timeZone: options.timeZone ?? 'Europe/Rome',
+  })
   const space = store.spacesEngine.createSpace({ name: 'Tool Reads' })
   const templateEngine = new TemplateEngine({ store })
   return {
@@ -136,7 +140,7 @@ describe('createFocusedSurfaceTools', () => {
       properties: Record<string, unknown>
     }
     expect(Object.keys(parameters.properties).sort()).toEqual(
-      ['id', 'title', 'tree', 'state', 'intent', 'justification'].sort(),
+      ['id', 'title', 'tree', 'state', 'relativeTime', 'intent', 'justification'].sort(),
     )
 
     const input = createSurface.schema.parse({
@@ -234,5 +238,194 @@ describe('createFocusedSurfaceTools', () => {
     expect(
       store.eventLog(otherSpace.id).some((event) => event.type === 'template.regenerated'),
     ).toBe(false)
+  })
+
+  it('creates a non-food relative-time Surface with Gateway-owned local-calendar validity', async () => {
+    const { store, space, tools } = harness()
+    const createSurface = toolNamed(tools, 'create_surface')
+    const input = createSurface.schema.parse({
+      id: 'srf-daily-spending',
+      title: 'Daily spending',
+      tree: {
+        id: 'root',
+        type: 'Box',
+        children: [
+          { id: 'count', type: 'Stat', binding: 'todayCount', props: { label: 'Today' } },
+          { id: 'total', type: 'Stat', binding: 'todayTotal', props: { label: 'Total' } },
+          { id: 'latest', type: 'Stat', binding: 'latestMerchant', props: { label: 'Latest' } },
+          {
+            id: 'rows',
+            type: 'Table',
+            binding: 'todayRows',
+            props: { columns: ['merchant', 'amount'] },
+          },
+        ],
+      },
+      state: {
+        spendingRecords: [
+          {
+            id: 'expense-1',
+            occurredAt: '2026-08-11T11:30:00+02:00',
+            merchant: 'Bookshop',
+            amount: 18,
+          },
+        ],
+        todayRows: [{ merchant: 'Bookshop', amount: 18 }],
+        todayCount: 1,
+        todayTotal: 18,
+        latestMerchant: 'Bookshop',
+      },
+      relativeTime: {
+        window: 'day',
+        source: { stateKey: 'spendingRecords' },
+        projectionStateKeys: ['todayRows', 'todayCount', 'todayTotal', 'latestMerchant'],
+      },
+    })
+
+    await createSurface.handler(input, trustedContext)
+
+    const created = SurfaceSchema.parse(store.getSurface('srf-daily-spending'))
+    expect(created.spaceId).toBe(space.id)
+    expect(created.validity).toEqual({
+      kind: 'relative-time',
+      timeZone: 'Europe/Rome',
+      window: 'day',
+      startsAt: '2026-08-10T22:00:00.000Z',
+      expiresAt: '2026-08-11T22:00:00.000Z',
+      source: { stateKey: 'spendingRecords', occurredAtKey: 'occurredAt' },
+      projectionStateKeys: ['todayRows', 'todayCount', 'todayTotal', 'latestMerchant'],
+    })
+    expect(created.state['spendingRecords']).toEqual([
+      {
+        id: 'expense-1',
+        occurredAt: '2026-08-11T09:30:00.000Z',
+        merchant: 'Bookshop',
+        amount: 18,
+      },
+    ])
+  })
+
+  it('refreshes every declared projection across a local boundary while preserving source records', async () => {
+    let now = new Date('2026-08-11T10:00:00.000Z')
+    const { store, tools } = harness({ now: () => now })
+    const createSurface = toolNamed(tools, 'create_surface')
+    await createSurface.handler(
+      createSurface.schema.parse({
+        id: 'srf-relative-boundary',
+        title: 'Daily activity',
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [
+            { id: 'count', type: 'Stat', binding: 'todayCount', props: { label: 'Today' } },
+            { id: 'latest', type: 'Stat', binding: 'latestItem', props: { label: 'Latest' } },
+            { id: 'rows', type: 'Table', binding: 'todayRows', props: { columns: ['item'] } },
+          ],
+        },
+        state: {
+          records: [
+            { id: 'first', occurredAt: '2026-08-11T09:00:00.000Z', item: 'Walk' },
+            { id: 'legacy', item: 'Unknown date' },
+          ],
+          todayRows: [{ item: 'Walk' }],
+          todayCount: 1,
+          latestItem: 'Walk',
+        },
+        relativeTime: {
+          window: 'day',
+          source: { stateKey: 'records' },
+          projectionStateKeys: ['todayRows', 'todayCount', 'latestItem'],
+        },
+      }),
+      trustedContext,
+    )
+
+    now = new Date('2026-08-12T08:00:00.000Z')
+    const listSurfaces = toolNamed(tools, 'list_surfaces')
+    const expiredInventory = JSON.parse(
+      (await listSurfaces.handler(listSurfaces.schema.parse({}), unusedContext)).content,
+    ) as Array<Record<string, unknown>>
+    expect(
+      expiredInventory.find((surface) => surface['id'] === 'srf-relative-boundary'),
+    ).toMatchObject({
+      relativeTime: {
+        status: 'expired',
+        undatedRecords: 1,
+        caveat:
+          '1 source record has no occurrence date and is excluded from this relative-time view.',
+      },
+    })
+    const readSurface = toolNamed(tools, 'read_surface')
+    const expiredRead = JSON.parse(
+      (
+        await readSurface.handler(
+          readSurface.schema.parse({ surfaceId: 'srf-relative-boundary' }),
+          unusedContext,
+        )
+      ).content,
+    ) as Record<string, unknown>
+    expect(expiredRead['relativeTime']).toMatchObject({ status: 'expired', undatedRecords: 1 })
+
+    const patchState = toolNamed(tools, 'patch_state')
+    const result = await patchState.handler(
+      patchState.schema.parse({
+        surfaceId: 'srf-relative-boundary',
+        operations: [
+          {
+            target: 'state',
+            op: 'replace',
+            path: '/records',
+            value: [
+              { id: 'second', occurredAt: '2026-08-12T09:30:00+02:00', item: 'Read' },
+              { id: 'first', occurredAt: '2026-08-11T09:00:00.000Z', item: 'Walk' },
+              { id: 'legacy', item: 'Unknown date' },
+            ],
+          },
+          {
+            target: 'state',
+            op: 'replace',
+            path: '/todayRows',
+            value: [{ item: 'Read' }],
+          },
+          { target: 'state', op: 'replace', path: '/todayCount', value: 1 },
+          { target: 'state', op: 'replace', path: '/latestItem', value: 'Read' },
+        ],
+      }),
+      trustedContext,
+    )
+
+    const surface = SurfaceSchema.parse(store.getSurface('srf-relative-boundary'))
+    expect(surface.state).toMatchObject({
+      todayRows: [{ item: 'Read' }],
+      todayCount: 1,
+      latestItem: 'Read',
+    })
+    expect(surface.state['records']).toEqual([
+      { id: 'second', occurredAt: '2026-08-12T07:30:00.000Z', item: 'Read' },
+      { id: 'first', occurredAt: '2026-08-11T09:00:00.000Z', item: 'Walk' },
+      { id: 'legacy', item: 'Unknown date' },
+    ])
+    expect(surface.validity).toMatchObject({
+      startsAt: '2026-08-11T22:00:00.000Z',
+      expiresAt: '2026-08-12T22:00:00.000Z',
+    })
+    expect(result.details).toMatchObject({ event: { validity: surface.validity } })
+    expect(store.eventLog(surface.spaceId).at(-1)).toMatchObject({
+      type: 'surface.patch_state',
+      at: '2026-08-12T08:00:00.000Z',
+    })
+
+    const eventsBeforePartialPatch = store.eventLog(surface.spaceId)
+    expect(() =>
+      patchState.handler(
+        patchState.schema.parse({
+          surfaceId: surface.id,
+          operations: [{ target: 'state', op: 'replace', path: '/todayCount', value: 2 }],
+        }),
+        trustedContext,
+      ),
+    ).toThrow('missing: todayRows, latestItem')
+    expect(store.getSurface(surface.id)).toEqual(surface)
+    expect(store.eventLog(surface.spaceId)).toEqual(eventsBeforePartialPatch)
   })
 })

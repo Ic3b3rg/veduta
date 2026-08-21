@@ -369,24 +369,60 @@ describe('production auth boundary', () => {
     // test exercises the real chat loop through the mock, so it now needs
     // the Local VPS profile plus its explicit development mock control.
     await writeFile(join(dataDir, 'connections.json'), JSON.stringify({ mockEnabled: true }))
+    await writeFile(join(dataDir, 'memory.json'), JSON.stringify({ timezone: 'Europe/Rome' }))
     const { auth, token } = await readyAuthStore()
     const { gateway, store } = buildServer({
       dataDir,
       auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
       profile: 'local-vps',
-      now: () => new Date(2026, 7, 3, 14, 5),
+      now: () => new Date('2026-08-03T12:05:00.000Z'),
     })
 
     const before = SurfaceSchema.parse(store.getSurface('srf-meals'))
     const treeBefore = structuredClone(before.tree)
+    store.setPinned(before.id, true, { origin: 'trusted:user', updatedBy: 'user' })
     const eventCountBefore = store.eventLog('spc-health').length
+    const surfaceCursorBefore = store.latestSurfaceCursor()
     expect(await chatSendProducesMealsPatch(gateway, store, token)).toBe(true)
 
     const after = SurfaceSchema.parse(store.getSurface('srf-meals'))
-    expect(after.state['meals']).toMatchObject([{ time: '14:05', meal: 'fesa di tacchino' }])
+    expect(after.state['mealRecords']).toEqual([
+      {
+        occurredAt: '2026-08-03T12:05:00.000Z',
+        time: '14:05',
+        meal: 'fesa di tacchino',
+      },
+    ])
+    expect(after.state['meals']).toEqual([
+      {
+        occurredAt: '2026-08-03T12:05:00.000Z',
+        time: '14:05',
+        meal: 'fesa di tacchino',
+      },
+    ])
     expect(after.state['lastMeal']).toBe('fesa di tacchino')
     expect(after.state['mealCount']).toBe(1)
+    expect(after.validity).toEqual({
+      kind: 'relative-time',
+      timeZone: 'Europe/Rome',
+      window: 'day',
+      startsAt: '2026-08-02T22:00:00.000Z',
+      expiresAt: '2026-08-03T22:00:00.000Z',
+      source: { stateKey: 'mealRecords', occurredAtKey: 'occurredAt' },
+      projectionStateKeys: ['meals', 'lastMeal', 'mealCount'],
+    })
+    expect(after.pinned).toBe(true)
     expect(after.tree).toEqual(treeBefore)
+
+    expect(store.surfaceEventsAfter(surfaceCursorBefore)).toEqual([
+      expect.objectContaining({
+        kind: 'patch',
+        event: expect.objectContaining({
+          patch: expect.objectContaining({ surfaceId: before.id }),
+          validity: after.validity,
+        }),
+      }),
+    ])
 
     // ADR-0003: the Agent must find user interactions before reasoning about
     // a Space, so the turn itself — the user's message and the assistant's

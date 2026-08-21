@@ -16,6 +16,7 @@ import {
   applySurfacePatch,
   findAtom,
   findDeclaredAgentAction,
+  surfaceRelativeTimeStatus,
   type ActionInvocation,
   type AtomNode,
   type ChatTurnCorrelation,
@@ -31,6 +32,7 @@ import {
   type SurfacePatchEvent,
   type SurfacePinnedEvent,
   type SurfaceOrder,
+  type SurfaceRelativeTimeStatus,
 } from '@veduta/protocol'
 import { z } from 'zod'
 import { defineTool, type ToolDef } from './agent-runner.ts'
@@ -41,6 +43,12 @@ import {
   requiredString,
   withImmediateTransaction,
 } from './sqlite-rows.ts'
+import {
+  RelativeTimeAuthoringSchema,
+  buildRelativeTimeValidity,
+  validityAfterStatePatch,
+  type RelativeTimeAuthoring,
+} from './relative-time-surface.ts'
 import {
   agentTurnFromRow,
   surfaceEngineEventFromRow,
@@ -123,6 +131,7 @@ export interface AuthorableSurfaceSummary {
   title: string
   freshness: Freshness
   pinned: boolean
+  relativeTime?: SurfaceRelativeTimeStatus
 }
 
 /** A Space-scoped inventory plus the whole-Surface origins of its rendered titles. */
@@ -135,6 +144,7 @@ export interface AuthorableSurfaceInventory {
 export interface AuthorableSurfaceRead extends SurfaceVersion {
   surface: Surface
   origins: Origin[]
+  relativeTime?: SurfaceRelativeTimeStatus
 }
 
 /**
@@ -164,6 +174,7 @@ export interface QueuedAgentTurn {
 export interface SurfaceEngineOptions {
   rootDir: string
   now: () => Date
+  timeZone?: string
   seed?: Surface[]
   hasSpace: (spaceId: string) => boolean
   appendSpaceEvent: (spaceId: string, input: AppendSpaceEventInput) => unknown
@@ -262,14 +273,19 @@ export const CreateSurfaceToolInputSchema = z.object({
   title: z.string().min(1),
   tree: AtomNodeSchema,
   state: JsonObjectSchema,
+  relativeTime: RelativeTimeAuthoringSchema.optional(),
 })
 
-const PatchStateToolInputSchema = z.object({
+const SurfacePatchToolInputSchema = z.object({
   surfaceId: z.string().min(1),
   operations: z.array(PatchOperationSchema).min(1),
 })
 
-const PatchTreeToolInputSchema = PatchStateToolInputSchema.extend({
+const PatchStateToolInputSchema = SurfacePatchToolInputSchema.extend({
+  relativeTime: RelativeTimeAuthoringSchema.optional(),
+})
+
+const PatchTreeToolInputSchema = SurfacePatchToolInputSchema.extend({
   expectedTreeVersion: z.number().int().nonnegative(),
 })
 
@@ -330,6 +346,7 @@ export interface CreateSurfaceOptions {
 export class SurfaceEngine {
   private readonly db: DatabaseSync
   private readonly now: () => Date
+  private readonly timeZone: string
   private readonly hasSpace: (spaceId: string) => boolean
   private readonly appendSpaceEvent: (spaceId: string, input: AppendSpaceEventInput) => unknown
   private readonly surfaceEventObservers = new Set<(event: SurfaceEngineEvent) => void>()
@@ -339,6 +356,7 @@ export class SurfaceEngine {
     mkdirSync(options.rootDir, { recursive: true })
     this.db = new DatabaseSync(join(options.rootDir, 'surfaces.sqlite'))
     this.now = options.now
+    this.timeZone = options.timeZone ?? 'UTC'
     this.hasSpace = options.hasSpace
     this.appendSpaceEvent = options.appendSpaceEvent
     initializeSurfaceSchema(this.db)
@@ -428,6 +446,7 @@ export class SurfaceEngine {
         title: surface.title,
         freshness: surface.freshness,
         pinned: surface.pinned ?? false,
+        ...relativeTimeSummary(surface, this.now()),
       }
     })
     return { surfaces, origins }
@@ -447,11 +466,13 @@ export class SurfaceEngine {
       )
       .get(surfaceId, spaceId)
     if (!row) throw new SurfaceReadError()
+    const surface = surfaceFromRow(row)
     return {
-      surface: surfaceFromRow(row),
+      surface,
       version: requiredNumber(row, 'version'),
       treeVersion: requiredNumber(row, 'tree_version'),
       origins: [contentOriginFromRow(row)],
+      ...relativeTimeSummary(surface, this.now()),
     }
   }
 
@@ -824,7 +845,11 @@ export class SurfaceEngine {
   patchState(
     surfaceId: string,
     operations: PatchOperation[],
-    options: { updatedBy: SurfaceWriteActor; origin?: Origin },
+    options: {
+      updatedBy: SurfaceWriteActor
+      origin?: Origin
+      relativeTime?: RelativeTimeAuthoring
+    },
   ): SurfaceMutation {
     assertPatchTarget(operations, 'state')
     return this.patchSurface(surfaceId, operations, {
@@ -832,6 +857,7 @@ export class SurfaceEngine {
       eventType: 'surface.patch_state',
       eventText: (surface) => `Patched state for Surface "${surface.title}"`,
       updateTreeVersion: false,
+      ...(options.relativeTime === undefined ? {} : { relativeTime: options.relativeTime }),
       ...(options.origin === undefined ? {} : { origin: options.origin }),
     })
   }
@@ -995,7 +1021,8 @@ export class SurfaceEngine {
         description:
           'Create a protocol-valid Surface inside a Space. For progressive composition, include ' +
           "typed Pending leaves in the complete initial layout; the new Surface's tree version " +
-          'starts at 1.',
+          'starts at 1. For today/this-week/this-month projections, declare relativeTime with a ' +
+          'separate durable source state key and every projected state key.',
         schema: CreateSurfaceToolInputSchema,
         level: 'L0',
         egressDomains: [],
@@ -1011,7 +1038,10 @@ export class SurfaceEngine {
       }),
       defineTool({
         name: 'patch_state',
-        description: 'Patch typed Surface state with protocol validation.',
+        description:
+          'Patch typed Surface state with protocol validation. A relative-time source or ' +
+          'projection patch must update all declared projection state keys together; use ' +
+          'relativeTime only to retrofit a legacy Surface contract.',
         schema: PatchStateToolInputSchema,
         level: 'L0',
         egressDomains: [],
@@ -1019,6 +1049,7 @@ export class SurfaceEngine {
           const mutation = this.patchState(input.surfaceId, input.operations, {
             updatedBy: 'agent',
             origin: effectiveToolWriteOrigin(context.taint.origins(), context.origin),
+            ...(input.relativeTime === undefined ? {} : { relativeTime: input.relativeTime }),
           })
           return { content: `patched state for Surface ${input.surfaceId}`, details: mutation }
         },
@@ -1079,6 +1110,7 @@ export class SurfaceEngine {
       idempotencyKey?: string
       eventPayload?: JsonObject
       origin?: Origin
+      relativeTime?: RelativeTimeAuthoring
     },
   ): SurfaceMutation {
     this.assertWritableByAgent(surfaceId, options.updatedBy)
@@ -1089,6 +1121,7 @@ export class SurfaceEngine {
         surfaceId,
         operations,
         options.updatedBy,
+        options.relativeTime,
       )
       const currentVersion = this.requireVersion(surfaceId)
       const nextVersion = currentVersion.version + 1
@@ -1171,13 +1204,26 @@ export class SurfaceEngine {
     surfaceId: string,
     operations: PatchOperation[],
     updatedBy: SurfaceWriteActor,
+    authoredRelativeTime?: RelativeTimeAuthoring,
   ): { patch: z.infer<typeof PatchSchema>; patched: Surface } {
     const updatedAt = this.nowIso()
     const patch = PatchSchema.parse({
       surfaceId,
       operations: stampPendingPatchOperations(operations, updatedAt),
     })
-    const patched = this.stampSurface(applySurfacePatch(current, patch), updatedBy, updatedAt)
+    const applied = applySurfacePatch(current, patch)
+    const validity = validityAfterStatePatch({
+      current: current.validity,
+      authored: authoredRelativeTime,
+      operations,
+      timeZone: this.timeZone,
+      now: new Date(updatedAt),
+    })
+    const patched = this.stampSurface(
+      { ...applied, ...(validity === undefined ? {} : { validity }) },
+      updatedBy,
+      updatedAt,
+    )
     return { patch, patched }
   }
 
@@ -1277,6 +1323,7 @@ export class SurfaceEngine {
       spaceId: surface.spaceId,
       patch,
       freshness: surface.freshness,
+      ...(surface.validity === undefined ? {} : { validity: surface.validity }),
     })
     this.insertEventRow(cursor, event.at, event.spaceId, event.patch.surfaceId, 'patch', event)
     return event
@@ -1389,6 +1436,16 @@ export class SurfaceEngine {
     daemonOwned: boolean,
   ): Surface {
     const updatedAt = this.nowIso()
+    const relativeTime =
+      'relativeTime' in input
+        ? (input.relativeTime as RelativeTimeAuthoring | undefined)
+        : undefined
+    const validity =
+      relativeTime === undefined
+        ? 'validity' in input
+          ? input.validity
+          : undefined
+        : buildRelativeTimeValidity(relativeTime, this.timeZone, new Date(updatedAt))
     return SurfaceSchema.parse({
       ...input,
       tree: stampPendingAtoms(input.tree, updatedAt),
@@ -1396,6 +1453,7 @@ export class SurfaceEngine {
         updatedAt,
         updatedBy,
       },
+      ...(validity === undefined ? {} : { validity }),
       // A Surface is never born pinned — only `setPinned`, after creation,
       // can pin it — and `pinnable` mirrors ownership from the moment the
       // Surface exists, so the object `createSurface` returns already
@@ -1489,8 +1547,8 @@ export class SurfaceEngine {
         `insert into surfaces
            (id, space_id, title, tree_json, state_json, version, tree_version,
             updated_at, updated_by, archived, daemon_owned, pinned, tree_updated_at,
-            template_id, template_space_id, content_origin)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            template_id, template_space_id, content_origin, validity_json)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         surface.id,
@@ -1512,6 +1570,7 @@ export class SurfaceEngine {
         options.templateId ?? null,
         options.templateSpaceId ?? null,
         contentOrigin,
+        surface.validity === undefined ? null : JSON.stringify(surface.validity),
       )
   }
 
@@ -1535,7 +1594,7 @@ export class SurfaceEngine {
         `update surfaces
          set title = ?, tree_json = ?, state_json = ?, version = ?, tree_version = ?,
              updated_at = ?, updated_by = ?, tree_updated_at = coalesce(?, tree_updated_at),
-             content_origin = coalesce(?, content_origin)
+             content_origin = coalesce(?, content_origin), validity_json = ?
          where id = ? and archived = 0`,
       )
       .run(
@@ -1548,6 +1607,7 @@ export class SurfaceEngine {
         surface.freshness.updatedBy,
         treeUpdatedAt ?? null,
         contentOrigin ?? null,
+        surface.validity === undefined ? null : JSON.stringify(surface.validity),
         surface.id,
       )
   }
@@ -1757,6 +1817,14 @@ function statePath(key: string): string {
 function contentOriginFromRow(row: Record<string, unknown>): Origin {
   const storedOrigin = requiredString(row, 'content_origin')
   return isValidOrigin(storedOrigin) ? storedOrigin : 'trusted:user'
+}
+
+function relativeTimeSummary(
+  surface: Surface,
+  now: Date,
+): { relativeTime: SurfaceRelativeTimeStatus } | Record<string, never> {
+  const relativeTime = surfaceRelativeTimeStatus(surface, now)
+  return relativeTime === undefined ? {} : { relativeTime }
 }
 
 function compareBackfillRank(

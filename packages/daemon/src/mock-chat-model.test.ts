@@ -70,10 +70,11 @@ describe('createMockChatResponder', () => {
     expect(call.arguments).toEqual({ surfaceId: 'surface-discovered-from-tool' })
   })
 
-  it('derives a valid patch from read_surface state and preserves numeric state values', async () => {
+  it('preserves source history and derives every Today value from occurrence time', async () => {
     const store = new Store()
     const responder = createMockChatResponder({
-      now: () => new Date(2026, 7, 3, 14, 5),
+      now: () => new Date('2026-08-03T12:05:00.000Z'),
+      timeZone: 'Europe/Rome',
     })
     const context = toolResultContext(MEAL_REQUEST, [
       {
@@ -96,13 +97,41 @@ describe('createMockChatResponder', () => {
             title: 'Meals',
             tree: { id: 'root', type: 'Box', children: [] },
             state: {
-              meals: [{ time: '08:10', meal: 'yogurt' }],
+              mealRecords: [
+                {
+                  occurredAt: '2026-08-03T06:10:00.000Z',
+                  time: '08:10',
+                  meal: 'yogurt',
+                },
+                {
+                  occurredAt: '2026-08-02T18:00:00.000Z',
+                  time: '20:00',
+                  meal: 'pasta',
+                },
+                { time: '12:00', meal: 'legacy entry' },
+              ],
+              meals: [
+                {
+                  occurredAt: '2026-08-03T06:10:00.000Z',
+                  time: '08:10',
+                  meal: 'yogurt',
+                },
+              ],
               lastMeal: 'yogurt',
-              mealCount: 7,
+              mealCount: 1,
             },
             freshness: { updatedAt: '2026-08-03T10:00:00.000Z', updatedBy: 'seed' },
             pinned: false,
             pinnable: true,
+            validity: {
+              kind: 'relative-time',
+              timeZone: 'Europe/Rome',
+              window: 'day',
+              startsAt: '2026-08-02T22:00:00.000Z',
+              expiresAt: '2026-08-03T22:00:00.000Z',
+              source: { stateKey: 'mealRecords', occurredAtKey: 'occurredAt' },
+              projectionStateKeys: ['meals', 'lastMeal', 'mealCount'],
+            },
           },
           version: 11,
           treeVersion: 4,
@@ -119,10 +148,41 @@ describe('createMockChatResponder', () => {
         {
           target: 'state',
           op: 'replace',
+          path: '/mealRecords',
+          value: [
+            {
+              occurredAt: '2026-08-03T12:05:00.000Z',
+              time: '14:05',
+              meal: 'fesa di tacchino',
+            },
+            {
+              occurredAt: '2026-08-03T06:10:00.000Z',
+              time: '08:10',
+              meal: 'yogurt',
+            },
+            {
+              occurredAt: '2026-08-02T18:00:00.000Z',
+              time: '20:00',
+              meal: 'pasta',
+            },
+            { time: '12:00', meal: 'legacy entry' },
+          ],
+        },
+        {
+          target: 'state',
+          op: 'replace',
           path: '/meals',
           value: [
-            { time: '14:05', meal: 'fesa di tacchino' },
-            { time: '08:10', meal: 'yogurt' },
+            {
+              occurredAt: '2026-08-03T12:05:00.000Z',
+              time: '14:05',
+              meal: 'fesa di tacchino',
+            },
+            {
+              occurredAt: '2026-08-03T06:10:00.000Z',
+              time: '08:10',
+              meal: 'yogurt',
+            },
           ],
         },
         {
@@ -131,7 +191,7 @@ describe('createMockChatResponder', () => {
           path: '/lastMeal',
           value: 'fesa di tacchino',
         },
-        { target: 'state', op: 'replace', path: '/mealCount', value: 8 },
+        { target: 'state', op: 'replace', path: '/mealCount', value: 2 },
       ],
     })
 

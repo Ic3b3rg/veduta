@@ -33,7 +33,14 @@ const SPACE_CHAT_PREAMBLE =
   'committed patch_tree increments it by one, and after a conflict call read_surface before ' +
   'retrying. Never leave a Pending Atom unresolved after composition fails: replace it with a ' +
   "visible explanatory Atom when possible; the client's bounded timeout is the last-resort " +
-  'fallback. append_event does not change a ' +
+  'fallback. When visible state represents a relative calendar window such as today, this week, ' +
+  'or this month, declare relativeTime when creating it (or on the first state patch of a legacy ' +
+  'Surface). Keep a separate durable source array and give every new source record an ISO ' +
+  'occurredAt for the effective real-world time. Use the current user-local clock and timezone ' +
+  'below as authoritative, preserve older source records, exclude undated legacy records from ' +
+  "the projection, and update every declared projectionStateKey in the same patch. read_surface's " +
+  'relativeTime status and caveat are authoritative; never present an expired projection as ' +
+  'current. append_event does not change a ' +
   'Surface or its visible state and is never a substitute for a Surface mutation. Only claim a ' +
   'Surface changed after a successful mutation tool result.'
 
