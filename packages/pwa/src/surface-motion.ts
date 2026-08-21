@@ -27,22 +27,58 @@ export function affectedAtomIdsForPatch(
   next: Surface,
   operations: PatchOperation[],
 ): string[] {
+  const previousAtoms = atomLocations(previous.tree)
+  const nextAtoms = atomLocations(next.tree)
+  const affected = affectedStateRegions(previous, next, operations)
+  const candidates = treeRegionCandidates(previous, next, operations, nextAtoms)
+  for (const atomId of changedTreeRegions(candidates, previousAtoms, nextAtoms)) {
+    affected.add(atomId)
+  }
+
+  return smallestVisibleRegions(next.tree, affected)
+}
+
+function affectedStateRegions(
+  previous: Surface,
+  next: Surface,
+  operations: PatchOperation[],
+): Set<string> {
   const affected = new Set<string>()
-  const treeAffected = new Set<string>()
-  const movedAtomIds = new Set<string>()
+  for (const operation of operations) {
+    if (operation.target !== 'state') continue
+    const stateKey = decodePointer(operation.path)[0]
+    if (stateKey !== undefined && !valuesEqual(previous.state[stateKey], next.state[stateKey])) {
+      collectBoundAtomIds(next.tree, stateKey, affected)
+    }
+  }
+  return affected
+}
+
+interface TreeRegionCandidate {
+  previousAtomId: string
+  comparePath: boolean
+}
+
+function treeRegionCandidates(
+  previous: Surface,
+  next: Surface,
+  operations: PatchOperation[],
+  nextAtoms: ReadonlyMap<string, AtomLocation>,
+): ReadonlyMap<string, TreeRegionCandidate> {
+  const candidates = new Map<string, TreeRegionCandidate>()
   const replacementOrigins = new Map<string, string>()
   const treeChanged = !valuesEqual(previous.tree, next.tree)
   let trackingSurface = surfaceWithAllBindingKeys(previous, next, operations)
 
-  for (const operation of operations) {
-    if (operation.target === 'state') {
-      const stateKey = decodePointer(operation.path)[0]
-      if (stateKey !== undefined && !valuesEqual(previous.state[stateKey], next.state[stateKey])) {
-        collectBoundAtomIds(next.tree, stateKey, affected)
-      }
-      continue
-    }
+  function addCandidate(atomId: string, comparePath = false): void {
+    candidates.set(atomId, {
+      previousAtomId: replacementOrigins.get(atomId) ?? atomId,
+      comparePath: comparePath || candidates.get(atomId)?.comparePath === true,
+    })
+  }
 
+  for (const operation of operations) {
+    if (operation.target === 'state') continue
     const surfaceAfterOperation = applySurfacePatch(trackingSurface, {
       surfaceId: trackingSurface.id,
       operations: [operation],
@@ -54,13 +90,10 @@ export function affectedAtomIdsForPatch(
 
     if (operation.op === 'remove') {
       const parent = nearestAtomBeforeTarget(trackingSurface.tree, operation.path)
-      if (parent && containsAtom(next.tree, parent.id)) treeAffected.add(parent.id)
+      if (parent && nextAtoms.has(parent.id)) addCandidate(parent.id)
     } else if (operation.op === 'move') {
       const moved = atomAtPointer(trackingSurface.tree, operation.from)
-      if (moved && containsAtom(next.tree, moved.id)) {
-        treeAffected.add(moved.id)
-        movedAtomIds.add(moved.id)
-      }
+      if (moved && nextAtoms.has(moved.id)) addCandidate(moved.id, true)
     } else {
       if (operation.op === 'replace') {
         const replaced = atomAtPointer(trackingSurface.tree, operation.path)
@@ -71,54 +104,62 @@ export function affectedAtomIdsForPatch(
           )
         }
       }
-      if (containsAtom(next.tree, operation.value.id)) treeAffected.add(operation.value.id)
+      if (nextAtoms.has(operation.value.id)) addCandidate(operation.value.id)
     }
 
     trackingSurface = surfaceAfterOperation
   }
 
-  const previousAtoms = atomLocations(previous.tree)
-  const nextAtoms = atomLocations(next.tree)
-  const retained = new Set(
-    [...treeAffected].filter((atomId) =>
+  return candidates
+}
+
+function changedTreeRegions(
+  candidates: ReadonlyMap<string, TreeRegionCandidate>,
+  previousAtoms: ReadonlyMap<string, AtomLocation>,
+  nextAtoms: ReadonlyMap<string, AtomLocation>,
+): Set<string> {
+  const changed = new Set<string>()
+  const handledPreviousIds = new Set<string>()
+  const structuralCandidates: [string, TreeRegionCandidate][] = []
+
+  for (const [atomId, candidate] of candidates) {
+    if (
       atomOwnFieldsChangedBetweenTrees(
-        previousAtoms.get(atomId),
+        previousAtoms.get(candidate.previousAtomId),
         nextAtoms.get(atomId),
-        movedAtomIds.has(atomId),
-      ),
-    ),
-  )
-  const structuralCandidates = [...treeAffected]
-    .filter((atomId) => !retained.has(atomId))
-    .sort(
-      (left, right) =>
-        atomMaxDepth(previousAtoms, nextAtoms, right) -
-        atomMaxDepth(previousAtoms, nextAtoms, left),
-    )
-  const retainedPreviousIds = new Set(
-    [...retained].map((atomId) => replacementOrigins.get(atomId) ?? atomId),
+        candidate.comparePath,
+      )
+    ) {
+      changed.add(atomId)
+      handledPreviousIds.add(candidate.previousAtomId)
+    } else {
+      structuralCandidates.push([atomId, candidate])
+    }
+  }
+  structuralCandidates.sort(
+    ([left], [right]) =>
+      atomMaxDepth(previousAtoms, nextAtoms, right) - atomMaxDepth(previousAtoms, nextAtoms, left),
   )
 
-  for (const atomId of structuralCandidates) {
-    const before = previousAtoms.get(atomId)
+  for (const [atomId, candidate] of structuralCandidates) {
+    const before = previousAtoms.get(candidate.previousAtomId)
     const after = nextAtoms.get(atomId)
     if (
       !before ||
       !after ||
       !valuesEqual(
-        residualAtomSnapshot(before.node, retainedPreviousIds),
-        residualAtomSnapshot(after.node, retained),
+        residualAtomSnapshot(before.node, handledPreviousIds),
+        residualAtomSnapshot(after.node, changed),
       )
     ) {
-      retained.add(atomId)
-      retainedPreviousIds.add(replacementOrigins.get(atomId) ?? atomId)
+      changed.add(atomId)
+      handledPreviousIds.add(candidate.previousAtomId)
     }
   }
-  for (const atomId of retained) affected.add(atomId)
-
-  return smallestVisibleRegions(next.tree, affected)
+  return changed
 }
 
+/** Adds bindings from every replayed tree so intermediate patches remain schema-valid. */
 function surfaceWithAllBindingKeys(
   previous: Surface,
   next: Surface,
@@ -218,8 +259,8 @@ function atomLocations(root: AtomNode): Map<string, AtomLocation> {
 }
 
 function atomMaxDepth(
-  previous: Map<string, AtomLocation>,
-  next: Map<string, AtomLocation>,
+  previous: ReadonlyMap<string, AtomLocation>,
+  next: ReadonlyMap<string, AtomLocation>,
   atomId: string,
 ): number {
   return Math.max(previous.get(atomId)?.depth ?? -1, next.get(atomId)?.depth ?? -1)
@@ -238,10 +279,6 @@ function decodePointer(pointer: string): string[] {
     .slice(1)
     .split('/')
     .map((segment) => segment.replace(/~1/g, '/').replace(/~0/g, '~'))
-}
-
-function containsAtom(node: AtomNode, id: string): boolean {
-  return node.id === id || (node.children ?? []).some((child) => containsAtom(child, id))
 }
 
 function smallestVisibleRegions(node: AtomNode, affected: Set<string>): string[] {
