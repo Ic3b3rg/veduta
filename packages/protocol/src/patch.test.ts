@@ -140,7 +140,14 @@ describe('applySurfacePatch', () => {
   it('applies refreshed relative-time validity from a replayable patch event', () => {
     const relative = SurfaceSchema.parse({
       ...surface,
-      state: { ...surface.state, records: [], todayRows: [] },
+      tree: {
+        id: 'root',
+        type: 'Box',
+        children: [
+          { id: 'rows', type: 'Table', binding: 'todayRows', props: { columns: ['item'] } },
+        ],
+      },
+      state: { records: [], todayRows: [] },
       validity: {
         kind: 'relative-time',
         timeZone: 'Europe/Rome',

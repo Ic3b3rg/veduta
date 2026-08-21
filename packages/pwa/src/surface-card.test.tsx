@@ -75,7 +75,7 @@ function relativeSurface() {
     state: {
       records: [
         { occurredAt: '2026-08-20T12:00:00+02:00', merchant: 'Bookshop', amount: 18 },
-        { merchant: 'Legacy shop', amount: 7 },
+        { occurredAt: null, merchant: 'Legacy shop', amount: 7 },
       ],
       todayRows: [{ merchant: 'Bookshop', amount: 18 }],
     },

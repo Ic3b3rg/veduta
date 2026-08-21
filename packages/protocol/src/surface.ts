@@ -114,7 +114,8 @@ export function surfaceRelativeTimeStatus(
     ? records.filter(
         (record) =>
           isJsonObject(record) &&
-          !Object.prototype.hasOwnProperty.call(record, validity.source.occurredAtKey),
+          (!Object.prototype.hasOwnProperty.call(record, validity.source.occurredAtKey) ||
+            record[validity.source.occurredAtKey] === null),
       ).length
     : 0
   const instant = now.getTime()
@@ -241,7 +242,7 @@ function validateRelativeTimeContract(
     }
 
     const occurredAt = record[validity.source.occurredAtKey]
-    if (occurredAt === undefined) return
+    if (occurredAt === undefined || occurredAt === null) return
     if (OccurrenceInstantSchema.safeParse(occurredAt).success) return
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -266,6 +267,28 @@ function validateRelativeTimeContract(
       message: `projection state key "${key}" does not exist in Surface state`,
     })
   })
+
+  const projections = new Set(validity.projectionStateKeys)
+  for (const ref of collectNodeBindingRefs(surface.tree, ['tree'])) {
+    if (ref.kind === 'binding' && !projections.has(ref.key)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ref.path,
+        message: `relative-time binding "${ref.key}" must be declared as a projection state key`,
+      })
+      continue
+    }
+    if (
+      ref.kind === 'fastAction' &&
+      (ref.key === validity.source.stateKey || projections.has(ref.key))
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ref.path,
+        message: 'fast actions cannot target relative-time source or projection state',
+      })
+    }
+  }
 }
 
 function normalizeRelativeTimeOccurrences(
