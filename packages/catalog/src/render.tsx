@@ -26,6 +26,7 @@ import {
   LabelAtom,
   ListItemAtom,
   MarkdownAtom,
+  PendingAtom,
   ProgressAtom,
   RadioGroupAtom,
   RowAtom,
@@ -74,6 +75,7 @@ const renderers = {
   Progress: ProgressAtom,
   ListItem: ListItemAtom,
   Automation: AutomationAtom,
+  Pending: PendingAtom,
 } satisfies Record<AtomNode['type'], AtomRenderer>
 
 export function renderNode(node: AtomNode, ctx: RenderContext): ReactNode {

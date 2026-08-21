@@ -16,6 +16,11 @@ export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
         props: { text: 'Generated Surface using the complete v1 Atom catalog' },
       },
       {
+        id: 'showcase-pending',
+        type: 'Pending',
+        props: { variant: 'text', label: 'Next recommendation', lines: 2 },
+      },
+      {
         id: 'showcase-text',
         type: 'Text',
         props: { text: 'A compact plan with fast controls, state bindings, and agent actions.' },

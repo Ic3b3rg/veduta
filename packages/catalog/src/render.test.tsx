@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { AtomNodeSchema, atomTypes, type AtomNode } from '@veduta/protocol'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { catalogTokens } from './design-system.ts'
 import { renderNode } from './render.tsx'
@@ -10,6 +10,7 @@ const originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'anim
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   if (originalAnimate) {
     Object.defineProperty(Element.prototype, 'animate', originalAnimate)
@@ -70,6 +71,138 @@ describe('renderNode', () => {
 
     expect(screen.getByTestId('unknown-atom').textContent).toContain('NewerAtom')
     expect(contentKeysFor(motionBrowser, 'future')).toEqual(['content'])
+  })
+
+  it('renders every Pending footprint as an accessible token-driven skeleton', () => {
+    const pendingTree = AtomNodeSchema.parse({
+      id: 'pending-root',
+      type: 'Box',
+      children: [
+        {
+          id: 'pending-text',
+          type: 'Pending',
+          props: { variant: 'text', label: 'Trip summary', lines: 3 },
+        },
+        {
+          id: 'pending-list',
+          type: 'Pending',
+          props: { variant: 'list', label: 'Packing list', rows: 4 },
+        },
+        {
+          id: 'pending-image',
+          type: 'Pending',
+          props: { variant: 'image', label: 'Route preview' },
+        },
+        {
+          id: 'pending-stat',
+          type: 'Pending',
+          props: { variant: 'stat', label: 'Trip distance' },
+        },
+        {
+          id: 'pending-chart',
+          type: 'Pending',
+          props: { variant: 'chart', label: 'Daily distance' },
+        },
+      ],
+    })
+
+    const light = render(renderNode(pendingTree, { state: {}, dispatch: vi.fn(), theme: 'light' }))
+
+    expect(screen.getByRole('status', { name: 'Trip summary loading' })).toBeDefined()
+    expect(screen.getByRole('status', { name: 'Packing list loading' })).toBeDefined()
+    expect(screen.getByRole('status', { name: 'Route preview loading' })).toBeDefined()
+    expect(screen.getByRole('status', { name: 'Trip distance loading' })).toBeDefined()
+    expect(screen.getByRole('status', { name: 'Daily distance loading' })).toBeDefined()
+
+    const textSlot = pendingSlot(light.container, 'text')
+    const listSlot = pendingSlot(light.container, 'list')
+    const imageSlot = pendingSlot(light.container, 'image')
+    const statSlot = pendingSlot(light.container, 'stat')
+    const chartSlot = pendingSlot(light.container, 'chart')
+    expect(textSlot.querySelectorAll('[data-pending-skeleton-line]')).toHaveLength(3)
+    expect(listSlot.querySelectorAll('[data-pending-skeleton-row]')).toHaveLength(4)
+    expect(imageSlot.style.aspectRatio).toBe('16 / 9')
+    expect(statSlot.style.minWidth).toBe('96px')
+    expect(chartSlot.style.minHeight).toBe('132px')
+
+    const lightShape = textSlot.querySelector<HTMLElement>('[data-pending-skeleton-shape]')
+    expect(lightShape?.style.background).toBe(cssColor(catalogTokens.light.color.surfaceMuted))
+
+    light.unmount()
+    const dark = render(renderNode(pendingTree, { state: {}, dispatch: vi.fn(), theme: 'dark' }))
+    const darkShape = pendingSlot(dark.container, 'text').querySelector<HTMLElement>(
+      '[data-pending-skeleton-shape]',
+    )
+    expect(darkShape?.style.background).toBe(cssColor(catalogTokens.dark.color.surfaceMuted))
+  })
+
+  it('degrades an unresolved Pending slot to a visible fallback at its timeout', () => {
+    vi.useFakeTimers()
+    const pending = AtomNodeSchema.parse({
+      id: 'pending-weather',
+      type: 'Pending',
+      props: { variant: 'stat', label: 'Weather', timeoutMs: 1_000 },
+    })
+
+    render(renderNode(pending, { state: {}, dispatch: vi.fn() }))
+    expect(screen.getByRole('status', { name: 'Weather loading' })).toBeDefined()
+
+    act(() => vi.advanceTimersByTime(999))
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    act(() => vi.advanceTimersByTime(1))
+    expect(screen.getByRole('alert').textContent).toBe('Weather unavailable')
+    expect(screen.queryByRole('status', { name: 'Weather loading' })).toBeNull()
+  })
+
+  it('renders malformed unvalidated Pending data as a visible fallback', () => {
+    const malformed: AtomNode = JSON.parse(
+      '{"id":"pending-malformed","type":"Pending","props":{"variant":"video"}}',
+    )
+
+    render(renderNode(malformed, { state: {}, dispatch: vi.fn() }))
+
+    expect(screen.getByRole('alert').textContent).toBe('Content unavailable')
+    expect(screen.queryByTestId('unknown-atom')).toBeNull()
+  })
+
+  it('fills one Pending region with entrance timing without re-animating resolved siblings', () => {
+    const motionBrowser = installMotionBrowser(false)
+    const before = AtomNodeSchema.parse({
+      id: 'progressive-root',
+      type: 'Box',
+      children: [
+        { id: 'resolved', type: 'Text', props: { text: 'Already filled' } },
+        {
+          id: 'summary-slot',
+          type: 'Pending',
+          props: { variant: 'text', label: 'Summary' },
+        },
+      ],
+    })
+    const after = AtomNodeSchema.parse({
+      ...before,
+      children: [
+        { id: 'resolved', type: 'Text', props: { text: 'Already filled' } },
+        { id: 'summary-slot', type: 'Text', props: { text: 'Ready now' } },
+      ],
+    })
+    const view = render(renderNode(before, { state: {}, dispatch: vi.fn() }))
+    const resolvedBefore = screen.getByText('Already filled')
+    motionBrowser.calls.length = 0
+
+    view.rerender(
+      renderNode(after, {
+        state: {},
+        dispatch: vi.fn(),
+        motion: { update: { key: 'fill-summary', atomIds: ['summary-slot'] } },
+      }),
+    )
+
+    expect(screen.getByText('Ready now')).toBeDefined()
+    expect(screen.getByText('Already filled')).toBe(resolvedBefore)
+    expect(contentKeysFor(motionBrowser, 'summary-slot')).toEqual(['content'])
+    expect(motionBrowser.calls.filter(({ nodeId }) => nodeId === 'resolved')).toEqual([])
   })
 
   it('staggers newly mounted sibling Atoms and does not re-animate persistent ids', () => {
@@ -761,6 +894,18 @@ describe('renderNode', () => {
 
 function collectTypes(node: AtomNode): AtomNode['type'][] {
   return [node.type, ...(node.children ?? []).flatMap(collectTypes)]
+}
+
+function pendingSlot(container: HTMLElement, variant: string): HTMLElement {
+  const slot = container.querySelector<HTMLElement>(`[data-pending-variant="${variant}"]`)
+  if (!slot) throw new Error(`missing ${variant} Pending slot`)
+  return slot
+}
+
+function cssColor(color: string): string {
+  const element = document.createElement('div')
+  element.style.background = color
+  return element.style.background
 }
 
 function collectIds(node: AtomNode): string[] {
