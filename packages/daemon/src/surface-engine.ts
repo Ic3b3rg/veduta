@@ -992,7 +992,10 @@ export class SurfaceEngine {
     return [
       defineTool({
         name: 'create_surface',
-        description: 'Create a protocol-valid Surface inside a Space.',
+        description:
+          'Create a protocol-valid Surface inside a Space. For progressive composition, include ' +
+          "typed Pending leaves in the complete initial layout; the new Surface's tree version " +
+          'starts at 1.',
         schema: CreateSurfaceToolInputSchema,
         level: 'L0',
         egressDomains: [],
@@ -1022,7 +1025,10 @@ export class SurfaceEngine {
       }),
       defineTool({
         name: 'patch_tree',
-        description: 'Patch a Surface Atom tree when the expected tree version still matches.',
+        description:
+          'Patch a Surface Atom tree when the expected tree version still matches. Replace ' +
+          'Pending leaves in place as regions resolve; each committed patch increments the tree ' +
+          'version by one.',
         schema: PatchTreeToolInputSchema,
         level: 'L0',
         egressDomains: [],

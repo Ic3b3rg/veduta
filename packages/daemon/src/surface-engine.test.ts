@@ -164,6 +164,123 @@ describe('Surface engine store', () => {
     expect(store.listSurfaces('spc-health').map((surface) => surface.id)).not.toContain('srf-water')
   })
 
+  it('publishes a Pending layout before independently committed fills and rejects a malformed fill without removing its slot', async () => {
+    const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+    const tools = store.surfaceTools()
+    const observed: SurfaceEngineEvent[] = []
+    store.onSurfaceEvent((event) => observed.push(event))
+
+    await runTool(tools, 'create_surface', {
+      id: 'srf-progressive-tools',
+      spaceId: 'spc-health',
+      title: 'Progressive tools',
+      tree: {
+        id: 'root',
+        type: 'Box',
+        children: [
+          {
+            id: 'progressive-summary',
+            type: 'Pending',
+            props: { variant: 'text', label: 'Summary' },
+          },
+          {
+            id: 'progressive-stat',
+            type: 'Pending',
+            props: { variant: 'stat', label: 'Distance', timeoutMs: 5_000 },
+          },
+          {
+            id: 'progressive-route',
+            type: 'Pending',
+            props: { variant: 'image', label: 'Route preview', timeoutMs: 5_000 },
+          },
+        ],
+      },
+      state: {},
+    })
+
+    expect(store.getSurfaceVersion('srf-progressive-tools')?.treeVersion).toBe(1)
+    expect(store.getSurface('srf-progressive-tools')?.tree.children).toMatchObject([
+      { id: 'progressive-summary', type: 'Pending' },
+      { id: 'progressive-stat', type: 'Pending' },
+      { id: 'progressive-route', type: 'Pending' },
+    ])
+
+    await runTool(tools, 'patch_tree', {
+      surfaceId: 'srf-progressive-tools',
+      expectedTreeVersion: 1,
+      operations: [
+        {
+          target: 'tree',
+          op: 'replace',
+          path: '/children/0',
+          value: {
+            id: 'progressive-summary',
+            type: 'Text',
+            props: { text: 'Summary ready.' },
+          },
+        },
+      ],
+    })
+
+    expect(store.getSurface('srf-progressive-tools')?.tree.children).toMatchObject([
+      { id: 'progressive-summary', type: 'Text' },
+      { id: 'progressive-stat', type: 'Pending' },
+      { id: 'progressive-route', type: 'Pending' },
+    ])
+
+    await runTool(tools, 'patch_tree', {
+      surfaceId: 'srf-progressive-tools',
+      expectedTreeVersion: 2,
+      operations: [
+        {
+          target: 'tree',
+          op: 'replace',
+          path: '/children/1',
+          value: {
+            id: 'progressive-stat',
+            type: 'Stat',
+            props: { label: 'Distance', value: '12 km' },
+          },
+        },
+      ],
+    })
+
+    const patchTree = tools.find((tool) => tool.name === 'patch_tree')
+    if (!patchTree) throw new Error('missing tool: patch_tree')
+    const malformedFill = {
+      surfaceId: 'srf-progressive-tools',
+      expectedTreeVersion: 3,
+      operations: [
+        {
+          target: 'tree',
+          op: 'replace',
+          path: '/children/2',
+          value: {
+            id: 'progressive-route',
+            type: 'Pending',
+            props: { variant: 'meter' },
+          },
+        },
+      ],
+    }
+    expect(patchTree.schema.safeParse(malformedFill).success).toBe(false)
+    expect(store.getSurface('srf-progressive-tools')?.tree.children?.[2]).toMatchObject({
+      id: 'progressive-route',
+      type: 'Pending',
+      props: { variant: 'image' },
+    })
+
+    expect(observed.map((entry) => entry.kind)).toEqual(['created', 'patch', 'patch'])
+    const patchEvents = observed.filter(
+      (entry): entry is Extract<SurfaceEngineEvent, { kind: 'patch' }> => entry.kind === 'patch',
+    )
+    expect(patchEvents.map((entry) => entry.event.patch.operations[0]?.path)).toEqual([
+      '/children/0',
+      '/children/1',
+    ])
+    expect(store.getSurfaceVersion('srf-progressive-tools')?.treeVersion).toBe(3)
+  })
+
   it('adds chat correlation to a live create_surface notification without persisting it for replay', async () => {
     const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
     const observed: SurfaceEngineEvent[] = []

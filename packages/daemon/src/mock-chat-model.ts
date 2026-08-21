@@ -60,6 +60,8 @@ function activeSpaceId(context: PiChatContext): string {
 const MEAL_REQUEST = 'aggiungi ai meals la fesa di tacchino'
 const MEAL_LABEL = 'fesa di tacchino'
 const TEMPLATE_SURFACE_REQUEST = 'create Weekly groceries from the Groceries Template'
+const PROGRESSIVE_SURFACE_REQUEST = 'show progressive surface demo'
+const DEFAULT_PROGRESSIVE_FILL_DELAY_MS = 1_200
 const REMINDER_RE = /\bremind me to\s+(.+?)\s+by\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i
 const SEND_RE = /^send to\s+(\S+)\s*:\s*(.+)$/i
 const TRANSFER_RE = /^transfer\s+([0-9]+(?:\.[0-9]+)?)\s+to\s+(\S+)$/i
@@ -68,6 +70,8 @@ const HELP_RE = /help|aiuto/i
 
 export interface MockChatModelOptions {
   now?: () => Date
+  /** Delay between progressive demo fills; tests inject zero while the dev profile stays observable. */
+  progressiveDelayMs?: number
 }
 
 /** `PiChatContext['messages']`'s element type, named locally so this file never
@@ -86,6 +90,10 @@ type PiUserContentBlock = PiUserContentArray[number]
  */
 export function createMockChatResponder(options: MockChatModelOptions): MockResponder {
   const now = options.now ?? (() => new Date())
+  const progressiveDelayMs = Math.max(
+    0,
+    options.progressiveDelayMs ?? DEFAULT_PROGRESSIVE_FILL_DELAY_MS,
+  )
 
   return (context) => {
     const lastUserIndex = findLastIndex(context.messages, isUserMessage)
@@ -100,11 +108,212 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
     if (text === TEMPLATE_SURFACE_REQUEST) {
       return respondToTemplateSurfaceFixture(toolResultsAfter)
     }
+    if (text === PROGRESSIVE_SURFACE_REQUEST) {
+      return respondToProgressiveSurfaceFixture(toolResultsAfter, now(), progressiveDelayMs)
+    }
 
     const lastToolResult = toolResultsAfter.at(-1)
     if (lastToolResult) return closingMessage(lastToolResult)
     return respondToUserText(text, now(), activeSpaceId(context))
   }
+}
+
+/**
+ * Contributor-facing journey for
+ * `issues/029-progressive-surface-composition.md`. It uses the same
+ * model-visible tool loop as every other Loopback behavior: publish the full
+ * layout first, then emit one versioned patch per resolved region. The image
+ * slot stays Pending so the catalog's bounded fallback is observable in a
+ * real browser.
+ */
+async function respondToProgressiveSurfaceFixture(
+  results: PiToolResultMessage[],
+  at: Date,
+  delayMs: number,
+): Promise<PiAssistantMessage> {
+  const creationResult = results.find((result) => result.toolName === 'create_surface')
+  if (!creationResult) {
+    return toolCallMessage(
+      'create_surface',
+      progressiveSurfaceInput(at),
+      'Publishing the complete trip layout with Pending regions.',
+    )
+  }
+
+  const surfaceId = createdSurfaceId(toolResultText(creationResult))
+  if (!surfaceId) {
+    return piFauxAssistantMessage('The progressive Surface could not be created safely.')
+  }
+
+  const failedPatch = results.find((result) => result.toolName === 'patch_tree' && result.isError)
+  if (failedPatch) {
+    return piFauxAssistantMessage('Progressive composition stopped after a tree patch failed.')
+  }
+
+  const completedPatches = results.filter((result) => result.toolName === 'patch_tree').length
+  const fill = progressiveFills[completedPatches]
+  if (!fill) {
+    return piFauxAssistantMessage(
+      'The progressive trip plan is ready; the route preview remains Pending to demonstrate its bounded fallback.',
+    )
+  }
+
+  await waitForProgressiveFill(delayMs)
+  return toolCallMessage(
+    'patch_tree',
+    {
+      surfaceId,
+      expectedTreeVersion: completedPatches + 1,
+      operations: [fill],
+    },
+    `Filling ${progressiveFillLabels[completedPatches]}.`,
+  )
+}
+
+function progressiveSurfaceInput(at: Date): Record<string, unknown> {
+  return {
+    id: `srf-progressive-${at.getTime()}`,
+    title: 'Progressive trip plan',
+    intent: 'Progressive trip planning demo',
+    justification: 'This contributor demo must expose independent Pending regions and fallback.',
+    tree: {
+      id: 'progressive-root',
+      type: 'Box',
+      props: { gap: 'md' },
+      children: [
+        {
+          id: 'progressive-title',
+          type: 'Title',
+          props: { text: 'Liguria road trip', level: 2 },
+        },
+        {
+          id: 'progressive-caption',
+          type: 'Caption',
+          props: { text: 'Regions fill independently; the route preview demonstrates fallback.' },
+        },
+        {
+          id: 'progressive-summary',
+          type: 'Pending',
+          props: { variant: 'text', label: 'Trip summary', lines: 3 },
+        },
+        {
+          id: 'progressive-metrics',
+          type: 'Row',
+          props: { gap: 'md' },
+          children: [
+            {
+              id: 'progressive-distance-column',
+              type: 'Col',
+              children: [
+                {
+                  id: 'progressive-distance',
+                  type: 'Pending',
+                  props: { variant: 'stat', label: 'Total distance' },
+                },
+              ],
+            },
+            {
+              id: 'progressive-chart-column',
+              type: 'Col',
+              children: [
+                {
+                  id: 'progressive-chart',
+                  type: 'Pending',
+                  props: { variant: 'chart', label: 'Distance by day' },
+                },
+              ],
+            },
+          ],
+        },
+        {
+          id: 'progressive-stops',
+          type: 'Pending',
+          props: { variant: 'list', label: 'Suggested stops', rows: 2 },
+        },
+        {
+          id: 'progressive-route',
+          type: 'Pending',
+          props: { variant: 'image', label: 'Route preview', timeoutMs: 8_000 },
+        },
+      ],
+    },
+    state: {},
+  }
+}
+
+const progressiveFills: readonly PatchOperation[] = [
+  {
+    target: 'tree',
+    op: 'replace',
+    path: '/children/2',
+    value: {
+      id: 'progressive-summary',
+      type: 'Text',
+      props: {
+        text: 'A four-day coastal route with short drives and time for unplanned stops.',
+      },
+    },
+  },
+  {
+    target: 'tree',
+    op: 'replace',
+    path: '/children/3/children/0/children/0',
+    value: {
+      id: 'progressive-distance',
+      type: 'Stat',
+      props: { label: 'Total distance', value: '286 km', detail: 'About 72 km per day' },
+    },
+  },
+  {
+    target: 'tree',
+    op: 'replace',
+    path: '/children/3/children/1/children/0',
+    value: {
+      id: 'progressive-chart',
+      type: 'Chart',
+      props: {
+        label: 'Distance by day',
+        data: [
+          { label: 'Day 1', value: 54 },
+          { label: 'Day 2', value: 81 },
+          { label: 'Day 3', value: 63 },
+          { label: 'Day 4', value: 88 },
+        ],
+      },
+    },
+  },
+  {
+    target: 'tree',
+    op: 'replace',
+    path: '/children/4',
+    value: {
+      id: 'progressive-stops',
+      type: 'Col',
+      children: [
+        {
+          id: 'progressive-stop-camogli',
+          type: 'ListItem',
+          props: { label: 'Camogli', detail: 'Morning harbor walk', status: 'Day 1' },
+        },
+        {
+          id: 'progressive-stop-lerici',
+          type: 'ListItem',
+          props: { label: 'Lerici', detail: 'Late lunch by the castle', status: 'Day 3' },
+        },
+      ],
+    },
+  },
+]
+
+const progressiveFillLabels = ['the summary', 'the distance', 'the chart', 'the stops'] as const
+
+function createdSurfaceId(content: string): string | undefined {
+  return /\bcreated Surface\s+(\S+)/.exec(content)?.[1]
+}
+
+async function waitForProgressiveFill(delayMs: number): Promise<void> {
+  if (delayMs === 0) return
+  await new Promise<void>((resolve) => globalThis.setTimeout(resolve, delayMs))
 }
 
 function respondToTemplateSurfaceFixture(results: PiToolResultMessage[]): PiAssistantMessage {

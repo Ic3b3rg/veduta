@@ -147,6 +147,14 @@ Surfaces are outside that boundary and share one non-disclosing refusal. The foc
 the raw engine creation operation remains explicitly Space-scoped for daemon and future
 multi-Space callers. Surface inventories are not injected into every assembled context.
 
+Progressive composition remains inside this same validated contract: the Agent creates the full
+layout with typed `Pending` leaf Atoms, then replaces each slot in place with an independent,
+versioned `patch_tree` operation as its content becomes ready. Preserving the Atom id limits the
+entrance transition to the filled region, while resolved siblings keep their mounted identity. The
+catalog renders token-driven text, list, image, stat, and chart skeletons; any unresolved slot
+degrades to a visible client-side fallback after its bounded timeout. No streaming format or second
+parser is involved ([issue 029](issues/029-progressive-surface-composition.md)).
+
 Good compositions become **Templates** saved in the Space and reused/patched (visual consistency across regenerations): a tree that has stopped changing — or that the user **pins** — is captured without its data, matched deterministically on intent and Atom signature, and reused instead of regenerated; regenerating over a match requires a justification. A pinned Surface keeps receiving state patches, while a tree change becomes a **Tree proposal** with a preview the user accepts or rejects ([ADR-0012](docs/adr/0012-emergent-templates.md)).
 
 ### 3.5 Proactivity (4 tiers, by increasing cost)

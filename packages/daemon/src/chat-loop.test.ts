@@ -244,6 +244,10 @@ describe('createChatLoop', () => {
     expect(systemPrompt).toContain('identify every Surface in this Space affected by the message')
     expect(systemPrompt).toContain('update every dependent state field')
     expect(systemPrompt).toContain('Do not stop after the first applicable Surface or state field')
+    expect(systemPrompt).toContain('create the complete layout with Pending leaf Atoms')
+    expect(systemPrompt).toContain('replace each Pending Atom in place with a separate patch_tree')
+    expect(systemPrompt).toContain('A newly created Surface starts at tree version 1')
+    expect(systemPrompt).toContain('Never leave a Pending Atom unresolved after composition fails')
     expect(systemPrompt).toContain(
       'Current user-local date and time: 2026-08-11 19:53 (Europe/Rome)',
     )

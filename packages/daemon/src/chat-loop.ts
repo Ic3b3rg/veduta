@@ -25,7 +25,15 @@ const SPACE_CHAT_PREAMBLE =
   'patch_state or patch_tree from what was returned. For each applicable Surface, update every ' +
   'dependent state field needed to keep its visible content internally consistent, including ' +
   'summaries, counts, histories, and progress values. Do not stop after the first applicable ' +
-  'Surface or state field. If none fits, use create_surface. append_event does not change a ' +
+  'Surface or state field. If none fits, use create_surface. When a new Surface has regions ' +
+  'that become ready independently, create the complete layout with Pending leaf Atoms, then ' +
+  'replace each Pending Atom in place with a separate patch_tree as its content becomes ready. ' +
+  'Preserve its id so the client gives only that region an entrance transition without ' +
+  're-animating resolved siblings. A newly created Surface starts at tree version 1; each ' +
+  'committed patch_tree increments it by one, and after a conflict call read_surface before ' +
+  'retrying. Never leave a Pending Atom unresolved after composition fails: replace it with a ' +
+  "visible explanatory Atom when possible; the client's bounded timeout is the last-resort " +
+  'fallback. append_event does not change a ' +
   'Surface or its visible state and is never a substitute for a Surface mutation. Only claim a ' +
   'Surface changed after a successful mutation tool result.'
 
