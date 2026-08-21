@@ -1,13 +1,5 @@
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
-import { loadMemoryConfig } from '../memory-config.ts'
-import { relativeTimeSeedUpgradePatch } from '../relative-time-surface.ts'
-import { seedSpaces } from '../seed.ts'
-import { SpacesEngine } from '../spaces-engine.ts'
-import { ensureSqliteColumn } from '../sqlite-rows.ts'
-import { SurfaceEngine } from '../surface-engine.ts'
 import { stampDataVersion } from './data-version-marker.ts'
+import { migrateV2RelativeTimeSurfaceValidity } from './migration-v2-relative-time.ts'
 
 /**
  * One forward-only data migration (`docs/adr/0013-signed-self-update.md`):
@@ -50,51 +42,9 @@ export const MIGRATIONS: readonly DataMigration[] = [
     description:
       'Add explicit relative-time Surface validity and retrofit matching persisted seed ' +
       'Surfaces through the ordinary validated patch and Event paths.',
-    migrate: migrateRelativeTimeSurfaceValidity,
+    migrate: migrateV2RelativeTimeSurfaceValidity,
   },
 ]
-
-function migrateRelativeTimeSurfaceValidity(rootDir: string): void {
-  const databasePath = join(rootDir, 'surfaces.sqlite')
-  if (!existsSync(databasePath)) return
-
-  const db = new DatabaseSync(databasePath)
-  try {
-    ensureSqliteColumn(db, 'surfaces', 'validity_json', 'text')
-  } finally {
-    db.close()
-  }
-
-  const now = () => new Date()
-  const timeZone = loadMemoryConfig(rootDir).timezone
-  const seed = seedSpaces({ relativeTimeNow: now, timeZone })
-  const spacesEngine = new SpacesEngine({ rootDir, now })
-  const surfaceEngine = new SurfaceEngine({
-    rootDir,
-    now,
-    timeZone,
-    seed: [],
-    hasSpace: (spaceId) => spacesEngine.getSpace(spaceId) !== undefined,
-    appendSpaceEvent: (spaceId, input) => spacesEngine.appendEvent(spaceId, input),
-  })
-
-  try {
-    for (const seedSurface of seed.surfaces) {
-      const persisted = surfaceEngine.getSurface(seedSurface.id)
-      if (persisted === undefined || spacesEngine.getSpace(persisted.spaceId) === undefined)
-        continue
-      const upgrade = relativeTimeSeedUpgradePatch(persisted, seedSurface)
-      if (upgrade === undefined) continue
-      surfaceEngine.patchState(persisted.id, upgrade.operations, {
-        updatedBy: 'job',
-        origin: 'trusted:system',
-        relativeTime: upgrade.relativeTime,
-      })
-    }
-  } finally {
-    surfaceEngine.close()
-  }
-}
 
 /**
  * Runs every migration whose `to` falls in `(span.from, span.to]`, in

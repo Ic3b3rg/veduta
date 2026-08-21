@@ -68,9 +68,10 @@ tree, so state and validity can advance together.
 
 Data version 2 adds the persisted validity column and reconciles earlier persisted seed Surfaces
 through the same validated state-patch and Event paths. The reconciliation is driven only by the
-current seed contract and Surface identity: when the old state has exactly one array projection, its
-object records become undated source records and every current projection resets to the seed's empty
-defaults. Ambiguous legacy shapes are refused rather than classified by a title or field-name guess.
+frozen version-2 contract and Surface identity: when the source is absent and the old state has
+exactly one array projection, its object records become undated source records and every current
+projection resets to the version-2 defaults. Source-present or otherwise ambiguous legacy shapes are
+refused rather than risking data loss or classifying them by a title or field-name guess.
 
 Rejected alternatives were title/field-name heuristics, a Surface query language, domain-specific
 meal logic in the protocol or catalog, storing only the current projection, and generating fake

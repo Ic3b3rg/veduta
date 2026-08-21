@@ -144,54 +144,52 @@ export interface RelativeTimeSeedUpgradePatch {
   operations: PatchOperation[]
 }
 
+export interface RelativeTimeSeedUpgradeDescriptor {
+  surfaceId: string
+  spaceId: string
+  relativeTime: RelativeTimeAuthoring
+  projectionDefaults: JsonObject
+}
+
 /**
- * Builds the one-time, domain-neutral patch for a persisted seed Surface that
+ * Builds a one-time, domain-neutral patch for a persisted seed Surface that
  * predates its relative-time contract. Exactly one array projection may act
- * as the legacy source; ambiguity is refused instead of guessing. Visible
- * projections reset to the current seed defaults while every legacy record
- * remains durable and undated in the new source.
+ * as the legacy source; an already-present source or any other ambiguity is
+ * refused instead of guessing. Visible projections reset to the descriptor's
+ * versioned defaults while every legacy record remains durable and undated in
+ * the new source.
  */
 export function relativeTimeSeedUpgradePatch(
   persisted: Surface,
-  currentSeed: Surface,
+  descriptor: RelativeTimeSeedUpgradeDescriptor,
 ): RelativeTimeSeedUpgradePatch | undefined {
-  const validity = currentSeed.validity
+  const contract = RelativeTimeAuthoringSchema.parse(descriptor.relativeTime)
   if (
-    persisted.id !== currentSeed.id ||
-    persisted.spaceId !== currentSeed.spaceId ||
+    persisted.id !== descriptor.surfaceId ||
+    persisted.spaceId !== descriptor.spaceId ||
     persisted.validity !== undefined ||
-    validity === undefined
+    Object.prototype.hasOwnProperty.call(persisted.state, contract.source.stateKey)
   ) {
     return undefined
   }
 
-  const sourceKey = validity.source.stateKey
-  const storedSource = persisted.state[sourceKey]
-  let sourceRecords: JsonObject[]
-  if (Array.isArray(storedSource)) {
-    if (!storedSource.every(isJsonObject)) return undefined
-    sourceRecords = storedSource
-  } else if (storedSource === undefined) {
-    const candidates = validity.projectionStateKeys
-      .map((key) => persisted.state[key])
-      .filter((value): value is JsonObject[] => Array.isArray(value) && value.every(isJsonObject))
-    if (candidates.length !== 1) return undefined
-    sourceRecords = candidates[0]!
-  } else {
-    return undefined
-  }
+  const sourceKey = contract.source.stateKey
+  const arrayProjections = contract.projectionStateKeys
+    .map((key) => persisted.state[key])
+    .filter((value): value is JsonObject[] => Array.isArray(value))
+  if (arrayProjections.length !== 1 || !arrayProjections[0]!.every(isJsonObject)) return undefined
+  const sourceRecords = arrayProjections[0]!
 
-  const operations: PatchOperation[] = []
-  if (storedSource === undefined) {
-    operations.push({
+  const operations: PatchOperation[] = [
+    {
       target: 'state',
       op: 'add',
       path: statePath(sourceKey),
       value: sourceRecords,
-    })
-  }
-  for (const key of validity.projectionStateKeys) {
-    const defaultValue = currentSeed.state[key]
+    },
+  ]
+  for (const key of contract.projectionStateKeys) {
+    const defaultValue = descriptor.projectionDefaults[key]
     if (defaultValue === undefined) return undefined
     operations.push({
       target: 'state',
@@ -202,7 +200,7 @@ export function relativeTimeSeedUpgradePatch(
   }
 
   return {
-    relativeTime: authoringContractFromValidity(validity),
+    relativeTime: contract,
     operations,
   }
 }

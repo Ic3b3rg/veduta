@@ -135,4 +135,44 @@ describe('runMigrations', () => {
     expect(migratedStore.latestSurfaceCursor()).toBe(migrationEvents[0]!.event.cursor)
     migratedStore.close()
   })
+
+  it('refuses a source-present v1 Surface instead of erasing populated legacy projections', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'veduta-relative-time-migration-conflict-'))
+    await writeFile(join(rootDir, 'memory.json'), JSON.stringify({ timezone: 'Europe/Rome' }))
+    const legacyStore = new Store({
+      rootDir,
+      now: () => new Date('2026-08-20T12:00:00.000Z'),
+      timeZone: 'Europe/Rome',
+    })
+    const cursorBefore = legacyStore.latestSurfaceCursor()
+    legacyStore.close()
+
+    const conflictingState = {
+      mealRecords: [],
+      meals: [{ time: '20:00', meal: 'pasta' }],
+      lastMeal: 'pasta',
+      mealCount: 1,
+    }
+    const db = new DatabaseSync(join(rootDir, 'surfaces.sqlite'))
+    db.prepare(
+      `update surfaces
+       set state_json = ?, validity_json = null, updated_at = ?, updated_by = 'seed'
+       where id = 'srf-meals'`,
+    ).run(JSON.stringify(conflictingState), '2026-08-20T12:00:00.000Z')
+    db.exec('alter table surfaces drop column validity_json')
+    db.close()
+    stampDataVersion(rootDir, 1)
+
+    expect(runMigrations(rootDir, { from: 1, to: 2 })).toEqual([2])
+
+    const migratedStore = new Store({ rootDir, timeZone: 'Europe/Rome' })
+    const meals = migratedStore.getSurface('srf-meals')!
+    expect(meals.state).toEqual(conflictingState)
+    expect(meals.validity).toBeUndefined()
+    expect(migratedStore.latestSurfaceCursor()).toBe(cursorBefore)
+    expect(
+      migratedStore.eventLog('spc-health').filter((event) => event.type === 'surface.patch_state'),
+    ).toEqual([])
+    migratedStore.close()
+  })
 })
