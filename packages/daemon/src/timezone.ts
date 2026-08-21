@@ -240,6 +240,16 @@ export function startOfZonedDay(
   return zonedTimeToUtc(zone, { ...parts, hour: 0, minute: 0 })
 }
 
+/** Midnight at the start of the ISO week (Monday) containing a zoned calendar day. */
+export function startOfZonedWeek(
+  zone: string,
+  parts: Pick<ZonedParts, 'year' | 'month' | 'day'>,
+): Date {
+  const weekday = new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay()
+  const daysSinceMonday = (weekday + 6) % 7
+  return startOfZonedDay(zone, { ...parts, day: parts.day - daysSinceMonday })
+}
+
 /** Midnight of the first day of the given zoned calendar month, as a UTC instant. */
 export function startOfZonedMonth(zone: string, year: number, month: number): Date {
   return zonedTimeToUtc(zone, { year, month, day: 1, hour: 0, minute: 0 })
@@ -270,12 +280,17 @@ export function relativeTimeWindowBounds(
     }
   }
 
-  const weekday = new Date(Date.UTC(local.year, local.month - 1, local.day)).getUTCDay()
-  const daysSinceMonday = (weekday + 6) % 7
-  const startDay = window === 'week' ? local.day - daysSinceMonday : local.day
-  const endDay = startDay + (window === 'week' ? 7 : 1)
+  if (window === 'week') {
+    const startsAt = startOfZonedWeek(zone, local)
+    const start = zonedParts(zone, startsAt)
+    return {
+      startsAt,
+      expiresAt: startOfZonedDay(zone, { ...start, day: start.day + 7 }),
+    }
+  }
+
   return {
-    startsAt: startOfZonedDay(zone, { year: local.year, month: local.month, day: startDay }),
-    expiresAt: startOfZonedDay(zone, { year: local.year, month: local.month, day: endDay }),
+    startsAt: startOfZonedDay(zone, local),
+    expiresAt: startOfZonedDay(zone, { ...local, day: local.day + 1 }),
   }
 }

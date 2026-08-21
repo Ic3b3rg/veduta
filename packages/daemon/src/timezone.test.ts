@@ -138,4 +138,22 @@ describe('relativeTimeWindowBounds', () => {
       expiresAt: new Date('2026-10-25T23:00:00.000Z'),
     })
   })
+
+  it('anchors an ISO week across a year boundary in the user timezone', () => {
+    expect(
+      relativeTimeWindowBounds('Pacific/Kiritimati', new Date('2026-01-01T12:00:00.000Z'), 'week'),
+    ).toEqual({
+      startsAt: new Date('2025-12-28T10:00:00.000Z'),
+      expiresAt: new Date('2026-01-04T10:00:00.000Z'),
+    })
+  })
+
+  it('anchors a calendar month across a DST transition', () => {
+    expect(
+      relativeTimeWindowBounds('Europe/Rome', new Date('2026-03-15T12:00:00.000Z'), 'month'),
+    ).toEqual({
+      startsAt: new Date('2026-02-28T23:00:00.000Z'),
+      expiresAt: new Date('2026-03-31T22:00:00.000Z'),
+    })
+  })
 })

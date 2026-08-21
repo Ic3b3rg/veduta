@@ -269,6 +269,12 @@ describe('createFocusedSurfaceTools', () => {
             merchant: 'Bookshop',
             amount: 18,
           },
+          {
+            id: 'expense-old',
+            occurredAt: '2026-08-10T11:30:00+02:00',
+            merchant: 'Old shop',
+            amount: 99,
+          },
         ],
         todayRows: [{ merchant: 'Bookshop', amount: 18 }],
         todayCount: 1,
@@ -302,7 +308,19 @@ describe('createFocusedSurfaceTools', () => {
         merchant: 'Bookshop',
         amount: 18,
       },
+      {
+        id: 'expense-old',
+        occurredAt: '2026-08-10T09:30:00.000Z',
+        merchant: 'Old shop',
+        amount: 99,
+      },
     ])
+    expect(created.state).toMatchObject({
+      todayRows: [{ merchant: 'Bookshop', amount: 18 }],
+      todayCount: 1,
+      todayTotal: 18,
+      latestMerchant: 'Bookshop',
+    })
   })
 
   it('refreshes every declared projection across a local boundary while preserving source records', async () => {

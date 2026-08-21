@@ -1,4 +1,10 @@
-import { startOfZonedDay, startOfZonedMonth, assertTimeZone, zonedParts } from './timezone.ts'
+import {
+  assertTimeZone,
+  startOfZonedDay,
+  startOfZonedMonth,
+  startOfZonedWeek,
+  zonedParts,
+} from './timezone.ts'
 import type { ZonedParts } from './timezone.ts'
 
 /**
@@ -117,21 +123,6 @@ function daysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate()
 }
 
-/**
- * Day-of-week as a pure calendar computation (Mon=0 .. Sun=6), independent of
- * any timezone: a calendar date's weekday does not depend on where it is
- * observed. Used only to locate the Monday of a week; the actual UTC bound is
- * still built through `startOfZonedDay`.
- */
-function daysSinceMonday(year: number, month: number, day: number): number {
-  const jsDay = new Date(Date.UTC(year, month - 1, day)).getUTCDay()
-  return (jsDay + 6) % 7
-}
-
-function mondayOfWeek(parts: ZonedParts): number {
-  return parts.day - daysSinceMonday(parts.year, parts.month, parts.day)
-}
-
 interface Bounds {
   from: Date
   to: Date
@@ -184,7 +175,8 @@ export function extractTemporalRange(
   const zone = assertTimeZone(options.timezone)
   const now = options.now
   const nowParts = zonedParts(zone, now)
-  const monday = mondayOfWeek(nowParts)
+  const weekStart = startOfZonedWeek(zone, nowParts)
+  const weekStartParts = zonedParts(zone, weekStart)
 
   const candidates: Candidate[] = []
   const push = (match: RegExpMatchArray, bounds: Bounds) => {
@@ -254,15 +246,15 @@ export function extractTemporalRange(
   // they say "this week" outside en-US calendars.
   for (const match of query.matchAll(THIS_WEEK_RE)) {
     push(match, {
-      from: startOfZonedDay(zone, { ...nowParts, day: monday }),
-      to: startOfZonedDay(zone, { ...nowParts, day: monday + 7 }),
+      from: weekStart,
+      to: startOfZonedDay(zone, { ...weekStartParts, day: weekStartParts.day + 7 }),
     })
   }
 
   for (const match of query.matchAll(LAST_WEEK_RE)) {
     push(match, {
-      from: startOfZonedDay(zone, { ...nowParts, day: monday - 7 }),
-      to: startOfZonedDay(zone, { ...nowParts, day: monday }),
+      from: startOfZonedDay(zone, { ...weekStartParts, day: weekStartParts.day - 7 }),
+      to: weekStart,
     })
   }
 
@@ -290,8 +282,11 @@ export function extractTemporalRange(
     const n = parseWindowCount(match[1])
     if (n === undefined) continue
     push(match, {
-      from: startOfZonedDay(zone, { ...nowParts, day: monday - 7 * (n - 1) }),
-      to: startOfZonedDay(zone, { ...nowParts, day: monday + 7 }),
+      from: startOfZonedDay(zone, {
+        ...weekStartParts,
+        day: weekStartParts.day - 7 * (n - 1),
+      }),
+      to: startOfZonedDay(zone, { ...weekStartParts, day: weekStartParts.day + 7 }),
     })
   }
 
