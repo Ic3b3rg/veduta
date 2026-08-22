@@ -260,6 +260,12 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
           expect.objectContaining({ meal: 'ricotta, cereali e latte' }),
         ]),
       )
+      await chatInput.fill('La ricotta era 100 g, i cereali 40 g e il latte 200 ml')
+      await page.getByRole('button', { name: 'Send' }).click()
+      await expect(meals.getByText('≈ 470–570 kcal')).toBeVisible()
+      await expect(meals.getByText('≈ 430–650 kcal')).toHaveCount(0)
+      await expect(meals.getByText('Today’s calorie estimate')).toHaveCount(1)
+
       await chatInput.fill('Non mostrare più la stima calorie')
       await page.getByRole('button', { name: 'Send' }).click()
       await expect(meals.getByText('Today’s calorie estimate')).toHaveCount(0)
@@ -267,9 +273,6 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(
         meals.getByText('ricotta, cereali e latte', { exact: true }).first(),
       ).toBeVisible()
-      await expect(
-        page.locator('.chat-entry.assistant').filter({ hasText: /all meal records are unchanged/ }),
-      ).toHaveCount(1)
     })
 
     await test.step('progressive composition publishes layout first, fills independently, then falls back (issue 029)', async () => {

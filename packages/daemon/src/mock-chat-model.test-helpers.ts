@@ -17,7 +17,7 @@ export function userContextInSpace(text: string, name: string, slug: string): Pi
 
 export function toolResultContext(
   userText: string,
-  results: Array<{ toolName: string; content: string }>,
+  results: Array<{ toolName: string; content: string; isError?: boolean }>,
 ): PiChatContext {
   return fromPartial<PiChatContext>({
     messages: [
@@ -42,7 +42,7 @@ export function toolResultContext(
             toolCallId,
             toolName: result.toolName,
             content: [{ type: 'text' as const, text: result.content }],
-            isError: false,
+            isError: result.isError ?? false,
             timestamp: Date.now(),
           },
         ]

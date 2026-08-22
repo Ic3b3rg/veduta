@@ -115,6 +115,36 @@ describe('createMockChatResponder', () => {
     expect(treePatch.name).toBe('patch_tree')
     expect(treePatch.arguments).toMatchObject({ surfaceId: 'meals-live', expectedTreeVersion: 1 })
   })
+
+  it('reports a calorie state failure without attempting a tree mutation', async () => {
+    const responder = createMockChatResponder({})
+    const context = toolResultContext(CALORIE_REQUEST, [
+      {
+        toolName: 'list_surfaces',
+        content: JSON.stringify([{ id: 'meals-live', title: 'Meals' }]),
+      },
+      {
+        toolName: 'read_surface',
+        content: JSON.stringify({
+          surface: {
+            id: 'meals-live',
+            spaceId: 'spc-health',
+            title: 'Meals',
+            tree: { id: 'root', type: 'Box', children: [] },
+            state: {},
+            freshness: { updatedAt: '2026-08-22T11:00:00.000Z', updatedBy: 'user' },
+          },
+          version: 1,
+          treeVersion: 1,
+        }),
+      },
+      { toolName: 'patch_state', content: 'conflict', isError: true },
+    ])
+    const reply = await responder(context, { callCount: 3 })
+    expect(reply.stopReason).toBe('stop')
+    expect(textIn(reply)).toContain('state update failed')
+    expect(reply.content.some((block) => block.type === 'toolCall')).toBe(false)
+  })
   it('closes with a stable summary after a tool result (the follow-up model call)', async () => {
     const responder = createMockChatResponder({})
     const context = toolResultContext('send to alice@example.com: hello', [

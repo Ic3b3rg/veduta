@@ -74,6 +74,7 @@ const MEAL_LABEL = 'fesa di tacchino'
 const BREAKFAST_REQUEST = 'aggiungi ai meals la colazione con ricotta, cereali e latte'
 const BREAKFAST_LABEL = 'ricotta, cereali e latte'
 const CALORIE_REQUEST = 'Quante calorie ho mangiato oggi ?'
+const CALORIE_QUANTITY_FOLLOW_UP = 'La ricotta era 100 g, i cereali 40 g e il latte 200 ml'
 const DISMISS_CALORIE_REQUEST = 'Non mostrare più la stima calorie'
 const CALORIE_REGION_ID = 'derived-calorie-estimate'
 const TEMPLATE_SURFACE_REQUEST = 'create Weekly groceries from the Groceries Template'
@@ -129,6 +130,13 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
       return respondToMealFixture(toolResultsAfter, now(), timeZone, BREAKFAST_LABEL)
     }
     if (text === CALORIE_REQUEST) return respondToCalorieFixture(toolResultsAfter)
+    if (text === CALORIE_QUANTITY_FOLLOW_UP) {
+      return respondToCalorieFixture(toolResultsAfter, {
+        total: '≈ 470–570 kcal',
+        breakfast: '≈ 370–420 kcal',
+        caveat: 'Turkey breast quantity is still missing; its value remains an estimate.',
+      })
+    }
     if (text === DISMISS_CALORIE_REQUEST) return respondToCalorieDismissal(toolResultsAfter)
     if (text === TEMPLATE_SURFACE_REQUEST) {
       return respondToTemplateSurfaceFixture(toolResultsAfter)
@@ -161,6 +169,41 @@ function respondToCalorieDismissal(results: PiToolResultMessage[]): PiAssistantM
 
   const regionIndex =
     read.surface.tree.children?.findIndex((child) => child.id === CALORIE_REGION_ID) ?? -1
+  const treePatch = results.find((result) => result.toolName === 'patch_tree')
+  if (read.surface.pinned && regionIndex !== -1) {
+    if (!treePatch) {
+      return toolCallMessage(
+        'patch_tree',
+        {
+          surfaceId: selected.id,
+          expectedTreeVersion: read.treeVersion,
+          operations: [{ target: 'tree', op: 'remove', path: `/children/${regionIndex}` }],
+        },
+        'Proposing removal of the derived calorie region while preserving Meals.',
+      )
+    }
+    return piFauxAssistantMessage(
+      treePatch.isError
+        ? `The pinned Meals composition was not changed: ${toolResultText(treePatch)}`
+        : 'A Tree proposal is waiting because Meals is pinned; its state and meal records are unchanged.',
+    )
+  }
+  if (regionIndex !== -1 && !treePatch) {
+    return toolCallMessage(
+      'patch_tree',
+      {
+        surfaceId: selected.id,
+        expectedTreeVersion: read.treeVersion,
+        operations: [{ target: 'tree', op: 'remove', path: `/children/${regionIndex}` }],
+      },
+      'Removing the derived calorie region while preserving Meals.',
+    )
+  }
+  if (treePatch?.isError) {
+    return piFauxAssistantMessage(
+      `The visible recomposition did not commit, so its state was left unchanged: ${toolResultText(treePatch)}`,
+    )
+  }
   const statePatch = results.find((result) => result.toolName === 'patch_state')
   if (!statePatch) {
     const derivedKeys = new Set(['calorieTotal', 'calorieBreakdown', 'calorieCaveat'])
@@ -192,33 +235,35 @@ function respondToCalorieDismissal(results: PiToolResultMessage[]): PiAssistantM
       'Removing only the derived calorie state.',
     )
   }
-  if (regionIndex === -1)
-    return piFauxAssistantMessage('The calorie estimate was removed; meal records are unchanged.')
-  const treePatch = results.find((result) => result.toolName === 'patch_tree')
-  if (!treePatch) {
-    return toolCallMessage(
-      'patch_tree',
-      {
-        surfaceId: selected.id,
-        expectedTreeVersion: read.treeVersion,
-        operations: [{ target: 'tree', op: 'remove', path: `/children/${regionIndex}` }],
-      },
-      'Removing the derived calorie region while preserving Meals.',
+  if (statePatch.isError) {
+    return piFauxAssistantMessage(
+      `The calorie state could not be removed, so the Meals composition was left unchanged: ${toolResultText(statePatch)}`,
     )
   }
-  if (treePatch.isError)
-    return piFauxAssistantMessage(
-      `The derived state was removed, but the visible recomposition did not commit: ${toolResultText(treePatch)}`,
-    )
+  if (regionIndex === -1)
+    return piFauxAssistantMessage('The calorie estimate was removed; meal records are unchanged.')
   return piFauxAssistantMessage(
-    toolResultText(treePatch).toLowerCase().includes('proposal')
-      ? 'The calorie state was removed and a Tree proposal is waiting because Meals is pinned.'
-      : 'The calorie estimate was removed from Meals; all meal records are unchanged.',
+    'The calorie estimate was removed from Meals; all meal records are unchanged.',
   )
 }
 
+interface CalorieEstimate {
+  total: string
+  breakfast: string
+  caveat: string
+}
+
+const DEFAULT_CALORIE_ESTIMATE: CalorieEstimate = {
+  total: '≈ 430–650 kcal',
+  breakfast: '≈ 330–500 kcal',
+  caveat: 'Missing quantities for ricotta, cereal, milk, and turkey breast; values are estimates.',
+}
+
 /** Representative issue #95 journey; production models follow the focused-Space contract. */
-function respondToCalorieFixture(results: PiToolResultMessage[]): PiAssistantMessage {
+function respondToCalorieFixture(
+  results: PiToolResultMessage[],
+  estimate = DEFAULT_CALORIE_ESTIMATE,
+): PiAssistantMessage {
   const listResult = results.find((result) => result.toolName === 'list_surfaces')
   if (!listResult) return toolCallMessage('list_surfaces', {}, 'Checking today’s Meals Surface.')
 
@@ -243,22 +288,29 @@ function respondToCalorieFixture(results: PiToolResultMessage[]): PiAssistantMes
     const relativeTime = read.surface.validity
       ? {
           ...authoringContractFromValidity(read.surface.validity),
-          projectionStateKeys: [
-            ...read.surface.validity.projectionStateKeys,
-            'calorieTotal',
-            'calorieBreakdown',
-            'calorieCaveat',
-          ],
+          projectionStateKeys: Array.from(
+            new Set([
+              ...read.surface.validity.projectionStateKeys,
+              'calorieTotal',
+              'calorieBreakdown',
+              'calorieCaveat',
+            ]),
+          ),
         }
       : undefined
     return toolCallMessage(
       'patch_state',
       {
         surfaceId: selected.id,
-        operations: calorieStateOperations(read.surface),
+        operations: calorieStateOperations(read.surface, estimate),
         ...(relativeTime === undefined ? {} : { relativeTime }),
       },
-      'Estimated total: ≈ 430–650 kcal. Quantities are missing, so the range is intentionally broad.',
+      `Estimated total: ${estimate.total}. ${estimate.caveat}`,
+    )
+  }
+  if (statePatch.isError) {
+    return piFauxAssistantMessage(
+      `Estimated total: ${estimate.total}. Meals was not changed because its state update failed: ${toolResultText(statePatch)}`,
     )
   }
 
@@ -277,29 +329,26 @@ function respondToCalorieFixture(results: PiToolResultMessage[]): PiAssistantMes
 
   if (treePatch.isError) {
     return piFauxAssistantMessage(
-      `Estimated total: ≈ 430–650 kcal. The values were saved, but the visible Meals composition could not be updated: ${toolResultText(treePatch)}`,
+      `Estimated total: ${estimate.total}. The values were saved, but the visible Meals composition could not be updated: ${toolResultText(treePatch)}`,
     )
   }
   const outcome = toolResultText(treePatch).toLowerCase().includes('proposal')
     ? 'A Tree proposal is waiting because Meals is pinned.'
     : 'Meals now shows the estimate, breakdown, and missing quantities.'
-  return piFauxAssistantMessage(`Estimated total: ≈ 430–650 kcal. ${outcome}`)
+  return piFauxAssistantMessage(`Estimated total: ${estimate.total}. ${outcome}`)
 }
 
-function calorieStateOperations(surface: Surface): PatchOperation[] {
+function calorieStateOperations(surface: Surface, estimate: CalorieEstimate): PatchOperation[] {
   const values: Array<[string, JsonValue]> = [
-    ['calorieTotal', '≈ 430–650 kcal'],
+    ['calorieTotal', estimate.total],
     [
       'calorieBreakdown',
       [
-        { meal: 'Breakfast: ricotta, cereal, milk', estimate: '≈ 330–500 kcal' },
+        { meal: 'Breakfast: ricotta, cereal, milk', estimate: estimate.breakfast },
         { meal: 'Turkey breast', estimate: '≈ 100–150 kcal' },
       ],
     ],
-    [
-      'calorieCaveat',
-      'Missing quantities for ricotta, cereal, milk, and turkey breast; values are estimates.',
-    ],
+    ['calorieCaveat', estimate.caveat],
   ]
   for (const key of surface.validity?.projectionStateKeys ?? []) {
     const value = surface.state[key]
