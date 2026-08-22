@@ -147,6 +147,13 @@ Surfaces are outside that boundary and share one non-disclosing refusal. The foc
 the raw engine creation operation remains explicitly Space-scoped for daemon and future
 multi-Space callers. Surface inventories are not injected into every assembled context.
 
+Focused-Space Surface authoring includes analytical answers with a useful structured, persistent
+form, even when the question does not mutate source data. The Agent inspects the complete affected
+set, enriches the Surface that owns the concern, or creates a distinct Surface through the normal
+Template gate when none fits. Follow-ups replace or remove derived regions instead of accumulating
+snapshots; source records remain durable. Ordinary conversation without visual payoff remains
+chat-only, and chat reports the committed mutation, Tree proposal, or failure honestly.
+
 Progressive composition remains inside this same validated contract: the Agent creates the full
 layout with typed `Pending` leaf Atoms, then replaces each slot in place with an independent,
 versioned `patch_tree` operation as its content becomes ready. Preserving the Atom id limits the

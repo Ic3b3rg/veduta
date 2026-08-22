@@ -26,9 +26,95 @@ import { WorkerBriefingSchema } from './worker-briefing.ts'
  */
 
 const MEAL_REQUEST = 'aggiungi ai meals la fesa di tacchino'
+const CALORIE_REQUEST = 'Quante calorie ho mangiato oggi ?'
 const TEMPLATE_SURFACE_REQUEST = 'create Weekly groceries from the Groceries Template'
 
 describe('createMockChatResponder', () => {
+  it('authors the exact calorie answer into the discovered Meals Surface before replying', async () => {
+    const responder = createMockChatResponder({})
+
+    const first = toolCallIn(await responder(userContext(CALORIE_REQUEST), { callCount: 0 }))
+    expect(first.name).toBe('list_surfaces')
+
+    const listed = toolResultContext(CALORIE_REQUEST, [
+      {
+        toolName: 'list_surfaces',
+        content: JSON.stringify([{ id: 'meals-live', title: 'Meals' }]),
+      },
+    ])
+    const second = toolCallIn(await responder(listed, { callCount: 1 }))
+    expect(second).toMatchObject({ name: 'read_surface', arguments: { surfaceId: 'meals-live' } })
+
+    const read = toolResultContext(CALORIE_REQUEST, [
+      {
+        toolName: 'list_surfaces',
+        content: JSON.stringify([{ id: 'meals-live', title: 'Meals' }]),
+      },
+      {
+        toolName: 'read_surface',
+        content: JSON.stringify({
+          surface: {
+            id: 'meals-live',
+            spaceId: 'spc-health',
+            title: 'Meals',
+            tree: {
+              id: 'root',
+              type: 'Box',
+              children: [{ id: 'title', type: 'Title', props: { text: 'Meals' } }],
+            },
+            state: {
+              mealRecords: [
+                {
+                  occurredAt: '2026-08-22T06:00:00.000Z',
+                  time: '08:00',
+                  meal: 'ricotta, cereali e latte',
+                },
+                { occurredAt: '2026-08-22T11:00:00.000Z', time: '13:00', meal: 'fesa di tacchino' },
+              ],
+              meals: [],
+              lastMeal: 'fesa di tacchino',
+              mealCount: 2,
+            },
+            freshness: { updatedAt: '2026-08-22T11:00:00.000Z', updatedBy: 'user' },
+            validity: {
+              kind: 'relative-time',
+              timeZone: 'Europe/Rome',
+              window: 'day',
+              startsAt: '2026-08-21T22:00:00.000Z',
+              expiresAt: '2026-08-22T22:00:00.000Z',
+              source: { stateKey: 'mealRecords', occurredAtKey: 'occurredAt' },
+              projectionStateKeys: ['meals', 'lastMeal', 'mealCount'],
+            },
+          },
+          version: 3,
+          treeVersion: 1,
+        }),
+      },
+    ])
+    const statePatch = toolCallIn(await responder(read, { callCount: 2 }))
+    expect(statePatch.name).toBe('patch_state')
+    expect(statePatch.arguments).toMatchObject({
+      surfaceId: 'meals-live',
+      operations: expect.arrayContaining([
+        expect.objectContaining({ path: '/calorieTotal', value: '≈ 430–650 kcal' }),
+        expect.objectContaining({ path: '/calorieBreakdown' }),
+        expect.objectContaining({ path: '/calorieCaveat' }),
+      ]),
+    })
+
+    const patched = toolResultContext(CALORIE_REQUEST, [
+      ...read.messages
+        .filter((message) => message.role === 'toolResult')
+        .map((message) => ({
+          toolName: message.toolName,
+          content: message.content[0]?.type === 'text' ? message.content[0].text : '',
+        })),
+      { toolName: 'patch_state', content: 'Surface state patched successfully.' },
+    ])
+    const treePatch = toolCallIn(await responder(patched, { callCount: 3 }))
+    expect(treePatch.name).toBe('patch_tree')
+    expect(treePatch.arguments).toMatchObject({ surfaceId: 'meals-live', expectedTreeVersion: 1 })
+  })
   it('closes with a stable summary after a tool result (the follow-up model call)', async () => {
     const responder = createMockChatResponder({})
     const context = toolResultContext('send to alice@example.com: hello', [

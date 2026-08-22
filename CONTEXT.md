@@ -19,7 +19,7 @@ Persistent UI unit inside a Space: a declarative tree of Atoms bound to typed st
 _Avoid_: canvas, artifact, widget (ambiguous), dashboard (reserved for Home)
 
 **Surface authoring**:
-The Agent's core capability of creating or modifying a persistent Surface by composing validated Atoms in response to user intent. Every Model connection eligible to power the Agent provides this capability.
+The Agent's core capability of creating, recomposing, or archiving a persistent Surface by composing validated Atoms in response to user intent. It includes keeping visually useful structured answers — such as estimates, comparisons, summaries, breakdowns, progress, plans, and timelines — visible in the Home while preserving the concise chat answer. Every Model connection eligible to power the Agent provides this capability.
 _Avoid_: generative UI (ambiguous), generated markup, text-only mode
 
 **Home**:

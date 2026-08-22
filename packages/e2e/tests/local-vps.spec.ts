@@ -228,6 +228,50 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       ])
     })
 
+    await test.step('the exact Italian calorie question enriches Meals and agrees with chat (issue 095)', async () => {
+      const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
+      await chatInput.fill('aggiungi ai meals la colazione con ricotta, cereali e latte')
+      await page.getByRole('button', { name: 'Send' }).click()
+      await expect(
+        page
+          .locator('.chat-entry.assistant')
+          .filter({ hasText: /Logging: ricotta, cereali e latte/ }),
+      ).toHaveCount(1)
+
+      await chatInput.fill('Quante calorie ho mangiato oggi ?')
+      await page.getByRole('button', { name: 'Send' }).click()
+
+      const meals = surfaceCard(page, 'Meals')
+      await expect(meals.getByText('Today’s calorie estimate')).toBeVisible()
+      await expect(meals.getByText('≈ 430–650 kcal')).toBeVisible()
+      await expect(meals.getByText('Breakfast: ricotta, cereal, milk')).toBeVisible()
+      await expect(meals.getByText('Turkey breast', { exact: true })).toBeVisible()
+      await expect(meals.getByText(/Missing quantities for ricotta/)).toBeVisible()
+      await expect(
+        page
+          .locator('.chat-entry.assistant')
+          .filter({ hasText: /Estimated total: ≈ 430–650 kcal/ }),
+      ).toHaveCount(1)
+
+      const mealsSurface = await fetchSurface(page, stack!.origin, 'srf-meals')
+      expect(mealsSurface.state['mealRecords']).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ meal: 'fesa di tacchino' }),
+          expect.objectContaining({ meal: 'ricotta, cereali e latte' }),
+        ]),
+      )
+      await chatInput.fill('Non mostrare più la stima calorie')
+      await page.getByRole('button', { name: 'Send' }).click()
+      await expect(meals.getByText('Today’s calorie estimate')).toHaveCount(0)
+      await expect(meals.getByText('fesa di tacchino', { exact: true }).first()).toBeVisible()
+      await expect(
+        meals.getByText('ricotta, cereali e latte', { exact: true }).first(),
+      ).toBeVisible()
+      await expect(
+        page.locator('.chat-entry.assistant').filter({ hasText: /all meal records are unchanged/ }),
+      ).toHaveCount(1)
+    })
+
     await test.step('progressive composition publishes layout first, fills independently, then falls back (issue 029)', async () => {
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
       await chatInput.fill('show progressive surface demo')
@@ -364,7 +408,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(page.getByRole('button', { name: 'Focus Meals' })).toBeVisible({
         timeout: 30_000,
       })
-      await expectMealLogged(page)
+      await expectMealLogged(page, 2)
       expect((await fetchSurface(page, stack.origin, 'srf-meals')).validity).toMatchObject({
         kind: 'relative-time',
         source: { stateKey: 'mealRecords', occurredAtKey: 'occurredAt' },
@@ -396,7 +440,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(page.getByRole('button', { name: 'Focus Meals' })).toBeVisible({
         timeout: 15_000,
       })
-      await expectMealLogged(page)
+      await expectMealLogged(page, 2)
     })
   } finally {
     await observerContext?.close()
@@ -419,10 +463,10 @@ function surfaceCard(page: Page, title: string) {
  * meals Table both render the bare meal string once patched). The count and
  * local wall-clock label prove the summary and prepended row changed too.
  */
-async function expectMealLogged(page: Page): Promise<void> {
+async function expectMealLogged(page: Page, expectedCount = 1): Promise<void> {
   const meals = surfaceCard(page, 'Meals')
   await expect(meals.getByText('fesa di tacchino', { exact: true }).first()).toBeVisible()
-  await expect(meals.getByText('1', { exact: true })).toBeVisible()
+  await expect(meals.getByText(String(expectedCount), { exact: true })).toBeVisible()
   await expect(meals.getByText(/^\d{2}:\d{2}$/, { exact: true }).first()).toBeVisible()
 }
 

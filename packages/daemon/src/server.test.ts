@@ -446,6 +446,105 @@ describe('production auth boundary', () => {
       },
     })
   })
+
+  it('keeps the exact calorie answer in chat and visibly enriches Meals through the real loop', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-calorie-mock-'))
+    await writeFile(join(dataDir, 'connections.json'), JSON.stringify({ mockEnabled: true }))
+    await writeFile(join(dataDir, 'memory.json'), JSON.stringify({ timezone: 'Europe/Rome' }))
+    const { auth, token } = await readyAuthStore()
+    const { gateway, store } = buildServer({
+      dataDir,
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+      profile: 'local-vps',
+      now: () => new Date('2026-08-22T12:00:00.000Z'),
+    })
+    store.patchState(
+      'srf-meals',
+      [
+        {
+          target: 'state',
+          op: 'replace',
+          path: '/mealRecords',
+          value: [
+            {
+              occurredAt: '2026-08-22T06:00:00.000Z',
+              time: '08:00',
+              meal: 'ricotta, cereali e latte',
+            },
+            { occurredAt: '2026-08-22T11:00:00.000Z', time: '13:00', meal: 'fesa di tacchino' },
+          ],
+        },
+        {
+          target: 'state',
+          op: 'replace',
+          path: '/meals',
+          value: [
+            {
+              occurredAt: '2026-08-22T06:00:00.000Z',
+              time: '08:00',
+              meal: 'ricotta, cereali e latte',
+            },
+            { occurredAt: '2026-08-22T11:00:00.000Z', time: '13:00', meal: 'fesa di tacchino' },
+          ],
+        },
+        { target: 'state', op: 'replace', path: '/lastMeal', value: 'fesa di tacchino' },
+        { target: 'state', op: 'replace', path: '/mealCount', value: 2 },
+      ],
+      { updatedBy: 'user', origin: 'trusted:user' },
+    )
+    const sourceBefore = structuredClone(store.getSurface('srf-meals')!.state['mealRecords'])
+    const eventCountBefore = store.eventLog('spc-health').length
+    const cursorBefore = store.latestSurfaceCursor()
+
+    const socket = new SchedulerFakeSocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: cursorBefore, token })
+    socket.receive({
+      type: 'chat.send',
+      text: 'Quante calorie ho mangiato oggi ?',
+      spaceId: 'spc-health',
+    })
+    await waitForTurnSettled(socket)
+    expect(
+      socket.sent.filter((frame) => frame.type === 'chat.turn-error'),
+      JSON.stringify(socket.sent),
+    ).toEqual([])
+
+    const after = SurfaceSchema.parse(store.getSurface('srf-meals'))
+    expect(after.state['mealRecords']).toEqual(sourceBefore)
+    expect(after.state).toMatchObject({
+      calorieTotal: '≈ 430–650 kcal',
+      calorieBreakdown: [
+        { meal: 'Breakfast: ricotta, cereal, milk', estimate: '≈ 330–500 kcal' },
+        { meal: 'Turkey breast', estimate: '≈ 100–150 kcal' },
+      ],
+    })
+    expect(
+      after.tree.children?.filter((child) => child.id === 'derived-calorie-estimate'),
+      JSON.stringify(store.eventLog('spc-health').slice(eventCountBefore)),
+    ).toHaveLength(1)
+    expect(socket.sent.filter((frame) => frame.type === 'surface.patch')).toHaveLength(2)
+
+    const events = store.eventLog('spc-health').slice(eventCountBefore)
+    expect(events.map((event) => event.type)).toEqual([
+      'turn',
+      'surface.patch_state',
+      'surface.patch_tree',
+      'turn',
+    ])
+    expect(events.at(-1)).toMatchObject({
+      payload: {
+        toolCalls: [
+          { toolName: 'list_surfaces' },
+          { toolName: 'read_surface' },
+          { toolName: 'patch_state' },
+          { toolName: 'patch_tree' },
+        ],
+      },
+    })
+    expect(events.at(-1)?.text).toContain('≈ 430–650 kcal')
+    expect(events.at(-1)?.text).toContain('Meals now shows')
+  })
 })
 
 describe('AC4: switching mock -> real provider is configuration only (issue 023)', () => {
