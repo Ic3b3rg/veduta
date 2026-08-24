@@ -14,6 +14,7 @@ import {
   type ModelConnectionMethod,
   type ScriptedToolCall,
 } from './provider-parity-model-fixture.ts'
+import { ModelRouter, type RuntimeRoutingConfig } from './model-routing.ts'
 import {
   captureProviderDefinitions,
   consistentProviderDefinitions,
@@ -33,6 +34,7 @@ import { Store } from './store.ts'
 import type { Origin } from './taint.ts'
 
 const CONNECTION_ID = 'c0ffee00-0000-4000-8000-000000000077'
+const FALLBACK_CONNECTION_ID = 'c0ffee00-0000-4000-8000-000000000078'
 const FIXED_NOW = new Date('2026-08-24T09:00:00.000Z')
 
 type AutomationTurnKey = 'create' | 'disable' | 'cancel' | 'reject-other-space'
@@ -92,6 +94,14 @@ interface AutomationParityPair {
   }
 }
 
+export interface AutomationHandlerErrorNoReplayOutcome {
+  attemptedConnectionIds: string[]
+  fallbackCalls: number
+  handlerCalls: number
+  toolResult: AutomationParityToolResult
+  dynamicToolSuccess: boolean[]
+}
+
 interface AutomationHarness {
   directories: string[]
   store: Store
@@ -138,6 +148,91 @@ export async function runAutomationParityPair(): Promise<AutomationParityPair> {
       handlerCallIds: byok.handlerCallIds,
     },
     subscription: { ...subscription, transports: subscription.transports },
+  }
+}
+
+export async function runAutomationHandlerErrorNoReplayScenario(): Promise<AutomationHandlerErrorNoReplayOutcome> {
+  const harness = buildHarness()
+  harness.activeTurn.key = 'reject-other-space'
+  const resultText = 'Automation is unavailable in this Space'
+  const transport = scriptedSubscriptionTransport(
+    [
+      {
+        toolName: 'set_automation_enabled',
+        input: { automationId: harness.otherSpaceAutomationId, enabled: false },
+        resultText,
+        success: false,
+      },
+    ],
+    'The other Space Automation was not changed.',
+    'automation-handler-error-no-replay',
+  )
+  const provider = subscriptionProvider({
+    connectionId: CONNECTION_ID,
+    rootDir: parityTempDir(harness.directories, 'veduta-provider-automation-no-replay-codex-'),
+    now: FIXED_NOW,
+    transport,
+  })
+  const attemptedConnectionIds: string[] = []
+  let fallbackCalls = 0
+
+  try {
+    const router = new ModelRouter({
+      config: automationNoReplayRoutingConfig(),
+      now: () => FIXED_NOW,
+      sleep: async () => {},
+    })
+    await router.execute(
+      {
+        purpose: 'chat-turn',
+        origin: 'user',
+        spaceId: AUTOMATION_PARITY_SPACE_ID,
+      },
+      async (model) => {
+        attemptedConnectionIds.push(model.connectionId ?? model.provider)
+        if (model.connectionId === FALLBACK_CONNECTION_ID) {
+          fallbackCalls++
+          return []
+        }
+        return runProviderParityTurn({
+          provider,
+          sessionStore: harness.sessionStore,
+          sessionId: 'provider-automation-handler-error-no-replay',
+          input: 'disable the Automation with the supplied id',
+          model,
+          tools: harness.tools,
+          promptOptions: {
+            origin: AUTOMATION_PARITY_UNTRUSTED_ORIGIN,
+            spaceId: AUTOMATION_PARITY_SPACE_ID,
+            trigger: {
+              kind: 'chat',
+              summary: 'disable an unavailable Automation',
+            },
+          },
+        })
+      },
+    )
+
+    const session = await harness.sessionStore.load('provider-automation-handler-error-no-replay')
+    const message = session.messages.filter((candidate) => candidate.role === 'tool').at(-1)
+    if (!message || message.role !== 'tool') {
+      throw new Error('the no-replay scenario produced no tool result')
+    }
+
+    return {
+      attemptedConnectionIds,
+      fallbackCalls,
+      handlerCalls: harness.handlerObservations.length,
+      toolResult: {
+        toolName: message.toolName ?? '',
+        content: message.content,
+        ...(message.isError === undefined ? {} : { isError: message.isError }),
+      },
+      dynamicToolSuccess: observeSubscriptionTransport(transport).toolResultSuccess,
+    }
+  } finally {
+    transport.close()
+    harness.dispose()
   }
 }
 
@@ -332,6 +427,29 @@ function buildHarness(): AutomationHarness {
       scheduler.stop()
       for (const directory of directories) rmSync(directory, { recursive: true, force: true })
     },
+  }
+}
+
+function automationNoReplayRoutingConfig(): RuntimeRoutingConfig {
+  return {
+    tiers: {
+      triage: [],
+      reasoning: [
+        {
+          provider: 'openai',
+          modelId: 'gpt-5-codex',
+          connectionId: CONNECTION_ID,
+        },
+        {
+          provider: 'openai',
+          modelId: 'gpt-5-codex-fallback',
+          connectionId: FALLBACK_CONNECTION_ID,
+        },
+      ],
+    },
+    providerKeys: {},
+    connectionKeys: {},
+    dailyCapUsd: { triage: 1, reasoning: 5 },
   }
 }
 

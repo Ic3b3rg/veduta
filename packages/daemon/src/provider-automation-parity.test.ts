@@ -4,6 +4,7 @@ import {
   AUTOMATION_PARITY_OTHER_SPACE_ID,
   AUTOMATION_PARITY_SPACE_ID,
   AUTOMATION_PARITY_UNTRUSTED_ORIGIN,
+  runAutomationHandlerErrorNoReplayScenario,
   runAutomationParityPair,
 } from './provider-automation-parity-fixture.ts'
 
@@ -175,6 +176,20 @@ describe('AgentRunner Automation parity across Model connection methods (issues 
       [true],
       [false],
     ])
+  })
+
+  it('returns an ownership error without replaying through another Model connection', async () => {
+    const outcome = await runAutomationHandlerErrorNoReplayScenario()
+
+    expect(outcome.attemptedConnectionIds).toHaveLength(1)
+    expect(outcome.fallbackCalls).toBe(0)
+    expect(outcome.handlerCalls).toBe(1)
+    expect(outcome.toolResult).toMatchObject({
+      toolName: 'set_automation_enabled',
+      content: 'Automation is unavailable in this Space',
+      isError: true,
+    })
+    expect(outcome.dynamicToolSuccess).toEqual([false])
   })
 })
 
