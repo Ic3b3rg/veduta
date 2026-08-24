@@ -185,7 +185,7 @@ describe('piToolParameters', () => {
     }
   })
 
-  it('derives focused Surface parameters with scoped creation and no model-facing Space ids', () => {
+  it('derives focused Surface and Automation parameters with no model-facing Space ids', () => {
     const { tools, dispose } = buildRealRegistry()
     try {
       const parameters = piToolParameters(tools)
@@ -213,6 +213,19 @@ describe('piToolParameters', () => {
       }
       expect(listSurfaceParameters.properties).toEqual({})
       expect(Object.keys(readSurfaceParameters.properties)).toEqual(['surfaceId'])
+
+      const expectedAutomationProperties: Record<string, string[]> = {
+        list_automations: [],
+        arm_timer: ['action', 'condition', 'targetSurfaceId', 'when'],
+        create_job: ['briefing', 'condition', 'cron'],
+        set_automation_enabled: ['automationId', 'enabled'],
+        cancel: ['automationId'],
+      }
+      for (const [name, expected] of Object.entries(expectedAutomationProperties)) {
+        const automationSchema = parameters[name] as { properties: Record<string, unknown> }
+        expect(Object.keys(automationSchema.properties).sort(), name).toEqual(expected)
+        expect(automationSchema.properties['spaceId'], name).toBeUndefined()
+      }
     } finally {
       dispose()
     }

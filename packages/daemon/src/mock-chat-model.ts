@@ -43,32 +43,6 @@ import { zonedParts } from './timezone.ts'
  * tool results. It has no Store reference or fixed Surface id.
  */
 
-/** Historical fallback Space (the pre-issue-37 chat stand-ins used the same
- * default): global chat's `systemPrompt` (chat-loop.ts's `buildContext`) has
- * no Active Space section at all, so the reminder branch below — the one
- * branch whose tool schema requires `spaceId` as a call argument rather than
- * reading it off `ToolContext` — falls back to this Space, exactly like the
- * stand-ins it replaces.
- */
-const DEFAULT_SPACE_ID = 'spc-health'
-
-/**
- * `spaces-engine.ts`'s `assembleContext` renders the turn's active Space as
- * a `# Active Space` section whose first line is `<name> (<slug>)`
- * (`section()`'s heading rule); Space ids are always `spc-<slug>`
- * (`spaces-engine.ts`'s `createSpace`). Parsed straight out of
- * `context.systemPrompt` — pi-ai's `Context` carries no Space identity of
- * its own, only `systemPrompt`/`messages`/`tools` — since that is the only
- * place a Space chat turn's own identity survives into the mock model.
- */
-const ACTIVE_SPACE_RE = /# Active Space\n\n.*\(([^()]+)\)/
-
-/** The turn's active Space id, parsed from the systemPrompt's Active Space section; `DEFAULT_SPACE_ID` for global chat, which has no such section. */
-function activeSpaceId(context: PiChatContext): string {
-  const match = ACTIVE_SPACE_RE.exec(context.systemPrompt ?? '')
-  return match?.[1] ? `spc-${match[1]}` : DEFAULT_SPACE_ID
-}
-
 const MEAL_REQUEST = 'aggiungi ai meals la fesa di tacchino'
 const MEAL_LABEL = 'fesa di tacchino'
 const BREAKFAST_REQUEST = 'aggiungi ai meals la colazione con ricotta, cereali e latte'
@@ -78,6 +52,10 @@ const CALORIE_QUANTITY_FOLLOW_UP = 'La ricotta era 100 g, i cereali 40 g e il la
 const DISMISS_CALORIE_REQUEST = 'Non mostrare più la stima calorie'
 const CALORIE_REGION_ID = 'derived-calorie-estimate'
 const TEMPLATE_SURFACE_REQUEST = 'create Weekly groceries from the Groceries Template'
+const CREATE_DAILY_AUTOMATION_REQUEST = 'Create a daily automation to review my plan at 9am'
+const LIST_AUTOMATIONS_REQUEST = 'List automations here'
+const DISABLE_AUTOMATIONS_REQUEST = 'Disable all automations here'
+const CANCEL_AUTOMATIONS_REQUEST = 'Cancel all automations here'
 const REMINDER_RE = /\bremind me to\s+(.+?)\s+by\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i
 const SEND_RE = /^send to\s+(\S+)\s*:\s*(.+)$/i
 const TRANSFER_RE = /^transfer\s+([0-9]+(?:\.[0-9]+)?)\s+to\s+(\S+)$/i
@@ -144,11 +122,122 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
     if (text === PROGRESSIVE_SURFACE_REQUEST) {
       return respondToProgressiveSurfaceFixture(toolResultsAfter, now(), progressiveDelayMs)
     }
+    if (text === LIST_AUTOMATIONS_REQUEST) return respondToAutomationInventory(toolResultsAfter)
+    if (text === DISABLE_AUTOMATIONS_REQUEST) {
+      return respondToDisableAutomations(toolResultsAfter)
+    }
+    if (text === CANCEL_AUTOMATIONS_REQUEST) return respondToCancelAutomations(toolResultsAfter)
 
     const lastToolResult = toolResultsAfter.at(-1)
     if (lastToolResult) return closingMessage(lastToolResult)
-    return respondToUserText(text, now(), activeSpaceId(context))
+    return respondToUserText(text, now())
   }
+}
+
+interface AutomationSummary {
+  id: number
+  kind: 'timer' | 'job'
+  description: string
+  enabled: boolean
+  status: 'armed' | 'completed'
+}
+
+function respondToAutomationInventory(results: PiToolResultMessage[]): PiAssistantMessage {
+  const listResult = results.find((result) => result.toolName === 'list_automations')
+  if (!listResult) {
+    return toolCallMessage('list_automations', {}, 'Reading every Automation in this Space.')
+  }
+  const automations = automationSummaries(toolResultText(listResult))
+  if (!automations) return piFauxAssistantMessage('The Automation inventory could not be read.')
+  if (automations.length === 0) return piFauxAssistantMessage('This Space has no Automations.')
+  return piFauxAssistantMessage(
+    automations
+      .map(
+        (automation) =>
+          `${automation.id}: ${automation.description} — ${automation.enabled ? 'enabled' : 'disabled'} (${automation.kind}, ${automation.status})`,
+      )
+      .join('\n'),
+  )
+}
+
+function respondToDisableAutomations(results: PiToolResultMessage[]): PiAssistantMessage {
+  const listResult = results.find((result) => result.toolName === 'list_automations')
+  if (!listResult) {
+    return toolCallMessage(
+      'list_automations',
+      {},
+      'Finding the complete enabled Automation set in this Space.',
+    )
+  }
+  const automations = automationSummaries(toolResultText(listResult))
+  if (!automations) return piFauxAssistantMessage('The Automation inventory could not be read.')
+  const enabled = automations.filter((automation) => automation.enabled)
+  const mutations = results.filter((result) => result.toolName === 'set_automation_enabled')
+  const failed = mutations.find((result) => result.isError)
+  if (failed) {
+    return piFauxAssistantMessage(
+      `The enabled state was not fully changed: ${toolResultText(failed)}`,
+    )
+  }
+  const next = enabled[mutations.length]
+  if (next) {
+    return toolCallMessage(
+      'set_automation_enabled',
+      { automationId: next.id, enabled: false },
+      `Disabling “${next.description}”.`,
+    )
+  }
+  return piFauxAssistantMessage(
+    `Disabled ${enabled.length} ${enabled.length === 1 ? 'Automation' : 'Automations'} in this Space.`,
+  )
+}
+
+function respondToCancelAutomations(results: PiToolResultMessage[]): PiAssistantMessage {
+  const listResult = results.find((result) => result.toolName === 'list_automations')
+  if (!listResult) {
+    return toolCallMessage(
+      'list_automations',
+      {},
+      'Finding the complete Automation set in this Space.',
+    )
+  }
+  const automations = automationSummaries(toolResultText(listResult))
+  if (!automations) return piFauxAssistantMessage('The Automation inventory could not be read.')
+  const cancellations = results.filter((result) => result.toolName === 'cancel')
+  const failed = cancellations.find((result) => result.isError)
+  if (failed) {
+    return piFauxAssistantMessage(
+      `The Automations were not fully cancelled: ${toolResultText(failed)}`,
+    )
+  }
+  const next = automations[cancellations.length]
+  if (next) {
+    return toolCallMessage('cancel', { automationId: next.id }, `Cancelling “${next.description}”.`)
+  }
+  return piFauxAssistantMessage(
+    `Cancelled ${automations.length} ${automations.length === 1 ? 'Automation' : 'Automations'} in this Space.`,
+  )
+}
+
+function automationSummaries(content: string): AutomationSummary[] | undefined {
+  const parsed = parseJson(content)
+  if (!Array.isArray(parsed)) return undefined
+  const summaries: AutomationSummary[] = []
+  for (const candidate of parsed) {
+    if (!isRecord(candidate)) return undefined
+    const { id, kind, description, enabled, status } = candidate
+    if (
+      typeof id !== 'number' ||
+      (kind !== 'timer' && kind !== 'job') ||
+      typeof description !== 'string' ||
+      typeof enabled !== 'boolean' ||
+      (status !== 'armed' && status !== 'completed')
+    ) {
+      return undefined
+    }
+    summaries.push({ id, kind, description, enabled, status })
+  }
+  return summaries
 }
 
 function respondToCalorieDismissal(results: PiToolResultMessage[]): PiAssistantMessage {
@@ -497,13 +586,20 @@ function templateLocation(content: string): { templateId: string; spaceId: strin
   return templateId === undefined || spaceId === undefined ? undefined : { templateId, spaceId }
 }
 
-function respondToUserText(text: string, at: Date, spaceId: string): PiAssistantMessage {
+function respondToUserText(text: string, at: Date): PiAssistantMessage {
+  if (text === CREATE_DAILY_AUTOMATION_REQUEST) {
+    return toolCallMessage(
+      'create_job',
+      { cron: '0 9 * * *', briefing: 'Review my plan' },
+      'Creating a daily Automation to review your plan at 09:00 UTC.',
+    )
+  }
+
   const reminder = reminderFromText(text, at)
   if (reminder) {
     return toolCallMessage(
       'arm_timer',
       {
-        spaceId,
         when: reminder.fireAtIso,
         condition: { kind: 'event-logged', textIncludes: reminder.conditionNeedle },
         action: reminder.action,

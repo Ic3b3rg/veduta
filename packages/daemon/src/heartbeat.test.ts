@@ -379,7 +379,7 @@ describe('reconcileJobs', () => {
 
     // A user toggles one job off; a second reconcile must not re-enable it or duplicate it.
     const firstJob = jobs[0]
-    if (firstJob) scheduler.setEnabled(firstJob.id, false, 'tool')
+    if (firstJob) scheduler.setEnabled(SYSTEM_SPACE_ID, firstJob.id, false, 'tool')
     heartbeat.reconcileJobs()
 
     const afterSecondReconcile = scheduler

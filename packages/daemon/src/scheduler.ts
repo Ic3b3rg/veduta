@@ -82,7 +82,7 @@ const CATCH_UP_LIMIT_MS = 24 * 60 * 60 * 1000
 const MAX_SLEEP_MS = 15 * 60 * 1000
 const MIN_SLEEP_MS = 1000
 
-const ArmTimerSchema = z.object({
+export const ArmTimerSchema = z.object({
   spaceId: z.string().min(1),
   when: z.string().datetime({ offset: true }),
   condition: ConditionSchema.optional(),
@@ -91,16 +91,25 @@ const ArmTimerSchema = z.object({
   targetSurfaceId: z.string().min(1).optional(),
 })
 
-const CreateJobSchema = z.object({
+export const CreateJobSchema = z.object({
   spaceId: z.string().min(1),
   cron: z.string().trim().min(1),
   briefing: z.string().trim().min(1),
   condition: ConditionSchema.optional(),
 })
 
-const CancelSchema = z.object({
+export const CancelAutomationSchema = z.object({
+  spaceId: z.string().min(1),
   automationId: z.number().int().positive(),
 })
+
+export const SetAutomationEnabledSchema = z.object({
+  spaceId: z.string().min(1),
+  automationId: z.number().int().positive(),
+  enabled: z.boolean(),
+})
+
+const AUTOMATION_UNAVAILABLE = 'Automation is unavailable in this Space'
 
 export class Scheduler {
   private readonly db: DatabaseSync
@@ -278,9 +287,9 @@ export class Scheduler {
     this.handlers.set(name, fn)
   }
 
-  cancel(automationId: number, origin?: Origin): Automation {
-    const automation = this.requireAutomation(automationId)
-    if (automation.status === 'cancelled') return automation
+  cancel(spaceId: string, automationId: number, origin?: Origin): Automation {
+    const automation = this.requireAutomationInSpace(spaceId, automationId)
+    const mutationOrigin = effectiveOrigin([automation.origin, origin], origin ?? 'trusted:system')
     this.db
       .prepare(`update automations set status = 'cancelled', next_run_at = null where id = ?`)
       .run(automationId)
@@ -291,15 +300,25 @@ export class Scheduler {
       { automationId },
       // The event embeds the automation's description: an untrusted-born
       // automation keeps its mark on every event that carries its text.
-      effectiveOrigin([automation.origin, origin], origin ?? 'trusted:system'),
+      mutationOrigin,
     )
-    this.refreshSurface(automation.spaceId)
+    this.refreshSurface(automation.spaceId, mutationOrigin)
     return this.requireAutomation(automationId)
   }
 
-  setEnabled(automationId: number, enabled: boolean, source: 'surface' | 'tool'): Automation {
-    const automation = this.requireAutomation(automationId)
+  setEnabled(
+    spaceId: string,
+    automationId: number,
+    enabled: boolean,
+    source: 'surface' | 'tool',
+    origin?: Origin,
+  ): Automation {
+    const automation = this.requireAutomationInSpace(spaceId, automationId)
     if (automation.enabled === enabled) return automation
+    const mutationOrigin = effectiveOrigin(
+      [automation.origin, origin],
+      source === 'surface' ? 'trusted:user' : (origin ?? 'trusted:system'),
+    )
     this.db
       .prepare('update automations set enabled = ? where id = ?')
       .run(enabled ? 1 : 0, automationId)
@@ -310,23 +329,19 @@ export class Scheduler {
       { automationId, enabled },
       // Same rule as cancel(): the description's provenance wins over the
       // caller's — a tainted description never re-enters context as trusted.
-      effectiveOrigin(
-        [automation.origin],
-        source === 'surface' ? 'trusted:user' : 'trusted:system',
-      ),
+      mutationOrigin,
     )
     // A Surface-originated toggle already mutated the Surface state on the
     // fast path; re-projecting would only duplicate events.
-    if (source === 'tool') this.refreshSurface(automation.spaceId)
+    if (source === 'tool') this.refreshSurface(automation.spaceId, mutationOrigin)
     return this.requireAutomation(automationId)
   }
 
-  listAutomations(spaceId?: string): Automation[] {
-    const rows =
-      spaceId === undefined
-        ? this.db.prepare('select * from automations order by id').all()
-        : this.db.prepare('select * from automations where space_id = ? order by id').all(spaceId)
-    return rows.map(automationFromRow)
+  listAutomations(spaceId: string): Automation[] {
+    return this.db
+      .prepare('select * from automations where space_id = ? order by id')
+      .all(spaceId)
+      .map(automationFromRow)
   }
 
   /**
@@ -383,14 +398,39 @@ export class Scheduler {
         },
       }),
       defineTool({
-        name: 'cancel',
+        name: 'set_automation_enabled',
         description:
-          'Cancel an Automation (timer or job) by id. It stops firing and leaves the Space Surface.',
-        schema: CancelSchema,
+          'Set an Automation enabled or disabled using an explicit boolean. Repeating the same desired state is a no-op.',
+        schema: SetAutomationEnabledSchema,
         level: 'L0',
         egressDomains: [],
         handler: (input, context) => {
-          const automation = this.cancel(input.automationId, toolWriteOrigin(context.origin))
+          const automation = this.setEnabled(
+            input.spaceId,
+            input.automationId,
+            input.enabled,
+            'tool',
+            toolWriteOrigin(context.origin),
+          )
+          return {
+            content: `automation ${automation.id} is ${automation.enabled ? 'enabled' : 'disabled'}`,
+            details: { automation },
+          }
+        },
+      }),
+      defineTool({
+        name: 'cancel',
+        description:
+          'Cancel an Automation (timer or job) by id. It stops firing and leaves the Space Surface.',
+        schema: CancelAutomationSchema,
+        level: 'L0',
+        egressDomains: [],
+        handler: (input, context) => {
+          const automation = this.cancel(
+            input.spaceId,
+            input.automationId,
+            toolWriteOrigin(context.origin),
+          )
           return { content: `cancelled automation ${automation.id}`, details: { automation } }
         },
       }),
@@ -648,7 +688,7 @@ export class Scheduler {
   }
 
   /** Project SQLite (the source of truth) onto the Space's Automations Surface. */
-  private refreshSurface(spaceId: string): void {
+  private refreshSurface(spaceId: string, mutationOrigin?: Origin): void {
     const space = this.store.getSpace(spaceId)
     if (!space) return
     const listed = this.listAutomations(spaceId).filter(
@@ -659,7 +699,7 @@ export class Scheduler {
     // them was born from a tainted turn, the projection's Space events carry
     // that mark too (issue #13 — the mark propagates to everything derived).
     const origin = effectiveOrigin(
-      listed.map((automation) => automation.origin),
+      [...listed.map((automation) => automation.origin), mutationOrigin],
       'trusted:system',
     )
     const surfaceId = automationsSurfaceId(space.slug)
@@ -731,7 +771,7 @@ export class Scheduler {
       queueMicrotask(() => this.refreshSurface(automation.spaceId))
       return
     }
-    this.setEnabled(automationId, notice.value, 'surface')
+    this.setEnabled(automation.spaceId, automationId, notice.value, 'surface')
   }
 
   private schedule(): void {
@@ -799,6 +839,14 @@ export class Scheduler {
   private requireAutomation(id: number): Automation {
     const automation = this.getAutomation(id)
     if (!automation) throw new Error(`unknown automation: ${id}`)
+    return automation
+  }
+
+  private requireAutomationInSpace(spaceId: string, id: number): Automation {
+    const automation = this.getAutomation(id)
+    if (!automation || automation.spaceId !== spaceId || automation.status === 'cancelled') {
+      throw new Error(AUTOMATION_UNAVAILABLE)
+    }
     return automation
   }
 

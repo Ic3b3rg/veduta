@@ -175,7 +175,7 @@ describe('reconcileManagedJobs', () => {
     expect(job).toBeDefined()
     if (!job) throw new Error('expected a job')
 
-    scheduler.setEnabled(job.id, false, 'tool')
+    scheduler.setEnabled(HEALTH, job.id, false, 'tool')
     expect(scheduler.listAutomations(HEALTH).find((j) => j.id === job.id)?.enabled).toBe(false)
 
     reconcileManagedJobs({ scheduler, spaceId: HEALTH, handler: HANDLER, enabled: true, desired })

@@ -54,7 +54,7 @@ export function reconcileManagedJobs(spec: ManagedJobSpec): void {
     // Disabled: no armed job of this family survives, so the scheduler can
     // never fire it.
     for (const job of jobs) {
-      if (job.status !== 'cancelled') scheduler.cancel(job.id, 'trusted:system')
+      if (job.status !== 'cancelled') scheduler.cancel(spaceId, job.id, 'trusted:system')
     }
     return
   }
@@ -65,7 +65,7 @@ export function reconcileManagedJobs(spec: ManagedJobSpec): void {
   // Cancel every armed job whose (cron, timezone) key is no longer desired.
   for (const job of armedJobs) {
     if (job.cron === undefined || !desiredKeys.has(jobKey(job.cron, job.timezone))) {
-      scheduler.cancel(job.id, 'trusted:system')
+      scheduler.cancel(spaceId, job.id, 'trusted:system')
     }
   }
 
@@ -78,7 +78,7 @@ export function reconcileManagedJobs(spec: ManagedJobSpec): void {
     const key = jobKey(job.cron, job.timezone)
     if (!desiredKeys.has(key)) continue
     if (survivorKeys.has(key)) {
-      scheduler.cancel(job.id, 'trusted:system')
+      scheduler.cancel(spaceId, job.id, 'trusted:system')
     } else {
       survivorKeys.add(key)
     }

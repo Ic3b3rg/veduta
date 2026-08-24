@@ -77,7 +77,7 @@ describe('Automations Surface projection', () => {
       when: '2026-07-08T21:00:00.000Z',
       action: 'Log my weight',
     })
-    scheduler.cancel(timer.id)
+    scheduler.cancel(HEALTH, timer.id)
     const surface = store.getSurface(SURFACE)
     expect(surface?.state).toEqual({})
     expect(surface?.tree.children?.[1]?.children?.[0]?.type).toBe('Caption')
@@ -267,9 +267,9 @@ describe('acceptance: disabled automations', () => {
       when: '2026-07-08T21:00:00.000Z',
       action: 'Log my weight',
     })
-    scheduler.setEnabled(timer.id, false, 'tool')
+    scheduler.setEnabled(HEALTH, timer.id, false, 'tool')
     expect(store.getSurface(SURFACE)?.state['job-1']).toBe(false)
-    scheduler.setEnabled(timer.id, true, 'tool')
+    scheduler.setEnabled(HEALTH, timer.id, true, 'tool')
     expect(store.getSurface(SURFACE)?.state['job-1']).toBe(true)
   })
 })
@@ -413,10 +413,15 @@ describe('recurring jobs and judgment conditions', () => {
 })
 
 describe('agent tools', () => {
-  it('exposes arm_timer, create_job and cancel with working handlers', async () => {
+  it('exposes scoped create, enabled-state and cancel tools with working handlers', async () => {
     const scheduler = createScheduler()
     const tools = Object.fromEntries(scheduler.tools().map((tool) => [tool.name, tool]))
-    expect(Object.keys(tools).sort()).toEqual(['arm_timer', 'cancel', 'create_job'])
+    expect(Object.keys(tools).sort()).toEqual([
+      'arm_timer',
+      'cancel',
+      'create_job',
+      'set_automation_enabled',
+    ])
 
     const armed = await tools['arm_timer']!.handler(
       {
@@ -428,18 +433,24 @@ describe('agent tools', () => {
     )
     expect(armed.content).toContain('armed timer')
 
-    const cancelled = await tools['cancel']!.handler(
-      { automationId: 1 },
+    const disabled = await tools['set_automation_enabled']!.handler(
+      { spaceId: HEALTH, automationId: 1, enabled: false },
       toolContext('call-2', 'trusted:user'),
+    )
+    expect(disabled.content).toContain('automation 1 is disabled')
+
+    const cancelled = await tools['cancel']!.handler(
+      { spaceId: HEALTH, automationId: 1 },
+      toolContext('call-3', 'trusted:user'),
     )
     expect(cancelled.content).toContain('cancelled automation 1')
     expect(scheduler.listAutomations(HEALTH)[0]?.status).toBe('cancelled')
   })
 
-  it('declares arm_timer, create_job and cancel L0 (daemon-internal, no outbound effect)', () => {
+  it('declares every Scheduler tool L0 (daemon-internal, no outbound effect)', () => {
     const scheduler = createScheduler()
     const tools = scheduler.tools()
-    expect(tools.map((tool) => tool.level)).toEqual(['L0', 'L0', 'L0'])
+    expect(tools.map((tool) => tool.level)).toEqual(['L0', 'L0', 'L0', 'L0'])
   })
 
   it('stamps a tainted turn origin onto the automation record and its arm/fire events, re-tainting future context', async () => {
@@ -485,7 +496,10 @@ describe('agent tools', () => {
 
     // A later trusted turn cancels it: the cancel event still embeds the
     // tainted description, so it must keep the untrusted mark.
-    await tools['cancel']!.handler({ automationId }, toolContext('call-trusted', 'trusted:user'))
+    await tools['cancel']!.handler(
+      { spaceId: HEALTH, automationId },
+      toolContext('call-trusted', 'trusted:user'),
+    )
     expect(
       store
         .eventLog(HEALTH)

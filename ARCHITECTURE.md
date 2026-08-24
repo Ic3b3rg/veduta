@@ -113,8 +113,9 @@ Automation, Worker, and final Connection parity remain tracked by
 
 The agent's main tools: focused-Space Surface discovery and authoring (`list_surfaces`,
 `read_surface`, Space-bound `create_surface`, `patch_state`, `patch_tree`), memory (`write_fact`
-with the AUDN Curator, `search_log`), scheduler (`arm_timer`, `create_job`), workers
-(`spawn_worker`), typed external actions, and a Veduta-owned general execution tool. The latter may
+with the AUDN Curator, `search_log`), Space-bound Automation management (`list_automations`,
+`arm_timer`, `create_job`, `set_automation_enabled`, `cancel`), workers (`spawn_worker`), typed
+external actions, and a Veduta-owned general execution tool. The latter may
 run external CLIs, APIs, and setup commands through `AgentRunner`; it is distinct from—and does not
 enable—provider-native command execution. Surface readers are L0 and report stored content origins,
 so reading untrusted Surface content grows the live turn taint before any later action.
@@ -184,6 +185,12 @@ LLM polling every 30 minutes is beaten on cost _and accuracy_ ([ref. 05](docs/re
 2. **One-shot timers**: every learned deadline/habit arms a timer that checks a condition at the deadline. They replace the periodic "is anything stale?". Visible as Automations.
 3. **Non-LLM pre-filters**: rules, embedding similarity, optionally a lightweight classifier. Milliseconds.
 4. **LLM cascade on the residue** (triage → reasoning) + **safety-net Heartbeat 1-2x/day** for fuzzy conditions.
+
+A focused turn receives a complete Automation inventory and Space-bound create, enabled-state,
+and cancellation tools. Their model-facing schemas never expose the internal Space id; raw
+Scheduler operations retain explicit Space scope. Unknown, cancelled, and other-Space Automation
+ids share one non-disclosing refusal, while every successful mutation refreshes the owning
+Automations Surface and appends its existing Space Event.
 
 Notification discipline: silent update → badge on the Space → push (the bar: "would a good human assistant interrupt?"), per-Space interruption budgets, freshness metadata on every Surface. Non-urgent notifications queue up for idle moments. Meaningful recurring dashboard outcomes instead update their linked Surface and create a durable In-app notification inside the owning Space; they never manufacture global chat, badge, or browser-push traffic ([ADR-0021](docs/adr/0021-space-owned-automation-outcomes.md)).
 

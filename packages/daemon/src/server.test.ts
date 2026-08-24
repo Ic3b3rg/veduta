@@ -1000,6 +1000,76 @@ describe('scheduler wiring (issue #11)', () => {
 
     await app.close() // onClose stops the scheduler loop
   })
+
+  it('creates, lists, disables, and cancels Personal Automations through focused model-visible inputs', async () => {
+    const { app, gateway, scheduler, store } = buildServer({
+      now: () => new Date('2026-08-24T09:00:00.000Z'),
+    })
+    const personal = store.spacesEngine.createSpace({ name: 'Personal' })
+
+    const send = async (text: string): Promise<SchedulerFakeSocket> => {
+      const socket = new SchedulerFakeSocket()
+      gateway.connect(socket)
+      socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+      socket.receive({ type: 'chat.send', text, spaceId: personal.id })
+      await waitForTurnSettled(socket)
+      return socket
+    }
+
+    await send('Create a daily automation to review my plan at 9am')
+    const created = scheduler.listAutomations(personal.id)
+    expect(created).toEqual([
+      expect.objectContaining({
+        kind: 'job',
+        description: 'Review my plan',
+        enabled: true,
+        status: 'armed',
+      }),
+    ])
+    const automationId = created[0]!.id
+    const surfaceId = 'srf-personal-automations'
+    expect(store.getSurface(surfaceId)?.state[`job-${automationId}`]).toBe(true)
+
+    const listed = await send('List automations here')
+    expect(
+      listed.sent.find((frame) => frame.type === 'chat.turn-end' && frame.spaceId === personal.id),
+    ).toMatchObject({
+      message: { text: expect.stringContaining('Review my plan — enabled') },
+    })
+
+    await send('Disable all automations here')
+    expect(scheduler.listAutomations(personal.id)[0]?.enabled).toBe(false)
+    expect(store.getSurface(surfaceId)?.state[`job-${automationId}`]).toBe(false)
+    expect(
+      store.eventLog(personal.id).filter((event) => event.type === 'automation.toggle'),
+    ).toHaveLength(1)
+
+    await send('Cancel all automations here')
+    expect(scheduler.listAutomations(personal.id)[0]?.status).toBe('cancelled')
+    expect(store.getSurface(surfaceId)?.state).toEqual({})
+    expect(
+      store.eventLog(personal.id).filter((event) => event.type === 'automation.cancel'),
+    ).toHaveLength(1)
+    expect(
+      store
+        .eventLog(personal.id)
+        .filter((event) => event.type === 'turn' && event.payload?.['role'] === 'assistant')
+        .map((event) => event.payload?.['toolCalls']),
+    ).toEqual([
+      [{ toolCallId: expect.any(String), toolName: 'create_job' }],
+      [{ toolCallId: expect.any(String), toolName: 'list_automations' }],
+      [
+        { toolCallId: expect.any(String), toolName: 'list_automations' },
+        { toolCallId: expect.any(String), toolName: 'set_automation_enabled' },
+      ],
+      [
+        { toolCallId: expect.any(String), toolName: 'list_automations' },
+        { toolCallId: expect.any(String), toolName: 'cancel' },
+      ],
+    ])
+
+    await app.close()
+  })
 })
 
 describe('worker wiring (issue #17)', () => {

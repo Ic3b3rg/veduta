@@ -15,6 +15,7 @@ import { Scheduler } from './scheduler.ts'
 import { createSpawnWorkerTool } from './spawn-worker-tool.ts'
 import { Store } from './store.ts'
 import { TemplateEngine } from './template-engine.ts'
+import { piToolParameters } from './tool-parameters.ts'
 import type { ApprovalCardPort } from './trust-contracts.ts'
 import { TrustLayer } from './trust-layer.ts'
 import { WorkerPool } from './worker.ts'
@@ -136,8 +137,10 @@ const EXPECTED_SPACE_TOOL_NAMES = [
   'list_templates',
   'create_surface_from_template',
   'pin_surface',
+  'list_automations',
   'arm_timer',
   'create_job',
+  'set_automation_enabled',
   'cancel',
   'spawn_worker',
 ].sort()
@@ -191,6 +194,29 @@ describe('chatToolRegistry', () => {
     try {
       const names = chatToolRegistry(deps)(ACTIVE_SPACE_ID).map((tool) => tool.name)
       expect(new Set(names).size).toBe(names.length)
+    } finally {
+      dispose()
+    }
+  })
+
+  it('offers only Space-bound Automation schemas to a focused turn', () => {
+    const { deps, dispose } = buildDeps()
+    try {
+      const tools = chatToolRegistry(deps)(ACTIVE_SPACE_ID)
+      const parameters = piToolParameters(tools)
+      const expectedProperties: Record<string, string[]> = {
+        list_automations: [],
+        arm_timer: ['action', 'condition', 'targetSurfaceId', 'when'],
+        create_job: ['briefing', 'condition', 'cron'],
+        set_automation_enabled: ['automationId', 'enabled'],
+        cancel: ['automationId'],
+      }
+
+      for (const [name, fields] of Object.entries(expectedProperties)) {
+        const schema = parameters[name] as { properties: Record<string, unknown> }
+        expect(Object.keys(schema.properties).sort(), name).toEqual(fields)
+        expect(schema.properties['spaceId'], name).toBeUndefined()
+      }
     } finally {
       dispose()
     }

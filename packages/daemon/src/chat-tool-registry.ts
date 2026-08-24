@@ -1,4 +1,5 @@
 import type { ToolDef } from './agent-runner.ts'
+import { createFocusedAutomationTools } from './focused-automation-tools.ts'
 import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
 import type { MemoryRetrieval } from './memory-retrieval.ts'
 import { createMemoryTools } from './memory-tools.ts'
@@ -25,7 +26,7 @@ export interface ChatToolRegistryDeps {
  * every Space chat turn gets the trust-wrapped outbound tools, Surface tools
  * (`create_surface` gated behind the Template-reuse justification check),
  * memory tools (`search_memory` included since a `MemoryRetrieval` is always
- * supplied), Template-reuse tools, scheduler tools, and `spawn_worker`. The
+ * supplied), Template-reuse tools, Space-bound Automation tools, and `spawn_worker`. The
  * global chat (no active Space) gets none of them — issue #37 deliberately
  * scopes it to conversation only, since there is no Space to read or write.
  *
@@ -52,7 +53,7 @@ export function chatToolRegistry(
         retrieval: deps.memoryRetrieval,
       }),
       ...templateTools(deps.templateEngine, { activeSpaceId: spaceId }),
-      ...deps.scheduler.tools(),
+      ...createFocusedAutomationTools({ scheduler: deps.scheduler, spaceId }),
       deps.spawnWorkerTool,
     ]
   }
