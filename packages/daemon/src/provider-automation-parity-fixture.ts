@@ -1,5 +1,6 @@
 import { rmSync } from 'node:fs'
 import { SurfaceSchema, type Surface } from '@veduta/protocol'
+import type { AgentEvent, ToolDef } from './agent-runner.ts'
 import type { FakeCodexTransport } from './codex-app-server-fake.ts'
 import { createFocusedAutomationTools } from './focused-automation-tools.ts'
 import { PiJsonlSessionStore } from './pi-agent-runner.ts'
@@ -56,16 +57,28 @@ export interface AutomationParityOutcome {
   otherSpaceAutomations: Automation[]
   automationsSurface: Surface
   eventLog: unknown[]
+  handlerExecution: {
+    total: number
+    distinctCallIds: number
+    maxCallsPerId: number
+    allContextHashesValid: boolean
+    byTool: Record<string, number>
+  }
 }
 
 interface AutomationParityRun {
   outcome: AutomationParityOutcome
   toolResultTexts: string[]
+  acceptedCallIds: string[]
+  handlerCallIds: string[]
   transport?: SubscriptionTransportObservation
 }
 
 interface AutomationParityPair {
-  byok: Pick<AutomationParityRun, 'outcome' | 'toolResultTexts'>
+  byok: Pick<
+    AutomationParityRun,
+    'outcome' | 'toolResultTexts' | 'acceptedCallIds' | 'handlerCallIds'
+  >
   subscription: AutomationParityRun & {
     transport: NonNullable<AutomationParityRun['transport']>
   }
@@ -76,9 +89,17 @@ interface AutomationHarness {
   store: Store
   scheduler: Scheduler
   sessionStore: PiJsonlSessionStore
+  tools: ToolDef[]
   focusedAutomationId: number
   eventStart: number
+  handlerObservations: HandlerObservation[]
   dispose(): void
+}
+
+interface HandlerObservation {
+  toolName: string
+  toolCallId: string
+  contextHash: string
 }
 
 export async function runAutomationParityPair(): Promise<AutomationParityPair> {
@@ -89,7 +110,12 @@ export async function runAutomationParityPair(): Promise<AutomationParityPair> {
   )
   if (!subscription.transport) throw new Error('subscription scenario produced no transport data')
   return {
-    byok: { outcome: byok.outcome, toolResultTexts: byok.toolResultTexts },
+    byok: {
+      outcome: byok.outcome,
+      toolResultTexts: byok.toolResultTexts,
+      acceptedCallIds: byok.acceptedCallIds,
+      handlerCallIds: byok.handlerCallIds,
+    },
     subscription: { ...subscription, transport: subscription.transport },
   }
 }
@@ -99,10 +125,6 @@ async function runAutomationParityScenario(
   expectedResultTexts: string[] = [],
 ): Promise<AutomationParityRun> {
   const harness = buildHarness()
-  const tools = createFocusedAutomationTools({
-    scheduler: harness.scheduler,
-    spaceId: AUTOMATION_PARITY_SPACE_ID,
-  })
   const scriptedCalls = callsWithResultTexts(
     method,
     expectedResultTexts,
@@ -135,7 +157,7 @@ async function runAutomationParityScenario(
       sessionId: 'provider-automation-parity',
       input: 'inspect and manage every Automation in this Space',
       model: modelForConnectionMethod(method, CONNECTION_ID),
-      tools,
+      tools: harness.tools,
       promptOptions: {
         origin: AUTOMATION_PARITY_UNTRUSTED_ORIGIN,
         spaceId: AUTOMATION_PARITY_SPACE_ID,
@@ -177,8 +199,11 @@ async function runAutomationParityScenario(
           .eventLog(AUTOMATION_PARITY_SPACE_ID)
           .slice(harness.eventStart)
           .map(normalizeSpaceEvent),
+        handlerExecution: handlerExecution(harness.handlerObservations),
       },
       toolResultTexts,
+      acceptedCallIds: acceptedToolCallIds(events),
+      handlerCallIds: harness.handlerObservations.map((observation) => observation.toolCallId),
       ...(transport === undefined ? {} : { transport: observeSubscriptionTransport(transport) }),
     }
     return result
@@ -207,6 +232,14 @@ function buildHarness(): AutomationHarness {
     when: '2026-08-24T20:00:00.000Z',
     action: 'Existing focused reminder',
   })
+  const handlerObservations: HandlerObservation[] = []
+  const tools = trackHandlerCalls(
+    createFocusedAutomationTools({
+      scheduler,
+      spaceId: AUTOMATION_PARITY_SPACE_ID,
+    }),
+    handlerObservations,
+  )
 
   return {
     directories,
@@ -216,12 +249,52 @@ function buildHarness(): AutomationHarness {
       cwd: parityTempDir(directories, 'veduta-provider-automation-cwd-'),
       sessionsRoot: parityTempDir(directories, 'veduta-provider-automation-sessions-'),
     }),
+    tools,
     focusedAutomationId: focused.id,
     eventStart: store.eventLog(AUTOMATION_PARITY_SPACE_ID).length,
+    handlerObservations,
     dispose() {
       scheduler.stop()
       for (const directory of directories) rmSync(directory, { recursive: true, force: true })
     },
+  }
+}
+
+function trackHandlerCalls(tools: ToolDef[], observations: HandlerObservation[]): ToolDef[] {
+  return tools.map((tool) => ({
+    ...tool,
+    async handler(input, context) {
+      observations.push({
+        toolName: tool.name,
+        toolCallId: context.toolCallId,
+        contextHash: context.contextHash,
+      })
+      return tool.handler(input, context)
+    },
+  }))
+}
+
+function acceptedToolCallIds(events: AgentEvent[]): string[] {
+  return events.flatMap((event) => (event.type === 'tool-start' ? [event.toolCallId] : []))
+}
+
+function handlerExecution(
+  observations: HandlerObservation[],
+): AutomationParityOutcome['handlerExecution'] {
+  const callsPerId = new Map<string, number>()
+  const byTool: Record<string, number> = {}
+  for (const observation of observations) {
+    callsPerId.set(observation.toolCallId, (callsPerId.get(observation.toolCallId) ?? 0) + 1)
+    byTool[observation.toolName] = (byTool[observation.toolName] ?? 0) + 1
+  }
+  return {
+    total: observations.length,
+    distinctCallIds: callsPerId.size,
+    maxCallsPerId: Math.max(0, ...callsPerId.values()),
+    allContextHashesValid: observations.every((observation) =>
+      /^[0-9a-f]{64}$/.test(observation.contextHash),
+    ),
+    byTool,
   }
 }
 

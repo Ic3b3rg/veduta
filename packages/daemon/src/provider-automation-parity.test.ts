@@ -47,6 +47,24 @@ describe('AgentRunner Automation parity across Model connection methods (issues 
     ).toEqual(['automationId', 'enabled'])
 
     expect(outcome.toolResults.map((result) => result.toolName)).toEqual(EXPECTED_TOOL_CHAIN)
+    expect(outcome.handlerExecution).toEqual({
+      total: 5,
+      distinctCallIds: 5,
+      maxCallsPerId: 1,
+      allContextHashesValid: true,
+      byTool: {
+        list_automations: 1,
+        arm_timer: 1,
+        create_job: 1,
+        set_automation_enabled: 1,
+        cancel: 1,
+      },
+    })
+    for (const run of [byok, subscription]) {
+      expect(run.handlerCallIds).toEqual(run.acceptedCallIds)
+      expect(new Set(run.acceptedCallIds).size).toBe(run.acceptedCallIds.length)
+    }
+    expect(subscription.acceptedCallIds).toEqual(['call-1', 'call-2', 'call-3', 'call-4', 'call-5'])
     expect(outcome.toolResults[0]?.content).toContain('Existing focused reminder')
     expect(outcome.toolResults[0]?.content).not.toContain('Other Space reminder')
 
