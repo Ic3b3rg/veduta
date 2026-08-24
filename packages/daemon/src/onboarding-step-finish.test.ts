@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { saveConnectionsConfig } from './connections-config.ts'
+import { primaryRoutableMethodsFixture } from './model-connection-test-support.ts'
 import { saveRoutingConfig, type SecretResolver } from './model-routing.ts'
 import { loadOnboardingConfig, saveOnboardingConfig } from './onboarding-config.ts'
 import { OnboardingStepError } from './onboarding-status.ts'
@@ -21,12 +22,7 @@ function freshRoot(): string {
 }
 
 const noSecrets: SecretResolver = { resolve: () => undefined }
-const primaryRoutableMethods = new Set([
-  'anthropic-api-key',
-  'openai-api-key',
-  'openrouter-api-key',
-  'chatgpt-codex',
-] as const)
+const primaryRoutableMethods = primaryRoutableMethodsFixture
 
 type FinishDepsInput = Omit<FinishDeps, 'primaryRoutableMethods'>
 

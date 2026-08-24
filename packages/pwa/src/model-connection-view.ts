@@ -146,13 +146,13 @@ export function catalogOptions(connection: ModelConnection): CatalogOption[] {
   }))
 }
 
-/** Connected records whose adapter method is currently available for the primary Agent route. */
+/** Connected records whose adapter declares the complete primary AgentRunner route. */
 export function primaryRoutableConnections(snapshot: ModelConnectionsSnapshot): ModelConnection[] {
-  const unavailableMethods = new Set(
-    snapshot.methods.filter((method) => !method.available).map((method) => method.id),
+  const routableMethods = new Set(
+    snapshot.methods.filter((method) => method.primaryRoutable).map((method) => method.id),
   )
   return snapshot.connections.filter(
-    (connection) => connection.state === 'connected' && !unavailableMethods.has(connection.method),
+    (connection) => connection.state === 'connected' && routableMethods.has(connection.method),
   )
 }
 

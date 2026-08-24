@@ -10,6 +10,7 @@ import {
 import Fastify, { type FastifyInstance } from 'fastify'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { saveConnectionsConfig } from './connections-config.ts'
+import { primaryRoutableMethodsFixture } from './model-connection-test-support.ts'
 import type { SecretResolver } from './model-routing.ts'
 import { saveOnboardingConfig } from './onboarding-config.ts'
 import { registerOnboardingRoutes, type OnboardingRoutesDeps } from './onboarding-routes.ts'
@@ -31,12 +32,7 @@ function freshRoot(): string {
   return rootDir
 }
 
-const primaryRoutableMethods = new Set([
-  'anthropic-api-key',
-  'openai-api-key',
-  'openrouter-api-key',
-  'chatgpt-codex',
-] as const)
+const primaryRoutableMethods = primaryRoutableMethodsFixture
 
 function baseDeps(
   dir: string,

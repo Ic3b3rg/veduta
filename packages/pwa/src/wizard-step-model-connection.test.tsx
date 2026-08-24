@@ -28,6 +28,7 @@ const anthropicApiKeyMethod = {
     revocation: 'local-only' as const,
     metered: true,
   },
+  primaryRoutable: true,
   available: true,
 }
 

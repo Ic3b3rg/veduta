@@ -33,6 +33,7 @@ function emptySnapshot(): ModelConnectionsSnapshot {
           revocation: 'local-only',
           metered: true,
         },
+        primaryRoutable: true,
         available: true,
       },
     ],

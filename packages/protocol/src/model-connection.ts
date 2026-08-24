@@ -103,7 +103,7 @@ export const ModelConnectionCapabilitiesSchema = z
   })
   .strict()
 
-/** One connection method as offered by the registry: display metadata, capabilities, and availability (e.g. the Claude gate, or a missing Codex binary) — all data, never hardcoded in the PWA. */
+/** One connection method as offered by the registry: display metadata, structural primary-route eligibility, and environment availability for creating a new connection — all data, never hardcoded in the PWA. */
 export const ModelConnectionMethodSchema = z
   .object({
     id: ModelConnectionMethodIdSchema,
@@ -111,6 +111,8 @@ export const ModelConnectionMethodSchema = z
     providerDisplayName: z.string().min(1),
     methodDisplayName: z.string().min(1),
     capabilities: ModelConnectionCapabilitiesSchema,
+    /** Structural AgentRunner eligibility, independent of credential lifecycle and environment readiness. */
+    primaryRoutable: z.boolean(),
     available: z.boolean(),
     unavailableReason: z.string().optional(),
     docsUrl: z.string().optional(),

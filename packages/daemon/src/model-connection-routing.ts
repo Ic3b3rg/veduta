@@ -53,11 +53,10 @@ import {
 export function deriveRoutingConfig(
   base: RoutingConfig,
   file: ConnectionsFile,
-  primaryRoutableMethods?: ReadonlySet<ModelConnectionRecord['method']>,
+  primaryRoutableMethods: ReadonlySet<ModelConnectionRecord['method']>,
 ): RuntimeRoutingConfig {
   const isPrimaryRoutable = (record: ModelConnectionRecord): boolean =>
-    record.state === 'connected' &&
-    (primaryRoutableMethods === undefined || primaryRoutableMethods.has(record.method))
+    record.state === 'connected' && primaryRoutableMethods.has(record.method)
 
   if (!file.selection) {
     const matchingRecord = (entry: TierModel): ModelConnectionRecord | undefined =>

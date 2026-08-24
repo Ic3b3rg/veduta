@@ -24,6 +24,7 @@ const anthropicApiKeyMethod: ModelConnectionMethod = {
     revocation: 'local-only',
     metered: true,
   },
+  primaryRoutable: true,
   available: true,
 }
 
@@ -38,6 +39,7 @@ const claudeSubscriptionMethod: ModelConnectionMethod = {
     revocation: 'local-only',
     metered: true,
   },
+  primaryRoutable: false,
   available: false,
 }
 
@@ -91,7 +93,7 @@ function emptySnapshot(
   return {
     vaultAvailable: true,
     mockControlAvailable: true,
-    methods: [],
+    methods: [anthropicApiKeyMethod],
     ...overrides,
   }
 }
@@ -129,7 +131,7 @@ describe('connectionSelectLabel', () => {
 })
 
 describe('primaryRoutableConnections', () => {
-  it('excludes a connected record when its method is unavailable', () => {
+  it('excludes a connected record when its method is structurally ineligible', () => {
     const snapshot: ModelConnectionsSnapshot = {
       vaultAvailable: true,
       mockControlAvailable: false,
@@ -140,6 +142,33 @@ describe('primaryRoutableConnections', () => {
     }
 
     expect(primaryRoutableConnections(snapshot)).toEqual([anthropicApiKey])
+  })
+
+  it('keeps a connected migrated BYOK record when the vault blocks only new authorization', () => {
+    const snapshot: ModelConnectionsSnapshot = {
+      vaultAvailable: false,
+      mockControlAvailable: false,
+      mockEnabled: false,
+      methods: [{ ...anthropicApiKeyMethod, available: false }],
+      connections: [anthropicApiKey],
+      selection: { connectionId: anthropicApiKey.id, modelId: 'claude-sonnet-5' },
+    }
+
+    expect(primaryRoutableConnections(snapshot)).toEqual([anthropicApiKey])
+    expect(canContinue(snapshot, 'vps')).toBe(true)
+  })
+
+  it('fails closed when a connected record has no method metadata', () => {
+    const snapshot: ModelConnectionsSnapshot = {
+      vaultAvailable: true,
+      mockControlAvailable: false,
+      mockEnabled: false,
+      methods: [],
+      connections: [anthropicApiKey],
+      selection: { connectionId: anthropicApiKey.id, modelId: 'claude-sonnet-5' },
+    }
+
+    expect(primaryRoutableConnections(snapshot)).toEqual([])
   })
 })
 

@@ -20,6 +20,7 @@ import {
 } from './provider-parity-model-fixture.ts'
 import {
   consistentProviderDefinitions,
+  providerDefinitionsFromThreadStart,
   type ProviderToolDefinition,
 } from './provider-parity-observation.ts'
 import {
@@ -36,7 +37,6 @@ import {
   requireWorkerSurface,
   requireWorkerTransport,
   stableWorkerToolResult,
-  workerDynamicToolNames,
   workerEventsSinceStart,
   workerHandlerCounts,
   workerRecordValue,
@@ -116,7 +116,7 @@ interface WorkerParityPair {
 export interface WorkerSubscriptionObservation {
   threadStarts: Array<{
     purpose: WorkerProviderCallPurpose
-    dynamicTools: string[]
+    dynamicTools: ProviderToolDefinition[]
     approvalPolicy: string
     sandbox: string
     webSearch: string
@@ -423,7 +423,7 @@ function observeWorkerSubscriptionTransport(
         const config = workerRecordValue(params['config'], 'thread/start config')
         return {
           purpose: workerThreadPurpose(params),
-          dynamicTools: workerDynamicToolNames(params),
+          dynamicTools: providerDefinitionsFromThreadStart(request.params),
           approvalPolicy: workerStringValue(params['approvalPolicy'], 'approval policy'),
           sandbox: workerStringValue(params['sandbox'], 'sandbox'),
           webSearch: workerStringValue(config['web_search'], 'web-search policy'),

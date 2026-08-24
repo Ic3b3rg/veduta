@@ -4,6 +4,7 @@ import {
   CreateModelConnectionRequestSchema,
   DeviceChallengeSchema,
   ModelConnectionIdSchema,
+  ModelConnectionMethodSchema,
   ModelConnectionSchema,
   ModelConnectionsSnapshotSchema,
 } from './model-connection.ts'
@@ -87,6 +88,29 @@ describe('ModelConnectionsSnapshotSchema', () => {
       selection: null,
     }
     expect(ModelConnectionsSnapshotSchema.safeParse(snapshot).success).toBe(true)
+  })
+})
+
+describe('ModelConnectionMethodSchema', () => {
+  const method = {
+    id: 'anthropic-api-key',
+    provider: 'anthropic',
+    providerDisplayName: 'Claude',
+    methodDisplayName: 'API key',
+    capabilities: {
+      authorization: 'api-key',
+      refresh: 'static',
+      revocation: 'local-only',
+      metered: true,
+    },
+    available: true,
+  }
+
+  it('requires explicit primary-route eligibility', () => {
+    expect(
+      ModelConnectionMethodSchema.safeParse({ ...method, primaryRoutable: true }).success,
+    ).toBe(true)
+    expect(ModelConnectionMethodSchema.safeParse(method).success).toBe(false)
   })
 })
 

@@ -47,11 +47,12 @@ export function consistentProviderDefinitions(
 export function subscriptionDefinitions(transport: FakeCodexTransport): ProviderToolDefinition[] {
   const observations = transport.requests
     .filter((candidate) => candidate.method === 'thread/start')
-    .map((request) => definitionsFromThreadStart(request.params))
+    .map((request) => providerDefinitionsFromThreadStart(request.params))
   return consistentProviderDefinitions(observations)
 }
 
-function definitionsFromThreadStart(paramsValue: unknown): ProviderToolDefinition[] {
+/** Reads the complete provider-neutral definition set from one Codex `thread/start` request. */
+export function providerDefinitionsFromThreadStart(paramsValue: unknown): ProviderToolDefinition[] {
   const params = recordValue(paramsValue, 'thread/start params')
   const dynamicTools = params['dynamicTools']
   if (!Array.isArray(dynamicTools)) throw new Error('thread/start carried no dynamicTools array')

@@ -21,6 +21,7 @@ const anthropicApiKeyMethod: ModelConnectionMethod = {
     revocation: 'local-only',
     metered: true,
   },
+  primaryRoutable: true,
   available: true,
 }
 
@@ -35,6 +36,7 @@ const claudeSubscriptionMethod: ModelConnectionMethod = {
     revocation: 'local-only',
     metered: true,
   },
+  primaryRoutable: false,
   available: false,
   unavailableReason: 'Claude subscription connections are not offered by this build yet.',
   docsUrl: 'https://example.com/docs/claude-subscription',
@@ -51,6 +53,7 @@ const chatgptCodexMethod: ModelConnectionMethod = {
     revocation: 'provider',
     metered: false,
   },
+  primaryRoutable: true,
   available: true,
 }
 
@@ -88,7 +91,7 @@ describe('ModelConnectionPanel', () => {
     expect(screen.queryByRole('button', { name: /authorize/i })).toBeNull()
   })
 
-  it('does not offer an unavailable method through the primary routing selectors', () => {
+  it('does not offer a structurally ineligible method through the primary routing selectors', () => {
     const staleConnected: ModelConnection = {
       id: 'a1a1a1a1-0000-4000-8000-000000000079',
       method: 'claude-subscription',

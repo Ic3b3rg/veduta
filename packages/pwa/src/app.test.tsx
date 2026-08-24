@@ -119,6 +119,7 @@ function connectedChatgptSubscriptionSnapshot(): ModelConnectionsSnapshot {
           revocation: 'provider',
           metered: false,
         },
+        primaryRoutable: true,
         available: true,
       },
     ],

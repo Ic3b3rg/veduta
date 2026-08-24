@@ -108,6 +108,9 @@ inference, and Surface creation and patching without BYOK; the
 The adapter's `primaryInference` declaration makes routing eligibility explicit: builtin and
 subscription transports carry the same AgentRunner contract, while an unavailable declaration
 cannot produce a primary routing candidate or runtime and never rewrites credential lifecycle.
+The registry projects that structural decision as `primaryRoutable`, separately from the
+environment-dependent `available` flag used to offer new connections, so migrated environment-key
+BYOK connections keep their existing route when the vault is unavailable.
 Deterministic BYOK/Codex fixtures prove equivalent definitions, events, sessions, and persistent
 effects for Surface authoring, Space memory, Templates, Automations, Workers, and trust-wrapped
 actions.

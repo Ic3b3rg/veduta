@@ -15,6 +15,11 @@ describe('AgentRunner Worker parity across Model connection methods (issue #78)'
     expect(outcome.definitions.chat.map((definition) => definition.name)).toEqual(['spawn_worker'])
     expect(outcome.definitions.worker.map((definition) => definition.name)).toEqual(['read_recent'])
     expect(outcome.definitions.review).toEqual([])
+    expect(subscription.transport.threadStarts.map((start) => start.dynamicTools)).toEqual([
+      outcome.definitions.chat,
+      outcome.definitions.worker,
+      outcome.definitions.review,
+    ])
 
     expect(outcome.execution).toEqual({
       spawnCalls: 1,
@@ -76,7 +81,12 @@ describe('AgentRunner Worker parity across Model connection methods (issue #78)'
       'c0ffee00-0000-4000-8000-000000000078',
       'c0ffee00-0000-4000-8000-000000000078',
     ])
-    expect(subscription.transport.threadStarts).toEqual([
+    expect(
+      subscription.transport.threadStarts.map(({ dynamicTools, ...start }) => ({
+        ...start,
+        dynamicTools: dynamicTools.map((definition) => definition.name),
+      })),
+    ).toEqual([
       {
         purpose: 'chat',
         dynamicTools: ['spawn_worker'],

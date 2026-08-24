@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { saveConnectionsConfig, type ConnectionsFile } from './connections-config.ts'
+import { primaryRoutableMethodsFixture } from './model-connection-test-support.ts'
 import { saveRoutingConfig, type SecretResolver } from './model-routing.ts'
 import { loadOnboardingConfig } from './onboarding-config.ts'
 import {
@@ -25,12 +26,7 @@ function freshRoot(): string {
 }
 
 const noSecrets: SecretResolver = { resolve: () => undefined }
-const primaryRoutableMethods = new Set([
-  'anthropic-api-key',
-  'openai-api-key',
-  'openrouter-api-key',
-  'chatgpt-codex',
-] as const)
+const primaryRoutableMethods = primaryRoutableMethodsFixture
 
 type ReadyDepsInput = Omit<ModelConnectionReadyDeps, 'primaryRoutableMethods'> &
   Partial<Pick<ModelConnectionReadyDeps, 'primaryRoutableMethods'>>

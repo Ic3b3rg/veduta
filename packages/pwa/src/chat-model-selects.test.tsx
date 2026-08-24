@@ -36,7 +36,7 @@ const connectedConnection: ModelConnection = {
   ],
 }
 
-const unavailableMethod: ModelConnectionMethod = {
+const routableMethod: ModelConnectionMethod = {
   id: 'anthropic-api-key',
   provider: 'anthropic',
   providerDisplayName: 'Claude',
@@ -47,6 +47,13 @@ const unavailableMethod: ModelConnectionMethod = {
     revocation: 'local-only',
     metered: true,
   },
+  primaryRoutable: true,
+  available: true,
+}
+
+const unavailableMethod: ModelConnectionMethod = {
+  ...routableMethod,
+  primaryRoutable: false,
   available: false,
   unavailableReason: 'this method is unavailable for primary routing',
 }
@@ -58,7 +65,7 @@ function connectedSnapshot(
     vaultAvailable: true,
     mockEnabled: false,
     mockControlAvailable: false,
-    methods: [],
+    methods: [routableMethod],
     connections: [connectedConnection],
     selection: { connectionId: connectedConnection.id, modelId: 'claude-sonnet-5' },
     ...overrides,
@@ -145,7 +152,7 @@ describe('ChatModelSelects', () => {
     expect(container.firstChild).toBeNull()
   })
 
-  it('renders nothing when every connected record belongs to an unavailable method', async () => {
+  it('renders nothing when every connected record belongs to a structurally ineligible method', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(

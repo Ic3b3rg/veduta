@@ -15,6 +15,7 @@ import {
   pruneOrphanConnectionKeys,
   RoutingState,
 } from './model-connection-routing.ts'
+import { primaryRoutableMethodsFixture } from './model-connection-test-support.ts'
 import {
   RuntimeRoutingConfigSchema,
   defaultRoutingConfig,
@@ -25,12 +26,7 @@ import {
 } from './model-routing.ts'
 
 const baseConfig: RoutingConfig = defaultRoutingConfig()
-const primaryRoutableMethods = new Set([
-  'anthropic-api-key',
-  'openai-api-key',
-  'openrouter-api-key',
-  'chatgpt-codex',
-] as const)
+const primaryRoutableMethods = primaryRoutableMethodsFixture
 
 let rootDir: string | undefined
 
@@ -73,7 +69,7 @@ describe('deriveRoutingConfig', () => {
       connections: [record({ id: 'anthropic', state: 'connected' })],
     })
 
-    expect(deriveRoutingConfig(baseConfig, file)).toEqual(baseConfig)
+    expect(deriveRoutingConfig(baseConfig, file, primaryRoutableMethods)).toEqual(baseConfig)
   })
 
   it('a base tier entry whose migrated record is revoked is dropped', () => {
@@ -81,7 +77,7 @@ describe('deriveRoutingConfig', () => {
       connections: [record({ id: 'anthropic', provider: 'anthropic', state: 'revoked' })],
     })
 
-    const derived = deriveRoutingConfig(baseConfig, file)
+    const derived = deriveRoutingConfig(baseConfig, file, primaryRoutableMethods)
 
     expect(derived.tiers.reasoning.map((entry) => entry.provider)).toEqual(['openai', 'openrouter'])
     expect(derived.tiers.triage.map((entry) => entry.provider)).toEqual(['openai', 'openrouter'])
@@ -94,7 +90,7 @@ describe('deriveRoutingConfig', () => {
 
     // Only `openai` has a record; `anthropic`/`openrouter` have none and
     // must pass through untouched, regardless of `openai`'s state.
-    const derived = deriveRoutingConfig(baseConfig, file)
+    const derived = deriveRoutingConfig(baseConfig, file, primaryRoutableMethods)
 
     expect(derived.tiers.reasoning.map((entry) => entry.provider)).toEqual([
       'anthropic',
@@ -130,7 +126,7 @@ describe('deriveRoutingConfig', () => {
       selection: { connectionId: 'conn-active', modelId: 'claude-sonnet-5' },
     })
 
-    const derived = deriveRoutingConfig(baseConfig, file)
+    const derived = deriveRoutingConfig(baseConfig, file, primaryRoutableMethods)
 
     const expectedEntries = [
       { provider: 'anthropic', modelId: 'claude-sonnet-5', connectionId: 'conn-active' },
@@ -196,7 +192,7 @@ describe('deriveRoutingConfig', () => {
       selection: { connectionId: 'conn-active', modelId: 'claude-sonnet-5' },
     })
 
-    const derived = deriveRoutingConfig(baseConfig, file)
+    const derived = deriveRoutingConfig(baseConfig, file, primaryRoutableMethods)
 
     expect(derived.tiers.reasoning).toEqual([
       { provider: 'openai', modelId: 'gpt-5.5', connectionId: 'conn-fallback' },
@@ -214,7 +210,7 @@ describe('deriveRoutingConfig', () => {
       selection: { connectionId: 'conn-active', modelId: 'claude-sonnet-5' },
     })
 
-    const derived = deriveRoutingConfig(baseConfig, file)
+    const derived = deriveRoutingConfig(baseConfig, file, primaryRoutableMethods)
 
     expect(derived.tiers.reasoning).toEqual([])
     expect(derived.tiers.triage).toEqual([])
@@ -240,7 +236,7 @@ describe('deriveRoutingConfig', () => {
       selection: { connectionId: 'conn-subscription', modelId: 'gpt-5.5-codex' },
     })
 
-    const derived = deriveRoutingConfig(baseConfig, file)
+    const derived = deriveRoutingConfig(baseConfig, file, primaryRoutableMethods)
 
     expect(derived.tiers.reasoning).toEqual([
       { provider: 'openai', modelId: 'gpt-5.5-codex', connectionId: 'conn-subscription' },
@@ -260,7 +256,7 @@ describe('deriveRoutingConfig', () => {
       selection: { connectionId: 'anthropic', modelId: 'claude-sonnet-5' },
     })
 
-    const derived = deriveRoutingConfig(baseConfig, file)
+    const derived = deriveRoutingConfig(baseConfig, file, primaryRoutableMethods)
 
     expect(derived.connectionKeys['anthropic']).toBe('secret://env/ANTHROPIC_API_KEY')
   })
@@ -278,7 +274,7 @@ describe('deriveRoutingConfig', () => {
       selection: { connectionId: 'conn-codex', modelId: 'gpt-5.5-codex' },
     })
 
-    const derived = deriveRoutingConfig(baseConfig, file)
+    const derived = deriveRoutingConfig(baseConfig, file, primaryRoutableMethods)
 
     expect(derived.connectionKeys['conn-codex']).toBeUndefined()
     expect(derived.tiers.reasoning).toEqual([

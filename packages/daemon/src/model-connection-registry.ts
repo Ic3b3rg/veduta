@@ -364,6 +364,7 @@ export class ModelConnectionRegistry {
         providerDisplayName: adapter.providerDisplayName,
         methodDisplayName: adapter.methodDisplayName,
         capabilities: adapter.capabilities,
+        primaryRoutable: primaryRouteEligibility(adapter).routable,
         available: availability.available,
         ...(availability.available
           ? {}
