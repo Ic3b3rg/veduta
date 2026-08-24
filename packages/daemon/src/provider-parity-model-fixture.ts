@@ -34,6 +34,8 @@ export interface ScriptedToolCall {
   toolName: string
   input: Record<string, unknown>
   resultText: string
+  /** Mirrors whether PiAgentRunner completed the handler successfully. */
+  success?: boolean
 }
 
 interface ProviderParityTurnOptions {
@@ -108,6 +110,7 @@ export function scriptedSubscriptionTransport(
       input: call.input,
       resultText: call.resultText,
       finalText,
+      ...(call.success === undefined ? {} : { success: call.success }),
     }),
   )
   const first = fixtures[0]

@@ -34,7 +34,8 @@ import type { Origin } from './taint.ts'
 
 const CONNECTION_ID = 'c0ffee00-0000-4000-8000-000000000077'
 const FIXED_NOW = new Date('2026-08-24T09:00:00.000Z')
-const FINAL_TEXT = 'Focused Automations managed.'
+
+type AutomationTurnKey = 'create' | 'disable' | 'cancel' | 'reject-other-space'
 
 export const AUTOMATION_PARITY_SPACE_ID = 'spc-health'
 export const AUTOMATION_PARITY_OTHER_SPACE_ID = 'spc-other-space'
@@ -43,6 +44,7 @@ export const AUTOMATION_PARITY_UNTRUSTED_ORIGIN = 'untrusted:gmail'
 export interface AutomationParityToolResult {
   toolName: string
   content: string
+  isError?: boolean
   details?: unknown
   origin?: Origin
   origins?: Origin[]
@@ -57,6 +59,12 @@ export interface AutomationParityOutcome {
   otherSpaceAutomations: Automation[]
   automationsSurface: Surface
   eventLog: unknown[]
+  otherSpaceEventLog: unknown[]
+  turns: Array<{
+    key: AutomationTurnKey
+    toolNames: string[]
+    finalText: string
+  }>
   handlerExecution: {
     total: number
     distinctCallIds: number
@@ -71,7 +79,7 @@ interface AutomationParityRun {
   toolResultTexts: string[]
   acceptedCallIds: string[]
   handlerCallIds: string[]
-  transport?: SubscriptionTransportObservation
+  transports?: Array<SubscriptionTransportObservation & { key: AutomationTurnKey }>
 }
 
 interface AutomationParityPair {
@@ -80,7 +88,7 @@ interface AutomationParityPair {
     'outcome' | 'toolResultTexts' | 'acceptedCallIds' | 'handlerCallIds'
   >
   subscription: AutomationParityRun & {
-    transport: NonNullable<AutomationParityRun['transport']>
+    transports: NonNullable<AutomationParityRun['transports']>
   }
 }
 
@@ -91,15 +99,26 @@ interface AutomationHarness {
   sessionStore: PiJsonlSessionStore
   tools: ToolDef[]
   focusedAutomationId: number
+  otherSpaceAutomationId: number
   eventStart: number
+  otherSpaceEventStart: number
   handlerObservations: HandlerObservation[]
+  activeTurn: { key: AutomationTurnKey }
   dispose(): void
 }
 
 interface HandlerObservation {
+  turnKey: AutomationTurnKey
   toolName: string
   toolCallId: string
   contextHash: string
+}
+
+interface AutomationTurnScript {
+  key: AutomationTurnKey
+  input: string
+  finalText: string
+  calls: Array<Omit<ScriptedToolCall, 'resultText'>>
 }
 
 export async function runAutomationParityPair(): Promise<AutomationParityPair> {
@@ -108,7 +127,9 @@ export async function runAutomationParityPair(): Promise<AutomationParityPair> {
     'chatgpt-subscription',
     byok.toolResultTexts,
   )
-  if (!subscription.transport) throw new Error('subscription scenario produced no transport data')
+  if (!subscription.transports) {
+    throw new Error('subscription scenario produced no transport data')
+  }
   return {
     byok: {
       outcome: byok.outcome,
@@ -116,7 +137,7 @@ export async function runAutomationParityPair(): Promise<AutomationParityPair> {
       acceptedCallIds: byok.acceptedCallIds,
       handlerCallIds: byok.handlerCallIds,
     },
-    subscription: { ...subscription, transport: subscription.transport },
+    subscription: { ...subscription, transports: subscription.transports },
   }
 }
 
@@ -125,67 +146,110 @@ async function runAutomationParityScenario(
   expectedResultTexts: string[] = [],
 ): Promise<AutomationParityRun> {
   const harness = buildHarness()
-  const scriptedCalls = callsWithResultTexts(
+  const scripts = turnsWithResultTexts(
     method,
     expectedResultTexts,
     harness.focusedAutomationId,
+    harness.otherSpaceAutomationId,
   )
   const byokDefinitionSets: ProviderToolDefinition[][] = []
-  let transport: FakeCodexTransport | undefined
+  const subscriptionDefinitionSets: ProviderToolDefinition[][] = []
+  const transportObservations: Array<
+    SubscriptionTransportObservation & { key: AutomationTurnKey }
+  > = []
+  const allEvents: AgentEvent[] = []
+  const acceptedCallIds: string[] = []
+  const turns: AutomationParityOutcome['turns'] = []
+  let observedToolMessages = 0
 
   try {
-    const provider =
-      method === 'byok'
-        ? captureProviderDefinitions(
-            scriptedByokProvider(scriptedCalls, FINAL_TEXT),
-            byokDefinitionSets,
-          )
-        : subscriptionProvider({
-            connectionId: CONNECTION_ID,
-            rootDir: parityTempDir(harness.directories, 'veduta-provider-automation-codex-'),
-            now: FIXED_NOW,
-            transport: (transport = scriptedSubscriptionTransport(
-              scriptedCalls,
-              FINAL_TEXT,
-              'automation',
-            )),
-          })
+    for (const script of scripts) {
+      harness.activeTurn.key = script.key
+      let transport: FakeCodexTransport | undefined
+      try {
+        const provider =
+          method === 'byok'
+            ? captureProviderDefinitions(
+                scriptedByokProvider(script.calls, script.finalText),
+                byokDefinitionSets,
+              )
+            : subscriptionProvider({
+                connectionId: CONNECTION_ID,
+                rootDir: parityTempDir(
+                  harness.directories,
+                  `veduta-provider-automation-${script.key}-codex-`,
+                ),
+                now: FIXED_NOW,
+                transport: (transport = scriptedSubscriptionTransport(
+                  script.calls,
+                  script.finalText,
+                  `automation-${script.key}`,
+                )),
+              })
 
-    const events = await runProviderParityTurn({
-      provider,
-      sessionStore: harness.sessionStore,
-      sessionId: 'provider-automation-parity',
-      input: 'inspect and manage every Automation in this Space',
-      model: modelForConnectionMethod(method, CONNECTION_ID),
-      tools: harness.tools,
-      promptOptions: {
-        origin: AUTOMATION_PARITY_UNTRUSTED_ORIGIN,
-        spaceId: AUTOMATION_PARITY_SPACE_ID,
-        trigger: { kind: 'chat', summary: 'manage focused Automations' },
-      },
-    })
+        const events = await runProviderParityTurn({
+          provider,
+          sessionStore: harness.sessionStore,
+          sessionId: 'provider-automation-parity',
+          input: script.input,
+          model: modelForConnectionMethod(method, CONNECTION_ID),
+          tools: harness.tools,
+          promptOptions: {
+            origin: AUTOMATION_PARITY_UNTRUSTED_ORIGIN,
+            spaceId: AUTOMATION_PARITY_SPACE_ID,
+            trigger: { kind: 'chat', summary: script.input },
+          },
+        })
+        allEvents.push(...events)
+        acceptedCallIds.push(
+          ...acceptedToolCallIds(events).map((toolCallId) => `${script.key}:${toolCallId}`),
+        )
+
+        const session = await harness.sessionStore.load('provider-automation-parity')
+        const toolMessages = session.messages
+          .filter((message) => message.role === 'tool')
+          .slice(observedToolMessages)
+        if (toolMessages.length !== script.calls.length) {
+          throw new Error(
+            `expected ${script.calls.length} ${script.key} tool results, received ${toolMessages.length}`,
+          )
+        }
+        observedToolMessages += toolMessages.length
+        turns.push({
+          key: script.key,
+          toolNames: toolMessages.map((message) => message.toolName ?? ''),
+          finalText: completedTurnText(events, script.key),
+        })
+
+        if (transport) {
+          subscriptionDefinitionSets.push(subscriptionDefinitions(transport))
+          transportObservations.push({
+            key: script.key,
+            ...observeSubscriptionTransport(transport),
+          })
+        }
+      } finally {
+        transport?.close()
+      }
+    }
 
     const session = await harness.sessionStore.load('provider-automation-parity')
     const toolMessages = session.messages.filter((message) => message.role === 'tool')
-    if (toolMessages.length !== scriptedCalls.length) {
-      throw new Error(
-        `expected ${scriptedCalls.length} tool results, received ${toolMessages.length}`,
-      )
-    }
     const toolResultTexts = toolMessages.map((message) => message.content)
     const offeredDefinitions =
       method === 'byok'
         ? consistentProviderDefinitions(byokDefinitionSets)
-        : subscriptionDefinitions(requireTransport(transport))
+        : consistentProviderDefinitions(subscriptionDefinitionSets)
 
     const result: AutomationParityRun = {
       outcome: {
         offeredDefinitions,
-        events: normalizeAgentEvents(events, { includeTurnOrigins: true }),
+        events: normalizeAgentEvents(allEvents, { includeTurnOrigins: true }),
         sessionEntries: normalizeSessionEntries(session.entries),
         toolResults: toolMessages.map((message) => ({
           toolName: message.toolName ?? '',
           content: message.content,
+          ...(message.isError === undefined ? {} : { isError: message.isError }),
           ...(message.details === undefined
             ? {}
             : { details: normalizeStableValue(message.details) }),
@@ -199,16 +263,22 @@ async function runAutomationParityScenario(
           .eventLog(AUTOMATION_PARITY_SPACE_ID)
           .slice(harness.eventStart)
           .map(normalizeSpaceEvent),
+        otherSpaceEventLog: harness.store
+          .eventLog(AUTOMATION_PARITY_OTHER_SPACE_ID)
+          .slice(harness.otherSpaceEventStart)
+          .map(normalizeSpaceEvent),
+        turns,
         handlerExecution: handlerExecution(harness.handlerObservations),
       },
       toolResultTexts,
-      acceptedCallIds: acceptedToolCallIds(events),
-      handlerCallIds: harness.handlerObservations.map((observation) => observation.toolCallId),
-      ...(transport === undefined ? {} : { transport: observeSubscriptionTransport(transport) }),
+      acceptedCallIds,
+      handlerCallIds: harness.handlerObservations.map(
+        (observation) => `${observation.turnKey}:${observation.toolCallId}`,
+      ),
+      ...(method === 'chatgpt-subscription' ? { transports: transportObservations } : {}),
     }
     return result
   } finally {
-    transport?.close()
     harness.dispose()
   }
 }
@@ -222,7 +292,7 @@ function buildHarness(): AutomationHarness {
     throw new Error('Automation parity fixture produced an unexpected other-Space id')
   }
   const scheduler = new Scheduler({ rootDir, store, now: () => FIXED_NOW })
-  scheduler.armTimer({
+  const otherSpaceAutomation = scheduler.armTimer({
     spaceId: AUTOMATION_PARITY_OTHER_SPACE_ID,
     when: '2026-08-24T22:00:00.000Z',
     action: 'Other Space reminder',
@@ -233,12 +303,14 @@ function buildHarness(): AutomationHarness {
     action: 'Existing focused reminder',
   })
   const handlerObservations: HandlerObservation[] = []
+  const activeTurn: { key: AutomationTurnKey } = { key: 'create' }
   const tools = trackHandlerCalls(
     createFocusedAutomationTools({
       scheduler,
       spaceId: AUTOMATION_PARITY_SPACE_ID,
     }),
     handlerObservations,
+    activeTurn,
   )
 
   return {
@@ -251,8 +323,11 @@ function buildHarness(): AutomationHarness {
     }),
     tools,
     focusedAutomationId: focused.id,
+    otherSpaceAutomationId: otherSpaceAutomation.id,
     eventStart: store.eventLog(AUTOMATION_PARITY_SPACE_ID).length,
+    otherSpaceEventStart: store.eventLog(AUTOMATION_PARITY_OTHER_SPACE_ID).length,
     handlerObservations,
+    activeTurn,
     dispose() {
       scheduler.stop()
       for (const directory of directories) rmSync(directory, { recursive: true, force: true })
@@ -260,11 +335,16 @@ function buildHarness(): AutomationHarness {
   }
 }
 
-function trackHandlerCalls(tools: ToolDef[], observations: HandlerObservation[]): ToolDef[] {
+function trackHandlerCalls(
+  tools: ToolDef[],
+  observations: HandlerObservation[],
+  activeTurn: { key: AutomationTurnKey },
+): ToolDef[] {
   return tools.map((tool) => ({
     ...tool,
     async handler(input, context) {
       observations.push({
+        turnKey: activeTurn.key,
         toolName: tool.name,
         toolCallId: context.toolCallId,
         contextHash: context.contextHash,
@@ -284,7 +364,8 @@ function handlerExecution(
   const callsPerId = new Map<string, number>()
   const byTool: Record<string, number> = {}
   for (const observation of observations) {
-    callsPerId.set(observation.toolCallId, (callsPerId.get(observation.toolCallId) ?? 0) + 1)
+    const correlatedCallId = `${observation.turnKey}:${observation.toolCallId}`
+    callsPerId.set(correlatedCallId, (callsPerId.get(correlatedCallId) ?? 0) + 1)
     byTool[observation.toolName] = (byTool[observation.toolName] ?? 0) + 1
   }
   return {
@@ -298,43 +379,93 @@ function handlerExecution(
   }
 }
 
-function callsWithResultTexts(
+function turnsWithResultTexts(
   method: ModelConnectionMethod,
   resultTexts: string[],
   focusedAutomationId: number,
-): ScriptedToolCall[] {
-  const calls: Array<Omit<ScriptedToolCall, 'resultText'>> = [
-    { toolName: 'list_automations', input: {} },
-    {
-      toolName: 'arm_timer',
-      input: {
-        when: '2026-08-24T21:00:00.000Z',
-        action: 'Check medication',
-      },
-    },
-    {
-      toolName: 'create_job',
-      input: { cron: '0 9 * * *', briefing: 'Review the plan' },
-    },
-    {
-      toolName: 'set_automation_enabled',
-      input: { automationId: focusedAutomationId, enabled: false },
-    },
-    { toolName: 'cancel', input: { automationId: focusedAutomationId } },
-  ]
-  if (method === 'chatgpt-subscription' && resultTexts.length !== calls.length) {
+  otherSpaceAutomationId: number,
+): Array<Omit<AutomationTurnScript, 'calls'> & { calls: ScriptedToolCall[] }> {
+  const scripts = automationTurnScripts(focusedAutomationId, otherSpaceAutomationId)
+  const callCount = scripts.reduce((total, script) => total + script.calls.length, 0)
+  if (method === 'chatgpt-subscription' && resultTexts.length !== callCount) {
     throw new Error('the subscription fixture needs one observed result per scripted call')
   }
-  return calls.map((call, index) => ({ ...call, resultText: resultTexts[index] ?? '' }))
+  let resultIndex = 0
+  return scripts.map((script) => ({
+    ...script,
+    calls: script.calls.map((call) => ({
+      ...call,
+      resultText: resultTexts[resultIndex++] ?? '',
+    })),
+  }))
+}
+
+function automationTurnScripts(
+  focusedAutomationId: number,
+  otherSpaceAutomationId: number,
+): AutomationTurnScript[] {
+  return [
+    {
+      key: 'create',
+      input: 'list every Automation here, then arm a medication timer and a daily review',
+      finalText: 'Created the focused Automations.',
+      calls: [
+        { toolName: 'list_automations', input: {} },
+        {
+          toolName: 'arm_timer',
+          input: {
+            when: '2026-08-24T21:00:00.000Z',
+            action: 'Check medication',
+          },
+        },
+        {
+          toolName: 'create_job',
+          input: { cron: '0 9 * * *', briefing: 'Review the plan' },
+        },
+      ],
+    },
+    {
+      key: 'disable',
+      input: 'disable the existing focused reminder',
+      finalText: 'Disabled the focused Automation.',
+      calls: [
+        {
+          toolName: 'set_automation_enabled',
+          input: { automationId: focusedAutomationId, enabled: false },
+        },
+      ],
+    },
+    {
+      key: 'cancel',
+      input: 'cancel the existing focused reminder',
+      finalText: 'Cancelled the focused Automation.',
+      calls: [{ toolName: 'cancel', input: { automationId: focusedAutomationId } }],
+    },
+    {
+      key: 'reject-other-space',
+      input: 'disable the Automation with the supplied id',
+      finalText: 'The other Space Automation was not changed.',
+      calls: [
+        {
+          toolName: 'set_automation_enabled',
+          input: { automationId: otherSpaceAutomationId, enabled: false },
+          success: false,
+        },
+      ],
+    },
+  ]
+}
+
+function completedTurnText(events: AgentEvent[], key: AutomationTurnKey): string {
+  const completed = events.filter((event) => event.type === 'turn-end').at(-1)
+  if (!completed || completed.type !== 'turn-end') {
+    throw new Error(`${key} turn produced no completion`)
+  }
+  return completed.text
 }
 
 function requireSurface(store: Store, surfaceId: string): Surface {
   const surface = store.getSurface(surfaceId)
   if (!surface) throw new Error(`missing Surface ${surfaceId}`)
   return SurfaceSchema.parse(surface)
-}
-
-function requireTransport(transport: FakeCodexTransport | undefined): FakeCodexTransport {
-  if (!transport) throw new Error('subscription scenario created no Codex transport')
-  return transport
 }

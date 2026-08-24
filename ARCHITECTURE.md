@@ -105,11 +105,11 @@ Codex-native command execution, patches, web search, MCP, and approvals remain d
 [real-account smoke](docs/references/11-model-connections-manual-smoke.md) verifies authorization,
 inference, and Surface creation and patching without BYOK; the
 [protocol capture](docs/references/13-codex-dynamic-tools-0.146.1.md) records the pinned boundary.
-Automation, Worker, and final Connection parity remain tracked by
+Worker and final Connection parity remain tracked by
 [issue 070](issues/070-codex-tool-parity.md) and its open
-[077](issues/077-chatgpt-subscription-automations.md),
-[078](issues/078-chatgpt-subscription-workers.md), and
-[079](issues/079-primary-connection-parity.md) slices.
+[078](issues/078-chatgpt-subscription-workers.md) and
+[079](issues/079-primary-connection-parity.md) slices. Automation management already crosses the
+same AgentRunner boundary through Space-bound ToolDefs for BYOK and ChatGPT subscriptions.
 
 The agent's main tools: focused-Space Surface discovery and authoring (`list_surfaces`,
 `read_surface`, Space-bound `create_surface`, `patch_state`, `patch_tree`), memory (`write_fact`

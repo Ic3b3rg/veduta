@@ -21,6 +21,7 @@ const EXPECTED_TOOL_CHAIN = [
   'create_job',
   'set_automation_enabled',
   'cancel',
+  'set_automation_enabled',
 ]
 
 describe('AgentRunner Automation parity across Model connection methods (issues #77 and #93)', () => {
@@ -47,16 +48,38 @@ describe('AgentRunner Automation parity across Model connection methods (issues 
     ).toEqual(['automationId', 'enabled'])
 
     expect(outcome.toolResults.map((result) => result.toolName)).toEqual(EXPECTED_TOOL_CHAIN)
+    expect(outcome.turns).toEqual([
+      {
+        key: 'create',
+        toolNames: ['list_automations', 'arm_timer', 'create_job'],
+        finalText: 'Created the focused Automations.',
+      },
+      {
+        key: 'disable',
+        toolNames: ['set_automation_enabled'],
+        finalText: 'Disabled the focused Automation.',
+      },
+      {
+        key: 'cancel',
+        toolNames: ['cancel'],
+        finalText: 'Cancelled the focused Automation.',
+      },
+      {
+        key: 'reject-other-space',
+        toolNames: ['set_automation_enabled'],
+        finalText: 'The other Space Automation was not changed.',
+      },
+    ])
     expect(outcome.handlerExecution).toEqual({
-      total: 5,
-      distinctCallIds: 5,
+      total: 6,
+      distinctCallIds: 6,
       maxCallsPerId: 1,
       allContextHashesValid: true,
       byTool: {
         list_automations: 1,
         arm_timer: 1,
         create_job: 1,
-        set_automation_enabled: 1,
+        set_automation_enabled: 2,
         cancel: 1,
       },
     })
@@ -64,9 +87,21 @@ describe('AgentRunner Automation parity across Model connection methods (issues 
       expect(run.handlerCallIds).toEqual(run.acceptedCallIds)
       expect(new Set(run.acceptedCallIds).size).toBe(run.acceptedCallIds.length)
     }
-    expect(subscription.acceptedCallIds).toEqual(['call-1', 'call-2', 'call-3', 'call-4', 'call-5'])
+    expect(subscription.acceptedCallIds).toEqual([
+      'create:call-1',
+      'create:call-2',
+      'create:call-3',
+      'disable:call-1',
+      'cancel:call-1',
+      'reject-other-space:call-1',
+    ])
     expect(outcome.toolResults[0]?.content).toContain('Existing focused reminder')
     expect(outcome.toolResults[0]?.content).not.toContain('Other Space reminder')
+    expect(outcome.toolResults.at(-1)).toMatchObject({
+      toolName: 'set_automation_enabled',
+      content: 'Automation is unavailable in this Space',
+      isError: true,
+    })
 
     expect(outcome.focusedAutomations).toEqual([
       expect.objectContaining({
@@ -98,6 +133,7 @@ describe('AgentRunner Automation parity across Model connection methods (issues 
         status: 'armed',
       }),
     ])
+    expect(outcome.otherSpaceEventLog).toEqual([])
 
     expect(SurfaceSchema.parse(outcome.automationsSurface)).toEqual(outcome.automationsSurface)
     expect(outcome.automationsSurface.spaceId).toBe(AUTOMATION_PARITY_SPACE_ID)
@@ -115,9 +151,30 @@ describe('AgentRunner Automation parity across Model connection methods (issues 
       expect(event['origin']).toBe(AUTOMATION_PARITY_UNTRUSTED_ORIGIN)
     }
 
-    expect(subscription.transport.requestMethods).toEqual(['thread/start', 'turn/start'])
-    expect(subscription.transport.responseIds).toEqual([0, 1, 2, 3, 4])
-    expect(subscription.transport.toolResultTexts).toEqual(byok.toolResultTexts)
+    expect(subscription.transports.map((turn) => turn.key)).toEqual([
+      'create',
+      'disable',
+      'cancel',
+      'reject-other-space',
+    ])
+    for (const turn of subscription.transports) {
+      expect(turn.requestMethods).toEqual(['thread/start', 'turn/start'])
+    }
+    expect(subscription.transports.map((turn) => turn.responseIds)).toEqual([
+      [0, 1, 2],
+      [0],
+      [0],
+      [0],
+    ])
+    expect(subscription.transports.flatMap((turn) => turn.toolResultTexts)).toEqual(
+      byok.toolResultTexts,
+    )
+    expect(subscription.transports.map((turn) => turn.toolResultSuccess)).toEqual([
+      [true, true, true],
+      [true],
+      [true],
+      [false],
+    ])
   })
 })
 

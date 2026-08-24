@@ -1,7 +1,8 @@
 # Reference 11 — Model connections: manual smoke and decision record
 
 > Companion to [issue 047](../../issues/047-model-connections.md),
-> [issue 073](../../issues/073-chatgpt-subscription-surface-authoring.md), the
+> [issue 073](../../issues/073-chatgpt-subscription-surface-authoring.md),
+> [issue 077](../../issues/077-chatgpt-subscription-automations.md), the
 > [ADR-0014 amendment](../adr/0014-subscription-inference-boundary.md), and
 > [ADR-0016](../adr/0016-primary-agent-connections-author-surfaces.md). Automated tests cover
 > every adapter against deterministic fakes; this documents the checks that need a real account
@@ -55,6 +56,44 @@ ChatGPT account with device-code login enabled in its security settings.
   provenance was `trusted:system`, the session contained both tool results, and the Space Event
   log contained `surface.create` followed by `surface.patch_state`. The existing Local VPS Spaces
   were not modified, and credential contents were not printed.
+
+## ChatGPT subscription — Automation parity smoke
+
+Use a disposable Space or disposable Automations so the checks do not disturb real reminders.
+Complete the authorization and model-selection prerequisites above, select the ChatGPT
+subscription connection, and leave every BYOK connection disabled for fallback during this run.
+
+1. Open the disposable Space and locate its **Automations** Surface. Record the visible entries so
+   later checks can distinguish pre-existing Automations from the ones created here.
+2. In that focused Space, ask: `List every Automation in this Space.` Confirm the reply describes
+   only the entries visible in that Space and exposes no internal Space id.
+3. Ask: `Remind me in five minutes to check the Automation parity smoke.` Confirm one new enabled
+   timer appears in the **Automations** Surface without refreshing the page.
+4. Ask: `Create a daily Automation at 09:00 to review the Automation parity smoke.` Confirm a
+   second enabled entry appears with a recurring schedule. Neither request should create a
+   duplicate entry.
+5. In a later chat turn, identify the daily Automation by its visible description and ask Veduta
+   to disable it. Confirm its switch becomes off while the timer remains enabled.
+6. Repeat the same disable request. Confirm the UI remains unchanged and no duplicate Automation
+   or chat-side retry appears; setting the explicit enabled state is idempotent.
+7. In another later turn, ask Veduta to cancel the timer by its visible description. Confirm only
+   that timer disappears from the **Automations** Surface and the disabled daily entry remains.
+8. Open a different Space, create one distinct recurring Automation there, then return to the
+   original Space. Ask Veduta to list and disable every Automation **here**. Confirm the original
+   Space changes while the other Space's Automation remains enabled and visible when reopened.
+9. From the original Space, ask Veduta to change the Automation that belongs to the other Space.
+   Confirm no Automation changes in either Space and the reply exposes neither an internal Space id
+   nor whether a supplied numeric id exists elsewhere.
+10. Return to **Model connections** and confirm the selected connection is still the ChatGPT
+    subscription. No BYOK connection should have handled or replayed any of the turns.
+
+The deterministic provider-parity test additionally compares normalized Agent events, session
+entries, Scheduler records, visible Surface state, origins, Space Event records, handler call ids,
+and failed dynamic-tool responses between BYOK/fake and Codex/fake. Run it with:
+
+```sh
+pnpm --filter @veduta/daemon exec vitest run src/provider-automation-parity.test.ts
+```
 
 ## Claude subscription — the gate
 

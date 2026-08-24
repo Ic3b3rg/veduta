@@ -12,6 +12,7 @@ export interface SubscriptionTransportObservation {
   requestMethods: string[]
   responseIds: number[]
   toolResultTexts: string[]
+  toolResultSuccess: boolean[]
   turnStartText: string
 }
 
@@ -80,6 +81,11 @@ export function observeSubscriptionTransport(
       return contentItems
         .map((item) => stringValue(recordValue(item, 'tool response item')['text'], 'tool text'))
         .join('\n')
+    }),
+    toolResultSuccess: transport.serverResponses.map((response) => {
+      const success = recordValue(response.result, 'dynamic tool response')['success']
+      if (typeof success !== 'boolean') throw new Error('dynamic tool response has no success flag')
+      return success
     }),
     turnStartText: stringValue(firstInput['text'], 'turn/start input text'),
   }
