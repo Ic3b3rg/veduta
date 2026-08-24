@@ -23,6 +23,7 @@ import { NotificationsConfigSchema, saveNotificationsConfig } from './notificati
 import { storeProviderKey } from './provider-api-key.ts'
 import { reflectionSurfaceId } from './reflection-surface.ts'
 import { SecretsVault } from './secrets-vault.ts'
+import { PiJsonlSessionStore } from './pi-agent-runner.ts'
 import { buildServer } from './server.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { treeProposalSurfaceId } from './tree-proposal.ts'
@@ -1074,7 +1075,8 @@ describe('scheduler wiring (issue #11)', () => {
 
 describe('worker wiring (issue #17)', () => {
   it('spawns a Worker through the real chat loop (mock candidate) and delivers a reviewed report into the Space', async () => {
-    const { app, gateway, store, workerPool } = buildServer()
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-worker-wiring-'))
+    const { app, gateway, router, store, workerPool } = buildServer({ dataDir })
 
     const socket = new SchedulerFakeSocket()
     gateway.connect(socket)
@@ -1110,6 +1112,30 @@ describe('worker wiring (issue #17)', () => {
     expect(delivered).toBeDefined()
     expect(delivered?.origin).toBe('untrusted:worker')
     expect(delivered?.payload).toMatchObject({ workerId, reviewStatus: 'passed' })
+
+    const sessions = new PiJsonlSessionStore({
+      cwd: dataDir,
+      sessionsRoot: join(dataDir, 'sessions'),
+    })
+    const workerSession = await sessions.load(`worker-${workerId}`)
+    expect(workerSession.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: 'user', origin: 'untrusted:worker' }),
+        expect.objectContaining({ role: 'assistant' }),
+      ]),
+    )
+    expect((await sessions.load('space:spc-health')).messages).not.toEqual(
+      expect.arrayContaining(workerSession.messages),
+    )
+    expect(router.callLog()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          purpose: 'worker',
+          workerId,
+          model: expect.objectContaining({ provider: 'mock' }),
+        }),
+      ]),
+    )
 
     await app.close()
   })
@@ -1258,7 +1284,7 @@ describe('event ingestion wiring (issue #12)', () => {
   })
 
   it('answers "show me the full text" with the dedicated gated turn, never raw text in chat history', async () => {
-    const { app, gateway, ingestion, store } = await ingestionServer({
+    const { app, gateway, ingestion, router, store } = await ingestionServer({
       allowSenders: ['anna@example.com'],
     })
     const payload = JSON.stringify({
@@ -1296,6 +1322,23 @@ describe('event ingestion wiring (issue #12)', () => {
       .filter((frame) => frame.type === 'chat.message')
       .map((frame) => (frame as { message: { text: string } }).message.text)
     expect(chatTexts.join('\n')).not.toContain('secret lunch plan')
+    const sessions = new PiJsonlSessionStore({
+      cwd: store.spacesEngine.rootDir,
+      sessionsRoot: join(store.spacesEngine.rootDir, 'sessions'),
+    })
+    const fullTextSession = await sessions.load('full-text')
+    // Raw mail is transient (SECURITY.md §3.5): the dedicated Pi turn uses
+    // an in-memory session and must never land in the durable chat store.
+    expect(fullTextSession.messages).toEqual([])
+    expect(router.callLog()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          purpose: 'full-text',
+          origin: 'user',
+          spaceId: 'spc-health',
+        }),
+      ]),
+    )
     await app.close()
   })
 

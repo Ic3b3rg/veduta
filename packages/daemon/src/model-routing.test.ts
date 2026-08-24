@@ -56,6 +56,7 @@ function testRouter(overrides: Partial<ConstructorParameters<typeof ModelRouter>
 describe('usage map (tierForRequest)', () => {
   it('routes chat turns to reasoning and mechanical purposes to triage', () => {
     expect(tierForRequest({ purpose: 'chat-turn', origin: 'user' })).toBe('reasoning')
+    expect(tierForRequest({ purpose: 'full-text', origin: 'user' })).toBe('reasoning')
     for (const purpose of [
       'classification',
       'mechanical-update',

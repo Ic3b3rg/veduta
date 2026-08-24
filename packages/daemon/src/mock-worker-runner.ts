@@ -12,7 +12,7 @@ import { WORKER_REPORT_VERSION, type WorkerReport } from './worker-briefing.ts'
 const MOCK_WORKER_MODEL: ModelRef = { provider: 'mock', modelId: 'worker-mock', tier: 'reasoning' }
 const MOCK_TOKENS_USED = 200
 
-/** A goal containing this word is the dev fixture's cue to draft a flagged, initially-rejectable claim (mirrors the old `createMockWorkerReviewComplete` sentinel, now content-driven — see below). */
+/** A goal containing this word cues the keyless mock candidate to draft a flagged claim. */
 const UNSUPPORTED_GOAL_SENTINEL = 'unsupported'
 /**
  * The exact phrase `reviewFeedbackNote` (worker-briefing.ts) puts in a
@@ -20,14 +20,14 @@ const UNSUPPORTED_GOAL_SENTINEL = 'unsupported'
  * `prompt()` call is the corrective retry, not the initial investigation.
  */
 const REVIEW_FEEDBACK_MARKER = 'An independent review flagged these claims as unsupported'
-/** The one claim the fixture ever flags, and the one `createMockWorkerReviewComplete` rejects on sight — dropped from the corrected draft. */
+/** The one claim the fixture flags and its mock reviewer rejects on sight. */
 export const MOCK_UNSUPPORTED_CLAIM_TEXT =
   'Every keto dieter loses at least 10 kg in the first month.'
 
 /**
  * `flagged`: true for the INITIAL draft of a goal containing the
- * `UNSUPPORTED_GOAL_SENTINEL` — includes one claim `createMockWorkerReviewComplete`
- * is guaranteed to reject. A corrective retry (detected via
+ * `UNSUPPORTED_GOAL_SENTINEL` — includes one claim the mock reviewer is
+ * guaranteed to reject. A corrective retry (detected via
  * `REVIEW_FEEDBACK_MARKER` in `prompt()`) always drops it: the reject→correct→pass
  * dev path exercises a genuinely different, corrected report rather than
  * replaying the same rejected text. Every other goal never includes the
@@ -38,9 +38,7 @@ function mockWorkerReport(flagged: boolean): WorkerReport {
   return {
     version: WORKER_REPORT_VERSION,
     title: 'Research summary',
-    summary:
-      'A generic canned research summary (dev stand-in; no provider key configured — the real ' +
-      'Agent loop replaces this runner outright).',
+    summary: 'A generic canned research summary from the deterministic keyless mock candidate.',
     sections: [
       {
         heading: 'Findings',
@@ -62,10 +60,17 @@ function mockWorkerReport(flagged: boolean): WorkerReport {
   }
 }
 
+/** The deterministic mock candidate's report for one real Pi Worker prompt. */
+export function mockWorkerReportForPrompt(input: string): WorkerReport {
+  const isCorrectiveRetry = input.includes(REVIEW_FEEDBACK_MARKER)
+  const flagged = !isCorrectiveRetry && input.toLowerCase().includes(UNSUPPORTED_GOAL_SENTINEL)
+  return mockWorkerReport(flagged)
+}
+
 /**
- * Deterministic, zero-network `AgentRunner` for Workers (issue #17):
- * the dev stand-in until the real Agent loop lands, same spirit as
- * `MockAgentRunner`/`mockReaderComplete`. On `prompt()` it appends the user
+ * Deterministic, zero-network `AgentRunner` kept as focused WorkerPool test
+ * support. Production uses `PiAgentRunner`; the keyless provider candidate
+ * reuses `mockWorkerReportForPrompt` above. On `prompt()` it appends the user
  * turn to its session, then emits exactly one `turn-end` whose text is a
  * valid `worker-report/v1` report — enough for the `WorkerPool` to exercise
  * its budget/delivery/review wiring with no API key.
@@ -115,9 +120,7 @@ export function createMockWorkerRunner(
       // "genuinely corrected" draft. Otherwise the INITIAL draft is flagged
       // only for a goal containing the sentinel; every other goal is never
       // flagged and so passes review immediately.
-      const isCorrectiveRetry = input.includes(REVIEW_FEEDBACK_MARKER)
-      const flagged = !isCorrectiveRetry && input.toLowerCase().includes(UNSUPPORTED_GOAL_SENTINEL)
-      const report = mockWorkerReport(flagged)
+      const report = mockWorkerReportForPrompt(input)
       const text = JSON.stringify(report)
 
       await sessionStore.append(activeSessionId, {
@@ -146,12 +149,9 @@ export function createMockWorkerRunner(
 }
 
 /**
- * Deterministic dev stand-in for the Worker adversarial review's LLM call
- * (issue #17, mirrors `mockReaderComplete`): the dev profile
- * has no provider keys by design, so every review reports a passing
- * verdict — enough to demonstrate the "review passed" acceptance criterion
- * without a provider client. The real provider client lands with the Agent
- * loop, same as chat and the quarantined reader.
+ * Deterministic always-pass completion retained for focused review tests.
+ * Production review goes through the provider bridge; the keyless mock
+ * candidate uses `mockWorkerReviewText` below.
  */
 export const mockWorkerReviewComplete: (
   model: ModelRef,
@@ -172,23 +172,27 @@ export const mockWorkerReviewComplete: (
  * that was never flagged to begin with — passes. This ties the verdict to
  * the actual content under review, so `WorkerPool`'s revision-tracking
  * sees a real change between the rejected and corrected drafts
- * instead of the same text passed through twice. Dev-only stand-in: the real
- * provider client replaces it outright once the Agent loop lands.
+ * instead of the same text passed through twice. The production keyless
+ * provider fixture calls the same content-driven helper below, so it stays
+ * deterministic without bypassing the live completion path.
  */
 export function createMockWorkerReviewComplete(): (
   model: ModelRef,
   prompt: string,
 ) => Promise<{ text: string; costUsd?: number }> {
   return async (_model, prompt) => {
-    if (prompt.includes(MOCK_UNSUPPORTED_CLAIM_TEXT)) {
-      return {
-        text: JSON.stringify({
-          verdict: 'reject',
-          unsupportedClaims: [MOCK_UNSUPPORTED_CLAIM_TEXT],
-          suggestedCaveat: 'This dev report could not be fully verified by an independent review.',
-        }),
-      }
-    }
-    return { text: JSON.stringify({ verdict: 'pass', unsupportedClaims: [] }) }
+    return { text: mockWorkerReviewText(prompt) }
   }
+}
+
+/** The deterministic mock candidate's verdict for one fresh review prompt. */
+export function mockWorkerReviewText(prompt: string): string {
+  if (prompt.includes(MOCK_UNSUPPORTED_CLAIM_TEXT)) {
+    return JSON.stringify({
+      verdict: 'reject',
+      unsupportedClaims: [MOCK_UNSUPPORTED_CLAIM_TEXT],
+      suggestedCaveat: 'This dev report could not be fully verified by an independent review.',
+    })
+  }
+  return JSON.stringify({ verdict: 'pass', unsupportedClaims: [] })
 }

@@ -1,6 +1,7 @@
 import type { AgentRunner, ToolDef } from './agent-runner.ts'
 import type { EventQueue } from './event-queue.ts'
 import type { ExternalEvent } from './external-event.ts'
+import type { ModelRouter } from './model-routing.ts'
 import { neutralizeDelimiters, untrustedOrigin } from './taint.ts'
 
 /**
@@ -17,6 +18,7 @@ export type FetchQuarantinedBody = (event: ExternalEvent) => Promise<string | un
 
 export interface QuarantinedText {
   source: string
+  spaceId: string
   text: string
 }
 
@@ -52,7 +54,7 @@ export async function loadQuarantinedText(
     if (body !== undefined) parts.push(body)
   }
 
-  return { source: event.source, text: parts.join('\n\n') }
+  return { source: event.source, spaceId: row.spaceId, text: parts.join('\n\n') }
 }
 
 /**
@@ -75,43 +77,115 @@ export function formatUntrustedFullText(source: string, text: string): string {
  * prompts the runner with nothing else in the input and `origin:
  * untrustedOrigin(source)` — the runner's own gate (SECURITY.md §3.2) then
  * strips every non-`L0` tool for the turn. Honors the `AgentRunner`
- * contract exactly: `prompt()` resolves `Promise<void>`, the reply arrives
- * via a `turn-end` event, so the handler subscribes before prompting and
- * unsubscribes on every path.
+ * contract exactly: `prompt()` resolves `Promise<void>`, replies and spend
+ * arrive via `turn-end` events, so each routed attempt subscribes before
+ * prompting and unsubscribes on every path.
  */
 export async function promptFullText(
   runner: AgentRunner,
   queue: EventQueue,
   fetchBody: FetchQuarantinedBody | undefined,
   queueId: number,
-  options?: { tools?: ToolDef[] },
+  options: { router: ModelRouter; tools?: ToolDef[] },
 ): Promise<string> {
   const loaded = await loadQuarantinedText(queue, fetchBody, queueId)
   if (!loaded) throw new Error(`no stored text for queue #${queueId}`)
 
   const formatted = formatUntrustedFullText(loaded.source, loaded.text)
 
-  let unsubscribe: (() => void) | undefined
   try {
-    return await new Promise<string>((resolve, reject) => {
-      unsubscribe = runner.on((event) => {
-        if (event.type === 'turn-end') {
-          resolve(event.text)
-        } else if (event.type === 'error') {
-          // Content-free: the runner's own error message may carry
-          // provider/transport detail, never quarantined content, but we
-          // still normalize to a fixed message here for the caller.
-          reject(new Error('the full-text turn failed'))
-        }
-      })
-      runner
-        .prompt(formatted, {
-          origin: untrustedOrigin(loaded.source),
-          ...(options?.tools ? { tools: options.tools } : {}),
+    return await options.router.execute(
+      { purpose: 'full-text', origin: 'user', spaceId: loaded.spaceId },
+      async (model, attempt) => {
+        const replies: string[] = []
+        let sawTurnEnd = false
+        const unsubscribe = runner.on((event) => {
+          if (event.type === 'turn-end') {
+            sawTurnEnd = true
+            if (event.text) replies.push(event.text)
+            if (event.costUsd !== undefined) {
+              try {
+                options.router.recordSpend(event.model, event.costUsd)
+              } catch (error) {
+                // Accounting is an observer of a completed model call. A
+                // storage failure must not turn that completion into a
+                // provider failure and trigger a same-turn retry.
+                console.error('full-text spend recording failed', error)
+              }
+            }
+          }
         })
-        .catch(reject)
-    })
-  } finally {
-    unsubscribe?.()
+        try {
+          await runner.prompt(formatted, {
+            model,
+            origin: untrustedOrigin(loaded.source),
+            spaceId: loaded.spaceId,
+            retryOfFailedTurn: attempt > 0,
+            ...(options.tools ? { tools: options.tools } : {}),
+          })
+        } finally {
+          unsubscribe()
+        }
+        if (!sawTurnEnd) throw new Error('the full-text runner completed without a turn result')
+        return replies.join('\n\n')
+      },
+    )
+  } catch {
+    // Content-free: provider/transport detail must not leak through the
+    // Gateway's reply path, especially alongside quarantined content.
+    throw new Error('the full-text turn failed')
+  }
+}
+
+export interface FullTextFlow {
+  request(queueId: number): Promise<string>
+  stop(): Promise<void>
+}
+
+/**
+ * Owns the single serialized full-text execution lane. Every request gets a
+ * fresh runner and disposable session: raw external text stays transient and
+ * can never carry from one Space into another model context. The shared chain
+ * still guarantees that only one full-text turn is ever in flight.
+ */
+export function createFullTextFlow(options: {
+  runnerFactory: () => AgentRunner
+  router: ModelRouter
+  queue: EventQueue
+  fetchBody?: FetchQuarantinedBody
+  tools?: ToolDef[]
+}): FullTextFlow {
+  let stopped = false
+  let activeRunner: AgentRunner | undefined
+  let chain: Promise<unknown> = Promise.resolve()
+
+  return {
+    request(queueId) {
+      if (stopped) return Promise.reject(new Error('the full-text flow is stopped'))
+      const next = chain
+        .catch(() => {})
+        .then(async () => {
+          if (stopped) throw new Error('the full-text flow is stopped')
+          const runner = options.runnerFactory()
+          activeRunner = runner
+          try {
+            await runner.start('full-text')
+            return await promptFullText(runner, options.queue, options.fetchBody, queueId, {
+              router: options.router,
+              ...(options.tools === undefined ? {} : { tools: options.tools }),
+            })
+          } finally {
+            if (activeRunner === runner) activeRunner = undefined
+          }
+        })
+      chain = next
+      return next
+    },
+    async stop() {
+      if (stopped) return
+      stopped = true
+      await activeRunner?.abort()
+      await chain.catch(() => {})
+    },
   }
 }

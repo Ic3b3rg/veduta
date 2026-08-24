@@ -13,6 +13,7 @@ import { defaultRedactor } from './redaction.ts'
  */
 export type CallPurpose =
   | 'chat-turn'
+  | 'full-text'
   | 'classification'
   | 'mechanical-update'
   | 'quarantined-reader'
@@ -42,7 +43,11 @@ export function tierForRequest(request: RouteRequest): ModelTier {
     }
     return request.workerTier
   }
-  if (request.purpose === 'chat-turn' || request.purpose === 'heartbeat-reasoning') {
+  if (
+    request.purpose === 'chat-turn' ||
+    request.purpose === 'full-text' ||
+    request.purpose === 'heartbeat-reasoning'
+  ) {
     return 'reasoning'
   }
   return 'triage'

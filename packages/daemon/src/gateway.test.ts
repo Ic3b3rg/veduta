@@ -499,8 +499,14 @@ describe('GatewayHub full-text requests', () => {
       },
     })
     const socket = new FakeGatewaySocket()
+    const observer = new FakeGatewaySocket()
     gateway.connect(socket)
+    gateway.connect(observer)
     socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+    observer.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+    const observerMessagesBefore = observer.sent.filter(
+      (frame) => frame.type === 'chat.message',
+    ).length
 
     socket.receive({ type: 'chat.send', text: 'show me the full text of event #42' })
     await flushMicrotasks()
@@ -510,6 +516,9 @@ describe('GatewayHub full-text requests', () => {
       type: 'chat.message',
       message: { role: 'assistant', text: 'Displayed the requested content.' },
     })
+    expect(observer.sent.filter((frame) => frame.type === 'chat.message')).toHaveLength(
+      observerMessagesBefore,
+    )
   })
 
   it('broadcasts a content-free notice when the full-text request rejects', async () => {

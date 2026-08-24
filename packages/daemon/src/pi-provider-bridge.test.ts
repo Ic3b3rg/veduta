@@ -1,6 +1,7 @@
 import { getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { installEgressEnforcement, EgressPolicy, type EgressDenial } from './egress.ts'
+import { createFakeProvider, fakeText, fakeUsage } from './fake-provider.ts'
 import {
   defaultRoutingConfig,
   isMarkedNonRetryable,
@@ -8,6 +9,7 @@ import {
   type SecretResolver,
 } from './model-routing.ts'
 import {
+  completeToolless,
   createProviderBridge,
   isBuiltinModel,
   probeModel,
@@ -798,6 +800,32 @@ describe('createProviderBridge', () => {
       await expect(
         probeModel(bridge, { provider: 'mock', modelId: 'reader-mock', tier: 'triage' }),
       ).rejects.toThrow('the provider rejected the request: invalid api key')
+    })
+  })
+
+  describe('completeToolless', () => {
+    it('runs one fresh prompt with no tools and returns provider text and cost', async () => {
+      const fake = createFakeProvider()
+      let observedContext: PiChatContext | undefined
+      fake.setResponses([
+        {
+          factory: (context) => {
+            observedContext = context
+            return fakeText('{"verdict":"pass"}')
+          },
+          usage: fakeUsage(0.125),
+        },
+      ])
+
+      const result = await completeToolless(
+        fake,
+        { provider: 'fake', modelId: 'fake-model', tier: 'reasoning' },
+        'review this report',
+      )
+
+      expect(result).toEqual({ text: '{"verdict":"pass"}', costUsd: 0.125 })
+      expect(observedContext?.tools).toBeUndefined()
+      expect(observedContext?.messages).toHaveLength(1)
     })
   })
 

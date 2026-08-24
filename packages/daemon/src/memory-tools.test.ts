@@ -25,6 +25,29 @@ function toolContext(toolCallId: string, origin: Origin, extraTaint: Origin[] = 
 }
 
 describe('memory tools', () => {
+  it('preserves an explicit Space override for the shared chat tools', async () => {
+    const engine = new SpacesEngine({
+      rootDir: await tempRoot(),
+      now: fixedNow,
+      seed: seedSpaces(),
+    })
+    const other = engine.createSpace({ name: 'Other' })
+    engine.appendEvent('spc-health', { text: 'health note', origin: 'trusted:user' })
+    engine.appendEvent(other.id, { text: 'other note', origin: 'trusted:user' })
+    const readRecent = requireTool(
+      createMemoryTools(engine, { activeSpaceId: 'spc-health' }),
+      'read_recent',
+    )
+
+    const result = await readRecent.handler(
+      readRecent.schema.parse({ spaceId: other.id, limit: 20 }),
+      toolContext('explicit-space', 'trusted:user'),
+    )
+
+    expect(result.content).toContain('other note')
+    expect(result.content).not.toContain('health note')
+  })
+
   it('exposes write_fact, append_event, read_recent and search_log through ToolDef', async () => {
     const engine = new SpacesEngine({
       rootDir: await tempRoot(),

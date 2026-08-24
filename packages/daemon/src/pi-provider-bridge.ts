@@ -19,6 +19,7 @@ import { streamSimple } from '@earendil-works/pi-ai/compat'
 import { getBuiltinModel } from '@earendil-works/pi-ai/providers/all'
 import type { ModelRef } from './agent-runner.ts'
 import {
+  isMarkedNonRetryable,
   markNonRetryable,
   NonRetryableModelError,
   type RoutingConfig,
@@ -432,25 +433,68 @@ export function isBuiltinModel(provider: string, modelId: string): boolean {
  * like a real turn would.
  */
 export async function probeModel(bridge: ProviderBridge, model: ModelRef): Promise<void> {
-  const descriptor = bridge.resolveModel(model)
   const context: PiChatContext = {
     systemPrompt: 'You are a connection test.',
     messages: [{ role: 'user', content: 'ping', timestamp: Date.now() }],
   }
-  const apiKey = bridge.getApiKey(descriptor.provider)
-  const stream = await bridge.streamFn(descriptor, context, {
-    ...(apiKey === undefined ? {} : { apiKey }),
-    maxTokens: 8,
-  })
-  for await (const _event of stream) {
-    // Drain to completion; only the final message matters here.
-  }
-  const finalMessage = await stream.result()
+  const finalMessage = await completeBridgeTurn(bridge, model, context, { maxTokens: 8 })
   if (finalMessage.stopReason === 'error') {
     throw new Error(
       finalMessage.errorMessage ?? 'the connection test failed with no error message reported',
     )
   }
+}
+
+/**
+ * Runs one stateless, tool-less completion through the same provider bridge
+ * as live Agent turns. Each call builds a fresh context containing only the
+ * supplied prompt; callers such as the Worker adversarial reviewer therefore
+ * cannot inherit the Worker's session, tools, or prior messages.
+ */
+export async function completeToolless(
+  bridge: ProviderBridge,
+  model: ModelRef,
+  prompt: string,
+): Promise<{ text: string; costUsd?: number }> {
+  const context: PiChatContext = {
+    messages: [{ role: 'user', content: prompt, timestamp: Date.now() }],
+  }
+  const finalMessage = await completeBridgeTurn(bridge, model, context)
+  if (finalMessage.stopReason === 'error') {
+    const message = finalMessage.errorMessage ?? 'the tool-less completion failed'
+    if (isMarkedNonRetryable(finalMessage)) throw new NonRetryableModelError(message)
+    throw new Error(message)
+  }
+  if (finalMessage.content.some((part) => part.type === 'toolCall')) {
+    throw new Error('the tool-less completion attempted to call a tool')
+  }
+  const text = finalMessage.content
+    .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+    .join('')
+  const costUsd = finalMessage.usage.cost.total
+  return {
+    text,
+    ...(Number.isFinite(costUsd) && costUsd >= 0 ? { costUsd } : {}),
+  }
+}
+
+/** Shared provider-boundary mechanics for the two stateless completion paths above. */
+async function completeBridgeTurn(
+  bridge: ProviderBridge,
+  model: ModelRef,
+  context: PiChatContext,
+  options: SimpleStreamOptions = {},
+): Promise<PiAssistantMessage> {
+  const descriptor = bridge.resolveModel(model)
+  const apiKey = bridge.getApiKey(descriptor.provider)
+  const stream = await bridge.streamFn(descriptor, context, {
+    ...options,
+    ...(apiKey === undefined ? {} : { apiKey }),
+  })
+  for await (const _event of stream) {
+    // Drain to completion; only the final message matters to both callers.
+  }
+  return stream.result()
 }
 
 /**

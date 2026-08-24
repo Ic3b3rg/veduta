@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Fastify from 'fastify'
 import { z } from 'zod'
-import type { ModelRef } from './agent-runner.ts'
+import { MemorySessionStore, type ModelRef, type SessionStore } from './agent-runner.ts'
 import { AllowlistSurfaceManager } from './allowlist-surface.ts'
 import { ApprovalPendingDecisionAdapter } from './approval-pending-decision.ts'
 import { ApprovalSurfaceManager } from './approval-surface.ts'
@@ -30,7 +30,7 @@ import { loadConnectionsConfig, type ConnectionsFile } from './connections-confi
 import { EgressPolicy, installEgressEnforcement } from './egress.ts'
 import { EventIngestion, type FetchStage } from './event-ingestion.ts'
 import type { ExternalEvent } from './external-event.ts'
-import { promptFullText } from './full-text-flow.ts'
+import { createFullTextFlow } from './full-text-flow.ts'
 import { registerGatewayRoute } from './gateway-route.ts'
 import { GatewayHub } from './gateway.ts'
 import { CalendarSource, GmailSource, GoogleTokenProvider } from './google-sources.ts'
@@ -42,11 +42,9 @@ import { registerIngestionRoutes } from './ingestion-routes.ts'
 import { loadMemoryConfig } from './memory-config.ts'
 import { MemoryIndex, type MemoryIndexOptions } from './memory-index.ts'
 import { MemoryRetrieval } from './memory-retrieval.ts'
-import { MockAgentRunner } from './mock-agent-runner.ts'
 import { createMockChatResponder } from './mock-chat-model.ts'
 import { mockReaderComplete } from './mock-provider.ts'
 import { createMockReflectionDistiller } from './mock-reflection-distiller.ts'
-import { createMockWorkerRunner, createMockWorkerReviewComplete } from './mock-worker-runner.ts'
 import { ModelConnectionError } from './model-connection-adapter.ts'
 import { BYOK_ADAPTERS } from './model-connection-byok.ts'
 import { claudeSubscriptionAdapter } from './model-connection-claude.ts'
@@ -73,8 +71,13 @@ import { registerOnboardingRoutes } from './onboarding-routes.ts'
 import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
 import { registerPendingDecisionRoutes } from './pending-decision-routes.ts'
 import { PendingDecisionService } from './pending-decision-service.ts'
-import { PiJsonlSessionStore } from './pi-agent-runner.ts'
-import { createProviderBridge, isBuiltinModel, probeModel } from './pi-provider-bridge.ts'
+import { PiAgentRunner, PiJsonlSessionStore } from './pi-agent-runner.ts'
+import {
+  completeToolless,
+  createProviderBridge,
+  isBuiltinModel,
+  probeModel,
+} from './pi-provider-bridge.ts'
 import { registerPushRoutes } from './push-routes.ts'
 import { PushStore } from './push-store.ts'
 import { QuarantinedReader } from './quarantined-reader.ts'
@@ -99,6 +102,7 @@ import { ensureSystemSpace } from './system-space.ts'
 import { TemplateEngine } from './template-engine.ts'
 import { TreePendingDecisionAdapter } from './tree-pending-decision.ts'
 import { TreeProposalSurfaceManager } from './tree-proposal.ts'
+import { piToolParameters } from './tool-parameters.ts'
 import { isTrustWrapped, TrustLayer } from './trust-layer.ts'
 import { ensureDataVersion } from './update/data-version.ts'
 import { UpdateManager } from './update-manager.ts'
@@ -106,6 +110,7 @@ import { UpdatePendingDecisionAdapter } from './update-pending-decision.ts'
 import { resolveInstalledVersion } from './version.ts'
 import { ensureVapidKeys, WebPushTransport, type PushTransport } from './web-push-transport.ts'
 import { WorkerPool } from './worker.ts'
+import { workerToolRegistry } from './worker-tool-registry.ts'
 
 export interface ServerOptions {
   pwaDistDir?: string
@@ -1115,29 +1120,36 @@ export function buildServer(options: ServerOptions = {}) {
     await codexSessionPool.closeAll()
   })
 
-  // Background Workers (issue #17, ADR-0002, ARCHITECTURE §3.6): ephemeral
+  // Background Workers (issues #17/#39, ADR-0002, ARCHITECTURE §3.6): ephemeral
   // investigate-and-report steps, run in an isolated session under a
   // token/iteration budget, with a separate adversarial review before
-  // delivery for high-risk briefings. `runnerFactory`/`reviewComplete` are
-  // dev stand-ins, same rationale as the mock quarantined reader/Heartbeat
-  // completion above — no provider key, deterministic, replaced outright by
-  // the real `PiAgentRunner` factory once the Agent loop lands. `workerTools`
-  // is empty in the dev profile: an L0-only registry (asserted in the
-  // constructor) that the scripted runner never dispatches against; the
-  // real Agent loop grows this alongside whatever L0 tools it offers.
+  // delivery for high-risk briefings. Every run gets a new PiAgentRunner and
+  // its own `worker-<id>` session; the shared session store is safe because
+  // that namespace can never collide with chat's `space:<id>` / `global`
+  // sessions. The real read-only registry is an L0, zero-egress ceiling,
+  // asserted again by WorkerPool. Review uses a fresh stateless bridge call,
+  // never the Worker's runner/session/tools. With no key, both paths still
+  // traverse the same router and deterministic mock candidate as chat.
+  const workerTools = workerToolRegistry({
+    spacesEngine: store.spacesEngine,
+    memoryRetrieval,
+  })
+  const workerParameters = piToolParameters(workerTools)
+  const createReadOnlyPiRunner = (sessionStore: SessionStore) =>
+    new PiAgentRunner({
+      sessionStore,
+      resolveModel: bridge.resolveModel,
+      getApiKey: bridge.getApiKey,
+      streamFn: bridge.streamFn,
+      toolParameters: workerParameters,
+    })
   const workerPool = new WorkerPool({
     store,
     router,
     now,
-    runnerFactory: () => createMockWorkerRunner(),
-    // A dev stand-in with a small stateful fixture (mock-worker-runner.ts):
-    // passes every review by default, except a goal containing the word
-    // "unsupported" first rejects (with a caveat), then passes on the
-    // corrective retry — enough to exercise acceptance C's reject → correct
-    // flow via `pnpm dev` with no provider key. Replaced outright by the
-    // real reviewer completion once the Agent loop lands.
-    reviewComplete: createMockWorkerReviewComplete(),
-    workerTools: [],
+    runnerFactory: () => createReadOnlyPiRunner(chatSessionStore),
+    reviewComplete: (model, prompt) => completeToolless(bridge, model, prompt),
+    workerTools,
   })
   workerPool.recoverAtBoot()
   app.addHook('onClose', async () => {
@@ -1312,22 +1324,21 @@ export function buildServer(options: ServerOptions = {}) {
       watchManager.registrations().find((registration) => registration.source === sourceName)
         ?.channelId,
   })
-  // The "read me the full text" flow (SECURITY.md §3.3): a dedicated turn,
-  // delimited and marked untrusted, gated to L0 tools by the runner itself.
-  // The real Agent loop swaps the MockAgentRunner instance, nothing else.
-  const fullTextRunner = new MockAgentRunner()
-  const fullTextRunnerReady = fullTextRunner.start('full-text')
-  // Requests are serialized: `promptFullText` resolves on the runner's next
-  // `turn-end`, so two concurrent turns on the shared runner would
-  // cross-wire replies. The chain keeps one turn in flight at a time.
-  let fullTextChain: Promise<unknown> = fullTextRunnerReady
-  fullTextHandler = (queueId) => {
-    const next = fullTextChain
-      .catch(() => {})
-      .then(() => promptFullText(fullTextRunner, ingestion.queue, fetchBody, queueId))
-    fullTextChain = next
-    return next
-  }
+  // The "read me the full text" flow (issue #39, SECURITY.md §3.3): one
+  // serialized execution lane with a fresh in-memory Pi session per request.
+  // Raw external text therefore stays transient and cannot cross Space
+  // boundaries. The user-requested call routes as `full-text`, while the
+  // prompt itself stays delimited and Untrusted. The same honest read-only
+  // registry as Workers is the complete capability ceiling; the runner also
+  // strips any accidentally introduced non-L0 definition.
+  const fullTextFlow = createFullTextFlow({
+    runnerFactory: () => createReadOnlyPiRunner(new MemorySessionStore()),
+    router,
+    queue: ingestion.queue,
+    fetchBody,
+    tools: workerTools,
+  })
+  fullTextHandler = (queueId) => fullTextFlow.request(queueId)
   // Boot redelivery is background work: `deliver` never throws, and its
   // ordering with watch registration below is immaterial (it only touches
   // already-accepted rows from a prior run). Queue/DB errors in the
@@ -1337,7 +1348,10 @@ export function buildServer(options: ServerOptions = {}) {
   })
   for (const register of registerWatches) register()
   watchManager.start()
-  app.addHook('onClose', async () => watchManager.stop())
+  app.addHook('onClose', async () => {
+    await fullTextFlow.stop()
+    watchManager.stop()
+  })
 
   // Dev profile: only the Vite dev server may call the daemon from a browser.
   void app.register(cors, {
