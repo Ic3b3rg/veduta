@@ -2,7 +2,8 @@
 
 > Companion to [issue 047](../../issues/047-model-connections.md),
 > [issue 073](../../issues/073-chatgpt-subscription-surface-authoring.md),
-> [issue 077](../../issues/077-chatgpt-subscription-automations.md), the
+> [issue 077](../../issues/077-chatgpt-subscription-automations.md),
+> [issue 078](../../issues/078-chatgpt-subscription-workers.md), the
 > [ADR-0014 amendment](../adr/0014-subscription-inference-boundary.md), and
 > [ADR-0016](../adr/0016-primary-agent-connections-author-surfaces.md). Automated tests cover
 > every adapter against deterministic fakes; this documents the checks that need a real account
@@ -93,6 +94,45 @@ and failed dynamic-tool responses between BYOK/fake and Codex/fake. Run it with:
 
 ```sh
 pnpm --filter @veduta/daemon exec vitest run src/provider-automation-parity.test.ts
+```
+
+## ChatGPT subscription — Worker parity smoke
+
+Use a disposable Space because this check deliberately creates Worker report Surfaces and includes
+a cancellation. Complete the authorization and model-selection prerequisites above, select the
+ChatGPT subscription connection, and leave every BYOK connection disabled for fallback during this
+run.
+
+1. Open the disposable Space and add one distinctive fact to its recent chat context, such as
+   `For this smoke check, remember that the recovery window is forty-eight hours.`
+2. Send: `Start exactly one background Worker to inspect recent evidence in this Space and report
+the recovery window. Let it use only read_recent, treat the briefing as high risk, and return
+immediately instead of doing the investigation in this chat turn.`
+3. Confirm the chat response finishes while one new **Worker:** Surface is still visible as
+   **researching**, with progress and a **Cancel** button. A second Worker Surface must not appear.
+4. Keep the Space open. Confirm that the same Surface updates without a page refresh to
+   **Delivered**, contains the forty-eight-hour finding, and shows either **Review passed** or a
+   visible review caveat. The chat transcript must not receive the Worker's evidence as a second
+   synchronous answer.
+5. Refresh the browser. Confirm the delivered Surface remains settled and no duplicate report or
+   second delivery appears.
+6. Start another deliberately slow Worker in the same Space with:
+   `Start exactly one background Worker to inspect all recent evidence here. Use only read_recent
+and return immediately; I will cancel it from the Surface.`
+7. As soon as its active Surface appears, click **Cancel**. Confirm that Surface becomes
+   **Cancelled**, carries the partial-result warning, and never later changes into a second clean
+   delivery. The first delivered Worker Surface must stay unchanged.
+8. Refresh once more. Confirm both terminal states persist and neither Worker has been duplicated.
+9. Return to **Model connections** and confirm the selected connection is still the ChatGPT
+   subscription. No BYOK connection should have handled or replayed either spawn.
+
+The deterministic provider-parity test additionally proves the asynchronous identity/result
+boundary, isolated `worker-*` session, read-only L0 definition set, protocol-valid Surface,
+`untrusted:worker` provenance, usage attribution, fresh tool-less high-risk review, cancellation,
+budget exhaustion, and post-tool failure without spawn replay. Run it with:
+
+```sh
+pnpm --filter @veduta/daemon exec vitest run src/provider-worker-parity.test.ts
 ```
 
 ## Claude subscription — the gate
