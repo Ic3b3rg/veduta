@@ -1,10 +1,9 @@
 import {
   piFauxAssistantMessage,
-  piFauxText,
-  piFauxToolCall,
   type PiAssistantMessage,
   type PiChatContext,
 } from './pi-provider-bridge.ts'
+import { isRecord, parseJson, toolCallMessage, toolResultText } from './mock-fixture-support.ts'
 
 const CREATE_DAILY_AUTOMATION_REQUEST = 'Create a daily automation to review my plan at 9am'
 const LIST_AUTOMATIONS_REQUEST = 'List automations here'
@@ -23,6 +22,37 @@ interface AutomationSummary {
 }
 
 type BulkMutation = 'disable' | 'cancel'
+
+interface BulkMutationDescriptor {
+  completionVerb: string
+  failurePrefix: string
+  listMessage: string
+  progressMessage: (automation: AutomationSummary) => string
+  targets: (inventory: AutomationSummary[]) => AutomationSummary[]
+  toolArguments: (automation: AutomationSummary) => Record<string, unknown>
+  toolName: 'set_automation_enabled' | 'cancel'
+}
+
+const BULK_MUTATIONS: Record<BulkMutation, BulkMutationDescriptor> = {
+  disable: {
+    completionVerb: 'Disabled',
+    failurePrefix: 'The enabled state was not fully changed',
+    listMessage: 'Finding the complete enabled Automation set in this Space.',
+    progressMessage: (automation) => `Disabling “${automation.description}”.`,
+    targets: (inventory) => inventory.filter((automation) => automation.enabled),
+    toolArguments: (automation) => ({ automationId: automation.id, enabled: false }),
+    toolName: 'set_automation_enabled',
+  },
+  cancel: {
+    completionVerb: 'Cancelled',
+    failurePrefix: 'The Automations were not fully cancelled',
+    listMessage: 'Finding the complete Automation set in this Space.',
+    progressMessage: (automation) => `Cancelling “${automation.description}”.`,
+    targets: (inventory) => inventory,
+    toolArguments: (automation) => ({ automationId: automation.id }),
+    toolName: 'cancel',
+  },
+}
 
 /** Deterministic issue #93 journey for Loopback-profile browser and integration tests. */
 export function respondToMockAutomation(
@@ -65,46 +95,32 @@ function respondToBulkMutation(
   results: PiToolResultMessage[],
   mutation: BulkMutation,
 ): PiAssistantMessage {
+  const descriptor = BULK_MUTATIONS[mutation]
   const listResult = results.find((result) => result.toolName === 'list_automations')
   if (!listResult) {
-    return toolCallMessage(
-      'list_automations',
-      {},
-      mutation === 'disable'
-        ? 'Finding the complete enabled Automation set in this Space.'
-        : 'Finding the complete Automation set in this Space.',
-    )
+    return toolCallMessage('list_automations', {}, descriptor.listMessage)
   }
 
   const inventory = automationSummaries(toolResultText(listResult))
   if (!inventory) return piFauxAssistantMessage('The Automation inventory could not be read.')
-  const targets =
-    mutation === 'disable' ? inventory.filter((automation) => automation.enabled) : inventory
-  const toolName = mutation === 'disable' ? 'set_automation_enabled' : 'cancel'
-  const mutations = results.filter((result) => result.toolName === toolName)
+  const targets = descriptor.targets(inventory)
+  const mutations = results.filter((result) => result.toolName === descriptor.toolName)
   const failed = mutations.find((result) => result.isError)
   if (failed) {
-    const prefix =
-      mutation === 'disable'
-        ? 'The enabled state was not fully changed'
-        : 'The Automations were not fully cancelled'
-    return piFauxAssistantMessage(`${prefix}: ${toolResultText(failed)}`)
+    return piFauxAssistantMessage(`${descriptor.failurePrefix}: ${toolResultText(failed)}`)
   }
 
   const next = targets[mutations.length]
   if (next) {
-    return mutation === 'disable'
-      ? toolCallMessage(
-          toolName,
-          { automationId: next.id, enabled: false },
-          `Disabling “${next.description}”.`,
-        )
-      : toolCallMessage(toolName, { automationId: next.id }, `Cancelling “${next.description}”.`)
+    return toolCallMessage(
+      descriptor.toolName,
+      descriptor.toolArguments(next),
+      descriptor.progressMessage(next),
+    )
   }
 
-  const verb = mutation === 'disable' ? 'Disabled' : 'Cancelled'
   return piFauxAssistantMessage(
-    `${verb} ${targets.length} ${targets.length === 1 ? 'Automation' : 'Automations'} in this Space.`,
+    `${descriptor.completionVerb} ${targets.length} ${targets.length === 1 ? 'Automation' : 'Automations'} in this Space.`,
   )
 }
 
@@ -127,30 +143,4 @@ function automationSummaries(content: string): AutomationSummary[] | undefined {
     summaries.push({ id, kind, description, enabled, status })
   }
   return summaries
-}
-
-function toolCallMessage(
-  name: string,
-  args: Record<string, unknown>,
-  text: string,
-): PiAssistantMessage {
-  return piFauxAssistantMessage([piFauxText(text), piFauxToolCall(name, args)], {
-    stopReason: 'toolUse',
-  })
-}
-
-function toolResultText(message: PiToolResultMessage): string {
-  return message.content.map((block) => (block.type === 'text' ? block.text : '')).join('\n')
-}
-
-function parseJson(content: string): unknown {
-  try {
-    return JSON.parse(content)
-  } catch {
-    return undefined
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

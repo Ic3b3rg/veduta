@@ -7,8 +7,6 @@ import {
 } from '@veduta/protocol'
 import {
   piFauxAssistantMessage,
-  piFauxText,
-  piFauxToolCall,
   type MockResponder,
   type PiAssistantMessage,
   type PiChatContext,
@@ -25,6 +23,7 @@ import {
   relativeTimeSourceRecords,
 } from './relative-time-surface.ts'
 import { respondToMockAutomation } from './mock-automation-fixture.ts'
+import { isRecord, parseJson, toolCallMessage, toolResultText } from './mock-fixture-support.ts'
 import { zonedParts } from './timezone.ts'
 
 /**
@@ -609,18 +608,6 @@ function surfaceRead(
   return { surface: surface.data, version, treeVersion }
 }
 
-function parseJson(content: string): unknown {
-  try {
-    return JSON.parse(content)
-  } catch {
-    return undefined
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 // ---------------------------------------------------------------------------
 // Text-only replies (the pre-issue-37 mock provider's echo logic)
 // ---------------------------------------------------------------------------
@@ -639,16 +626,6 @@ function echoMessage(text: string): PiAssistantMessage {
 /** The follow-up model call after a tool ran: a short, stable closing line. */
 function closingMessage(toolResult: PiToolResultMessage): PiAssistantMessage {
   return piFauxAssistantMessage(`Done — ${toolResult.toolName} completed.`)
-}
-
-function toolCallMessage(
-  name: string,
-  args: Record<string, unknown>,
-  text: string,
-): PiAssistantMessage {
-  return piFauxAssistantMessage([piFauxText(text), piFauxToolCall(name, args)], {
-    stopReason: 'toolUse',
-  })
 }
 
 // ---------------------------------------------------------------------------
@@ -779,10 +756,6 @@ function userMessageText(message: PiUserMessage): string {
     .filter(isTextBlock)
     .map((block) => block.text)
     .join('\n')
-}
-
-function toolResultText(message: PiToolResultMessage): string {
-  return message.content.map((block) => (block.type === 'text' ? block.text : '')).join('\n')
 }
 
 function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
