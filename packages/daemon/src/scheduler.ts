@@ -843,11 +843,14 @@ export class Scheduler {
   }
 
   private requireAutomationInSpace(spaceId: string, id: number): Automation {
-    const automation = this.getAutomation(id)
-    if (!automation || automation.spaceId !== spaceId || automation.status === 'cancelled') {
-      throw new Error(AUTOMATION_UNAVAILABLE)
-    }
-    return automation
+    const row = this.db
+      .prepare(
+        `select * from automations
+         where id = ? and space_id = ? and status != 'cancelled'`,
+      )
+      .get(id, spaceId)
+    if (!row) throw new Error(AUTOMATION_UNAVAILABLE)
+    return automationFromRow(row)
   }
 
   private requireSpace(spaceId: string): void {

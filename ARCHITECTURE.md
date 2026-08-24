@@ -190,7 +190,8 @@ A focused turn receives a complete Automation inventory and Space-bound create, 
 and cancellation tools. Their model-facing schemas never expose the internal Space id; raw
 Scheduler operations retain explicit Space scope. Unknown, cancelled, and other-Space Automation
 ids share one non-disclosing refusal, while every successful mutation refreshes the owning
-Automations Surface and appends its existing Space Event.
+Automations Surface and appends its existing Space Event. `AgentRunner` gives the same focused
+definitions to every eligible primary Model connection; provider adapters own no scheduling rules.
 
 Notification discipline: silent update → badge on the Space → push (the bar: "would a good human assistant interrupt?"), per-Space interruption budgets, freshness metadata on every Surface. Non-urgent notifications queue up for idle moments. Meaningful recurring dashboard outcomes instead update their linked Surface and create a durable In-app notification inside the owning Space; they never manufacture global chat, badge, or browser-push traffic ([ADR-0021](docs/adr/0021-space-owned-automation-outcomes.md)).
 

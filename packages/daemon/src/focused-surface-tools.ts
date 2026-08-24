@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { defineTool, type ToolDef } from './agent-runner.ts'
+import { bindToolToSpace, renderFocusedStoredJson } from './focused-tool-support.ts'
 import type { Store } from './store.ts'
 import { CreateSurfaceToolInputSchema } from './surface-engine.ts'
 import {
@@ -7,7 +8,6 @@ import {
   gateCreateSurfaceTool,
   type TemplateEngine,
 } from './template-engine.ts'
-import { isUntrusted, untrustedDataBlock, untrustedSource, type Origin } from './taint.ts'
 
 const ListSurfacesSchema = z.object({})
 const ReadSurfaceSchema = z.object({
@@ -32,7 +32,7 @@ export function createFocusedSurfaceTools(options: FocusedSurfaceToolsOptions): 
   const surfaceTools = options.store.surfaceTools().map((tool) => {
     if (tool.name !== 'create_surface') return tool
     const gated = gateCreateSurfaceTool(tool, options.templateEngine)
-    return bindCreateSurfaceToSpace(gated, options.spaceId)
+    return bindToolToSpace(gated, FocusedCreateSurfaceSchema, options.spaceId)
   })
 
   return [
@@ -46,7 +46,11 @@ export function createFocusedSurfaceTools(options: FocusedSurfaceToolsOptions): 
       handler() {
         const inventory = options.store.listAuthorableSurfaces(options.spaceId)
         return {
-          content: renderStoredJson(inventory.surfaces, inventory.origins, 'surface summaries'),
+          content: renderFocusedStoredJson(
+            inventory.surfaces,
+            inventory.origins,
+            'surface summaries',
+          ),
           details: { surfaces: inventory.surfaces },
           origins: inventory.origins,
         }
@@ -68,7 +72,7 @@ export function createFocusedSurfaceTools(options: FocusedSurfaceToolsOptions): 
           ...(read.relativeTime === undefined ? {} : { relativeTime: read.relativeTime }),
         }
         return {
-          content: renderStoredJson(modelRead, read.origins, 'surface'),
+          content: renderFocusedStoredJson(modelRead, read.origins, 'surface'),
           details: modelRead,
           origins: read.origins,
         }
@@ -76,26 +80,4 @@ export function createFocusedSurfaceTools(options: FocusedSurfaceToolsOptions): 
     }),
     ...surfaceTools,
   ]
-}
-
-/** Injects the trusted turn scope after parsing, so caller input cannot redirect creation. */
-function bindCreateSurfaceToSpace(tool: ToolDef, spaceId: string): ToolDef {
-  return defineTool({
-    name: tool.name,
-    description: tool.description,
-    schema: FocusedCreateSurfaceSchema,
-    level: tool.level,
-    egressDomains: tool.egressDomains,
-    handler(input, context) {
-      return tool.handler({ ...input, spaceId }, context)
-    },
-  })
-}
-
-/** Marks any model-visible JSON carrying untrusted Surface content as data. */
-function renderStoredJson(value: unknown, origins: Origin[], field: string): string {
-  const json = JSON.stringify(value)
-  const untrusted = origins.find(isUntrusted)
-  if (!untrusted) return json
-  return untrustedDataBlock(untrustedSource(untrusted) ?? 'external', [[field, json]])
 }

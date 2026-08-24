@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { defineTool, type ToolDef } from './agent-runner.ts'
+import { bindToolToSpace, renderFocusedStoredJson } from './focused-tool-support.ts'
 import {
   ArmTimerSchema,
   CancelAutomationSchema,
@@ -8,7 +9,7 @@ import {
   type Automation,
   type Scheduler,
 } from './scheduler.ts'
-import { isUntrusted, untrustedDataBlock, untrustedSource, type Origin } from './taint.ts'
+import type { Origin } from './taint.ts'
 
 const ListAutomationsSchema = z.object({})
 const FocusedArmTimerSchema = ArmTimerSchema.omit({ spaceId: true })
@@ -39,7 +40,7 @@ export function createFocusedAutomationTools(options: FocusedAutomationToolsOpti
         const summaries = automations.map(automationSummary)
         const origins = automationOrigins(automations)
         return {
-          content: renderStoredAutomations(summaries, origins),
+          content: renderFocusedStoredJson(summaries, origins, 'automations'),
           details: { automations: summaries },
           origins,
         }
@@ -73,29 +74,8 @@ function automationOrigins(automations: Automation[]): Origin[] {
   return Array.from(new Set(automations.map((automation) => automation.origin ?? 'trusted:system')))
 }
 
-function renderStoredAutomations(summaries: Record<string, unknown>[], origins: Origin[]): string {
-  const json = JSON.stringify(summaries)
-  const untrusted = origins.find(isUntrusted)
-  if (!untrusted) return json
-  return untrustedDataBlock(untrustedSource(untrusted) ?? 'external', [['automations', json]])
-}
-
 function toolNamed(tools: ToolDef[], name: string): ToolDef {
   const tool = tools.find((candidate) => candidate.name === name)
   if (!tool) throw new Error(`missing Scheduler tool: ${name}`)
   return tool
-}
-
-/** Injects the focused turn scope after parsing, so caller input cannot redirect the operation. */
-function bindToolToSpace(tool: ToolDef, schema: z.AnyZodObject, spaceId: string): ToolDef {
-  return defineTool({
-    name: tool.name,
-    description: tool.description,
-    schema,
-    level: tool.level,
-    egressDomains: tool.egressDomains,
-    handler(input, context) {
-      return tool.handler({ ...input, spaceId }, context)
-    },
-  })
 }
