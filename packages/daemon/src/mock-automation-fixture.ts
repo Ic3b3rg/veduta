@@ -1,9 +1,10 @@
+import { z } from 'zod'
 import {
   piFauxAssistantMessage,
   type PiAssistantMessage,
   type PiChatContext,
 } from './pi-provider-bridge.ts'
-import { isRecord, parseJson, toolCallMessage, toolResultText } from './mock-fixture-support.ts'
+import { parseJson, toolCallMessage, toolResultText } from './mock-fixture-support.ts'
 
 const CREATE_DAILY_AUTOMATION_REQUEST = 'Create a daily automation to review my plan at 9am'
 const LIST_AUTOMATIONS_REQUEST = 'List automations here'
@@ -13,13 +14,16 @@ const CANCEL_AUTOMATIONS_REQUEST = 'Cancel all automations here'
 type PiTurnMessage = PiChatContext['messages'][number]
 type PiToolResultMessage = Extract<PiTurnMessage, { role: 'toolResult' }>
 
-interface AutomationSummary {
-  id: number
-  kind: 'timer' | 'job'
-  description: string
-  enabled: boolean
-  status: 'armed' | 'completed'
-}
+const AutomationSummarySchema = z.object({
+  id: z.number(),
+  kind: z.enum(['timer', 'job']),
+  description: z.string(),
+  enabled: z.boolean(),
+  status: z.enum(['armed', 'completed']),
+})
+const AutomationInventorySchema = z.array(AutomationSummarySchema)
+
+type AutomationSummary = z.infer<typeof AutomationSummarySchema>
 
 type BulkMutation = 'disable' | 'cancel'
 
@@ -125,22 +129,6 @@ function respondToBulkMutation(
 }
 
 function automationSummaries(content: string): AutomationSummary[] | undefined {
-  const parsed = parseJson(content)
-  if (!Array.isArray(parsed)) return undefined
-  const summaries: AutomationSummary[] = []
-  for (const candidate of parsed) {
-    if (!isRecord(candidate)) return undefined
-    const { id, kind, description, enabled, status } = candidate
-    if (
-      typeof id !== 'number' ||
-      (kind !== 'timer' && kind !== 'job') ||
-      typeof description !== 'string' ||
-      typeof enabled !== 'boolean' ||
-      (status !== 'armed' && status !== 'completed')
-    ) {
-      return undefined
-    }
-    summaries.push({ id, kind, description, enabled, status })
-  }
-  return summaries
+  const inventory = AutomationInventorySchema.safeParse(parseJson(content))
+  return inventory.success ? inventory.data : undefined
 }

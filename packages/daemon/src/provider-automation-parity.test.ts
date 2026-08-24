@@ -86,15 +86,15 @@ describe('AgentRunner Automation parity across Model connection methods (issues 
     expect(Object.values(outcome.automationsSurface.state)).toEqual([true, true])
     expect(outcome.automationsSurface.tree.children?.[1]?.children).toHaveLength(2)
 
-    expect(
-      outcome.eventLog
-        .filter((event) => isRecord(event) && String(event['type']).startsWith('automation.'))
-        .map((event) => (event as Record<string, unknown>)['type']),
-    ).toEqual(['automation.arm', 'automation.arm', 'automation.toggle', 'automation.cancel'])
-    for (const event of outcome.eventLog.filter(
-      (candidate) => isRecord(candidate) && String(candidate['type']).startsWith('automation.'),
-    )) {
-      expect((event as Record<string, unknown>)['origin']).toBe(AUTOMATION_PARITY_UNTRUSTED_ORIGIN)
+    const automationEvents = outcome.eventLog.filter(isAutomationEvent)
+    expect(automationEvents.map((event) => event['type'])).toEqual([
+      'automation.arm',
+      'automation.arm',
+      'automation.toggle',
+      'automation.cancel',
+    ])
+    for (const event of automationEvents) {
+      expect(event['origin']).toBe(AUTOMATION_PARITY_UNTRUSTED_ORIGIN)
     }
 
     expect(subscription.transport.requestMethods).toEqual(['thread/start', 'turn/start'])
@@ -119,4 +119,8 @@ function recordValue(value: unknown, label: string): Record<string, unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isAutomationEvent(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && String(value['type']).startsWith('automation.')
 }
