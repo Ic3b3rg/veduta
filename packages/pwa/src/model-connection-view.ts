@@ -146,6 +146,16 @@ export function catalogOptions(connection: ModelConnection): CatalogOption[] {
   }))
 }
 
+/** Connected records whose adapter method is currently available for the primary Agent route. */
+export function primaryRoutableConnections(snapshot: ModelConnectionsSnapshot): ModelConnection[] {
+  const unavailableMethods = new Set(
+    snapshot.methods.filter((method) => !method.available).map((method) => method.id),
+  )
+  return snapshot.connections.filter(
+    (connection) => connection.state === 'connected' && !unavailableMethods.has(connection.method),
+  )
+}
+
 /**
  * Whether the Model connection step (or panel) can be considered done for
  * `profile` (issue #47, ADR-0014 amendment): loopback never blocks (the
@@ -161,15 +171,17 @@ export function canContinue(
   if (profile === 'loopback') return true
 
   if (profile === 'local-vps') {
-    const hasConnected = snapshot.connections.some((connection) => connection.state === 'connected')
-    return (hasConnected && snapshot.selection !== null) || snapshot.mockEnabled
+    const hasSelectedConnection = primaryRoutableConnections(snapshot).some(
+      (connection) => connection.id === snapshot.selection?.connectionId,
+    )
+    return hasSelectedConnection || snapshot.mockEnabled
   }
 
   if (snapshot.selection === null) return false
-  const selected = snapshot.connections.find(
+  const selected = primaryRoutableConnections(snapshot).find(
     (connection) => connection.id === snapshot.selection?.connectionId,
   )
-  return selected?.state === 'connected'
+  return selected !== undefined
 }
 
 /** 'expires in M:SS', or 'expired' once `now` has passed the challenge's expiry -- the same rendering the daemon's countdown deadline assumes the PWA stops polling at. */

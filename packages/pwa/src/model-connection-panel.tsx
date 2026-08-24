@@ -12,6 +12,7 @@ import {
   challengeCountdownLabel,
   connectionSelectLabel,
   lifecycleCopy,
+  primaryRoutableConnections,
 } from './model-connection-view.ts'
 
 export interface ModelConnectionPanelProps {
@@ -359,9 +360,7 @@ function SelectionControls({
   onVerify: (id: string, modelId: string) => void
   onApplySelection: (connectionId: string, modelId: string) => Promise<boolean>
 }) {
-  const connectedConnections = snapshot.connections.filter(
-    (connection) => connection.state === 'connected',
-  )
+  const connectedConnections = primaryRoutableConnections(snapshot)
   const [draftConnectionId, setDraftConnectionId] = useState(
     snapshot.selection?.connectionId ?? connectedConnections[0]?.id ?? '',
   )
@@ -382,6 +381,8 @@ function SelectionControls({
   useEffect(() => {
     latestSnapshot.current = snapshot
   }, [snapshot])
+
+  if (connectedConnections.length === 0) return null
 
   // A device-code connection can become connected while this component
   // stays mounted. React preserves the empty draft initialized during the

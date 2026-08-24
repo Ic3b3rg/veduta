@@ -105,9 +105,12 @@ Codex-native command execution, patches, web search, MCP, and approvals remain d
 [real-account smoke](docs/references/11-model-connections-manual-smoke.md) verifies authorization,
 inference, and Surface creation and patching without BYOK; the
 [protocol capture](docs/references/13-codex-dynamic-tools-0.146.1.md) records the pinned boundary.
-Final Connection parity remains tracked by [issue 070](issues/070-codex-tool-parity.md) and its
-open [079](issues/079-primary-connection-parity.md) slice. Automation management and asynchronous
-Workers already cross the same AgentRunner boundary through BYOK and ChatGPT subscriptions.
+The adapter's `primaryInference` declaration makes routing eligibility explicit: builtin and
+subscription transports carry the same AgentRunner contract, while an unavailable declaration
+cannot produce a primary routing candidate or runtime and never rewrites credential lifecycle.
+Deterministic BYOK/Codex fixtures prove equivalent definitions, events, sessions, and persistent
+effects for Surface authoring, Space memory, Templates, Automations, Workers, and trust-wrapped
+actions.
 
 The agent's main tools: focused-Space Surface discovery and authoring (`list_surfaces`,
 `read_surface`, Space-bound `create_surface`, `patch_state`, `patch_tree`), memory (`write_fact`

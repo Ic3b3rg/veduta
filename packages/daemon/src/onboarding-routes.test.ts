@@ -31,6 +31,13 @@ function freshRoot(): string {
   return rootDir
 }
 
+const primaryRoutableMethods = new Set([
+  'anthropic-api-key',
+  'openai-api-key',
+  'openrouter-api-key',
+  'chatgpt-codex',
+] as const)
+
 function baseDeps(
   dir: string,
   overrides: Partial<OnboardingRoutesDeps> = {},
@@ -49,6 +56,7 @@ function baseDeps(
     env: { VEDUTA_LEGACY_HOME: dir },
     scheduleExit: () => {},
     secrets: noSecrets,
+    primaryRoutableMethods,
     ...overrides,
   }
 }

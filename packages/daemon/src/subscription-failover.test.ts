@@ -226,7 +226,7 @@ describe('subscription-turn failover (issue #47)', () => {
         connectionId: 'sub-conn-1',
         provider: 'openai',
         transport: 'subscription',
-        stream: (request) => codexSubscriptionAdapter.stream!(context, request),
+        stream: (request) => codexSubscriptionAdapter.primaryInference.stream(context, request),
       },
       {
         connectionId: 'sub-conn-2',
@@ -333,7 +333,7 @@ describe('subscription-turn failover (issue #47)', () => {
         connectionId: 'sub-conn-1',
         provider: 'openai',
         transport: 'subscription',
-        stream: (request) => codexSubscriptionAdapter.stream!(context, request),
+        stream: (request) => codexSubscriptionAdapter.primaryInference.stream(context, request),
       },
       {
         connectionId: 'sub-conn-2',

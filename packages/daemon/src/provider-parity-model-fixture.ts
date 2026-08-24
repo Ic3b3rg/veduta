@@ -159,7 +159,7 @@ export function subscriptionProvider(options: {
     connectionId: options.connectionId,
     provider: 'openai',
     transport: 'subscription',
-    stream: (request) => codexSubscriptionAdapter.stream!(context, request),
+    stream: (request) => codexSubscriptionAdapter.primaryInference.stream(context, request),
   }
   return createProviderBridge({
     config: defaultRoutingConfig(),

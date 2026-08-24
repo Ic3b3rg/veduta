@@ -6,7 +6,7 @@ import { saveConnectionsConfig } from './connections-config.ts'
 import { saveRoutingConfig, type SecretResolver } from './model-routing.ts'
 import { loadOnboardingConfig, saveOnboardingConfig } from './onboarding-config.ts'
 import { OnboardingStepError } from './onboarding-status.ts'
-import { applyFinish } from './onboarding-step-finish.ts'
+import { applyFinish as applyFinishImpl, type FinishDeps } from './onboarding-step-finish.ts'
 
 let rootDir: string | undefined
 
@@ -21,6 +21,18 @@ function freshRoot(): string {
 }
 
 const noSecrets: SecretResolver = { resolve: () => undefined }
+const primaryRoutableMethods = new Set([
+  'anthropic-api-key',
+  'openai-api-key',
+  'openrouter-api-key',
+  'chatgpt-codex',
+] as const)
+
+type FinishDepsInput = Omit<FinishDeps, 'primaryRoutableMethods'>
+
+function applyFinish(deps: FinishDepsInput) {
+  return applyFinishImpl({ ...deps, primaryRoutableMethods })
+}
 
 function resolverFor(values: Record<string, string>): SecretResolver {
   return { resolve: (ref) => values[ref] }
@@ -283,6 +295,50 @@ describe('applyFinish', () => {
         scheduleExit: vi.fn(),
         env: { VEDUTA_LEGACY_HOME: dir },
         secrets,
+      }),
+    ).toThrow(OnboardingStepError)
+    expect(loadOnboardingConfig(dir).steps.finish).toBeUndefined()
+  })
+
+  it('a selectionless migrated route cannot finish when its method is excluded from the primary route', () => {
+    const dir = freshRoot()
+    completeAllPriorSteps(dir)
+    saveConnectionsConfig(dir, {
+      version: 1,
+      connections: [
+        {
+          id: 'anthropic',
+          method: 'claude-subscription',
+          provider: 'anthropic',
+          label: 'Claude · Subscription',
+          state: 'connected',
+          stateAt: '2026-07-24T10:00:00.000Z',
+          enabledForFallback: false,
+          createdAt: '2026-07-24T10:00:00.000Z',
+          selectedModelId: 'claude-sonnet-5',
+        },
+      ],
+      mockEnabled: false,
+    })
+    saveRoutingConfig(dir, {
+      tiers: {
+        triage: [{ provider: 'anthropic', modelId: 'claude-haiku-4-5' }],
+        reasoning: [{ provider: 'anthropic', modelId: 'claude-sonnet-5' }],
+      },
+      providerKeys: { anthropic: 'secret://env/ANTHROPIC_API_KEY' },
+      connectionKeys: {},
+      dailyCapUsd: { triage: 5, reasoning: 20 },
+    })
+    const secrets = resolverFor({ 'secret://env/ANTHROPIC_API_KEY': 'sk-real-key' })
+
+    expect(() =>
+      applyFinishImpl({
+        rootDir: dir,
+        profile: 'vps',
+        scheduleExit: vi.fn(),
+        env: { VEDUTA_LEGACY_HOME: dir },
+        secrets,
+        primaryRoutableMethods: new Set(['anthropic-api-key']),
       }),
     ).toThrow(OnboardingStepError)
     expect(loadOnboardingConfig(dir).steps.finish).toBeUndefined()

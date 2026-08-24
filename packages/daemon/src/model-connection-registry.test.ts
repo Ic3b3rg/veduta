@@ -62,6 +62,7 @@ function createFakeAdapter(
       revocation: 'local-only',
       metered: true,
     },
+    primaryInference: { transport: 'builtin' },
     availability: async () => ({ available: true }),
     authorize: async (): Promise<AuthorizeResult> => ({ state: 'connected' }),
     refresh: async () => ({ state: 'connected' }),
@@ -127,6 +128,40 @@ describe('mutation queue', () => {
 })
 
 describe('verify', () => {
+  it('rejects an unavailable primary route without changing connection lifecycle', async () => {
+    const dir = freshRoot()
+    const reason = 'this adapter cannot satisfy the primary Agent inference contract'
+    const verify = vi.fn(async () => {})
+    const record: ModelConnectionRecord = {
+      id: 'aaaaaaaa-0000-4000-8000-000000000079',
+      method: 'claude-subscription',
+      provider: 'anthropic',
+      label: 'Claude · Subscription',
+      state: 'connected',
+      stateAt: '2026-08-09T09:00:00.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T09:00:00.000Z',
+      catalog: [{ id: 'claude-sonnet-5', label: 'Claude Sonnet 5', routable: true }],
+    }
+    saveConnectionsConfig(dir, { version: 1, connections: [record], mockEnabled: false })
+    const adapter = createFakeAdapter({
+      methodId: 'claude-subscription',
+      primaryInference: { transport: 'unavailable', reason },
+      verify,
+    })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+
+    const error = await registry
+      .verify(record.id, 'claude-sonnet-5')
+      .catch((caught: unknown) => caught)
+
+    expect(verify).not.toHaveBeenCalled()
+    expect(error).toBeInstanceOf(ModelConnectionError)
+    expect((error as ModelConnectionError).code).toBe('unsupported')
+    expect((error as ModelConnectionError).message).toBe(reason)
+    expect(loadConnectionsConfig(dir).connections[0]).toEqual(record)
+  })
+
   it('completes when the probe refreshes the same automatic connection', async () => {
     const dir = freshRoot()
     const connectionId = 'aaaaaaaa-1111-4000-8000-000000000000'
@@ -232,9 +267,73 @@ describe('create', () => {
     expect((error as ModelConnectionError).message).toBe('nope, not right now')
     expect(loadConnectionsConfig(dir).connections).toHaveLength(0)
   })
+
+  it('refuses a method with no complete primary inference route', async () => {
+    const dir = freshRoot()
+    const reason = 'this adapter cannot satisfy the primary Agent inference contract'
+    const adapter = createFakeAdapter({
+      primaryInference: { transport: 'unavailable', reason },
+    })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+
+    const error = await registry
+      .create({ method: 'anthropic-api-key' })
+      .catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(ModelConnectionError)
+    expect((error as ModelConnectionError).code).toBe('unsupported')
+    expect((error as ModelConnectionError).message).toBe(reason)
+    expect(loadConnectionsConfig(dir).connections).toHaveLength(0)
+  })
 })
 
 describe('normalizeStatesOnBoot', () => {
+  it('preserves a stale connected record while primary-route policy excludes it', async () => {
+    const dir = freshRoot()
+    const reason = 'this adapter cannot satisfy the primary Agent inference contract'
+    const record: ModelConnectionRecord = {
+      id: 'aaaaaaaa-0000-4000-8000-000000000079',
+      method: 'claude-subscription',
+      provider: 'anthropic',
+      label: 'Claude · Subscription',
+      state: 'connected',
+      stateAt: '2026-08-09T09:00:00.000Z',
+      enabledForFallback: true,
+      selectedModelId: 'claude-sonnet-5',
+      catalog: [{ id: 'claude-sonnet-5', label: 'Claude Sonnet 5', routable: true }],
+      createdAt: '2026-08-09T09:00:00.000Z',
+    }
+    saveConnectionsConfig(dir, {
+      version: 1,
+      connections: [record],
+      selection: { connectionId: record.id, modelId: 'claude-sonnet-5' },
+      mockEnabled: false,
+    })
+    const adapter = createFakeAdapter({
+      methodId: 'claude-subscription',
+      primaryInference: { transport: 'unavailable', reason },
+    })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+
+    registry.normalizeStatesOnBoot()
+
+    const file = loadConnectionsConfig(dir)
+    expect(file).toEqual({
+      version: 1,
+      connections: [record],
+      selection: { connectionId: record.id, modelId: 'claude-sonnet-5' },
+      mockEnabled: false,
+    })
+    expect(
+      deriveRoutingConfig(
+        defaultRoutingConfig(),
+        file,
+        registry.primaryRoutableMethods(),
+      ).tiers.reasoning.some((entry) => entry.connectionId === record.id),
+    ).toBe(false)
+    expect((await registry.snapshot()).connections[0]).toEqual(record)
+  })
+
   it('moves waiting-for-user to failed with the interrupted-authorization reason', () => {
     const dir = freshRoot()
     const record: ModelConnectionRecord = {
@@ -259,6 +358,33 @@ describe('normalizeStatesOnBoot', () => {
     expect(updated?.stateReason).toBe(
       'authorization was interrupted by a daemon restart; start it again',
     )
+  })
+
+  it('preserves a revoked record when its method is unavailable for primary routing', () => {
+    const dir = freshRoot()
+    const reason = 'this adapter cannot satisfy the primary Agent inference contract'
+    const revokedReason = 'the user removed this connection'
+    const record: ModelConnectionRecord = {
+      id: 'aaaaaaaa-0000-4000-8000-000000000079',
+      method: 'claude-subscription',
+      provider: 'anthropic',
+      label: 'Claude · Subscription',
+      state: 'revoked',
+      stateReason: revokedReason,
+      stateAt: '2026-08-09T09:00:00.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T09:00:00.000Z',
+    }
+    saveConnectionsConfig(dir, { version: 1, connections: [record], mockEnabled: false })
+    const adapter = createFakeAdapter({
+      methodId: 'claude-subscription',
+      primaryInference: { transport: 'unavailable', reason },
+    })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+
+    registry.normalizeStatesOnBoot()
+
+    expect(loadConnectionsConfig(dir).connections[0]).toEqual(record)
   })
 
   it('recovers a Codex connection failed by a turn-local refusal without recovering real failures', () => {
@@ -474,6 +600,36 @@ describe('noteCallFailure', () => {
 })
 
 describe('commitSelection', () => {
+  it('rejects a stale connected record whose adapter is unavailable for primary routing', async () => {
+    const dir = freshRoot()
+    const reason = 'this adapter cannot satisfy the primary Agent inference contract'
+    const record: ModelConnectionRecord = {
+      id: 'aaaaaaaa-0000-4000-8000-000000000079',
+      method: 'claude-subscription',
+      provider: 'anthropic',
+      label: 'Claude · Subscription',
+      state: 'connected',
+      stateAt: '2026-08-09T09:00:00.000Z',
+      enabledForFallback: false,
+      catalog: [{ id: 'claude-sonnet-5', label: 'Claude Sonnet 5', routable: true }],
+      createdAt: '2026-08-09T09:00:00.000Z',
+    }
+    saveConnectionsConfig(dir, { version: 1, connections: [record], mockEnabled: false })
+    const adapter = createFakeAdapter({
+      methodId: 'claude-subscription',
+      primaryInference: { transport: 'unavailable', reason },
+    })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+
+    const error = await registry
+      .applySelectionPrepared(record.id, 'claude-sonnet-5')
+      .catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(ModelConnectionError)
+    expect((error as ModelConnectionError).code).toBe('unsupported')
+    expect((error as ModelConnectionError).message).toBe(reason)
+  })
+
   it('rejects when the generation moved (the try-again reason)', async () => {
     const dir = freshRoot()
     const adapter = createFakeAdapter()
@@ -735,6 +891,40 @@ describe('remove tombstones a reserved legacy provider id (issue #47)', () => {
 })
 
 describe('authorize', () => {
+  it('cannot reconnect a stale record whose adapter is unavailable for primary routing', async () => {
+    const dir = freshRoot()
+    const reason = 'this adapter cannot satisfy the primary Agent inference contract'
+    const authorize = vi.fn(async (): Promise<AuthorizeResult> => ({ state: 'connected' }))
+    const record: ModelConnectionRecord = {
+      id: 'aaaaaaaa-0000-4000-8000-000000000079',
+      method: 'claude-subscription',
+      provider: 'anthropic',
+      label: 'Claude · Subscription',
+      state: 'failed',
+      stateReason: reason,
+      stateAt: '2026-08-09T09:00:00.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T09:00:00.000Z',
+    }
+    saveConnectionsConfig(dir, { version: 1, connections: [record], mockEnabled: false })
+    const adapter = createFakeAdapter({
+      methodId: 'claude-subscription',
+      primaryInference: { transport: 'unavailable', reason },
+      authorize,
+    })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+
+    const error = await registry
+      .authorize(record.id, { apiKey: 'sk-test' })
+      .catch((caught: unknown) => caught)
+
+    expect(authorize).not.toHaveBeenCalled()
+    expect(error).toBeInstanceOf(ModelConnectionError)
+    expect((error as ModelConnectionError).code).toBe('unsupported')
+    expect((error as ModelConnectionError).message).toBe(reason)
+    expect(loadConnectionsConfig(dir).connections[0]).toEqual(record)
+  })
+
   it('is method-discriminated (both rejected messages)', async () => {
     const dir = freshRoot()
     const apiKeyAdapter = createFakeAdapter()
@@ -783,15 +973,22 @@ describe('runtimes (issue #47)', () => {
         revocation: 'provider',
         metered: false,
       },
+      primaryInference: {
+        transport: 'unavailable',
+        reason: 'this adapter cannot satisfy the primary Agent inference contract',
+      },
       ...overrides,
     })
   }
 
-  it('builds a subscription runtime for a connected Codex connection whose adapter implements stream', async () => {
+  it('builds a subscription runtime for a connected Codex connection with a subscription route', async () => {
     const dir = freshRoot()
     const adapter = codexAdapter({
-      stream: async function* () {
-        yield { type: 'text-delta' as const, text: 'hello from codex' }
+      primaryInference: {
+        transport: 'subscription',
+        stream: async function* () {
+          yield { type: 'text-delta' as const, text: 'hello from codex' }
+        },
       },
     })
     const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
@@ -816,15 +1013,18 @@ describe('runtimes (issue #47)', () => {
 
   it('a connected adapter implementing stream gets a subscription runtime regardless of method id', async () => {
     const dir = freshRoot()
-    // A BYOK-shaped api-key adapter that (hypothetically) also implements
-    // `stream` — the transport decision is adapter-authoritative (issue
-    // #47), never keyed off `record.method === 'chatgpt-codex'` specifically.
+    // A BYOK-shaped api-key adapter that hypothetically declares a
+    // subscription route — the transport decision is adapter-authoritative
+    // (issue #47), never keyed off a specific method id.
     const adapter = createFakeAdapter({
-      stream: async function* () {
-        yield {
-          type: 'text-delta' as const,
-          text: 'hello from a non-codex subscription adapter',
-        }
+      primaryInference: {
+        transport: 'subscription',
+        stream: async function* () {
+          yield {
+            type: 'text-delta' as const,
+            text: 'hello from a non-codex subscription adapter',
+          }
+        },
       },
     })
     const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
@@ -841,18 +1041,28 @@ describe('runtimes (issue #47)', () => {
     })
   })
 
-  it('reports a chatgpt-codex connection as builtin transport when its adapter has no stream verb', async () => {
+  it('omits a connected adapter that cannot supply its primary inference transport', async () => {
     const dir = freshRoot()
-    const adapter = codexAdapter() // no `stream` override
+    const adapter = codexAdapter()
+    saveConnectionsConfig(dir, {
+      version: 1,
+      connections: [
+        {
+          id: 'aaaaaaaa-1111-4000-8000-000000000000',
+          method: 'chatgpt-codex',
+          provider: 'openai',
+          label: 'Incomplete subscription adapter',
+          state: 'connected',
+          stateAt: '2026-08-09T10:00:00.000Z',
+          enabledForFallback: false,
+          createdAt: '2026-08-09T10:00:00.000Z',
+        },
+      ],
+      mockEnabled: false,
+    })
     const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
-    const created = await registry.create({ method: 'chatgpt-codex' })
-    const connectionId = created.connections[0]?.id
-    if (!connectionId) throw new Error('test setup failed')
-    await registry.authorize(connectionId, {})
 
-    const [runtime] = registry.runtimes()
-
-    expect(runtime).toEqual({ connectionId, provider: 'openai', transport: 'builtin' })
+    expect(registry.runtimes()).toEqual([])
   })
 
   it('omits every connection that is not connected', async () => {
@@ -866,6 +1076,44 @@ describe('runtimes (issue #47)', () => {
 })
 
 describe('ensureFresh (issue #47)', () => {
+  it('rejects refresh for an unavailable primary route without changing credential state', async () => {
+    const dir = freshRoot()
+    const reason = 'this adapter cannot satisfy the primary Agent inference contract'
+    const refresh = vi.fn(async (): Promise<RefreshResult> => ({ state: 'connected' }))
+    const record: ModelConnectionRecord = {
+      id: 'aaaaaaaa-0000-4000-8000-000000000079',
+      method: 'claude-subscription',
+      provider: 'anthropic',
+      label: 'Claude · Subscription',
+      state: 'expired',
+      stateReason: 'the credential expired',
+      stateAt: '2026-08-09T09:00:00.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T09:00:00.000Z',
+    }
+    saveConnectionsConfig(dir, { version: 1, connections: [record], mockEnabled: false })
+    const adapter = createFakeAdapter({
+      methodId: 'claude-subscription',
+      capabilities: {
+        authorization: 'none',
+        refresh: 'automatic',
+        revocation: 'local-only',
+        metered: true,
+      },
+      primaryInference: { transport: 'unavailable', reason },
+      refresh,
+    })
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter]))
+
+    const error = await registry.read(record.id).catch((caught: unknown) => caught)
+
+    expect(refresh).not.toHaveBeenCalled()
+    expect(error).toBeInstanceOf(ModelConnectionError)
+    expect((error as ModelConnectionError).code).toBe('unsupported')
+    expect((error as ModelConnectionError).message).toBe(reason)
+    expect(loadConnectionsConfig(dir).connections[0]).toEqual(record)
+  })
+
   it('returns the post-refresh lifecycle state', async () => {
     const dir = freshRoot()
     const adapter = createFakeAdapter({

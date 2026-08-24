@@ -21,12 +21,13 @@ import {
  * A migration deliberately never sets `file.selection` (`model-connection-migration.ts`),
  * so an install with no selection routes almost exactly as before — the one
  * exception is that a base tier entry whose MATCHING migrated record exists
- * and is no longer `'connected'` (revoked, expired, failed — e.g. `remove`'s
- * env-backed tombstone) is dropped; an entry with no matching record at all
- * passes through unchanged (pure legacy, no Model connection was ever made
- * for it). No observable change until either the user makes a Model
- * connections choice explicit, or a migrated connection's own state moves
- * away from `'connected'`.
+ * and is no longer primary-routable — either not `'connected'` (revoked,
+ * expired, failed — e.g. `remove`'s env-backed tombstone) or excluded by the
+ * registry's adapter policy — is dropped; an entry with no matching record
+ * at all passes through unchanged (pure legacy, no Model connection was ever
+ * made for it). No observable change until either the user makes a Model
+ * connections choice explicit, a migrated connection's own state moves away
+ * from `'connected'`, or its adapter becomes ineligible for primary routing.
  *
  * Once `file.selection` is set, BOTH tiers follow the SAME selection: the
  * ADR-0014 amendment records that triage following the visible reasoning
@@ -34,15 +35,16 @@ import {
  * maintainer call. The tier array is `[activeHead?, ...fallbacks]`:
  *
  * - The selected connection contributes the head entry ONLY when it is
- *   still `state === 'connected'` — an expired, failed or revoked active
- *   connection is omitted rather than routed to (a stale credential must
- *   never be attempted), leaving the tier to the fallbacks alone (possibly
- *   empty, which surfaces as `NoAvailableModelError`).
- * - A fallback is any OTHER connection that is `state === 'connected'`,
- *   `enabledForFallback === true`, and has a `selectedModelId` — in file
- *   order. `enabledForFallback` defaults to `false`, so a subscription
- *   never falls back to metered BYOK implicitly; the user opts a
- *   connection into the chain explicitly.
+ *   still `state === 'connected'` and its method is in
+ *   `primaryRoutableMethods` — an expired, failed, revoked, or structurally
+ *   ineligible active connection is omitted rather than routed to, leaving
+ *   the tier to the fallbacks alone (possibly empty, which surfaces as
+ *   `NoAvailableModelError`).
+ * - A fallback is any OTHER primary-routable connection that has
+ *   `enabledForFallback === true` and a `selectedModelId`, in file order.
+ *   `enabledForFallback` defaults to `false`, so a subscription never falls
+ *   back to metered BYOK implicitly; the user opts a connection into the
+ *   chain explicitly.
  *
  * `connectionKeys[connection.id]` is set to `record.secretRef` for every
  * included connection that has one (Codex is keyless by design).
@@ -51,7 +53,12 @@ import {
 export function deriveRoutingConfig(
   base: RoutingConfig,
   file: ConnectionsFile,
+  primaryRoutableMethods?: ReadonlySet<ModelConnectionRecord['method']>,
 ): RuntimeRoutingConfig {
+  const isPrimaryRoutable = (record: ModelConnectionRecord): boolean =>
+    record.state === 'connected' &&
+    (primaryRoutableMethods === undefined || primaryRoutableMethods.has(record.method))
+
   if (!file.selection) {
     const matchingRecord = (entry: TierModel): ModelConnectionRecord | undefined =>
       file.connections.find(
@@ -60,7 +67,7 @@ export function deriveRoutingConfig(
     const dropDisconnected = (entries: TierModel[]): TierModel[] =>
       entries.filter((entry) => {
         const record = matchingRecord(entry)
-        return record === undefined || record.state === 'connected'
+        return record === undefined || isPrimaryRoutable(record)
       })
     return RuntimeRoutingConfigSchema.parse({
       ...base,
@@ -73,12 +80,12 @@ export function deriveRoutingConfig(
 
   const { selection } = file
   const active = file.connections.find((connection) => connection.id === selection.connectionId)
-  const head = active && active.state === 'connected' ? active : undefined
+  const head = active && isPrimaryRoutable(active) ? active : undefined
 
   const fallbacks = file.connections.filter(
     (connection): connection is ModelConnectionRecord & { selectedModelId: string } =>
       connection.id !== selection.connectionId &&
-      connection.state === 'connected' &&
+      isPrimaryRoutable(connection) &&
       connection.enabledForFallback === true &&
       connection.selectedModelId !== undefined,
   )
@@ -120,9 +127,10 @@ export function buildRuntimeRouting(deps: {
   file: ConnectionsFile
   secrets: SecretResolver
   profile: 'loopback' | 'local-vps' | 'vps'
+  primaryRoutableMethods: ReadonlySet<ModelConnectionRecord['method']>
 }): RuntimeRoutingConfig {
   const base = loadRoutingConfig(deps.rootDir)
-  const derived = deriveRoutingConfig(base, deps.file)
+  const derived = deriveRoutingConfig(base, deps.file, deps.primaryRoutableMethods)
   return withMockFallback(derived, deps.secrets, {
     profile: deps.profile,
     mockEnabled: deps.file.mockEnabled,

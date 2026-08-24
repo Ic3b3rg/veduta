@@ -25,11 +25,10 @@ import type { SecretResolver } from './model-routing.ts'
 import { SecretsVault } from './secrets-vault.ts'
 
 /**
- * Every `ModelConnectionAdapter` — BYOK's three providers plus the
- * permanently-unavailable Claude subscription gate — is exercised against
- * the same five contract assertions (issue #47's adapter contract suite),
- * so a future adapter (Codex) inherits the same guarantees just by joining
- * this `describe.each` table.
+ * Every `ModelConnectionAdapter` — BYOK's three providers, the
+ * permanently-unavailable Claude subscription gate, and Codex — is
+ * exercised against the same contract assertions (issues #47 and #79), so
+ * a future adapter inherits the same guarantees by joining this table.
  */
 
 const KEY_MATERIAL = Buffer.from('a test key material, long enough for scrypt')
@@ -146,6 +145,16 @@ function freshRoot(): string {
 }
 
 describe.each(CASES)('adapter contract: $name', ({ adapter, available, buildContext }) => {
+  it('declares a complete primary inference route or is unavailable', () => {
+    const inference = adapter.primaryInference
+    if (!available) {
+      expect(inference.transport).toBe('unavailable')
+      return
+    }
+    expect(inference.transport).not.toBe('unavailable')
+    if (inference.transport === 'subscription') expect(inference.stream).toBeTypeOf('function')
+  })
+
   it('authorize returns a lifecycle state the protocol enum contains, or throws a typed ModelConnectionError', async () => {
     const ctx = buildContext(freshRoot())
     try {

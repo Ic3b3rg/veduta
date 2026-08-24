@@ -12,9 +12,9 @@ import type {
  * live routing (issue #47, docs/adr/0014-subscription-inference-boundary.md
  * amendment). `registry.runtimes()` already builds the raw per-connection
  * `ModelConnectionRuntime[]` — provider, transport, and, for a Codex
- * connection, the adapter's own `stream` verb bound to that connection's
- * `AdapterContext`. This module wraps ONLY the `stream` member with the two
- * policies a live turn needs that the registry itself must not carry
+ * connection, its `primaryInference.stream` bound to that connection's
+ * `AdapterContext`. This module wraps ONLY the runtime `stream` member with
+ * the two policies a live turn needs that the registry itself must not carry
  * (keeping `runtimes()` a plain synchronous snapshot, `model-connection-registry.ts`'s
  * own doc comment):
  *
@@ -23,8 +23,8 @@ import type {
  *   doc comment describes for a subscription's automatic refresh — and, when
  *   that check itself finds the connection no longer `'connected'` (expired,
  *   revoked, failed), refuses the turn with `NonRetryableModelError` BEFORE
- *   the adapter's own `stream` verb is ever called, rather than only
- *   reacting to a failure mid-call;
+ *   the adapter's declared subscription stream is ever called, rather than
+ *   only reacting to a failure mid-call;
  * - on an `unauthorized`/`expired` failure mid-turn, marking the connection
  *   `revoked`/`expired` (`registry.noteCallFailure`) and rethrowing as
  *   `NonRetryableModelError`, so `ModelRouter` never fails a
@@ -77,8 +77,8 @@ async function* streamWithRecovery(
   // `ensureFresh` just ran a real refresh (it returns `undefined` for its
   // own no-op skips — a static-refresh method, or one still inside the
   // freshness window) and found the connection is no longer `'connected'`:
-  // refuse the turn here, before the adapter's own `stream` verb is ever
-  // called, rather than only reacting to a failure mid-call. No second
+  // refuse the turn here, before the adapter's declared subscription stream
+  // is ever called, rather than only reacting to a failure mid-call. No second
   // `noteCallFailure` — `ensureFresh`'s own refresh already persisted this
   // state.
   if (state !== undefined && state !== 'connected') {

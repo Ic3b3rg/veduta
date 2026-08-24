@@ -131,6 +131,7 @@ export function createByokAdapter(provider: ByokProvider): ModelConnectionAdapte
       revocation: 'local-only',
       metered: true,
     },
+    primaryInference: { transport: 'builtin' },
     availability,
     authorize: (ctx, input) => authorize(provider, ctx, input),
     refresh,

@@ -25,6 +25,12 @@ import {
 } from './model-routing.ts'
 
 const baseConfig: RoutingConfig = defaultRoutingConfig()
+const primaryRoutableMethods = new Set([
+  'anthropic-api-key',
+  'openai-api-key',
+  'openrouter-api-key',
+  'chatgpt-codex',
+] as const)
 
 let rootDir: string | undefined
 
@@ -132,6 +138,43 @@ describe('deriveRoutingConfig', () => {
     ]
     expect(derived.tiers.reasoning).toEqual(expectedEntries)
     expect(derived.tiers.triage).toEqual(expectedEntries)
+  })
+
+  it('omits connected methods excluded by primary-route policy from the active and fallback chain', () => {
+    const unavailableActive = record({
+      id: 'conn-unavailable',
+      method: 'claude-subscription',
+      provider: 'anthropic',
+      state: 'connected',
+      selectedModelId: 'claude-sonnet-5',
+    })
+    const eligibleFallback = record({
+      id: 'conn-fallback',
+      method: 'openai-api-key',
+      provider: 'openai',
+      state: 'connected',
+      enabledForFallback: true,
+      selectedModelId: 'gpt-5.5',
+    })
+    const unavailableFallback = record({
+      id: 'conn-unavailable-fallback',
+      method: 'claude-subscription',
+      provider: 'anthropic',
+      state: 'connected',
+      enabledForFallback: true,
+      selectedModelId: 'claude-opus-5',
+    })
+    const file = connectionsFile({
+      connections: [unavailableActive, eligibleFallback, unavailableFallback],
+      selection: { connectionId: unavailableActive.id, modelId: 'claude-sonnet-5' },
+    })
+
+    const derived = deriveRoutingConfig(baseConfig, file, new Set(['openai-api-key']))
+
+    expect(derived.tiers.reasoning).toEqual([
+      { provider: 'openai', modelId: 'gpt-5.5', connectionId: 'conn-fallback' },
+    ])
+    expect(derived.tiers.triage).toEqual(derived.tiers.reasoning)
   })
 
   it('omits an expired active connection so the tier holds only fallbacks', () => {
@@ -349,6 +392,7 @@ describe('buildRuntimeRouting', () => {
       file,
       secrets: noKeysResolve,
       profile: 'loopback',
+      primaryRoutableMethods,
     })
 
     expect(runtime.tiers.reasoning).toEqual([])
@@ -364,6 +408,7 @@ describe('buildRuntimeRouting', () => {
       file: connectionsFile(),
       secrets: noKeysResolve,
       profile: 'loopback',
+      primaryRoutableMethods,
     })
 
     expect(runtime.tiers.reasoning.at(-1)).toEqual({ provider: 'mock', modelId: 'worker-mock' })

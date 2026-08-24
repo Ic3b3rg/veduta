@@ -26,7 +26,7 @@ import {
   type AdapterAvailability,
   type AdapterEnv,
   type AuthorizeResult,
-  type ModelConnectionAdapter,
+  type SubscriptionModelConnectionAdapter,
   type RefreshResult,
 } from './model-connection-adapter.ts'
 import { sanitizeErrorText } from './model-routing.ts'
@@ -335,7 +335,7 @@ function defaultProbeTransport(options: {
  * adapter's own probe result silently outlive whatever invalidated the
  * registry's copy.
  */
-export function createCodexAdapter(deps: CodexAdapterDeps): ModelConnectionAdapter {
+export function createCodexAdapter(deps: CodexAdapterDeps): SubscriptionModelConnectionAdapter {
   async function availability(env: AdapterEnv): Promise<AdapterAvailability> {
     const binary = deps.resolveBinary(env.env, env.rootDir)
     if (binary === undefined) {
@@ -367,18 +367,18 @@ export function createCodexAdapter(deps: CodexAdapterDeps): ModelConnectionAdapt
       revocation: 'provider',
       metered: false,
     },
+    primaryInference: { transport: 'subscription', stream },
     availability,
     authorize,
     refresh,
     catalog,
     verify,
     revoke,
-    stream,
   }
 }
 
 /** The production singleton — registered once in `server.ts`'s adapters array, exactly like `claudeSubscriptionAdapter`. */
-export const codexSubscriptionAdapter: ModelConnectionAdapter = createCodexAdapter({
+export const codexSubscriptionAdapter = createCodexAdapter({
   resolveBinary: resolveCodexBinary,
   probeTransport: defaultProbeTransport,
 })

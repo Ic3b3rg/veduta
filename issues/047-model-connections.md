@@ -111,15 +111,15 @@ None — builds on completed issues [003](003-agent-runner-wrapper.md),
 [010](010-model-routing.md), and [019](019-onboarding-wizard.md), and on
 [ADR-0014](../docs/adr/0014-subscription-inference-boundary.md).
 
-## Status note (2026-08-09)
+## Status note (2026-08-24)
 
 [ADR-0016](../docs/adr/0016-primary-agent-connections-author-surfaces.md) and
-[issue 070](070-codex-tool-parity.md) supersede only the shipped ChatGPT text-only exception. Model
-connection onboarding, lifecycle, catalog, selection, refresh, and failure behavior stay in this
-issue; tool-capable Agent routing moves to issue 070.
+[issue 070](070-codex-tool-parity.md) extend the shipped connection lifecycle with the complete
+primary AgentRunner contract. Model connection onboarding, lifecycle, catalog, selection, refresh,
+and failure behavior stay in this issue; provider-independent Agent routing belongs to issue 070.
 
-Five of the eight criteria above are satisfied by what shipped (Consistent UX, Routing
-controls, Multiple accounts, Failure policy, Security boundary). The deterministic coverage lives
+Five of the eight criteria above are satisfied by what shipped (Consistent UX, Routing controls,
+Multiple accounts, Failure policy, Security boundary). The deterministic coverage lives
 alongside the implementation in `model-connection-*.test.ts`, `onboarding-*.test.ts`, and the PWA's
 `model-connection-*.test.tsx` files. Three criteria stay open and cannot be closed by more code in
 this repository alone:
@@ -133,15 +133,14 @@ this repository alone:
 - **ChatGPT subscription** is implemented end to end behind the exactly-pinned `codex app-server`
   0.146.1 binary (device-code authorization, catalog, verify, streamed turns, automatic
   refresh, revoke) and every step is covered by contract and unit tests against
-  `codex-app-server-fake.ts`. What is still missing is the real-account manual smoke in
-  `docs/references/11-model-connections-manual-smoke.md` — no CI environment carries the pinned
-  binary, so this criterion cannot be ticked until that walk is actually run once against a real
-  ChatGPT account.
+  `codex-app-server-fake.ts`. The real-account create-and-patch smoke passed on 2026-08-11 and is
+  recorded in `docs/references/11-model-connections-manual-smoke.md`; forced provider-side token
+  expiry remains reproducible only through deterministic fakes.
 - **The adapter contract tests half of the last criterion is done** (`model-connection-adapter-contract.test.ts`,
-  `describe.each` over BYOK, Claude and Codex); **the manual-smoke half is not**, for the same two
-  reasons above — a real Claude account smoke is impossible while the gate stands, and the real
-  ChatGPT account smoke is still to be run. Forced access-token expiry is exercised only through
-  deterministic fakes (`model-connection-codex.test.ts`'s `refresh reports expired when the
-refresh call fails`), matching what `docs/references/11-model-connections-manual-smoke.md`
+  `describe.each` over BYOK, Claude and Codex); **the manual-smoke half is not** because of the
+  provider-policy boundary above — a real Claude account smoke is impossible while the gate
+  stands. Forced access-token expiry is exercised only through deterministic fakes
+  (`model-connection-codex.test.ts`'s `refresh reports expired when the refresh call fails`),
+  matching what `docs/references/11-model-connections-manual-smoke.md`
   records as the only testable path: the public ChatGPT API gives no way to force a provider-side
   token expiry on demand.

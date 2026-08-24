@@ -10,6 +10,7 @@ import {
   MigrationChoiceRequestSchema,
   ModelConnectionStepRequestSchema,
   OnboardingStatusSchema,
+  type ModelConnectionMethodId,
   type OnboardingStatus,
 } from '@veduta/protocol'
 import { rejectUnexpectedBody } from './fastify-validation.ts'
@@ -68,6 +69,8 @@ export interface OnboardingRoutesDeps {
    * resolve" never disagrees between the wizard step and a live turn.
    */
   secrets: SecretResolver
+  /** Primary-route eligibility from the live Model connection registry. */
+  primaryRoutableMethods: ReadonlySet<ModelConnectionMethodId>
   /**
    * Threaded through to the migration import routes (issue #47): reconciles
    * an imported provider key into a visible Model connection before the
@@ -239,7 +242,12 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingR
     if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
     try {
       applyModelConnectionStep(
-        { rootDir: deps.rootDir, profile: deps.profile, secrets: deps.secrets },
+        {
+          rootDir: deps.rootDir,
+          profile: deps.profile,
+          secrets: deps.secrets,
+          primaryRoutableMethods: deps.primaryRoutableMethods,
+        },
         parsed.data,
       )
     } catch (error) {
@@ -283,6 +291,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingR
         scheduleExit: deps.scheduleExit,
         env: deps.env,
         secrets: deps.secrets,
+        primaryRoutableMethods: deps.primaryRoutableMethods,
       })
       return FinishResponseSchema.parse(result)
     } catch (error) {

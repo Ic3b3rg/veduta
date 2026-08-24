@@ -48,9 +48,10 @@ Claude subscription remains visible but unavailable until Anthropic publishes or
 third-party subscription contract; Anthropic BYOK remains supported. The
 [real-account smoke](docs/references/11-model-connections-manual-smoke.md) confirms ChatGPT
 authorization, model selection, inference, and Surface creation and patching without an API key.
-Final Connection parity remains open under [issue 070](issues/070-codex-tool-parity.md),
-specifically [079](issues/079-primary-connection-parity.md). Automation and Worker parity are
-covered by the shared AgentRunner contract and deterministic BYOK/Codex fixtures.
+[Connection parity](CONTEXT.md) is enforced by one primary inference contract: every routable
+adapter receives the same allowed tool definitions, while an adapter without that contract is
+unavailable. Deterministic BYOK/Codex fixtures cover Surface authoring, Space memory, Templates,
+Automations, Workers, and trust-wrapped actions.
 
 The durable boundaries live in
 [ADR-0014](docs/adr/0014-subscription-inference-boundary.md) and

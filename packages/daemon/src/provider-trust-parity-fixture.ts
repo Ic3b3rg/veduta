@@ -17,6 +17,12 @@ import {
   type ScriptedToolCall,
 } from './provider-parity-model-fixture.ts'
 import {
+  captureProviderDefinitions,
+  consistentProviderDefinitions,
+  subscriptionDefinitions,
+  type ProviderToolDefinition,
+} from './provider-parity-observation.ts'
+import {
   normalizeAgentEvents,
   normalizeSessionEntries,
   normalizeSpaceEvent,
@@ -42,6 +48,7 @@ export const TRUST_PARITY_APPROVAL_RESULT =
 export type TrustParityScenario = 'allowlisted-l1' | 'tainted-l1' | 'l2'
 
 export interface TrustParityOutcome {
+  definitions: ProviderToolDefinition[]
   events: unknown[]
   sessionEntries: unknown[]
   auditEntries: unknown[]
@@ -284,9 +291,13 @@ export async function runTrustParityScenario(
     const cardsStart = harness.approvalCards.length
     const deliveriesStart = deliveryCount(harness.store)
     const script = scriptFor(harness, scenario)
+    const definitionObservations: ProviderToolDefinition[][] = []
     const provider =
       method === 'byok'
-        ? scriptedByokProvider(script.calls, script.finalText)
+        ? captureProviderDefinitions(
+            scriptedByokProvider(script.calls, script.finalText),
+            definitionObservations,
+          )
         : subscriptionProvider({
             connectionId: CONNECTION_ID,
             rootDir: parityTempDir(harness.directories, 'veduta-provider-trust-codex-'),
@@ -324,6 +335,10 @@ export async function runTrustParityScenario(
     )
     return {
       outcome: {
+        definitions:
+          transport === undefined
+            ? consistentProviderDefinitions(definitionObservations)
+            : subscriptionDefinitions(transport),
         events: normalizeAgentEvents(events, { includeTurnOrigins: true }),
         sessionEntries: normalizeSessionEntries(session.entries),
         auditEntries: normalizeAuditEntries(

@@ -825,6 +825,7 @@ export function buildServer(options: ServerOptions = {}) {
       }
     },
   })
+  const primaryRoutableMethods = registry.primaryRoutableMethods()
   registry.normalizeStatesOnBoot()
   // Wraps `registry.runtimes()`'s raw subscription sources with the
   // pre-inference freshness check and the revoked/expired →
@@ -846,6 +847,7 @@ export function buildServer(options: ServerOptions = {}) {
       file: loadConnectionsConfig(store.spacesEngine.rootDir),
       secrets,
       profile,
+      primaryRoutableMethods,
     }),
   )
   const router = new ModelRouter({
@@ -882,6 +884,7 @@ export function buildServer(options: ServerOptions = {}) {
       file,
       secrets,
       profile,
+      primaryRoutableMethods,
     })
     routingState.replace(derived)
     router.setConfig(derived)
@@ -926,6 +929,7 @@ export function buildServer(options: ServerOptions = {}) {
       file: { ...file, selection: { connectionId, modelId } },
       secrets,
       profile,
+      primaryRoutableMethods,
     })
     const probeBridge = createProviderBridge({
       config: candidateConfig,
@@ -1396,6 +1400,7 @@ export function buildServer(options: ServerOptions = {}) {
     env: onboardingOptions.env ?? process.env,
     scheduleExit: onboardingOptions.scheduleExit ?? defaultScheduleExit(app),
     secrets,
+    primaryRoutableMethods,
     // Issue #47: an imported provider key becomes a visible, usable Model
     // connection before the migration import route's response goes out,
     // with no daemon restart required.

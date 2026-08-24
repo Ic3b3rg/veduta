@@ -3,7 +3,8 @@
 > Companion to [issue 047](../../issues/047-model-connections.md),
 > [issue 073](../../issues/073-chatgpt-subscription-surface-authoring.md),
 > [issue 077](../../issues/077-chatgpt-subscription-automations.md),
-> [issue 078](../../issues/078-chatgpt-subscription-workers.md), the
+> [issue 078](../../issues/078-chatgpt-subscription-workers.md),
+> [issue 079](../../issues/079-primary-connection-parity.md), the
 > [ADR-0014 amendment](../adr/0014-subscription-inference-boundary.md), and
 > [ADR-0016](../adr/0016-primary-agent-connections-author-surfaces.md). Automated tests cover
 > every adapter against deterministic fakes; this documents the checks that need a real account
@@ -28,7 +29,7 @@ ChatGPT account with device-code login enabled in its security settings.
    with one bound state field. The offered `create_surface` definition must not contain `spaceId`,
    and the call must create the Surface in the focused Space without supplying one.
    The reply must stream into chat, the protocol-valid Surface must appear live without a page
-   refresh, and the obsolete no-tools compatibility note must not be present.
+   refresh, and no reduced-capability connection notice may be present.
 6. In the same focused Space, ask the Agent to update that field. The turn must call
    `patch_state`; the rendered Atom must update live and the Surface must remain protocol-valid.
 7. Focus Health and send exactly `aggiungi ai meals la fesa di tacchino`. Confirm the turn calls
@@ -57,6 +58,40 @@ ChatGPT account with device-code login enabled in its security settings.
   provenance was `trusted:system`, the session contained both tool results, and the Space Event
   log contained `surface.create` followed by `surface.patch_state`. The existing Local VPS Spaces
   were not modified, and credential contents were not printed.
+
+## Deterministic contract for Connection parity
+
+The provider-parity suite drives the same public `AgentRunner.prompt()` scenarios through
+BYOK/fake and Codex/fake. It compares the definitions observed at the BYOK boundary with the
+actual Codex `dynamicTools` definitions, then compares accepted calls, handler results, final text,
+normalized Agent events, session entries, and persistent outcomes while ignoring only
+provider-assigned metadata:
+
+- [`subscription-surface-flow.test.ts`](../../packages/daemon/src/subscription-surface-flow.test.ts)
+  covers Surface creation and typed-state patching.
+- [`provider-memory-parity.test.ts`](../../packages/daemon/src/provider-memory-parity.test.ts)
+  covers FACTS, Event log reads, Retrieval, origins, and live taint.
+- [`provider-template-parity.test.ts`](../../packages/daemon/src/provider-template-parity.test.ts)
+  covers Template discovery, reuse, pinning, validation, and the direct-authoring justification
+  gate.
+- [`provider-automation-parity.test.ts`](../../packages/daemon/src/provider-automation-parity.test.ts)
+  covers Space-bound listing, timers, recurring Automations, enabled state, cancellation,
+  ownership, and handler-error replay safety.
+- [`provider-worker-parity.test.ts`](../../packages/daemon/src/provider-worker-parity.test.ts)
+  covers asynchronous spawn and delivery, isolated read-only tools, review call purpose, budget
+  exhaustion, cancellation, and failure replay safety.
+- [`provider-trust-parity.test.ts`](../../packages/daemon/src/provider-trust-parity.test.ts) covers
+  allowlisted L1 execution, Untrusted-origin taint, Approval cards, and unconditional L2 carding.
+- [`provider-tool-parity.test.ts`](../../packages/daemon/src/provider-tool-parity.test.ts) covers the
+  generic definition/call/result loop, handler errors, and sequential accepted call ids.
+
+The transport matrix remains separate in
+[`codex-tool-turn.test.ts`](../../packages/daemon/src/codex-tool-turn.test.ts),
+[`codex-app-server-protocol.test.ts`](../../packages/daemon/src/codex-app-server-protocol.test.ts),
+and [`subscription-failover.test.ts`](../../packages/daemon/src/subscription-failover.test.ts):
+malformed arguments, unknown tools, duplicate ids, correlation drift, abort, timeout,
+version/capability drift, provider-native items, additive response fields, and post-effect retry
+refusal all fail closed.
 
 ## ChatGPT subscription — Automation parity smoke
 
@@ -143,19 +178,12 @@ documentation link, and offers no login flow of any kind. The corresponding acce
 of issue 047 is unsatisfiable until Anthropic grants approval or publishes a public third-party
 OAuth contract; this is a provider-policy boundary, not a missing feature.
 
-## Wayfinder #53 decision comment
+## Wayfinder #53 decision and supersession
 
-The decision posted to the wayfinder frontier ticket:
-
-> Decision: narrow boundary redraw. Subscription adapters wrap first-party provider runtimes as
-> inference-only engines behind the Model connection contract; Veduta's Agent loop keeps tools,
-> trust decisions, Event log writes and Surface changes for every connection method. ChatGPT
-> ships real, through a pinned `codex app-server` child process (device-code login, catalog via
-> `model/list`, one tool-less thread per turn, fail-closed when the app-server does not confirm
-> an empty tool set). Claude subscription ships as a permanently gated adapter, unavailable with
-> the exact approval-requirement reason, per the issue-51 research. BYOK becomes one Model
-> connection method behind the same contract. Recorded in the ADR-0014 amendment.
-
-That quote is the historical issue-047 decision. ADR-0016 supersedes only its Codex exception:
-issue 073 enables the hardened dynamic-tool path for focused-Space turns while keeping
-provider-native tools disabled and global chat without tools.
+The original issue-047 decision established subscription adapters as inference-only engines behind
+the Model connection contract: Veduta's Agent loop keeps tool execution, trust decisions, Event log
+writes, and Surface changes; ChatGPT uses the pinned `codex app-server`; Claude subscription stays
+unavailable until its provider permits third-party routing; and BYOK uses the same connection
+lifecycle. ADR-0016 and issues 070–079 subsequently replaced the narrow initial Codex inference
+boundary with the complete dynamic-tool contract while preserving every provider-native tool
+refusal. Global chat scope remains a separate concern owned by issue 052.

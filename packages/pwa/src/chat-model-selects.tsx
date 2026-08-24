@@ -1,7 +1,11 @@
 import type { ModelConnectionsSnapshot } from '@veduta/protocol'
 import { useEffect, useState } from 'react'
 import { applyModelSelection, fetchModelConnections } from './api.ts'
-import { catalogOptions, connectionSelectLabel } from './model-connection-view.ts'
+import {
+  catalogOptions,
+  connectionSelectLabel,
+  primaryRoutableConnections,
+} from './model-connection-view.ts'
 
 /**
  * The topbar's compact "which model am I talking to" control (issue #47,
@@ -40,11 +44,10 @@ export function ChatModelSelects({ token }: { token?: string | undefined }) {
     }
   }, [token])
 
-  if (snapshot === undefined || snapshot.connections.length === 0) return null
+  if (snapshot === undefined) return null
 
-  const connectedConnections = snapshot.connections.filter(
-    (connection) => connection.state === 'connected',
-  )
+  const connectedConnections = primaryRoutableConnections(snapshot)
+  if (connectedConnections.length === 0) return null
   const connectionId = snapshot.selection?.connectionId ?? ''
   const modelId = snapshot.selection?.modelId ?? ''
   const selectedConnection = connectedConnections.find(

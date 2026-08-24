@@ -94,6 +94,19 @@ export interface RefreshResult {
   reason?: string
 }
 
+export interface SubscriptionPrimaryModelInference {
+  readonly transport: 'subscription'
+  stream(
+    ctx: AdapterContext,
+    request: SubscriptionStreamRequest,
+  ): AsyncIterable<SubscriptionStreamEvent>
+}
+
+export type PrimaryModelInference =
+  | { readonly transport: 'builtin' }
+  | SubscriptionPrimaryModelInference
+  | { readonly transport: 'unavailable'; readonly reason: string; readonly docsUrl?: string }
+
 export interface ModelConnectionAdapter {
   readonly methodId: ModelConnectionMethodId
   /** The canonical provider name — feeds pi-ai model resolution and PROVIDER_HOSTS. Never a connection id. */
@@ -101,7 +114,14 @@ export interface ModelConnectionAdapter {
   readonly providerDisplayName: string
   readonly methodDisplayName: string
   readonly capabilities: ModelConnectionCapabilities
-  /** Async and cacheable per process: a Codex binary/version probe happens here, at snapshot time. */
+  /**
+   * The adapter's complete primary-Agent inference route. This is a
+   * transport choice, not an optional Agent capability: both routable
+   * variants receive the same AgentRunner tool contract, while an adapter
+   * with no such route is excluded from primary routing.
+   */
+  readonly primaryInference: PrimaryModelInference
+  /** Async and cacheable per process for a routable declaration: a Codex binary/version probe happens here, at snapshot time. */
   availability(env: AdapterEnv): Promise<AdapterAvailability>
   authorize(ctx: AdapterContext, input: AuthorizeInput): Promise<AuthorizeResult>
   /** Poll a device-code login, refresh a credential, or re-check a connected one. */
@@ -109,17 +129,35 @@ export interface ModelConnectionAdapter {
   catalog(ctx: AdapterContext): Promise<ModelCatalogEntry[]>
   verify(ctx: AdapterContext, modelId: string): Promise<void>
   revoke(ctx: AdapterContext): Promise<{ providerRevoked: boolean; note?: string }>
-  /**
-   * Only for methods whose inference does not go through pi-ai's builtin
-   * catalog (issue #47: Codex). `ModelConnectionRegistry.runtimes()` reads
-   * this off the adapter to decide whether a `connected` connection can be
-   * a `'subscription'`-transport runtime at all; the adapter must actually
-   * implement this verb. Absent on every BYOK/Claude adapter.
-   */
-  stream?(
-    ctx: AdapterContext,
-    request: SubscriptionStreamRequest,
-  ): AsyncIterable<SubscriptionStreamEvent>
+}
+
+export type SubscriptionModelConnectionAdapter = Omit<
+  ModelConnectionAdapter,
+  'primaryInference'
+> & {
+  readonly primaryInference: SubscriptionPrimaryModelInference
+}
+
+export type RoutablePrimaryModelInference = Exclude<
+  PrimaryModelInference,
+  { readonly transport: 'unavailable' }
+>
+
+export type PrimaryRouteEligibility =
+  | { readonly routable: true; readonly inference: RoutablePrimaryModelInference }
+  | { readonly routable: false; readonly reason: string; readonly docsUrl?: string }
+
+/** The single policy boundary that turns an adapter declaration into primary-route eligibility. */
+export function primaryRouteEligibility(
+  adapter: Pick<ModelConnectionAdapter, 'primaryInference'>,
+): PrimaryRouteEligibility {
+  const inference = adapter.primaryInference
+  if (inference.transport !== 'unavailable') return { routable: true, inference }
+  return {
+    routable: false,
+    reason: inference.reason,
+    ...(inference.docsUrl === undefined ? {} : { docsUrl: inference.docsUrl }),
+  }
 }
 
 export type ModelConnectionErrorCode =

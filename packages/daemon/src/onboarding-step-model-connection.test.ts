@@ -6,8 +6,9 @@ import { saveConnectionsConfig, type ConnectionsFile } from './connections-confi
 import { saveRoutingConfig, type SecretResolver } from './model-routing.ts'
 import { loadOnboardingConfig } from './onboarding-config.ts'
 import {
-  applyModelConnectionStep,
-  assertModelConnectionReady,
+  applyModelConnectionStep as applyModelConnectionStepImpl,
+  assertModelConnectionReady as assertModelConnectionReadyImpl,
+  type ModelConnectionReadyDeps,
 } from './onboarding-step-model-connection.ts'
 import { OnboardingStepError } from './onboarding-status.ts'
 
@@ -24,6 +25,35 @@ function freshRoot(): string {
 }
 
 const noSecrets: SecretResolver = { resolve: () => undefined }
+const primaryRoutableMethods = new Set([
+  'anthropic-api-key',
+  'openai-api-key',
+  'openrouter-api-key',
+  'chatgpt-codex',
+] as const)
+
+type ReadyDepsInput = Omit<ModelConnectionReadyDeps, 'primaryRoutableMethods'> &
+  Partial<Pick<ModelConnectionReadyDeps, 'primaryRoutableMethods'>>
+
+function assertModelConnectionReady(deps: ReadyDepsInput): void {
+  assertModelConnectionReadyImpl({
+    ...deps,
+    primaryRoutableMethods: deps.primaryRoutableMethods ?? primaryRoutableMethods,
+  })
+}
+
+function applyModelConnectionStep(
+  deps: ReadyDepsInput,
+  request: Parameters<typeof applyModelConnectionStepImpl>[1],
+): void {
+  applyModelConnectionStepImpl(
+    {
+      ...deps,
+      primaryRoutableMethods: deps.primaryRoutableMethods ?? primaryRoutableMethods,
+    },
+    request,
+  )
+}
 
 function resolverFor(values: Record<string, string>): SecretResolver {
   return { resolve: (ref) => values[ref] }
@@ -88,6 +118,30 @@ describe('assertModelConnectionReady', () => {
     expect(() =>
       assertModelConnectionReady({ rootDir: dir, profile: 'vps', secrets: noSecrets }),
     ).not.toThrow()
+  })
+
+  it('refuses a connected selection whose method is excluded from the primary route', () => {
+    const dir = freshRoot()
+    const unavailable = {
+      ...connectedAnthropic,
+      id: 'a1a1a1a1-0000-4000-8000-000000000079',
+      method: 'claude-subscription' as const,
+    }
+    saveConnectionsConfig(dir, {
+      version: 1,
+      connections: [unavailable],
+      selection: { connectionId: unavailable.id, modelId: 'claude-sonnet-5' },
+      mockEnabled: false,
+    })
+
+    expect(() =>
+      assertModelConnectionReady({
+        rootDir: dir,
+        profile: 'vps',
+        secrets: noSecrets,
+        primaryRoutableMethods: new Set(['anthropic-api-key']),
+      }),
+    ).toThrow(OnboardingStepError)
   })
 
   it('refuses on vps when the stored selection points at a connection that is not connected', () => {
@@ -162,6 +216,39 @@ describe('assertModelConnectionReady', () => {
     expect(() =>
       assertModelConnectionReady({ rootDir: dir, profile: 'vps', secrets }),
     ).not.toThrow()
+  })
+
+  it('refuses a selectionless migrated route whose method is excluded from the primary route', () => {
+    const dir = freshRoot()
+    saveConnectionsConfig(dir, {
+      version: 1,
+      connections: [
+        {
+          ...connectedAnthropic,
+          method: 'claude-subscription',
+        },
+      ],
+      mockEnabled: false,
+    })
+    saveRoutingConfig(dir, {
+      tiers: {
+        triage: [{ provider: 'anthropic', modelId: 'claude-haiku-4-5' }],
+        reasoning: [{ provider: 'anthropic', modelId: 'claude-sonnet-5' }],
+      },
+      providerKeys: { anthropic: 'secret://env/ANTHROPIC_API_KEY' },
+      connectionKeys: {},
+      dailyCapUsd: { triage: 5, reasoning: 20 },
+    })
+    const secrets = resolverFor({ 'secret://env/ANTHROPIC_API_KEY': 'sk-real-key' })
+
+    expect(() =>
+      assertModelConnectionReady({
+        rootDir: dir,
+        profile: 'vps',
+        secrets,
+        primaryRoutableMethods: new Set(['anthropic-api-key']),
+      }),
+    ).toThrow(OnboardingStepError)
   })
 
   it('local-vps passes when mockEnabled is true, even with no connection at all', () => {

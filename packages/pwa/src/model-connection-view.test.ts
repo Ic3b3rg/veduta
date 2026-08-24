@@ -10,6 +10,7 @@ import {
   challengeCountdownLabel,
   connectionSelectLabel,
   lifecycleCopy,
+  primaryRoutableConnections,
 } from './model-connection-view.ts'
 
 const anthropicApiKeyMethod: ModelConnectionMethod = {
@@ -124,6 +125,21 @@ describe('connectionSelectLabel', () => {
     expect(connectionSelectLabel(novelConnection, [novelConnection], [])).toBe(
       'some-future-provider',
     )
+  })
+})
+
+describe('primaryRoutableConnections', () => {
+  it('excludes a connected record when its method is unavailable', () => {
+    const snapshot: ModelConnectionsSnapshot = {
+      vaultAvailable: true,
+      mockControlAvailable: false,
+      mockEnabled: false,
+      methods: [anthropicApiKeyMethod, claudeSubscriptionMethod],
+      connections: [anthropicApiKey, claudeSubscription],
+      selection: { connectionId: claudeSubscription.id, modelId: 'claude-sonnet-5' },
+    }
+
+    expect(primaryRoutableConnections(snapshot)).toEqual([anthropicApiKey])
   })
 })
 

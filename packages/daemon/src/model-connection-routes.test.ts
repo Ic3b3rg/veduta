@@ -63,6 +63,12 @@ function fakeDeviceAdapter(
       revocation: 'provider',
       metered: false,
     },
+    primaryInference: {
+      transport: 'subscription',
+      stream: async function* () {
+        yield* []
+      },
+    },
     availability: async () => ({ available: true }),
     authorize: async (): Promise<AuthorizeResult> => ({
       state: 'waiting-for-user',

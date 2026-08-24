@@ -25,6 +25,7 @@ import {
 import {
   ModelConnectionError,
   connectionErrorFrom,
+  primaryRouteEligibility,
   type AdapterContext,
   type AdapterEnv,
   type AdapterAvailability,
@@ -271,6 +272,12 @@ export class ModelConnectionRegistry {
     return record
   }
 
+  private requirePrimaryRoute(methodId: ModelConnectionMethodId) {
+    const route = primaryRouteEligibility(this.findAdapter(methodId))
+    if (!route.routable) throw new ModelConnectionError('unsupported', route.reason)
+    return route.inference
+  }
+
   private replaceRecord(file: ConnectionsFile, record: ModelConnectionRecord): ConnectionsFile {
     return {
       ...file,
@@ -308,7 +315,17 @@ export class ModelConnectionRegistry {
   private async getAvailability(adapter: ModelConnectionAdapter): Promise<AdapterAvailability> {
     const cached = this.availabilityCache.get(adapter.methodId)
     if (cached) return cached
-    const availability = await adapter.availability(this.adapterEnv())
+    // A missing primary route is authoritative and already carries the
+    // user-visible reason. Environment probes can only further restrict a
+    // routable declaration; they can never make this adapter eligible.
+    const route = primaryRouteEligibility(adapter)
+    const availability: AdapterAvailability = !route.routable
+      ? {
+          available: false,
+          reason: route.reason,
+          ...(route.docsUrl === undefined ? {} : { docsUrl: route.docsUrl }),
+        }
+      : await adapter.availability(this.adapterEnv())
     this.availabilityCache.set(adapter.methodId, availability)
     return availability
   }
@@ -421,6 +438,7 @@ export class ModelConnectionRegistry {
       const file = loadConnectionsConfig(this.rootDir)
       const record = this.findRecord(file, id)
       const adapter = this.findAdapter(record.method)
+      this.requirePrimaryRoute(record.method)
       return adapter.refresh(this.contextFor(id, record.secretRef), challenge)
     })()
 
@@ -600,6 +618,7 @@ export class ModelConnectionRegistry {
       const file = loadConnectionsConfig(this.rootDir)
       const record = this.findRecord(file, id)
       const adapter = this.findAdapter(record.method)
+      this.requirePrimaryRoute(record.method)
 
       if (adapter.capabilities.authorization === 'api-key' && input.apiKey === undefined) {
         throw new ModelConnectionError(
@@ -678,6 +697,9 @@ export class ModelConnectionRegistry {
   }
 
   async verify(id: string, modelId: string): Promise<void> {
+    const initialFile = loadConnectionsConfig(this.rootDir)
+    const initialRecord = this.findRecord(initialFile, id)
+    this.requirePrimaryRoute(initialRecord.method)
     // A subscription probe performs the same pre-inference freshness check
     // as a real turn. Run that check, and then the provider I/O itself,
     // outside the mutation queue: an automatic refresh persists through
@@ -826,6 +848,7 @@ export class ModelConnectionRegistry {
     return this.queue(() => {
       const file = loadConnectionsConfig(this.rootDir)
       const record = this.findRecord(file, connectionId)
+      this.requirePrimaryRoute(record.method)
       if (record.state !== 'connected') {
         throw new ModelConnectionError('rejected', 'this connection is not connected')
       }
@@ -882,8 +905,8 @@ export class ModelConnectionRegistry {
    * the connection's lifecycle state AFTER a refresh actually ran (issue
    * #47): `connection-inference.ts`'s wrapper reads this to refuse a turn on
    * a connection that just turned out to be revoked/expired, BEFORE ever
-   * calling the adapter's own `stream` verb, rather than only reacting to a
-   * failure mid-call.
+   * calling the adapter's declared subscription stream, rather than only
+   * reacting to a failure mid-call.
    *
    * The current record's own state is read FIRST, before either skip check
    * (issue #47): a connection that is already revoked/expired/failed must
@@ -945,14 +968,12 @@ export class ModelConnectionRegistry {
   }
 
   /**
-   * Every `connected` connection as a `pi-provider-bridge.ts`
-   * `ModelConnectionRuntime` (issue #47): `'subscription'` transport for any
-   * connection whose adapter implements `stream` (`model-connection-adapter.ts`'s
-   * doc comment on that member — only Codex today, but the check is
-   * adapter-authoritative, not a hardcoded method id, so a future
-   * subscription adapter needs no change here), `'builtin'` for everything
-   * else. The `stream` member here calls the adapter directly, with NO
-   * freshness check and NO failure-state mapping — `connection-inference.ts`'s
+   * Every primary-routable `connected` connection as a
+   * `pi-provider-bridge.ts` `ModelConnectionRuntime` (issues #47 and #79).
+   * The adapter declares one complete inference transport; an unavailable
+   * declaration yields no runtime rather than falling through to another
+   * provider path. The subscription `stream` here calls the adapter
+   * directly, with NO freshness check and NO failure-state mapping — `connection-inference.ts`'s
    * `createConnectionRuntimes` is the one place that wraps it with
    * `ensureFresh`/`noteCallFailure` before `server.ts` ever hands this array
    * to the provider bridge; this method stays a plain, synchronous snapshot
@@ -962,22 +983,32 @@ export class ModelConnectionRegistry {
     const file = loadConnectionsConfig(this.rootDir)
     return file.connections
       .filter((record) => record.state === 'connected')
-      .map((record) => {
-        const adapter = this.findAdapter(record.method)
-        const transport: ModelConnectionRuntime['transport'] =
-          adapter.stream !== undefined ? 'subscription' : 'builtin'
-        if (transport !== 'subscription') {
-          return { connectionId: record.id, provider: record.provider, transport }
+      .flatMap((record): ModelConnectionRuntime[] => {
+        const route = primaryRouteEligibility(this.findAdapter(record.method))
+        if (!route.routable) return []
+        const inference = route.inference
+        if (inference.transport === 'builtin') {
+          return [{ connectionId: record.id, provider: record.provider, transport: 'builtin' }]
         }
         const context = this.contextFor(record.id, record.secretRef)
-        const adapterStream = adapter.stream!
-        return {
-          connectionId: record.id,
-          provider: record.provider,
-          transport,
-          stream: (request: SubscriptionStreamRequest) => adapterStream(context, request),
-        }
+        return [
+          {
+            connectionId: record.id,
+            provider: record.provider,
+            transport: 'subscription',
+            stream: (request: SubscriptionStreamRequest) => inference.stream(context, request),
+          },
+        ]
       })
+  }
+
+  /** Adapter methods eligible for the primary Agent route, independent of credential lifecycle. */
+  primaryRoutableMethods(): ReadonlySet<ModelConnectionMethodId> {
+    return new Set(
+      this.adapters
+        .filter((adapter) => primaryRouteEligibility(adapter).routable)
+        .map((adapter) => adapter.methodId),
+    )
   }
 
   /**

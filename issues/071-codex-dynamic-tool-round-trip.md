@@ -10,7 +10,7 @@ Complete one deterministic ChatGPT-subscription tool round trip through the exis
 
 Promote the sanitized `@openai/codex@0.146.1` prototype findings into a durable repository reference and derive the adapter fixtures from those observed shapes. The captured contract initializes with `experimentalApi`, sends `dynamicTools` at thread start, receives an `item/tool/call` server request, keeps the reverse JSON-RPC request id separate from the semantic tool-call id, responds on that request id with `success` and `contentItems`, and then lets the same Codex turn continue. Required fields remain typed while unknown additive fields are tolerated.
 
-Replace the text-only subscription seam with a Veduta-owned structured turn contract carrying allowed tool definitions and normalized text/tool-call events. Provider protocol types remain inside the adapter. The adapter translates definitions, calls, and results only; zod validation, handler execution, trust context, session persistence, and normalized `AgentEvent`s remain owned by `PiAgentRunner`. Keep the current primary-routing capability gate in place until the fail-closed hardening slice is complete.
+Replace the response-only subscription seam with a Veduta-owned structured turn contract carrying allowed tool definitions and normalized text/tool-call events. Provider protocol types remain inside the adapter. The adapter translates definitions, calls, and results only; zod validation, handler execution, trust context, session persistence, and normalized `AgentEvent`s remain owned by `PiAgentRunner`. Keep primary routing fail-closed until the hardening slice proves the complete transport contract.
 
 ## Acceptance criteria
 

@@ -88,6 +88,36 @@ describe('ModelConnectionPanel', () => {
     expect(screen.queryByRole('button', { name: /authorize/i })).toBeNull()
   })
 
+  it('does not offer an unavailable method through the primary routing selectors', () => {
+    const staleConnected: ModelConnection = {
+      id: 'a1a1a1a1-0000-4000-8000-000000000079',
+      method: 'claude-subscription',
+      provider: 'anthropic',
+      label: 'Claude · Subscription',
+      state: 'connected',
+      stateAt: '2026-08-09T00:00:00.000Z',
+      enabledForFallback: false,
+      createdAt: '2026-08-09T00:00:00.000Z',
+      catalog: [{ id: 'claude-sonnet-5', label: 'Claude Sonnet 5', routable: true }],
+    }
+
+    render(
+      <ModelConnectionPanel
+        snapshot={baseSnapshot({
+          methods: [claudeSubscriptionMethod],
+          connections: [staleConnected],
+          selection: { connectionId: staleConnected.id, modelId: 'claude-sonnet-5' },
+        })}
+        busy={false}
+        error={null}
+        {...noop}
+      />,
+    )
+
+    expect(screen.queryByLabelText('Connection')).toBeNull()
+    expect(screen.queryByLabelText('Model')).toBeNull()
+  })
+
   it('shows the device code and verification URL while waiting for the user', () => {
     const waiting: ModelConnection = {
       id: 'b1b1b1b1-0000-4000-8000-000000000001',

@@ -44,6 +44,9 @@ describe('AgentRunner trust parity across Model connection methods (issue #74)',
     const subscription = await runTrustParityScenario('chatgpt-subscription', 'allowlisted-l1')
 
     expect(subscription.outcome).toEqual(byok.outcome)
+    expect(byok.outcome.definitions.map((definition) => definition.name)).toEqual(
+      expect.arrayContaining(['read_surface', 'send_message', 'transfer_funds']),
+    )
     expect(subscription.subscriptionResponseIds).toEqual([0])
     expectToolLifecycle(
       subscription.outcome,
@@ -77,6 +80,9 @@ describe('AgentRunner trust parity across Model connection methods (issue #74)',
     const subscription = await runTrustParityScenario('chatgpt-subscription', 'tainted-l1')
 
     expect(subscription.outcome).toEqual(byok.outcome)
+    expect(byok.outcome.definitions.map((definition) => definition.name)).toEqual(
+      expect.arrayContaining(['read_surface', 'send_message', 'transfer_funds']),
+    )
     expect(subscription.subscriptionResponseIds).toEqual([0, 1])
     expectToolLifecycle(
       subscription.outcome,
@@ -170,6 +176,9 @@ describe('AgentRunner trust parity across Model connection methods (issue #74)',
     const subscription = await runTrustParityScenario('chatgpt-subscription', 'l2')
 
     expect(subscription.outcome).toEqual(byok.outcome)
+    expect(byok.outcome.definitions.map((definition) => definition.name)).toEqual(
+      expect.arrayContaining(['read_surface', 'send_message', 'transfer_funds']),
+    )
     expect(subscription.subscriptionResponseIds).toEqual([0])
     expectToolLifecycle(
       subscription.outcome,

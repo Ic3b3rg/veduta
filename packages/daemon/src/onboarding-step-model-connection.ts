@@ -1,4 +1,4 @@
-import type { ModelConnectionStepRequest } from '@veduta/protocol'
+import type { ModelConnectionMethodId, ModelConnectionStepRequest } from '@veduta/protocol'
 import type { ConnectionsFile } from './connections-config.ts'
 import { loadConnectionsConfig, saveConnectionsConfig } from './connections-config.ts'
 import { deriveRoutingConfig } from './model-connection-routing.ts'
@@ -20,6 +20,8 @@ export interface ModelConnectionReadyDeps {
   rootDir: string
   profile: 'loopback' | 'local-vps' | 'vps'
   secrets: SecretResolver
+  /** Adapter methods that may power the primary Agent. */
+  primaryRoutableMethods: ReadonlySet<ModelConnectionMethodId>
 }
 
 /**
@@ -38,7 +40,7 @@ export interface ModelConnectionReadyDeps {
  * - `file.selection === undefined`: an install that never went through the
  *   Model connections wizard step at all (a legacy BYOK install migrated at
  *   boot, `docs/adr/0014-…`'s migration deliberately never sets a
- *   selection) — the head of `routing.json`'s reasoning tier resolving a
+ *   selection) — the head of the policy-filtered reasoning tier resolving a
  *   real key through `providerKeys`/`connectionKeys` means a chat turn
  *   actually has somewhere to route to.
  */
@@ -46,15 +48,17 @@ function hasEffectiveSelection(
   rootDir: string,
   secrets: SecretResolver,
   file: ConnectionsFile,
+  primaryRoutableMethods: ReadonlySet<ModelConnectionMethodId>,
 ): boolean {
   const routing = loadRoutingConfig(rootDir)
+  const effectiveRouting = deriveRoutingConfig(routing, file, primaryRoutableMethods)
   if (file.selection !== undefined) {
-    return deriveRoutingConfig(routing, file).tiers.reasoning.length > 0
+    return effectiveRouting.tiers.reasoning.length > 0
   }
 
-  const head = routing.tiers.reasoning[0]
+  const head = effectiveRouting.tiers.reasoning[0]
   if (!head) return false
-  const secretRef = secretRefForTierModel(head, routing)
+  const secretRef = secretRefForTierModel(head, effectiveRouting)
   if (secretRef === undefined) return false
   return secrets.resolve(secretRef) !== undefined
 }
@@ -74,7 +78,7 @@ export function assertModelConnectionReady(deps: ModelConnectionReadyDeps): void
 
   const file = loadConnectionsConfig(deps.rootDir)
   if (deps.profile === 'local-vps' && file.mockEnabled) return
-  if (hasEffectiveSelection(deps.rootDir, deps.secrets, file)) return
+  if (hasEffectiveSelection(deps.rootDir, deps.secrets, file, deps.primaryRoutableMethods)) return
 
   throw new OnboardingStepError(
     'connect a Model connection and select a model before continuing',

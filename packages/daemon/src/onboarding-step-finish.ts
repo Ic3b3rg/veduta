@@ -1,4 +1,4 @@
-import type { FinishResponse } from '@veduta/protocol'
+import type { FinishResponse, ModelConnectionMethodId } from '@veduta/protocol'
 import type { SecretResolver } from './model-routing.ts'
 import { loadOnboardingConfig, saveOnboardingConfig } from './onboarding-config.ts'
 import { assertModelConnectionReady } from './onboarding-step-model-connection.ts'
@@ -17,6 +17,7 @@ export interface FinishDeps {
   env: NodeJS.ProcessEnv
   /** Fed to `assertModelConnectionReady` (issue #47), the last check before completion — the same gate `applyModelConnectionStep` itself enforces, so finishing can never bypass it. */
   secrets: SecretResolver
+  primaryRoutableMethods: ReadonlySet<ModelConnectionMethodId>
   homeDir?: string
   now?: () => Date
 }
@@ -70,6 +71,7 @@ export function applyFinish(deps: FinishDeps): FinishResponse {
     rootDir: deps.rootDir,
     profile: deps.profile,
     secrets: deps.secrets,
+    primaryRoutableMethods: deps.primaryRoutableMethods,
   })
 
   saveOnboardingConfig(deps.rootDir, {

@@ -31,6 +31,7 @@ export const claudeSubscriptionAdapter: ModelConnectionAdapter = {
     revocation: 'provider',
     metered: true,
   },
+  primaryInference: { transport: 'unavailable', reason: UNAVAILABLE_REASON, docsUrl: DOCS_URL },
   async availability() {
     return { available: false, reason: UNAVAILABLE_REASON, docsUrl: DOCS_URL }
   },

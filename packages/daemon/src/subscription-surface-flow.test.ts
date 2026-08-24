@@ -32,6 +32,12 @@ import {
   type ProviderBridge,
 } from './pi-provider-bridge.ts'
 import {
+  captureProviderDefinitions,
+  consistentProviderDefinitions,
+  subscriptionDefinitions,
+  type ProviderToolDefinition,
+} from './provider-parity-observation.ts'
+import {
   normalizeAgentEvents,
   normalizeSessionEntries,
   normalizeSpaceEvent,
@@ -206,6 +212,7 @@ class FakeGatewaySocket implements GatewaySocket {
 }
 
 interface SurfaceProviderOutcome {
+  definitions: ProviderToolDefinition[]
   events: unknown[]
   sessionEntries: unknown[]
   surface: unknown
@@ -216,7 +223,10 @@ interface SurfaceProviderOutcome {
 async function runSurfaceProvider(
   provider: ProviderBridge,
   model: ModelRef,
+  subscriptionTransport?: FakeCodexTransport,
 ): Promise<SurfaceProviderOutcome> {
+  const definitionObservations: ProviderToolDefinition[][] = []
+  const observedProvider = captureProviderDefinitions(provider, definitionObservations)
   const store = new Store({
     rootDir: tempDir('veduta-subscription-parity-root-'),
     now: () => FIXED_NOW,
@@ -233,9 +243,9 @@ async function runSurfaceProvider(
   })
   const runner = new PiAgentRunner({
     sessionStore,
-    resolveModel: provider.resolveModel,
-    getApiKey: provider.getApiKey,
-    streamFn: provider.streamFn,
+    resolveModel: observedProvider.resolveModel,
+    getApiKey: observedProvider.getApiKey,
+    streamFn: observedProvider.streamFn,
     toolParameters: piToolParameters(tools),
   })
   const events: AgentEvent[] = []
@@ -258,6 +268,10 @@ async function runSurfaceProvider(
   const session = await sessionStore.load(`space:${space.id}`)
 
   return {
+    definitions:
+      subscriptionTransport === undefined
+        ? consistentProviderDefinitions(definitionObservations)
+        : subscriptionDefinitions(subscriptionTransport),
     events: normalizeAgentEvents(events, { includeTurnOrigins: true }),
     sessionEntries: normalizeSessionEntries(session.entries),
     surface: SurfaceSchema.parse(store.getSurface(SURFACE_ID)),
@@ -287,7 +301,7 @@ function codexProvider(transport: FakeCodexTransport): ProviderBridge {
     connectionId: CONNECTION_ID,
     provider: 'openai',
     transport: 'subscription',
-    stream: (request) => codexSubscriptionAdapter.stream!(context, request),
+    stream: (request) => codexSubscriptionAdapter.primaryInference.stream(context, request),
   }
   return createProviderBridge({
     config: routingConfig(),
@@ -511,6 +525,7 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
       const subscriptionOutcome = await runSurfaceProvider(
         codexProvider(providerTransport),
         subscriptionModel,
+        providerTransport,
       )
       const nativeEventLog = await runChatEventLog(scriptedNativeProvider(), nativeModel)
       const subscriptionEventLog = await runChatEventLog(
@@ -519,6 +534,9 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
       )
 
       expect(subscriptionOutcome).toEqual(nativeOutcome)
+      expect(nativeOutcome.definitions.map((definition) => definition.name)).toEqual(
+        expect.arrayContaining(['read_surface', 'create_surface', 'patch_state']),
+      )
       expect(subscriptionEventLog).toEqual(nativeEventLog)
       expect(subscriptionOutcome.provenance).toEqual({ contentOrigin: 'trusted:system' })
       expect(subscriptionOutcome.eventLog).toEqual([

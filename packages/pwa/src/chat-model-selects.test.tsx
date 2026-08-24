@@ -1,5 +1,9 @@
 // @vitest-environment jsdom
-import type { ModelConnection, ModelConnectionsSnapshot } from '@veduta/protocol'
+import type {
+  ModelConnection,
+  ModelConnectionMethod,
+  ModelConnectionsSnapshot,
+} from '@veduta/protocol'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ChatModelSelects } from './chat-model-selects.tsx'
@@ -30,6 +34,21 @@ const connectedConnection: ModelConnection = {
     { id: 'claude-sonnet-5', label: 'Claude Sonnet', routable: true },
     { id: 'claude-opus-5', label: 'Claude Opus', routable: true },
   ],
+}
+
+const unavailableMethod: ModelConnectionMethod = {
+  id: 'anthropic-api-key',
+  provider: 'anthropic',
+  providerDisplayName: 'Claude',
+  methodDisplayName: 'API key',
+  capabilities: {
+    authorization: 'api-key',
+    refresh: 'static',
+    revocation: 'local-only',
+    metered: true,
+  },
+  available: false,
+  unavailableReason: 'this method is unavailable for primary routing',
 }
 
 function connectedSnapshot(
@@ -124,5 +143,23 @@ describe('ChatModelSelects', () => {
 
     await waitFor(() => expect(fetch).toHaveBeenCalled())
     expect(container.firstChild).toBeNull()
+  })
+
+  it('renders nothing when every connected record belongs to an unavailable method', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          connectedSnapshot({
+            methods: [unavailableMethod],
+          }),
+        ),
+      ),
+    )
+
+    const { container } = render(<ChatModelSelects token="tok" />)
+
+    await waitFor(() => expect(fetch).toHaveBeenCalled())
+    expect(container.innerHTML).toBe('')
   })
 })

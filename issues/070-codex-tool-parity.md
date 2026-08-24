@@ -4,14 +4,13 @@
 
 [ADR-0016](../docs/adr/0016-primary-agent-connections-author-surfaces.md) makes **Connection
 parity** ([`CONTEXT.md`](../CONTEXT.md)) an eligibility invariant: changing provider, model, or authorization
-method cannot change the Agent's Veduta capabilities. Issue 047 shipped the ChatGPT subscription
-connection through the exactly pinned `codex app-server` 0.146.1, but deliberately narrowed that
-transport to text. The adapter exposes `AsyncIterable<string>`, `PiAgentRunner` removes every
-`ToolDef` when `vedutaTools` is false, and the Codex stream interrupts every non-text item.
+method cannot change the Agent's Veduta capabilities. Issue 047 initially shipped the ChatGPT
+subscription connection through the exactly pinned `codex app-server` 0.146.1 with a transitional
+response-only inference boundary that could not carry Veduta tool definitions or calls.
 
-That exception contradicts the founding contract. The BYOK path already lets `pi-agent-core`
+That boundary contradicts the founding contract. The BYOK path already lets `pi-agent-core`
 drive Veduta's validated tools through the single Agent loop; a ChatGPT subscription must reach
-the same loop rather than become a different, text-only product. The pinned app-server exposes
+the same loop and persistent outcomes. The pinned app-server exposes
 custom `dynamicTools` behind its experimental `experimentalApi` capability. Veduta accepts that
 pinned experimental boundary, while remaining fail-closed on protocol drift and continuing to
 refuse every provider-native tool.
@@ -33,7 +32,7 @@ provenance, and UI behavior as BYOK.
   credentials or account data; interrupt any unfinished turn and delete the scratch install.
   Record the sanitized findings in a durable repository reference and derive fixtures from the
   observed protocol. Do not guess a tool-result verb or payload.
-- Replace the subscription transport's text-only seam with a Veduta-owned structured contract
+- Replace the subscription transport's response-only seam with a Veduta-owned structured contract
   that carries the turn's allowed tool definitions and emits normalized text and tool-call events.
   Preserve tool-call ids, names, JSON inputs, tool-result identity, errors, and the repeated
   model-call loop. Provider protocol types stay inside the adapter; `pi-agent-core` remains behind
@@ -52,17 +51,15 @@ provenance, and UI behavior as BYOK.
 - Carry tool results back through the exact provider mechanism proven by the protocol capture and
   let the normal AgentRunner loop continue until a final assistant response. Preserve aborts,
   timeouts, per-turn correlation, retry classification, and the no-silent-fallback rule. Whether a
-  Codex thread must span tool-result continuation is decided by the captured 0.146.1 contract, not
-  by preserving issue 047's text-only thread-per-call assumption.
+  Codex thread must span tool-result continuation is decided by the captured 0.146.1 contract.
 - Stop flattening live tool calls and results into inert prompt markers. Conversation replay may
   omit provider reasoning as today, but it must preserve the structured identity and error state
   needed for a correct follow-up after tool execution. Images remain outside this issue unless the
   captured dynamic-tool contract requires a compatible representation.
-- Remove `vedutaTools` from `@veduta/protocol`, `ModelConnectionAdapter`, registry metadata,
-  routing helpers, `PiAgentRunner`, Gateway wiring, PWA copy, fakes, and tests. Remove the
-  `toolsEnabledForModel`/`isTextOnly` capability cliff. A primary Model connection is either fully
-  Agent-routable or unavailable; explicitly tool-less calls are selected by call purpose, never by
-  provider or authorization method.
+- Remove provider-specific optional-tool metadata from `@veduta/protocol`,
+  `ModelConnectionAdapter`, routing helpers, `PiAgentRunner`, Gateway wiring, PWA copy, fakes, and
+  tests. A primary Model connection is either fully Agent-routable or unavailable; explicitly
+  tool-free calls are selected by call purpose, never by provider or authorization method.
 - Keep the current Model connections lifecycle, selectors, visible state, and **Test model** action
   unchanged. This issue changes the inference capability behind a selected connection, not the
   connection-management UX.
@@ -96,9 +93,9 @@ provenance, and UI behavior as BYOK.
       malformed dynamic call, and capability drift fixtures all interrupt and fail closed without
       executing an effect or silently retrying through another credential. These turn-local
       refusals never change the selected Model connection's lifecycle or force reauthorization.
-- [ ] **No degraded mode:** `vedutaTools`, `isTextOnly`, `toolsEnabledForModel`, and the PWA's
-      text-only notice no longer exist. An adapter that cannot complete the structured contract is
-      not eligible for primary routing.
+- [ ] **No reduced-capability route:** provider-specific optional-tool metadata and the PWA's
+      reduced-capability notice no longer exist. An adapter that cannot complete the structured
+      contract is not eligible for primary routing.
 - [ ] **Protocol evidence:** the sanitized 0.146.1 dynamic-tool capture documents every required
       shape used by production schemas; response schemas keep required fields typed while
       tolerating unknown additive keys.
@@ -123,7 +120,8 @@ provenance, and UI behavior as BYOK.
 - #71 through #76 — completed dynamic-tool transport, Surface, trust, memory, and Template slices.
 - #77 — Automation parity after the focused Automation contract in #93.
 - #78 — Worker parity after real Worker execution in #39.
-- #79 — removal of the temporary capability seam after all parity slices.
+- #79 — one explicit primary inference contract and the final provider-parity suite after all
+  category slices.
 
 ## Parent completion criteria
 

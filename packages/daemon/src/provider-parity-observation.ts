@@ -43,10 +43,16 @@ export function consistentProviderDefinitions(
   return first
 }
 
-/** Reads the provider-neutral definitions translated into Codex dynamic tools. */
+/** Reads the provider-neutral definitions translated into every Codex dynamic-tool request. */
 export function subscriptionDefinitions(transport: FakeCodexTransport): ProviderToolDefinition[] {
-  const request = transport.requests.find((candidate) => candidate.method === 'thread/start')
-  const params = recordValue(request?.params, 'thread/start params')
+  const observations = transport.requests
+    .filter((candidate) => candidate.method === 'thread/start')
+    .map((request) => definitionsFromThreadStart(request.params))
+  return consistentProviderDefinitions(observations)
+}
+
+function definitionsFromThreadStart(paramsValue: unknown): ProviderToolDefinition[] {
+  const params = recordValue(paramsValue, 'thread/start params')
   const dynamicTools = params['dynamicTools']
   if (!Array.isArray(dynamicTools)) throw new Error('thread/start carried no dynamicTools array')
   return dynamicTools.map((value) => {
