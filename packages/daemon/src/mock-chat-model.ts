@@ -53,6 +53,7 @@ const CALORIE_QUANTITY_FOLLOW_UP = 'La ricotta era 100 g, i cereali 40 g e il la
 const DISMISS_CALORIE_REQUEST = 'Non mostrare più la stima calorie'
 const CALORIE_REGION_ID = 'derived-calorie-estimate'
 const TEMPLATE_SURFACE_REQUEST = 'create Weekly groceries from the Groceries Template'
+const GLOBAL_WEIGHT_TRACKER_REQUEST = 'create a weight tracker in Health'
 const REMINDER_RE = /\bremind me to\s+(.+?)\s+by\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i
 const SEND_RE = /^send to\s+(\S+)\s*:\s*(.+)$/i
 const TRANSFER_RE = /^transfer\s+([0-9]+(?:\.[0-9]+)?)\s+to\s+(\S+)$/i
@@ -125,6 +126,9 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
     if (text === TEMPLATE_SURFACE_REQUEST) {
       return respondToTemplateSurfaceFixture(toolResultsAfter)
     }
+    if (text === GLOBAL_WEIGHT_TRACKER_REQUEST) {
+      return respondToGlobalWeightTrackerFixture(toolResultsAfter)
+    }
     if (text === PROGRESSIVE_SURFACE_REQUEST) {
       return respondToProgressiveSurfaceFixture(toolResultsAfter, now(), progressiveDelayMs)
     }
@@ -135,6 +139,53 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
     if (lastToolResult) return closingMessage(lastToolResult)
     return respondToUserText(text, now())
   }
+}
+
+/** Issue #136's Home acceptance journey through the real scoped global registry. */
+function respondToGlobalWeightTrackerFixture(results: PiToolResultMessage[]): PiAssistantMessage {
+  const entered = results.find((result) => result.toolName === 'enter_space')
+  if (!entered) {
+    return toolCallMessage(
+      'enter_space',
+      { spaceId: 'health' },
+      'Entering Health before creating its weight tracker.',
+    )
+  }
+  if (entered.isError) {
+    return piFauxAssistantMessage(`Health could not be entered: ${toolResultText(entered)}`)
+  }
+
+  const created = results.find((result) => result.toolName === 'create_surface')
+  if (!created) {
+    return toolCallMessage(
+      'create_surface',
+      {
+        spaceId: 'health',
+        id: 'srf-health-weight-tracker',
+        title: 'Weight tracker',
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [
+            { id: 'title', type: 'Title', props: { text: 'Weight tracker' } },
+            {
+              id: 'current-weight',
+              type: 'Stat',
+              binding: 'currentWeight',
+              props: { label: 'Current weight' },
+            },
+          ],
+        },
+        state: { currentWeight: 'Not recorded' },
+      },
+      'Creating a durable weight tracker in Health.',
+    )
+  }
+  return piFauxAssistantMessage(
+    created.isError
+      ? `The Weight tracker was not created: ${toolResultText(created)}`
+      : 'The Weight tracker is ready in Health.',
+  )
 }
 
 function isWorkerPrompt(text: string): boolean {

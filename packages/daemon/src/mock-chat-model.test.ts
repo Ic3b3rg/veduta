@@ -10,7 +10,9 @@ import {
   userContextInSpace,
 } from './mock-chat-model.test-helpers.ts'
 import { createFocusedAutomationTools } from './focused-automation-tools.ts'
+import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
 import { formatUntrustedFullText } from './full-text-flow.ts'
+import { createGlobalChatTools } from './global-chat-tools.ts'
 import { createMockChatResponder } from './mock-chat-model.ts'
 import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
 import { Scheduler } from './scheduler.ts'
@@ -30,8 +32,47 @@ import { WorkerBriefingSchema } from './worker-briefing.ts'
 const MEAL_REQUEST = 'aggiungi ai meals la fesa di tacchino'
 const CALORIE_REQUEST = 'Quante calorie ho mangiato oggi ?'
 const TEMPLATE_SURFACE_REQUEST = 'create Weekly groceries from the Groceries Template'
+const GLOBAL_WEIGHT_TRACKER_REQUEST = 'create a weight tracker in Health'
 
 describe('createMockChatResponder', () => {
+  it('enters Health and creates a scoped protocol-valid weight tracker from global chat', async () => {
+    const responder = createMockChatResponder({})
+
+    const enter = toolCallIn(
+      await responder(userContext(GLOBAL_WEIGHT_TRACKER_REQUEST), { callCount: 0 }),
+    )
+    expect(enter).toMatchObject({ name: 'enter_space', arguments: { spaceId: 'health' } })
+
+    const entered = toolResultContext(GLOBAL_WEIGHT_TRACKER_REQUEST, [
+      { toolName: 'enter_space', content: '# Active Space\n\nHealth (health)' },
+    ])
+    const create = toolCallIn(await responder(entered, { callCount: 1 }))
+    expect(create.name).toBe('create_surface')
+    expect(create.arguments).toMatchObject({
+      spaceId: 'health',
+      id: 'srf-health-weight-tracker',
+      title: 'Weight tracker',
+    })
+
+    const store = new Store()
+    store.spacesEngine.createSpace({ name: 'Health' })
+    const templateEngine = new TemplateEngine({ store })
+    const focusedToolsFor = (spaceId: string) =>
+      createFocusedSurfaceTools({ store, templateEngine, spaceId })
+    const createSurface = createGlobalChatTools({ store, focusedToolsFor }).find(
+      (tool) => tool.name === 'create_surface',
+    )!
+    expect(createSurface.schema.safeParse(create.arguments).success).toBe(true)
+
+    const completed = toolResultContext(GLOBAL_WEIGHT_TRACKER_REQUEST, [
+      { toolName: 'enter_space', content: '# Active Space\n\nHealth (health)' },
+      { toolName: 'create_surface', content: 'created Surface srf-health-weight-tracker' },
+    ])
+    const reply = await responder(completed, { callCount: 2 })
+    expect(reply.stopReason).toBe('stop')
+    expect(textIn(reply)).toContain('Weight tracker')
+  })
+
   it('authors the exact calorie answer into the discovered Meals Surface before replying', async () => {
     const responder = createMockChatResponder({})
 
