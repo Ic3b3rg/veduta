@@ -10,7 +10,7 @@ import {
 } from '@veduta/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { defineTool, type AgentEvent, type ModelRef, type ToolContext } from './agent-runner.ts'
+import { defineTool, type AgentEvent, type ModelRef } from './agent-runner.ts'
 import { createChatLoop, type ChatLoop } from './chat-loop.ts'
 import {
   createFakeCodexTransport,
@@ -187,10 +187,7 @@ function scriptedSurfaceTransport(): FakeCodexTransport {
   return transport
 }
 
-function scriptedGlobalReadTransport(
-  enterResultText: string,
-  readResultText: string,
-): FakeCodexTransport {
+function scriptedGlobalCreateTransport(enterResultText: string): FakeCodexTransport {
   const enterFixture = fakeCodexDynamicToolRoundTrip({
     callId: 'call-global-enter',
     reverseRequestId: 0,
@@ -198,13 +195,13 @@ function scriptedGlobalReadTransport(
     input: { spaceId: SPACE_ID },
     resultText: enterResultText,
   })
-  const readFixture = fakeCodexDynamicToolRoundTrip({
-    callId: 'call-global-read',
+  const createFixture = fakeCodexDynamicToolRoundTrip({
+    callId: 'call-global-create',
     reverseRequestId: 1,
-    tool: 'read_surface',
-    input: { spaceId: SPACE_ID, surfaceId: SURFACE_ID },
-    resultText: readResultText,
-    finalText: 'Hydration read globally.',
+    tool: 'create_surface',
+    input: { spaceId: SPACE_ID, ...createSurfaceInput },
+    resultText: `created Surface ${SURFACE_ID}`,
+    finalText: 'Hydration created globally.',
   })
   const transport = createFakeCodexTransport({
     responses: {
@@ -217,10 +214,13 @@ function scriptedGlobalReadTransport(
     },
     serverResponseStages: [
       {
-        notifications: [enterFixture.continuationNotifications[0]!, readFixture.startNotification],
-        serverRequests: [readFixture.serverRequest],
+        notifications: [
+          enterFixture.continuationNotifications[0]!,
+          createFixture.startNotification,
+        ],
+        serverRequests: [createFixture.serverRequest],
       },
-      { notifications: readFixture.continuationNotifications },
+      { notifications: createFixture.continuationNotifications },
     ],
   })
   return transport
@@ -587,30 +587,13 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
     }
   })
 
-  it('round-trips enter_space and a scoped read through the Codex subscription contract', async () => {
+  it('round-trips enter_space and a scoped mutation through the Codex subscription contract', async () => {
     const rootDir = tempDir('veduta-subscription-global-root-')
     const store = new Store({ rootDir, now: () => FIXED_NOW })
-    store.createSurface(
-      SurfaceSchema.parse({
-        ...createSurfaceInput,
-        spaceId: SPACE_ID,
-        freshness: { updatedAt: FIXED_NOW.toISOString(), updatedBy: 'agent' },
-      }),
-      'agent',
-    )
     const templateEngine = new TemplateEngine({ store })
     const focusedToolsFor = (spaceId: string) =>
       createFocusedSurfaceTools({ store, templateEngine, spaceId })
-    const focusedTools = focusedToolsFor(SPACE_ID)
-    const readSurface = focusedTools.find((tool) => tool.name === 'read_surface')!
-    const readResult = await readSurface.handler(
-      readSurface.schema.parse({ surfaceId: SURFACE_ID }),
-      fromPartial<ToolContext>({}),
-    )
-    const transport = scriptedGlobalReadTransport(
-      store.assembleSpaceContext(SPACE_ID),
-      readResult.content,
-    )
+    const transport = scriptedGlobalCreateTransport(store.assembleSpaceContext(SPACE_ID))
     const sessionStore = new PiJsonlSessionStore({
       cwd: tempDir('veduta-subscription-global-cwd-'),
       sessionsRoot: tempDir('veduta-subscription-global-sessions-'),
@@ -643,7 +626,7 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
       await chatLoop.handleChatMessage({
         adapterId: 'pwa',
         clientId: 'global-subscription-client',
-        text: 'Read Health hydration globally',
+        text: 'Create Health hydration globally',
         receivedAt: FIXED_NOW.toISOString(),
       })
 
@@ -654,7 +637,7 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
         turnId: start.turnId,
         message: {
           role: 'assistant',
-          text: 'Hydration read globally.',
+          text: 'Hydration created globally.',
           targets: [
             {
               spaceId: SPACE_ID,
@@ -667,11 +650,16 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
         },
       })
       expect(transport.serverResponses.map((response) => response.id)).toEqual([0, 1])
+      expect(store.getSurface(SURFACE_ID)).toMatchObject({
+        spaceId: SPACE_ID,
+        title: 'Hydration',
+        state: { status: 'Needs water' },
+      })
       expect(
         (await sessionStore.load('global')).messages
           .filter((message) => message.role === 'tool')
           .map((message) => message.toolName),
-      ).toEqual(['enter_space', 'read_surface'])
+      ).toEqual(['enter_space', 'create_surface'])
 
       const correlated = store
         .eventLog(SPACE_ID)
@@ -679,6 +667,7 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
       expect(correlated.map((event) => [event.type, event.payload?.['role']])).toEqual([
         ['turn', 'user'],
         ['turn.tool', undefined],
+        ['surface.create', undefined],
         ['turn.tool', undefined],
         ['turn', 'assistant'],
       ])
@@ -686,7 +675,7 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
         correlated
           .filter((event) => event.type === 'turn.tool')
           .map((event) => event.payload?.['toolName']),
-      ).toEqual(['enter_space', 'read_surface'])
+      ).toEqual(['enter_space', 'create_surface'])
     } finally {
       await chatLoop.stop()
       transport.close()
