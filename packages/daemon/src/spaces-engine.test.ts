@@ -74,6 +74,43 @@ describe('SpacesEngine layout and lifecycle', () => {
     expect(engine.searchLog(space.id, 'Confirmed Space proposal')).toHaveLength(1)
   })
 
+  it('keeps overlapping global-turn correlations isolated and authoritative', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow, seed: seedSpaces() })
+    let releaseFirst: () => void = () => undefined
+    const waitForSecond = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+
+    await Promise.all([
+      engine.withEventCorrelation('turn-first', async () => {
+        await waitForSecond
+        engine.appendEvent('spc-health', {
+          type: 'test.first',
+          text: 'first correlated event',
+          payload: { correlationId: 'forged' },
+        })
+      }),
+      engine.withEventCorrelation('turn-second', async () => {
+        engine.appendEvent('spc-health', {
+          type: 'test.second',
+          text: 'second correlated event',
+        })
+        releaseFirst()
+      }),
+    ])
+    engine.appendEvent('spc-health', { type: 'test.outside', text: 'outside correlation' })
+
+    const events = engine
+      .readRecent('spc-health', 100)
+      .filter((event) => event.type.startsWith('test.'))
+    expect(events.map((event) => [event.type, event.payload?.['correlationId']])).toEqual([
+      ['test.second', 'turn-second'],
+      ['test.first', 'turn-first'],
+      ['test.outside', undefined],
+    ])
+  })
+
   it('persists Space proposals and their terminal user decision across restart', async () => {
     const rootDir = await tempRoot()
     const first = new SpacesEngine({ rootDir, now: fixedNow })

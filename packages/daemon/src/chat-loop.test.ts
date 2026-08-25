@@ -1,12 +1,14 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { GatewayServerMessage } from '@veduta/protocol'
+import { SurfaceSchema, type GatewayServerMessage } from '@veduta/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { defineTool, type ToolContext, type ToolDef } from './agent-runner.ts'
 import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import { createChatLoop, type ChatLoop } from './chat-loop.ts'
+import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
+import { createGlobalChatTools, type GlobalChatTurnHooks } from './global-chat-tools.ts'
 import {
   createFakeProvider,
   fakeFailure,
@@ -19,6 +21,7 @@ import {
 import { ModelRouter, SpendingCapError, type RoutingConfig } from './model-routing.ts'
 import { PiJsonlSessionStore } from './pi-agent-runner.ts'
 import { Store } from './store.ts'
+import { TemplateEngine } from './template-engine.ts'
 
 /**
  * Integration harness for the chat loop (issue #37): a real `Store`,
@@ -112,9 +115,46 @@ function buildHarness(
     sessionStore,
     bridge: fake,
     isTrustWrapped: () => false,
-    toolsFor: (spaceId) => {
+    toolsFor: (spaceId, hooks?: GlobalChatTurnHooks) => {
       toolsForCalls.push(spaceId)
-      return spaceId === undefined ? [] : [testTool]
+      if (spaceId !== undefined) return [testTool]
+      return [
+        defineTool({
+          ...testTool,
+          handler: (input, context) => {
+            const target = store.getSpace(input.value)
+            if (!target) throw new Error(`unknown test Space: ${input.value}`)
+            hooks?.onSpaceEntered?.(target)
+            hooks?.onResultTarget?.({
+              spaceId: target.id,
+              spaceSlug: target.slug,
+              spaceName: target.name,
+            })
+            toolExecutions.push({ name: 'test_tool', input })
+            toolContexts.push(context)
+            return { content: 'tool ok' }
+          },
+        }),
+        defineTool({
+          name: 'test_proposal',
+          description: 'emit a pending Space proposal for the chat result',
+          schema: z.object({}),
+          level: 'L0',
+          egressDomains: [],
+          handler: () => {
+            hooks?.onPendingDecision?.({
+              id: 'space-proposal:proposal-test',
+              kind: 'space-proposal',
+              summary: 'Create Space “Travel”',
+              scope: { type: 'global' },
+              allowedResolutions: ['accept', 'reject'],
+              state: 'pending',
+              createdAt: '2026-08-25T10:00:00.000Z',
+            })
+            return { content: 'proposal ready' }
+          },
+        }),
+      ]
     },
     send: (clientId, frame) => {
       if (options.throwOnFirstDelta && frame.type === 'chat.turn-delta') {
@@ -228,7 +268,7 @@ describe('createChatLoop', () => {
     h.fake.setResponses([
       {
         factory: (context) => {
-          systemPrompt = context.systemPrompt
+          systemPrompt = context.systemPrompt ?? ''
           return fakeText('Understood.')
         },
       },
@@ -566,7 +606,7 @@ describe('createChatLoop', () => {
     expect(proactiveFnCalled).toBe(false)
   })
 
-  it('global chat: start/end frames, no Event log writes, toolsFor called with undefined', async () => {
+  it('a global chat turn that enters no Space leaves every Space Event log untouched', async () => {
     const h = harness()
     const spaceId = h.store.listSpaces()[0]!.id
     const before = h.store.eventLog(spaceId).length
@@ -583,6 +623,228 @@ describe('createChatLoop', () => {
     })
     expect(h.store.eventLog(spaceId)).toHaveLength(before)
     expect(h.toolsForCalls).toContain(undefined)
+  })
+
+  it('gives global chat a bounded active roster and an honest multi-Space targeting policy', async () => {
+    const h = harness()
+    const privateSpace = h.store.spacesEngine.createSpace({ name: 'Private Notes' })
+    h.store.spacesEngine.appendEvent(privateSpace.id, {
+      type: 'private.test',
+      text: 'UNRELATED-SPACE-CONTEXT-MUST-STAY-OUT',
+      origin: 'trusted:user',
+    })
+    for (let index = 0; index < 55; index += 1) {
+      h.store.spacesEngine.createSpace({ name: `Roster ${String(index).padStart(2, '0')}` })
+    }
+    const archived = h.store.spacesEngine.createSpace({ name: 'Archived roster entry' })
+    h.store.archiveSpace(archived.id)
+    let systemPrompt = ''
+    h.fake.setResponses([
+      {
+        factory: (context) => {
+          systemPrompt = context.systemPrompt ?? ''
+          return fakeText('Understood.')
+        },
+      },
+    ])
+
+    await h.chatLoop.handleChatMessage(chatEvent({ text: 'coordinate my plans' }))
+
+    const roster = systemPrompt.split('# Active Spaces\n\n')[1]?.split('\n\n')[0] ?? ''
+    expect(roster.split('\n').filter((line) => line.startsWith('- '))).toHaveLength(50)
+    expect(roster).toContain('additional active Spaces omitted')
+    expect(roster).not.toContain('Archived roster entry')
+    expect(systemPrompt).toContain('call enter_space before any scoped tool')
+    expect(systemPrompt).toContain('When exactly one existing Space is unambiguous, act directly')
+    expect(systemPrompt).toContain('When multiple Spaces are plausible, ask the user')
+    expect(systemPrompt).toContain('use propose_space and stop before creating a Space or Surface')
+    expect(systemPrompt).toContain('One turn may enter and work in multiple Spaces')
+    expect(systemPrompt).not.toContain('this conversation is for talking only')
+    expect(systemPrompt).not.toContain('UNRELATED-SPACE-CONTEXT-MUST-STAY-OUT')
+  })
+
+  it('logs one correlated global turn only in entered Spaces and returns deduplicated result targets', async () => {
+    const h = harness()
+    const space = h.store.listSpaces()[0]!
+    h.fake.setResponses([
+      { message: fakeToolCall('test_tool', { value: space.id }) },
+      { message: fakeText('Health updated.') },
+    ])
+
+    await h.chatLoop.handleChatMessage(chatEvent({ text: 'update Health' }))
+
+    const start = h.frames.find(({ frame }) => frame.type === 'chat.turn-start')?.frame
+    if (!start || start.type !== 'chat.turn-start') throw new Error('expected a turn start')
+    expect(h.frames.at(-1)!.frame).toMatchObject({
+      type: 'chat.turn-end',
+      message: {
+        role: 'assistant',
+        text: 'Health updated.',
+        targets: [
+          {
+            spaceId: space.id,
+            spaceSlug: space.slug,
+            spaceName: space.name,
+          },
+        ],
+      },
+    })
+
+    const turns = h.store.eventLog(space.id).filter((event) => event.type === 'turn')
+    expect(turns).toHaveLength(2)
+    expect(turns[0]).toMatchObject({
+      text: 'update Health',
+      origin: 'trusted:user',
+      payload: { role: 'user', correlationId: start.turnId },
+    })
+    expect(turns[1]).toMatchObject({
+      text: 'Health updated.',
+      payload: {
+        role: 'assistant',
+        correlationId: start.turnId,
+        toolCalls: [{ toolName: 'test_tool' }],
+      },
+    })
+
+    for (const other of h.store.listSpaces().filter((candidate) => candidate.id !== space.id)) {
+      expect(
+        h.store
+          .eventLog(other.id)
+          .filter((event) => event.payload?.['correlationId'] === start.turnId),
+      ).toEqual([])
+    }
+  })
+
+  it('runs one Agent turn that enters and mutates two Spaces with one correlation', async () => {
+    const h = harness()
+    const health = h.store.getSpace('spc-health')!
+    const work = h.store.spacesEngine.createSpace({ name: 'Work' })
+    for (const [space, surfaceId, title] of [
+      [health, 'srf-health-plan', 'Health plan'],
+      [work, 'srf-work-plan', 'Work plan'],
+    ] as const) {
+      h.store.createSurface(
+        SurfaceSchema.parse({
+          id: surfaceId,
+          spaceId: space.id,
+          title,
+          tree: { id: 'root', type: 'Stat', binding: 'status', props: { label: 'Status' } },
+          state: { status: 'Before' },
+          freshness: { updatedAt: '2026-08-25T10:00:00.000Z', updatedBy: 'seed' },
+        }),
+        'agent',
+      )
+    }
+    const templateEngine = new TemplateEngine({ store: h.store })
+    const focusedToolsFor = (spaceId: string) =>
+      createFocusedSurfaceTools({ store: h.store, templateEngine, spaceId })
+    const multiSpaceLoop = createChatLoop({
+      store: h.store,
+      router: h.router,
+      sessionStore: h.sessionStore,
+      bridge: h.fake,
+      isTrustWrapped: () => false,
+      toolsFor: (spaceId, hooks?: GlobalChatTurnHooks) =>
+        spaceId === undefined
+          ? createGlobalChatTools({
+              store: h.store,
+              focusedToolsFor,
+              ...(hooks === undefined ? {} : { hooks }),
+            })
+          : focusedToolsFor(spaceId),
+      send: (clientId, frame) => h.frames.push({ clientId, frame }),
+    })
+    h.fake.setResponses([
+      { message: fakeToolCall('enter_space', { spaceId: health.id }) },
+      { message: fakeToolCall('enter_space', { spaceId: work.id }) },
+      {
+        message: fakeToolCall('patch_state', {
+          spaceId: health.id,
+          surfaceId: 'srf-health-plan',
+          operations: [{ target: 'state', op: 'replace', path: '/status', value: 'Ready' }],
+        }),
+      },
+      {
+        message: fakeToolCall('patch_state', {
+          spaceId: work.id,
+          surfaceId: 'srf-work-plan',
+          operations: [{ target: 'state', op: 'replace', path: '/status', value: 'Ready' }],
+        }),
+      },
+      { message: fakeText('Both plans are ready.') },
+    ])
+
+    try {
+      await multiSpaceLoop.handleChatMessage(
+        chatEvent({ text: 'Coordinate Health training with Work deadlines' }),
+      )
+
+      const start = h.frames.find(({ frame }) => frame.type === 'chat.turn-start')?.frame
+      if (!start || start.type !== 'chat.turn-start') throw new Error('expected global turn start')
+      expect(h.store.getSurface('srf-health-plan')?.state['status']).toBe('Ready')
+      expect(h.store.getSurface('srf-work-plan')?.state['status']).toBe('Ready')
+      expect(h.frames.at(-1)?.frame).toMatchObject({
+        type: 'chat.turn-end',
+        message: {
+          text: 'Both plans are ready.',
+          targets: [
+            expect.objectContaining({ spaceId: health.id, surfaceId: 'srf-health-plan' }),
+            expect.objectContaining({ spaceId: work.id, surfaceId: 'srf-work-plan' }),
+          ],
+        },
+      })
+
+      for (const [spaceId, surfaceId] of [
+        [health.id, 'srf-health-plan'],
+        [work.id, 'srf-work-plan'],
+      ] as const) {
+        const correlated = h.store
+          .eventLog(spaceId)
+          .filter((event) => event.payload?.['correlationId'] === start.turnId)
+        expect(correlated.some((event) => event.payload?.['role'] === 'user')).toBe(true)
+        expect(
+          correlated.some(
+            (event) =>
+              event.type === 'surface.patch_state' && event.payload?.['surfaceId'] === surfaceId,
+          ),
+        ).toBe(true)
+        expect(correlated.some((event) => event.payload?.['role'] === 'assistant')).toBe(true)
+      }
+    } finally {
+      await multiSpaceLoop.stop()
+    }
+  })
+
+  it('returns a pending Space proposal for one-tap resolution without entering a Space', async () => {
+    const h = harness()
+    h.fake.setResponses([
+      { message: fakeToolCall('test_proposal', {}) },
+      { message: fakeText('Travel needs a new Space.') },
+    ])
+
+    await h.chatLoop.handleChatMessage(chatEvent({ text: 'Plan a trip to Japan' }))
+
+    expect(h.frames.at(-1)?.frame).toMatchObject({
+      type: 'chat.turn-end',
+      message: {
+        role: 'assistant',
+        text: 'Travel needs a new Space.',
+        pendingDecisions: [
+          {
+            id: 'space-proposal:proposal-test',
+            kind: 'space-proposal',
+            state: 'pending',
+          },
+        ],
+      },
+    })
+    for (const space of h.store.listSpaces()) {
+      expect(
+        h.store
+          .eventLog(space.id)
+          .filter((event) => event.payload?.['correlationId'] !== undefined),
+      ).toEqual([])
+    }
   })
 
   it('unknown spaceId: a turn-start frame precedes the turn-error frame, same turnId, nothing else', async () => {

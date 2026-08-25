@@ -1,11 +1,17 @@
 import { randomUUID } from 'node:crypto'
-import type { GatewayServerMessage } from '@veduta/protocol'
+import type {
+  ChatResultTarget,
+  GatewayServerMessage,
+  PendingDecision,
+  Space,
+} from '@veduta/protocol'
 import type { SessionStore, ToolDef } from './agent-runner.ts'
 import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import type { ModelRouter } from './model-routing.ts'
 import { sanitizeErrorText } from './model-routing.ts'
 import { PiAgentRunner } from './pi-agent-runner.ts'
 import type { ProviderBridge } from './pi-provider-bridge.ts'
+import type { GlobalChatTurnHooks } from './global-chat-tools.ts'
 import { ABSTENTION_RULE } from './spaces-engine.ts'
 import type { Store } from './store.ts'
 import { effectiveOrigin, type Origin } from './taint.ts'
@@ -57,15 +63,20 @@ const TOOL_BOUNDARY =
   'Use only the Veduta tools explicitly provided in this turn. Never call provider-native shell, ' +
   'command, filesystem, web, MCP, or any other tool not supplied by Veduta.'
 
-/**
- * Global chat has no Space to read or write, so this issue's scope
- * deliberately withholds every tool from it (issue #37): the Agent converses
- * only, and points the user at opening a Space for anything that touches one.
- */
+const GLOBAL_SPACE_ROSTER_LIMIT = 50
+
 const GLOBAL_CHAT_PREAMBLE =
-  "You are Veduta's Agent in the global chat: this conversation is for talking only. Space " +
-  'work — reading or writing anything about a specific life area — needs the user to open ' +
-  'that Space first; you have no tools here.'
+  "You are Veduta's single Agent in the global chat. You can selectively read and act across " +
+  "active Spaces without changing the user's current route. Resolve targets honestly from the " +
+  "user's request and the active roster. When exactly one existing Space is unambiguous, act " +
+  'directly: call enter_space before any scoped tool, then pass that Space id or slug as spaceId. ' +
+  'When multiple Spaces are plausible, ask the user which one they mean and make no tool call or ' +
+  'write. When no existing Space fits, use propose_space and stop before creating a Space or ' +
+  'Surface; only the user can accept the one-tap proposal. One turn may enter and work in multiple ' +
+  'Spaces: enter each relevant Space separately, coordinate them here in this one Agent, and keep ' +
+  'every scoped call assigned to its own Space. Never infer a target merely because it appears ' +
+  'first in the roster. Workers remain optional, asynchronous, investigate-and-report executions ' +
+  'scoped to exactly one entered Space; you retain the final decision.'
 
 export interface ChatLoopOptions {
   store: Store
@@ -75,8 +86,8 @@ export interface ChatLoopOptions {
   /** Bundles `resolveModel`/`getApiKey`/`streamFn` — the real provider bridge (issue #37) or a test double shaped like one (`fake-provider.ts`). */
   bridge: ProviderBridge
   isTrustWrapped: (tool: ToolDef) => boolean
-  /** The Space's tool registry, or `[]` for global chat (issue #37: no tools until a Space is chosen). */
-  toolsFor: (spaceId: string | undefined) => ToolDef[]
+  /** Focused tools, or the stable scoped global registry with per-turn result hooks. */
+  toolsFor: (spaceId: string | undefined, hooks?: GlobalChatTurnHooks) => ToolDef[]
   send: (clientId: string, frame: GatewayServerMessage) => void
   /** Clock and global user timezone injected into every turn's context. */
   now?: () => Date
@@ -115,6 +126,25 @@ function finalTextOf(segments: string[], lastTurnEndText: string | undefined): s
   return segments.length > 0 ? segments.join('\n\n') : lastTurnEndText || ''
 }
 
+function addResultTarget(targets: ChatResultTarget[], target: ChatResultTarget): void {
+  const sameSurface = targets.findIndex(
+    (candidate) => candidate.spaceId === target.spaceId && candidate.surfaceId === target.surfaceId,
+  )
+  if (sameSurface >= 0) {
+    targets[sameSurface] = target
+    return
+  }
+  if (target.surfaceId === undefined) {
+    if (targets.some((candidate) => candidate.spaceId === target.spaceId)) return
+  } else {
+    const spaceOnly = targets.findIndex(
+      (candidate) => candidate.spaceId === target.spaceId && candidate.surfaceId === undefined,
+    )
+    if (spaceOnly >= 0) targets.splice(spaceOnly, 1)
+  }
+  if (targets.length < 20) targets.push(target)
+}
+
 export function createChatLoop(options: ChatLoopOptions): ChatLoop {
   const now = options.now ?? (() => new Date())
   const timeZone = options.timeZone ?? 'UTC'
@@ -139,7 +169,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
     // session's whole lifetime — `PiAgentRunner.toPiTools` throws "missing pi
     // parameters" for any tool name `toolsFor` returns later that was not
     // present in this snapshot (issue #37). Every registry `toolsFor` can
-    // build today is static per Space, so this holds; it would break the
+    // build today is static per focused or global session, so this holds; it would break the
     // moment a registry's tool set could vary turn-to-turn for the same
     // session (e.g. a future per-turn feature flag on tool availability).
     const runner = new PiAgentRunner({
@@ -177,14 +207,20 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
       }
     }
     const docs = options.store.readGlobalDocs()
-    const spaceLines = options.store
-      .listSpaces()
-      .map((space) => `- ${space.name} (${space.slug})`)
+    const spaces = options.store.listSpaces()
+    const roster = spaces.slice(0, GLOBAL_SPACE_ROSTER_LIMIT)
+    const omitted = spaces.length - roster.length
+    const spaceLines = roster
+      .map((space) => `- ${space.name} (slug: ${space.slug}; id: ${space.id})`)
       .join('\n')
+    const boundedRoster =
+      spaceLines.length === 0
+        ? 'No active Spaces yet.'
+        : `${spaceLines}${omitted > 0 ? `\nShowing the first ${roster.length}; ${omitted} additional active Spaces omitted.` : ''}`
     const systemPrompt = [
       `# SOUL\n\n${docs.soul.trim()}`,
       `# USER\n\n${docs.user.trim()}`,
-      `# Spaces\n\n${spaceLines || 'No Spaces yet.'}`,
+      `# Active Spaces\n\n${boundedRoster}`,
       clock,
       TOOL_BOUNDARY,
       GLOBAL_CHAT_PREAMBLE,
@@ -198,12 +234,41 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
   ): Promise<void> {
     const turnId = randomUUID()
     const spaceField = spaceId === undefined ? {} : { spaceId }
+    const enteredSpaces = new Map<string, Space>()
+    const resultTargets: ChatResultTarget[] = []
+    const pendingDecisions: PendingDecision[] = []
+    const globalHooks: GlobalChatTurnHooks | undefined =
+      spaceId === undefined
+        ? {
+            onSpaceEntered(space) {
+              if (enteredSpaces.has(space.id)) return
+              options.store.spacesEngine.appendEvent(space.id, {
+                type: 'turn',
+                text: event.text,
+                origin: 'trusted:user',
+                payload: { role: 'user', correlationId: turnId },
+              })
+              enteredSpaces.set(space.id, space)
+            },
+            onResultTarget(target) {
+              addResultTarget(resultTargets, target)
+            },
+            onPendingDecision(decision) {
+              const existing = pendingDecisions.findIndex(
+                (candidate) => candidate.id === decision.id,
+              )
+              if (existing >= 0) pendingDecisions[existing] = decision
+              else if (pendingDecisions.length < 10) pendingDecisions.push(decision)
+            },
+          }
+        : undefined
     options.send(event.clientId, { type: 'chat.turn-start', turnId, ...spaceField })
 
     try {
       const sessionId = sessionIdFor(spaceId)
       const runner = await getRunner(sessionId, spaceId)
       const { systemPrompt, contextOrigins } = buildContext(spaceId)
+      const turnTools = options.toolsFor(spaceId, globalHooks)
 
       if (spaceId !== undefined) {
         options.store.spacesEngine.appendEvent(spaceId, {
@@ -322,7 +387,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
             resetPerAttemptAccumulation()
             return runner.prompt(event.text, {
               model,
-              tools: options.toolsFor(spaceId),
+              tools: turnTools,
               systemPrompt,
               origin: 'trusted:user',
               contextOrigins,
@@ -351,21 +416,65 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
           origin: assistantOrigin,
           payload: { role: 'assistant', toolCalls },
         })
+      } else {
+        appendGlobalTerminalEvents(enteredSpaces, {
+          text: finalText,
+          origin: effectiveOrigin(lastTurnEnd?.origins ?? [], 'trusted:system'),
+          payload: { role: 'assistant', correlationId: turnId, toolCalls },
+        })
       }
 
       options.send(event.clientId, {
         type: 'chat.turn-end',
         turnId,
         ...spaceField,
-        message: { role: 'assistant', text: finalText },
+        message: {
+          role: 'assistant',
+          text: finalText,
+          ...(resultTargets.length === 0 ? {} : { targets: resultTargets }),
+          ...(pendingDecisions.length === 0 ? {} : { pendingDecisions }),
+        },
       })
     } catch (error) {
+      const errorText = sanitizeErrorText(error)
+      if (spaceId === undefined) {
+        const enteredOrigins = [...enteredSpaces.keys()].flatMap((enteredSpaceId) =>
+          options.store.spacesEngine.contextOrigins(enteredSpaceId),
+        )
+        appendGlobalTerminalEvents(enteredSpaces, {
+          text: `Global turn failed: ${errorText}`,
+          origin: effectiveOrigin(enteredOrigins, 'trusted:system'),
+          payload: { role: 'assistant', correlationId: turnId, outcome: 'failed' },
+        })
+      }
       options.send(event.clientId, {
         type: 'chat.turn-error',
         turnId,
         ...spaceField,
-        error: sanitizeErrorText(error),
+        error: errorText,
       })
+    }
+  }
+
+  function appendGlobalTerminalEvents(
+    spaces: Map<string, Space>,
+    input: {
+      text: string
+      origin: Origin
+      payload: NonNullable<Parameters<Store['spacesEngine']['appendEvent']>[1]['payload']>
+    },
+  ): void {
+    for (const enteredSpaceId of spaces.keys()) {
+      try {
+        options.store.spacesEngine.appendEvent(enteredSpaceId, {
+          type: 'turn',
+          text: input.text,
+          origin: input.origin,
+          payload: input.payload,
+        })
+      } catch (error) {
+        console.error(`global chat terminal Event write failed for Space ${enteredSpaceId}`, error)
+      }
     }
   }
 

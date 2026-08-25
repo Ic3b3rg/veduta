@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import {
   appendFileSync,
   closeSync,
@@ -110,6 +111,7 @@ export class SpacesEngine {
   readonly rootDir: string
   private readonly now: () => Date
   private readonly proposals: SpaceProposalStore
+  private readonly eventCorrelation = new AsyncLocalStorage<string>()
   private readonly memoryWriteObservers = new Set<(notice: MemoryWriteNotice) => void>()
 
   constructor(options: SpacesEngineOptions = {}) {
@@ -321,6 +323,9 @@ export class SpacesEngine {
     // SECURITY.md §4: no secret ever appears in the Event log. Redaction
     // happens PRE-append (ADR-0003: the log is never rewritten), so a
     // secret that reached this call never lands durably in the first place.
+    const correlationId = this.eventCorrelation.getStore()
+    const payload =
+      correlationId === undefined ? input.payload : { ...(input.payload ?? {}), correlationId }
     const event: SpaceEvent = {
       at,
       spaceId: space.id,
@@ -328,13 +333,18 @@ export class SpacesEngine {
       text: defaultRedactor.redactText(input.text),
       origin: input.origin ?? 'trusted:system',
       ...(occurredAt === undefined ? {} : { occurredAt }),
-      ...(input.payload === undefined
+      ...(payload === undefined
         ? {}
-        : { payload: defaultRedactor.redactDeep(input.payload) as JsonObject }),
+        : { payload: defaultRedactor.redactDeep(payload) as JsonObject }),
     }
     appendFileSync(this.logPath(space, at), `${JSON.stringify(event)}\n`)
     this.notifyMemoryWrite(space.id, 'event')
     return event
+  }
+
+  /** Adds one global-turn correlation to every Event appended by `operation`. */
+  withEventCorrelation<T>(correlationId: string, operation: () => T): T {
+    return this.eventCorrelation.run(correlationId, operation)
   }
 
   readRecent(spaceId: string, limit = 20): SpaceEvent[] {

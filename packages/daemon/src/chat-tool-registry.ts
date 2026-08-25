@@ -1,6 +1,7 @@
 import type { ToolDef } from './agent-runner.ts'
 import { createFocusedAutomationTools } from './focused-automation-tools.ts'
 import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
+import { createGlobalChatTools, type GlobalChatTurnHooks } from './global-chat-tools.ts'
 import type { MemoryRetrieval } from './memory-retrieval.ts'
 import { createMemoryTools } from './memory-tools.ts'
 import type { Scheduler } from './scheduler.ts'
@@ -8,9 +9,9 @@ import type { Store } from './store.ts'
 import { templateTools, type TemplateEngine } from './template-engine.ts'
 
 /**
- * Everything `chatToolRegistry` (issue #37) needs to build a Space's chat
- * tool set, narrowed to exactly what `server.ts` has in scope by the time it
- * constructs the chat loop — one instance per daemon, never per turn.
+ * Everything `chatToolRegistry` needs to build focused and scoped-global
+ * chat tool sets, narrowed to exactly what `server.ts` has in scope by the
+ * time it constructs the chat loop — one instance per daemon, never per turn.
  */
 export interface ChatToolRegistryDeps {
   store: Store
@@ -22,13 +23,13 @@ export interface ChatToolRegistryDeps {
 }
 
 /**
- * Builds the chat tool registry (issue #37, exact set per the issue spec):
+ * Builds the canonical focused registry plus issue #136's scoped global form:
  * every Space chat turn gets the trust-wrapped outbound tools, Surface tools
  * (`create_surface` gated behind the Template-reuse justification check),
  * memory tools (`search_memory` included since a `MemoryRetrieval` is always
- * supplied), Template-reuse tools, Space-bound Automation tools, and `spawn_worker`. The
- * global chat (no active Space) gets none of them — issue #37 deliberately
- * scopes it to conversation only, since there is no Space to read or write.
+ * supplied), Template-reuse tools, Space-bound Automation tools, and `spawn_worker`.
+ * Global chat receives adapters over those same handlers, with an explicit
+ * active-Space target and a successful `enter_space` required first.
  *
  * Extracted into its own module so `server.ts`'s construction and
  * `tool-parameters.test.ts`'s registry-shape assertions build the exact same
@@ -37,9 +38,8 @@ export interface ChatToolRegistryDeps {
  */
 export function chatToolRegistry(
   deps: ChatToolRegistryDeps,
-): (spaceId: string | undefined) => ToolDef[] {
-  return (spaceId) => {
-    if (spaceId === undefined) return []
+): (spaceId: string | undefined, hooks?: GlobalChatTurnHooks) => ToolDef[] {
+  const focusedToolsFor = (spaceId: string): ToolDef[] => {
     const surfaceTools = createFocusedSurfaceTools({
       store: deps.store,
       templateEngine: deps.templateEngine,
@@ -57,4 +57,13 @@ export function chatToolRegistry(
       deps.spawnWorkerTool,
     ]
   }
+
+  return (spaceId, hooks) =>
+    spaceId === undefined
+      ? createGlobalChatTools({
+          store: deps.store,
+          focusedToolsFor,
+          ...(hooks === undefined ? {} : { hooks }),
+        })
+      : focusedToolsFor(spaceId)
 }

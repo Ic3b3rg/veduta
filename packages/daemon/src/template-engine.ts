@@ -533,6 +533,12 @@ export function templateTools(
       level: 'L0',
       egressDomains: [],
       handler(input, context) {
+        if (options.activeSpaceId !== undefined) {
+          const surface = engine.store.getSurface(input.surfaceId)
+          if (!surface || surface.spaceId !== options.activeSpaceId) {
+            throw new Error('Surface is not authorable in this Space')
+          }
+        }
         const { surface, template } = engine.pin(input.surfaceId, input.pinned, {
           origin: effectiveToolWriteOrigin(context.taint.origins(), context.origin),
           updatedBy: 'agent',

@@ -91,6 +91,15 @@ export function isTrustWrapped(tool: ToolDef): boolean {
   return wrappedTools.has(tool)
 }
 
+/**
+ * Carries the trust-wrapper brand onto a schema/scope adapter that delegates
+ * to the branded tool. The adapter must not bypass the source handler.
+ */
+export function inheritTrustWrapper(source: ToolDef, adapter: ToolDef): ToolDef {
+  if (wrappedTools.has(source)) wrappedTools.add(adapter)
+  return adapter
+}
+
 interface RegistryEntry {
   tool: ToolDef
   meta: ToolMeta<unknown>

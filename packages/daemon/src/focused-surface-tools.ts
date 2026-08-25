@@ -30,9 +30,11 @@ export interface FocusedSurfaceToolsOptions {
  */
 export function createFocusedSurfaceTools(options: FocusedSurfaceToolsOptions): ToolDef[] {
   const surfaceTools = options.store.surfaceTools().map((tool) => {
-    if (tool.name !== 'create_surface') return tool
-    const gated = gateCreateSurfaceTool(tool, options.templateEngine)
-    return bindToolToSpace(gated, FocusedCreateSurfaceSchema, options.spaceId)
+    if (tool.name === 'create_surface') {
+      const gated = gateCreateSurfaceTool(tool, options.templateEngine)
+      return bindToolToSpace(gated, FocusedCreateSurfaceSchema, options.spaceId)
+    }
+    return bindSurfaceMutationToSpace(tool, options.store, options.spaceId)
   })
 
   return [
@@ -80,4 +82,21 @@ export function createFocusedSurfaceTools(options: FocusedSurfaceToolsOptions): 
     }),
     ...surfaceTools,
   ]
+}
+
+function bindSurfaceMutationToSpace(tool: ToolDef, store: Store, spaceId: string): ToolDef {
+  return defineTool({
+    name: tool.name,
+    description: tool.description,
+    schema: tool.schema,
+    level: tool.level,
+    egressDomains: tool.egressDomains,
+    handler(input, context) {
+      const surface = store.getSurface(input.surfaceId)
+      if (!surface || surface.spaceId !== spaceId) {
+        throw new Error('Surface is not authorable in this Space')
+      }
+      return tool.handler(input, { ...context, spaceId })
+    },
+  })
 }

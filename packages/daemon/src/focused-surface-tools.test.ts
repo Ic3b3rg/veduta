@@ -157,6 +157,34 @@ describe('createFocusedSurfaceTools', () => {
     expect(store.listAuthorableSurfaces(otherSpace.id).surfaces).toEqual([])
   })
 
+  it('refuses a Surface mutation whose id belongs to another Space', async () => {
+    const { store, tools } = harness()
+    const otherSpace = store.spacesEngine.createSpace({ name: 'Other Scope' })
+    store.createSurface(
+      SurfaceSchema.parse({
+        id: 'srf-other-scope',
+        spaceId: otherSpace.id,
+        title: 'Other scope',
+        tree: { id: 'root', type: 'Stat', binding: 'count', props: { label: 'Count' } },
+        state: { count: 0 },
+        freshness: { updatedAt: '2026-08-11T10:00:00.000Z', updatedBy: 'agent' },
+      }),
+      'agent',
+    )
+    const patchState = toolNamed(tools, 'patch_state')
+
+    expect(() =>
+      patchState.handler(
+        patchState.schema.parse({
+          surfaceId: 'srf-other-scope',
+          operations: [{ target: 'state', op: 'replace', path: '/count', value: 1 }],
+        }),
+        trustedContext,
+      ),
+    ).toThrow(/not authorable in this Space/)
+    expect(store.getSurface('srf-other-scope')?.state['count']).toBe(0)
+  })
+
   it('keeps Template refusal and justified regeneration on the bound create_surface path', async () => {
     const { store, space, templateEngine, tools } = harness()
     const otherSpace = store.spacesEngine.createSpace({ name: 'Unbound Template Space' })
