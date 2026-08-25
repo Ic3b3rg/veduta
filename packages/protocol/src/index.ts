@@ -89,8 +89,10 @@ export {
   type JsonObject,
 } from './json.ts'
 export {
+  ChatResultTargetSchema,
   ChatMessageSchema,
   ChatClientMessageSchema,
+  type ChatResultTarget,
   type ChatMessage,
   type ChatClientMessage,
 } from './chat.ts'
