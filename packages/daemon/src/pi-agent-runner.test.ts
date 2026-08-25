@@ -337,6 +337,25 @@ describe('transformPiContext', () => {
     expect(result).toEqual([currentToolCall])
     expect(result[0]).toBe(currentToolCall)
   })
+
+  it('keeps ordinary messages in the stable provider-neutral shape', async () => {
+    const rawUser = fromPartial<AgentMessage>({
+      role: 'user',
+      content: [{ type: 'text', text: 'revise after independent review' }],
+      timestamp: 1,
+    })
+
+    const result = await transformPiContext(
+      [rawUser],
+      transformOptions(disabledContextPolicy, 'revise'),
+      () => undefined,
+    )
+
+    expect(result).toEqual([
+      { role: 'user', content: 'revise after independent review', timestamp: 1 },
+    ])
+    expect(result[0]).not.toBe(rawUser)
+  })
 })
 
 describe('branchMessagesForPrompt', () => {

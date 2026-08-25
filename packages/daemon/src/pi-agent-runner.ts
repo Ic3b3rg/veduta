@@ -799,7 +799,9 @@ export interface PiContextTransformOptions {
  * `SessionMessage[]`, applies the `ContextPolicy` transform when enabled
  * (identity otherwise), reports the sha256 of the canonical envelope
  * (`systemPrompt` + the transformed messages + `input`) via `onHash`, then
- * maps back to pi's message shape.
+ * maps back to pi's stable provider-neutral shape. A retained assistant
+ * tool-call message is the sole exception: it keeps its original provider
+ * structure so pi can execute that live call after filtering.
  */
 export async function transformPiContext(
   messages: AgentMessage[],
@@ -828,8 +830,19 @@ export async function transformPiContext(
       input: options.input,
     }),
   )
-  return transformed.map(
-    (message) => originalBySession.get(message) ?? toPiMessage(message, options.fallbackModel),
+  return transformed.map((message) => {
+    const original = originalBySession.get(message)
+    return original && hasPiToolCall(original)
+      ? original
+      : toPiMessage(message, options.fallbackModel)
+  })
+}
+
+function hasPiToolCall(message: AgentMessage): boolean {
+  return (
+    message.role === 'assistant' &&
+    Array.isArray(message.content) &&
+    message.content.some((block) => block.type === 'toolCall')
   )
 }
 
