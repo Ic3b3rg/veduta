@@ -43,7 +43,12 @@ export function parseSpaceDeepLink(pathname: string): SpaceDeepLink | undefined 
   const surface = parseSurfaceDeepLink(pathname)
   if (surface) return surface
   const match = /^\/app\/space\/([^/]+)$/.exec(pathname)
-  return match ? { spaceSlug: decodeURIComponent(match[1]!) } : undefined
+  if (!match) return undefined
+  try {
+    return { spaceSlug: decodeURIComponent(match[1]!) }
+  } catch {
+    return undefined
+  }
 }
 
 const CANONICAL_HOME_CACHE_AUTHORITY = 'gateway-surface-order-v1'

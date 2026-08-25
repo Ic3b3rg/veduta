@@ -76,6 +76,7 @@ describe('Surface deep links', () => {
 
   it('ignores unrelated paths', () => {
     expect(parseSurfaceDeepLink('/')).toBeUndefined()
+    expect(parseSpaceDeepLink('/app/space/%')).toBeUndefined()
   })
 })
 
