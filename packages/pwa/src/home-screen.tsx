@@ -1,4 +1,10 @@
-import type { ApprovalCard, ChatMessage, Surface, SurfaceMoveDirection } from '@veduta/protocol'
+import type {
+  ApprovalCard,
+  ChatMessage,
+  PendingDecisionResolution,
+  Surface,
+  SurfaceMoveDirection,
+} from '@veduta/protocol'
 import { ApprovalCards } from './approval-cards.tsx'
 import type { SpaceWithSurfaces } from './api.ts'
 import { AttentionBadge } from './attention-badge.tsx'
@@ -41,6 +47,10 @@ interface HomeScreenProps {
   onSurfaceCreationFeedbackShown: (surfaceId: string, feedbackKey: string) => void
   onError: (message: string) => void
   onApprovalCardsChange: (cards: ApprovalCard[]) => void
+  onResolvePendingDecision: (
+    decisionId: string,
+    resolution: PendingDecisionResolution,
+  ) => Promise<void> | void
   onSend: (message: string) => boolean
 }
 
@@ -72,6 +82,7 @@ export function HomeScreen({
   onSurfaceCreationFeedbackShown,
   onError,
   onApprovalCardsChange,
+  onResolvePendingDecision,
   onSend,
 }: HomeScreenProps) {
   return (
@@ -152,6 +163,7 @@ export function HomeScreen({
         focusedSpace={focusedSpace}
         focusToken={focusChatToken}
         onDismissApprovalCards={onApprovalCardsChange}
+        onResolvePendingDecision={onResolvePendingDecision}
         onSend={onSend}
       />
     </div>

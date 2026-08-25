@@ -3,6 +3,8 @@ import type {
   ChatMessage,
   GatewayServerMessage,
   OnboardingStatus,
+  PendingDecision,
+  PendingDecisionResolution,
   Surface,
   SurfaceMoveDirection,
   SurfaceOrder,
@@ -20,6 +22,7 @@ import {
   markSpaceAttentionSeen,
   moveSurface as requestSurfaceMove,
   pinSurface,
+  resolvePendingDecision,
   type GatewayConnection,
   type SpaceWithSurfaces,
 } from './api.ts'
@@ -39,8 +42,9 @@ import {
   applySurfaceStreamEvent,
   cachedSnapshot,
   mergeSpaceAttention,
-  parseSurfaceDeepLink,
+  parseSpaceDeepLink,
   saveSnapshot,
+  spaceDeepLink,
   surfaceDeepLink,
   surfaceOrderForStreamEvent,
   type SurfaceStreamEvent,
@@ -92,7 +96,7 @@ export function App() {
   )
   const [focusedSpaceId, setFocusedSpaceId] = useState<string | undefined>(undefined)
   const [focusedSurfaceId, setFocusedSurfaceId] = useState<string | undefined>(
-    () => parseSurfaceDeepLink(location.pathname)?.surfaceId,
+    () => parseSpaceDeepLink(location.pathname)?.surfaceId,
   )
   const [focusChatToken, setFocusChatToken] = useState(0)
   const [streamingTurns, setStreamingTurns] = useState<Map<string, StreamingTurn>>(new Map())
@@ -612,7 +616,7 @@ export function App() {
   // (back/forward) and the service-worker 'navigate' message (below) both
   // call this instead of duplicating the parsing logic.
   const applyLocation = useCallback(() => {
-    const link = parseSurfaceDeepLink(location.pathname)
+    const link = parseSpaceDeepLink(location.pathname)
     const space = link
       ? spacesRef.current.find((candidate) => candidate.slug === link.spaceSlug)
       : undefined
@@ -689,9 +693,11 @@ export function App() {
 
   const focusSpace = (space: SpaceWithSurfaces, surface?: Surface) => {
     setFocusedSpaceId(space.id)
+    setFocusedSurfaceId(surface?.id)
     if (surface) {
-      setFocusedSurfaceId(surface.id)
       history.pushState(null, '', surfaceDeepLink(space.slug, surface.id))
+    } else {
+      history.pushState(null, '', spaceDeepLink(space.slug))
     }
     setFocusChatToken((value) => value + 1)
   }
@@ -705,6 +711,45 @@ export function App() {
     requestSurfaceMove(space.id, surfaceId, direction, authToken)
       .then((result) => applyConfirmedSurfaceOrder(result.order))
       .catch((e: Error) => setError(`"${surface?.title ?? surfaceId}" move failed: ${e.message}`))
+  }
+
+  const resolveChatPendingDecision = async (
+    decisionId: string,
+    resolution: PendingDecisionResolution,
+  ) => {
+    let decision: PendingDecision
+    try {
+      const result = await resolvePendingDecision(decisionId, resolution, authToken)
+      decision = result.decision
+    } catch (error) {
+      if (error instanceof ApiResponseError && error.status === 401) {
+        resetUnauthorizedSession()
+        return
+      }
+      setError(error instanceof Error ? error.message : 'Pending decision resolution failed')
+      return
+    }
+
+    setChatEntries((entries) =>
+      entries.map((entry) => {
+        if (!entry.pendingDecisions?.some((candidate) => candidate.id === decision.id)) return entry
+        return {
+          ...entry,
+          pendingDecisions: entry.pendingDecisions.map((candidate) =>
+            candidate.id === decision.id ? decision : candidate,
+          ),
+        }
+      }),
+    )
+
+    if (decision.kind === 'space-proposal' && decision.outcome === 'accepted') {
+      try {
+        const snapshot = await fetchSpaces(authToken)
+        replaceSpaces(snapshot.spaces, snapshot.surfaceCursor)
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Space refresh failed')
+      }
+    }
   }
 
   const queuedCount = queuedChat.length + queuedFastActions.length
@@ -823,6 +868,7 @@ export function App() {
       onSurfaceCreationFeedbackShown={acknowledgeSurfaceCreationFeedback}
       onError={setError}
       onApprovalCardsChange={setApprovalCards}
+      onResolvePendingDecision={resolveChatPendingDecision}
       onSend={(message) => {
         const spaceId = focusedSpace?.id
         const sent = gatewayRef.current?.sendChat(message, spaceId) ?? false

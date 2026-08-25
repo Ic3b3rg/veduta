@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ApprovalCard, ChatMessage } from '@veduta/protocol'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatBar } from './chat-bar.tsx'
 
@@ -8,6 +8,7 @@ const scrollTops = new WeakMap<HTMLElement, number>()
 const scrollHeights = new WeakMap<HTMLElement, number>()
 
 beforeEach(() => {
+  history.replaceState(null, '', '/')
   Object.defineProperties(HTMLElement.prototype, {
     clientHeight: {
       configurable: true,
@@ -46,6 +47,7 @@ const noApprovalCards: ApprovalCard[] = []
 function renderChatBar(
   entries: ChatMessage[],
   streamingEntries: { turnId: string; text: string }[],
+  onResolvePendingDecision = vi.fn(async () => undefined),
 ) {
   const chatBar = (
     nextEntries: ChatMessage[],
@@ -58,6 +60,7 @@ function renderChatBar(
       focusedSpace={undefined}
       focusToken={0}
       onDismissApprovalCards={vi.fn()}
+      onResolvePendingDecision={onResolvePendingDecision}
       onSend={vi.fn(() => true)}
     />
   )
@@ -65,6 +68,7 @@ function renderChatBar(
 
   return {
     ...view,
+    onResolvePendingDecision,
     rerenderChatBar(
       nextEntries: ChatMessage[],
       nextStreamingEntries: { turnId: string; text: string }[],
@@ -185,6 +189,72 @@ describe('ChatBar', () => {
 
     expect(screen.getByText('the complete final answer')).toBeDefined()
     expect(screen.queryByTestId('chat-streaming-cursor')).toBeNull()
+  })
+
+  it('renders accessible result links without navigating automatically', () => {
+    renderChatBar(
+      [
+        {
+          role: 'assistant',
+          text: 'Both results are ready.',
+          targets: [
+            {
+              spaceId: 'spc-health',
+              spaceSlug: 'health',
+              spaceName: 'Health',
+              surfaceId: 'srf-weight',
+              surfaceTitle: 'Weight tracker',
+            },
+            {
+              spaceId: 'spc-work',
+              spaceSlug: 'work',
+              spaceName: 'Work',
+            },
+          ],
+        },
+      ],
+      [],
+    )
+
+    expect(
+      screen.getByRole('link', { name: 'Open Health · Weight tracker' }).getAttribute('href'),
+    ).toBe('/app/space/health/surface/srf-weight')
+    expect(screen.getByRole('link', { name: 'Open Work' }).getAttribute('href')).toBe(
+      '/app/space/work',
+    )
+    expect(location.pathname).toBe('/')
+  })
+
+  it('renders one-tap actions for a pending Space proposal', async () => {
+    const onResolvePendingDecision = vi.fn(async () => undefined)
+    renderChatBar(
+      [
+        {
+          role: 'assistant',
+          text: 'Travel needs its own Space.',
+          pendingDecisions: [
+            {
+              id: 'space-proposal:proposal-1',
+              kind: 'space-proposal',
+              summary: 'Create Space “Travel”',
+              scope: { type: 'global' },
+              allowedResolutions: ['accept', 'reject'],
+              state: 'pending',
+              createdAt: '2026-08-25T10:00:00.000Z',
+            },
+          ],
+        },
+      ],
+      [],
+      onResolvePendingDecision,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Accept Create Space “Travel”' }))
+
+    await waitFor(() =>
+      expect(onResolvePendingDecision).toHaveBeenCalledWith('space-proposal:proposal-1', 'accept'),
+    )
+    expect(location.pathname).toBe('/')
   })
 
   it('renders a streaming entry with the accumulated text and the in-progress affordance', () => {

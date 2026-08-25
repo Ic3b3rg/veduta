@@ -17,8 +17,10 @@ import {
   applySurfaceStreamEvent,
   cachedSnapshot,
   mergeSpaceAttention,
+  parseSpaceDeepLink,
   parseSurfaceDeepLink,
   saveSnapshot,
+  spaceDeepLink,
   surfaceDeepLink,
   surfaceStreamEventCursor,
   type SurfaceStreamEvent,
@@ -57,6 +59,16 @@ describe('Surface deep links', () => {
 
     expect(href).toBe('/app/space/health/surface/srf-meals')
     expect(parseSurfaceDeepLink(href)).toEqual({
+      spaceSlug: 'health',
+      surfaceId: 'srf-meals',
+    })
+  })
+
+  it('builds a Space-only deep link', () => {
+    const href = spaceDeepLink('health')
+    expect(href).toBe('/app/space/health')
+    expect(parseSpaceDeepLink(href)).toEqual({ spaceSlug: 'health' })
+    expect(parseSpaceDeepLink('/app/space/health/surface/srf-meals')).toEqual({
       spaceSlug: 'health',
       surfaceId: 'srf-meals',
     })

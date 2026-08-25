@@ -17,8 +17,17 @@ export interface SurfaceDeepLink {
   surfaceId: string
 }
 
+export interface SpaceDeepLink {
+  spaceSlug: string
+  surfaceId?: string
+}
+
+export function spaceDeepLink(spaceSlug: string): string {
+  return `/app/space/${encodeURIComponent(spaceSlug)}`
+}
+
 export function surfaceDeepLink(spaceSlug: string, surfaceId: string): string {
-  return `/app/space/${encodeURIComponent(spaceSlug)}/surface/${encodeURIComponent(surfaceId)}`
+  return `${spaceDeepLink(spaceSlug)}/surface/${encodeURIComponent(surfaceId)}`
 }
 
 export function parseSurfaceDeepLink(pathname: string): SurfaceDeepLink | undefined {
@@ -28,6 +37,13 @@ export function parseSurfaceDeepLink(pathname: string): SurfaceDeepLink | undefi
     spaceSlug: decodeURIComponent(match[1]!),
     surfaceId: decodeURIComponent(match[2]!),
   }
+}
+
+export function parseSpaceDeepLink(pathname: string): SpaceDeepLink | undefined {
+  const surface = parseSurfaceDeepLink(pathname)
+  if (surface) return surface
+  const match = /^\/app\/space\/([^/]+)$/.exec(pathname)
+  return match ? { spaceSlug: decodeURIComponent(match[1]!) } : undefined
 }
 
 const CANONICAL_HOME_CACHE_AUTHORITY = 'gateway-surface-order-v1'

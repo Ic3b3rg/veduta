@@ -81,6 +81,47 @@
   color: var(--accent);
 }
 
+.chat-result-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  grid-column: 2;
+}
+
+.chat-result-links a {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.chat-pending-decisions {
+  display: grid;
+  gap: 8px;
+  grid-column: 2;
+}
+
+.chat-pending-decision {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  justify-content: space-between;
+  padding: 10px;
+}
+
+.chat-pending-decision-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-pending-decision-outcome {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 /* In-progress affordance for a streamed `chat.turn-*` turn (issue 037):
    the accumulated text renders like any other assistant entry, plus a
    pulsing dot so it visibly reads as still-in-flight rather than a finished

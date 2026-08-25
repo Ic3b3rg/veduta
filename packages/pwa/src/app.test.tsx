@@ -36,6 +36,7 @@ vi.mock('./api.ts', async (importOriginal) => {
     invokeFastAction: vi.fn(),
     moveSurface: vi.fn(),
     fetchModelConnections: vi.fn(),
+    resolvePendingDecision: vi.fn(),
   }
 })
 
@@ -49,6 +50,7 @@ import {
   fetchSpaces,
   invokeFastAction,
   moveSurface,
+  resolvePendingDecision,
 } from './api.ts'
 
 // jsdom has no matchMedia implementation; `pwa-storage.ts#isStandalone` (read
@@ -676,6 +678,86 @@ describe('App', () => {
     expect(focusButton.closest('article')?.classList.contains('creation-highlight')).toBe(true)
     expect(focusButton.getAttribute('aria-pressed')).toBe('false')
     expect(document.activeElement).toBe(chatInput)
+    expect(location.pathname).toBe('/')
+  })
+
+  it('accepts a chat Space proposal through the common decision API without changing route', async () => {
+    const handlers = await renderConnectedEmptyHealth('pwa-proposal')
+    vi.mocked(resolvePendingDecision).mockResolvedValue({
+      decision: {
+        id: 'space-proposal:proposal-travel',
+        kind: 'space-proposal',
+        summary: 'Create Space “Travel”',
+        scope: { type: 'global' },
+        allowedResolutions: ['accept', 'reject'],
+        state: 'terminal',
+        outcome: 'accepted',
+        createdAt: '2026-08-25T10:00:00.000Z',
+        decisionAt: '2026-08-25T10:01:00.000Z',
+        resolvedAt: '2026-08-25T10:01:00.000Z',
+        resolvedBy: 'trusted:user',
+      },
+      replayed: false,
+    })
+    vi.mocked(fetchSpaces).mockResolvedValueOnce({
+      surfaceCursor: 0,
+      spaces: [
+        {
+          id: 'spc-health',
+          slug: 'health',
+          name: 'Health',
+          archived: false,
+          attention: 0,
+          attentionRevision: 0,
+          surfaces: [],
+        },
+        {
+          id: 'spc-travel',
+          slug: 'travel',
+          name: 'Travel',
+          archived: false,
+          attention: 0,
+          attentionRevision: 0,
+          surfaces: [],
+        },
+      ],
+    })
+
+    act(() => {
+      handlers.onChatTurnStart({ type: 'chat.turn-start', turnId: 'turn-proposal' })
+      handlers.onChatTurnEnd({
+        type: 'chat.turn-end',
+        turnId: 'turn-proposal',
+        message: {
+          role: 'assistant',
+          text: 'Travel needs its own Space.',
+          pendingDecisions: [
+            {
+              id: 'space-proposal:proposal-travel',
+              kind: 'space-proposal',
+              summary: 'Create Space “Travel”',
+              scope: { type: 'global' },
+              allowedResolutions: ['accept', 'reject'],
+              state: 'pending',
+              createdAt: '2026-08-25T10:00:00.000Z',
+            },
+          ],
+        },
+      })
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Accept Create Space “Travel”' }))
+
+    await waitFor(() =>
+      expect(resolvePendingDecision).toHaveBeenCalledWith(
+        'space-proposal:proposal-travel',
+        'accept',
+        undefined,
+      ),
+    )
+    expect(await screen.findByRole('button', { name: /Travel/ })).toBeDefined()
+    expect(screen.getByText('Accepted')).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Accept Create Space “Travel”' })).toBeNull()
     expect(location.pathname).toBe('/')
   })
 
