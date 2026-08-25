@@ -31,6 +31,7 @@ Decisions:     096 contract → 097 outcomes → (067 Home, 098 chat)
 Character:     099 parent; 100 policy → 101 migration; (101,098) → 102 identity → (103 Space → 105 undo, 104 onboarding)
 Ordering:      106 parent → 108 canonical-order → (109 groups, 110 mutations, 111 reveal) → 112 recovery
 Visibility:    (037 agent-loop,042 focused-tools) → 107 chat-created-surface-focus
+Chat:          136 global multi-Space → 137 focused Space proposal
 System:        063 parent → 113 invariant → (114 usage,115 devices,116 authoring); (114,115) → 117 projections
 Home:          033 parent → 064 router → 065 routes; (065,117) → 066 grid → (067 decisions,068 activity) → 069 narrow
 ```
@@ -160,3 +161,4 @@ blocker is closed.
 | 134 | [Relative-time Surface views](134-relative-time-surface-views.md)                                    | Core         |
 | 135 | [Pull-based personal Mailbox roadmap](135-pull-based-personal-mailbox.md)                            | Proactivity  |
 | 136 | [Global chat multi-Space work](136-global-chat-multi-space.md)                                       | Core         |
+| 137 | [Focused chat Space proposal](137-focused-chat-space-proposal.md)                                    | Core         |
