@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react'
+import { BrowserRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('./api.ts', () => ({
@@ -34,6 +35,14 @@ function AuthGateHarness() {
   )
 }
 
+function renderAuthGate() {
+  render(
+    <BrowserRouter>
+      <AuthGateHarness />
+    </BrowserRouter>,
+  )
+}
+
 describe('AuthGate first-boot code', () => {
   it('keeps the setup code in the URL after passkey registration fails', async () => {
     window.history.replaceState({}, '', '/setup?code=first-boot-code')
@@ -41,7 +50,7 @@ describe('AuthGate first-boot code', () => {
       new Error('The operation either timed out or was not allowed.'),
     )
 
-    render(<AuthGateHarness />)
+    renderAuthGate()
     fireEvent.click(screen.getByRole('button', { name: 'Register passkey' }))
 
     expect((await screen.findByRole('alert')).textContent).toBe(
@@ -51,7 +60,7 @@ describe('AuthGate first-boot code', () => {
   })
 
   it('removes the setup code from the URL after passkey registration succeeds', async () => {
-    window.history.replaceState({}, '', '/setup?code=first-boot-code')
+    window.history.replaceState({}, '', '/setup?code=first-boot-code&next=home#finish')
     vi.mocked(registerPasskey).mockResolvedValue({
       token: 'vdt_tok_registered',
       device: {
@@ -63,10 +72,12 @@ describe('AuthGate first-boot code', () => {
       },
     })
 
-    render(<AuthGateHarness />)
+    renderAuthGate()
     fireEvent.click(screen.getByRole('button', { name: 'Register passkey' }))
 
     expect(await screen.findByText('Authenticated')).toBeDefined()
-    expect(window.location.search).toBe('')
+    expect(window.location.pathname + window.location.search + window.location.hash).toBe(
+      '/setup?next=home#finish',
+    )
   })
 })

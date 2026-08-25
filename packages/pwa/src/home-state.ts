@@ -12,45 +12,6 @@ import {
 } from '@veduta/protocol'
 import type { SpaceWithSurfaces } from './api.ts'
 
-export interface SurfaceDeepLink {
-  spaceSlug: string
-  surfaceId: string
-}
-
-export interface SpaceDeepLink {
-  spaceSlug: string
-  surfaceId?: string
-}
-
-export function spaceDeepLink(spaceSlug: string): string {
-  return `/app/space/${encodeURIComponent(spaceSlug)}`
-}
-
-export function surfaceDeepLink(spaceSlug: string, surfaceId: string): string {
-  return `${spaceDeepLink(spaceSlug)}/surface/${encodeURIComponent(surfaceId)}`
-}
-
-export function parseSurfaceDeepLink(pathname: string): SurfaceDeepLink | undefined {
-  const match = /^\/app\/space\/([^/]+)\/surface\/([^/]+)$/.exec(pathname)
-  if (!match) return undefined
-  return {
-    spaceSlug: decodeURIComponent(match[1]!),
-    surfaceId: decodeURIComponent(match[2]!),
-  }
-}
-
-export function parseSpaceDeepLink(pathname: string): SpaceDeepLink | undefined {
-  const surface = parseSurfaceDeepLink(pathname)
-  if (surface) return surface
-  const match = /^\/app\/space\/([^/]+)$/.exec(pathname)
-  if (!match) return undefined
-  try {
-    return { spaceSlug: decodeURIComponent(match[1]!) }
-  } catch {
-    return undefined
-  }
-}
-
 const CANONICAL_HOME_CACHE_AUTHORITY = 'gateway-surface-order-v1'
 
 export function saveSnapshot(storage: Storage, key: string, snapshot: SurfaceSnapshot): void {

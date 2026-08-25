@@ -11,6 +11,7 @@ import type {
   SurfaceSnapshot,
 } from '@veduta/protocol'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { BrowserRouter } from 'react-router-dom'
 import { dismissCardsForSurface } from './approval-cards.tsx'
 import {
   ApiResponseError,
@@ -35,6 +36,7 @@ import {
   type ChatTurnFrame,
   type StreamingTurn,
 } from './chat-turn-state.ts'
+import { ClientRouteTable, clientPath, useClientRouting } from './client-router.tsx'
 import {
   applyBufferedSurfaceStreamEvents,
   applySpaceAttention,
@@ -42,10 +44,7 @@ import {
   applySurfaceStreamEvent,
   cachedSnapshot,
   mergeSpaceAttention,
-  parseSpaceDeepLink,
   saveSnapshot,
-  spaceDeepLink,
-  surfaceDeepLink,
   surfaceOrderForStreamEvent,
   type SurfaceStreamEvent,
 } from './home-state.ts'
@@ -74,6 +73,20 @@ import { affectedAtomIdsForPatch, type SurfaceUpdateFeedback } from './surface-m
 import './app.css'
 
 export function App() {
+  return (
+    <BrowserRouter>
+      <RoutedApp />
+    </BrowserRouter>
+  )
+}
+
+function RoutedApp() {
+  const {
+    navigate,
+    locationKey,
+    spaceSlug: focusedSpaceSlug,
+    surfaceId: focusedSurfaceId,
+  } = useClientRouting()
   const [cachedHome] = useState(() => cachedSnapshot(localStorage, HOME_CACHE_KEY))
   const [spaces, setSpaces] = useState<SpaceWithSurfaces[]>(() => cachedHome?.spaces ?? [])
   const [error, setError] = useState<string | null>(null)
@@ -94,11 +107,6 @@ export function App() {
   const [showInstallGuide, setShowInstallGuide] = useState(
     () => !isStandalone() && localStorage.getItem(INSTALL_DISMISSED_KEY) !== '1',
   )
-  const [focusedSpaceId, setFocusedSpaceId] = useState<string | undefined>(undefined)
-  const [focusedSurfaceId, setFocusedSurfaceId] = useState<string | undefined>(
-    () => parseSpaceDeepLink(location.pathname)?.surfaceId,
-  )
-  const [focusChatToken, setFocusChatToken] = useState(0)
   const [streamingTurns, setStreamingTurns] = useState<Map<string, StreamingTurn>>(new Map())
   const [surfaceUpdateFeedbacks, setSurfaceUpdateFeedbacks] = useState<
     Record<string, SurfaceUpdateFeedback>
@@ -108,13 +116,6 @@ export function App() {
     registerLiveCreation,
     acknowledge: acknowledgeSurfaceCreationFeedback,
   } = useSurfaceCreationFeedback()
-  // Which full-page view is showing (issue #47): a minimal view switch, not
-  // a router -- Home is the only view with the topbar/space-rail/chat shell,
-  // and `model-connections` is a standalone screen reached from the
-  // topbar's unconditional "Model connections" button (it must be reachable
-  // even with zero connections, so it lives next to `ChatModelSelects`
-  // rather than inside it) and left via its own Back button.
-  const [view, setView] = useState<'home' | 'model-connections'>('home')
   const [onboardingRetryToken, setOnboardingRetryToken] = useState(0)
   const gatewayRef = useRef<GatewayConnection | null>(null)
   const spacesRef = useRef<SpaceWithSurfaces[]>(cachedHome?.spaces ?? [])
@@ -612,49 +613,20 @@ export function App() {
     }
   }, [authToken, gatewayOnline, queuedFastActions, replaceSurface])
 
-  // The single parser for "current URL -> focused Space/Surface": popstate
-  // (back/forward) and the service-worker 'navigate' message (below) both
-  // call this instead of duplicating the parsing logic.
-  const applyLocation = useCallback(() => {
-    const link = parseSpaceDeepLink(location.pathname)
-    const space = link
-      ? spacesRef.current.find((candidate) => candidate.slug === link.spaceSlug)
-      : undefined
-    if (!link || !space) {
-      // Back to a non-Surface URL (e.g. "/") returns chat to global scope.
-      setFocusedSpaceId(undefined)
-      setFocusedSurfaceId(undefined)
-      return
-    }
-    setFocusedSpaceId(space.id)
-    setFocusedSurfaceId(link.surfaceId)
-    setFocusChatToken((value) => value + 1)
-  }, [])
-
-  const spacesLoaded = spaces.length > 0
-  useEffect(() => {
-    window.addEventListener('popstate', applyLocation)
-    if (spacesLoaded) applyLocation()
-    return () => window.removeEventListener('popstate', applyLocation)
-  }, [spacesLoaded, applyLocation])
-
   // A push notification click (public/service-worker.js) posts this message
-  // to an already-open client instead of always opening a new tab; routing
-  // it through history.pushState + applyLocation keeps a single code path
-  // with the popstate/deep-link handling above.
+  // to an already-open client instead of always opening a new tab.
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return
 
     const onMessage = (event: MessageEvent) => {
       const data = event.data as { type?: unknown; url?: unknown } | undefined
       if (data?.type !== 'navigate' || typeof data.url !== 'string') return
-      history.pushState(null, '', data.url)
-      applyLocation()
+      navigate(data.url)
     }
 
     navigator.serviceWorker.addEventListener('message', onMessage)
     return () => navigator.serviceWorker.removeEventListener('message', onMessage)
-  }, [applyLocation])
+  }, [navigate])
 
   // Re-registers an already-granted push subscription at boot and on every
   // login/token change: keeps the daemon's push store fresh after
@@ -668,8 +640,15 @@ export function App() {
   // Clearing the attention badge is a fast-path mutation (AGENTS.md: every
   // mutation appends to the Event log) — fire it whenever focus lands on a
   // Space that still has attention, whether via a click (focusSpace) or a
-  // deep link/popstate/SW-navigate (all of which go through applyLocation
-  // above and land here via focusedSpaceId).
+  // deep links, Back/Forward, and service-worker navigation (all of which
+  // update the router params and therefore focusedSpaceId below).
+  const focusedSpace = useMemo(
+    () => spaces.find((space) => space.slug === focusedSpaceSlug),
+    [focusedSpaceSlug, spaces],
+  )
+  const focusedSpaceId = focusedSpace?.id
+  const focusChatToken = `${locationKey}:${focusedSpaceId ?? ''}:${focusedSurfaceId ?? ''}`
+
   useEffect(() => {
     if (!focusedSpaceId) return
     const space = spacesRef.current.find((candidate) => candidate.id === focusedSpaceId)
@@ -684,22 +663,8 @@ export function App() {
       .catch(() => undefined)
   }, [focusedSpaceId, authToken, replaceSpaces])
 
-  // Undefined until the user (or a deep link) picks a Space: chat stays
-  // global instead of silently pre-routing to the first Space.
-  const focusedSpace = useMemo(
-    () => spaces.find((space) => space.id === focusedSpaceId),
-    [focusedSpaceId, spaces],
-  )
-
   const focusSpace = (space: SpaceWithSurfaces, surface?: Surface) => {
-    setFocusedSpaceId(space.id)
-    setFocusedSurfaceId(surface?.id)
-    if (surface) {
-      history.pushState(null, '', surfaceDeepLink(space.slug, surface.id))
-    } else {
-      history.pushState(null, '', spaceDeepLink(space.slug))
-    }
-    setFocusChatToken((value) => value + 1)
+    navigate(surface ? clientPath.surface(space.slug, surface.id) : clientPath.space(space.slug))
   }
 
   const moveSurface = (
@@ -822,6 +787,7 @@ export function App() {
           setOnboardingStatus((prev) =>
             prev ? { ...prev, required: false, completed: true } : prev,
           )
+          navigate(clientPath.home, { replace: true })
           fetchSpaces(authToken)
             .then((snapshot) => replaceSpaces(snapshot.spaces, snapshot.surfaceCursor))
             .catch((e: Error) => setError(e.message))
@@ -830,11 +796,7 @@ export function App() {
     )
   }
 
-  if (view === 'model-connections') {
-    return <SettingsModelConnections token={authToken} onBack={() => setView('home')} />
-  }
-
-  return (
+  const homeScreen = (
     <HomeScreen
       authMode={authMode}
       authToken={authToken}
@@ -855,7 +817,7 @@ export function App() {
         text: turn.text,
       }))}
       focusChatToken={focusChatToken}
-      onOpenModelConnections={() => setView('model-connections')}
+      onOpenModelConnections={() => navigate(clientPath.modelConnections)}
       onInstallDone={() => {
         localStorage.setItem(INSTALL_DISMISSED_KEY, '1')
         setShowInstallGuide(false)
@@ -876,6 +838,15 @@ export function App() {
         if (!sent) setQueuedChat((prev) => [...prev, queuedChatEntry(message, spaceId)])
         return true
       }}
+    />
+  )
+
+  return (
+    <ClientRouteTable
+      home={homeScreen}
+      modelConnections={
+        <SettingsModelConnections token={authToken} onBack={() => navigate(clientPath.home)} />
+      }
     />
   )
 }

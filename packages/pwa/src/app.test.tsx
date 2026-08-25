@@ -7,37 +7,23 @@ import {
   SurfaceCreatedEventSchema,
   SurfaceMovedEventSchema,
   SurfacePatchEventSchema,
-  type AuthStatus,
   type ModelConnectionsSnapshot,
   type OnboardingStatus,
 } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ApiModule from './api.ts'
-import {
-  installMotionBrowser,
-  restoreMotionBrowser,
-  type MotionAnimationCall,
-} from './motion-test-browser.ts'
+import { authStatus, installAppTestBrowser, resetAppTestBrowser } from './app-test-support.ts'
+import type { MotionAnimationCall } from './motion-test-browser.ts'
 import { AUTH_TOKEN_KEY, HOME_CACHE_KEY, SURFACE_ORDER_KEY } from './pwa-storage.ts'
 
 let scrollIntoView: ReturnType<typeof vi.fn>
 let atomAnimations: MotionAnimationCall[]
 
 vi.mock('./api.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof ApiModule>()
-  return {
-    ...actual,
-    fetchAuthStatus: vi.fn(),
-    fetchSpaces: vi.fn(),
-    fetchOnboardingStatus: vi.fn(),
-    connectGateway: vi.fn(() => ({ close: vi.fn(), sendChat: vi.fn(() => false) })),
-    invokeFastAction: vi.fn(),
-    moveSurface: vi.fn(),
-    fetchModelConnections: vi.fn(),
-    resolvePendingDecision: vi.fn(),
-  }
+  const { createAppApiMock } = await import('./app-test-support.ts')
+  return createAppApiMock(await importOriginal<typeof ApiModule>())
 })
 
 import { App } from './app.tsx'
@@ -57,25 +43,12 @@ import {
 // at mount to decide whether to show the install guide) calls it
 // unconditionally.
 beforeEach(() => {
-  atomAnimations = installMotionBrowser(false).calls
-  scrollIntoView = vi.fn()
-  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
-    configurable: true,
-    value: scrollIntoView,
-  })
+  const browser = installAppTestBrowser()
+  atomAnimations = browser.atomAnimations
+  scrollIntoView = browser.scrollIntoView
 })
 
-afterEach(() => {
-  cleanup()
-  localStorage.clear()
-  window.history.replaceState({}, '', '/')
-  vi.clearAllMocks()
-  restoreMotionBrowser()
-})
-
-function authStatus(overrides: Partial<AuthStatus> = {}): AuthStatus {
-  return { mode: 'production', bootstrapRequired: false, passkeyRegistered: true, ...overrides }
-}
+afterEach(resetAppTestBrowser)
 
 function connectedModelConnectionsSnapshot(): ModelConnectionsSnapshot {
   return {
@@ -874,30 +847,6 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByLabelText('Spaces')).toBeDefined())
 
     expect(await screen.findByRole('button', { name: 'Model connections' })).toBeDefined()
-  })
-
-  it('the Model connections button opens the settings view', async () => {
-    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
-    vi.mocked(fetchSpaces).mockResolvedValue({ spaces: [], surfaceCursor: 0 })
-    vi.mocked(fetchOnboardingStatus).mockResolvedValue(
-      fromPartial<OnboardingStatus>({ required: false, completed: true }),
-    )
-    vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
-
-    render(<App />)
-
-    await waitFor(() => expect(screen.getByLabelText('Spaces')).toBeDefined())
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Model connections' }))
-
-    expect(
-      await screen.findByRole('heading', { name: 'Model connections', level: 2 }),
-    ).toBeDefined()
-    expect(screen.queryByLabelText('Spaces')).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
-
-    expect(await screen.findByLabelText('Spaces')).toBeDefined()
   })
 })
 

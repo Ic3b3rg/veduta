@@ -32,7 +32,7 @@ interface HomeScreenProps {
   approvalCards: ApprovalCard[]
   chatEntries: ChatMessage[]
   streamingEntries: { turnId: string; text: string }[]
-  focusChatToken: number
+  focusChatToken: string
   onOpenModelConnections: () => void
   onInstallDone: () => void
   onFocusSpace: (space: SpaceWithSurfaces, surface?: Surface) => void
@@ -119,6 +119,7 @@ export function HomeScreen({
               key={space.id}
               type="button"
               className={space.id === focusedSpace?.id ? 'space-button selected' : 'space-button'}
+              aria-pressed={space.id === focusedSpace?.id}
               onClick={() => onFocusSpace(space)}
             >
               <span>{space.name}</span>

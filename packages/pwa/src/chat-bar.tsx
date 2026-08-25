@@ -1,8 +1,9 @@
 import type { ApprovalCard, ChatMessage, PendingDecisionResolution } from '@veduta/protocol'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import type { SpaceWithSurfaces } from './api.ts'
 import { ApprovalCards } from './approval-cards.tsx'
-import { spaceDeepLink, surfaceDeepLink } from './home-state.ts'
+import { clientPath } from './client-router.tsx'
 
 export function ChatBar({
   entries,
@@ -21,7 +22,7 @@ export function ChatBar({
   streamingEntries: { turnId: string; text: string }[]
   approvalCards: ApprovalCard[]
   focusedSpace: SpaceWithSurfaces | undefined
-  focusToken: number
+  focusToken: string
   onDismissApprovalCards: (cards: ApprovalCard[]) => void
   onResolvePendingDecision: (
     decisionId: string,
@@ -105,12 +106,12 @@ export function ChatBar({
                     }`
                     const href =
                       target.surfaceId === undefined
-                        ? spaceDeepLink(target.spaceSlug)
-                        : surfaceDeepLink(target.spaceSlug, target.surfaceId)
+                        ? clientPath.space(target.spaceSlug)
+                        : clientPath.surface(target.spaceSlug, target.surfaceId)
                     return (
-                      <a key={`${target.spaceId}:${target.surfaceId ?? ''}`} href={href}>
+                      <Link key={`${target.spaceId}:${target.surfaceId ?? ''}`} to={href}>
                         {label}
-                      </a>
+                      </Link>
                     )
                   })}
                 </nav>

@@ -17,11 +17,7 @@ import {
   applySurfaceStreamEvent,
   cachedSnapshot,
   mergeSpaceAttention,
-  parseSpaceDeepLink,
-  parseSurfaceDeepLink,
   saveSnapshot,
-  spaceDeepLink,
-  surfaceDeepLink,
   surfaceStreamEventCursor,
   type SurfaceStreamEvent,
 } from './home-state.ts'
@@ -52,33 +48,6 @@ function testSpace(
     attentionRevision: attention.attentionRevision ?? 0,
   }
 }
-
-describe('Surface deep links', () => {
-  it('round-trips app Space and Surface links', () => {
-    const href = surfaceDeepLink('health', 'srf-meals')
-
-    expect(href).toBe('/app/space/health/surface/srf-meals')
-    expect(parseSurfaceDeepLink(href)).toEqual({
-      spaceSlug: 'health',
-      surfaceId: 'srf-meals',
-    })
-  })
-
-  it('builds a Space-only deep link', () => {
-    const href = spaceDeepLink('health')
-    expect(href).toBe('/app/space/health')
-    expect(parseSpaceDeepLink(href)).toEqual({ spaceSlug: 'health' })
-    expect(parseSpaceDeepLink('/app/space/health/surface/srf-meals')).toEqual({
-      spaceSlug: 'health',
-      surfaceId: 'srf-meals',
-    })
-  })
-
-  it('ignores unrelated paths', () => {
-    expect(parseSurfaceDeepLink('/')).toBeUndefined()
-    expect(parseSpaceDeepLink('/app/space/%')).toBeUndefined()
-  })
-})
 
 describe('Surface order', () => {
   it('applies the Gateway order exactly and retains snapshot-only projected Surfaces afterward', () => {

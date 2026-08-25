@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type { ApprovalCard, ChatMessage } from '@veduta/protocol'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatBar } from './chat-bar.tsx'
 
@@ -53,16 +54,18 @@ function renderChatBar(
     nextEntries: ChatMessage[],
     nextStreamingEntries: { turnId: string; text: string }[],
   ) => (
-    <ChatBar
-      entries={nextEntries}
-      streamingEntries={nextStreamingEntries}
-      approvalCards={noApprovalCards}
-      focusedSpace={undefined}
-      focusToken={0}
-      onDismissApprovalCards={vi.fn()}
-      onResolvePendingDecision={onResolvePendingDecision}
-      onSend={vi.fn(() => true)}
-    />
+    <MemoryRouter>
+      <ChatBar
+        entries={nextEntries}
+        streamingEntries={nextStreamingEntries}
+        approvalCards={noApprovalCards}
+        focusedSpace={undefined}
+        focusToken="initial"
+        onDismissApprovalCards={vi.fn()}
+        onResolvePendingDecision={onResolvePendingDecision}
+        onSend={vi.fn(() => true)}
+      />
+    </MemoryRouter>
   )
   const view = render(chatBar(entries, streamingEntries))
 

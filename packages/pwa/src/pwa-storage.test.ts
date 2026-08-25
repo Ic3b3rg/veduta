@@ -6,26 +6,15 @@ import {
   CHAT_HISTORY_LIMIT,
   CHAT_QUEUE_KEY,
   FAST_ACTION_QUEUE_KEY,
-  consumeSetupCode,
   persistChatHistory,
   readChatHistory,
   readQueuedChat,
   readQueuedFastActions,
-  readSetupCode,
 } from './pwa-storage.ts'
 
 beforeEach(() => {
   localStorage.clear()
   history.replaceState(null, '', '/')
-})
-
-describe('setup code storage', () => {
-  it('reads and consumes the code while preserving the rest of the URL', () => {
-    history.replaceState({ from: 'test' }, '', '/setup?code=pair-me&next=home#finish')
-    expect(readSetupCode()).toBe('pair-me')
-    expect(consumeSetupCode()).toBe('pair-me')
-    expect(location.pathname + location.search + location.hash).toBe('/setup?next=home#finish')
-  })
 })
 
 describe('persisted PWA state', () => {

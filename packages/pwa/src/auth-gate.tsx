@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { loginWithPasskey, registerPasskey } from './api.ts'
-import { consumeSetupCode, defaultDeviceName, readSetupCode } from './pwa-storage.ts'
+import { defaultDeviceName } from './pwa-storage.ts'
 
 export function AuthGate({
   bootstrapRequired,
@@ -15,7 +16,11 @@ export function AuthGate({
   onAuthenticated: (token: string) => void
   onError: (message: string) => void
 }) {
-  const [oneTimeCode, setOneTimeCode] = useState(() => readSetupCode())
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [oneTimeCode, setOneTimeCode] = useState(
+    () => new URLSearchParams(location.search).get('code') ?? '',
+  )
   const [deviceName, setDeviceName] = useState(defaultDeviceName())
   const [busy, setBusy] = useState(false)
 
@@ -66,7 +71,16 @@ export function AuthGate({
                   oneTimeCode,
                   deviceName: deviceName.trim(),
                 })
-                consumeSetupCode()
+                const searchParams = new URLSearchParams(location.search)
+                searchParams.delete('code')
+                navigate(
+                  {
+                    pathname: location.pathname,
+                    search: searchParams.toString(),
+                    hash: location.hash,
+                  },
+                  { replace: true },
+                )
                 return session
               })
             }
