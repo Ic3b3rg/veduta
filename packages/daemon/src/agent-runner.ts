@@ -85,6 +85,12 @@ export interface AgentPromptOptions {
   tools?: ToolDef[]
   contextPolicy?: ContextPolicy
   /**
+   * Selects which durable session messages may enter this prompt. Unlike a
+   * compaction policy, this never rewrites the stored branch: it filters the
+   * history used for taint and the live model request together.
+   */
+  contextFilter?: SessionContextFilter
+  /**
    * Overrides the runner's constructor-level system prompt for this turn
    * only — the chat loop assembles Space context per turn (issue #37)
    * rather than fixing a single system prompt for the runner's lifetime.
@@ -290,6 +296,18 @@ export interface SessionStore {
     options?: { fromEntryId?: string; newSessionId?: string },
   ): Promise<SessionBranch>
 }
+
+export type SessionContextFilterPhase = 'history' | 'turn'
+
+/**
+ * A non-destructive context boundary. `history` runs on the durable branch
+ * before the new user input; `turn` runs on each live model invocation so
+ * tool calls/results from the current turn can remain available.
+ */
+export type SessionContextFilter = (
+  messages: SessionMessage[],
+  context: { phase: SessionContextFilterPhase },
+) => SessionMessage[]
 
 export interface ContextPolicy {
   enabled: boolean

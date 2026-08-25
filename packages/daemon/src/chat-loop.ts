@@ -5,7 +5,7 @@ import type {
   PendingDecision,
   Space,
 } from '@veduta/protocol'
-import type { SessionStore, ToolDef } from './agent-runner.ts'
+import type { SessionContextFilter, SessionMessage, SessionStore, ToolDef } from './agent-runner.ts'
 import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import type { ModelRouter } from './model-routing.ts'
 import { sanitizeErrorText } from './model-routing.ts'
@@ -14,6 +14,7 @@ import type { ProviderBridge } from './pi-provider-bridge.ts'
 import type { GlobalChatTurnHooks } from './global-chat-tools.ts'
 import { ABSTENTION_RULE } from './spaces-engine.ts'
 import type { Store } from './store.ts'
+import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { effectiveOrigin, type Origin } from './taint.ts'
 import { zonedParts } from './timezone.ts'
 import { piToolParameters } from './tool-parameters.ts'
@@ -70,6 +71,8 @@ const GLOBAL_CHAT_PREAMBLE =
   "active Spaces without changing the user's current route. Resolve targets honestly from the " +
   "user's request and the active roster. When exactly one existing Space is unambiguous, act " +
   'directly: call enter_space before any scoped tool, then pass that Space id or slug as spaceId. ' +
+  'Enter every target again on each turn; an earlier conversational summary never replaces its ' +
+  'current Space context. ' +
   'When multiple Spaces are plausible, ask the user which one they mean and make no tool call or ' +
   'write. When no existing Space fits, use propose_space and stop before creating a Space or ' +
   'Surface; only the user can accept the one-tap proposal. One turn may enter and work in multiple ' +
@@ -77,6 +80,40 @@ const GLOBAL_CHAT_PREAMBLE =
   'every scoped call assigned to its own Space. Never infer a target merely because it appears ' +
   'first in the roster. Workers remain optional, asynchronous, investigate-and-report executions ' +
   'scoped to exactly one entered Space; you retain the final decision.'
+
+/**
+ * Keep the conversational transcript, but never carry a previous turn's
+ * Space context or scoped tool arguments/results into a new global turn.
+ * Current-turn tool messages stay intact so the Agent can continue after an
+ * `enter_space` or mutation call. Historical assistant messages are cloned
+ * so the runner reconstructs text-only messages rather than preserving old
+ * provider tool-call blocks whose matching results were removed.
+ */
+const GLOBAL_CHAT_CONTEXT_FILTER: SessionContextFilter = (messages, { phase }) => {
+  let currentTurnStart = -1
+  if (phase === 'turn') {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === 'user') {
+        currentTurnStart = index
+        break
+      }
+    }
+  }
+
+  const historyEnd = currentTurnStart < 0 ? messages.length : currentTurnStart
+  const conversation = messages.slice(0, historyEnd).flatMap(conversationMessage)
+  return currentTurnStart < 0
+    ? conversation
+    : [...conversation, ...messages.slice(currentTurnStart)]
+}
+
+function conversationMessage(message: SessionMessage): SessionMessage[] {
+  if (message.role === 'tool') return []
+  if (message.role === 'assistant') {
+    return message.content.trim() === '' ? [] : [{ ...message }]
+  }
+  return [message]
+}
 
 export interface ChatLoopOptions {
   store: Store
@@ -207,7 +244,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
       }
     }
     const docs = options.store.readGlobalDocs()
-    const spaces = options.store.listSpaces()
+    const spaces = options.store.listSpaces().filter((space) => space.id !== SYSTEM_SPACE_ID)
     const roster = spaces.slice(0, GLOBAL_SPACE_ROSTER_LIMIT)
     const omitted = spaces.length - roster.length
     const spaceLines = roster
@@ -221,6 +258,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
       `# SOUL\n\n${docs.soul.trim()}`,
       `# USER\n\n${docs.user.trim()}`,
       `# Active Spaces\n\n${boundedRoster}`,
+      ABSTENTION_RULE,
       clock,
       TOOL_BOUNDARY,
       GLOBAL_CHAT_PREAMBLE,
@@ -391,6 +429,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
               systemPrompt,
               origin: 'trusted:user',
               contextOrigins,
+              ...(spaceId === undefined ? { contextFilter: GLOBAL_CHAT_CONTEXT_FILTER } : {}),
               ...spaceField,
               trigger: { kind: 'chat', summary: event.text },
               initiatingTurn: { clientId: event.clientId, turnId },

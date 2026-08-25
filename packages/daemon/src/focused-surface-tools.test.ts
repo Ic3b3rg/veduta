@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { ToolContext, ToolDef } from './agent-runner.ts'
 import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
 import { Store } from './store.ts'
-import type { SurfaceEngineEvent } from './surface-engine.ts'
+import { SurfaceReadError, type SurfaceEngineEvent } from './surface-engine.ts'
 import { TemplateEngine } from './template-engine.ts'
 import { TurnTaintAccumulator } from './taint.ts'
 import { piToolParameters } from './tool-parameters.ts'
@@ -181,8 +181,36 @@ describe('createFocusedSurfaceTools', () => {
         }),
         trustedContext,
       ),
-    ).toThrow(/not authorable in this Space/)
+    ).toThrow(SurfaceReadError)
     expect(store.getSurface('srf-other-scope')?.state['count']).toBe(0)
+  })
+
+  it('gives the same non-disclosing refusal for daemon-owned Surface mutations', () => {
+    const { store, space, tools } = harness()
+    store.createSurface(
+      SurfaceSchema.parse({
+        id: 'srf-daemon-owned',
+        spaceId: space.id,
+        title: 'Daemon controls',
+        tree: { id: 'root', type: 'Stat', binding: 'count', props: { label: 'Count' } },
+        state: { count: 0 },
+        pinnable: true,
+        freshness: { updatedAt: '2026-08-11T10:00:00.000Z', updatedBy: 'agent' },
+      }),
+      'agent',
+      { daemonOwned: true },
+    )
+
+    const patchState = toolNamed(tools, 'patch_state')
+    expect(() =>
+      patchState.handler(
+        patchState.schema.parse({
+          surfaceId: 'srf-daemon-owned',
+          operations: [{ target: 'state', op: 'replace', path: '/count', value: 1 }],
+        }),
+        trustedContext,
+      ),
+    ).toThrow(SurfaceReadError)
   })
 
   it('keeps Template refusal and justified regeneration on the bound create_surface path', async () => {

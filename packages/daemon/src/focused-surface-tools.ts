@@ -92,10 +92,7 @@ function bindSurfaceMutationToSpace(tool: ToolDef, store: Store, spaceId: string
     level: tool.level,
     egressDomains: tool.egressDomains,
     handler(input, context) {
-      const surface = store.getSurface(input.surfaceId)
-      if (!surface || surface.spaceId !== spaceId) {
-        throw new Error('Surface is not authorable in this Space')
-      }
+      store.readAuthorableSurface(spaceId, input.surfaceId)
       return tool.handler(input, { ...context, spaceId })
     },
   })

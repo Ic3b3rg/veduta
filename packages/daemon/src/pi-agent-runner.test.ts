@@ -9,6 +9,7 @@ import {
   defineTool,
   disabledContextPolicy,
   type ContextPolicy,
+  type SessionContextFilter,
   type SessionEntry,
   type SessionMessage,
 } from './agent-runner.ts'
@@ -307,6 +308,34 @@ describe('transformPiContext', () => {
     // (docs/SECURITY.md §5, trust-layer.ts `contextHash`), so the two
     // system prompts must not collapse to the same hash.
     expect(hashes[0]).not.toBe(hashes[1])
+  })
+
+  it('preserves a retained live tool-call message instead of flattening its provider structure', async () => {
+    const historicalToolResult = fromPartial<AgentMessage>({
+      role: 'toolResult',
+      toolCallId: 'call-old',
+      toolName: 'enter_space',
+      content: [{ type: 'text', text: 'old Space context' }],
+      timestamp: 1,
+    })
+    const currentToolCall = fromPartial<AgentMessage>({
+      role: 'assistant',
+      content: [{ type: 'toolCall', id: 'call-current', name: 'read_surface', arguments: {} }],
+      timestamp: 2,
+    })
+    const retainCurrent: SessionContextFilter = (messages) => messages.slice(-1)
+
+    const result = await transformPiContext(
+      [historicalToolResult, currentToolCall],
+      {
+        ...transformOptions(disabledContextPolicy, 'read it'),
+        contextFilter: retainCurrent,
+      },
+      () => undefined,
+    )
+
+    expect(result).toEqual([currentToolCall])
+    expect(result[0]).toBe(currentToolCall)
   })
 })
 

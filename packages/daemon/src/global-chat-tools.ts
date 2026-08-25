@@ -8,7 +8,8 @@ import {
 import { defineTool, type ToolContext, type ToolDef, type ToolResult } from './agent-runner.ts'
 import { SpacePendingDecisionAdapter } from './space-pending-decision.ts'
 import type { Store } from './store.ts'
-import { effectiveToolWriteOrigin } from './taint.ts'
+import { SYSTEM_SPACE_ID } from './system-space.ts'
+import { effectiveToolWriteOrigin, type Origin } from './taint.ts'
 import { inheritTrustWrapper } from './trust-layer.ts'
 
 const GlobalSpaceTargetSchema = z.object({
@@ -62,7 +63,16 @@ export function createGlobalChatTools(options: GlobalChatToolsOptions): ToolDef[
           enteredSpaceIds.add(space.id)
         }
         options.hooks?.onResultTarget?.(spaceTarget(space))
-        recordToolOutcome(options.store, space.id, 'enter_space', context, 'completed', false)
+        recordToolOutcome(
+          options.store,
+          space.id,
+          'enter_space',
+          context,
+          'completed',
+          false,
+          undefined,
+          origins,
+        )
         return { content, details: { space }, origins }
       },
     }),
@@ -128,6 +138,7 @@ function scopeFocusedTool(
           'completed',
           MUTATING_TOOL_NAMES.has(schemaTool.name),
           target.surfaceId,
+          result.origins,
         )
         return result
       } catch (error) {
@@ -172,12 +183,16 @@ function recordToolOutcome(
   outcome: 'completed' | 'failed',
   mutation: boolean,
   surfaceId?: string,
+  observedOrigins: Origin[] = [],
 ): void {
   const correlationId = requireCorrelationId(context)
   store.spacesEngine.appendEvent(spaceId, {
     type: 'turn.tool',
     text: `Global turn tool ${toolName} ${outcome}`,
-    origin: effectiveToolWriteOrigin(context.taint.origins(), context.origin),
+    origin: effectiveToolWriteOrigin(
+      [...context.taint.origins(), ...observedOrigins],
+      context.origin,
+    ),
     payload: {
       correlationId,
       toolCallId: context.toolCallId,
@@ -200,6 +215,9 @@ function resolveActiveSpace(store: Store, target: string): Space {
     .listAllSpaces()
     .find((candidate) => candidate.id === target || candidate.slug === target)
   if (!space) throw new Error(`unknown Space id or slug: ${target}`)
+  if (space.id === SYSTEM_SPACE_ID) {
+    throw new Error('System Space is Gateway-owned and cannot be entered by the Agent')
+  }
   if (space.archived) throw new Error(`archived Space cannot be entered: ${target}`)
   return space
 }

@@ -21,6 +21,7 @@ import {
 import { ModelRouter, SpendingCapError, type RoutingConfig } from './model-routing.ts'
 import { PiJsonlSessionStore } from './pi-agent-runner.ts'
 import { Store } from './store.ts'
+import { ensureSystemSpace } from './system-space.ts'
 import { TemplateEngine } from './template-engine.ts'
 
 /**
@@ -132,7 +133,10 @@ function buildHarness(
             })
             toolExecutions.push({ name: 'test_tool', input })
             toolContexts.push(context)
-            return { content: 'tool ok' }
+            return {
+              content: store.assembleSpaceContext(target.id),
+              origins: store.spacesEngine.contextOrigins(target.id),
+            }
           },
         }),
         defineTool({
@@ -192,6 +196,28 @@ function chatEvent(
   overrides: Partial<NormalizedChannelEvent> & { text: string },
 ): NormalizedChannelEvent {
   return { adapterId: 'pwa', clientId: 'c1', receivedAt: new Date().toISOString(), ...overrides }
+}
+
+function globalSurfaceChatLoop(harness: Harness): ChatLoop {
+  const templateEngine = new TemplateEngine({ store: harness.store })
+  const focusedToolsFor = (spaceId: string) =>
+    createFocusedSurfaceTools({ store: harness.store, templateEngine, spaceId })
+  return createChatLoop({
+    store: harness.store,
+    router: harness.router,
+    sessionStore: harness.sessionStore,
+    bridge: harness.fake,
+    isTrustWrapped: () => false,
+    toolsFor: (spaceId, hooks?: GlobalChatTurnHooks) =>
+      spaceId === undefined
+        ? createGlobalChatTools({
+            store: harness.store,
+            focusedToolsFor,
+            ...(hooks === undefined ? {} : { hooks }),
+          })
+        : focusedToolsFor(spaceId),
+    send: (clientId, frame) => harness.frames.push({ clientId, frame }),
+  })
 }
 
 describe('createChatLoop', () => {
@@ -627,6 +653,7 @@ describe('createChatLoop', () => {
 
   it('gives global chat a bounded active roster and an honest multi-Space targeting policy', async () => {
     const h = harness()
+    ensureSystemSpace(h.store.spacesEngine)
     const privateSpace = h.store.spacesEngine.createSpace({ name: 'Private Notes' })
     h.store.spacesEngine.appendEvent(privateSpace.id, {
       type: 'private.test',
@@ -654,13 +681,68 @@ describe('createChatLoop', () => {
     expect(roster.split('\n').filter((line) => line.startsWith('- '))).toHaveLength(50)
     expect(roster).toContain('additional active Spaces omitted')
     expect(roster).not.toContain('Archived roster entry')
+    expect(roster).not.toContain('System (slug: system')
     expect(systemPrompt).toContain('call enter_space before any scoped tool')
+    expect(systemPrompt).toContain('Enter every target again on each turn')
     expect(systemPrompt).toContain('When exactly one existing Space is unambiguous, act directly')
     expect(systemPrompt).toContain('When multiple Spaces are plausible, ask the user')
     expect(systemPrompt).toContain('use propose_space and stop before creating a Space or Surface')
     expect(systemPrompt).toContain('One turn may enter and work in multiple Spaces')
     expect(systemPrompt).not.toContain('this conversation is for talking only')
     expect(systemPrompt).not.toContain('UNRELATED-SPACE-CONTEXT-MUST-STAY-OUT')
+  })
+
+  it('keeps a previously entered Space context out of a later unrelated global turn', async () => {
+    const h = harness()
+    const health = h.store.getSpace('spc-health')!
+    h.store.spacesEngine.appendEvent(health.id, {
+      type: 'private.test',
+      text: 'HEALTH-ONLY-CONTEXT-MUST-NOT-CROSS-TURNS',
+      origin: 'untrusted:gmail',
+    })
+    let secondTurnContext = ''
+    h.fake.setResponses([
+      { message: fakeToolCall('test_tool', { value: health.id }) },
+      { message: fakeText('Health summary retained in conversation.') },
+      {
+        factory: (context) => {
+          secondTurnContext = JSON.stringify(context.messages)
+          return fakeText('Work only.')
+        },
+      },
+    ])
+
+    await h.chatLoop.handleChatMessage(chatEvent({ text: 'Summarize Health' }))
+    expect(
+      (await h.sessionStore.load('global')).messages.find(
+        (message) => message.content === 'Health summary retained in conversation.',
+      ),
+    ).toMatchObject({ role: 'assistant', origin: 'untrusted:gmail' })
+    await h.chatLoop.handleChatMessage(chatEvent({ text: 'Now discuss Work only' }))
+
+    expect(secondTurnContext).toContain('Health summary retained in conversation.')
+    expect(secondTurnContext).not.toContain('HEALTH-ONLY-CONTEXT-MUST-NOT-CROSS-TURNS')
+    expect(secondTurnContext).not.toContain('FACTS')
+  })
+
+  it('asks on an ambiguous global request and writes no Space Event', async () => {
+    const h = harness()
+    const work = h.store.spacesEngine.createSpace({ name: 'Work' })
+    const before = new Map(
+      h.store.listSpaces().map((space) => [space.id, h.store.eventLog(space.id).length]),
+    )
+    h.fake.setResponses([{ message: fakeText('Do you mean Health or Work?') }])
+
+    await h.chatLoop.handleChatMessage(chatEvent({ text: 'Update my plan' }))
+
+    expect(h.frames.at(-1)?.frame).toMatchObject({
+      type: 'chat.turn-end',
+      message: { text: 'Do you mean Health or Work?' },
+    })
+    expect(h.toolExecutions).toEqual([])
+    for (const space of [h.store.getSpace('spc-health')!, work]) {
+      expect(h.store.eventLog(space.id)).toHaveLength(before.get(space.id)!)
+    }
   })
 
   it('logs one correlated global turn only in entered Spaces and returns deduplicated result targets', async () => {
@@ -715,6 +797,74 @@ describe('createChatLoop', () => {
     }
   })
 
+  it('refuses a blind global mutation through AgentRunner before entering its Space', async () => {
+    const h = harness()
+    const health = h.store.getSpace('spc-health')!
+    h.store.createSurface(
+      SurfaceSchema.parse({
+        id: 'srf-blind-plan',
+        spaceId: health.id,
+        title: 'Blind plan',
+        tree: { id: 'root', type: 'Stat', binding: 'status', props: { label: 'Status' } },
+        state: { status: 'Before' },
+        freshness: { updatedAt: '2026-08-25T10:00:00.000Z', updatedBy: 'seed' },
+      }),
+      'agent',
+    )
+    const loop = globalSurfaceChatLoop(h)
+    h.fake.setResponses([
+      {
+        message: fakeToolCall('patch_state', {
+          spaceId: health.id,
+          surfaceId: 'srf-blind-plan',
+          operations: [{ target: 'state', op: 'replace', path: '/status', value: 'Changed' }],
+        }),
+      },
+      { message: fakeText('I need to enter Health first.') },
+    ])
+
+    try {
+      await loop.handleChatMessage(chatEvent({ text: 'Change the Health plan' }))
+
+      expect(h.store.getSurface('srf-blind-plan')?.state['status']).toBe('Before')
+      expect(h.frames.at(-1)?.frame).toMatchObject({
+        type: 'chat.turn-end',
+        message: { text: 'I need to enter Health first.' },
+      })
+      expect(
+        h.store
+          .eventLog(health.id)
+          .filter((event) => event.payload?.['correlationId'] !== undefined),
+      ).toEqual([])
+    } finally {
+      await loop.stop()
+    }
+  })
+
+  it('refuses an archived global target through AgentRunner without writing it', async () => {
+    const h = harness()
+    const archived = h.store.spacesEngine.createSpace({ name: 'Archived Plans' })
+    h.store.archiveSpace(archived.id)
+    const before = h.store.eventLog(archived.id).length
+    const loop = globalSurfaceChatLoop(h)
+    h.fake.setResponses([
+      { message: fakeToolCall('enter_space', { spaceId: archived.id }) },
+      { message: fakeText('That Space is archived.') },
+    ])
+
+    try {
+      await loop.handleChatMessage(chatEvent({ text: 'Read Archived Plans' }))
+
+      expect(h.frames.at(-1)?.frame).toMatchObject({
+        type: 'chat.turn-end',
+        message: { text: 'That Space is archived.' },
+      })
+      expect(h.store.eventLog(archived.id)).toHaveLength(before)
+    } finally {
+      await loop.stop()
+    }
+  })
+
   it('runs one Agent turn that enters and mutates two Spaces with one correlation', async () => {
     const h = harness()
     const health = h.store.getSpace('spc-health')!
@@ -735,25 +885,7 @@ describe('createChatLoop', () => {
         'agent',
       )
     }
-    const templateEngine = new TemplateEngine({ store: h.store })
-    const focusedToolsFor = (spaceId: string) =>
-      createFocusedSurfaceTools({ store: h.store, templateEngine, spaceId })
-    const multiSpaceLoop = createChatLoop({
-      store: h.store,
-      router: h.router,
-      sessionStore: h.sessionStore,
-      bridge: h.fake,
-      isTrustWrapped: () => false,
-      toolsFor: (spaceId, hooks?: GlobalChatTurnHooks) =>
-        spaceId === undefined
-          ? createGlobalChatTools({
-              store: h.store,
-              focusedToolsFor,
-              ...(hooks === undefined ? {} : { hooks }),
-            })
-          : focusedToolsFor(spaceId),
-      send: (clientId, frame) => h.frames.push({ clientId, frame }),
-    })
+    const multiSpaceLoop = globalSurfaceChatLoop(h)
     h.fake.setResponses([
       { message: fakeToolCall('enter_space', { spaceId: health.id }) },
       { message: fakeToolCall('enter_space', { spaceId: work.id }) },

@@ -17,6 +17,7 @@ import { toPiAgentTool } from './pi-agent-runner.ts'
 import { Scheduler } from './scheduler.ts'
 import { createSpawnWorkerTool } from './spawn-worker-tool.ts'
 import { Store } from './store.ts'
+import { SurfaceReadError } from './surface-engine.ts'
 import { TemplateEngine } from './template-engine.ts'
 import { gateToolsForOrigins, TurnTaintAccumulator } from './taint.ts'
 import { piToolParameters } from './tool-parameters.ts'
@@ -234,6 +235,13 @@ describe('chatToolRegistry', () => {
       expect(enteredResult.content).toContain('Health (health)')
       expect(enteredResult.origins).toContain('untrusted:gmail')
       expect(entered).toEqual([expect.objectContaining({ id: ACTIVE_SPACE_ID })])
+      expect(
+        deps.store
+          .eventLog(ACTIVE_SPACE_ID)
+          .find(
+            (event) => event.type === 'turn.tool' && event.payload?.['toolName'] === 'enter_space',
+          ),
+      ).toMatchObject({ origin: 'untrusted:gmail' })
 
       await expect(
         writeFact.handler(
@@ -512,6 +520,23 @@ describe('chatToolRegistry', () => {
         },
         'agent',
       )
+      deps.store.createSurface(
+        {
+          id: 'srf-daemon-owned-pin',
+          spaceId: ACTIVE_SPACE_ID,
+          title: 'Daemon-owned pin scope',
+          tree: { id: 'root', type: 'Box', children: [] },
+          state: {},
+          pinned: false,
+          pinnable: true,
+          freshness: {
+            updatedAt: new Date('2026-08-25T10:00:00.000Z').toISOString(),
+            updatedBy: 'agent',
+          },
+        },
+        'agent',
+        { daemonOwned: true },
+      )
       const tools = chatToolRegistry(deps)(undefined)
       const enterSpace = tools.find((tool) => tool.name === 'enter_space')!
       const pinSurface = tools.find((tool) => tool.name === 'pin_surface')!
@@ -529,8 +554,19 @@ describe('chatToolRegistry', () => {
           }),
           { ...globalToolContext(), toolCallId: 'call-pin' },
         ),
-      ).rejects.toThrow(/not authorable in this Space/)
+      ).rejects.toThrow(SurfaceReadError)
+      await expect(
+        pinSurface.handler(
+          pinSurface.schema.parse({
+            spaceId: ACTIVE_SPACE_ID,
+            surfaceId: 'srf-daemon-owned-pin',
+            pinned: true,
+          }),
+          { ...globalToolContext(), toolCallId: 'call-pin-daemon-owned' },
+        ),
+      ).rejects.toThrow(SurfaceReadError)
       expect(deps.store.getSurface('srf-other-pin-scope')?.pinned).not.toBe(true)
+      expect(deps.store.getSurface('srf-daemon-owned-pin')?.pinned).not.toBe(true)
       expect(deps.store.spacesEngine.listTemplates(otherSpace.id)).toEqual([])
     } finally {
       dispose()
