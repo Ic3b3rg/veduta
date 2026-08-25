@@ -23,7 +23,7 @@ pay the token and trust cost for Surfaces it did not need.
 
 The accepted cross-Space direction remains unchanged: a future global-chat turn will resolve and
 enter the relevant Spaces itself rather than require manual navigation
-([global multi-Space specification](052-global-chat-multi-space.md),
+([global multi-Space specification](136-global-chat-multi-space.md),
 [ADR-0002](../docs/adr/0002-single-agent-spaces.md)). This issue provides the reusable Surface read
 seam while keeping its current focused-Space model-facing contract narrow.
 

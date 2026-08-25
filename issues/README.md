@@ -85,7 +85,6 @@ blocker is closed.
 | 047 | [Model connections](047-model-connections.md)                                                        | Adoption     |
 | 048 | [Guided VPS access installer](048-guided-vps-access-installer.md)                                    | Adoption     |
 | 049 | [Tailnet access](049-tailnet-access.md)                                                              | Adoption     |
-| 052 | [Global chat multi-Space work](052-global-chat-multi-space.md)                                       | Core         |
 | 062 | [Self-update E2E readiness budget](062-self-update-e2e-readiness-budget.md)                          | Operations   |
 | 063 | [System Space GenUI namespace](063-system-space-genui-namespace.md)                                  | Core         |
 | 064 | [Declarative client router](064-declarative-client-router.md)                                        | Core         |
@@ -160,3 +159,4 @@ blocker is closed.
 | 133 | [System Space memory health](133-system-space-memory-health.md)                                      | Core         |
 | 134 | [Relative-time Surface views](134-relative-time-surface-views.md)                                    | Core         |
 | 135 | [Pull-based personal Mailbox roadmap](135-pull-based-personal-mailbox.md)                            | Proactivity  |
+| 136 | [Global chat multi-Space work](136-global-chat-multi-space.md)                                       | Core         |

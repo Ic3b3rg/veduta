@@ -1,4 +1,4 @@
-# 052 — Global chat performs scoped multi-Space work
+# 136 — Global chat performs scoped multi-Space work
 
 ## Context
 
@@ -105,7 +105,8 @@ current PWA route unchanged while linking to the results.
 
 ## Blocked by
 
-[070 — ChatGPT subscription tool parity](070-codex-tool-parity.md). Also builds on completed issues
-[006](006-spaces-engine-memory.md), [009](009-pwa-home-chat.md),
+- #70 — [ChatGPT subscription tool parity](070-codex-tool-parity.md) (completed)
+
+Also builds on completed issues [006](006-spaces-engine-memory.md), [009](009-pwa-home-chat.md),
 [014](014-trust-layer.md), [017](017-worker-review.md), and [037](037-agent-loop-chat.md), and on
 [ADR-0002](../docs/adr/0002-single-agent-spaces.md).

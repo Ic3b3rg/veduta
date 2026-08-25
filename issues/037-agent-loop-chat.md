@@ -110,7 +110,7 @@ deterministic behavior through the mock routing candidate, never through a paral
 
 ## Superseded scope note
 
-[Issue 052](052-global-chat-multi-space.md) supersedes only this issue's no-tools global-chat
+[Issue 136](136-global-chat-multi-space.md) supersedes only this issue's no-tools global-chat
 narrowing. Focused-Space chat, sessions, streaming, routing, trust gating, and turn ingestion remain
 unchanged; the single Agent gains selective, explicitly scoped access to one or more Spaces from the
 global session.

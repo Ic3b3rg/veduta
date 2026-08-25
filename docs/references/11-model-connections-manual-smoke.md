@@ -186,4 +186,4 @@ writes, and Surface changes; ChatGPT uses the pinned `codex app-server`; Claude 
 unavailable until its provider permits third-party routing; and BYOK uses the same connection
 lifecycle. ADR-0016 and issues 070–079 subsequently replaced the narrow initial Codex inference
 boundary with the complete dynamic-tool contract while preserving every provider-native tool
-refusal. Global chat scope remains a separate concern owned by issue 052.
+refusal. Global chat scope remains a separate concern owned by issue 136.

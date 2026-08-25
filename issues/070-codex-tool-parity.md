@@ -105,7 +105,7 @@ provenance, and UI behavior as BYOK.
 
 ## Out of scope
 
-- Giving the global chat Space tools when no Space is open; [issue 052](052-global-chat-multi-space.md)
+- Giving the global chat Space tools when no Space is open; [issue 136](136-global-chat-multi-space.md)
   owns selective multi-Space work.
 - Redesigning Model connection states, removing **Test model**, or changing onboarding and model
   selectors.

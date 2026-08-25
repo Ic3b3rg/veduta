@@ -8,7 +8,7 @@
 
 Make the hardened ChatGPT-subscription adapter eligible to power focused-Space Agent turns and
 pass exactly the turn's existing Space- and origin-gated tool registry into Codex dynamic tools.
-Keep global chat's no-Space behavior unchanged; issue #52 owns global multi-Space work.
+Keep global chat's no-Space behavior unchanged; issue #136 owns global multi-Space work.
 
 Deliver the first user-visible parity path: in an existing Space, a subscription turn creates a
 protocol-valid Surface, streams a short confirmation into the PWA, and a follow-up turn patches

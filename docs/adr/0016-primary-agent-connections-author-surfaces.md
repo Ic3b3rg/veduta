@@ -10,6 +10,6 @@ Tool support is an eligibility invariant, not an optional Model connection capab
 
 Primary-route eligibility is evaluated independently from credential lifecycle. A stale stored selection or fallback whose adapter declares `unavailable` remains auditable with its original lifecycle state, but contributes no routing candidate; authorization, refresh, verification, and selection reject it with the adapter's exact reason. The registry derives an explicit `primaryRoutable` method flag from that declaration, and the PWA requires both a connected record and `primaryRoutable: true` before offering a primary-routing selector. This is deliberately separate from the method's environment-dependent `available` flag, which controls whether the current install can offer a new connection: for example, an existing migrated `secret://env/…` BYOK connection remains primary-routable when an unavailable vault prevents only new API-key authorization.
 
-[Issue 070](../../issues/070-codex-tool-parity.md) delivers the Codex subscription boundary; [issue 052](../../issues/052-global-chat-multi-space.md) separately owns selective multi-Space work from global chat.
+[Issue 070](../../issues/070-codex-tool-parity.md) delivers the Codex subscription boundary; [issue 136](../../issues/136-global-chat-multi-space.md) separately owns selective multi-Space work from global chat.
 
 Status: accepted
