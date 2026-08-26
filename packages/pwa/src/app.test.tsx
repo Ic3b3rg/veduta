@@ -146,6 +146,16 @@ async function renderConnectedEmptyHealth(clientId: string) {
 }
 
 describe('App', () => {
+  it('offers keyboard users a direct path to the Home content', async () => {
+    await renderConnectedEmptyHealth('pwa-skip-link')
+
+    const skipLink = screen.getByRole('link', { name: 'Skip to Home content' })
+    const home = screen.getByRole('main', { name: 'Home' })
+
+    expect(skipLink.getAttribute('href')).toBe('#home-content')
+    expect(home.id).toBe('home-content')
+  })
+
   it('renders the canonical Gateway snapshot and removes obsolete browser-local Surface order', async () => {
     localStorage.setItem(
       SURFACE_ORDER_KEY,

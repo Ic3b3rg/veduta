@@ -2,9 +2,8 @@
   /* Derived from catalogTokens via the style element injected in main.tsx
      (issue 024). Theme-independent: the --catalog-* variables flip with the
      color scheme. Never redeclare these in the dark block — the drift test
-     enforces single declaration. Shell cards sit on the raised surface;
-     the chat dock tints the base surface (hence the two different catalog
-     surface variables below). */
+     enforces single declaration. Glass aliases keep translucency and theme
+     behavior in one place for the shell, Surface material, and chat dock. */
   --text: var(--catalog-color-text);
   --text-muted: var(--catalog-color-text-muted);
   --surface: var(--catalog-color-surface-raised);
@@ -12,16 +11,22 @@
   --accent: var(--catalog-color-accent);
   --accent-text: var(--catalog-color-accent-text);
   --focus: var(--catalog-color-focus);
-  --chat-dock-bg: color-mix(in srgb, var(--catalog-color-surface) 96%, transparent);
+  --glass-panel: color-mix(in srgb, var(--catalog-color-surface) 82%, transparent);
+  --glass-panel-raised: color-mix(in srgb, var(--catalog-color-surface-raised) 90%, transparent);
+  --glass-border: color-mix(in srgb, var(--catalog-color-text) 10%, transparent);
+  --glass-highlight: color-mix(in srgb, var(--catalog-color-text) 7%, transparent);
+  --accent-glow: color-mix(in srgb, var(--catalog-color-accent) 18%, transparent);
+  --success-glow: color-mix(in srgb, var(--catalog-color-success) 10%, transparent);
+  --chat-dock-bg: var(--glass-panel-raised);
 
   /* Shell-only tokens, hand-authored: no catalog counterpart (page
      background, soft text/border tints, pills, status triads, chat dock
      shadow). */
   --page-bg: #f4f6f8;
   --text-soft: #415060;
-  --border-strong: #bcc7d4;
-  --accent-soft: #8ab9aa;
-  --accent-soft-bg: #e3efe9;
+  --border-strong: color-mix(in srgb, var(--border) 76%, var(--text) 24%);
+  --accent-soft: color-mix(in srgb, var(--accent) 42%, transparent);
+  --accent-soft-bg: color-mix(in srgb, var(--accent) 14%, transparent);
   --pill-bg: #e9edf2;
   --success-bg: #dff4e8;
   --success-border: #a5d9bd;
@@ -32,7 +37,9 @@
   --danger-bg: #fff1f0;
   --danger-border: #f1b8b2;
   --danger-text: #9b1c13;
+  --glass-blur: 24px;
   --chat-dock-shadow: rgba(22, 32, 42, 0.09);
+  --surface-shadow: rgba(22, 32, 42, 0.12);
   color-scheme: light;
   color: var(--text);
   background: var(--page-bg);
@@ -43,12 +50,9 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --page-bg: #0c1117;
-    --text-soft: #bac4d0;
-    --border-strong: #3b475a;
-    --accent-soft: #3f6b59;
-    --accent-soft-bg: #1e2f28;
-    --pill-bg: #232c38;
+    --page-bg: #07080c;
+    --text-soft: #c2c1ca;
+    --pill-bg: #20212b;
     --success-bg: #143427;
     --success-border: #2c6b4a;
     /* Dark status text equals the raw catalog status tokens; light keeps
@@ -60,7 +64,8 @@
     --danger-bg: #351312;
     --danger-border: #7a2f28;
     --danger-text: var(--catalog-color-danger);
-    --chat-dock-shadow: rgba(0, 0, 0, 0.4);
+    --chat-dock-shadow: rgba(0, 0, 0, 0.55);
+    --surface-shadow: rgba(0, 0, 0, 0.34);
     color-scheme: dark;
   }
 }
@@ -70,24 +75,35 @@
 }
 
 body {
+  background:
+    radial-gradient(circle at 78% -12%, var(--accent-glow), transparent 30rem),
+    radial-gradient(circle at 104% 38%, var(--success-glow), transparent 27rem), var(--page-bg);
+  background-attachment: fixed;
   margin: 0;
-  min-width: 320px;
+  min-height: 100vh;
+  min-width: 0;
   overflow-x: hidden;
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
 button {
+  background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: 6px;
-  background: var(--surface);
+  box-shadow: inset 0 1px var(--glass-highlight);
   color: var(--text);
   cursor: pointer;
   min-height: 36px;
   padding: 7px 11px;
+  transition:
+    border-color var(--catalog-motion-fast),
+    box-shadow var(--catalog-motion-fast),
+    transform var(--catalog-motion-fast);
 }
 
 button:disabled {
@@ -95,8 +111,26 @@ button:disabled {
   opacity: 0.48;
 }
 
+@media (hover: hover) {
+  button:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+    transform: translateY(-1px);
+  }
+}
+
+button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
 }

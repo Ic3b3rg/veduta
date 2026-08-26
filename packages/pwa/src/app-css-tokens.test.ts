@@ -55,7 +55,12 @@ function propertyPattern(property: string): string {
 
 function declarationValue(block: string, property: string): string | undefined {
   const pattern = new RegExp(`${propertyPattern(property)}\\s*:\\s*([^;]+);`)
-  return block.match(pattern)?.[1]?.trim()
+  return block
+    .match(pattern)?.[1]
+    ?.trim()
+    .replace(/\s+/g, ' ')
+    .replace(/\(\s+/g, '(')
+    .replace(/\s+\)/g, ')')
 }
 
 function declarationCount(css: string, property: string): number {
@@ -84,7 +89,16 @@ describe('derived aliases are declared once, in the base block, at the expected 
     ['--accent', 'var(--catalog-color-accent)'],
     ['--accent-text', 'var(--catalog-color-accent-text)'],
     ['--focus', 'var(--catalog-color-focus)'],
-    ['--chat-dock-bg', 'color-mix(in srgb, var(--catalog-color-surface) 96%, transparent)'],
+    ['--glass-panel', 'color-mix(in srgb, var(--catalog-color-surface) 82%, transparent)'],
+    [
+      '--glass-panel-raised',
+      'color-mix(in srgb, var(--catalog-color-surface-raised) 90%, transparent)',
+    ],
+    ['--glass-border', 'color-mix(in srgb, var(--catalog-color-text) 10%, transparent)'],
+    ['--glass-highlight', 'color-mix(in srgb, var(--catalog-color-text) 7%, transparent)'],
+    ['--accent-glow', 'color-mix(in srgb, var(--catalog-color-accent) 18%, transparent)'],
+    ['--success-glow', 'color-mix(in srgb, var(--catalog-color-success) 10%, transparent)'],
+    ['--chat-dock-bg', 'var(--glass-panel-raised)'],
   ]
 
   for (const [name, expected] of aliases) {
@@ -135,6 +149,16 @@ describe('dark status text aliases reference the raw catalog status tokens', () 
       expect(declarationValue(darkBlock, name)).toBe(expected)
     })
   }
+})
+
+describe('topbar action hierarchy', () => {
+  it('keeps the Install action accented instead of applying the secondary glass material', () => {
+    const installBlock = extractBlock(appCss, /\.install-button\s*{([^}]*)}/)
+
+    expect(appCss).toContain('.topbar-actions > button:not(.install-button),')
+    expect(declarationValue(installBlock, 'background')).toBe('var(--accent)')
+    expect(declarationValue(installBlock, 'color')).toBe('var(--accent-text)')
+  })
 })
 
 // -- guard 3: duplication scanner (secondary guard) -------------------------

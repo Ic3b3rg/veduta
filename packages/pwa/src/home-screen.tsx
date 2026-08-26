@@ -87,6 +87,9 @@ export function HomeScreen({
 }: HomeScreenProps) {
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#home-content">
+        Skip to Home content
+      </a>
       <header className="topbar">
         <div>
           <h1>Veduta</h1>
@@ -131,7 +134,7 @@ export function HomeScreen({
           ))}
         </aside>
 
-        <main className="home" aria-label="Home">
+        <main className="home" id="home-content" aria-label="Home">
           {approvalCards.length > 0 && (
             <ApprovalCards cards={approvalCards} onDismiss={onApprovalCardsChange} />
           )}

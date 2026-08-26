@@ -55,6 +55,39 @@ describe('SurfaceCard relative-time validity', () => {
   })
 })
 
+describe('SurfaceCard material hierarchy', () => {
+  it('embeds Atom content inside one pinnable Surface shell', () => {
+    const surface = SurfaceSchema.parse({
+      ...relativeSurface(),
+      pinned: true,
+      pinnable: true,
+    })
+    const { container } = render(
+      <SurfaceCard
+        surface={surface}
+        selected={true}
+        canMoveUp={false}
+        canMoveDown={false}
+        onFocus={vi.fn()}
+        onMoveUp={vi.fn()}
+        onMoveDown={vi.fn()}
+        onPatched={vi.fn()}
+        onQueueFastAction={vi.fn()}
+        onTogglePin={vi.fn()}
+        onCreationFeedbackShown={vi.fn()}
+        onError={vi.fn()}
+      />,
+    )
+
+    const card = container.querySelector('article.surface-card')
+    expect(card?.classList.contains('pinned')).toBe(true)
+
+    const content = card?.querySelector(':scope > .surface-content')
+    expect(content).not.toBeNull()
+    expect(content?.querySelector(':scope > [data-veduta-theme="light"]')).not.toBeNull()
+  })
+})
+
 function relativeSurface() {
   return SurfaceSchema.parse({
     id: 'srf-daily-spending',

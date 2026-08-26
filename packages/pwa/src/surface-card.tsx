@@ -136,6 +136,7 @@ export function SurfaceCard({
       className={[
         'surface-card',
         selected ? 'selected' : '',
+        surface.pinned ? 'pinned' : '',
         creationHighlighted ? 'creation-highlight' : '',
         relativeTime?.status === 'expired' ? 'relative-time-expired' : '',
       ]
@@ -192,12 +193,14 @@ export function SurfaceCard({
           {relativeTime.caveat}
         </div>
       )}
-      {renderNode(surface.tree, {
-        state: surface.state,
-        dispatch,
-        theme,
-        ...(updateFeedback ? { motion: { update: updateFeedback } } : {}),
-      })}
+      <div className="surface-content">
+        {renderNode(surface.tree, {
+          state: surface.state,
+          dispatch,
+          theme,
+          ...(updateFeedback ? { motion: { update: updateFeedback } } : {}),
+        })}
+      </div>
       <div className="freshness">
         updated {freshnessLabel(surface.freshness.updatedAt)} by {surface.freshness.updatedBy}
       </div>

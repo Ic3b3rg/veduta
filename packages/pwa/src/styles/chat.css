@@ -1,19 +1,24 @@
 .chat-dock {
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
   background: var(--chat-dock-bg);
-  border-top: 1px solid var(--border);
-  bottom: 0;
-  box-shadow: 0 -8px 26px var(--chat-dock-shadow);
-  left: 0;
-  padding: 10px 16px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  bottom: 14px;
+  box-shadow:
+    inset 0 1px var(--glass-highlight),
+    0 24px 64px var(--chat-dock-shadow),
+    0 0 34px color-mix(in srgb, var(--accent-glow) 35%, transparent);
+  left: 50%;
+  padding: 10px;
   position: fixed;
-  right: 0;
-  width: 100%;
+  transform: translateX(-50%);
+  width: min(760px, calc(100% - 32px));
   z-index: 10;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
 }
 
 .chat-log-frame {
-  margin: 0 auto 8px;
-  max-width: 900px;
+  margin: 0 0 8px;
   position: relative;
 }
 
@@ -28,8 +33,9 @@
 
 .chat-scroll-to-bottom {
   align-items: center;
-  background: var(--surface);
-  border-color: var(--border-strong);
+  backdrop-filter: blur(14px);
+  background: var(--glass-panel-raised);
+  border-color: var(--glass-border);
   border-radius: 999px;
   bottom: 8px;
   box-shadow: 0 2px 8px var(--chat-dock-shadow);
@@ -78,6 +84,10 @@
 }
 
 .chat-entry.assistant span {
+  color: var(--text);
+}
+
+.chat-entry.assistant strong {
   color: var(--accent);
 }
 
@@ -102,7 +112,8 @@
 
 .chat-pending-decision {
   align-items: center;
-  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--glass-highlight) 34%, transparent);
+  border: 1px solid var(--glass-border);
   border-radius: 10px;
   display: flex;
   flex-wrap: wrap;
@@ -157,19 +168,36 @@
 .chat-compose {
   display: flex;
   gap: 8px;
-  margin: 0 auto;
-  max-width: 900px;
 }
 
 .chat-compose input {
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--catalog-color-surface) 58%, transparent);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  box-shadow: inset 0 1px var(--glass-highlight);
   color: var(--text);
   flex: 1;
-  min-height: 44px;
+  min-height: 46px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 10px 14px;
+  transition:
+    background var(--catalog-motion-fast),
+    border-color var(--catalog-motion-fast),
+    box-shadow var(--catalog-motion-fast);
+}
+
+.chat-compose input::placeholder {
+  color: var(--text-muted);
+}
+
+.chat-compose input:focus-visible {
+  background: color-mix(in srgb, var(--catalog-color-surface) 78%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+  box-shadow:
+    inset 0 1px var(--glass-highlight),
+    0 0 0 3px var(--accent-soft-bg),
+    0 8px 24px var(--accent-glow);
+  outline: none;
 }
 
 .chat-compose button,
@@ -178,4 +206,15 @@
   border-color: var(--accent);
   color: var(--accent-text);
   font-weight: 700;
+}
+
+.chat-compose button {
+  border-radius: 10px;
+  min-width: 76px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-compose input {
+    transition: none;
+  }
 }
