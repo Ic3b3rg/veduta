@@ -440,7 +440,9 @@ export class ModelRouter {
   private readonly onCallError: ((model: ModelRef, error: unknown) => void) | undefined
   private readonly isRetryable: (error: unknown) => boolean
   private readonly calls: RoutedCall[] = []
+  private readonly usageObservers = new Set<() => void>()
   private usageToday: DailyUsage
+  private usageSourceUnavailable = false
 
   constructor(options: ModelRouterOptions = {}) {
     this.config = RuntimeRoutingConfigSchema.parse(options.config ?? defaultRoutingConfig())
@@ -451,7 +453,13 @@ export class ModelRouter {
     this.onEvent = options.onEvent
     this.onCallError = options.onCallError
     this.isRetryable = options.isRetryable ?? defaultIsRetryable
-    this.usageToday = this.restoreUsage(this.today())
+    const today = this.today()
+    try {
+      this.usageToday = this.restoreUsage(today)
+    } catch {
+      this.usageToday = emptyDailyUsage(today)
+      this.usageSourceUnavailable = true
+    }
   }
 
   /**
@@ -546,6 +554,7 @@ export class ModelRouter {
     ) {
       this.notifyCapExceeded(usage, model.tier)
     }
+    this.notifyUsageChange()
   }
 
   proactivityAllowed(tier: ModelTier): boolean {
@@ -565,6 +574,11 @@ export class ModelRouter {
         spentUsd,
       })),
     }
+  }
+
+  onUsageChange(observer: () => void): () => void {
+    this.usageObservers.add(observer)
+    return () => this.usageObservers.delete(observer)
   }
 
   callLog(): RoutedCall[] {
@@ -645,17 +659,15 @@ export class ModelRouter {
 
   private currentUsage(): DailyUsage {
     const today = this.today()
-    if (this.usageToday.date !== today) this.usageToday = this.restoreUsage(today)
+    if (this.usageSourceUnavailable || this.usageToday.date !== today) {
+      this.usageToday = this.restoreUsage(today)
+      this.usageSourceUnavailable = false
+    }
     return this.usageToday
   }
 
   private restoreUsage(date: string): DailyUsage {
-    const usage: DailyUsage = {
-      date,
-      tiers: { triage: 0, reasoning: 0 },
-      workers: new Map(),
-      capNotified: new Set(),
-    }
+    const usage = emptyDailyUsage(date)
     const path = this.usagePath(date)
     if (!path || !existsSync(path)) return usage
     for (const line of readFileSync(path, 'utf8').split('\n')) {
@@ -696,12 +708,31 @@ export class ModelRouter {
     this.onEvent?.(event)
   }
 
+  private notifyUsageChange(): void {
+    for (const observer of this.usageObservers) {
+      try {
+        observer()
+      } catch (error) {
+        console.error('usage observer failed', error)
+      }
+    }
+  }
+
   private nowIso(): string {
     return this.now().toISOString()
   }
 
   private today(): string {
     return this.nowIso().slice(0, 10)
+  }
+}
+
+function emptyDailyUsage(date: string): DailyUsage {
+  return {
+    date,
+    tiers: { triage: 0, reasoning: 0 },
+    workers: new Map(),
+    capNotified: new Set(),
   }
 }
 

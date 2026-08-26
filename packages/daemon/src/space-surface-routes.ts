@@ -7,22 +7,18 @@ import {
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
-import type { ModelRouter } from './model-routing.ts'
 import type { NotificationCenter } from './notification-center.ts'
 import type { PushStore } from './push-store.ts'
 import { extractBearer, type ServerAuthOptions } from './server-auth.ts'
 import { SurfaceActionError, type Store } from './store.ts'
 import { SurfaceMoveError, SurfaceNotPinnableError } from './surface-engine.ts'
-import { appendSystemSurface } from './system-space.ts'
 import type { TemplateEngine } from './template-engine.ts'
-import { usageSurface } from './usage-surface.ts'
 
 const PinSurfaceBodySchema = z.object({ pinned: z.boolean() })
 
 export interface SpaceSurfaceRouteDeps {
   auth: ServerAuthOptions
   store: Store
-  router: ModelRouter
   pushStore: PushStore
   notificationCenter: NotificationCenter
   templateEngine: TemplateEngine
@@ -32,13 +28,10 @@ export function registerSpaceSurfaceRoutes(
   app: FastifyInstance,
   deps: SpaceSurfaceRouteDeps,
 ): void {
-  const { auth, store, router, pushStore, notificationCenter, templateEngine } = deps
+  const { auth, store, pushStore, notificationCenter, templateEngine } = deps
 
   app.get('/api/spaces', (request) => {
-    const rawSnapshot = appendSystemSurface(
-      store.snapshot(),
-      usageSurface(router.usage(), new Date().toISOString()),
-    )
+    const rawSnapshot = store.snapshot()
     const snapshot = {
       ...rawSnapshot,
       spaces: rawSnapshot.spaces.map((space) => {

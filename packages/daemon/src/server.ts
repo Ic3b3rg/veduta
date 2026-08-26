@@ -111,6 +111,7 @@ import { resolveInstalledVersion } from './version.ts'
 import { ensureVapidKeys, WebPushTransport, type PushTransport } from './web-push-transport.ts'
 import { WorkerPool } from './worker.ts'
 import { workerToolRegistry } from './worker-tool-registry.ts'
+import { UsageSurfaceManager } from './usage-surface.ts'
 
 export interface ServerOptions {
   pwaDistDir?: string
@@ -889,6 +890,12 @@ export function buildServer(options: ServerOptions = {}) {
     routingState.replace(derived)
     router.setConfig(derived)
   }
+  // Model usage is durable living System state (issue #114): boot creates
+  // the daemon-owned Surface, accepted accounting refreshes it through
+  // ModelRouter's observer seam, and its own UTC rollover timer keeps the
+  // day current without a snapshot request.
+  const usageSurfaces = new UsageSurfaceManager({ store, source: router, now })
+  usageSurfaces.start()
 
   // The provider bridge (issue #37, ADR-0004 amendment; widened by issue
   // #47): maps a routed `ModelRef` plus its resolved key onto pi-ai's
@@ -1114,6 +1121,7 @@ export function buildServer(options: ServerOptions = {}) {
   scheduler.start()
   app.addHook('onClose', async () => {
     scheduler.stop()
+    usageSurfaces.dispose()
     heartbeatSurfaces.dispose()
     reflectionSurfaces.dispose()
     updateManager?.dispose()
@@ -1377,7 +1385,6 @@ export function buildServer(options: ServerOptions = {}) {
   registerSpaceSurfaceRoutes(app, {
     auth,
     store,
-    router,
     pushStore,
     notificationCenter,
     templateEngine,
@@ -1489,5 +1496,6 @@ export function buildServer(options: ServerOptions = {}) {
     memoryRetrieval,
     reflection,
     reflectionSurfaces,
+    usageSurfaces,
   }
 }

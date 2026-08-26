@@ -29,6 +29,7 @@ import { PiJsonlSessionStore } from './pi-agent-runner.ts'
 import { buildServer } from './server.ts'
 import { SpacesEngine } from './spaces-engine.ts'
 import { treeProposalSurfaceId } from './tree-proposal.ts'
+import { MODEL_USAGE_SURFACE_ID } from './usage-surface.ts'
 import { CURRENT_DATA_VERSION } from './update/data-version.ts'
 import { generateKeypair } from './update/minisign.ts'
 import { UPDATE_SURFACE_ID } from './update-surface.ts'
@@ -108,8 +109,9 @@ describe('GET /api/spaces', () => {
     // boot-time reconciliation (issues/021-advanced-memory.md): its single
     // configured time arms one more managed job on the same Automations
     // Surface (2 more ticks), and its per-Space Nightly Reflection Surface is
-    // pre-created for the Health Space (1 more tick).
-    expect(body.surfaceCursor).toBe(13)
+    // pre-created for the Health Space (1 more tick), plus the persisted
+    // Model usage Surface in the System Space (1 more tick).
+    expect(body.surfaceCursor).toBe(14)
     expect(body.spaces.map((s) => s.slug)).toEqual(['health', 'system'])
     expect(body.spaces.filter((space) => space.id === SYSTEM_SPACE_ID)).toHaveLength(1)
     for (const surface of body.spaces.flatMap((space) => space.surfaces)) {
@@ -156,18 +158,40 @@ describe('GET /api/spaces', () => {
     await app.close()
   })
 
-  it('exposes the model usage Surface in the System space (BYOK transparency)', async () => {
-    const { app, router } = buildServer()
+  it('persists and refreshes Model usage before the Space snapshot is read', async () => {
+    const { app, gateway, router, store } = buildServer()
+    expect(SurfaceSchema.parse(store.getSurface(MODEL_USAGE_SURFACE_ID)).state).toMatchObject({
+      reasoning: '$0.00 of $20.00/day',
+      status: 'Current',
+    })
+    const beforeSpendCursor = store.latestSurfaceCursor()
+    const socket = new SchedulerFakeSocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: beforeSpendCursor })
+
     router.recordSpend({ provider: 'anthropic', modelId: 'claude-sonnet-5', tier: 'reasoning' }, 2)
 
+    expect(SurfaceSchema.parse(store.getSurface(MODEL_USAGE_SURFACE_ID)).state).toMatchObject({
+      reasoning: '$2.00 of $20.00/day',
+      status: 'Current',
+    })
+    expect(store.latestSurfaceCursor()).toBe(beforeSpendCursor + 1)
+    expect(
+      socket.sent.filter(
+        (frame) =>
+          frame.type === 'surface.patch' && frame.event.patch.surfaceId === MODEL_USAGE_SURFACE_ID,
+      ),
+    ).toHaveLength(1)
+    const beforeReadCursor = store.latestSurfaceCursor()
+
     const res = await app.inject({ method: 'GET', url: '/api/spaces' })
-    const body = res.json() as {
-      spaces: { id: string; surfaces: { id: string; tree: unknown }[] }[]
-    }
+    const body = SurfaceSnapshotSchema.parse(res.json())
     const system = body.spaces.find((space) => space.id === SYSTEM_SPACE_ID)
-    const usage = system?.surfaces.find((surface) => surface.id === 'srf-usage')
-    expect(usage).toBeDefined()
-    expect(JSON.stringify(usage?.tree)).toContain('$2.00')
+    const usage = system?.surfaces.find((surface) => surface.id === MODEL_USAGE_SURFACE_ID)
+    expect(usage?.state).toMatchObject({ reasoning: '$2.00 of $20.00/day' })
+    expect(store.latestSurfaceCursor()).toBe(beforeReadCursor)
+
+    await app.close()
   })
 })
 
