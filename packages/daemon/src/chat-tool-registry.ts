@@ -1,3 +1,4 @@
+import { SYSTEM_SPACE_ID } from '@veduta/protocol'
 import type { ToolDef } from './agent-runner.ts'
 import { createFocusedAutomationTools } from './focused-automation-tools.ts'
 import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
@@ -6,6 +7,7 @@ import type { MemoryRetrieval } from './memory-retrieval.ts'
 import { createMemoryTools } from './memory-tools.ts'
 import type { Scheduler } from './scheduler.ts'
 import type { Store } from './store.ts'
+import { createSystemChatTools } from './system-chat-tools.ts'
 import { templateTools, type TemplateEngine } from './template-engine.ts'
 
 /**
@@ -23,13 +25,15 @@ export interface ChatToolRegistryDeps {
 }
 
 /**
- * Builds the canonical focused registry plus issue #136's scoped global form:
- * every Space chat turn gets the trust-wrapped outbound tools, Surface tools
+ * Builds the canonical focused registry, the Gateway-owned System registry,
+ * plus issue #136's scoped global form:
+ * every user life-area Space chat turn gets the trust-wrapped outbound tools, Surface tools
  * (`create_surface` gated behind the Template-reuse justification check),
  * memory tools (`search_memory` included since a `MemoryRetrieval` is always
  * supplied), Template-reuse tools, Space-bound Automation tools, and `spawn_worker`.
  * Global chat receives adapters over those same handlers, with an explicit
- * active-Space target and a successful `enter_space` required first.
+ * active-Space target and a successful `enter_space` required first. A
+ * System-scoped turn receives only its explicitly assembled status registry.
  *
  * Extracted into its own module so `server.ts`'s construction and
  * `tool-parameters.test.ts`'s registry-shape assertions build the exact same
@@ -58,12 +62,17 @@ export function chatToolRegistry(
     ]
   }
 
-  return (spaceId, hooks) =>
-    spaceId === undefined
-      ? createGlobalChatTools({
-          store: deps.store,
-          focusedToolsFor,
-          ...(hooks === undefined ? {} : { hooks }),
-        })
-      : focusedToolsFor(spaceId)
+  return (spaceId, hooks) => {
+    if (spaceId === undefined) {
+      return createGlobalChatTools({
+        store: deps.store,
+        focusedToolsFor,
+        ...(hooks === undefined ? {} : { hooks }),
+      })
+    }
+    if (spaceId === SYSTEM_SPACE_ID) {
+      return createSystemChatTools({ store: deps.store, scheduler: deps.scheduler })
+    }
+    return focusedToolsFor(spaceId)
+  }
 }

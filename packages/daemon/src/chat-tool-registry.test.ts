@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
+import { SYSTEM_SPACE_ID } from '@veduta/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { chatToolRegistry, type ChatToolRegistryDeps } from './chat-tool-registry.ts'
@@ -139,7 +140,20 @@ const EXPECTED_GLOBAL_TOOL_NAMES = [
   ...EXPECTED_SPACE_TOOL_NAMES,
 ].sort()
 
+const EXPECTED_SYSTEM_TOOL_NAMES = ['list_surfaces', 'read_surface', 'list_automations'].sort()
+
 describe('chatToolRegistry', () => {
+  it('offers only explicit safe status reads to a System-scoped turn', () => {
+    const { deps, dispose } = buildDeps()
+    try {
+      const tools = chatToolRegistry(deps)(SYSTEM_SPACE_ID)
+      expect(tools.map((tool) => tool.name).sort()).toEqual(EXPECTED_SYSTEM_TOOL_NAMES)
+      expect(new Set(tools.map((tool) => tool.name)).size).toBe(tools.length)
+    } finally {
+      dispose()
+    }
+  })
+
   it('offers one stable scoped registry to global chat', () => {
     const { deps, dispose } = buildDeps()
     try {

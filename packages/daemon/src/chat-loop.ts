@@ -12,7 +12,7 @@ import { sanitizeErrorText } from './model-routing.ts'
 import { PiAgentRunner } from './pi-agent-runner.ts'
 import type { ProviderBridge } from './pi-provider-bridge.ts'
 import type { GlobalChatTurnHooks } from './global-chat-tools.ts'
-import { ABSTENTION_RULE } from './spaces-engine.ts'
+import { ABSTENTION_RULE, renderEventForContext } from './spaces-engine.ts'
 import type { Store } from './store.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { effectiveOrigin, type Origin } from './taint.ts'
@@ -80,6 +80,18 @@ const GLOBAL_CHAT_PREAMBLE =
   'every scoped call assigned to its own Space. Never infer a target merely because it appears ' +
   'first in the roster. Workers remain optional, asynchronous, investigate-and-report executions ' +
   'scoped to exactly one entered Space; you retain the final decision.'
+
+const SYSTEM_CHAT_PREAMBLE =
+  "You are Veduta's Agent, answering conversationally inside the canonical Gateway-owned System Space. " +
+  'This Space is only for Veduta status and controls. Use list_surfaces, read_surface, and ' +
+  'list_automations only as read-only status tools. Only invoke a Gateway operation when a ' +
+  'dedicated tool for that operation is explicitly present in this turn. Never create or patch ' +
+  'ordinary Surfaces here. Do not write FACTS or INSTRUCTIONS, author Templates or Automations, ' +
+  'spawn Workers, or use outbound actions from this Space. If the user asks to store or manage ' +
+  'personal content, do not silently change scope: explain that the System Space cannot own that ' +
+  'content and visibly direct the user to an appropriate user life-area Space from the roster ' +
+  'below, or to global chat when none fits. Actions declared by a daemon-owned System Surface ' +
+  'continue through their declared fast or Agent path; never imitate one with a generic write.'
 
 /**
  * Keep the conversational transcript, but never carry a previous turn's
@@ -182,6 +194,17 @@ function addResultTarget(targets: ChatResultTarget[], target: ChatResultTarget):
   if (targets.length < 20) targets.push(target)
 }
 
+function activeLifeAreaRoster(store: Store): string {
+  const spaces = store.listSpaces().filter((space) => space.id !== SYSTEM_SPACE_ID)
+  const roster = spaces.slice(0, GLOBAL_SPACE_ROSTER_LIMIT)
+  const omitted = spaces.length - roster.length
+  const lines = roster
+    .map((space) => `- ${space.name} (slug: ${space.slug}; id: ${space.id})`)
+    .join('\n')
+  if (lines.length === 0) return 'No active user life-area Spaces yet.'
+  return `${lines}${omitted > 0 ? `\nShowing the first ${roster.length}; ${omitted} additional active Spaces omitted.` : ''}`
+}
+
 export function createChatLoop(options: ChatLoopOptions): ChatLoop {
   const now = options.now ?? (() => new Date())
   const timeZone = options.timeZone ?? 'UTC'
@@ -231,6 +254,30 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
     const clock =
       `Current user-local date and time: ${year}-${twoDigits(month)}-${twoDigits(day)} ` +
       `${twoDigits(hour)}:${twoDigits(minute)} (${timeZone}).`
+    if (spaceId === SYSTEM_SPACE_ID) {
+      const docs = options.store.readGlobalDocs()
+      const space = options.store.getSpace(SYSTEM_SPACE_ID)
+      if (!space) throw new Error(`unknown Space: ${SYSTEM_SPACE_ID}`)
+      const recentEvents = options.store.spacesEngine.readRecent(SYSTEM_SPACE_ID, 20)
+      const recent =
+        recentEvents.length === 0
+          ? 'No recent Event log entries.'
+          : recentEvents.map(renderEventForContext).join('\n')
+      return {
+        systemPrompt: [
+          `# SOUL\n\n${docs.soul.trim()}`,
+          `# USER\n\n${docs.user.trim()}`,
+          `# Active Space\n\n${space.name} (${space.slug}; id: ${space.id})`,
+          `# Recent Event log\n\n${recent}`,
+          `# User life-area Spaces\n\n${activeLifeAreaRoster(options.store)}`,
+          ABSTENTION_RULE,
+          clock,
+          TOOL_BOUNDARY,
+          SYSTEM_CHAT_PREAMBLE,
+        ].join('\n\n'),
+        contextOrigins: Array.from(new Set(recentEvents.map((event) => event.origin))),
+      }
+    }
     if (spaceId !== undefined) {
       return {
         systemPrompt: [
@@ -244,20 +291,10 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
       }
     }
     const docs = options.store.readGlobalDocs()
-    const spaces = options.store.listSpaces().filter((space) => space.id !== SYSTEM_SPACE_ID)
-    const roster = spaces.slice(0, GLOBAL_SPACE_ROSTER_LIMIT)
-    const omitted = spaces.length - roster.length
-    const spaceLines = roster
-      .map((space) => `- ${space.name} (slug: ${space.slug}; id: ${space.id})`)
-      .join('\n')
-    const boundedRoster =
-      spaceLines.length === 0
-        ? 'No active Spaces yet.'
-        : `${spaceLines}${omitted > 0 ? `\nShowing the first ${roster.length}; ${omitted} additional active Spaces omitted.` : ''}`
     const systemPrompt = [
       `# SOUL\n\n${docs.soul.trim()}`,
       `# USER\n\n${docs.user.trim()}`,
-      `# Active Spaces\n\n${boundedRoster}`,
+      `# Active Spaces\n\n${activeLifeAreaRoster(options.store)}`,
       ABSTENTION_RULE,
       clock,
       TOOL_BOUNDARY,

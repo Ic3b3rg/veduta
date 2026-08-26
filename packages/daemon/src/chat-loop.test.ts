@@ -325,6 +325,52 @@ describe('createChatLoop', () => {
     expect(systemPrompt).toContain('Never call provider-native shell')
   })
 
+  it('keeps System chat conversational and visibly redirects personal content without changing scope', async () => {
+    const h = harness()
+    const system = ensureSystemSpace(h.store.spacesEngine)
+    const health = h.store.getSpace('spc-health')!
+    const systemEventsBefore = h.store.eventLog(system.id).length
+    const healthEventsBefore = h.store.eventLog(health.id)
+    let systemPrompt = ''
+    h.fake.setResponses([
+      {
+        factory: (context) => {
+          systemPrompt = context.systemPrompt ?? ''
+          return fakeText(
+            'I cannot store personal content in System. Open Health and ask me there instead.',
+          )
+        },
+      },
+    ])
+
+    await h.chatLoop.handleChatMessage(
+      chatEvent({ text: 'Remember that my next run is Friday', spaceId: system.id }),
+    )
+
+    expect(systemPrompt).toContain('Gateway-owned System Space')
+    expect(systemPrompt).toContain('read-only status')
+    expect(systemPrompt).toContain('Never create or patch')
+    expect(systemPrompt).toContain('Do not write FACTS or INSTRUCTIONS')
+    expect(systemPrompt).toContain('do not silently change scope')
+    expect(systemPrompt).toContain('visibly direct the user')
+    expect(systemPrompt).toContain('# User life-area Spaces')
+    expect(systemPrompt).toContain(`- ${health.name} (slug: ${health.slug}; id: ${health.id})`)
+    expect(systemPrompt).not.toContain('Surface authoring also applies')
+    expect(h.frames.at(-1)?.frame).toMatchObject({
+      type: 'chat.turn-end',
+      spaceId: system.id,
+      message: {
+        text: 'I cannot store personal content in System. Open Health and ask me there instead.',
+      },
+    })
+    expect(h.store.eventLog(system.id).slice(systemEventsBefore)).toMatchObject([
+      { type: 'turn', payload: { role: 'user' } },
+      { type: 'turn', payload: { role: 'assistant' } },
+    ])
+    expect(h.store.eventLog(health.id)).toEqual(healthEventsBefore)
+    expect(h.toolsForCalls).toContain(system.id)
+  })
+
   it('an observer failure (send throwing on the first delta) never fails the turn, still delivers later frames, and never triggers failover (issue #37 fix)', async () => {
     const h = harness({ throwOnFirstDelta: true })
     const spaceId = h.store.listSpaces()[0]!.id
