@@ -5,18 +5,29 @@ import type {
   Surface,
   SurfaceMoveDirection,
 } from '@veduta/protocol'
+import { Link } from 'react-router-dom'
 import { ApprovalCards } from './approval-cards.tsx'
 import type { SpaceWithSurfaces } from './api.ts'
 import { AttentionBadge } from './attention-badge.tsx'
 import { ChatBar } from './chat-bar.tsx'
 import { ChatModelSelects } from './chat-model-selects.tsx'
+import { clientPath } from './client-router.tsx'
 import { InstallButton } from './install-button.tsx'
 import { NotificationBell } from './notification-bell.tsx'
 import type { BrowserInstallPromptEvent, QueuedFastAction } from './pwa-storage.ts'
 import { SpaceSection } from './space-section.tsx'
 import type { SurfaceUpdateFeedback } from './surface-motion.ts'
 
-interface HomeScreenProps {
+export type AppRouteSelection =
+  | { kind: 'home' }
+  | {
+      kind: 'space'
+      slug: string
+      space: SpaceWithSurfaces | undefined
+      surfaceId: string | undefined
+    }
+
+interface AppShellProps {
   authMode: 'dev' | 'production' | undefined
   authToken: string | undefined
   gatewayOnline: boolean
@@ -25,8 +36,7 @@ interface HomeScreenProps {
   showInstallGuide: boolean
   error: string | null
   spaces: SpaceWithSurfaces[]
-  focusedSpace: SpaceWithSurfaces | undefined
-  focusedSurfaceId: string | undefined
+  route: AppRouteSelection
   surfaceCreationFeedbackKeys: Record<string, string>
   surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback>
   approvalCards: ApprovalCard[]
@@ -54,8 +64,13 @@ interface HomeScreenProps {
   onSend: (message: string) => boolean
 }
 
-/** The presentational Home shell; App owns networking, persistence, and routing. */
-export function HomeScreen({
+interface RouteRecovery {
+  heading: string
+  message: string
+}
+
+/** The fixed PWA shell; App owns networking and persistence and supplies route-derived selection. */
+export function AppShell({
   authMode,
   authToken,
   gatewayOnline,
@@ -64,8 +79,7 @@ export function HomeScreen({
   showInstallGuide,
   error,
   spaces,
-  focusedSpace,
-  focusedSurfaceId,
+  route,
   surfaceCreationFeedbackKeys,
   surfaceUpdateFeedbacks,
   approvalCards,
@@ -84,11 +98,21 @@ export function HomeScreen({
   onApprovalCardsChange,
   onResolvePendingDecision,
   onSend,
-}: HomeScreenProps) {
+}: AppShellProps) {
+  const focusedSpace = route.kind === 'space' ? route.space : undefined
+  const focusedSurfaceId = route.kind === 'space' ? route.surfaceId : undefined
+  const routeRecovery = resolveRouteRecovery(route)
+  const visibleSpaces = routeRecovery ? [] : focusedSpace ? [focusedSpace] : spaces
+  const mainContentName = routeRecovery
+    ? 'Route recovery'
+    : focusedSpace
+      ? `${focusedSpace.name} Space`
+      : 'Home'
+
   return (
     <div className="app-shell">
-      <a className="skip-link" href="#home-content">
-        Skip to Home content
+      <a className="skip-link" href="#main-content">
+        Skip to {mainContentName} content
       </a>
       <header className="topbar">
         <div>
@@ -115,7 +139,7 @@ export function HomeScreen({
         </p>
       )}
 
-      <div className="home-layout">
+      <div className="shell-layout">
         <aside className="space-rail" aria-label="Spaces">
           {spaces.map((space) => (
             <button
@@ -134,12 +158,30 @@ export function HomeScreen({
           ))}
         </aside>
 
-        <main className="home" id="home-content" aria-label="Home">
-          {approvalCards.length > 0 && (
-            <ApprovalCards cards={approvalCards} onDismiss={onApprovalCardsChange} />
+        <main className="shell-main" id="main-content" aria-label={mainContentName}>
+          {focusedSpace && !routeRecovery && (
+            <nav className="space-breadcrumb" aria-label="Breadcrumb">
+              <Link to={clientPath.home}>
+                <span aria-hidden="true">← </span>
+                Home
+              </Link>
+              <span aria-current="page">{focusedSpace.name}</span>
+            </nav>
           )}
 
-          {spaces.map((space) => (
+          {routeRecovery ? (
+            <section className="route-recovery" aria-labelledby="route-recovery-title">
+              <h2 id="route-recovery-title">{routeRecovery.heading}</h2>
+              <p>{routeRecovery.message}</p>
+              <Link to={clientPath.home}>Back to Home</Link>
+            </section>
+          ) : (
+            approvalCards.length > 0 && (
+              <ApprovalCards cards={approvalCards} onDismiss={onApprovalCardsChange} />
+            )
+          )}
+
+          {visibleSpaces.map((space) => (
             <SpaceSection
               key={space.id}
               space={space}
@@ -172,4 +214,24 @@ export function HomeScreen({
       />
     </div>
   )
+}
+
+function resolveRouteRecovery(route: AppRouteSelection): RouteRecovery | undefined {
+  if (route.kind === 'home') return undefined
+  if (route.space === undefined) {
+    return {
+      heading: 'Space not found',
+      message: `No active Space matches “${route.slug}”.`,
+    }
+  }
+  if (
+    route.surfaceId !== undefined &&
+    !route.space.surfaces.some((surface) => surface.id === route.surfaceId)
+  ) {
+    return {
+      heading: 'Surface not found',
+      message: `No Surface “${route.surfaceId}” belongs to ${route.space.name}.`,
+    }
+  }
+  return undefined
 }

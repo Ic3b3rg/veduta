@@ -20,7 +20,7 @@ function renderRoute(path: string) {
     <MemoryRouter initialEntries={[path]}>
       <RoutingProbe />
       <ClientRouteTable
-        home={<p>Home screen</p>}
+        appShell={<p>App shell</p>}
         modelConnections={<p>Model connections screen</p>}
       />
     </MemoryRouter>,
@@ -29,11 +29,11 @@ function renderRoute(path: string) {
 
 describe('client route table', () => {
   it.each([
-    ['/', 'Home screen'],
-    ['/setup', 'Home screen'],
+    ['/', 'App shell'],
+    ['/setup', 'App shell'],
     ['/app/settings/models', 'Model connections screen'],
-    ['/app/space/health', 'Home screen'],
-    ['/app/space/health/surface/srf-meals', 'Home screen'],
+    ['/app/space/health', 'App shell'],
+    ['/app/space/health/surface/srf-meals', 'App shell'],
   ])('renders the fixed screen for %s', async (path, screenName) => {
     renderRoute(path)
 

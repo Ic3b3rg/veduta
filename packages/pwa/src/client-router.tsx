@@ -59,22 +59,22 @@ export function useClientRouting(): {
 }
 
 export function ClientRouteTable({
-  home,
+  appShell,
   modelConnections,
 }: {
-  home: ReactNode
+  appShell: ReactNode
   modelConnections: ReactNode
 }) {
   return (
     <Routes>
-      <Route path={CLIENT_ROUTE_PATTERN.home} element={home} />
+      <Route path={CLIENT_ROUTE_PATTERN.home} element={appShell} />
       <Route
         path={CLIENT_ROUTE_PATTERN.setup}
         element={<Navigate to={clientPath.home} replace />}
       />
       <Route path={CLIENT_ROUTE_PATTERN.modelConnections} element={modelConnections} />
-      <Route path={CLIENT_ROUTE_PATTERN.space} element={home} />
-      <Route path={CLIENT_ROUTE_PATTERN.surface} element={home} />
+      <Route path={CLIENT_ROUTE_PATTERN.space} element={appShell} />
+      <Route path={CLIENT_ROUTE_PATTERN.surface} element={appShell} />
       <Route path="*" element={<Navigate to={clientPath.home} replace />} />
     </Routes>
   )

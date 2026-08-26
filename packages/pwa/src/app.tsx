@@ -48,7 +48,7 @@ import {
   surfaceOrderForStreamEvent,
   type SurfaceStreamEvent,
 } from './home-state.ts'
-import { HomeScreen } from './home-screen.tsx'
+import { AppShell, type AppRouteSelection } from './app-shell.tsx'
 import { homeBlockedByStatusFailure } from './onboarding-state.ts'
 import {
   AUTH_TOKEN_KEY,
@@ -796,8 +796,18 @@ function RoutedApp() {
     )
   }
 
-  const homeScreen = (
-    <HomeScreen
+  const appRouteSelection: AppRouteSelection =
+    focusedSpaceSlug === undefined
+      ? { kind: 'home' }
+      : {
+          kind: 'space',
+          slug: focusedSpaceSlug,
+          space: focusedSpace,
+          surfaceId: focusedSurfaceId,
+        }
+
+  const appShell = (
+    <AppShell
       authMode={authMode}
       authToken={authToken}
       gatewayOnline={gatewayOnline}
@@ -806,8 +816,7 @@ function RoutedApp() {
       showInstallGuide={showInstallGuide}
       error={error}
       spaces={spaces}
-      focusedSpace={focusedSpace}
-      focusedSurfaceId={focusedSurfaceId}
+      route={appRouteSelection}
       surfaceCreationFeedbackKeys={surfaceCreationFeedbackKeys}
       surfaceUpdateFeedbacks={surfaceUpdateFeedbacks}
       approvalCards={approvalCards}
@@ -843,7 +852,7 @@ function RoutedApp() {
 
   return (
     <ClientRouteTable
-      home={homeScreen}
+      appShell={appShell}
       modelConnections={
         <SettingsModelConnections token={authToken} onBack={() => navigate(clientPath.home)} />
       }

@@ -152,8 +152,8 @@ describe('App', () => {
     const skipLink = screen.getByRole('link', { name: 'Skip to Home content' })
     const home = screen.getByRole('main', { name: 'Home' })
 
-    expect(skipLink.getAttribute('href')).toBe('#home-content')
-    expect(home.id).toBe('home-content')
+    expect(skipLink.getAttribute('href')).toBe('#main-content')
+    expect(home.id).toBe('main-content')
   })
 
   it('renders the canonical Gateway snapshot and removes obsolete browser-local Surface order', async () => {

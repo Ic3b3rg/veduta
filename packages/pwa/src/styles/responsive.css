@@ -22,7 +22,7 @@
   .topbar,
   .space-heading,
   .approval-card,
-  .home-layout {
+  .shell-layout {
     display: grid;
   }
 
@@ -49,7 +49,7 @@
     justify-self: start;
   }
 
-  .home-layout {
+  .shell-layout {
     grid-template-columns: 1fr;
   }
 
@@ -127,6 +127,7 @@
   .space-rail,
   .surface-card,
   .approval-card,
+  .route-recovery,
   .notif-guide,
   .chat-dock {
     backdrop-filter: none;

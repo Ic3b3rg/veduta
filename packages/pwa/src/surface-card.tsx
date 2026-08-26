@@ -58,6 +58,14 @@ export function SurfaceCard({
   const relativeTime = useRelativeTimeStatus(surface)
 
   useEffect(() => {
+    if (!selected) return
+    const card = cardRef.current
+    if (!card) return
+
+    scrollSurfaceCardIntoView(card)
+  }, [selected])
+
+  useEffect(() => {
     if (
       creationFeedbackKey === undefined ||
       handledCreationFeedbackRef.current === creationFeedbackKey
@@ -68,8 +76,7 @@ export function SurfaceCard({
     if (!card) return
 
     handledCreationFeedbackRef.current = creationFeedbackKey
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    card.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' })
+    scrollSurfaceCardIntoView(card)
     setCreationHighlighted(true)
     onCreationFeedbackShown(creationFeedbackKey)
   }, [creationFeedbackKey, onCreationFeedbackShown])
@@ -206,6 +213,11 @@ export function SurfaceCard({
       </div>
     </article>
   )
+}
+
+function scrollSurfaceCardIntoView(card: HTMLElement): void {
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  card.scrollIntoView?.({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' })
 }
 
 const MAX_TIMEOUT_MS = 2_147_483_647

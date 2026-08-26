@@ -120,8 +120,8 @@ self.addEventListener('push', (event) => {
 
 // Focus an already-open client and hand it the deep link rather than always
 // opening a new window/tab; app.tsx's service-worker 'message' listener
-// routes { type: 'navigate', url } through the same deep-link focus logic
-// popstate uses.
+// routes { type: 'navigate', url } through the same client router as clicks
+// and browser Back/Forward.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
   const url = isRelativeUrl(event.notification.data?.url) ? event.notification.data.url : '/'
