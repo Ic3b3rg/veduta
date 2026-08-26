@@ -11,8 +11,8 @@ import { SYSTEM_SPACE_ID } from './system-space.ts'
  * Declarative Atoms only (Title, Caption, Stat, Badge), same idiom as
  * `usage-surface.ts`. Lives in the System Space and is projected through
  * the Store — following the persisted create/patch/broadcast lifecycle of
- * `AllowlistSurfaceManager`/`AuditSurfaceManager`, NOT the synthetic
- * GET-time `appendSystemSurface` path — so it reaches clients through the
+ * `AllowlistSurfaceManager`/`AuditSurfaceManager`, not a read-time
+ * snapshot projection — so it reaches clients through the
  * same central broadcast as any other Space Surface.
  */
 export const HEARTBEAT_SURFACE_ID = 'srf-heartbeat'

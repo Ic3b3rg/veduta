@@ -1,9 +1,8 @@
-import { SurfaceSchema, type Surface, type SurfaceSnapshot } from '@veduta/protocol'
+import { SurfaceSchema, type Surface } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import { SpacesEngine } from './spaces-engine.ts'
-import { SYSTEM_SPACE_ID, appendSystemSurface, ensureSystemSpace } from './system-space.ts'
-
-const emptySnapshot: SurfaceSnapshot = { surfaceCursor: 0, spaces: [] }
+import { Store } from './store.ts'
+import { SYSTEM_SPACE_ID, ensureSystemSpace } from './system-space.ts'
 
 function systemSurface(id: string): Surface {
   return SurfaceSchema.parse({
@@ -16,26 +15,31 @@ function systemSurface(id: string): Surface {
   })
 }
 
-describe('appendSystemSurface', () => {
-  it('creates the synthetic System Space on first use', () => {
-    const snapshot = appendSystemSurface(emptySnapshot, systemSurface('srf-usage'))
-    expect(snapshot.spaces).toHaveLength(1)
-    expect(snapshot.spaces[0]).toMatchObject({ id: SYSTEM_SPACE_ID, slug: 'system' })
-    expect(snapshot.spaces[0]?.surfaces.map((surface) => surface.id)).toEqual(['srf-usage'])
-  })
-
-  it('merges further daemon Surfaces into the one System Space', () => {
-    const first = appendSystemSurface(emptySnapshot, systemSurface('srf-usage'))
-    const second = appendSystemSurface(first, systemSurface('srf-connected-devices'))
-    expect(second.spaces).toHaveLength(1)
-    expect(second.spaces[0]?.surfaces.map((surface) => surface.id)).toEqual([
-      'srf-usage',
-      'srf-connected-devices',
-    ])
-  })
-})
-
 describe('ensureSystemSpace', () => {
+  it('does not let a Store snapshot materialize a missing System Space', () => {
+    const store = new Store()
+    expect(store.getSpace(SYSTEM_SPACE_ID)).toBeUndefined()
+
+    const snapshot = store.snapshot()
+
+    expect(snapshot.spaces.some((space) => space.id === SYSTEM_SPACE_ID)).toBe(false)
+    expect(store.getSpace(SYSTEM_SPACE_ID)).toBeUndefined()
+  })
+
+  it('keeps projected FACTS out of the System snapshot and lookup paths', () => {
+    const store = new Store()
+    ensureSystemSpace(store.spacesEngine)
+    store.createSurface(systemSurface('srf-system-daemon'), 'job', { daemonOwned: true })
+
+    const system = store.snapshot().spaces.find((space) => space.id === SYSTEM_SPACE_ID)
+
+    expect(system?.surfaces.map((surface) => surface.id)).toEqual(['srf-system-daemon'])
+    expect(store.listSurfaces(SYSTEM_SPACE_ID).map((surface) => surface.id)).toEqual([
+      'srf-system-daemon',
+    ])
+    expect(store.getSurface('srf-system-facts')).toBeUndefined()
+  })
+
   it('reserves the canonical identity from ordinary creation before boot materializes it', () => {
     const spacesEngine = new SpacesEngine()
 
@@ -124,22 +128,5 @@ describe('ensureSystemSpace', () => {
     expect(system).toMatchObject({ name: 'Controls', slug: 'controls', archived: false })
     expect(spacesEngine.getSpace(health.id)).toMatchObject({ archived: false })
     expect(spacesEngine.readRecent(SYSTEM_SPACE_ID, Number.MAX_SAFE_INTEGER)).toEqual(systemEvents)
-  })
-
-  it('keeps appendSystemSurface merging into the now-persisted System Space', () => {
-    const spacesEngine = new SpacesEngine()
-    ensureSystemSpace(spacesEngine)
-    const snapshotWithSystemSpace: SurfaceSnapshot = {
-      surfaceCursor: 0,
-      spaces: spacesEngine
-        .listSpaces()
-        .map((space) => ({ ...space, surfaces: [], attention: 0, attentionRevision: 0 })),
-    }
-
-    const merged = appendSystemSurface(snapshotWithSystemSpace, systemSurface('srf-usage'))
-
-    expect(merged.spaces).toHaveLength(1)
-    expect(merged.spaces[0]).toMatchObject({ id: SYSTEM_SPACE_ID, slug: 'system' })
-    expect(merged.spaces[0]?.surfaces.map((surface) => surface.id)).toEqual(['srf-usage'])
   })
 })

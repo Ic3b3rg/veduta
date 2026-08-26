@@ -3,10 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fromPartial } from '@total-typescript/shoehorn'
+import { SYSTEM_SPACE_ID } from '@veduta/protocol'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ToolContext } from './agent-runner.ts'
+import { SYSTEM_AUTOMATIONS_SURFACE_ID } from './automations-surface.ts'
 import { Scheduler, type EscalationContext } from './scheduler.ts'
 import { Store } from './store.ts'
+import { ensureSystemSpace } from './system-space.ts'
 import type { Origin } from './taint.ts'
 
 function toolContext(toolCallId: string, origin: Origin): ToolContext {
@@ -49,6 +52,36 @@ afterEach(() => {
 })
 
 describe('Automations Surface projection', () => {
+  it('persists the System Space projection as daemon-owned living state', () => {
+    ensureSystemSpace(store.spacesEngine)
+
+    createScheduler()
+
+    const surfaceId = SYSTEM_AUTOMATIONS_SURFACE_ID
+    const surface = store.getSurface(surfaceId)
+    expect(surface).toMatchObject({ id: surfaceId, spaceId: SYSTEM_SPACE_ID })
+    expect(store.isSurfaceDaemonOwned(surfaceId)).toBe(true)
+    const reopened = new Store({ rootDir, now })
+    expect(reopened.getSurface(surfaceId)).toMatchObject({ id: surfaceId })
+    expect(reopened.isSurfaceDaemonOwned(surfaceId)).toBe(true)
+    reopened.close()
+    expect(store.eventLog(SYSTEM_SPACE_ID)).toContainEqual(
+      expect.objectContaining({
+        type: 'surface.create',
+        payload: { surfaceId },
+      }),
+    )
+    expect(store.surfaceEventsAfter(0)).toContainEqual(
+      expect.objectContaining({
+        kind: 'created',
+        event: expect.objectContaining({
+          spaceId: SYSTEM_SPACE_ID,
+          surface: expect.objectContaining({ id: surfaceId }),
+        }),
+      }),
+    )
+  })
+
   it('pre-creates an empty Automations Surface for every active Space', () => {
     createScheduler()
     const surface = store.getSurface(SURFACE)

@@ -1,3 +1,4 @@
+import { SYSTEM_SPACE_ID } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import {
   automationIdFromStateKey,
@@ -17,6 +18,12 @@ const reminder = {
 }
 
 describe('automationsSurface', () => {
+  it('keeps the daemon-private System identity stable when its presentation slug changes', () => {
+    const surface = automationsSurface({ id: SYSTEM_SPACE_ID, slug: 'controls' }, [], freshness)
+
+    expect(surface.id).toBe('srf-system-automations')
+  })
+
   it('builds a protocol-valid Surface with one Automation Atom per job', () => {
     const surface = automationsSurface(
       space,

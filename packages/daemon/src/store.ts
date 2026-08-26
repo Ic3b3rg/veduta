@@ -1,4 +1,5 @@
 import {
+  SYSTEM_SPACE_ID,
   SurfaceSnapshotSchema,
   findDeclaredAction,
   type JsonValue,
@@ -108,12 +109,18 @@ export class Store {
   }
 
   listSurfaces(spaceId?: string): Surface[] {
+    const stored = this.surfaceEngine.listSurfaces(spaceId)
+    // The generic FACTS projection belongs only to user life-area Spaces (ADR-0020).
     if (spaceId) {
-      return [...this.surfaceEngine.listSurfaces(spaceId), this.spacesEngine.factsSurface(spaceId)]
+      return spaceId === SYSTEM_SPACE_ID
+        ? stored
+        : [...stored, this.spacesEngine.factsSurface(spaceId)]
     }
     return [
-      ...this.surfaceEngine.listSurfaces(),
-      ...this.listSpaces().map((space) => this.spacesEngine.factsSurface(space.id)),
+      ...stored,
+      ...this.listSpaces()
+        .filter((space) => space.id !== SYSTEM_SPACE_ID)
+        .map((space) => this.spacesEngine.factsSurface(space.id)),
     ]
   }
 
@@ -121,6 +128,7 @@ export class Store {
     return (
       this.surfaceEngine.getSurface(id) ??
       this.listSpaces()
+        .filter((space) => space.id !== SYSTEM_SPACE_ID)
         .map((space) => this.spacesEngine.factsSurface(space.id))
         .find((surface) => surface.id === id)
     )

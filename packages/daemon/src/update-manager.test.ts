@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  SurfaceSchema,
   UpdateMarkerSchema,
   type AtomNode,
   type ReleaseMetadata,
@@ -203,7 +204,30 @@ afterEach(async () => {
 describe('UpdateManager.register', () => {
   it('pre-creates the Update Surface and reconciles the daily check-updates job', () => {
     manager.register()
-    expect(store.getSurface(UPDATE_SURFACE_ID)).toBeDefined()
+    expect(SurfaceSchema.parse(store.getSurface(UPDATE_SURFACE_ID))).toMatchObject({
+      id: UPDATE_SURFACE_ID,
+      spaceId: SYSTEM_SPACE_ID,
+    })
+    expect(store.isSurfaceDaemonOwned(UPDATE_SURFACE_ID)).toBe(true)
+    const reopened = new Store({ rootDir, now })
+    expect(reopened.getSurface(UPDATE_SURFACE_ID)).toBeDefined()
+    expect(reopened.isSurfaceDaemonOwned(UPDATE_SURFACE_ID)).toBe(true)
+    reopened.close()
+    expect(store.eventLog(SYSTEM_SPACE_ID)).toContainEqual(
+      expect.objectContaining({
+        type: 'surface.create',
+        payload: { surfaceId: UPDATE_SURFACE_ID },
+      }),
+    )
+    expect(store.surfaceEventsAfter(0)).toContainEqual(
+      expect.objectContaining({
+        kind: 'created',
+        event: expect.objectContaining({
+          spaceId: SYSTEM_SPACE_ID,
+          surface: expect.objectContaining({ id: UPDATE_SURFACE_ID }),
+        }),
+      }),
+    )
     const jobs = scheduler
       .listAutomations(SYSTEM_SPACE_ID)
       .filter((automation) => automation.handler === 'check-updates')

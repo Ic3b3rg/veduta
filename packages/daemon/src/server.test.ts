@@ -18,8 +18,11 @@ import {
 } from '@veduta/protocol'
 import { describe, expect, it, vi } from 'vitest'
 import { ALLOWLIST_SURFACE_ID } from './allowlist-surface.ts'
+import { AUDIT_SURFACE_ID } from './audit-surface.ts'
 import { AuthStore, type PasskeyRelyingParty, type StoredPasskey } from './auth-store.ts'
+import { SYSTEM_AUTOMATIONS_SURFACE_ID } from './automations-surface.ts'
 import { CONNECTED_DEVICES_SURFACE_ID } from './connected-devices-surface.ts'
+import { HEARTBEAT_SURFACE_ID } from './heartbeat-surface.ts'
 import { NoAvailableModelError, loadRoutingConfig, saveRoutingConfig } from './model-routing.ts'
 import { NOTIFICATION_SETTINGS_SURFACE_ID } from './notification-settings-surface.ts'
 import { NotificationsConfigSchema, saveNotificationsConfig } from './notifications-config.ts'
@@ -29,6 +32,7 @@ import { SecretsVault } from './secrets-vault.ts'
 import { PiJsonlSessionStore } from './pi-agent-runner.ts'
 import { buildServer } from './server.ts'
 import { SpacesEngine } from './spaces-engine.ts'
+import { Store } from './store.ts'
 import { treeProposalSurfaceId } from './tree-proposal.ts'
 import { MODEL_USAGE_SURFACE_ID } from './usage-surface.ts'
 import { CURRENT_DATA_VERSION } from './update/data-version.ts'
@@ -89,6 +93,86 @@ describe('PWA static assets', () => {
 })
 
 describe('GET /api/spaces', () => {
+  it('returns a request-pure inventory of persisted daemon-owned System Surfaces', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-system-surface-inventory-'))
+    const { app, store } = buildServer({ dataDir })
+    const expectedSystemSurfaceIds = [
+      SYSTEM_AUTOMATIONS_SURFACE_ID,
+      ALLOWLIST_SURFACE_ID,
+      AUDIT_SURFACE_ID,
+      HEARTBEAT_SURFACE_ID,
+      NOTIFICATION_SETTINGS_SURFACE_ID,
+      MODEL_USAGE_SURFACE_ID,
+    ].sort()
+    const cursorBefore = store.latestSurfaceCursor()
+    const eventsBefore = store.eventLog(SYSTEM_SPACE_ID)
+
+    const first = SurfaceSnapshotSchema.parse(
+      (await app.inject({ method: 'GET', url: '/api/spaces' })).json(),
+    )
+    const second = SurfaceSnapshotSchema.parse(
+      (await app.inject({ method: 'GET', url: '/api/spaces' })).json(),
+    )
+    const system = first.spaces.find((space) => space.id === SYSTEM_SPACE_ID)
+    const visibleIds = system?.surfaces.map((surface) => surface.id).sort()
+
+    expect(visibleIds).toEqual(expectedSystemSurfaceIds)
+    expect(second).toEqual(first)
+    expect(store.latestSurfaceCursor()).toBe(cursorBefore)
+    expect(store.eventLog(SYSTEM_SPACE_ID)).toEqual(eventsBefore)
+
+    const lifecycleIds = new Set(
+      eventsBefore
+        .filter((event) => event.type === 'surface.create')
+        .map((event) => event.payload?.['surfaceId']),
+    )
+    const liveCreationIds = new Set(
+      store
+        .surfaceEventsAfter(0)
+        .flatMap((event) =>
+          event.kind === 'created' && event.event.spaceId === SYSTEM_SPACE_ID
+            ? [event.event.surface.id]
+            : [],
+        ),
+    )
+    for (const surface of system?.surfaces ?? []) {
+      expect(SurfaceSchema.safeParse(surface).success).toBe(true)
+      expect(store.isSurfaceDaemonOwned(surface.id)).toBe(true)
+      expect(lifecycleIds.has(surface.id)).toBe(true)
+      expect(liveCreationIds.has(surface.id)).toBe(true)
+      expect(surface.freshness.updatedAt).not.toBe('')
+    }
+
+    const reflectionId = reflectionSurfaceId('health')
+    const reflectionSurface = SurfaceSchema.parse(store.getSurface(reflectionId))
+    expect(reflectionSurface.freshness.updatedAt).not.toBe('')
+    expect(store.isSurfaceDaemonOwned(reflectionId)).toBe(true)
+    expect(store.eventLog('spc-health')).toContainEqual(
+      expect.objectContaining({
+        type: 'surface.create',
+        payload: { surfaceId: reflectionId },
+      }),
+    )
+    expect(store.surfaceEventsAfter(0)).toContainEqual(
+      expect.objectContaining({
+        kind: 'created',
+        event: expect.objectContaining({
+          spaceId: 'spc-health',
+          surface: expect.objectContaining({ id: reflectionId }),
+        }),
+      }),
+    )
+
+    await app.close()
+
+    const reopened = new Store({ rootDir: dataDir })
+    for (const surfaceId of [...expectedSystemSurfaceIds, reflectionId]) {
+      expect(reopened.getSurface(surfaceId)).toBeDefined()
+      expect(reopened.isSurfaceDaemonOwned(surfaceId)).toBe(true)
+    }
+    reopened.close()
+  })
+
   it('returns the seed space with protocol-valid surfaces', async () => {
     const { app } = buildServer()
     const res = await app.inject({ method: 'GET', url: '/api/spaces' })

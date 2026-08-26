@@ -1,4 +1,4 @@
-import { SurfaceSchema, type AtomNode, type Surface } from '@veduta/protocol'
+import { SYSTEM_SPACE_ID, SurfaceSchema, type AtomNode, type Surface } from '@veduta/protocol'
 
 /**
  * The per-Space "Automations" Surface (issue #11, ADR-0005): every job
@@ -15,9 +15,17 @@ export interface AutomationListItem {
 }
 
 export const AUTOMATIONS_LIST_NODE_ID = 'automations-list'
+/** The System slug is presentation; its daemon-private Surface identity is fixed (ADR-0020). */
+export const SYSTEM_AUTOMATIONS_SURFACE_ID = 'srf-system-automations'
 
 export function automationsSurfaceId(spaceSlug: string): string {
   return `srf-${spaceSlug}-automations`
+}
+
+export function automationsSurfaceIdForSpace(space: { id: string; slug: string }): string {
+  return space.id === SYSTEM_SPACE_ID
+    ? SYSTEM_AUTOMATIONS_SURFACE_ID
+    : automationsSurfaceId(space.slug)
 }
 
 export function automationStateKey(id: number): string {
@@ -62,7 +70,7 @@ export function automationsSurface(
   freshness: { updatedAt: string; updatedBy: 'job' },
 ): Surface {
   return SurfaceSchema.parse({
-    id: automationsSurfaceId(space.slug),
+    id: automationsSurfaceIdForSpace(space),
     spaceId: space.id,
     title: 'Automations',
     tree: {

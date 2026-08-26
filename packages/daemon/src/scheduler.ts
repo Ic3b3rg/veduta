@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { JsonObject, PatchOperation } from '@veduta/protocol'
+import { SYSTEM_SPACE_ID, type JsonObject, type PatchOperation } from '@veduta/protocol'
 import { z } from 'zod'
 import { defineTool, type ToolDef } from './agent-runner.ts'
 import {
@@ -8,7 +8,7 @@ import {
   automationsListNode,
   automationsState,
   automationsSurface,
-  automationsSurfaceId,
+  automationsSurfaceIdForSpace,
   type AutomationListItem,
 } from './automations-surface.ts'
 import { nextCronOccurrence, parseCron } from './cron.ts'
@@ -683,7 +683,9 @@ export class Scheduler {
    */
   private ensureSurfaces(): void {
     for (const space of this.store.listSpaces()) {
-      if (!this.store.getSurface(automationsSurfaceId(space.slug))) this.refreshSurface(space.id)
+      if (!this.store.getSurface(automationsSurfaceIdForSpace(space))) {
+        this.refreshSurface(space.id)
+      }
     }
   }
 
@@ -702,14 +704,15 @@ export class Scheduler {
       [...listed.map((automation) => automation.origin), mutationOrigin],
       'trusted:system',
     )
-    const surfaceId = automationsSurfaceId(space.slug)
+    const surfaceId = automationsSurfaceIdForSpace(space)
     const existing = this.store.getSurface(surfaceId)
 
     if (!existing) {
       this.store.createSurface(
         automationsSurface(space, items, { updatedAt: this.nowIso(), updatedBy: 'job' }),
         'job',
-        { origin },
+        // System jobs are Gateway-managed; life-area Automations remain ordinary Space state.
+        { origin, daemonOwned: space.id === SYSTEM_SPACE_ID },
       )
       return
     }
@@ -760,7 +763,7 @@ export class Scheduler {
     const automation = this.getAutomation(automationId)
     if (!automation) return
     const space = this.store.getSpace(automation.spaceId)
-    if (!space || notice.surfaceId !== automationsSurfaceId(space.slug)) return
+    if (!space || notice.surfaceId !== automationsSurfaceIdForSpace(space)) return
     // The toggle contract is an explicit boolean; anything else must not
     // silently flip a job (truthy strings like "false" would invert it).
     // The fast path already persisted the malformed value into Surface
