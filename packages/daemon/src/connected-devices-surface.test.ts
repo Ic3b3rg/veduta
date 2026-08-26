@@ -338,7 +338,7 @@ function expectConnectedDevicesIdentityCollisionRejected(options: {
   if (options.daemonOwned) {
     store.createSurface(impostor, 'job', { daemonOwned: true })
   } else {
-    store.createSurface(impostor, 'agent')
+    store.createSurface(impostor, 'job')
   }
   const beforeStart = store.getSurface(CONNECTED_DEVICES_SURFACE_ID)
 

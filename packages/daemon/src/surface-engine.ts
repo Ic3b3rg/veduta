@@ -6,6 +6,7 @@ import {
   JsonObjectSchema,
   PatchOperationSchema,
   PatchSchema,
+  SYSTEM_SPACE_ID,
   SurfaceArchivedEventSchema,
   SurfaceCreatedEventSchema,
   SurfaceMovedEventSchema,
@@ -195,19 +196,22 @@ export class SurfaceTreeConflictError extends Error {
 }
 
 /**
- * Raised by `patchState`/`patchTree`/`archiveSurface` when `updatedBy:
- * 'agent'` targets a daemon-owned Surface (approval cards, the trust admin
- * Surfaces — ADR-0007's structural-defense contract): a tainted-but-L0 turn
- * must never be able to rewrite a pending approval card's `field.*` content
- * or pre-set its `decision.*` state after the human has read it. Enforced
- * here in the engine — the one write path for Surface state and tree
- * changes — so no tool-level wrapper can bypass it. `updatedBy: 'user'`
- * (fast-path clicks) and `updatedBy: 'job'` (the owning manager's own
- * writes) are never subject to this check.
+ * Raised by generic Agent Surface writes when the target belongs to the
+ * Gateway: either a daemon-owned Surface or any Surface in the canonical
+ * System Space. Enforced in the engine so no tool wrapper can bypass the
+ * ownership boundary. `updatedBy: 'user'` (fast-path clicks) and
+ * `updatedBy: 'job'` (the owning manager's writes) remain allowed.
  */
 export class SurfaceOwnershipError extends Error {
-  constructor(readonly surfaceId: string) {
-    super(`Surface ${surfaceId} is daemon-owned and cannot be written by the Agent`)
+  constructor(
+    readonly surfaceId: string,
+    ownership: 'daemon' | 'system' = 'daemon',
+  ) {
+    super(
+      ownership === 'system'
+        ? `Surface ${surfaceId} is in the Gateway-owned System Space and cannot be written by the Agent`
+        : `Surface ${surfaceId} is daemon-owned and cannot be written by the Agent`,
+    )
     this.name = 'SurfaceOwnershipError'
   }
 }
@@ -425,6 +429,7 @@ export class SurfaceEngine {
    */
   listAuthorableSurfaces(spaceId: string): AuthorableSurfaceInventory {
     this.requireKnownSpace(spaceId)
+    if (spaceId === SYSTEM_SPACE_ID) return { surfaces: [], origins: [] }
     const rows = this.db
       .prepare(
         `select * from surfaces
@@ -459,6 +464,7 @@ export class SurfaceEngine {
    */
   readAuthorableSurface(spaceId: string, surfaceId: string): AuthorableSurfaceRead {
     this.requireKnownSpace(spaceId)
+    if (spaceId === SYSTEM_SPACE_ID) throw new SurfaceReadError()
     const row = this.db
       .prepare(
         `select * from surfaces
@@ -525,6 +531,7 @@ export class SurfaceEngine {
     const daemonOwned = options?.daemonOwned ?? false
     const surface = this.surfaceForWrite(input, updatedBy, daemonOwned)
     this.requireKnownSpace(surface.spaceId)
+    this.assertSpaceWritableByAgent(surface.spaceId, surface.id, updatedBy)
     // See `CreateSurfaceOptions.contentOrigin`: default to this call's own
     // write origin, never a flat `'trusted:user'`.
     const contentOrigin = options?.contentOrigin ?? options?.origin ?? 'trusted:user'
@@ -707,10 +714,10 @@ export class SurfaceEngine {
     return this.db
       .prepare(
         `select * from surfaces
-         where archived = 0 and daemon_owned = 0 and tree_updated_at <= ?
+         where archived = 0 and daemon_owned = 0 and space_id <> ? and tree_updated_at <= ?
          order by id`,
       )
-      .all(beforeIso)
+      .all(SYSTEM_SPACE_ID, beforeIso)
       .map(surfaceFromRow)
   }
 
@@ -1487,15 +1494,27 @@ export class SurfaceEngine {
     return surface
   }
 
-  /**
-   * The write-protection check backing `SurfaceOwnershipError`: only
-   * `updatedBy: 'agent'` is ever refused, and only against a Surface
-   * stamped `daemonOwned` at creation. Checked before any transaction
-   * opens, so a refused write has no side effects at all.
-   */
+  /** Refuses Agent writes to daemon-owned or canonical System Surfaces. */
   private assertWritableByAgent(surfaceId: string, updatedBy: SurfaceWriteActor): void {
     if (updatedBy !== 'agent') return
-    if (this.isDaemonOwned(surfaceId)) throw new SurfaceOwnershipError(surfaceId)
+    const row = this.db
+      .prepare('select daemon_owned, space_id from surfaces where id = ?')
+      .get(surfaceId)
+    if (row === undefined) return
+    if (requiredString(row, 'space_id') === SYSTEM_SPACE_ID) {
+      throw new SurfaceOwnershipError(surfaceId, 'system')
+    }
+    if (requiredNumber(row, 'daemon_owned') === 1) throw new SurfaceOwnershipError(surfaceId)
+  }
+
+  private assertSpaceWritableByAgent(
+    spaceId: string,
+    surfaceId: string,
+    updatedBy: SurfaceWriteActor,
+  ): void {
+    if (updatedBy === 'agent' && spaceId === SYSTEM_SPACE_ID) {
+      throw new SurfaceOwnershipError(surfaceId, 'system')
+    }
   }
 
   /**

@@ -429,7 +429,7 @@ function expectUsageSurfaceIdentityCollisionRejected(options: {
   if (options.daemonOwned) {
     store.createSurface(impostor, 'job', { daemonOwned: true })
   } else {
-    store.createSurface(impostor, 'agent')
+    store.createSurface(impostor, 'job')
   }
   const beforeStart = store.getSurface(MODEL_USAGE_SURFACE_ID)
 

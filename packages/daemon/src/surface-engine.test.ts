@@ -4,7 +4,7 @@ import { performance } from 'node:perf_hooks'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fromPartial } from '@total-typescript/shoehorn'
-import { SurfaceSchema, type Surface } from '@veduta/protocol'
+import { SYSTEM_SPACE_ID, SurfaceSchema, type Surface } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import type { ToolContext } from './agent-runner.ts'
 import { Store } from './store.ts'
@@ -12,10 +12,12 @@ import { TurnTaintAccumulator } from './taint.ts'
 import {
   SurfaceEngine,
   SurfaceNotPinnableError,
+  SurfaceOwnershipError,
   SurfaceReadError,
   type SurfaceEngineEvent,
   type TreeProposal,
 } from './surface-engine.ts'
+import { ensureSystemSpace } from './system-space.ts'
 
 describe('Surface engine store', () => {
   it('persists Surface state and version metadata in SQLite across Store restarts', async () => {
@@ -110,6 +112,76 @@ describe('Surface engine store', () => {
     expect(new Set(messages).size).toBe(1)
     expect(messages[0]).not.toMatch(/missing|archived|daemon|facts|other/i)
     expect(store.listAuthorableSurfaces(activeSpace.id).surfaces).toEqual([])
+  })
+
+  it('excludes every System Surface from Agent authoring reads and Template harvesting', async () => {
+    const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+    ensureSystemSpace(store.spacesEngine)
+    store.createSurface(emptySurface('srf-system-legacy', SYSTEM_SPACE_ID), 'job')
+    store.createSurface(emptySurface('srf-system-daemon', SYSTEM_SPACE_ID), 'job', {
+      daemonOwned: true,
+    })
+
+    expect(store.listAuthorableSurfaces(SYSTEM_SPACE_ID)).toEqual({ surfaces: [], origins: [] })
+    for (const surfaceId of ['srf-system-legacy', 'srf-system-daemon']) {
+      expect(() => store.readAuthorableSurface(SYSTEM_SPACE_ID, surfaceId)).toThrow(
+        SurfaceReadError,
+      )
+    }
+    expect(
+      store
+        .stableSurfaces(new Date(fixedNow().getTime() + 1_000).toISOString())
+        .map((surface) => surface.id),
+    ).not.toContain('srf-system-legacy')
+  })
+
+  it('rejects every generic Agent Surface write into the System Space without side effects', async () => {
+    const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+    ensureSystemSpace(store.spacesEngine)
+    const legacy = SurfaceSchema.parse({
+      ...checklistSurface('srf-system-legacy-write', 1),
+      spaceId: SYSTEM_SPACE_ID,
+    })
+    const storedLegacy = store.createSurface(legacy, 'job')
+    const tools = store.surfaceTools()
+    const eventsBefore = store.eventLog(SYSTEM_SPACE_ID)
+
+    await expect(
+      runTool(tools, 'create_surface', {
+        id: 'srf-system-agent-create',
+        spaceId: SYSTEM_SPACE_ID,
+        title: 'Personal notes',
+        tree: { id: 'root', type: 'Box', children: [] },
+        state: {},
+      }),
+    ).rejects.toBeInstanceOf(SurfaceOwnershipError)
+    await expect(
+      runTool(tools, 'patch_state', {
+        surfaceId: legacy.id,
+        operations: [{ target: 'state', op: 'replace', path: '/item0', value: true }],
+      }),
+    ).rejects.toBeInstanceOf(SurfaceOwnershipError)
+    await expect(
+      runTool(tools, 'patch_tree', {
+        surfaceId: legacy.id,
+        expectedTreeVersion: 1,
+        operations: [
+          {
+            target: 'tree',
+            op: 'add',
+            path: '/children/1',
+            value: { id: 'note', type: 'Text', props: { text: 'Personal content' } },
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(SurfaceOwnershipError)
+    await expect(
+      runTool(tools, 'archive_surface', { surfaceId: legacy.id }),
+    ).rejects.toBeInstanceOf(SurfaceOwnershipError)
+
+    expect(store.getSurface('srf-system-agent-create')).toBeUndefined()
+    expect(store.getSurface(legacy.id)).toEqual(storedLegacy)
+    expect(store.eventLog(SYSTEM_SPACE_ID)).toEqual(eventsBefore)
   })
 
   it('exposes Agent tools for create_surface, patch_state, patch_tree and archive_surface', async () => {
