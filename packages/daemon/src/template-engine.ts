@@ -2,6 +2,7 @@ import { z } from 'zod'
 import {
   AtomNodeSchema,
   JsonObjectSchema,
+  SYSTEM_SPACE_ID,
   SurfaceTemplateIdSchema,
   type ChatTurnCorrelation,
   type JsonObject,
@@ -189,9 +190,11 @@ export class TemplateEngine {
    * Locks or unlocks a Surface's tree via `Store.setPinned`, threading
    * `options` through unchanged. Pinning also saves a Template for that
    * Surface (`savedBy: 'pin'`), idempotent by tree shape exactly like
-   * `harvest`. Unpinning never saves one. `options.updatedBy` excludes
-   * `'job'`: a daemon-owned Surface manager writing as `job` has no
-   * business pinning or unpinning a Surface it does not own.
+   * `harvest`. System Space pinning remains only a presentation preference,
+   * so its Gateway-owned composition is never saved as a Template. Unpinning
+   * never saves one. `options.updatedBy` excludes `'job'`: a daemon-owned
+   * Surface manager writing as `job` has no business pinning or unpinning a
+   * Surface it does not own.
    */
   pin(
     surfaceId: string,
@@ -315,7 +318,8 @@ export class TemplateEngine {
 
   /**
    * Shared by `harvest` and `pin`: derives a Template from `surface`,
-   * skips the save when one already exists in `spaceId` at the same tree
+   * excluding the Gateway-owned System Space, and skips the save when one
+   * already exists in `spaceId` at the same tree
    * shape *and* the same normalized intent (`treeHash` over the *reduced*
    * tree, paired with `normalizedIntent` over the Template's own `intent` —
    * the same two values `templateIdEntropy` folds together for the
@@ -341,6 +345,7 @@ export class TemplateEngine {
     savedBy: 'pin' | 'stability',
     templatesBySpace: Map<string, SurfaceTemplate[]>,
   ): SurfaceTemplate | undefined {
+    if (surface.spaceId === SYSTEM_SPACE_ID) return undefined
     const provenance = this.store.surfaceProvenance(surface.id)
     const contentOrigin = provenance?.contentOrigin ?? 'trusted:user'
     const origin = effectiveOrigin([contentOrigin], 'trusted:system')

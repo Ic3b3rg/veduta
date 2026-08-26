@@ -910,6 +910,7 @@ export class SurfaceEngine {
         version.treeVersion,
       )
     }
+    this.assertWritableByAgent(surfaceId, options.updatedBy)
 
     if (options.bypassPin !== true) {
       const current = this.requireActiveSurface(surfaceId)

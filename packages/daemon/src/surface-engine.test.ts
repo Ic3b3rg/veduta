@@ -142,7 +142,12 @@ describe('Surface engine store', () => {
       ...checklistSurface('srf-system-legacy-write', 1),
       spaceId: SYSTEM_SPACE_ID,
     })
-    const storedLegacy = store.createSurface(legacy, 'job')
+    store.createSurface(legacy, 'job')
+    store.setPinnedWithOrder(legacy.id, true, {
+      origin: 'trusted:user',
+      updatedBy: 'user',
+    })
+    const storedLegacy = store.getSurface(legacy.id)!
     const tools = store.surfaceTools()
     const eventsBefore = store.eventLog(SYSTEM_SPACE_ID)
 
@@ -181,6 +186,7 @@ describe('Surface engine store', () => {
 
     expect(store.getSurface('srf-system-agent-create')).toBeUndefined()
     expect(store.getSurface(legacy.id)).toEqual(storedLegacy)
+    expect(store.listTreeProposals({ surfaceId: legacy.id })).toEqual([])
     expect(store.eventLog(SYSTEM_SPACE_ID)).toEqual(eventsBefore)
   })
 

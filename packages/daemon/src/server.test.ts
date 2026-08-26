@@ -2153,6 +2153,7 @@ describe('POST /api/surfaces/:id/pin (issues/022-emergent-templates.md)', () => 
     expect(systemSurface?.pinnable).toBe(true)
 
     const eventsBeforePin = store.eventLog(SYSTEM_SPACE_ID).length
+    const templatesBeforePin = store.spacesEngine.listTemplates(SYSTEM_SPACE_ID)
     const pin = await app.inject({
       method: 'POST',
       url: `/api/surfaces/${ALLOWLIST_SURFACE_ID}/pin`,
@@ -2170,6 +2171,13 @@ describe('POST /api/surfaces/:id/pin (issues/022-emergent-templates.md)', () => 
         payload: { surfaceId: ALLOWLIST_SURFACE_ID, pinned: true },
       }),
     )
+    expect(store.spacesEngine.listTemplates(SYSTEM_SPACE_ID)).toEqual(templatesBeforePin)
+    expect(
+      store
+        .eventLog(SYSTEM_SPACE_ID)
+        .slice(eventsBeforePin)
+        .some((event) => event.type === 'template.saved'),
+    ).toBe(false)
 
     const regular = store.surfaceOrder(SYSTEM_SPACE_ID).regularSurfaceIds
     const moveTarget = regular[1]
