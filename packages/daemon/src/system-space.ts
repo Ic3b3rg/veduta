@@ -1,7 +1,13 @@
-import { SpaceSchema, type Space, type Surface, type SurfaceSnapshot } from '@veduta/protocol'
+import {
+  SYSTEM_SPACE_ID,
+  SpaceSchema,
+  type Space,
+  type Surface,
+  type SurfaceSnapshot,
+} from '@veduta/protocol'
 import type { SpacesEngine } from './spaces-engine.ts'
 
-export const SYSTEM_SPACE_ID = 'spc-system'
+export { SYSTEM_SPACE_ID } from '@veduta/protocol'
 const SYSTEM_SPACE_SLUG = 'system'
 const SYSTEM_SPACE_NAME = 'System'
 
@@ -19,14 +25,7 @@ const SYSTEM_SPACE_NAME = 'System'
  * synthesizing one.
  */
 export function ensureSystemSpace(spacesEngine: SpacesEngine): Space {
-  const existing = spacesEngine.getSpace(SYSTEM_SPACE_ID)
-  if (!existing) {
-    return spacesEngine.createSpace({ name: SYSTEM_SPACE_NAME, slug: SYSTEM_SPACE_SLUG })
-  }
-  if (existing.archived) {
-    return spacesEngine.restoreSpace(SYSTEM_SPACE_ID)
-  }
-  return existing
+  return spacesEngine.ensureSystemSpace({ name: SYSTEM_SPACE_NAME, slug: SYSTEM_SPACE_SLUG })
 }
 
 /**

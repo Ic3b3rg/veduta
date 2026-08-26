@@ -11,10 +11,8 @@ import { untrustedOrigin, type Origin } from './taint.ts'
  * refresh only ever replaces a stable set of tree paths. Lives in the
  * System Space, daemon-owned (`UpdateManager` is the sole writer, never the
  * Agent — an update is a code-level decision, not something to reason
- * about), which also makes it non-pinnable: `SurfaceEngine.createSurface`
- * derives `pinnable: !daemonOwned` unconditionally (surface-engine.ts), so
- * `daemonOwned: true` alone is what keeps this un-pinnable — there is
- * nothing else to pass.
+ * about). It remains user-pinnable because System-Space Pin and ordering are
+ * presentation preferences that do not transfer content ownership.
  */
 export const UPDATE_SURFACE_ID = 'srf-update'
 

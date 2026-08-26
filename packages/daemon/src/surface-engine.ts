@@ -49,6 +49,7 @@ import {
   validityAfterStatePatch,
   type RelativeTimeAuthoring,
 } from './relative-time-surface.ts'
+import { isSurfacePinnable } from './surface-pinnability.ts'
 import {
   agentTurnFromRow,
   surfaceEngineEventFromRow,
@@ -212,14 +213,13 @@ export class SurfaceOwnershipError extends Error {
 }
 
 /**
- * Raised by `setPinned` when the target Surface is daemon-owned (approval
- * cards, trust admin Surfaces — never user-pinnable, mirroring
- * `SurfaceSchema.pinnable`) or does not exist. Checked before any write
- * transaction opens, so a refused pin has no side effects at all.
+ * Raised by `setPinned` when the target Surface is unknown or not eligible
+ * for user pinning. Gateway-owned System Surfaces are the deliberate
+ * daemon-owned exception because their pin is a presentation preference.
  */
 export class SurfaceNotPinnableError extends Error {
   constructor(readonly surfaceId: string) {
-    super(`Surface ${surfaceId} is daemon-owned or unknown and cannot be pinned`)
+    super(`Surface ${surfaceId} is not pinnable or unknown`)
     this.name = 'SurfaceNotPinnableError'
   }
 }
@@ -573,8 +573,9 @@ export class SurfaceEngine {
    * Locks or unlocks a Surface's tree (`issues/022-emergent-templates.md`),
    * appending `surface.pin` to the Space's Event log inside the same write
    * transaction as the column update (ADR-0003: no silent state change).
-   * Refuses a daemon-owned or unknown Surface with `SurfaceNotPinnableError`
-   * before any transaction opens.
+   * Refuses an unknown or non-pinnable Surface with `SurfaceNotPinnableError`
+   * before any transaction opens. Gateway-owned System Surfaces stay
+   * pinnable because this mutation changes presentation, not ownership.
    *
    * `updatedBy`/`origin` come from the caller: a
    * hardcoded `updatedBy: 'user'`/`origin: 'trusted:user'` would let a
@@ -1459,11 +1460,10 @@ export class SurfaceEngine {
       },
       ...(validity === undefined ? {} : { validity }),
       // A Surface is never born pinned — only `setPinned`, after creation,
-      // can pin it — and `pinnable` mirrors ownership from the moment the
-      // Surface exists, so the object `createSurface` returns already
-      // matches what `surfaceFromRow` would derive after a reload.
+      // can pin it. Daemon ownership normally makes it non-pinnable, except
+      // inside the canonical System Space where pinning is presentation.
       pinned: false,
-      pinnable: !daemonOwned,
+      pinnable: isSurfacePinnable(daemonOwned, input.spaceId),
     })
   }
 
@@ -1511,13 +1511,20 @@ export class SurfaceEngine {
   }
 
   /**
-   * The refusal check backing `SurfaceNotPinnableError`'s daemon-owned case:
-   * checked before any transaction opens, so a refused pin has no side
-   * effects. The unknown-Surface case is checked inside the write
-   * transaction (`setPinned`), where the row is fetched anyway.
+   * Refuses daemon-owned Surfaces outside the canonical System Space before
+   * any transaction opens. The unknown-Surface case is checked inside the
+   * write transaction (`setPinned`), where the row is fetched anyway.
    */
   private assertPinnable(surfaceId: string): void {
-    if (this.isDaemonOwned(surfaceId)) throw new SurfaceNotPinnableError(surfaceId)
+    const row = this.db
+      .prepare('select daemon_owned, space_id from surfaces where id = ?')
+      .get(surfaceId)
+    if (
+      row !== undefined &&
+      !isSurfacePinnable(requiredNumber(row, 'daemon_owned') === 1, requiredString(row, 'space_id'))
+    ) {
+      throw new SurfaceNotPinnableError(surfaceId)
+    }
   }
 
   private requireVersion(id: string): SurfaceVersion {

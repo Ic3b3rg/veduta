@@ -48,7 +48,7 @@ export {
   type SurfaceRelativeTimeStatus,
   type NodeBindingRef,
 } from './surface.ts'
-export { SpaceSchema, type Space } from './space.ts'
+export { SYSTEM_SPACE_ID, SpaceSchema, type Space } from './space.ts'
 export {
   PendingDecisionKindSchema,
   PendingDecisionResolutionSchema,

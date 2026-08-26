@@ -19,6 +19,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import {
+  SYSTEM_SPACE_ID,
   SpaceSchema,
   SurfaceSchema,
   SurfaceTemplateIdSchema,
@@ -148,8 +149,38 @@ export class SpacesEngine {
     return this.listAllSpaces().find((space) => space.id === spaceId)
   }
 
+  /** Gateway boot's only path for materializing or repairing the canonical System Space. */
+  ensureSystemSpace(input: { name: string; slug: string }): Space {
+    const existing = this.getSpace(SYSTEM_SPACE_ID)
+    if (existing) {
+      if (!existing.archived) return existing
+      const restored = SpaceSchema.parse({ ...existing, archived: false })
+      this.writeSpace(restored)
+      this.appendEvent(restored.id, {
+        type: 'lifecycle',
+        text: 'Restored System Space',
+        origin: 'trusted:system',
+      })
+      return restored
+    }
+
+    const space = SpaceSchema.parse({
+      id: SYSTEM_SPACE_ID,
+      slug: this.uniqueSlug(input.slug),
+      name: input.name.trim(),
+      archived: false,
+    })
+    this.initializeSpace(space)
+    this.appendEvent(space.id, {
+      type: 'lifecycle',
+      text: `Created Space "${space.name}"`,
+      origin: 'trusted:system',
+    })
+    return space
+  }
+
   createSpace(input: { name: string; slug?: string; instructions?: string }): Space {
-    const slug = this.uniqueSlug(input.slug ?? slugify(input.name))
+    const slug = this.uniqueUserSpaceSlug(input.slug ?? slugify(input.name))
     const space = SpaceSchema.parse({
       id: `spc-${slug}`,
       slug,
@@ -166,7 +197,7 @@ export class SpacesEngine {
   }
 
   proposeSpace(input: { name: string; reason: string }): SpaceProposal {
-    const slug = this.uniqueSlug(slugify(input.name))
+    const slug = this.uniqueUserSpaceSlug(slugify(input.name))
     return this.proposals.create({
       name: input.name.trim(),
       slug,
@@ -206,14 +237,18 @@ export class SpacesEngine {
   }
 
   archiveSpace(spaceId: string): Space {
+    this.assertOrdinarySpaceLifecycle(spaceId, 'archive')
     return this.updateSpace(spaceId, { archived: true }, 'Archived Space')
   }
 
   restoreSpace(spaceId: string): Space {
+    this.assertOrdinarySpaceLifecycle(spaceId, 'restore')
     return this.updateSpace(spaceId, { archived: false }, 'Restored Space')
   }
 
   mergeSpaces(targetSpaceId: string, sourceSpaceId: string): Space {
+    this.assertOrdinarySpaceLifecycle(targetSpaceId, 'merge')
+    this.assertOrdinarySpaceLifecycle(sourceSpaceId, 'merge')
     if (targetSpaceId === sourceSpaceId) throw new Error('cannot merge a Space into itself')
     const target = this.requireSpace(targetSpaceId)
     const source = this.requireSpace(sourceSpaceId)
@@ -903,6 +938,21 @@ export class SpacesEngine {
     for (let index = 2; ; index += 1) {
       const candidate = `${base}-${index}`
       if (!existing.has(candidate)) return candidate
+    }
+  }
+
+  /** Ordinary creation may use any presentation slug except one that would mint the canonical id. */
+  private uniqueUserSpaceSlug(baseSlug: string): string {
+    const slug = this.uniqueSlug(baseSlug)
+    return `spc-${slug}` === SYSTEM_SPACE_ID ? this.uniqueSlug(`${slug}-2`) : slug
+  }
+
+  private assertOrdinarySpaceLifecycle(
+    spaceId: string,
+    operation: 'archive' | 'restore' | 'merge',
+  ): void {
+    if (spaceId === SYSTEM_SPACE_ID) {
+      throw new Error(`Cannot ${operation}: System Space lifecycle is Gateway-owned`)
     }
   }
 

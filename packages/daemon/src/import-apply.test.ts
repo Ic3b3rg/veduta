@@ -10,7 +10,12 @@ import {
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
-import type { ImportItem, ImportOptions, ImportPlan } from '@veduta/protocol'
+import {
+  SYSTEM_SPACE_ID,
+  type ImportItem,
+  type ImportOptions,
+  type ImportPlan,
+} from '@veduta/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { restoreBackup } from './backup.ts'
 import {
@@ -572,6 +577,51 @@ describe('applyImport — note dates', () => {
 })
 
 describe('applyImport — slug reconciliation', () => {
+  it('never reuses the canonical System Space when its presentation slug is imported', async () => {
+    const sourceDir = buildHermesFixture()
+    const rootDir = freshDir('veduta-apply-target-')
+    const seededEngine = new SpacesEngine({
+      rootDir,
+      seed: {
+        spaces: [
+          {
+            id: SYSTEM_SPACE_ID,
+            name: 'Controls',
+            slug: IMPORTED_SPACE_SLUG,
+            archived: false,
+          },
+        ],
+        surfaces: [],
+      },
+    })
+    const systemEvents = seededEngine.readRecent(SYSTEM_SPACE_ID, Number.MAX_SAFE_INTEGER)
+    const read = readHermesFixture(sourceDir)
+
+    const result = await applyImport(
+      { rootDir, keyMaterial: KEY_MATERIAL },
+      {
+        snapshot: read.snapshot,
+        secrets: read.secrets,
+        options: { overwrite: false, secrets: false },
+      },
+    )
+
+    const reopened = new SpacesEngine({ rootDir })
+    if (!result.spaceId) throw new Error('expected an imported Space')
+    expect(result.spaceId).not.toBe(SYSTEM_SPACE_ID)
+    expect(reopened.getSpace(result.spaceId)).toMatchObject({
+      id: 'spc-imported-2',
+      slug: 'imported-2',
+    })
+    expect(reopened.getSpace(SYSTEM_SPACE_ID)).toMatchObject({
+      name: 'Controls',
+      slug: IMPORTED_SPACE_SLUG,
+      archived: false,
+    })
+    expect(reopened.readFacts(SYSTEM_SPACE_ID).active).toEqual([])
+    expect(reopened.readRecent(SYSTEM_SPACE_ID, Number.MAX_SAFE_INTEGER)).toEqual(systemEvents)
+  })
+
   it('reuses the imported Space by slug on a second (--overwrite) apply, never creating imported-2', async () => {
     const sourceDir = buildHermesFixture()
     const rootDir = freshDir('veduta-apply-target-')

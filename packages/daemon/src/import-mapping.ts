@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import type { ImportSourceKind } from '@veduta/protocol'
+import { SYSTEM_SPACE_ID, type ImportSourceKind } from '@veduta/protocol'
 import { defaultRedactor } from './redaction.ts'
 import { defaultSoul } from './spaces-engine.ts'
 import { neutralizeDelimiters, untrustedDataBlock } from './taint.ts'
@@ -136,8 +136,11 @@ function readImportedSpaceExists(rootDir: string): boolean {
   const path = join(rootDir, 'spaces', IMPORTED_SPACE_SLUG, 'SPACE.json')
   if (!existsSync(path)) return false
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as { archived?: unknown }
-    return parsed.archived !== true
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as {
+      id?: unknown
+      archived?: unknown
+    }
+    return parsed.id !== SYSTEM_SPACE_ID && parsed.archived !== true
   } catch {
     return true
   }

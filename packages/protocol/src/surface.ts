@@ -73,9 +73,9 @@ const SurfaceObjectSchema = z.object({
   /** The user locked this Surface's tree; the Agent may still patch state. */
   pinned: z.boolean().default(false),
   /**
-   * False for daemon-owned Surfaces (approval cards, admin Surfaces) and the
-   * projected FACTS Surface, so no client renders a pin toggle the daemon
-   * would refuse.
+   * False for Surfaces whose ownership or projection makes pinning invalid.
+   * Gateway-owned System Surfaces may still expose true because their Pin is
+   * an ordinary presentation preference.
    */
   pinnable: z.boolean().default(true),
   /**

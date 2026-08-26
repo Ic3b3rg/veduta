@@ -36,6 +36,25 @@ describe('appendSystemSurface', () => {
 })
 
 describe('ensureSystemSpace', () => {
+  it('reserves the canonical identity from ordinary creation before boot materializes it', () => {
+    const spacesEngine = new SpacesEngine()
+
+    const userAuthored = spacesEngine.createSpace({ name: 'System', slug: 'system' })
+    const proposal = spacesEngine.proposeSpace({
+      name: 'System',
+      reason: 'The user chose this presentation name.',
+    })
+    const system = ensureSystemSpace(spacesEngine)
+
+    expect(userAuthored).toMatchObject({ id: 'spc-system-2', slug: 'system-2', name: 'System' })
+    expect(proposal.spaceId).not.toBe(SYSTEM_SPACE_ID)
+    expect(proposal.slug).not.toBe('system')
+    expect(system).toMatchObject({ id: SYSTEM_SPACE_ID, slug: 'system', name: 'System' })
+    expect(
+      spacesEngine.listAllSpaces().filter((space) => space.id === SYSTEM_SPACE_ID),
+    ).toHaveLength(1)
+  })
+
   it('creates the persisted System Space when missing', () => {
     const spacesEngine = new SpacesEngine()
     expect(spacesEngine.getSpace(SYSTEM_SPACE_ID)).toBeUndefined()
@@ -47,9 +66,12 @@ describe('ensureSystemSpace', () => {
   })
 
   it('restores the System Space when it exists but is archived', () => {
-    const spacesEngine = new SpacesEngine()
-    spacesEngine.createSpace({ name: 'System', slug: 'system' })
-    spacesEngine.archiveSpace(SYSTEM_SPACE_ID)
+    const spacesEngine = new SpacesEngine({
+      seed: {
+        spaces: [{ id: SYSTEM_SPACE_ID, name: 'System', slug: 'system', archived: true }],
+        surfaces: [],
+      },
+    })
     expect(spacesEngine.getSpace(SYSTEM_SPACE_ID)).toMatchObject({ archived: true })
 
     const space = ensureSystemSpace(spacesEngine)
@@ -70,6 +92,38 @@ describe('ensureSystemSpace', () => {
     expect(spacesEngine.readRecent(SYSTEM_SPACE_ID, Number.MAX_SAFE_INTEGER)).toEqual(
       eventsAfterCreate,
     )
+  })
+
+  it('refuses ordinary lifecycle mutations by identity despite changed presentation values', () => {
+    const spacesEngine = new SpacesEngine({
+      seed: {
+        spaces: [
+          {
+            id: SYSTEM_SPACE_ID,
+            name: 'Controls',
+            slug: 'controls',
+            archived: false,
+          },
+        ],
+        surfaces: [],
+      },
+    })
+    const system = ensureSystemSpace(spacesEngine)
+    const health = spacesEngine.createSpace({ name: 'Health' })
+    const systemEvents = spacesEngine.readRecent(SYSTEM_SPACE_ID, Number.MAX_SAFE_INTEGER)
+
+    for (const mutation of [
+      () => spacesEngine.archiveSpace(SYSTEM_SPACE_ID),
+      () => spacesEngine.restoreSpace(SYSTEM_SPACE_ID),
+      () => spacesEngine.mergeSpaces(SYSTEM_SPACE_ID, health.id),
+      () => spacesEngine.mergeSpaces(health.id, SYSTEM_SPACE_ID),
+    ]) {
+      expect(mutation).toThrow(/System Space lifecycle is Gateway-owned/)
+    }
+
+    expect(system).toMatchObject({ name: 'Controls', slug: 'controls', archived: false })
+    expect(spacesEngine.getSpace(health.id)).toMatchObject({ archived: false })
+    expect(spacesEngine.readRecent(SYSTEM_SPACE_ID, Number.MAX_SAFE_INTEGER)).toEqual(systemEvents)
   })
 
   it('keeps appendSystemSurface merging into the now-persisted System Space', () => {

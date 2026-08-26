@@ -18,7 +18,7 @@ import type {
   ImportPlan,
   ImportResult,
 } from '@veduta/protocol'
-import { ImportResultSchema } from '@veduta/protocol'
+import { SYSTEM_SPACE_ID, ImportResultSchema } from '@veduta/protocol'
 import { createBackup } from './backup.ts'
 import { backupFile } from './config-backup.ts'
 import type { CuratorOperation } from './facts.ts'
@@ -293,7 +293,9 @@ function populateImportedSpace(
   let eventsAppended = 0
 
   if (hasSpaceWork) {
-    const existing = spacesEngine.listSpaces().find((space) => space.slug === IMPORTED_SPACE_SLUG)
+    const existing = spacesEngine
+      .listSpaces()
+      .find((space) => space.id !== SYSTEM_SPACE_ID && space.slug === IMPORTED_SPACE_SLUG)
     const space =
       existing ??
       spacesEngine.createSpace({

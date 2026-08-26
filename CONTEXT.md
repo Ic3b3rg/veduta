@@ -11,7 +11,7 @@ Namespace for a life area (Health, Work, Home...): holds dedicated memory, Surfa
 _Avoid_: division, project, area agent, workspace
 
 **System Space**:
-The one always-active, Gateway-owned Space for Veduta's own status and controls, separate from user-created life-area Spaces. Every visible Surface there is daemon-owned durable living state; the Agent cannot create ordinary Surfaces or write Space memory there.
+The one always-active, Gateway-owned Space for Veduta's own status and controls, separate from user-created life-area Spaces. It is identified only by the shared `spc-system` identity; its name and slug are presentation values. Gateway boot alone creates or repairs it, while ordinary creation, import, rename, archive, and merge lifecycle paths cannot replace or target it. The PWA may place it in a secondary fixed-shell group by that identity but still renders its validated Atom trees through the catalog. Every visible Surface there is daemon-owned durable living state; the Agent cannot create ordinary Surfaces or write Space memory there. User Pin and ordering remain ordinary evented presentation preferences.
 _Avoid_: admin page, settings dashboard, system workspace
 
 **Surface**:

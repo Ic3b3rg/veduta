@@ -12,14 +12,17 @@ import {
 } from '@veduta/protocol'
 import { z } from 'zod'
 import type { QueuedAgentTurn, SurfaceEngineEvent, TreeProposal } from './surface-engine.ts'
+import { isSurfacePinnable } from './surface-pinnability.ts'
 import { optionalString, requiredNumber, requiredString } from './sqlite-rows.ts'
 import { isValidOrigin } from './taint.ts'
 
 export function surfaceFromRow(row: Record<string, unknown>): Surface {
   const validity = optionalString(row, 'validity_json')
+  const spaceId = requiredString(row, 'space_id')
+  const daemonOwned = requiredNumber(row, 'daemon_owned') === 1
   return SurfaceSchema.parse({
     id: requiredString(row, 'id'),
-    spaceId: requiredString(row, 'space_id'),
+    spaceId,
     title: requiredString(row, 'title'),
     tree: JSON.parse(requiredString(row, 'tree_json')),
     state: JSON.parse(requiredString(row, 'state_json')),
@@ -28,9 +31,9 @@ export function surfaceFromRow(row: Record<string, unknown>): Surface {
       updatedBy: requiredString(row, 'updated_by'),
     },
     pinned: requiredNumber(row, 'pinned') === 1,
-    // Daemon-owned Surfaces are never pinnable, so clients do not render a
-    // toggle for a mutation the daemon would refuse.
-    pinnable: requiredNumber(row, 'daemon_owned') === 0,
+    // Gateway-owned System Surfaces remain pinnable as an ordinary
+    // presentation preference; other daemon-owned Surfaces stay protected.
+    pinnable: isSurfacePinnable(daemonOwned, spaceId),
     ...(validity === undefined ? {} : { validity: JSON.parse(validity) }),
   })
 }

@@ -10,12 +10,14 @@ import {
   PendingDecisionListSchema,
   PendingDecisionResolveResultSchema,
   PinSurfaceResultSchema,
+  SYSTEM_SPACE_ID,
   SurfaceSchema,
   SurfaceSnapshotSchema,
   type GatewayServerMessage,
   type Surface,
 } from '@veduta/protocol'
 import { describe, expect, it, vi } from 'vitest'
+import { ALLOWLIST_SURFACE_ID } from './allowlist-surface.ts'
 import { AuthStore, type PasskeyRelyingParty, type StoredPasskey } from './auth-store.ts'
 import { NoAvailableModelError, loadRoutingConfig, saveRoutingConfig } from './model-routing.ts'
 import { NOTIFICATION_SETTINGS_SURFACE_ID } from './notification-settings-surface.ts'
@@ -25,7 +27,7 @@ import { reflectionSurfaceId } from './reflection-surface.ts'
 import { SecretsVault } from './secrets-vault.ts'
 import { PiJsonlSessionStore } from './pi-agent-runner.ts'
 import { buildServer } from './server.ts'
-import { SYSTEM_SPACE_ID } from './system-space.ts'
+import { SpacesEngine } from './spaces-engine.ts'
 import { treeProposalSurfaceId } from './tree-proposal.ts'
 import { CURRENT_DATA_VERSION } from './update/data-version.ts'
 import { generateKeypair } from './update/minisign.ts'
@@ -91,7 +93,7 @@ describe('GET /api/spaces', () => {
     expect(res.statusCode).toBe(200)
     const body = res.json() as {
       surfaceCursor: number
-      spaces: { slug: string; surfaces: unknown[] }[]
+      spaces: { id: string; slug: string; surfaces: unknown[] }[]
     }
     // Boot pre-creates several cursor-bearing Surfaces: the scheduler's
     // Automations Surface for every persisted Space (health, and now the
@@ -109,9 +111,49 @@ describe('GET /api/spaces', () => {
     // pre-created for the Health Space (1 more tick).
     expect(body.surfaceCursor).toBe(13)
     expect(body.spaces.map((s) => s.slug)).toEqual(['health', 'system'])
+    expect(body.spaces.filter((space) => space.id === SYSTEM_SPACE_ID)).toHaveLength(1)
     for (const surface of body.spaces.flatMap((space) => space.surfaces)) {
       expect(SurfaceSchema.safeParse(surface).success).toBe(true)
     }
+  })
+
+  it('repairs one archived canonical System Space at Gateway boot without replacing it', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-system-space-'))
+    new SpacesEngine({
+      rootDir: dataDir,
+      seed: {
+        spaces: [
+          {
+            id: 'spc-health',
+            name: 'Health',
+            slug: 'health',
+            archived: false,
+          },
+          {
+            id: SYSTEM_SPACE_ID,
+            name: 'Controls',
+            slug: 'controls',
+            archived: true,
+          },
+        ],
+        surfaces: [],
+      },
+    })
+
+    const { app, store } = buildServer({ dataDir })
+
+    expect(
+      store.spacesEngine.listAllSpaces().filter((space) => space.id === SYSTEM_SPACE_ID),
+    ).toEqual([expect.objectContaining({ name: 'Controls', slug: 'controls', archived: false })])
+    expect(store.eventLog(SYSTEM_SPACE_ID)).toContainEqual(
+      expect.objectContaining({
+        type: 'lifecycle',
+        text: 'Restored System Space',
+        origin: 'trusted:system',
+      }),
+    )
+
+    await app.close()
   })
 
   it('exposes the model usage Surface in the System space (BYOK transparency)', async () => {
@@ -120,9 +162,9 @@ describe('GET /api/spaces', () => {
 
     const res = await app.inject({ method: 'GET', url: '/api/spaces' })
     const body = res.json() as {
-      spaces: { slug: string; surfaces: { id: string; tree: unknown }[] }[]
+      spaces: { id: string; surfaces: { id: string; tree: unknown }[] }[]
     }
-    const system = body.spaces.find((space) => space.slug === 'system')
+    const system = body.spaces.find((space) => space.id === SYSTEM_SPACE_ID)
     const usage = system?.surfaces.find((surface) => surface.id === 'srf-usage')
     expect(usage).toBeDefined()
     expect(JSON.stringify(usage?.tree)).toContain('$2.00')
@@ -1390,8 +1432,8 @@ describe('trust layer wiring (issue #14)', () => {
   it('boots the System Space with the allowlist and audit admin Surfaces', async () => {
     const { app } = buildServer()
     const res = await app.inject({ method: 'GET', url: '/api/spaces' })
-    const body = res.json() as { spaces: { slug: string; surfaces: { id: string }[] }[] }
-    const system = body.spaces.find((space) => space.slug === 'system')
+    const body = res.json() as { spaces: { id: string; surfaces: { id: string }[] }[] }
+    const system = body.spaces.find((space) => space.id === SYSTEM_SPACE_ID)
     expect(system?.surfaces.some((surface) => surface.id === 'srf-trust-allowlist')).toBe(true)
     expect(system?.surfaces.some((surface) => surface.id === 'srf-trust-audit')).toBe(true)
     await app.close()
@@ -1977,6 +2019,55 @@ describe('memory engines wiring (issues/021-advanced-memory.md)', () => {
 })
 
 describe('POST /api/surfaces/:id/pin (issues/022-emergent-templates.md)', () => {
+  it('allows daemon-owned System Surfaces to be pinned and ordered with Space Events', async () => {
+    const { app, store } = buildServer()
+    const systemSurface = store.getSurface(ALLOWLIST_SURFACE_ID)
+    expect(store.isSurfaceDaemonOwned(ALLOWLIST_SURFACE_ID)).toBe(true)
+    expect(systemSurface?.spaceId).toBe(SYSTEM_SPACE_ID)
+    expect(systemSurface?.pinnable).toBe(true)
+
+    const eventsBeforePin = store.eventLog(SYSTEM_SPACE_ID).length
+    const pin = await app.inject({
+      method: 'POST',
+      url: `/api/surfaces/${ALLOWLIST_SURFACE_ID}/pin`,
+      payload: { pinned: true },
+    })
+
+    expect(pin.statusCode).toBe(200)
+    expect(PinSurfaceResultSchema.parse(pin.json())).toMatchObject({
+      changed: true,
+      surface: { id: ALLOWLIST_SURFACE_ID, spaceId: SYSTEM_SPACE_ID, pinned: true },
+    })
+    expect(store.eventLog(SYSTEM_SPACE_ID).slice(eventsBeforePin)).toContainEqual(
+      expect.objectContaining({
+        type: 'surface.pin',
+        payload: { surfaceId: ALLOWLIST_SURFACE_ID, pinned: true },
+      }),
+    )
+
+    const regular = store.surfaceOrder(SYSTEM_SPACE_ID).regularSurfaceIds
+    const moveTarget = regular[1]
+    if (!moveTarget) throw new Error('expected two regular System Surfaces')
+    expect(store.isSurfaceDaemonOwned(moveTarget)).toBe(true)
+    const eventsBeforeMove = store.eventLog(SYSTEM_SPACE_ID).length
+
+    const move = await app.inject({
+      method: 'POST',
+      url: `/api/spaces/${SYSTEM_SPACE_ID}/surfaces/${moveTarget}/move`,
+      payload: { direction: 'up' },
+    })
+
+    expect(move.statusCode).toBe(200)
+    expect(store.eventLog(SYSTEM_SPACE_ID).slice(eventsBeforeMove)).toContainEqual(
+      expect.objectContaining({
+        type: 'surface.move',
+        payload: { surfaceId: moveTarget, direction: 'up' },
+      }),
+    )
+
+    await app.close()
+  })
+
   it('returns and snapshots the canonical newest-first lifecycle order (issue #108)', async () => {
     const { app, store } = buildServer()
     store.createSurface(templateTestSurface('srf-order-a-older'), 'agent')

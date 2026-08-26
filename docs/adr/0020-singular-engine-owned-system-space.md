@@ -7,12 +7,14 @@ daemon-local, generic lifecycle and Agent paths can still target the Space, and 
 Connected devices are appended while serving a snapshot instead of following the persisted Surface
 lifecycle.
 
-The protocol therefore owns the canonical `spc-system` identity. The Gateway guarantees exactly
-one active Space with that identity and is its only content and lifecycle owner. Name and slug are
-presentation values, never classification; no configurable kind flag or parallel System Space
-schema is introduced. Boot may create a missing instance or repair an archived development
-instance, while ordinary creation, import, rename, archive, and merge operations cannot replace it
-or target it as either merge participant.
+The protocol therefore owns `SYSTEM_SPACE_ID`, whose one canonical value is `spc-system`. The
+Gateway guarantees exactly one active Space with that identity and is its only content and
+lifecycle owner. Name and slug are presentation values, never classification; no configurable kind
+flag or parallel System Space schema is introduced. The boot materializer is the only path allowed
+to create a missing instance or repair an archived development instance. Ordinary creation and
+import cannot claim the identity; exposed archive, restore, and merge paths compare it and refuse
+before writing, with merge refusing it as either source or target. Any rename path must enforce the
+same identity boundary.
 
 An Agent turn scoped to the System Space remains conversational but receives only safe status reads
 and explicit Gateway operations. It cannot create ordinary Surfaces, patch their content
@@ -30,9 +32,10 @@ explicit stale or error state and last successful timestamp, and repairs the sam
 after recovery. Reading the Space snapshot never creates or refreshes System content.
 
 The PWA may use only the shared Space identity to place the canonical System Space in a visually
-secondary fixed-shell group. It never interprets individual System Surface identities and never
-introduces a bespoke renderer, generated route, or generated markup; all content remains generic
-validated GenUI.
+secondary fixed-shell group. Pinning and ordering its daemon-owned Surfaces remain ordinary
+evented presentation preferences. The PWA never interprets individual System Surface identities
+and never introduces a bespoke renderer, generated route, or generated markup; all content
+remains generic validated GenUI.
 
 Veduta has no production installations at the time of this decision, so no permanent migration for
 legacy user-authored System content is added. Development state is disposable and will be reset

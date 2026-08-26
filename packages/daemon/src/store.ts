@@ -277,7 +277,7 @@ export class Store {
   }
 
   /**
-   * Locks or unlocks a Surface's tree; refuses a daemon-owned or unknown
+   * Locks or unlocks a Surface's tree; refuses a non-pinnable or unknown
    * Surface. `options.origin`/`options.updatedBy` are the caller's own
    * (never hardcoded here or in `SurfaceEngine.setPinned`) — see that
    * method's docstring for why a hardcoded `trusted:user` would forge a
