@@ -6,7 +6,12 @@ import { describe, expect, it, vi } from 'vitest'
 import type { UsageSnapshot } from './model-routing.ts'
 import { Store } from './store.ts'
 import { ensureSystemSpace, SYSTEM_SPACE_ID } from './system-space.ts'
-import { MODEL_USAGE_SURFACE_ID, UsageSurfaceManager, usageSurface } from './usage-surface.ts'
+import {
+  MODEL_USAGE_SURFACE_ID,
+  type UsageSource,
+  UsageSurfaceManager,
+  usageSurface,
+} from './usage-surface.ts'
 
 const updatedAt = '2026-07-08T10:00:00.000Z'
 
@@ -75,18 +80,9 @@ describe('usageSurface', () => {
 
 describe('UsageSurfaceManager', () => {
   it('materializes one persisted daemon-owned Model usage Surface at boot', () => {
-    const rootDir = mkdtempSync(join(tmpdir(), 'veduta-usage-surface-'))
     const now = () => new Date(updatedAt)
-    const store = new Store({ rootDir, now })
-    ensureSystemSpace(store.spacesEngine)
-    const manager = new UsageSurfaceManager({
-      store,
-      source: {
-        usage: () => snapshot(),
-        onUsageChange: () => () => {},
-      },
-      now,
-    })
+    const harness = createUsageManagerHarness({ now })
+    const { manager, rootDir, store } = harness
 
     manager.start()
 
@@ -100,8 +96,7 @@ describe('UsageSurfaceManager', () => {
         .listSurfaces(SYSTEM_SPACE_ID)
         .filter((surface) => surface.id === MODEL_USAGE_SURFACE_ID),
     ).toHaveLength(1)
-    manager.dispose()
-    store.close()
+    harness.close()
 
     const reopened = new Store({ rootDir, now })
     ensureSystemSpace(reopened.spacesEngine)
@@ -114,25 +109,10 @@ describe('UsageSurfaceManager', () => {
   })
 
   it('refreshes persisted state through the normal Event and live-update lifecycle', () => {
-    const rootDir = mkdtempSync(join(tmpdir(), 'veduta-usage-surface-'))
     const now = () => new Date(updatedAt)
-    const store = new Store({ rootDir, now })
-    ensureSystemSpace(store.spacesEngine)
-    let current = snapshot()
-    let notifyUsageChange = () => {}
-    const manager = new UsageSurfaceManager({
-      store,
-      source: {
-        usage: () => current,
-        onUsageChange: (listener) => {
-          notifyUsageChange = listener
-          return () => {
-            notifyUsageChange = () => {}
-          }
-        },
-      },
-      now,
-    })
+    const source = new MutableUsageSource(snapshot())
+    const harness = createUsageManagerHarness({ now, source })
+    const { manager, store } = harness
     manager.start()
     store.setPinned(MODEL_USAGE_SURFACE_ID, true, {
       origin: 'trusted:user',
@@ -142,13 +122,15 @@ describe('UsageSurfaceManager', () => {
     const liveEvents: ReturnType<Store['surfaceEventsAfter']> = []
     const unsubscribe = store.onSurfaceEvent((event) => liveEvents.push(event))
 
-    current = snapshot({
-      tiers: {
-        triage: { spentUsd: 0.25, capUsd: 5 },
-        reasoning: { spentUsd: 3, capUsd: 20 },
-      },
-    })
-    notifyUsageChange()
+    source.set(
+      snapshot({
+        tiers: {
+          triage: { spentUsd: 0.25, capUsd: 5 },
+          reasoning: { spentUsd: 3, capUsd: 20 },
+        },
+      }),
+    )
+    source.notify()
 
     const refreshed = SurfaceSchema.parse(store.getSurface(MODEL_USAGE_SURFACE_ID))
     expect(refreshed).toMatchObject({
@@ -173,40 +155,21 @@ describe('UsageSurfaceManager', () => {
     ])
 
     unsubscribe()
-    manager.dispose()
-    store.close()
+    harness.close()
   })
 
   it('keeps the last valid values visible through a source failure and repairs in place', () => {
-    const rootDir = mkdtempSync(join(tmpdir(), 'veduta-usage-surface-'))
     let clock = new Date(updatedAt)
     const now = () => clock
-    const store = new Store({ rootDir, now })
-    ensureSystemSpace(store.spacesEngine)
-    let current: UsageSnapshot | Error = snapshot()
-    let notifyUsageChange = () => {}
-    const manager = new UsageSurfaceManager({
-      store,
-      source: {
-        usage: () => {
-          if (current instanceof Error) throw current
-          return current
-        },
-        onUsageChange: (listener) => {
-          notifyUsageChange = listener
-          return () => {
-            notifyUsageChange = () => {}
-          }
-        },
-      },
-      now,
-    })
+    const source = new MutableUsageSource(snapshot())
+    const harness = createUsageManagerHarness({ now, source })
+    const { manager, store } = harness
     manager.start()
     const beforeEvents = store.eventLog(SYSTEM_SPACE_ID).length
 
     clock = new Date('2026-07-08T10:05:00.000Z')
-    current = new Error('provider credential must never be rendered')
-    expect(() => notifyUsageChange()).not.toThrow()
+    source.set(new Error('provider credential must never be rendered'))
+    expect(() => source.notify()).not.toThrow()
 
     const stale = SurfaceSchema.parse(store.getSurface(MODEL_USAGE_SURFACE_ID))
     expect(stale).toMatchObject({
@@ -220,13 +183,15 @@ describe('UsageSurfaceManager', () => {
     expect(JSON.stringify(stale)).not.toContain('provider credential')
 
     clock = new Date('2026-07-08T10:10:00.000Z')
-    current = snapshot({
-      tiers: {
-        triage: { spentUsd: 0.25, capUsd: 5 },
-        reasoning: { spentUsd: 3, capUsd: 20 },
-      },
-    })
-    notifyUsageChange()
+    source.set(
+      snapshot({
+        tiers: {
+          triage: { spentUsd: 0.25, capUsd: 5 },
+          reasoning: { spentUsd: 3, capUsd: 20 },
+        },
+      }),
+    )
+    source.notify()
 
     expect(SurfaceSchema.parse(store.getSurface(MODEL_USAGE_SURFACE_ID))).toMatchObject({
       id: MODEL_USAGE_SURFACE_ID,
@@ -241,20 +206,15 @@ describe('UsageSurfaceManager', () => {
       expect.objectContaining({ type: 'surface.patch_state' }),
     ])
 
-    manager.dispose()
-    store.close()
+    harness.close()
   })
 
   it('refreshes the persisted Surface when the UTC usage day rolls over', async () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026-07-08T23:59:59.900Z'))
-      const rootDir = mkdtempSync(join(tmpdir(), 'veduta-usage-surface-'))
       const now = () => new Date()
-      const store = new Store({ rootDir, now })
-      ensureSystemSpace(store.spacesEngine)
-      const manager = new UsageSurfaceManager({
-        store,
+      const harness = createUsageManagerHarness({
         source: {
           usage: () => {
             const date = now().toISOString().slice(0, 10)
@@ -276,6 +236,7 @@ describe('UsageSurfaceManager', () => {
         },
         now,
       })
+      const { manager, store } = harness
       manager.start()
       const beforeCursor = store.latestSurfaceCursor()
 
@@ -288,45 +249,26 @@ describe('UsageSurfaceManager', () => {
       })
       expect(store.latestSurfaceCursor()).toBe(beforeCursor + 1)
 
-      manager.dispose()
-      store.close()
+      harness.close()
     } finally {
       vi.useRealTimers()
     }
   })
 
   it('does not emit duplicate semantic updates for equivalent refreshes', () => {
-    const rootDir = mkdtempSync(join(tmpdir(), 'veduta-usage-surface-'))
     let clock = new Date(updatedAt)
     const now = () => clock
-    const store = new Store({ rootDir, now })
-    ensureSystemSpace(store.spacesEngine)
-    let current: UsageSnapshot | Error = snapshot()
-    let notifyUsageChange = () => {}
-    const manager = new UsageSurfaceManager({
-      store,
-      source: {
-        usage: () => {
-          if (current instanceof Error) throw current
-          return current
-        },
-        onUsageChange: (listener) => {
-          notifyUsageChange = listener
-          return () => {
-            notifyUsageChange = () => {}
-          }
-        },
-      },
-      now,
-    })
+    const source = new MutableUsageSource(snapshot())
+    const harness = createUsageManagerHarness({ now, source })
+    const { manager, store } = harness
     manager.start()
     const beforeCursor = store.latestSurfaceCursor()
     const beforeEvents = store.eventLog(SYSTEM_SPACE_ID)
     const lastSuccessfulAt = store.getSurface(MODEL_USAGE_SURFACE_ID)?.state['lastSuccessfulAt']
 
     clock = new Date('2026-07-08T11:00:00.000Z')
-    notifyUsageChange()
-    notifyUsageChange()
+    source.notify()
+    source.notify()
     manager.start()
 
     expect(store.latestSurfaceCursor()).toBe(beforeCursor)
@@ -341,16 +283,15 @@ describe('UsageSurfaceManager', () => {
     ).toHaveLength(1)
 
     clock = new Date('2026-07-08T12:00:00.000Z')
-    current = new Error('temporary usage source failure')
-    notifyUsageChange()
+    source.set(new Error('temporary usage source failure'))
+    source.notify()
 
     expect(store.getSurface(MODEL_USAGE_SURFACE_ID)?.state).toMatchObject({
       status: 'Stale — usage source unavailable; showing last valid values',
       lastSuccessfulAt: '2026-07-08T11:00:00.000Z',
     })
 
-    manager.dispose()
-    store.close()
+    harness.close()
   })
 
   it('refuses to adopt a daemon-owned identity collision outside the System Space', () => {
@@ -365,22 +306,10 @@ describe('UsageSurfaceManager', () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date(updatedAt))
-      const rootDir = mkdtempSync(join(tmpdir(), 'veduta-usage-surface-'))
       const now = () => new Date()
-      const store = new Store({ rootDir, now })
-      ensureSystemSpace(store.spacesEngine)
-      let unavailable = true
-      const manager = new UsageSurfaceManager({
-        store,
-        source: {
-          usage: () => {
-            if (unavailable) throw new Error('temporary usage source failure')
-            return snapshot()
-          },
-          onUsageChange: () => () => {},
-        },
-        now,
-      })
+      const source = new MutableUsageSource(new Error('temporary usage source failure'))
+      const harness = createUsageManagerHarness({ now, source })
+      const { manager, store } = harness
 
       manager.start()
 
@@ -390,7 +319,7 @@ describe('UsageSurfaceManager', () => {
         lastSuccessfulAt: 'No successful refresh yet',
       })
 
-      unavailable = false
+      source.set(snapshot())
       await vi.advanceTimersByTimeAsync(60_000)
 
       expect(SurfaceSchema.parse(store.getSurface(MODEL_USAGE_SURFACE_ID)).state).toMatchObject({
@@ -404,8 +333,7 @@ describe('UsageSurfaceManager', () => {
           .filter((surface) => surface.id === MODEL_USAGE_SURFACE_ID),
       ).toHaveLength(1)
 
-      manager.dispose()
-      store.close()
+      harness.close()
     } finally {
       vi.useRealTimers()
     }
@@ -420,14 +348,80 @@ function collectNodes(node: AtomNode): AtomNode[] {
   return [node, ...(node.children ?? []).flatMap(collectNodes)]
 }
 
+class MutableUsageSource implements UsageSource {
+  private current: UsageSnapshot | Error
+  private listener = () => {}
+
+  constructor(current: UsageSnapshot | Error) {
+    this.current = current
+  }
+
+  usage(): UsageSnapshot {
+    if (this.current instanceof Error) throw this.current
+    return this.current
+  }
+
+  onUsageChange(listener: () => void): () => void {
+    this.listener = listener
+    return () => {
+      this.listener = () => {}
+    }
+  }
+
+  set(current: UsageSnapshot | Error): void {
+    this.current = current
+  }
+
+  notify(): void {
+    this.listener()
+  }
+}
+
+function createUsageManagerHarness(options: { now?: () => Date; source?: UsageSource } = {}): {
+  rootDir: string
+  store: Store
+  manager: UsageSurfaceManager
+  close(): void
+} {
+  const now = options.now ?? (() => new Date(updatedAt))
+  const rootDir = mkdtempSync(join(tmpdir(), 'veduta-usage-surface-'))
+  const store = new Store({ rootDir, now })
+  ensureSystemSpace(store.spacesEngine)
+  const manager = new UsageSurfaceManager({
+    store,
+    source: options.source ?? new MutableUsageSource(snapshot()),
+    now,
+  })
+  return {
+    rootDir,
+    store,
+    manager,
+    close() {
+      manager.dispose()
+      store.close()
+    },
+  }
+}
+
 function expectUsageSurfaceIdentityCollisionRejected(options: {
   spaceId: string
   daemonOwned: boolean
 }): void {
-  const rootDir = mkdtempSync(join(tmpdir(), 'veduta-usage-surface-collision-'))
   const now = () => new Date(updatedAt)
-  const store = new Store({ rootDir, now })
-  ensureSystemSpace(store.spacesEngine)
+  let subscriptionActive = false
+  const harness = createUsageManagerHarness({
+    now,
+    source: {
+      usage: () => snapshot(),
+      onUsageChange: () => {
+        subscriptionActive = true
+        return () => {
+          subscriptionActive = false
+        }
+      },
+    },
+  })
+  const { manager, store } = harness
   const impostor = SurfaceSchema.parse({
     ...usageSurface(snapshot(), updatedAt),
     spaceId: options.spaceId,
@@ -438,27 +432,12 @@ function expectUsageSurfaceIdentityCollisionRejected(options: {
     store.createSurface(impostor, 'agent')
   }
   const beforeStart = store.getSurface(MODEL_USAGE_SURFACE_ID)
-  let subscriptionActive = false
-  const manager = new UsageSurfaceManager({
-    store,
-    source: {
-      usage: () => snapshot(),
-      onUsageChange: () => {
-        subscriptionActive = true
-        return () => {
-          subscriptionActive = false
-        }
-      },
-    },
-    now,
-  })
 
   try {
     expect(() => manager.start()).toThrow(/refusing to adopt Surface "srf-usage"/)
     expect(subscriptionActive).toBe(false)
     expect(store.getSurface(MODEL_USAGE_SURFACE_ID)).toEqual(beforeStart)
   } finally {
-    manager.dispose()
-    store.close()
+    harness.close()
   }
 }
