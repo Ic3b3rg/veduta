@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmdirSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -675,6 +682,25 @@ describe('spending caps', () => {
     expect(router.usage().tiers.triage.spentUsd).toBe(0)
   })
 
+  it('notifies usage observers only after accepted accounting and supports unsubscribe', () => {
+    const router = testRouter()
+    let changes = 0
+    const unsubscribe = router.onUsageChange(() => {
+      changes += 1
+    })
+
+    router.recordSpend({ provider: 'mock', modelId: 'cheap', tier: 'triage' }, Number.NaN)
+    router.recordSpend({ provider: 'mock', modelId: 'cheap', tier: 'triage' }, -1)
+    expect(changes).toBe(0)
+
+    router.recordSpend({ provider: 'mock', modelId: 'cheap', tier: 'triage' }, 0.25)
+    expect(changes).toBe(1)
+
+    unsubscribe()
+    router.recordSpend({ provider: 'mock', modelId: 'cheap', tier: 'triage' }, 0.25)
+    expect(changes).toBe(1)
+  })
+
   it('persists spend to the usage log and rebuilds counters on restart', () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'veduta-usage-'))
     const now = () => new Date('2026-07-08T10:00:00.000Z')
@@ -732,6 +758,24 @@ describe('spending caps', () => {
     )
     const router = testRouter({ rootDir })
     expect(router.usage().tiers.triage.spentUsd).toBe(0.5)
+  })
+
+  it('keeps boot alive and retries a temporarily unreadable daily usage source', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'veduta-usage-'))
+    const usageDir = join(rootDir, 'usage')
+    const dailyPath = join(usageDir, '2026-07-08.jsonl')
+    mkdirSync(dailyPath, { recursive: true })
+
+    let router: ModelRouter | undefined
+    expect(() => {
+      router = testRouter({ rootDir })
+    }).not.toThrow()
+    expect(() => router?.usage()).toThrow()
+
+    rmdirSync(dailyPath)
+    writeFileSync(dailyPath, `${JSON.stringify({ kind: 'spend', tier: 'triage', usd: 0.5 })}\n`)
+
+    expect(router?.usage().tiers.triage.spentUsd).toBe(0.5)
   })
 
   it('bounds the in-memory call log for a long-running daemon', async () => {

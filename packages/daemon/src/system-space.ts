@@ -15,22 +15,22 @@ const SYSTEM_SPACE_NAME = 'System'
  * Materializes the System Space as a real, persisted Space (issue #14):
  * the trust admin Surfaces (allowlist, audit) need a durable home a
  * user can navigate to, so it can no longer stay purely synthetic like
- * the usage/connected-devices Surfaces below. This is a deliberate,
+ * the remaining Connected devices request projection. This is a deliberate,
  * documented deviation from "every Space is user-confirmed" (ADR-0002's
  * proposal→confirm flow) — the System Space is daemon-created at boot,
  * not proposed, because it is not a life area the user chose but
  * infrastructure the daemon itself owns. `appendSystemSurface` keeps
- * working unchanged afterward: once `spc-system` exists in the snapshot,
- * it takes the "merge into existing Space" branch below instead of
- * synthesizing one.
+ * working for that remaining projection afterward: once `spc-system` exists
+ * in the snapshot, it takes the "merge into existing Space" branch below
+ * instead of synthesizing one.
  */
 export function ensureSystemSpace(spacesEngine: SpacesEngine): Space {
   return spacesEngine.ensureSystemSpace({ name: SYSTEM_SPACE_NAME, slug: SYSTEM_SPACE_SLUG })
 }
 
 /**
- * The synthetic System Space: computed at read time for daemon-owned
- * Surfaces (usage, connected devices), never persisted by SpacesEngine.
+ * Legacy read-time append path retained for Connected devices until issue
+ * #115 persists that Surface and issue #117 removes this helper.
  */
 export function appendSystemSurface(snapshot: SurfaceSnapshot, surface: Surface): SurfaceSnapshot {
   if (snapshot.spaces.some((space) => space.id === SYSTEM_SPACE_ID)) {
