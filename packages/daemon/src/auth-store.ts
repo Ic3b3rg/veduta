@@ -157,6 +157,7 @@ export class AuthStore {
   private authenticationCeremonies = new Map<string, AuthenticationCeremony>()
   private pairingCodes = new Map<string, StoredPairingCode>()
   private revokedListeners = new Set<(event: SessionRevokedEvent) => void>()
+  private connectedDevicesListeners = new Set<() => void>()
   private sequence = 1
   private now: () => Date
   private randomBytes: (length: number) => Buffer
@@ -313,7 +314,9 @@ export class AuthStore {
     this.state.devices.push(device)
     this.consumeOneTimeCode(ceremony.codeHash)
     this.registrationCeremonies.delete(ceremony.id)
-    return this.createSession(device)
+    const session = this.createSession(device)
+    this.emitConnectedDevicesChanged()
+    return session
   }
 
   async startPasskeyLogin(): Promise<{ ceremonyId: string; options: PasskeyOptions }> {
@@ -365,9 +368,13 @@ export class AuthStore {
     const device = this.activeDevice(passkey.deviceId)
     if (!device) throw new AuthStoreError('revoked-device', 'device has been revoked')
     device.lastSeenAt = this.now().toISOString()
-    if (input.deviceName) device.name = inputName(input.deviceName)
+    const nextName = input.deviceName ? inputName(input.deviceName) : undefined
+    const renamed = nextName !== undefined && nextName !== device.name
+    if (nextName !== undefined) device.name = nextName
     this.authenticationCeremonies.delete(ceremony.id)
-    return this.createSession(device)
+    const session = this.createSession(device)
+    if (renamed) this.emitConnectedDevicesChanged()
+    return session
   }
 
   verifySession(token: string | undefined): AuthSession | undefined {
@@ -405,6 +412,10 @@ export class AuthStore {
 
   listDevices(token: string): AuthDevice[] {
     if (!this.verifySession(token)) return []
+    return this.connectedDevices()
+  }
+
+  connectedDevices(): AuthDevice[] {
     return this.state.devices.filter((device) => !device.revokedAt).map((device) => ({ ...device }))
   }
 
@@ -424,11 +435,17 @@ export class AuthStore {
       }
     }
     this.persist()
+    this.emitConnectedDevicesChanged()
   }
 
   onSessionRevoked(listener: (event: SessionRevokedEvent) => void): () => void {
     this.revokedListeners.add(listener)
     return () => this.revokedListeners.delete(listener)
+  }
+
+  onConnectedDevicesChange(listener: () => void): () => void {
+    this.connectedDevicesListeners.add(listener)
+    return () => this.connectedDevicesListeners.delete(listener)
   }
 
   private requireSession(token: string): AuthSession {
@@ -530,7 +547,25 @@ export class AuthStore {
   }
 
   private emitRevoked(event: SessionRevokedEvent): void {
-    for (const listener of this.revokedListeners) listener(event)
+    notifyObservers(this.revokedListeners, event, 'session revocation observer failed')
+  }
+
+  private emitConnectedDevicesChanged(): void {
+    notifyObservers(this.connectedDevicesListeners, undefined, 'connected devices observer failed')
+  }
+}
+
+function notifyObservers<Event>(
+  observers: Iterable<(event: Event) => void>,
+  event: Event,
+  failureMessage: string,
+): void {
+  for (const observer of observers) {
+    try {
+      observer(event)
+    } catch (error) {
+      console.error(failureMessage, error)
+    }
   }
 }
 

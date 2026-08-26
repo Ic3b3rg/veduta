@@ -19,18 +19,15 @@ const SYSTEM_SPACE_NAME = 'System'
  * documented deviation from "every Space is user-confirmed" (ADR-0002's
  * proposal→confirm flow) — the System Space is daemon-created at boot,
  * not proposed, because it is not a life area the user chose but
- * infrastructure the daemon itself owns. `appendSystemSurface` keeps
- * working for that remaining projection afterward: once `spc-system` exists
- * in the snapshot, it takes the "merge into existing Space" branch below
- * instead of synthesizing one.
+ * infrastructure the daemon itself owns.
  */
 export function ensureSystemSpace(spacesEngine: SpacesEngine): Space {
   return spacesEngine.ensureSystemSpace({ name: SYSTEM_SPACE_NAME, slug: SYSTEM_SPACE_SLUG })
 }
 
 /**
- * Legacy read-time append path retained for Connected devices until issue
- * #115 persists that Surface and issue #117 removes this helper.
+ * Compatibility helper retained until issue #117 removes the obsolete
+ * synthetic System Space path. No snapshot route calls it after issue #115.
  */
 export function appendSystemSurface(snapshot: SurfaceSnapshot, surface: Surface): SurfaceSnapshot {
   if (snapshot.spaces.some((space) => space.id === SYSTEM_SPACE_ID)) {

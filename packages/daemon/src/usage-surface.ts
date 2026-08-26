@@ -1,7 +1,8 @@
-import { SurfaceSchema, type JsonValue, type PatchOperation, type Surface } from '@veduta/protocol'
+import { SurfaceSchema, type JsonValue, type Surface } from '@veduta/protocol'
 import type { TierUsage, UsageSnapshot } from './model-routing.ts'
 import type { Store } from './store.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
+import { statePatchOperations } from './system-surface-state.ts'
 
 const MAX_WORKER_ROWS = 10
 const SOURCE_RETRY_MS = 60_000
@@ -256,37 +257,12 @@ function usageState(
   }
 }
 
-function statePatchOperations(
-  current: Record<string, JsonValue>,
-  next: Record<string, JsonValue>,
-  ignoredKeys: string[] = [],
-): PatchOperation[] {
-  const ignored = new Set(ignoredKeys)
-  return Object.entries(next).flatMap(([key, value]) => {
-    if (ignored.has(key) || jsonEqual(current[key], value)) return []
-    return [
-      {
-        target: 'state' as const,
-        op: Object.prototype.hasOwnProperty.call(current, key)
-          ? ('replace' as const)
-          : ('add' as const),
-        path: `/${key}`,
-        value,
-      },
-    ]
-  })
-}
-
 function tierTotal(tier: TierUsage): string {
   return `${usd(tier.spentUsd)} of ${usd(tier.capUsd)}/day`
 }
 
 function usd(amount: number): string {
   return `$${amount.toFixed(2)}`
-}
-
-function jsonEqual(left: JsonValue | undefined, right: JsonValue): boolean {
-  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 function millisecondsUntilNextUtcDay(now: Date): number {

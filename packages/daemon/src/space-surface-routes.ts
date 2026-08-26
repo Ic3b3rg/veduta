@@ -6,10 +6,8 @@ import {
 } from '@veduta/protocol'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { appendConnectedDevicesSurface } from './connected-devices-surface.ts'
 import type { NotificationCenter } from './notification-center.ts'
 import type { PushStore } from './push-store.ts'
-import { extractBearer, type ServerAuthOptions } from './server-auth.ts'
 import { SurfaceActionError, type Store } from './store.ts'
 import { SurfaceMoveError, SurfaceNotPinnableError } from './surface-engine.ts'
 import type { TemplateEngine } from './template-engine.ts'
@@ -17,7 +15,6 @@ import type { TemplateEngine } from './template-engine.ts'
 const PinSurfaceBodySchema = z.object({ pinned: z.boolean() })
 
 export interface SpaceSurfaceRouteDeps {
-  auth: ServerAuthOptions
   store: Store
   pushStore: PushStore
   notificationCenter: NotificationCenter
@@ -28,9 +25,9 @@ export function registerSpaceSurfaceRoutes(
   app: FastifyInstance,
   deps: SpaceSurfaceRouteDeps,
 ): void {
-  const { auth, store, pushStore, notificationCenter, templateEngine } = deps
+  const { store, pushStore, notificationCenter, templateEngine } = deps
 
-  app.get('/api/spaces', (request) => {
+  app.get('/api/spaces', () => {
     const rawSnapshot = store.snapshot()
     const snapshot = {
       ...rawSnapshot,
@@ -39,9 +36,7 @@ export function registerSpaceSurfaceRoutes(
         return { ...space, attention: attention.count, attentionRevision: attention.revision }
       }),
     }
-    if (auth.mode !== 'production') return snapshot
-    const token = extractBearer(request.headers.authorization)
-    return token ? appendConnectedDevicesSurface(snapshot, auth.store.listDevices(token)) : snapshot
+    return snapshot
   })
 
   app.get('/api/spaces/:spaceId/events', (request, reply) => {

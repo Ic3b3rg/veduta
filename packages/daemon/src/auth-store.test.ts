@@ -1,5 +1,5 @@
 import { fromPartial } from '@total-typescript/shoehorn'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   AuthStore,
   AuthStoreError,
@@ -77,6 +77,87 @@ describe('AuthStore passkey setup', () => {
     expect(auth.verifySession(session.token)).toBeUndefined()
     expect(revokedTokenHashes).toHaveLength(2)
     expect(auth.listDevices(session.token)).toEqual([])
+  })
+
+  it('publishes the daemon device inventory after enrollment, rename, and revocation', async () => {
+    const passkeys = new FakePasskeyRelyingParty()
+    const auth = new AuthStore({
+      mode: 'production',
+      bootstrapCode: '12345678',
+      passkeys,
+      now: () => now,
+      randomBytes: deterministicBytes,
+    })
+    const inventories: string[][] = []
+    const unsubscribe = auth.onConnectedDevicesChange(() => {
+      inventories.push(auth.connectedDevices().map((device) => device.name))
+    })
+
+    const registration = await auth.startPasskeyRegistration({
+      oneTimeCode: '12345678',
+      deviceName: 'Silvio iPhone',
+    })
+    await auth.finishPasskeyRegistration({
+      ceremonyId: registration.ceremonyId,
+      response: fromPartial({ id: 'credential-phone' }),
+    })
+
+    const authentication = await auth.startPasskeyLogin()
+    const renamedSession = await auth.finishPasskeyLogin({
+      ceremonyId: authentication.ceremonyId,
+      response: fromPartial({ id: 'credential-phone' }),
+      deviceName: 'Pocket phone',
+    })
+    auth.revokeDevice(renamedSession.token, renamedSession.device.id)
+
+    expect(inventories).toEqual([['Silvio iPhone'], ['Pocket phone'], []])
+    unsubscribe()
+  })
+
+  it('isolates device lifecycle observers from persisted auth mutations and one another', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const passkeys = new FakePasskeyRelyingParty()
+      const auth = new AuthStore({
+        mode: 'production',
+        bootstrapCode: '12345678',
+        passkeys,
+        now: () => now,
+        randomBytes: deterministicBytes,
+      })
+      let connectedChanges = 0
+      let sessionRevocations = 0
+      auth.onConnectedDevicesChange(() => {
+        throw new Error('connected devices observer failed')
+      })
+      auth.onConnectedDevicesChange(() => {
+        connectedChanges += 1
+      })
+      auth.onSessionRevoked(() => {
+        throw new Error('session revocation observer failed')
+      })
+      auth.onSessionRevoked(() => {
+        sessionRevocations += 1
+      })
+
+      const registration = await auth.startPasskeyRegistration({
+        oneTimeCode: '12345678',
+        deviceName: 'Silvio iPhone',
+      })
+      const session = await auth.finishPasskeyRegistration({
+        ceremonyId: registration.ceremonyId,
+        response: fromPartial({ id: 'credential-phone' }),
+      })
+      expect(connectedChanges).toBe(1)
+
+      expect(() => auth.revokeDevice(session.token, session.device.id)).not.toThrow()
+      expect(auth.connectedDevices()).toEqual([])
+      expect(connectedChanges).toBe(2)
+      expect(sessionRevocations).toBe(1)
+      expect(consoleError).toHaveBeenCalled()
+    } finally {
+      consoleError.mockRestore()
+    }
   })
 
   it('updates the passkey counter after login verification', async () => {

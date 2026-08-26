@@ -85,6 +85,7 @@ import { defaultRedactor } from './redaction.ts'
 import { Reflection } from './reflection.ts'
 import { ReflectionSurfaceManager } from './reflection-surface.ts'
 import { Scheduler } from './scheduler.ts'
+import { ConnectedDevicesSurfaceManager } from './connected-devices-surface.ts'
 import {
   compositeSecretResolver,
   resolveVaultKeyMaterial,
@@ -528,6 +529,16 @@ export function buildServer(options: ServerOptions = {}) {
       : {}),
   })
 
+  // Connected devices is durable living System state (issue #115): only
+  // the VPS and Local VPS profiles have a real device inventory, and AuthStore
+  // lifecycle notifications refresh it without coupling persistence to a
+  // Space snapshot request.
+  const connectedDevicesSurfaces =
+    auth.mode === 'production'
+      ? new ConnectedDevicesSurfaceManager({ store, source: auth.store, now })
+      : undefined
+  connectedDevicesSurfaces?.start()
+
   // Web Push notifications (issue #18): the
   // daemon's one choke point for surfacing anything to the user outside a
   // Surface's own patches. Built before the Scheduler/Heartbeat below so
@@ -570,6 +581,7 @@ export function buildServer(options: ServerOptions = {}) {
       : undefined
   app.addHook('onClose', async () => {
     disposePushRevocationListener?.()
+    connectedDevicesSurfaces?.dispose()
     notificationCenter.dispose()
     notificationSettings.dispose()
     pushStore.close()
@@ -1383,7 +1395,6 @@ export function buildServer(options: ServerOptions = {}) {
   registerStaticRoutes(app, pwaDistDir)
 
   registerSpaceSurfaceRoutes(app, {
-    auth,
     store,
     pushStore,
     notificationCenter,
@@ -1497,5 +1508,6 @@ export function buildServer(options: ServerOptions = {}) {
     reflection,
     reflectionSurfaces,
     usageSurfaces,
+    connectedDevicesSurfaces,
   }
 }

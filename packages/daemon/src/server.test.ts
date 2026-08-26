@@ -19,6 +19,7 @@ import {
 import { describe, expect, it, vi } from 'vitest'
 import { ALLOWLIST_SURFACE_ID } from './allowlist-surface.ts'
 import { AuthStore, type PasskeyRelyingParty, type StoredPasskey } from './auth-store.ts'
+import { CONNECTED_DEVICES_SURFACE_ID } from './connected-devices-surface.ts'
 import { NoAvailableModelError, loadRoutingConfig, saveRoutingConfig } from './model-routing.ts'
 import { NOTIFICATION_SETTINGS_SURFACE_ID } from './notification-settings-surface.ts'
 import { NotificationsConfigSchema, saveNotificationsConfig } from './notifications-config.ts'
@@ -92,10 +93,7 @@ describe('GET /api/spaces', () => {
     const { app } = buildServer()
     const res = await app.inject({ method: 'GET', url: '/api/spaces' })
     expect(res.statusCode).toBe(200)
-    const body = res.json() as {
-      surfaceCursor: number
-      spaces: { id: string; slug: string; surfaces: unknown[] }[]
-    }
+    const body = SurfaceSnapshotSchema.parse(res.json())
     // Boot pre-creates several cursor-bearing Surfaces: the scheduler's
     // Automations Surface for every persisted Space (health, and now the
     // real System Space too — issue #14), the trust layer's allowlist
@@ -114,6 +112,11 @@ describe('GET /api/spaces', () => {
     expect(body.surfaceCursor).toBe(14)
     expect(body.spaces.map((s) => s.slug)).toEqual(['health', 'system'])
     expect(body.spaces.filter((space) => space.id === SYSTEM_SPACE_ID)).toHaveLength(1)
+    expect(
+      body.spaces
+        .flatMap((space) => space.surfaces)
+        .filter((surface) => surface.id === CONNECTED_DEVICES_SURFACE_ID),
+    ).toEqual([])
     for (const surface of body.spaces.flatMap((space) => space.surfaces)) {
       expect(SurfaceSchema.safeParse(surface).success).toBe(true)
     }
@@ -338,6 +341,69 @@ describe('production auth boundary', () => {
     expect(response.statusCode).not.toBe(401)
   })
 
+  it('persists and refreshes Connected devices before the authenticated snapshot is read', async () => {
+    const { auth, token } = await readyAuthStore()
+    const { app, gateway, store } = buildServer({
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+    })
+    expect(SurfaceSchema.parse(store.getSurface(CONNECTED_DEVICES_SURFACE_ID)).state).toMatchObject(
+      {
+        devices: [{ device: 'Silvio iPhone', linked: '2026-07-03' }],
+        status: 'Current',
+      },
+    )
+    const beforeRenameCursor = store.latestSurfaceCursor()
+    const socket = new SchedulerFakeSocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: beforeRenameCursor, token })
+
+    const options = await app.inject({ method: 'POST', url: '/api/auth/login/options' })
+    const ceremony = options.json() as { ceremonyId: string }
+    const renamed = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login/verify',
+      payload: {
+        ceremonyId: ceremony.ceremonyId,
+        response: { id: 'credential-phone' },
+        deviceName: 'Pocket phone',
+      },
+    })
+    expect(renamed.statusCode).toBe(200)
+    expect(SurfaceSchema.parse(store.getSurface(CONNECTED_DEVICES_SURFACE_ID)).state).toMatchObject(
+      {
+        devices: [{ device: 'Pocket phone', linked: '2026-07-03' }],
+        status: 'Current',
+      },
+    )
+    expect(
+      socket.sent.filter(
+        (frame) =>
+          frame.type === 'surface.patch' &&
+          frame.event.patch.surfaceId === CONNECTED_DEVICES_SURFACE_ID,
+      ),
+    ).toHaveLength(1)
+    const beforeReadCursor = store.latestSurfaceCursor()
+
+    const snapshot = SurfaceSnapshotSchema.parse(
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/spaces',
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).json(),
+    )
+    const connectedDevices = snapshot.spaces
+      .find((space) => space.id === SYSTEM_SPACE_ID)
+      ?.surfaces.filter((surface) => surface.id === CONNECTED_DEVICES_SURFACE_ID)
+    expect(connectedDevices).toEqual([
+      expect.objectContaining({ state: expect.objectContaining({ status: 'Current' }) }),
+    ])
+    expect(store.latestSurfaceCursor()).toBe(beforeReadCursor)
+
+    await app.close()
+  })
+
   it('runs the passkey registration ceremony through public auth endpoints', async () => {
     const auth = new AuthStore({
       mode: 'production',
@@ -347,9 +413,15 @@ describe('production auth boundary', () => {
       randomBytes: deterministicBytes,
       publicOrigin: 'https://veduta.test',
     })
-    const { app } = buildServer({
+    const { app, store } = buildServer({
       auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
     })
+    expect(SurfaceSchema.parse(store.getSurface(CONNECTED_DEVICES_SURFACE_ID)).state).toMatchObject(
+      {
+        devices: [],
+        status: 'Current',
+      },
+    )
 
     const options = await app.inject({
       method: 'POST',
@@ -369,6 +441,36 @@ describe('production auth boundary', () => {
     expect(verified.json()).toMatchObject({
       device: { name: 'Silvio iPhone', credentialId: 'credential-phone' },
     })
+    expect(SurfaceSchema.parse(store.getSurface(CONNECTED_DEVICES_SURFACE_ID)).state).toMatchObject(
+      {
+        devices: [{ device: 'Silvio iPhone', linked: '2026-07-03' }],
+        status: 'Current',
+      },
+    )
+    await app.close()
+  })
+
+  it('refreshes the persisted inventory when a device is revoked', async () => {
+    const { auth, token } = await readyAuthStore()
+    const { app, store } = buildServer({
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+    })
+    const session = auth.verifySession(token)
+    expect(session).toBeDefined()
+    if (!session) throw new Error('expected an authenticated device session')
+    const beforeCursor = store.latestSurfaceCursor()
+
+    auth.revokeDevice(token, session.device.id)
+
+    expect(SurfaceSchema.parse(store.getSurface(CONNECTED_DEVICES_SURFACE_ID)).state).toMatchObject(
+      {
+        devices: [],
+        status: 'Current',
+      },
+    )
+    expect(store.latestSurfaceCursor()).toBe(beforeCursor + 1)
+
+    await app.close()
   })
 
   it('rate limits repeated invalid auth attempts with progressive lockout', async () => {
