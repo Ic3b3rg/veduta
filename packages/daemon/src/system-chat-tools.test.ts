@@ -88,7 +88,7 @@ describe('createSystemChatTools', () => {
     }
   })
 
-  it('preserves declared Surface actions plus evented System presentation preferences', () => {
+  it('preserves declared actions, evented presentation preferences, and Gateway refreshes', () => {
     const { store, scheduler } = harness()
     const actionable = SurfaceSchema.parse({
       id: 'srf-system-actions',
@@ -152,13 +152,29 @@ describe('createSystemChatTools', () => {
         updatedBy: 'user',
       })
       expect(pin).toMatchObject({ changed: true, surface: { pinned: true } })
+      const refresh = store.patchTree(
+        actionable.id,
+        [
+          {
+            target: 'tree',
+            op: 'add',
+            path: '/children/2',
+            value: { id: 'status', type: 'Caption', props: { text: 'Refreshed' } },
+          },
+        ],
+        { expectedTreeVersion: 1, updatedBy: 'job' },
+      )
+      expect(refresh).toMatchObject({
+        surface: { id: actionable.id, pinned: true },
+      })
+      expect(store.listTreeProposals({ surfaceId: actionable.id })).toEqual([])
 
       expect(
         store
           .eventLog(SYSTEM_SPACE_ID)
           .slice(eventsBefore)
           .map((event) => event.type),
-      ).toEqual(['fast_path', 'agent_path', 'surface.move', 'surface.pin'])
+      ).toEqual(['fast_path', 'agent_path', 'surface.move', 'surface.pin', 'surface.patch_tree'])
     } finally {
       scheduler.stop()
       store.close()

@@ -880,9 +880,11 @@ export class SurfaceEngine {
    * the same validation `patchSurface` performs on the committed path) and
    * recorded as a `pending` Tree proposal instead of mutating
    * (`issues/022-emergent-templates.md`): the pin is a capability on the
-   * Surface, not a property of `updatedBy`, so it applies identically to
-   * `'agent'`, `'user'`, and `'job'` writes. `bypassPin: true` is the one
-   * documented escape hatch (`tree-proposal.ts`'s
+   * Surface, not normally a property of `updatedBy`. The canonical System
+   * Space is the deliberate exception: its Pin is only a presentation
+   * preference, so a Gateway manager refresh (`updatedBy: 'job'`) continues
+   * to update the daemon-owned content. `bypassPin: true` is the documented
+   * escape hatch for ordinary Spaces (`tree-proposal.ts`'s
    * `TreeProposalSurfaceManager`, once the human has accepted); it is never
    * derived from `updatedBy` — every daemon-owned Surface manager already
    * writes as `'job'` (docs/adr/0012-emergent-templates.md, "The pin is a
@@ -914,7 +916,9 @@ export class SurfaceEngine {
 
     if (options.bypassPin !== true) {
       const current = this.requireActiveSurface(surfaceId)
-      if (current.pinned) {
+      const isGatewaySystemRefresh =
+        current.spaceId === SYSTEM_SPACE_ID && options.updatedBy === 'job'
+      if (current.pinned && !isGatewaySystemRefresh) {
         return this.recordTreeProposal(current, operations, {
           expectedTreeVersion: options.expectedTreeVersion,
           updatedBy: options.updatedBy,
