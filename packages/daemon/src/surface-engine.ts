@@ -1501,10 +1501,10 @@ export class SurfaceEngine {
       .prepare('select daemon_owned, space_id from surfaces where id = ?')
       .get(surfaceId)
     if (row === undefined) return
+    if (requiredNumber(row, 'daemon_owned') === 1) throw new SurfaceOwnershipError(surfaceId)
     if (requiredString(row, 'space_id') === SYSTEM_SPACE_ID) {
       throw new SurfaceOwnershipError(surfaceId, 'system')
     }
-    if (requiredNumber(row, 'daemon_owned') === 1) throw new SurfaceOwnershipError(surfaceId)
   }
 
   private assertSpaceWritableByAgent(
