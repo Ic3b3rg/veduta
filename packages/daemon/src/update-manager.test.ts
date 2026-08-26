@@ -19,7 +19,11 @@ import { untrustedOrigin } from './taint.ts'
 import { generateKeypair, publicKeyIdText, sign, type GeneratedKeypair } from './update/minisign.ts'
 import { resolveUpdateHome } from './update/update-transaction.ts'
 import { UpdateManager, type UpdateManagerConfig } from './update-manager.ts'
-import { UPDATE_CHECK_STATE_KEY, UPDATE_SURFACE_ID } from './update-surface.ts'
+import {
+  UPDATE_CHECK_STATE_KEY,
+  UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY,
+  UPDATE_SURFACE_ID,
+} from './update-surface.ts'
 
 function findNode(node: AtomNode, id: string): AtomNode | undefined {
   if (node.id === id) return node
@@ -264,7 +268,7 @@ describe('UpdateManager.runCheck', () => {
     })
   })
 
-  it('records lastCheckedAt only (no event, no offer) when the offered version is not newer', async () => {
+  it('records the successful check time only (no event, no offer) when the offered version is not newer', async () => {
     manager.register()
     serveRelease(defaultRelease({ version: '1.0.0' })) // equals installedVersion
 
@@ -278,6 +282,7 @@ describe('UpdateManager.runCheck', () => {
 
     const surface = store.getSurface(UPDATE_SURFACE_ID)
     expect(findNode(surface!.tree, 'update-apply-button')).toBeUndefined()
+    expect(surface!.state[UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY]).toBe('2026-08-05T06:30:00.000Z')
   })
 
   it('a broken signature chain is refused as a failed check, never an offer', async () => {
@@ -298,6 +303,7 @@ describe('UpdateManager.runCheck', () => {
 
     const surface = store.getSurface(UPDATE_SURFACE_ID)
     expect(findNode(surface!.tree, 'update-apply-button')).toBeUndefined()
+    expect(findNode(surface!.tree, 'update-check-error-badge')?.props?.['tone']).toBe('danger')
     expect(notifications).toHaveLength(0)
   })
 
@@ -330,6 +336,35 @@ describe('UpdateManager.runCheck', () => {
     expect(outcome).not.toMatch(/^check-failed:/)
     const surface = store.getSurface(UPDATE_SURFACE_ID)
     expect(findNode(surface!.tree, 'update-apply-button')).toBeDefined()
+  })
+
+  it('keeps a verified offer visible and marks it with an error when the next check fails', async () => {
+    manager.register()
+    serveRelease(defaultRelease({ version: '1.1.0', notes: 'Still valid' }))
+    await manager.runCheck('manual')
+    const successfulAt = '2026-08-05T06:30:00.000Z'
+
+    clock = new Date('2026-08-05T07:30:00.000Z')
+
+    serveRelease(defaultRelease({ version: '1.1.0' }), { corruptReleaseSig: true })
+    const outcome = await manager.runCheck('manual')
+
+    expect(outcome).toMatch(/^check-failed:/)
+    const surface = store.getSurface(UPDATE_SURFACE_ID)
+    expect(findNode(surface!.tree, 'update-available-stat')?.props?.['value']).toBe('1.1.0')
+    expect(findNode(surface!.tree, 'update-available-notes')?.props?.['text']).toBe('Still valid')
+    expect(findNode(surface!.tree, 'update-apply-button')).toBeDefined()
+    expect(findNode(surface!.tree, 'update-check-error-badge')?.props?.['tone']).toBe('danger')
+    expect(findNode(surface!.tree, 'update-last-successful-check')?.binding).toBe(
+      UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY,
+    )
+    expect(surface!.state[UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY]).toBe(successfulAt)
+
+    const reopened = new Store({ rootDir, now })
+    expect(
+      reopened.getSurface(UPDATE_SURFACE_ID)?.state[UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY],
+    ).toBe(successfulAt)
+    reopened.close()
   })
 
   it('a hostile artifact name/trusted comment in a failed check is recorded under an untrusted origin, in the Event and the Surface alike', async () => {

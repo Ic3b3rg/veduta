@@ -44,9 +44,9 @@ import {
   buttonsRowNode,
   currentStatNode,
   outcomeSlotNode,
-  outcomeTone,
   UPDATE_APPLY_STATE_KEY,
   UPDATE_CHECK_STATE_KEY,
+  UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY,
   UPDATE_SURFACE_ID,
   updateSurface,
   updateSurfaceContentOrigin,
@@ -432,7 +432,7 @@ export class UpdateManager {
    * failed check. The newer-version decision is made with a plain
    * `compareVersions` before `checkMonotonic` runs, rather than by
    * inspecting `checkMonotonic`'s thrown message, so "not newer" (silent —
-   * "Surface lastCheckedAt only") and "dataVersion regressed" (a real
+   * successful-check state only) and "dataVersion regressed" (a real
    * failure, worth surfacing) are never conflated. Returns a short outcome
    * string, which becomes the `check-updates` Automation's `lastOutcome`
    * when invoked from the scheduler.
@@ -484,11 +484,17 @@ export class UpdateManager {
       const isNewer = compareVersions(metadata.version, this.installedVersion) > 0
       if (!isNewer) {
         this.updateDecisions.markPendingOffersStale(nowIso)
-        this.currentView =
-          this.currentView.status === 'update-available'
-            ? { currentVersion: this.installedVersion, status: 'idle', lastCheckedAt: nowIso }
-            : { ...this.currentView, lastCheckedAt: nowIso }
-        this.refreshSurface()
+        if (this.currentView.status === 'update-available') {
+          this.currentView = {
+            currentVersion: this.installedVersion,
+            status: 'idle',
+          }
+        } else {
+          const nextView = { ...this.currentView }
+          delete nextView.checkError
+          this.currentView = nextView
+        }
+        this.refreshAfterSuccessfulCheck(nowIso)
         return 'no-update-available'
       }
 
@@ -507,8 +513,8 @@ export class UpdateManager {
       }
       const decision = this.updateDecisions.recordVerifiedOffer(available, nowIso)
       if (decision.status !== 'pending') {
-        this.currentView = { ...this.viewFromDecision(decision), lastCheckedAt: nowIso }
-        this.refreshSurface()
+        this.currentView = this.viewFromDecision(decision)
+        this.refreshAfterSuccessfulCheck(nowIso)
         return `offer-already-decided:${metadata.version}`
       }
       this.verifiedOffer = { manifest, metadata }
@@ -516,9 +522,8 @@ export class UpdateManager {
         currentVersion: this.installedVersion,
         status: 'update-available',
         available,
-        lastCheckedAt: nowIso,
       }
-      this.refreshSurface()
+      this.refreshAfterSuccessfulCheck(nowIso)
 
       const origin = untrustedOrigin('update-feed')
       this.store.spacesEngine.appendEvent(SYSTEM_SPACE_ID, {
@@ -558,27 +563,14 @@ export class UpdateManager {
         origin,
         payload: { source, reason },
       })
-      const nowIso = this.now().toISOString()
-      // Status intentionally stays whatever it already was (idle, or a
-      // still-standing earlier offer) — a transient check failure (the feed
-      // being briefly unreachable, say) must never overwrite a real offer
-      // or fabricate a `refused` outcome that belongs to an apply attempt,
-      // not a discovery check. `outcomeDetail` only overwrites when `status`
-      // is not itself already a terminal apply outcome (`outcomeTone`,
-      // `update-surface.ts`) — otherwise a background check failure would
-      // clobber the text under a still-showing `applied`/`rolled-back`/
-      // `refused` Badge, contradicting its own tone. When it does overwrite,
-      // the Surface refresh is forced to
-      // the same untrusted origin as the Event, for the same reason: the
-      // content now includes feed/error-derived text even though the current
-      // rendering never shows it outside a terminal status.
-      if (outcomeTone(this.currentView.status) === undefined) {
-        this.currentView = { ...this.currentView, outcomeDetail: reason, lastCheckedAt: nowIso }
-        this.refreshSurface(origin)
-      } else {
-        this.currentView = { ...this.currentView, lastCheckedAt: nowIso }
-        this.refreshSurface()
-      }
+      // Status and apply outcome intentionally stay whatever they already
+      // were: a transient feed failure must neither erase a still-valid
+      // offer nor fabricate/clobber a terminal apply result. Its independent
+      // `checkError` Badge makes the failure visible beside either one. The
+      // Surface refresh is forced to the Event's untrusted origin because the
+      // visible error can contain feed-controlled text.
+      this.currentView = { ...this.currentView, checkError: reason }
+      this.refreshSurface(origin)
       return `check-failed:${reason}`
     }
   }
@@ -731,6 +723,31 @@ export class UpdateManager {
     this.refreshSurface(this.updateDecisions.latest()?.outcomeOrigin)
   }
 
+  private refreshAfterSuccessfulCheck(checkedAt: string): void {
+    this.currentView = { ...this.currentView, lastSuccessfulCheckAt: checkedAt }
+    const existing = this.store.getSurface(UPDATE_SURFACE_ID)
+    if (existing && existing.state[UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY] !== checkedAt) {
+      this.store.patchState(
+        UPDATE_SURFACE_ID,
+        [
+          {
+            target: 'state',
+            op: Object.prototype.hasOwnProperty.call(
+              existing.state,
+              UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY,
+            )
+              ? 'replace'
+              : 'add',
+            path: `/${UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY}`,
+            value: checkedAt,
+          },
+        ],
+        { updatedBy: 'job', origin: 'trusted:system' },
+      )
+    }
+    this.refreshSurface()
+  }
+
   /**
    * Rebuilds the Update Surface's fixed-slot tree from `this.currentView`.
    * `origin`/`contentOrigin` are always passed explicitly — never omitted —
@@ -740,7 +757,7 @@ export class UpdateManager {
    * `refreshSurface` apply to their own Surface writes). `forcedOrigin`
    * overrides the usual `available`-derived computation for the one caller
    * whose content can carry feed/error-derived text even with no offer on
-   * display — a failed check's `outcomeDetail` (`runCheck`'s catch block,
+   * display — a failed check's `checkError` (`runCheck`'s catch block,
    * `docs/adr/0013-signed-self-update.md`: ALL feed-derived text stays
    * untrusted, not only release notes).
    */
@@ -902,7 +919,6 @@ export class UpdateManager {
       currentVersion: this.installedVersion,
       status: outcomeStatus(result.outcome),
       outcomeDetail: outcomeDetail(result),
-      lastCheckedAt: this.now().toISOString(),
     }
     this.refreshSurface(origin)
 

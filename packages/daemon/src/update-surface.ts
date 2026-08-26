@@ -22,6 +22,9 @@ export const UPDATE_APPLY_STATE_KEY = 'apply.requested'
 /** The state key "Check now"'s fast action mutates — same one-shot idiom as `UPDATE_APPLY_STATE_KEY`. */
 export const UPDATE_CHECK_STATE_KEY = 'check.requested'
 
+/** Persisted source-success clock; check failures never advance it. */
+export const UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY = 'check.lastSuccessfulAt'
+
 export type UpdateSurfaceStatus =
   'idle' | 'update-available' | 'updating' | 'applied' | 'rolled-back' | 'refused'
 
@@ -37,17 +40,16 @@ export interface UpdateSurfaceView {
   currentVersion: string
   available?: UpdateSurfaceAvailable
   status: UpdateSurfaceStatus
+  /** The most recent feed/check failure, shown alongside any still-valid offer or apply outcome. */
+  checkError?: string
+  /** The terminal result of an apply attempt; independent from `checkError`. */
   outcomeDetail?: string
   /**
-   * When the manager last completed a check, ISO instant. Not rendered as
-   * its own tree node — refreshing the Surface with an unchanged view (the
-   * "no newer release" case, `update-manager.ts`'s `runCheck`) still stamps
-   * `freshness.updatedAt` to `now()`, which already is the visible "last
-   * checked" signal. Kept on the view so callers/tests can assert the
-   * manager's own bookkeeping without inspecting the Surface's freshness
-   * directly.
+   * ISO instant of the last check that fetched, parsed, and verified the
+   * feed. Stored separately from Surface freshness so exposing a later
+   * failure cannot make that failed attempt look successful.
    */
-  lastCheckedAt?: string
+  lastSuccessfulCheckAt?: string
 }
 
 const CURRENT_STAT_NODE_ID = 'update-current-version'
@@ -115,12 +117,9 @@ export function availableSlotNode(view: UpdateSurfaceView): AtomNode {
 
 /**
  * `applied` -> success (green), `rolled-back`/`refused` -> danger (red);
- * every other status has no outcome badge to show. Exported so
- * `update-manager.ts` can ask the same question before deciding whether to
- * overwrite `outcomeDetail`: a transient check failure must never clobber the
- * Badge recording a prior apply's real terminal outcome. A green `applied`
- * Badge must never end up displaying a
- * feed-fetch error's text instead of its own outcome).
+ * every other status has no apply-outcome Badge to show. Check failures use
+ * their own danger Badge so they never clobber a prior apply's real terminal
+ * outcome or hide an offer that remains valid.
  */
 export function outcomeTone(status: UpdateSurfaceStatus): 'success' | 'danger' | undefined {
   if (status === 'applied') return 'success'
@@ -129,26 +128,40 @@ export function outcomeTone(status: UpdateSurfaceStatus): 'success' | 'danger' |
 }
 
 export function outcomeSlotNode(view: UpdateSurfaceView): AtomNode {
+  const children: AtomNode[] = []
   if (view.status === 'updating') {
-    return {
-      id: OUTCOME_SLOT_NODE_ID,
-      type: 'Box',
-      children: [
-        { id: 'update-outcome-caption', type: 'Caption', props: { text: 'Applying update…' } },
-      ],
+    children.push({
+      id: 'update-outcome-caption',
+      type: 'Caption',
+      props: { text: 'Applying update…' },
+    })
+  } else {
+    const tone = outcomeTone(view.status)
+    if (tone && view.outcomeDetail !== undefined) {
+      children.push({
+        id: 'update-outcome-badge',
+        type: 'Badge',
+        props: { text: view.outcomeDetail, tone },
+      })
     }
   }
-  const tone = outcomeTone(view.status)
-  if (!tone || view.outcomeDetail === undefined) {
-    return { id: OUTCOME_SLOT_NODE_ID, type: 'Box', children: [] }
+
+  if (view.checkError !== undefined) {
+    children.push({
+      id: 'update-check-error-badge',
+      type: 'Badge',
+      props: { text: `Update check failed: ${view.checkError}`, tone: 'danger' },
+    })
   }
-  return {
-    id: OUTCOME_SLOT_NODE_ID,
-    type: 'Box',
-    children: [
-      { id: 'update-outcome-badge', type: 'Badge', props: { text: view.outcomeDetail, tone } },
-    ],
-  }
+
+  children.push({
+    id: 'update-last-successful-check',
+    type: 'Stat',
+    binding: UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY,
+    props: { label: 'Last successful check' },
+  })
+
+  return { id: OUTCOME_SLOT_NODE_ID, type: 'Box', children }
 }
 
 export function buttonsRowNode(view: UpdateSurfaceView): AtomNode {
@@ -210,6 +223,7 @@ export function updateSurface(
     state: {
       [UPDATE_APPLY_STATE_KEY]: false,
       [UPDATE_CHECK_STATE_KEY]: false,
+      [UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY]: view.lastSuccessfulCheckAt ?? 'Not yet',
     },
     freshness,
   })

@@ -26,7 +26,7 @@ describe('ensureSystemSpace', () => {
     expect(store.getSpace(SYSTEM_SPACE_ID)).toBeUndefined()
   })
 
-  it('keeps projected FACTS out of the System snapshot and lookup paths', () => {
+  it('keeps projected FACTS out of the System snapshot and Store read paths', () => {
     const store = new Store()
     ensureSystemSpace(store.spacesEngine)
     store.createSurface(systemSurface('srf-system-daemon'), 'job', { daemonOwned: true })

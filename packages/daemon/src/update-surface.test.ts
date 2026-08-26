@@ -5,6 +5,7 @@ import { untrustedOrigin } from './taint.ts'
 import {
   UPDATE_APPLY_STATE_KEY,
   UPDATE_CHECK_STATE_KEY,
+  UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY,
   UPDATE_SURFACE_ID,
   updateSurface,
   updateSurfaceContentOrigin,
@@ -35,6 +36,7 @@ describe('updateSurface', () => {
     expect(surface.state).toEqual({
       [UPDATE_APPLY_STATE_KEY]: false,
       [UPDATE_CHECK_STATE_KEY]: false,
+      [UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY]: 'Not yet',
     })
   })
 
@@ -82,8 +84,17 @@ describe('updateSurface', () => {
     const surface = updateSurface(idleView(), FRESHNESS)
     const availableSlot = findNode(surface.tree, 'update-available-slot')
     expect(availableSlot?.children).toEqual([])
-    const outcomeSlot = findNode(surface.tree, 'update-outcome-slot')
-    expect(outcomeSlot?.children).toEqual([])
+    expect(findNode(surface.tree, 'update-outcome-badge')).toBeUndefined()
+  })
+
+  it('keeps the last successful check timestamp in visible persisted state', () => {
+    const checkedAt = '2026-08-05T06:30:00.000Z'
+    const surface = updateSurface({ ...idleView(), lastSuccessfulCheckAt: checkedAt }, FRESHNESS)
+
+    expect(surface.state[UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY]).toBe(checkedAt)
+    expect(findNode(surface.tree, 'update-last-successful-check')?.binding).toBe(
+      UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY,
+    )
   })
 
   it('shows a success-tone outcome Badge once applied, and a danger tone once rolled back or refused', () => {
@@ -102,6 +113,39 @@ describe('updateSurface', () => {
     expect(findNode(applied.tree, 'update-outcome-badge')?.props?.['tone']).toBe('success')
     expect(findNode(rolledBack.tree, 'update-outcome-badge')?.props?.['tone']).toBe('danger')
     expect(findNode(refused.tree, 'update-outcome-badge')?.props?.['tone']).toBe('danger')
+  })
+
+  it('shows a failed check without hiding an available update or a terminal apply outcome', () => {
+    const updateAvailable = updateSurface(
+      {
+        currentVersion: '1.0.0',
+        status: 'update-available',
+        available: { version: '1.1.0', notes: 'Bug fixes', migratesData: false },
+        checkError: 'signature verification failed',
+      },
+      FRESHNESS,
+    )
+    const applied = updateSurface(
+      {
+        currentVersion: '1.1.0',
+        status: 'applied',
+        outcomeDetail: 'Updated to 1.1.0',
+        checkError: 'feed unavailable',
+      },
+      FRESHNESS,
+    )
+
+    expect(findNode(updateAvailable.tree, 'update-available-stat')?.props?.['value']).toBe('1.1.0')
+    expect(findNode(updateAvailable.tree, 'update-apply-button')).toBeDefined()
+    expect(findNode(updateAvailable.tree, 'update-check-error-badge')?.props).toMatchObject({
+      text: 'Update check failed: signature verification failed',
+      tone: 'danger',
+    })
+    expect(findNode(applied.tree, 'update-outcome-badge')?.props?.['text']).toBe('Updated to 1.1.0')
+    expect(findNode(applied.tree, 'update-check-error-badge')?.props).toMatchObject({
+      text: 'Update check failed: feed unavailable',
+      tone: 'danger',
+    })
   })
 })
 

@@ -116,21 +116,13 @@ export class Store {
         ? stored
         : [...stored, this.spacesEngine.factsSurface(spaceId)]
     }
-    return [
-      ...stored,
-      ...this.listSpaces()
-        .filter((space) => space.id !== SYSTEM_SPACE_ID)
-        .map((space) => this.spacesEngine.factsSurface(space.id)),
-    ]
+    return [...stored, ...this.listProjectedFactsSurfaces()]
   }
 
   getSurface(id: string): Surface | undefined {
     return (
       this.surfaceEngine.getSurface(id) ??
-      this.listSpaces()
-        .filter((space) => space.id !== SYSTEM_SPACE_ID)
-        .map((space) => this.spacesEngine.factsSurface(space.id))
-        .find((surface) => surface.id === id)
+      this.listProjectedFactsSurfaces().find((surface) => surface.id === id)
     )
   }
 
@@ -370,6 +362,12 @@ export class Store {
 
   llmCallCount(): number {
     return this.llmCalls
+  }
+
+  private listProjectedFactsSurfaces(): Surface[] {
+    return this.listSpaces()
+      .filter((space) => space.id !== SYSTEM_SPACE_ID)
+      .map((space) => this.spacesEngine.factsSurface(space.id))
   }
 
   eventLog(spaceId: string): SpaceEvent[] {

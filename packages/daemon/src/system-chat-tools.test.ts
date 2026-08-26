@@ -5,6 +5,7 @@ import { fromPartial } from '@total-typescript/shoehorn'
 import { SYSTEM_SPACE_ID, SurfaceSchema } from '@veduta/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ToolContext, ToolDef } from './agent-runner.ts'
+import { SYSTEM_AUTOMATIONS_SURFACE_ID } from './automations-surface.ts'
 import { Scheduler } from './scheduler.ts'
 import { Store } from './store.ts'
 import { SystemStatusReadError, createSystemChatTools } from './system-chat-tools.ts'
@@ -61,9 +62,14 @@ describe('createSystemChatTools', () => {
             title: 'srf-system-status',
             pinned: false,
           }),
+          expect.objectContaining({
+            id: SYSTEM_AUTOMATIONS_SURFACE_ID,
+            title: 'Automations',
+            pinned: false,
+          }),
         ],
       })
-      expect(list.origins).toEqual(['untrusted:gmail'])
+      expect(list.origins).toEqual(['untrusted:gmail', 'trusted:system'])
 
       const readSurface = toolNamed(tools, 'read_surface')
       const read = await readSurface.handler(
