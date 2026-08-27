@@ -70,6 +70,7 @@ import { loadNotificationsConfig } from './notifications-config.ts'
 import { registerOnboardingRoutes } from './onboarding-routes.ts'
 import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
 import { registerPendingDecisionRoutes } from './pending-decision-routes.ts'
+import { pendingDecisionFeedback } from './pending-decision-feedback.ts'
 import { PendingDecisionService } from './pending-decision-service.ts'
 import { PiAgentRunner, PiJsonlSessionStore } from './pi-agent-runner.ts'
 import {
@@ -1126,6 +1127,26 @@ export function buildServer(options: ServerOptions = {}) {
       ...(updateManager === undefined ? [] : [new UpdatePendingDecisionAdapter(updateManager)]),
     ],
     ready: Promise.all([decisionRecovery, updateRecovery]),
+  })
+  const refreshPendingDecisions = () => {
+    void pendingDecisions.refresh().catch((error) => {
+      console.error('Pending decision lifecycle refresh failed', error)
+    })
+  }
+  const disposePendingDecisionLifecycle = [
+    pendingDecisions.onLifecycle(({ revision, decision }) => {
+      gateway.broadcastPendingDecision({
+        revision,
+        decision,
+        message: pendingDecisionFeedback(decision),
+      })
+    }),
+    trust.onChange(refreshPendingDecisions),
+    store.onSurfaceEvent(refreshPendingDecisions),
+  ]
+  refreshPendingDecisions()
+  app.addHook('onClose', () => {
+    for (const dispose of disposePendingDecisionLifecycle) dispose()
   })
 
   notificationSettings.start()

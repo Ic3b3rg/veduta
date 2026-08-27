@@ -91,6 +91,9 @@ describe('PendingDecisionService', () => {
   it('resolves an allowed exact id as trusted:user and returns the authoritative decision', async () => {
     const adapter = new RecordingAdapter()
     const service = new PendingDecisionService({ adapters: [adapter] })
+    const lifecycle: { revision: number; decision: PendingDecision }[] = []
+    service.onLifecycle((event) => lifecycle.push(event))
+    await service.list()
 
     await expect(service.resolve('approval:effect-1', 'approve', 'trusted:user')).resolves.toEqual({
       decision: expect.objectContaining({
@@ -102,6 +105,42 @@ describe('PendingDecisionService', () => {
       replayed: false,
     })
     expect(adapter.actors).toEqual(['trusted:user'])
+    expect(lifecycle).toMatchObject([
+      { revision: 1, decision: { id: 'approval:effect-1', outcome: 'executed' } },
+    ])
+  })
+
+  it('publishes externally-owned lifecycle changes once and exposes the matching revision', async () => {
+    const adapter = new RecordingAdapter()
+    const service = new PendingDecisionService({ adapters: [adapter] })
+    const lifecycle: { revision: number; decision: PendingDecision }[] = []
+    service.onLifecycle((event) => lifecycle.push(event))
+
+    await expect(service.list()).resolves.toMatchObject({ revision: 0 })
+    adapter.decision = {
+      ...adapter.decision,
+      state: 'resolving',
+      decisionAt: '2026-08-16T08:00:30.000Z',
+      resolvedBy: 'trusted:user',
+    }
+    await service.refresh()
+    adapter.decision = {
+      ...adapter.decision,
+      state: 'terminal',
+      outcome: 'failed',
+      resolvedAt: '2026-08-16T08:01:00.000Z',
+    }
+    await service.refresh()
+    await service.refresh()
+
+    expect(lifecycle).toMatchObject([
+      { revision: 1, decision: { state: 'resolving' } },
+      { revision: 2, decision: { state: 'terminal', outcome: 'failed' } },
+    ])
+    await expect(service.list()).resolves.toMatchObject({
+      revision: 2,
+      decisions: [{ state: 'terminal', outcome: 'failed' }],
+    })
   })
 
   it('rejects unknown ids, disallowed verbs, and every non-user actor before delegation', async () => {

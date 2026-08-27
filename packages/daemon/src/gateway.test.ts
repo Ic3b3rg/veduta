@@ -36,6 +36,42 @@ describe('GatewayHub Surface sync', () => {
     expect(Math.abs(first.lastPatchAt() - second.lastPatchAt())).toBeLessThanOrEqual(200)
   })
 
+  it('broadcasts a validated authoritative Pending-decision lifecycle', () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store)
+    const first = new FakeGatewaySocket()
+    const second = new FakeGatewaySocket()
+    gateway.connect(first)
+    gateway.connect(second)
+    first.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+    second.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    gateway.broadcastPendingDecision({
+      revision: 1,
+      decision: {
+        id: 'approval:effect-1',
+        kind: 'approval',
+        summary: 'Send message to alice@example.com',
+        scope: { type: 'space', spaceId: 'spc-work' },
+        allowedResolutions: ['approve', 'reject'],
+        state: 'terminal',
+        outcome: 'executed',
+        createdAt: '2026-08-16T08:00:00.000Z',
+        resolvedAt: '2026-08-16T08:01:00.000Z',
+        resolvedBy: 'trusted:user',
+      },
+      message: 'Executed: Send message to alice@example.com.',
+    })
+
+    for (const socket of [first, second]) {
+      expect(socket.sent.at(-1)).toMatchObject({
+        type: 'pending-decision.lifecycle',
+        revision: 1,
+        decision: { id: 'approval:effect-1', outcome: 'executed' },
+      })
+    }
+  })
+
   it('replays patches after the reconnect cursor without requiring a snapshot reload', () => {
     const store = new Store()
     const gateway = new GatewayHub(store)

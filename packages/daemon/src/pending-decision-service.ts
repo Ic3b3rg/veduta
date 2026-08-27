@@ -26,6 +26,11 @@ export interface PendingDecisionServiceOptions {
   ready?: Promise<unknown>
 }
 
+export interface PendingDecisionLifecycleEvent {
+  revision: number
+  decision: PendingDecision
+}
+
 export class PendingDecisionNotFoundError extends Error {
   constructor(readonly decisionId: string) {
     super(`unknown Pending decision: ${decisionId}`)
@@ -59,6 +64,11 @@ export class PendingDecisionService {
   private readonly adapters = new Map<PendingDecisionKind, PendingDecisionAdapter>()
   private readonly ready: Promise<unknown>
   private readonly inFlight = new Map<string, Promise<PendingDecision>>()
+  private readonly lifecycleListeners = new Set<(event: PendingDecisionLifecycleEvent) => void>()
+  private decisions = new Map<string, PendingDecision>()
+  private revision = 0
+  private initialized = false
+  private refreshTail: Promise<void> = Promise.resolve()
 
   constructor(options: PendingDecisionServiceOptions) {
     for (const adapter of options.adapters) {
@@ -71,17 +81,23 @@ export class PendingDecisionService {
   }
 
   async list(): Promise<PendingDecisionList> {
-    await this.ready
-    const decisions = (
-      await Promise.all([...this.adapters.values()].map((adapter) => adapter.list()))
-    )
-      .flat()
-      .map((decision) => this.parseAdapterDecision(decision))
-      .sort(
-        (left, right) =>
-          right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id),
-      )
-    return PendingDecisionListSchema.parse({ decisions })
+    await this.refresh()
+    return PendingDecisionListSchema.parse({
+      revision: this.revision,
+      decisions: this.sortedDecisions(),
+    })
+  }
+
+  /** Reconciles workflow-owned state and publishes each changed decision exactly once. */
+  refresh(): Promise<void> {
+    const refresh = this.refreshTail.then(() => this.collectAndPublish())
+    this.refreshTail = refresh.catch(() => undefined)
+    return refresh
+  }
+
+  onLifecycle(listener: (event: PendingDecisionLifecycleEvent) => void): () => void {
+    this.lifecycleListeners.add(listener)
+    return () => this.lifecycleListeners.delete(listener)
   }
 
   async resolve(
@@ -90,7 +106,7 @@ export class PendingDecisionService {
     actor: string,
   ): Promise<PendingDecisionResolveResult> {
     if (actor !== 'trusted:user') throw new PendingDecisionActorError()
-    await this.ready
+    await this.refresh()
 
     const adapter = this.adapterForId(id)
     const current = await adapter.get(id)
@@ -109,8 +125,16 @@ export class PendingDecisionService {
       return PendingDecisionResolveResultSchema.parse({ decision, replayed: true })
     }
 
-    const work = Promise.resolve(adapter.resolve(id, resolution, actor)).then((decision) =>
-      this.parseAdapterDecision(decision, adapter.kind, id),
+    const work = Promise.resolve(adapter.resolve(id, resolution, actor)).then(
+      async (decision) => {
+        const parsed = this.parseAdapterDecision(decision, adapter.kind, id)
+        await this.refresh()
+        return parsed
+      },
+      async (error: unknown) => {
+        await this.refresh()
+        throw error
+      },
     )
     this.inFlight.set(id, work)
     try {
@@ -119,6 +143,47 @@ export class PendingDecisionService {
     } finally {
       if (this.inFlight.get(id) === work) this.inFlight.delete(id)
     }
+  }
+
+  private async collectAndPublish(): Promise<void> {
+    await this.ready
+    const collected = (
+      await Promise.all([...this.adapters.values()].map((adapter) => adapter.list()))
+    )
+      .flat()
+      .map((decision) => this.parseAdapterDecision(decision))
+    const next = new Map(collected.map((decision) => [decision.id, decision]))
+
+    if (!this.initialized) {
+      this.decisions = next
+      this.initialized = true
+      return
+    }
+
+    for (const decision of collected) {
+      const previous = this.decisions.get(decision.id)
+      if (previous !== undefined && decisionsEqual(previous, decision)) continue
+      this.revision += 1
+      this.publishLifecycle({ revision: this.revision, decision })
+    }
+    this.decisions = next
+  }
+
+  private publishLifecycle(event: PendingDecisionLifecycleEvent): void {
+    for (const listener of this.lifecycleListeners) {
+      try {
+        listener(event)
+      } catch (error) {
+        console.error('Pending decision lifecycle observer failed', error)
+      }
+    }
+  }
+
+  private sortedDecisions(): PendingDecision[] {
+    return [...this.decisions.values()].sort(
+      (left, right) =>
+        right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id),
+    )
   }
 
   private adapterForId(id: string): PendingDecisionAdapter {
@@ -146,4 +211,8 @@ export class PendingDecisionService {
     }
     return decision
   }
+}
+
+function decisionsEqual(left: PendingDecision, right: PendingDecision): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
 }

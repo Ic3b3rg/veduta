@@ -5,6 +5,7 @@ import {
   type ApprovalCard,
   type GatewayClientMessage,
   type GatewayServerMessage,
+  type PendingDecisionLifecycleMessage,
   type PresenceEntry,
 } from '@veduta/protocol'
 import { PwaChannelAdapter, type NormalizedChannelEvent } from './channel-adapter.ts'
@@ -187,6 +188,11 @@ export class GatewayHub {
   /** Broadcasts a new approval card chip (issue #14) to every connected client. */
   broadcastApprovalCard(card: ApprovalCard): void {
     this.pwa.broadcast({ type: 'approval.card', card })
+  }
+
+  /** Broadcasts daemon-authored decision progress/outcome; HTTP list recovery covers offline clients. */
+  broadcastPendingDecision(lifecycle: Omit<PendingDecisionLifecycleMessage, 'type'>): void {
+    this.pwa.broadcast({ type: 'pending-decision.lifecycle', ...lifecycle })
   }
 
   /**

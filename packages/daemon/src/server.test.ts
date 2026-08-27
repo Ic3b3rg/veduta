@@ -283,6 +283,38 @@ describe('GET /api/spaces', () => {
 })
 
 describe('Pending decision HTTP integration', () => {
+  it('broadcasts the authoritative lifecycle when the common resolver reaches a terminal outcome', async () => {
+    const { app, gateway, store } = buildServer()
+    const socket = new SchedulerFakeSocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+    const proposal = store.spacesEngine.proposeSpace({
+      name: 'Garden',
+      reason: 'Outdoor maintenance.',
+    })
+    const decisionId = `space-proposal:${proposal.id}`
+    await app.inject({ method: 'GET', url: '/api/pending-decisions' })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/pending-decisions/${encodeURIComponent(decisionId)}/resolve`,
+      payload: { resolution: 'reject' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(
+      socket.sent.filter((frame) => frame.type === 'pending-decision.lifecycle'),
+    ).toMatchObject([
+      {
+        type: 'pending-decision.lifecycle',
+        revision: 1,
+        decision: { id: decisionId, state: 'terminal', outcome: 'rejected' },
+        message: 'Rejected: Create Space “Garden”.',
+      },
+    ])
+    await app.close()
+  })
+
   it('resolves one durable Space proposal exactly once and recovers terminal truth', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'veduta-pending-decisions-'))
     const first = buildServer({ dataDir })
@@ -409,7 +441,10 @@ describe('production auth boundary', () => {
       headers: { authorization: `Bearer ${token}` },
     })
     expect(pendingDecisions.statusCode).toBe(200)
-    expect(PendingDecisionListSchema.parse(pendingDecisions.json())).toEqual({ decisions: [] })
+    expect(PendingDecisionListSchema.parse(pendingDecisions.json())).toEqual({
+      revision: 0,
+      decisions: [],
+    })
   })
 
   it('lets the Gateway WebSocket upgrade past the Bearer hook (per-connection auth instead)', async () => {
@@ -1669,6 +1704,7 @@ describe('trust layer wiring (issue #14)', () => {
     )!
     expect(cardFrame.card.level).toBe('L1')
     const surfaceId = cardFrame.card.surfaceId
+    await app.inject({ method: 'GET', url: '/api/pending-decisions' })
     expect(store.getSurface(surfaceId)?.spaceId).toBe('spc-health')
     // No delivery yet — the human has not decided.
     expect(store.eventLog('spc-health').some((e) => e.type === 'outbound.delivery')).toBe(false)
@@ -1700,6 +1736,15 @@ describe('trust layer wiring (issue #14)', () => {
     // sits at a lower index than the decision that preceded it.
     expect(outcomeIndex).toBeLessThan(decisionIndex)
     expect(audit.find((e) => e.kind === 'action.outcome')?.outcome).toBe('executed')
+    expect(
+      socket.sent
+        .filter((frame) => frame.type === 'pending-decision.lifecycle')
+        .map((frame) => ({ state: frame.decision.state, message: frame.message })),
+    ).toEqual([
+      { state: 'pending', message: 'Awaiting your decision: Send message to alice@example.com.' },
+      { state: 'resolving', message: 'In progress: Send message to alice@example.com.' },
+      { state: 'terminal', message: 'Executed: Send message to alice@example.com.' },
+    ])
 
     await app.close()
   })
