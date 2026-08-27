@@ -16,6 +16,7 @@ import {
   applySurfaceOrderToSpaces,
   applySurfaceStreamEvent,
   cachedSnapshot,
+  homeSpaceGroups,
   mergeSpaceAttention,
   saveSnapshot,
   surfaceStreamEventCursor,
@@ -112,6 +113,60 @@ describe('cachedSnapshot', () => {
 
     storage.setItem('home', '{"surfaceCursor":"wrong"}')
     expect(cachedSnapshot(storage, 'home')).toBeUndefined()
+  })
+})
+
+describe('homeSpaceGroups', () => {
+  it('summarizes active user Spaces before the canonical System Space by identity', () => {
+    const system = {
+      ...testSpace('spc-system', []),
+      slug: 'maintenance',
+      name: 'Maintenance',
+      attention: 2,
+    }
+    const health = {
+      ...testSpace('spc-health', [
+        testSurface('srf-older', 'spc-health', '2026-08-20T08:00:00.000Z'),
+        testSurface('srf-newer', 'spc-health', '2026-08-21T09:30:00.000Z'),
+      ]),
+      slug: 'health',
+      name: 'Health',
+    }
+    const userNamedSystem = {
+      ...testSpace('spc-user-system', []),
+      slug: 'system',
+      name: 'System',
+    }
+    const archived = { ...testSpace('spc-archive', []), archived: true }
+
+    const groups = homeSpaceGroups([system, health, archived, userNamedSystem])
+
+    expect(groups.userSpaces).toEqual([
+      {
+        id: 'spc-health',
+        slug: 'health',
+        name: 'Health',
+        surfaceCount: 2,
+        freshestUpdatedAt: '2026-08-21T09:30:00.000Z',
+        attention: 0,
+      },
+      {
+        id: 'spc-user-system',
+        slug: 'system',
+        name: 'System',
+        surfaceCount: 0,
+        attention: 0,
+      },
+    ])
+    expect(groups.systemSpaces).toEqual([
+      {
+        id: 'spc-system',
+        slug: 'maintenance',
+        name: 'Maintenance',
+        surfaceCount: 0,
+        attention: 2,
+      },
+    ])
   })
 })
 

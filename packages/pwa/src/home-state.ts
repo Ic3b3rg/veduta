@@ -1,5 +1,6 @@
 import {
   applySurfacePatchEvent,
+  SYSTEM_SPACE_ID,
   SurfaceSnapshotSchema,
   type SurfaceArchivedEvent,
   type SurfaceCreatedEvent,
@@ -13,6 +14,55 @@ import {
 import type { SpaceWithSurfaces } from './api.ts'
 
 const CANONICAL_HOME_CACHE_AUTHORITY = 'gateway-surface-order-v1'
+
+export interface HomeSpaceSummary {
+  id: string
+  slug: string
+  name: string
+  surfaceCount: number
+  freshestUpdatedAt?: string
+  attention: number
+}
+
+export interface HomeSpaceGroups {
+  userSpaces: HomeSpaceSummary[]
+  systemSpaces: HomeSpaceSummary[]
+}
+
+export function homeSpaceGroups(spaces: SpaceWithSurfaces[]): HomeSpaceGroups {
+  const groups: HomeSpaceGroups = { userSpaces: [], systemSpaces: [] }
+
+  for (const space of spaces) {
+    if (space.archived) continue
+    const summary = homeSpaceSummary(space)
+    const group = space.id === SYSTEM_SPACE_ID ? groups.systemSpaces : groups.userSpaces
+    group.push(summary)
+  }
+
+  return groups
+}
+
+function homeSpaceSummary(space: SpaceWithSurfaces): HomeSpaceSummary {
+  let freshestUpdatedAt: string | undefined
+  let freshestTime = Number.NEGATIVE_INFINITY
+
+  for (const surface of space.surfaces) {
+    const updatedAt = surface.freshness.updatedAt
+    const updatedTime = Date.parse(updatedAt)
+    if (updatedTime <= freshestTime) continue
+    freshestUpdatedAt = updatedAt
+    freshestTime = updatedTime
+  }
+
+  return {
+    id: space.id,
+    slug: space.slug,
+    name: space.name,
+    surfaceCount: space.surfaces.length,
+    ...(freshestUpdatedAt === undefined ? {} : { freshestUpdatedAt }),
+    attention: space.attention,
+  }
+}
 
 export function saveSnapshot(storage: Storage, key: string, snapshot: SurfaceSnapshot): void {
   storage.setItem(
