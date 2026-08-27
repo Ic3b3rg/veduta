@@ -176,7 +176,10 @@ export const PendingDecisionSchema = z
   })
 
 export const PendingDecisionListSchema = z
-  .object({ decisions: z.array(PendingDecisionSchema) })
+  .object({
+    revision: z.number().int().nonnegative().optional(),
+    decisions: z.array(PendingDecisionSchema),
+  })
   .strict()
   .superRefine(({ decisions }, context) => {
     const seen = new Set<string>()

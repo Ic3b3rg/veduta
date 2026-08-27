@@ -26,6 +26,10 @@ describe('PendingDecisionSchema', () => {
     expect(PendingDecisionListSchema.parse({ decisions: [pendingApproval] })).toEqual({
       decisions: [pendingApproval],
     })
+    expect(PendingDecisionListSchema.parse({ revision: 4, decisions: [pendingApproval] })).toEqual({
+      revision: 4,
+      decisions: [pendingApproval],
+    })
   })
 
   it('requires the id prefix and allowed resolutions to match the decision kind', () => {

@@ -28,12 +28,35 @@ export type ChatResultTarget = z.infer<typeof ChatResultTargetSchema>
  * crossing the WebSocket is one of these — neither side defines its
  * own local chat shape.
  */
-export const ChatMessageSchema = z.object({
-  role: z.enum(['user', 'assistant']),
-  text: z.string(),
-  targets: z.array(ChatResultTargetSchema).max(20).optional(),
-  pendingDecisions: z.array(PendingDecisionSchema).max(10).optional(),
-})
+export const ChatMessageSchema = z
+  .object({
+    role: z.enum(['user', 'assistant']),
+    text: z.string(),
+    targets: z.array(ChatResultTargetSchema).max(20).optional(),
+    pendingDecisions: z.array(PendingDecisionSchema).max(10).optional(),
+    decisionFeedbackId: z.string().min(1).max(300).optional(),
+  })
+  .superRefine((message, context) => {
+    if (message.decisionFeedbackId === undefined) return
+    if (message.role !== 'assistant') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['decisionFeedbackId'],
+        message: 'Pending-decision feedback must be daemon-authored assistant text',
+      })
+    }
+    if (
+      message.pendingDecisions?.length !== 1 ||
+      message.pendingDecisions[0]?.id !== message.decisionFeedbackId ||
+      message.pendingDecisions[0].state === 'pending'
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['decisionFeedbackId'],
+        message: 'feedback must carry the exact resolving or terminal Pending decision',
+      })
+    }
+  })
 
 export type ChatMessage = z.infer<typeof ChatMessageSchema>
 

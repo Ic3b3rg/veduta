@@ -82,4 +82,31 @@ describe('ChatMessageSchema result targets', () => {
       pendingDecisions: [pendingDecision],
     })
   })
+
+  it('ties one daemon-authored feedback entry to its exact Pending-decision id', () => {
+    const decision = {
+      id: 'approval:effect-1',
+      kind: 'approval',
+      summary: 'Send a message',
+      scope: { type: 'space', spaceId: 'spc-work' },
+      allowedResolutions: ['approve', 'reject'],
+      state: 'terminal',
+      outcome: 'executed',
+      createdAt: '2026-08-25T10:00:00.000Z',
+      resolvedAt: '2026-08-25T10:01:00.000Z',
+      resolvedBy: 'trusted:user',
+    }
+    const feedback = {
+      role: 'assistant',
+      text: 'Executed: Send a message.',
+      decisionFeedbackId: 'approval:effect-1',
+      pendingDecisions: [decision],
+    }
+
+    expect(ChatMessageSchema.parse(feedback)).toEqual(feedback)
+    expect(
+      ChatMessageSchema.safeParse({ ...feedback, decisionFeedbackId: 'approval:other' }).success,
+    ).toBe(false)
+    expect(ChatMessageSchema.safeParse({ ...feedback, role: 'user' }).success).toBe(false)
+  })
 })

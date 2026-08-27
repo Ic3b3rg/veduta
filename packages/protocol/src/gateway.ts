@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { AuthSessionTokenSchema } from './auth.ts'
 import { ChatClientMessageSchema, ChatMessageSchema } from './chat.ts'
 import { ActionInvocationSchema, PatchSchema } from './patch.ts'
+import { PendingDecisionSchema } from './pending-decision.ts'
 import { SpaceSchema } from './space.ts'
 import { FreshnessSchema, RelativeTimeValiditySchema, SurfaceSchema } from './surface.ts'
 
@@ -208,6 +209,13 @@ export const ChatTurnErrorMessageSchema = z.object({
   error: z.string(),
 })
 
+export const PendingDecisionLifecycleMessageSchema = z.object({
+  type: z.literal('pending-decision.lifecycle'),
+  revision: GatewayCursorSchema,
+  decision: PendingDecisionSchema,
+  message: z.string().min(1).max(700),
+})
+
 export const GatewayClientMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('hello'),
@@ -267,6 +275,7 @@ export const GatewayServerMessageSchema = z.discriminatedUnion('type', [
   ChatTurnDeltaMessageSchema,
   ChatTurnEndMessageSchema,
   ChatTurnErrorMessageSchema,
+  PendingDecisionLifecycleMessageSchema,
   z.object({
     type: z.literal('approval.card'),
     card: ApprovalCardSchema,
@@ -305,6 +314,7 @@ export type ChatTurnStartMessage = z.infer<typeof ChatTurnStartMessageSchema>
 export type ChatTurnDeltaMessage = z.infer<typeof ChatTurnDeltaMessageSchema>
 export type ChatTurnEndMessage = z.infer<typeof ChatTurnEndMessageSchema>
 export type ChatTurnErrorMessage = z.infer<typeof ChatTurnErrorMessageSchema>
+export type PendingDecisionLifecycleMessage = z.infer<typeof PendingDecisionLifecycleMessageSchema>
 export type PresenceStatus = z.infer<typeof PresenceStatusSchema>
 export type PresenceEntry = z.infer<typeof PresenceEntrySchema>
 export type ApprovalCard = z.infer<typeof ApprovalCardSchema>

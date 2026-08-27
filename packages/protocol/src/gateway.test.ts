@@ -82,6 +82,33 @@ describe('Gateway protocol', () => {
     ).toBe(true)
   })
 
+  it('accepts a revisioned authoritative Pending-decision lifecycle frame', () => {
+    const frame = {
+      type: 'pending-decision.lifecycle' as const,
+      revision: 7,
+      decision: {
+        id: 'approval:effect-1',
+        kind: 'approval' as const,
+        summary: 'Send message to alice@example.com',
+        scope: { type: 'space' as const, spaceId: 'spc-work' },
+        allowedResolutions: ['approve', 'reject'] as const,
+        state: 'terminal' as const,
+        outcome: 'executed' as const,
+        createdAt: '2026-08-16T08:00:00.000Z',
+        decisionAt: '2026-08-16T08:01:00.000Z',
+        resolvedAt: '2026-08-16T08:01:01.000Z',
+        resolvedBy: 'trusted:user' as const,
+      },
+      message: 'Executed: Send message to alice@example.com.',
+    }
+
+    expect(GatewayServerMessageSchema.parse(frame)).toEqual(frame)
+    expect(GatewayServerMessageSchema.safeParse({ ...frame, revision: -1 }).success).toBe(false)
+    expect(
+      GatewayServerMessageSchema.safeParse({ ...frame, message: 'x'.repeat(701) }).success,
+    ).toBe(false)
+  })
+
   it('rejects an ApprovalCard missing surfaceId or expiresAt', () => {
     expect(
       ApprovalCardSchema.safeParse({
