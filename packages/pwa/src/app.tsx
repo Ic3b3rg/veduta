@@ -213,6 +213,21 @@ function RoutedApp() {
     pendingDecisionRevisionRef.current = -1
     pendingDecisionBufferRef.current = []
 
+    const replayBufferedLifecycle = () => {
+      const buffered = pendingDecisionBufferRef.current
+        .slice()
+        .sort((left, right) => left.revision - right.revision)
+      pendingDecisionBufferRef.current = []
+      pendingDecisionSyncingRef.current = false
+      for (const lifecycle of buffered) {
+        pendingDecisionRevisionRef.current = Math.max(
+          pendingDecisionRevisionRef.current,
+          lifecycle.revision,
+        )
+        applyPendingDecisionFeedback(lifecycle.decision, lifecycle.message)
+      }
+    }
+
     void fetchPendingDecisions(authToken)
       .then((snapshot) => {
         if (generation !== pendingDecisionSyncGenerationRef.current) return
@@ -220,28 +235,20 @@ function RoutedApp() {
         setChatEntries((entries) => reconcilePendingDecisionSnapshot(entries, snapshot.decisions))
         setApprovalCards((cards) => reconcileApprovalCards(cards, snapshot.decisions))
 
-        const buffered = pendingDecisionBufferRef.current
-          .slice()
-          .sort((left, right) => left.revision - right.revision)
-        pendingDecisionBufferRef.current = []
-        pendingDecisionSyncingRef.current = false
-        for (const lifecycle of buffered) acceptPendingDecisionLifecycle(lifecycle)
+        replayBufferedLifecycle()
       })
       .catch((error: unknown) => {
         if (generation !== pendingDecisionSyncGenerationRef.current) return
-        const buffered = pendingDecisionBufferRef.current
-          .slice()
-          .sort((left, right) => left.revision - right.revision)
-        pendingDecisionBufferRef.current = []
-        pendingDecisionSyncingRef.current = false
         if (error instanceof ApiResponseError && error.status === 401) {
+          pendingDecisionBufferRef.current = []
+          pendingDecisionSyncingRef.current = false
           resetUnauthorizedSession()
           return
         }
         console.warn('failed to refresh Pending decisions:', error)
-        for (const lifecycle of buffered) acceptPendingDecisionLifecycle(lifecycle)
+        replayBufferedLifecycle()
       })
-  }, [acceptPendingDecisionLifecycle, authToken, resetUnauthorizedSession])
+  }, [applyPendingDecisionFeedback, authToken, resetUnauthorizedSession])
 
   // Streamed Agent turns (issue 037: PWA-side streaming): `chat.turn-start`/`-delta` only
   // ever touch `streamingTurns` (never localStorage-backed `chatEntries`,

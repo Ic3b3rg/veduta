@@ -10,6 +10,7 @@ import {
   type ModelConnectionsSnapshot,
   type OnboardingStatus,
   type PendingDecision,
+  type PendingDecisionList,
 } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -855,6 +856,47 @@ describe('App', () => {
 
     vi.mocked(fetchPendingDecisions).mockResolvedValueOnce({ revision: 2, decisions: [terminal] })
     await act(async () => handlers.onHello(0, 'pwa-reconnect'))
+
+    expect(
+      await screen.findAllByText('Accepted: Create Space “Travel”.', { exact: true }),
+    ).toHaveLength(2)
+    expect(document.querySelectorAll('.chat-entry[data-decision-feedback-id]')).toHaveLength(1)
+  })
+
+  it('keeps a live terminal outcome that also lands in the reconnect snapshot', async () => {
+    const handlers = await renderConnectedEmptyHealth('pwa-reconnect-race')
+    await waitFor(() => expect(fetchPendingDecisions).toHaveBeenCalledOnce())
+    const terminal: PendingDecision = {
+      id: 'space-proposal:proposal-travel',
+      kind: 'space-proposal',
+      summary: 'Create Space “Travel”',
+      scope: { type: 'global' },
+      allowedResolutions: ['accept', 'reject'],
+      state: 'terminal',
+      outcome: 'accepted',
+      createdAt: '2026-08-25T10:00:00.000Z',
+      resolvedAt: '2026-08-25T10:01:01.000Z',
+      resolvedBy: 'trusted:user',
+    }
+    let resolveSnapshot: ((snapshot: PendingDecisionList) => void) | undefined
+    vi.mocked(fetchPendingDecisions).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSnapshot = resolve
+      }),
+    )
+
+    act(() => handlers.onHello(0, 'pwa-reconnect-race'))
+    act(() => {
+      handlers.onPendingDecisionLifecycle({
+        type: 'pending-decision.lifecycle',
+        revision: 2,
+        decision: terminal,
+        message: 'Accepted: Create Space “Travel”.',
+      })
+    })
+    await act(async () => {
+      resolveSnapshot?.({ revision: 2, decisions: [terminal] })
+    })
 
     expect(
       await screen.findAllByText('Accepted: Create Space “Travel”.', { exact: true }),
