@@ -15,6 +15,7 @@ import { clientPath } from './client-router.tsx'
 import { HomeSpaceGrid, type HomeSpacesLoadState } from './home-space-grid.tsx'
 import { InstallButton } from './install-button.tsx'
 import { NotificationBell } from './notification-bell.tsx'
+import { latestPendingDecisionFeedback } from './pending-decision-state.ts'
 import type { BrowserInstallPromptEvent, QueuedFastAction } from './pwa-storage.ts'
 import { SpaceSection } from './space-section.tsx'
 import type { SurfaceUpdateFeedback } from './surface-motion.ts'
@@ -113,6 +114,7 @@ export function AppShell({
     : focusedSpace
       ? `${focusedSpace.name} Space`
       : 'Home'
+  const pendingDecisionFeedback = latestPendingDecisionFeedback(chatEntries)
 
   return (
     <div className="app-shell">
@@ -141,6 +143,16 @@ export function AppShell({
       {error && (
         <p className="error" role="alert">
           {error}
+        </p>
+      )}
+
+      {pendingDecisionFeedback && (
+        <p
+          className={`pending-decision-feedback ${pendingDecisionFeedback.state}`}
+          role="status"
+          data-decision-feedback-id={pendingDecisionFeedback.id}
+        >
+          {pendingDecisionFeedback.text}
         </p>
       )}
 

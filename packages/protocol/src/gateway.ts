@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { AuthSessionTokenSchema } from './auth.ts'
 import { ChatClientMessageSchema, ChatMessageSchema } from './chat.ts'
 import { ActionInvocationSchema, PatchSchema } from './patch.ts'
-import { PendingDecisionSchema } from './pending-decision.ts'
+import { pendingDecisionFeedback, PendingDecisionSchema } from './pending-decision.ts'
 import { SpaceSchema } from './space.ts'
 import { FreshnessSchema, RelativeTimeValiditySchema, SurfaceSchema } from './surface.ts'
 
@@ -209,12 +209,15 @@ export const ChatTurnErrorMessageSchema = z.object({
   error: z.string(),
 })
 
-export const PendingDecisionLifecycleMessageSchema = z.object({
+const PendingDecisionLifecycleMessageObjectSchema = z.object({
   type: z.literal('pending-decision.lifecycle'),
   revision: GatewayCursorSchema,
   decision: PendingDecisionSchema,
   message: z.string().min(1).max(700),
 })
+
+export const PendingDecisionLifecycleMessageSchema =
+  PendingDecisionLifecycleMessageObjectSchema.superRefine(refinePendingDecisionLifecycleMessage)
 
 export const GatewayClientMessageSchema = z.discriminatedUnion('type', [
   z.object({
@@ -239,7 +242,7 @@ export const GatewayClientMessageSchema = z.discriminatedUnion('type', [
   }),
 ])
 
-export const GatewayServerMessageSchema = z.discriminatedUnion('type', [
+const GatewayServerMessageObjectSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('hello'),
     clientId: z.string().min(1),
@@ -275,7 +278,7 @@ export const GatewayServerMessageSchema = z.discriminatedUnion('type', [
   ChatTurnDeltaMessageSchema,
   ChatTurnEndMessageSchema,
   ChatTurnErrorMessageSchema,
-  PendingDecisionLifecycleMessageSchema,
+  PendingDecisionLifecycleMessageObjectSchema,
   z.object({
     type: z.literal('approval.card'),
     card: ApprovalCardSchema,
@@ -295,6 +298,26 @@ export const GatewayServerMessageSchema = z.discriminatedUnion('type', [
     error: z.string().min(1),
   }),
 ])
+
+export const GatewayServerMessageSchema = GatewayServerMessageObjectSchema.superRefine(
+  (message, context) => {
+    if (message.type === 'pending-decision.lifecycle') {
+      refinePendingDecisionLifecycleMessage(message, context)
+    }
+  },
+)
+
+function refinePendingDecisionLifecycleMessage(
+  lifecycle: z.infer<typeof PendingDecisionLifecycleMessageObjectSchema>,
+  context: z.RefinementCtx,
+): void {
+  if (lifecycle.message === pendingDecisionFeedback(lifecycle.decision)) return
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ['message'],
+    message: 'lifecycle message must be derived from the Pending decision state',
+  })
+}
 
 export type GatewayCursor = z.infer<typeof GatewayCursorSchema>
 export type SurfaceOrder = z.infer<typeof SurfaceOrderSchema>

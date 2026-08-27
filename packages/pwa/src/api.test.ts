@@ -481,6 +481,7 @@ function connectWithFakeSocket(handlerOverrides: Partial<GatewayHandlers>) {
     onChatTurnDelta: vi.fn(),
     onChatTurnEnd: vi.fn(),
     onChatTurnError: vi.fn(),
+    onPendingDecisionLifecycle: vi.fn(),
     onApprovalCard: vi.fn(),
     onPresence: vi.fn(),
     onSpaceAttention: vi.fn(),
@@ -588,6 +589,31 @@ describe('connectGateway chat.turn-* dispatch', () => {
     deliver(socket, frame)
 
     expect(onChatMessage).toHaveBeenCalledWith(frame)
+  })
+
+  it('dispatches authoritative Pending-decision lifecycle frames intact', () => {
+    const onPendingDecisionLifecycle = vi.fn()
+    const { socket } = connectWithFakeSocket({ onPendingDecisionLifecycle })
+    const frame = {
+      type: 'pending-decision.lifecycle',
+      revision: 3,
+      message: 'In progress: Send message.',
+      decision: {
+        id: 'approval:effect-1',
+        kind: 'approval',
+        summary: 'Send message',
+        scope: { type: 'global' },
+        allowedResolutions: ['approve', 'reject'],
+        state: 'resolving',
+        createdAt: '2026-08-25T10:00:00.000Z',
+        decisionAt: '2026-08-25T10:01:00.000Z',
+        resolvedBy: 'trusted:user',
+      },
+    }
+
+    deliver(socket, frame)
+
+    expect(onPendingDecisionLifecycle).toHaveBeenCalledWith(frame)
   })
 
   it('drops a frame that fails schema validation without calling any handler', () => {

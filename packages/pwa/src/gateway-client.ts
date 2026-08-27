@@ -28,6 +28,9 @@ export interface GatewayHandlers {
   onChatTurnDelta(message: Extract<GatewayServerMessage, { type: 'chat.turn-delta' }>): void
   onChatTurnEnd(message: Extract<GatewayServerMessage, { type: 'chat.turn-end' }>): void
   onChatTurnError(message: Extract<GatewayServerMessage, { type: 'chat.turn-error' }>): void
+  onPendingDecisionLifecycle(
+    message: Extract<GatewayServerMessage, { type: 'pending-decision.lifecycle' }>,
+  ): void
   onApprovalCard(message: Extract<GatewayServerMessage, { type: 'approval.card' }>): void
   onPresence(message: Extract<GatewayServerMessage, { type: 'presence.update' }>): void
   onSpaceAttention(message: Extract<GatewayServerMessage, { type: 'space.attention' }>): void
@@ -111,6 +114,9 @@ function dispatchGatewayMessage(handlers: GatewayHandlers, message: GatewayServe
       break
     case 'chat.turn-error':
       handlers.onChatTurnError(message)
+      break
+    case 'pending-decision.lifecycle':
+      handlers.onPendingDecisionLifecycle(message)
       break
     case 'approval.card':
       handlers.onApprovalCard(message)

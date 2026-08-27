@@ -39,6 +39,19 @@ const KIND_CONTRACT = {
   { prefix: string; resolutions: readonly z.infer<typeof PendingDecisionResolutionSchema>[] }
 >
 
+const TERMINAL_FEEDBACK_PREFIXES: Record<PendingDecisionOutcome, string> = {
+  executed: 'Executed',
+  accepted: 'Accepted',
+  rejected: 'Rejected',
+  expired: 'Expired without a decision',
+  failed: 'Failed',
+  stale: 'Refused because it became stale',
+  indeterminate: 'Outcome could not be determined after recovery',
+  applied: 'Applied',
+  'rolled-back': 'Rolled back',
+  refused: 'Refused',
+}
+
 export interface ParsedPendingDecisionId {
   kind: z.infer<typeof PendingDecisionKindSchema>
   nativeId: string
@@ -72,6 +85,27 @@ export function formatPendingDecisionId(
     throw new Error(`invalid native id for ${kind} Pending decision`)
   }
   return id
+}
+
+/** Payload-free feedback derived only from a validated Pending decision's safe summary and state. */
+export function pendingDecisionFeedback(decision: PendingDecision): string {
+  if (decision.state === 'pending') {
+    return pendingDecisionFeedbackSentence('Awaiting your decision', decision.summary)
+  }
+  if (decision.state === 'resolving') {
+    return pendingDecisionFeedbackSentence('In progress', decision.summary)
+  }
+  if (decision.outcome === undefined) {
+    throw new Error(`terminal Pending decision ${decision.id} has no authoritative outcome`)
+  }
+  return pendingDecisionFeedbackSentence(
+    TERMINAL_FEEDBACK_PREFIXES[decision.outcome],
+    decision.summary,
+  )
+}
+
+function pendingDecisionFeedbackSentence(prefix: string, summary: string): string {
+  return `${prefix}: ${summary}${/[.!?]$/.test(summary) ? '' : '.'}`
 }
 
 export const PendingDecisionSchema = z

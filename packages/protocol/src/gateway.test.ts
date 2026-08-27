@@ -5,6 +5,7 @@ import {
   GatewayServerMessageSchema,
   MoveSurfaceRequestSchema,
   MoveSurfaceResultSchema,
+  PendingDecisionLifecycleMessageSchema,
   PinSurfaceResultSchema,
   SurfaceArchivedEventSchema,
   SurfaceCreatedEventSchema,
@@ -106,6 +107,16 @@ describe('Gateway protocol', () => {
     expect(GatewayServerMessageSchema.safeParse({ ...frame, revision: -1 }).success).toBe(false)
     expect(
       GatewayServerMessageSchema.safeParse({ ...frame, message: 'x'.repeat(701) }).success,
+    ).toBe(false)
+    expect(
+      GatewayServerMessageSchema.safeParse({ ...frame, message: 'The model says it probably ran.' })
+        .success,
+    ).toBe(false)
+    expect(
+      PendingDecisionLifecycleMessageSchema.safeParse({
+        ...frame,
+        message: 'The model says it probably ran.',
+      }).success,
     ).toBe(false)
   })
 

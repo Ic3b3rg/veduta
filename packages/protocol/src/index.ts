@@ -61,6 +61,7 @@ export {
   PendingDecisionResolveResultSchema,
   formatPendingDecisionId,
   parsePendingDecisionId,
+  pendingDecisionFeedback,
   pendingDecisionNativeId,
   type PendingDecisionKind,
   type PendingDecisionResolution,

@@ -1,14 +1,17 @@
-import type {
-  ApprovalCard,
-  ChatMessage,
-  GatewayServerMessage,
-  OnboardingStatus,
-  PendingDecision,
-  PendingDecisionResolution,
-  Surface,
-  SurfaceMoveDirection,
-  SurfaceOrder,
-  SurfaceSnapshot,
+import {
+  formatPendingDecisionId,
+  pendingDecisionFeedback,
+  type ApprovalCard,
+  type ChatMessage,
+  type GatewayServerMessage,
+  type OnboardingStatus,
+  type PendingDecision,
+  type PendingDecisionLifecycleMessage,
+  type PendingDecisionResolution,
+  type Surface,
+  type SurfaceMoveDirection,
+  type SurfaceOrder,
+  type SurfaceSnapshot,
 } from '@veduta/protocol'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BrowserRouter } from 'react-router-dom'
@@ -18,6 +21,7 @@ import {
   connectGateway,
   fetchAuthStatus,
   fetchOnboardingStatus,
+  fetchPendingDecisions,
   fetchSpaces,
   invokeFastAction,
   markSpaceAttentionSeen,
@@ -51,6 +55,10 @@ import {
 import type { HomeSpacesLoadState } from './home-space-grid.tsx'
 import { AppShell, type AppRouteSelection } from './app-shell.tsx'
 import { homeBlockedByStatusFailure } from './onboarding-state.ts'
+import {
+  applyPendingDecisionLifecycle,
+  reconcilePendingDecisionSnapshot,
+} from './pending-decision-state.ts'
 import {
   AUTH_TOKEN_KEY,
   CHAT_HISTORY_LIMIT,
@@ -138,6 +146,10 @@ function RoutedApp() {
   // `applyIncomingTurnFrame`/`onClose` below for why a stale clientId would
   // otherwise strand a turn's closing frame.
   const clientIdRef = useRef<string | undefined>(undefined)
+  const pendingDecisionRevisionRef = useRef(-1)
+  const pendingDecisionSyncingRef = useRef(false)
+  const pendingDecisionSyncGenerationRef = useRef(0)
+  const pendingDecisionBufferRef = useRef<PendingDecisionLifecycleMessage[]>([])
 
   const resetUnauthorizedSession = useCallback(() => {
     localStorage.removeItem(AUTH_TOKEN_KEY)
@@ -160,6 +172,76 @@ function RoutedApp() {
   const appendChatEntry = useCallback((entry: ChatMessage) => {
     setChatEntries((prev) => [...prev, entry].slice(-CHAT_HISTORY_LIMIT))
   }, [])
+
+  const applyPendingDecisionFeedback = useCallback((decision: PendingDecision, message: string) => {
+    const lifecycle: PendingDecisionLifecycleMessage = {
+      type: 'pending-decision.lifecycle',
+      revision: 0,
+      decision,
+      message,
+    }
+    setChatEntries((entries) =>
+      applyPendingDecisionLifecycle(entries, lifecycle).slice(-CHAT_HISTORY_LIMIT),
+    )
+    setApprovalCards((cards) => reconcileApprovalCards(cards, [decision]))
+  }, [])
+
+  const acceptPendingDecisionLifecycle = useCallback(
+    (lifecycle: PendingDecisionLifecycleMessage) => {
+      if (lifecycle.revision <= pendingDecisionRevisionRef.current) return
+      pendingDecisionRevisionRef.current = lifecycle.revision
+      applyPendingDecisionFeedback(lifecycle.decision, lifecycle.message)
+    },
+    [applyPendingDecisionFeedback],
+  )
+
+  const handlePendingDecisionLifecycle = useCallback(
+    (lifecycle: PendingDecisionLifecycleMessage) => {
+      if (pendingDecisionSyncingRef.current) {
+        pendingDecisionBufferRef.current.push(lifecycle)
+        return
+      }
+      acceptPendingDecisionLifecycle(lifecycle)
+    },
+    [acceptPendingDecisionLifecycle],
+  )
+
+  const refreshPendingDecisionSnapshot = useCallback(() => {
+    pendingDecisionSyncGenerationRef.current += 1
+    const generation = pendingDecisionSyncGenerationRef.current
+    pendingDecisionSyncingRef.current = true
+    pendingDecisionRevisionRef.current = -1
+    pendingDecisionBufferRef.current = []
+
+    void fetchPendingDecisions(authToken)
+      .then((snapshot) => {
+        if (generation !== pendingDecisionSyncGenerationRef.current) return
+        pendingDecisionRevisionRef.current = snapshot.revision ?? 0
+        setChatEntries((entries) => reconcilePendingDecisionSnapshot(entries, snapshot.decisions))
+        setApprovalCards((cards) => reconcileApprovalCards(cards, snapshot.decisions))
+
+        const buffered = pendingDecisionBufferRef.current
+          .slice()
+          .sort((left, right) => left.revision - right.revision)
+        pendingDecisionBufferRef.current = []
+        pendingDecisionSyncingRef.current = false
+        for (const lifecycle of buffered) acceptPendingDecisionLifecycle(lifecycle)
+      })
+      .catch((error: unknown) => {
+        if (generation !== pendingDecisionSyncGenerationRef.current) return
+        const buffered = pendingDecisionBufferRef.current
+          .slice()
+          .sort((left, right) => left.revision - right.revision)
+        pendingDecisionBufferRef.current = []
+        pendingDecisionSyncingRef.current = false
+        if (error instanceof ApiResponseError && error.status === 401) {
+          resetUnauthorizedSession()
+          return
+        }
+        console.warn('failed to refresh Pending decisions:', error)
+        for (const lifecycle of buffered) acceptPendingDecisionLifecycle(lifecycle)
+      })
+  }, [acceptPendingDecisionLifecycle, authToken, resetUnauthorizedSession])
 
   // Streamed Agent turns (issue 037: PWA-side streaming): `chat.turn-start`/`-delta` only
   // ever touch `streamingTurns` (never localStorage-backed `chatEntries`,
@@ -446,6 +528,7 @@ function RoutedApp() {
           // (mergeSpaceAttention) never lets the refetched snapshot clobber
           // a newer attention count already applied locally.
           refetchAndReplay()
+          refreshPendingDecisionSnapshot()
         },
         onSurfacePatch(event) {
           handleSurfaceStreamEvent({ type: 'surface.patch', event })
@@ -469,6 +552,7 @@ function RoutedApp() {
         onChatTurnDelta: applyIncomingTurnFrame,
         onChatTurnEnd: applyIncomingTurnFrame,
         onChatTurnError: applyIncomingTurnFrame,
+        onPendingDecisionLifecycle: handlePendingDecisionLifecycle,
         onApprovalCard(message) {
           setApprovalCards((prev) =>
             prev.some((card) => card.id === message.card.id) ? prev : [...prev, message.card],
@@ -525,17 +609,22 @@ function RoutedApp() {
     return () => {
       closedByApp = true
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
+      pendingDecisionSyncGenerationRef.current += 1
+      pendingDecisionSyncingRef.current = false
+      pendingDecisionBufferRef.current = []
       gatewayRef.current?.close()
     }
   }, [
     handleSurfaceStreamEvent,
     handleSurfaceCreatedMessage,
+    handlePendingDecisionLifecycle,
     appendChatEntry,
     applyIncomingTurnFrame,
     acceptCanonicalSnapshot,
     authToken,
     replaceSpaces,
     refetchAndReplay,
+    refreshPendingDecisionSnapshot,
     resetUnauthorizedSession,
     spacesRetryToken,
   ])
@@ -703,17 +792,7 @@ function RoutedApp() {
       return
     }
 
-    setChatEntries((entries) =>
-      entries.map((entry) => {
-        if (!entry.pendingDecisions?.some((candidate) => candidate.id === decision.id)) return entry
-        return {
-          ...entry,
-          pendingDecisions: entry.pendingDecisions.map((candidate) =>
-            candidate.id === decision.id ? decision : candidate,
-          ),
-        }
-      }),
-    )
+    applyPendingDecisionFeedback(decision, pendingDecisionFeedback(decision))
 
     if (decision.kind === 'space-proposal' && decision.outcome === 'accepted') {
       try {
@@ -878,6 +957,17 @@ function RoutedApp() {
 
 function findSurface(spaces: SpaceWithSurfaces[], surfaceId: string): Surface | undefined {
   return spaces.flatMap((space) => space.surfaces).find((surface) => surface.id === surfaceId)
+}
+
+function reconcileApprovalCards(
+  cards: ApprovalCard[],
+  decisions: readonly PendingDecision[],
+): ApprovalCard[] {
+  const decisionsById = new Map(decisions.map((decision) => [decision.id, decision]))
+  return cards.filter((card) => {
+    const decision = decisionsById.get(formatPendingDecisionId('approval', card.id))
+    return decision === undefined || decision.state === 'pending'
+  })
 }
 
 function surfaceStreamEventErrorMessage(streamEvent: SurfaceStreamEvent): string {

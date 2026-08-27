@@ -9,6 +9,7 @@ import {
   SurfacePatchEventSchema,
   type ModelConnectionsSnapshot,
   type OnboardingStatus,
+  type PendingDecision,
 } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -39,6 +40,7 @@ import {
   fetchAuthStatus,
   fetchModelConnections,
   fetchOnboardingStatus,
+  fetchPendingDecisions,
   fetchSpaces,
   invokeFastAction,
   moveSurface,
@@ -732,6 +734,132 @@ describe('App', () => {
     expect(screen.getByText('Accepted')).toBeDefined()
     expect(screen.queryByRole('button', { name: 'Accept Create Space “Travel”' })).toBeNull()
     expect(location.pathname).toBe('/')
+  })
+
+  it('shows one convergent Pending-decision outcome in chat and the fixed shell', async () => {
+    const handlers = await renderConnectedEmptyHealth('pwa-outcome')
+    const pending: PendingDecision = {
+      id: 'approval:effect-1',
+      kind: 'approval' as const,
+      summary: 'Send message to alice@example.com',
+      scope: { type: 'space' as const, spaceId: 'spc-health' },
+      allowedResolutions: ['approve', 'reject'],
+      state: 'pending',
+      decisionSurfaceId: 'srf-approval-1',
+      createdAt: '2026-08-25T10:00:00.000Z',
+    }
+    const resolving: PendingDecision = {
+      ...pending,
+      state: 'resolving',
+      decisionAt: '2026-08-25T10:01:00.000Z',
+      resolvedBy: 'trusted:user' as const,
+    }
+    const terminal: PendingDecision = {
+      ...resolving,
+      state: 'terminal',
+      outcome: 'executed',
+      resolvedAt: '2026-08-25T10:01:01.000Z',
+    }
+
+    act(() => {
+      handlers.onChatMessage({
+        type: 'chat.message',
+        message: {
+          role: 'assistant',
+          text: 'This action needs approval.',
+          pendingDecisions: [pending],
+        },
+      })
+      handlers.onApprovalCard({
+        type: 'approval.card',
+        card: {
+          id: 'effect-1',
+          level: 'L1',
+          title: 'Send message',
+          body: 'Safe notification summary',
+          actionLabel: 'Approve',
+          createdAt: '2026-08-25T10:00:00.000Z',
+          surfaceId: 'srf-approval-1',
+          expiresAt: '2026-08-25T10:10:00.000Z',
+        },
+      })
+      handlers.onPendingDecisionLifecycle({
+        type: 'pending-decision.lifecycle',
+        revision: 1,
+        decision: resolving,
+        message: 'In progress: Send message to alice@example.com.',
+      })
+    })
+
+    expect(
+      await screen.findAllByText('In progress: Send message to alice@example.com.', {
+        exact: true,
+      }),
+    ).toHaveLength(2)
+    expect(screen.queryByRole('heading', { name: 'Send message' })).toBeNull()
+
+    act(() => {
+      handlers.onPendingDecisionLifecycle({
+        type: 'pending-decision.lifecycle',
+        revision: 2,
+        decision: terminal,
+        message: 'Executed: Send message to alice@example.com.',
+      })
+      handlers.onPendingDecisionLifecycle({
+        type: 'pending-decision.lifecycle',
+        revision: 2,
+        decision: terminal,
+        message: 'Executed: Send message to alice@example.com.',
+      })
+    })
+
+    expect(
+      await screen.findAllByText('Executed: Send message to alice@example.com.', { exact: true }),
+    ).toHaveLength(2)
+    expect(
+      document.querySelectorAll('[data-decision-feedback-id="approval:effect-1"]'),
+    ).toHaveLength(2)
+    expect(screen.queryByText('In progress: Send message to alice@example.com.')).toBeNull()
+  })
+
+  it('reconciles a known Pending decision after reconnect without duplicating chat feedback', async () => {
+    const handlers = await renderConnectedEmptyHealth('pwa-reconnect')
+    await waitFor(() => expect(fetchPendingDecisions).toHaveBeenCalledOnce())
+    const resolving: PendingDecision = {
+      id: 'space-proposal:proposal-travel',
+      kind: 'space-proposal' as const,
+      summary: 'Create Space “Travel”',
+      scope: { type: 'global' as const },
+      allowedResolutions: ['accept', 'reject'],
+      state: 'resolving',
+      createdAt: '2026-08-25T10:00:00.000Z',
+      decisionAt: '2026-08-25T10:01:00.000Z',
+      resolvedBy: 'trusted:user' as const,
+    }
+    const terminal: PendingDecision = {
+      ...resolving,
+      state: 'terminal',
+      outcome: 'accepted',
+      resolvedAt: '2026-08-25T10:01:01.000Z',
+    }
+
+    act(() => {
+      handlers.onPendingDecisionLifecycle({
+        type: 'pending-decision.lifecycle',
+        revision: 1,
+        decision: resolving,
+        message: 'In progress: Create Space “Travel”.',
+      })
+    })
+    expect(await screen.findAllByText('In progress: Create Space “Travel”.')).toHaveLength(2)
+
+    vi.mocked(fetchPendingDecisions).mockResolvedValueOnce({ revision: 2, decisions: [terminal] })
+    await act(async () => handlers.onHello(0, 'pwa-reconnect'))
+
+    expect(
+      await screen.findAllByText('Accepted: Create Space “Travel”.', { exact: true }),
+    ).toHaveLength(2)
+    expect(document.querySelectorAll('.chat-entry[data-decision-feedback-id]')).toHaveLength(1)
   })
 
   it('uses immediate positioning and a non-animated visible highlight for reduced motion', async () => {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { resolvePendingDecision } from './pending-decisions-api.ts'
+import { fetchPendingDecisions, resolvePendingDecision } from './pending-decisions-api.ts'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -39,5 +39,37 @@ describe('resolvePendingDecision', () => {
     expect(JSON.parse(init?.body as string)).toEqual({ resolution: 'accept' })
     expect(init?.headers).toMatchObject({ authorization: 'Bearer test-token' })
     expect(result).toEqual(body)
+  })
+})
+
+describe('fetchPendingDecisions', () => {
+  it('gets and validates the authoritative lifecycle snapshot', async () => {
+    const body = {
+      revision: 7,
+      decisions: [
+        {
+          id: 'approval:effect-1',
+          kind: 'approval',
+          summary: 'Send message to alice@example.com',
+          scope: { type: 'space', spaceId: 'spc-work' },
+          allowedResolutions: ['approve', 'reject'],
+          state: 'terminal',
+          outcome: 'executed',
+          createdAt: '2026-08-25T10:00:00.000Z',
+          resolvedAt: '2026-08-25T10:01:00.000Z',
+          resolvedBy: 'trusted:user',
+        },
+      ],
+    }
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify(body), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(fetchPendingDecisions('test-token')).resolves.toEqual(body)
+    expect(fetchMock).toHaveBeenCalledWith('/api/pending-decisions', {
+      headers: { authorization: 'Bearer test-token' },
+    })
   })
 })

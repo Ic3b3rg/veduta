@@ -108,5 +108,8 @@ describe('ChatMessageSchema result targets', () => {
       ChatMessageSchema.safeParse({ ...feedback, decisionFeedbackId: 'approval:other' }).success,
     ).toBe(false)
     expect(ChatMessageSchema.safeParse({ ...feedback, role: 'user' }).success).toBe(false)
+    expect(
+      ChatMessageSchema.safeParse({ ...feedback, text: 'The model says it probably ran.' }).success,
+    ).toBe(false)
   })
 })

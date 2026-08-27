@@ -215,6 +215,22 @@
   white-space: pre-wrap;
 }
 
+.pending-decision-feedback {
+  background: var(--glass-panel-raised);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  color: var(--text);
+  margin: 0 auto 14px;
+  max-width: 1180px;
+  padding: 10px 12px;
+}
+
+.pending-decision-feedback.resolving {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+}
+
 .shell-layout {
   align-items: start;
   display: grid;

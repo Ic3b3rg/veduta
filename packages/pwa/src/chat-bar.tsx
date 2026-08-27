@@ -95,7 +95,11 @@ export function ChatBar({
             <ApprovalCards cards={approvalCards} compact onDismiss={onDismissApprovalCards} />
           )}
           {entries.map((entry, index) => (
-            <div key={`${entry.role}-${index}`} className={`chat-entry ${entry.role}`}>
+            <div
+              key={`${entry.role}-${index}`}
+              className={`chat-entry ${entry.role}`}
+              data-decision-feedback-id={entry.decisionFeedbackId}
+            >
               <strong>{entry.role === 'user' ? 'you' : 'veduta'}</strong>
               <span>{entry.text}</span>
               {entry.targets && entry.targets.length > 0 && (
@@ -116,36 +120,38 @@ export function ChatBar({
                   })}
                 </nav>
               )}
-              {entry.pendingDecisions && entry.pendingDecisions.length > 0 && (
-                <section className="chat-pending-decisions" aria-label="Pending decisions">
-                  {entry.pendingDecisions.map((decision) => (
-                    <article key={decision.id} className="chat-pending-decision">
-                      <span>{decision.summary}</span>
-                      {decision.state === 'pending' ? (
-                        <div className="chat-pending-decision-actions">
-                          {decision.allowedResolutions.map((resolution) => (
-                            <button
-                              key={resolution}
-                              type="button"
-                              disabled={resolvingDecisionIds.has(decision.id)}
-                              aria-label={`${resolutionLabel(resolution)} ${decision.summary}`}
-                              onClick={() => void resolveDecision(decision.id, resolution)}
-                            >
-                              {resolutionLabel(resolution)}
-                            </button>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="chat-pending-decision-outcome">
-                          {decision.state === 'resolving'
-                            ? 'Resolving…'
-                            : sentenceCase(decision.outcome ?? 'resolved')}
-                        </span>
-                      )}
-                    </article>
-                  ))}
-                </section>
-              )}
+              {entry.decisionFeedbackId === undefined &&
+                entry.pendingDecisions &&
+                entry.pendingDecisions.length > 0 && (
+                  <section className="chat-pending-decisions" aria-label="Pending decisions">
+                    {entry.pendingDecisions.map((decision) => (
+                      <article key={decision.id} className="chat-pending-decision">
+                        <span>{decision.summary}</span>
+                        {decision.state === 'pending' ? (
+                          <div className="chat-pending-decision-actions">
+                            {decision.allowedResolutions.map((resolution) => (
+                              <button
+                                key={resolution}
+                                type="button"
+                                disabled={resolvingDecisionIds.has(decision.id)}
+                                aria-label={`${resolutionLabel(resolution)} ${decision.summary}`}
+                                onClick={() => void resolveDecision(decision.id, resolution)}
+                              >
+                                {resolutionLabel(resolution)}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="chat-pending-decision-outcome">
+                            {decision.state === 'resolving'
+                              ? 'Resolving…'
+                              : sentenceCase(decision.outcome ?? 'resolved')}
+                          </span>
+                        )}
+                      </article>
+                    ))}
+                  </section>
+                )}
             </div>
           ))}
           {streamingEntries.map((turn) => (

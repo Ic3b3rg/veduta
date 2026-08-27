@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { PendingDecisionSchema } from './pending-decision.ts'
+import { pendingDecisionFeedback, PendingDecisionSchema } from './pending-decision.ts'
 
 /** A completed global-chat result the PWA can link without changing route automatically. */
 export const ChatResultTargetSchema = z
@@ -38,6 +38,7 @@ export const ChatMessageSchema = z
   })
   .superRefine((message, context) => {
     if (message.decisionFeedbackId === undefined) return
+    const decision = message.pendingDecisions?.[0]
     if (message.role !== 'assistant') {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -47,13 +48,25 @@ export const ChatMessageSchema = z
     }
     if (
       message.pendingDecisions?.length !== 1 ||
-      message.pendingDecisions[0]?.id !== message.decisionFeedbackId ||
-      message.pendingDecisions[0].state === 'pending'
+      decision?.id !== message.decisionFeedbackId ||
+      decision.state === 'pending'
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['decisionFeedbackId'],
         message: 'feedback must carry the exact resolving or terminal Pending decision',
+      })
+      return
+    }
+    if (
+      decision !== undefined &&
+      (decision.state === 'resolving' || decision.outcome !== undefined) &&
+      message.text !== pendingDecisionFeedback(decision)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['text'],
+        message: 'feedback text must be derived from the Pending decision state',
       })
     }
   })
