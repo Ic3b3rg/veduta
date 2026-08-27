@@ -1,5 +1,6 @@
 @import './styles/foundation.css';
 @import './styles/shell.css';
+@import './styles/home.css';
 @import './styles/chat.css';
 @import './styles/auth.css';
 @import './styles/onboarding.css';

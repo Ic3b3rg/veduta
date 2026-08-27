@@ -49,14 +49,6 @@
     justify-self: start;
   }
 
-  .home-space-groups {
-    gap: 24px;
-  }
-
-  .space-card {
-    min-height: 204px;
-  }
-
   .shell-layout {
     grid-template-columns: 1fr;
   }
@@ -133,9 +125,6 @@
 @media (prefers-reduced-transparency: reduce) {
   .topbar,
   .space-rail,
-  .space-card,
-  .first-space-invitation,
-  .home-state-panel,
   .surface-card,
   .approval-card,
   .route-recovery,

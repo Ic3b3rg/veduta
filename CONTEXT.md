@@ -11,7 +11,7 @@ Namespace for a life area (Health, Work, Home...): holds dedicated memory, Surfa
 _Avoid_: division, project, area agent, workspace
 
 **System Space**:
-The one always-active, Gateway-owned Space for Veduta's own status and controls, separate from user-created life-area Spaces. It is identified only by the shared `spc-system` identity; its name and slug are presentation values. Gateway boot alone creates or repairs it, while ordinary creation, import, rename, archive, and merge lifecycle paths cannot replace or target it. The PWA may place it in a secondary fixed-shell group by that identity but still renders its validated Atom trees through the catalog. Every visible Surface there is daemon-owned durable living state; the Agent cannot create ordinary Surfaces or write Space memory there. User Pin and ordering remain ordinary evented presentation preferences.
+The one always-active, Gateway-owned Space for Veduta's own status and controls, separate from user-created life-area Spaces. It is identified only by the shared `spc-system` identity; its name and slug are presentation values. Gateway boot alone creates or repairs it, while ordinary creation, import, rename, archive, and merge lifecycle paths cannot replace or target it. The PWA may place it in a secondary fixed-shell group by that identity but still renders its validated Atom trees through the catalog after the user drills into the Space. Every visible Surface there is daemon-owned durable living state; the Agent cannot create ordinary Surfaces or write Space memory there. User Pin and ordering remain ordinary evented presentation preferences.
 _Avoid_: admin page, settings dashboard, system workspace
 
 **Surface**:
@@ -19,11 +19,11 @@ Persistent UI unit inside a Space: a declarative tree of Atoms bound to typed st
 _Avoid_: canvas, artifact, widget (ambiguous), dashboard (reserved for Home)
 
 **Surface authoring**:
-The Agent's core capability of creating, recomposing, or archiving a persistent Surface by composing validated Atoms in response to user intent. It includes keeping visually useful structured answers — such as estimates, comparisons, summaries, breakdowns, progress, plans, and timelines — visible in the Home while preserving the concise chat answer. Every Model connection eligible to power the Agent provides this capability.
+The Agent's core capability of creating, recomposing, or archiving a persistent Surface by composing validated Atoms in response to user intent. It includes keeping visually useful structured answers — such as estimates, comparisons, summaries, breakdowns, progress, plans, and timelines — persistently visible through each Space's drill-down from Home while preserving the concise chat answer. Every Model connection eligible to power the Agent provides this capability.
 _Avoid_: generative UI (ambiguous), generated markup, text-only mode
 
 **Home**:
-The primary screen of the PWA: shows all Spaces with their Surfaces. It is what the user sees "at first glance upon opening".
+The primary screen of the PWA: shows every active Space as an at-a-glance metadata summary, with each Space's Surfaces available after drill-down. It is what the user sees "at first glance upon opening".
 _Avoid_: generic dashboard, feed
 
 **Atom**:
