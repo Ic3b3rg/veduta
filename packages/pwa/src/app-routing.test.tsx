@@ -7,7 +7,7 @@ import {
   type OnboardingStatus,
 } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ApiModule from './api.ts'
 import { authStatus, installAppTestBrowser, resetAppTestBrowser } from './app-test-support.ts'
@@ -315,8 +315,11 @@ describe('App routing', () => {
 
     fireEvent.click(screen.getByRole('link', { name: 'Home' }))
     await waitFor(() => expect(location.pathname).toBe('/'))
-    expect(screen.getByRole('button', { name: 'Focus Hydration' })).toBeDefined()
-    expect(screen.getByRole('button', { name: 'Focus Roadmap' })).toBeDefined()
+    const home = screen.getByRole('main', { name: 'Home' })
+    expect(within(home).getByRole('link', { name: /Health/ })).toBeDefined()
+    expect(within(home).getByRole('link', { name: /Work/ })).toBeDefined()
+    expect(within(home).queryByRole('button', { name: 'Focus Hydration' })).toBeNull()
+    expect(within(home).queryByRole('button', { name: 'Focus Roadmap' })).toBeNull()
   })
 
   it('visibly positions the Surface requested by the nested route', async () => {

@@ -48,6 +48,7 @@ import {
   surfaceOrderForStreamEvent,
   type SurfaceStreamEvent,
 } from './home-state.ts'
+import type { HomeSpacesLoadState } from './home-space-grid.tsx'
 import { AppShell, type AppRouteSelection } from './app-shell.tsx'
 import { homeBlockedByStatusFailure } from './onboarding-state.ts'
 import {
@@ -89,6 +90,9 @@ function RoutedApp() {
   } = useClientRouting()
   const [cachedHome] = useState(() => cachedSnapshot(localStorage, HOME_CACHE_KEY))
   const [spaces, setSpaces] = useState<SpaceWithSurfaces[]>(() => cachedHome?.spaces ?? [])
+  const [homeSpacesLoadState, setHomeSpacesLoadState] = useState<HomeSpacesLoadState>(() =>
+    cachedHome === undefined ? 'loading' : 'ready',
+  )
   const [error, setError] = useState<string | null>(null)
   const [chatEntries, setChatEntries] = useState<ChatMessage[]>(readChatHistory)
   const [approvalCards, setApprovalCards] = useState<ApprovalCard[]>([])
@@ -117,6 +121,7 @@ function RoutedApp() {
     acknowledge: acknowledgeSurfaceCreationFeedback,
   } = useSurfaceCreationFeedback()
   const [onboardingRetryToken, setOnboardingRetryToken] = useState(0)
+  const [spacesRetryToken, setSpacesRetryToken] = useState(0)
   const gatewayRef = useRef<GatewayConnection | null>(null)
   const spacesRef = useRef<SpaceWithSurfaces[]>(cachedHome?.spaces ?? [])
   const surfaceCursorRef = useRef(cachedHome?.surfaceCursor ?? 0)
@@ -210,6 +215,7 @@ function RoutedApp() {
         snapshot.spaces.map((space) => [space.id, snapshot.surfaceCursor]),
       )
       replaceSpaces(snapshot.spaces, snapshot.surfaceCursor)
+      setHomeSpacesLoadState('ready')
     },
     [replaceSpaces],
   )
@@ -501,6 +507,7 @@ function RoutedApp() {
         if (spacesRef.current.length === 0) {
           localStorage.removeItem(AUTH_TOKEN_KEY)
           setAuthToken(undefined)
+          setHomeSpacesLoadState('error')
         }
         setError(
           spacesRef.current.length > 0 ? `Offline: showing cached Home. ${e.message}` : e.message,
@@ -530,6 +537,7 @@ function RoutedApp() {
     replaceSpaces,
     refetchAndReplay,
     resetUnauthorizedSession,
+    spacesRetryToken,
   ])
 
   // Onboarding wizard gate (issue 019): fetched once
@@ -719,6 +727,12 @@ function RoutedApp() {
 
   const queuedCount = queuedChat.length + queuedFastActions.length
 
+  const retrySpaces = () => {
+    setError(null)
+    if (spacesRef.current.length === 0) setHomeSpacesLoadState('loading')
+    setSpacesRetryToken((value) => value + 1)
+  }
+
   if (authMode === 'production' && !authToken) {
     return (
       <AuthGate
@@ -816,6 +830,7 @@ function RoutedApp() {
       showInstallGuide={showInstallGuide}
       error={error}
       spaces={spaces}
+      homeSpacesLoadState={homeSpacesLoadState}
       route={appRouteSelection}
       surfaceCreationFeedbackKeys={surfaceCreationFeedbackKeys}
       surfaceUpdateFeedbacks={surfaceUpdateFeedbacks}
@@ -827,6 +842,7 @@ function RoutedApp() {
       }))}
       focusChatToken={focusChatToken}
       onOpenModelConnections={() => navigate(clientPath.modelConnections)}
+      onRetrySpaces={retrySpaces}
       onInstallDone={() => {
         localStorage.setItem(INSTALL_DISMISSED_KEY, '1')
         setShowInstallGuide(false)

@@ -12,6 +12,7 @@ import { AttentionBadge } from './attention-badge.tsx'
 import { ChatBar } from './chat-bar.tsx'
 import { ChatModelSelects } from './chat-model-selects.tsx'
 import { clientPath } from './client-router.tsx'
+import { HomeSpaceGrid, type HomeSpacesLoadState } from './home-space-grid.tsx'
 import { InstallButton } from './install-button.tsx'
 import { NotificationBell } from './notification-bell.tsx'
 import type { BrowserInstallPromptEvent, QueuedFastAction } from './pwa-storage.ts'
@@ -36,6 +37,7 @@ interface AppShellProps {
   showInstallGuide: boolean
   error: string | null
   spaces: SpaceWithSurfaces[]
+  homeSpacesLoadState: HomeSpacesLoadState
   route: AppRouteSelection
   surfaceCreationFeedbackKeys: Record<string, string>
   surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback>
@@ -44,6 +46,7 @@ interface AppShellProps {
   streamingEntries: { turnId: string; text: string }[]
   focusChatToken: string
   onOpenModelConnections: () => void
+  onRetrySpaces: () => void
   onInstallDone: () => void
   onFocusSpace: (space: SpaceWithSurfaces, surface?: Surface) => void
   onMoveSurface: (
@@ -79,6 +82,7 @@ export function AppShell({
   showInstallGuide,
   error,
   spaces,
+  homeSpacesLoadState,
   route,
   surfaceCreationFeedbackKeys,
   surfaceUpdateFeedbacks,
@@ -87,6 +91,7 @@ export function AppShell({
   streamingEntries,
   focusChatToken,
   onOpenModelConnections,
+  onRetrySpaces,
   onInstallDone,
   onFocusSpace,
   onMoveSurface,
@@ -102,7 +107,7 @@ export function AppShell({
   const focusedSpace = route.kind === 'space' ? route.space : undefined
   const focusedSurfaceId = route.kind === 'space' ? route.surfaceId : undefined
   const routeRecovery = resolveRouteRecovery(route)
-  const visibleSpaces = routeRecovery ? [] : focusedSpace ? [focusedSpace] : spaces
+  const visibleSpaces = routeRecovery || focusedSpace === undefined ? [] : [focusedSpace]
   const mainContentName = routeRecovery
     ? 'Route recovery'
     : focusedSpace
@@ -179,6 +184,14 @@ export function AppShell({
             approvalCards.length > 0 && (
               <ApprovalCards cards={approvalCards} onDismiss={onApprovalCardsChange} />
             )
+          )}
+
+          {route.kind === 'home' && !routeRecovery && (
+            <HomeSpaceGrid
+              spaces={spaces}
+              loadState={homeSpacesLoadState}
+              onRetry={onRetrySpaces}
+            />
           )}
 
           {visibleSpaces.map((space) => (

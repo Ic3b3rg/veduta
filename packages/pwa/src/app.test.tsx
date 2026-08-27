@@ -4,6 +4,8 @@
 // networking, routing, and live-state seams. Lower-level helpers keep their
 // exhaustive coverage in their own colocated tests.
 import {
+  SYSTEM_SPACE_ID,
+  SurfaceArchivedEventSchema,
   SurfaceCreatedEventSchema,
   SurfaceMovedEventSchema,
   SurfacePatchEventSchema,
@@ -11,12 +13,13 @@ import {
   type OnboardingStatus,
 } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ApiModule from './api.ts'
 import { authStatus, installAppTestBrowser, resetAppTestBrowser } from './app-test-support.ts'
 import type { MotionAnimationCall } from './motion-test-browser.ts'
 import { AUTH_TOKEN_KEY, HOME_CACHE_KEY, SURFACE_ORDER_KEY } from './pwa-storage.ts'
+import { saveSnapshot } from './home-state.ts'
 
 let scrollIntoView: ReturnType<typeof vi.fn>
 let atomAnimations: MotionAnimationCall[]
@@ -156,7 +159,227 @@ describe('App', () => {
     expect(home.id).toBe('main-content')
   })
 
+  it('renders Home as metadata-only Space cards that converge on live Surface lifecycle', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
+    vi.mocked(fetchSpaces).mockResolvedValue({
+      surfaceCursor: 0,
+      spaces: [
+        {
+          id: SYSTEM_SPACE_ID,
+          slug: 'maintenance',
+          name: 'Maintenance',
+          archived: false,
+          attention: 0,
+          attentionRevision: 0,
+          surfaces: [],
+        },
+        {
+          id: 'spc-health',
+          slug: 'health',
+          name: 'Health',
+          archived: false,
+          attention: 1,
+          attentionRevision: 1,
+          surfaces: [
+            {
+              ...appSurface('srf-overview', 'Overview'),
+              tree: { id: 'root', type: 'Title', props: { text: 'Private Surface detail' } },
+              freshness: { updatedAt: '2026-08-21T09:00:00.000Z', updatedBy: 'agent' },
+            },
+          ],
+        },
+      ],
+    })
+    vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+      fromPartial<OnboardingStatus>({ required: false, completed: true }),
+    )
+    vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
+
+    render(<App />)
+
+    const home = await screen.findByRole('main', { name: 'Home' })
+    const groups = within(home).getAllByRole('region')
+    expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual([
+      'Your Spaces',
+      'System',
+    ])
+    const healthCard = within(home).getByRole('link', { name: /Health/ })
+    expect(healthCard.getAttribute('href')).toBe('/app/space/health')
+    expect(healthCard.textContent).toContain('1 Surface')
+    expect(healthCard.querySelector('time')?.getAttribute('datetime')).toBe(
+      '2026-08-21T09:00:00.000Z',
+    )
+    expect(within(home).queryByText('Private Surface detail')).toBeNull()
+    expect(within(home).queryByRole('button', { name: 'Focus Overview' })).toBeNull()
+
+    await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+    const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
+    if (!handlers) throw new Error('Gateway handlers were not registered')
+
+    const created = SurfaceCreatedEventSchema.parse({
+      cursor: 1,
+      at: '2026-08-21T10:00:00.000Z',
+      spaceId: 'spc-health',
+      surface: {
+        ...appSurface('srf-new', 'New Surface'),
+        tree: { id: 'root', type: 'Title', props: { text: 'New private detail' } },
+        freshness: { updatedAt: '2026-08-21T10:00:00.000Z', updatedBy: 'agent' },
+      },
+      order: {
+        cursor: 1,
+        spaceId: 'spc-health',
+        pinnedSurfaceIds: [],
+        regularSurfaceIds: ['srf-overview', 'srf-new'],
+      },
+    })
+
+    act(() => handlers.onSurfaceCreated({ type: 'surface.created', event: created }))
+
+    expect(within(home).getByRole('link', { name: /Health/ }).textContent).toContain('2 Surfaces')
+    expect(
+      within(home)
+        .getByRole('link', { name: /Health/ })
+        .querySelector('time')
+        ?.getAttribute('datetime'),
+    ).toBe('2026-08-21T10:00:00.000Z')
+    expect(within(home).queryByText('New private detail')).toBeNull()
+
+    const archived = SurfaceArchivedEventSchema.parse({
+      cursor: 2,
+      at: '2026-08-21T10:01:00.000Z',
+      spaceId: 'spc-health',
+      surfaceId: 'srf-new',
+      order: {
+        cursor: 2,
+        spaceId: 'spc-health',
+        pinnedSurfaceIds: [],
+        regularSurfaceIds: ['srf-overview'],
+      },
+    })
+
+    act(() => handlers.onSurfaceArchived(archived))
+
+    expect(within(home).getByRole('link', { name: /Health/ }).textContent).toContain('1 Surface')
+    expect(
+      within(home)
+        .getByRole('link', { name: /Health/ })
+        .querySelector('time')
+        ?.getAttribute('datetime'),
+    ).toBe('2026-08-21T09:00:00.000Z')
+  })
+
+  it('keeps a protocol-valid cached Home visible when the Gateway is offline', async () => {
+    saveSnapshot(localStorage, HOME_CACHE_KEY, {
+      surfaceCursor: 4,
+      spaces: [
+        {
+          id: SYSTEM_SPACE_ID,
+          slug: 'system',
+          name: 'Veduta',
+          archived: false,
+          attention: 0,
+          attentionRevision: 0,
+          surfaces: [],
+        },
+        {
+          id: 'spc-health',
+          slug: 'health',
+          name: 'Health',
+          archived: false,
+          attention: 0,
+          attentionRevision: 0,
+          surfaces: [appSurface('srf-cached', 'Cached Surface')],
+        },
+      ],
+    })
+    vi.mocked(fetchAuthStatus).mockRejectedValue(new Error('Gateway unavailable'))
+    vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
+
+    render(<App />)
+
+    expect(await screen.findByRole('link', { name: /Health/ })).toBeDefined()
+    expect(screen.getByRole('alert').textContent).toContain('Offline: showing cached Home')
+    expect(screen.queryByRole('button', { name: 'Focus Cached Surface' })).toBeNull()
+  })
+
+  it('shows Home loading while the first valid snapshot is in flight', async () => {
+    let resolveSpaces: ((snapshot: Awaited<ReturnType<typeof fetchSpaces>>) => void) | undefined
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
+    vi.mocked(fetchSpaces).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSpaces = resolve
+        }),
+    )
+    vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+      fromPartial<OnboardingStatus>({ required: false, completed: true }),
+    )
+    vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
+
+    render(<App />)
+
+    expect(await screen.findByRole('status', { name: 'Loading Spaces' })).toBeDefined()
+
+    await act(async () =>
+      resolveSpaces?.({
+        surfaceCursor: 0,
+        spaces: [
+          {
+            id: SYSTEM_SPACE_ID,
+            slug: 'system',
+            name: 'Veduta',
+            archived: false,
+            attention: 0,
+            attentionRevision: 0,
+            surfaces: [],
+          },
+        ],
+      }),
+    )
+
+    expect(
+      await screen.findByRole('region', { name: 'Create your first Space from chat' }),
+    ).toBeDefined()
+  })
+
+  it('recovers a malformed local Home cache by retrying the validated Gateway snapshot', async () => {
+    localStorage.setItem(HOME_CACHE_KEY, '{malformed')
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
+    vi.mocked(fetchSpaces)
+      .mockRejectedValueOnce(new Error('Gateway unavailable'))
+      .mockResolvedValueOnce({
+        surfaceCursor: 1,
+        spaces: [
+          {
+            id: SYSTEM_SPACE_ID,
+            slug: 'system',
+            name: 'Veduta',
+            archived: false,
+            attention: 0,
+            attentionRevision: 0,
+            surfaces: [],
+          },
+        ],
+      })
+    vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+      fromPartial<OnboardingStatus>({ required: false, completed: true }),
+    )
+    vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
+
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: 'Spaces unavailable' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading Spaces' }))
+
+    expect(
+      await screen.findByRole('region', { name: 'Create your first Space from chat' }),
+    ).toBeDefined()
+    expect(fetchSpaces).toHaveBeenCalledTimes(2)
+    expect(localStorage.getItem(HOME_CACHE_KEY)).not.toBe('{malformed')
+  })
+
   it('renders the canonical Gateway snapshot and removes obsolete browser-local Surface order', async () => {
+    window.history.replaceState({}, '', '/app/space/health')
     localStorage.setItem(
       SURFACE_ORDER_KEY,
       JSON.stringify({ 'spc-health': ['srf-second', 'srf-first'] }),
@@ -213,6 +436,7 @@ describe('App', () => {
   })
 
   it('does not let a stale Move HTTP response overwrite a newer live order', async () => {
+    window.history.replaceState({}, '', '/app/space/health')
     vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
     vi.mocked(fetchSpaces).mockResolvedValue({
       surfaceCursor: 10,
@@ -286,6 +510,7 @@ describe('App', () => {
   })
 
   it('renders a selected-subscription Surface, streamed confirmation, and follow-up patch live', async () => {
+    window.history.replaceState({}, '', '/app/space/health')
     vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
     vi.mocked(fetchSpaces).mockResolvedValue({
       surfaceCursor: 0,
@@ -403,6 +628,7 @@ describe('App', () => {
   })
 
   it('fades the content added by the exact Meals chat patch without hiding Atom containers', async () => {
+    window.history.replaceState({}, '', '/app/space/health')
     vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
     vi.mocked(fetchSpaces).mockResolvedValue({
       surfaceCursor: 0,
@@ -554,6 +780,7 @@ describe('App', () => {
   })
 
   it('fades an interactive Atom value on its optimistic fast-path update', async () => {
+    window.history.replaceState({}, '', '/app/space/health')
     const groceries = {
       id: 'srf-groceries',
       spaceId: 'spc-health',
@@ -622,8 +849,11 @@ describe('App', () => {
   })
 
   it('centres and highlights a correlated chat-created Surface once without changing focus, route, or selection', async () => {
+    window.history.replaceState({}, '', '/app/space/health')
     const handlers = await renderConnectedEmptyHealth('pwa-initiator')
-    const chatInput = screen.getByRole<HTMLInputElement>('textbox', { name: 'Message Veduta' })
+    const chatInput = screen.getByRole<HTMLInputElement>('textbox', {
+      name: 'Message Veduta in Health',
+    })
     chatInput.focus()
 
     const created = SurfaceCreatedEventSchema.parse({
@@ -661,7 +891,7 @@ describe('App', () => {
     expect(focusButton.closest('article')?.classList.contains('creation-highlight')).toBe(true)
     expect(focusButton.getAttribute('aria-pressed')).toBe('false')
     expect(document.activeElement).toBe(chatInput)
-    expect(location.pathname).toBe('/')
+    expect(location.pathname).toBe('/app/space/health')
   })
 
   it('accepts a chat Space proposal through the common decision API without changing route', async () => {
@@ -745,6 +975,7 @@ describe('App', () => {
   })
 
   it('uses immediate positioning and a non-animated visible highlight for reduced motion', async () => {
+    window.history.replaceState({}, '', '/app/space/health')
     vi.stubGlobal(
       'matchMedia',
       vi.fn().mockReturnValue({
