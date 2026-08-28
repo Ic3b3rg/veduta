@@ -17,6 +17,7 @@ interface PendingDecisionSyncOptions {
   authToken: string | undefined
   setChatEntries: Dispatch<SetStateAction<ChatMessage[]>>
   setApprovalCards: Dispatch<SetStateAction<ApprovalCard[]>>
+  setDecisions: Dispatch<SetStateAction<PendingDecision[]>>
   onUnauthorized: () => void
 }
 
@@ -29,7 +30,7 @@ interface PendingDecisionSync {
 
 /** Owns snapshot/stream ordering for the PWA's authoritative Pending-decision view. */
 export function usePendingDecisionSync(options: PendingDecisionSyncOptions): PendingDecisionSync {
-  const { authToken, setChatEntries, setApprovalCards, onUnauthorized } = options
+  const { authToken, setChatEntries, setApprovalCards, setDecisions, onUnauthorized } = options
   const revisionRef = useRef(-1)
   const syncingRef = useRef(false)
   const syncGenerationRef = useRef(0)
@@ -37,12 +38,13 @@ export function usePendingDecisionSync(options: PendingDecisionSyncOptions): Pen
 
   const showPendingDecisionFeedback = useCallback(
     (decision: PendingDecision, message: string) => {
+      setDecisions((current) => upsertPendingDecision(current, decision))
       setChatEntries((entries) =>
         applyPendingDecisionFeedback(entries, { decision, message }).slice(-CHAT_HISTORY_LIMIT),
       )
       setApprovalCards((cards) => reconcileApprovalCards(cards, [decision]))
     },
-    [setApprovalCards, setChatEntries],
+    [setApprovalCards, setChatEntries, setDecisions],
   )
 
   const acceptLifecycle = useCallback(
@@ -85,6 +87,7 @@ export function usePendingDecisionSync(options: PendingDecisionSyncOptions): Pen
       .then((snapshot) => {
         if (generation !== syncGenerationRef.current) return
         revisionRef.current = snapshot.revision
+        setDecisions(snapshot.decisions)
         setChatEntries((entries) =>
           reconcilePendingDecisionSnapshot(entries, snapshot.decisions).slice(-CHAT_HISTORY_LIMIT),
         )
@@ -102,7 +105,7 @@ export function usePendingDecisionSync(options: PendingDecisionSyncOptions): Pen
         console.warn('failed to refresh Pending decisions:', error)
         replayBufferedLifecycle()
       })
-  }, [acceptLifecycle, authToken, onUnauthorized, setApprovalCards, setChatEntries])
+  }, [acceptLifecycle, authToken, onUnauthorized, setApprovalCards, setChatEntries, setDecisions])
 
   const cancelPendingDecisionSnapshot = useCallback(() => {
     syncGenerationRef.current += 1
@@ -116,6 +119,16 @@ export function usePendingDecisionSync(options: PendingDecisionSyncOptions): Pen
     refreshPendingDecisionSnapshot,
     cancelPendingDecisionSnapshot,
   }
+}
+
+function upsertPendingDecision(
+  decisions: readonly PendingDecision[],
+  decision: PendingDecision,
+): PendingDecision[] {
+  return [...decisions.filter((candidate) => candidate.id !== decision.id), decision].sort(
+    (left, right) =>
+      right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id),
+  )
 }
 
 function reconcileApprovalCards(

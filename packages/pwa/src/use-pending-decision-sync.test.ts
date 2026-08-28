@@ -82,13 +82,15 @@ function deferred<T>(): {
 function useHarness(onUnauthorized: () => void) {
   const [chatEntries, setChatEntries] = useState<ChatMessage[]>([])
   const [approvalCards, setApprovalCards] = useState<ApprovalCard[]>([approvalCard])
+  const [decisions, setDecisions] = useState<PendingDecision[]>([])
   const sync = usePendingDecisionSync({
     authToken: 'token',
     setChatEntries,
     setApprovalCards,
+    setDecisions,
     onUnauthorized,
   })
-  return { ...sync, chatEntries, approvalCards }
+  return { ...sync, chatEntries, approvalCards, decisions }
 }
 
 beforeEach(() => {
@@ -119,6 +121,7 @@ describe('usePendingDecisionSync', () => {
       pendingDecisions: [terminal],
     })
     expect(result.current.approvalCards).toEqual([])
+    expect(result.current.decisions).toEqual([terminal])
 
     const settled = result.current.chatEntries
     act(() => result.current.handlePendingDecisionLifecycle(lifecycle(2, resolving)))

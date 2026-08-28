@@ -99,6 +99,7 @@ function RoutedApp() {
   const [error, setError] = useState<string | null>(null)
   const [chatEntries, setChatEntries] = useState<ChatMessage[]>(readChatHistory)
   const [approvalCards, setApprovalCards] = useState<ApprovalCard[]>([])
+  const [, setPendingDecisions] = useState<PendingDecision[]>([])
   const [queuedChat, setQueuedChat] = useState(readQueuedChat)
   const [queuedFastActions, setQueuedFastActions] = useState(readQueuedFastActions)
   const [authToken, setAuthToken] = useState<string | undefined>(
@@ -158,6 +159,7 @@ function RoutedApp() {
     authToken,
     setChatEntries,
     setApprovalCards,
+    setDecisions: setPendingDecisions,
     onUnauthorized: resetUnauthorizedSession,
   })
 
