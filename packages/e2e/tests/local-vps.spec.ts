@@ -17,6 +17,7 @@ import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stac
  *         Groceries checkbox state.
  *   Issue #134 - the Meals projection carries explicit relative-time validity,
  *                a durable occurrence-dated source record, and no expired UI.
+ *   Issue #67 - a pinned patch_tree Pending decision is revealed only in the initiating tab.
  *
  * Also covers the Space Event log (ADR-0003: every fast-path mutation
  * appends to it) via `GET /api/spaces/spc-health/events` -- both right
@@ -116,18 +117,22 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       // The wizard shell polls `/api/auth/status` itself and calls
       // `onCompleted()` once the daemon answers again (onboarding-wizard.tsx),
       // so Home appears without any action from this test.
-      await expect(page.getByRole('button', { name: 'Focus Meals' })).toBeVisible({
-        timeout: 60_000,
-      })
+      await expect(
+        page.getByRole('main', { name: 'Home' }).getByRole('link', { name: /Health/ }),
+      ).toBeVisible({ timeout: 60_000 })
     })
 
-    await test.step('Home shows the seeded Health Space Surfaces', async () => {
-      await expect(page.getByRole('heading', { name: 'Health' })).toBeVisible()
+    await test.step('Home links to the seeded Health Space and its Surfaces', async () => {
+      await page
+        .getByRole('main', { name: 'Home' })
+        .getByRole('link', { name: /Health/ })
+        .click()
+      await expect(page.getByRole('main', { name: 'Health Space' })).toBeVisible()
       await expect(page.getByRole('button', { name: 'Focus Meals' })).toBeVisible()
       await expect(page.getByRole('button', { name: 'Focus Groceries' })).toBeVisible()
     })
 
-    await test.step('focus Health, then the Italian meal request discovers, reads, and patches Meals (AC2)', async () => {
+    await test.step('the Italian meal request discovers, reads, and patches Meals (AC2)', async () => {
       // The Gateway WebSocket connects asynchronously after Home's initial
       // render (app.tsx's `connectGateway`); sending chat before it opens
       // gets silently queued for a later retry instead of reaching the
@@ -136,18 +141,6 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       // otherwise this step can pass on a stale Surface if it checks only
       // static copy rather than the bound state rendered by the Atoms.
       await expect(page.locator('.status-pill.online')).toHaveText('Live')
-
-      // Focus the Health Space first (the space-rail button, app.tsx's
-      // `focusSpace`): under the real Agent loop (issue #37) a chat message
-      // sent with no focused Space is a GLOBAL turn, which is deliberately
-      // scoped to conversation only and gets no tools at all
-      // (chat-loop.ts's `GLOBAL_CHAT_PREAMBLE`/`toolsFor`) -- the meal-
-      // logging demo needs a Space turn, whose gated tool registry includes
-      // `patch_state`, to have anything to patch the Surface with.
-      await page
-        .getByRole('complementary', { name: 'Spaces' })
-        .getByRole('button', { name: 'Health' })
-        .click()
 
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta' })
       await chatInput.fill('aggiungi ai meals la fesa di tacchino')
@@ -333,7 +326,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         viewport: revealViewport,
       })
       const observerPage = await observerContext.newPage()
-      await observerPage.goto(stack!.origin)
+      await observerPage.goto(`${stack!.origin}/app/space/health`)
       await expect(observerPage.locator('.status-pill.online')).toHaveText('Live')
       await expect(observerPage.getByRole('button', { name: 'Focus Groceries' })).toBeVisible()
 
@@ -350,9 +343,9 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
 
       const initiatingCard = surfaceCard(page, 'Weekly groceries')
       const observerCard = surfaceCard(observerPage, 'Weekly groceries')
-      await expect(initiatingCard).toHaveClass(/creation-highlight/, { timeout: 2_000 })
+      await expect(initiatingCard).toHaveClass(/surface-reveal-highlight/, { timeout: 2_000 })
       await expect(observerCard).toBeAttached()
-      await expect(observerCard).not.toHaveClass(/creation-highlight/)
+      await expect(observerCard).not.toHaveClass(/surface-reveal-highlight/)
 
       const observerCardTop = await observerCard.evaluate(
         (card) => card.getBoundingClientRect().top,
@@ -383,13 +376,67 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       ).toHaveClass(/selected/)
       expect(page.url()).toBe(initiatingUrl)
 
-      await expect(initiatingCard).not.toHaveClass(/creation-highlight/, { timeout: 3_000 })
+      await expect(initiatingCard).not.toHaveClass(/surface-reveal-highlight/, { timeout: 3_000 })
       await page.evaluate(() => window.scrollTo(0, 0))
       await page.reload()
       await expect(page.locator('.status-pill.online')).toHaveText('Live')
       await expect(surfaceCard(page, 'Weekly groceries')).toBeAttached()
-      await expect(surfaceCard(page, 'Weekly groceries')).not.toHaveClass(/creation-highlight/)
+      await expect(surfaceCard(page, 'Weekly groceries')).not.toHaveClass(
+        /surface-reveal-highlight/,
+      )
       expect(await page.evaluate(() => window.scrollY)).toBe(0)
+
+      await observerContext.close()
+      observerContext = undefined
+    })
+
+    await test.step('a pinned patch_tree decision reveals its real Decision Surface only in the initiating tab (issue 067)', async () => {
+      const meals = surfaceCard(page, 'Meals')
+      await meals.getByRole('button', { name: 'Pin Meals' }).click()
+      await expect(meals.getByRole('button', { name: 'Pinned Meals' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      )
+
+      observerContext = await browser.newContext({
+        storageState: await context.storageState(),
+        viewport: { width: 480, height: 300 },
+      })
+      const observerPage = await observerContext.newPage()
+      await observerPage.goto(`${stack!.origin}/app/space/health`)
+      await expect(observerPage.locator('.status-pill.online')).toHaveText('Live')
+      const observerUrl = observerPage.url()
+
+      const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
+      const initiatingUrl = page.url()
+      await chatInput.fill('Quante calorie ho mangiato oggi ?')
+      await expect(chatInput).toBeFocused()
+      await chatInput.press('Enter')
+
+      const decisionTitle = 'Proposed layout change: Meals'
+      const initiatingDecision = surfaceCard(page, decisionTitle)
+      const observerDecision = surfaceCard(observerPage, decisionTitle)
+      await expect(initiatingDecision).toHaveClass(/surface-reveal-highlight/, {
+        timeout: 5_000,
+      })
+      await expect(
+        initiatingDecision.getByRole('button', { name: `Focus ${decisionTitle}` }),
+      ).toHaveAttribute('aria-pressed', 'false')
+      await expect(chatInput).toBeFocused()
+      expect(page.url()).toBe(initiatingUrl)
+
+      await expect(observerDecision).toBeAttached()
+      await expect(observerDecision).not.toHaveClass(/surface-reveal-highlight/)
+      expect(observerPage.url()).toBe(observerUrl)
+
+      const notification = page.locator('.pending-decision-notification', {
+        hasText: 'Change the “Meals” Surface tree',
+      })
+      await notification
+        .getByRole('button', { name: 'Accept Change the “Meals” Surface tree' })
+        .click()
+      await expect(initiatingDecision).toHaveCount(0)
+      await expect(meals.getByText('Today’s calorie estimate')).toBeVisible()
 
       await observerContext.close()
       observerContext = undefined
