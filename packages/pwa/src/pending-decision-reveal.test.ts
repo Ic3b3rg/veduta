@@ -36,7 +36,7 @@ describe('usePendingDecisionReveal', () => {
 
     act(() => result.current.registerLiveTurn(replacement(), 'pwa-1', pendingTurns))
 
-    const revealKey = JSON.stringify(['pwa-1', 'turn-1', decision.id, decision.decisionSurfaceId])
+    const revealKey = JSON.stringify(['pwa-1', 'turn-1', decision.decisionSurfaceId])
     expect(result.current.revealKeys).toEqual({ 'srf-decision-weekly-plan': revealKey })
 
     const registered = result.current.revealKeys
@@ -77,6 +77,17 @@ describe('usePendingDecisionReveal', () => {
 
     act(() => result.current.registerLiveTurn(replacement(), 'pwa-1', new Map([['turn-1', {}]])))
     act(() => result.current.cancelAll())
+
+    expect(result.current.revealKeys).toEqual({})
+  })
+
+  it('does not request a second reveal when another live source already showed the correlation', () => {
+    const revealKey = JSON.stringify(['pwa-1', 'turn-1', decision.decisionSurfaceId])
+    const { result } = renderHook(() =>
+      usePendingDecisionReveal((candidate) => candidate === revealKey),
+    )
+
+    act(() => result.current.registerLiveTurn(replacement(), 'pwa-1', new Map([['turn-1', {}]])))
 
     expect(result.current.revealKeys).toEqual({})
   })

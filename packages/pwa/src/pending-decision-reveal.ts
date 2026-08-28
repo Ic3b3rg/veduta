@@ -1,6 +1,7 @@
 import type { PendingDecision } from '@veduta/protocol'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type { ChatTurnFrame } from './chat-turn-state.ts'
+import { surfaceRevealFeedbackKey } from './surface-creation-feedback.ts'
 
 interface PendingTurns {
   has(turnId: string): boolean
@@ -12,7 +13,7 @@ export interface PendingDecisionRevealRequest {
 }
 
 /** Owns live-turn-only, initiating-tab presentation requests for Decision Surfaces. */
-export function usePendingDecisionReveal() {
+export function usePendingDecisionReveal(wasFeedbackShown?: (feedbackKey: string) => boolean) {
   const [requests, setRequests] = useState<Record<string, PendingDecisionRevealRequest>>({})
   const consumedKeysRef = useRef(new Set<string>())
   const revealKeys = useMemo(
@@ -38,9 +39,10 @@ export function usePendingDecisionReveal() {
         const surfaceId = pendingDecisionSurfaceId(decision)
         if (surfaceId === undefined) continue
 
-        const key = JSON.stringify([currentClientId, frame.turnId, decision.id, surfaceId])
+        const key = surfaceRevealFeedbackKey(currentClientId, frame.turnId, surfaceId)
         if (consumedKeysRef.current.has(key)) continue
         consumedKeysRef.current.add(key)
+        if (wasFeedbackShown?.(key) === true) continue
         additions[surfaceId] = { decisionId: decision.id, key }
       }
 
@@ -48,7 +50,7 @@ export function usePendingDecisionReveal() {
         setRequests((current) => ({ ...current, ...additions }))
       }
     },
-    [],
+    [wasFeedbackShown],
   )
 
   const acknowledge = useCallback((surfaceId: string, key: string) => {

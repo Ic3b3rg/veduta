@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import type {
-  ApprovalCard,
   ChatMessage,
   PendingDecision,
   PendingDecisionLifecycleMessage,
@@ -44,17 +43,6 @@ const terminal: PendingDecision = {
   resolvedAt: '2026-08-25T10:01:01.000Z',
 }
 
-const approvalCard: ApprovalCard = {
-  id: 'effect-1',
-  level: 'L1',
-  title: 'Send message',
-  body: 'To: alice@example.com',
-  actionLabel: 'Review',
-  createdAt: pending.createdAt,
-  surfaceId: 'srf-approval-1',
-  expiresAt: '2026-08-25T10:30:00.000Z',
-}
-
 function lifecycle(revision: number, decision: PendingDecision): PendingDecisionLifecycleMessage {
   const lead = decision.state === 'pending' ? 'Awaiting your decision' : 'Outcome'
   return {
@@ -81,16 +69,14 @@ function deferred<T>(): {
 
 function useHarness(onUnauthorized: () => void) {
   const [chatEntries, setChatEntries] = useState<ChatMessage[]>([])
-  const [approvalCards, setApprovalCards] = useState<ApprovalCard[]>([approvalCard])
   const [decisions, setDecisions] = useState<PendingDecision[]>([])
   const sync = usePendingDecisionSync({
     authToken: 'token',
     setChatEntries,
-    setApprovalCards,
     setDecisions,
     onUnauthorized,
   })
-  return { ...sync, chatEntries, approvalCards, decisions }
+  return { ...sync, chatEntries, decisions }
 }
 
 beforeEach(() => {
@@ -120,7 +106,6 @@ describe('usePendingDecisionSync', () => {
       decisionFeedbackId: terminal.id,
       pendingDecisions: [terminal],
     })
-    expect(result.current.approvalCards).toEqual([])
     expect(result.current.decisions).toEqual([terminal])
 
     const settled = result.current.chatEntries
@@ -157,7 +142,7 @@ describe('usePendingDecisionSync', () => {
     await act(async () => snapshot.resolve({ revision: 1, decisions: [terminal] }))
 
     expect(result.current.chatEntries).toEqual([])
-    expect(result.current.approvalCards).toEqual([approvalCard])
+    expect(result.current.decisions).toEqual([])
   })
 
   it('drops buffered state and resets the session when the snapshot is unauthorized', async () => {

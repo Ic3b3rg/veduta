@@ -662,46 +662,14 @@ describe('App', () => {
     expect(location.pathname).toBe('/app/space/health')
   })
 
-  it('reveals one exact pinned Tree-proposal Decision Surface for the initiating live turn', async () => {
+  it('reveals a pinned Tree-proposal Decision Surface once across separate live frames', async () => {
+    window.history.replaceState({}, '', '/app/space/health')
     const handlers = await renderConnectedEmptyHealth('pwa-tree-proposal')
-    const chatInput = screen.getByRole<HTMLInputElement>('textbox', { name: 'Message Veduta' })
-    chatInput.focus()
-    const surfaceId = 'srf-decision-weekly-plan'
-    const pending: PendingDecision = {
-      id: 'tree-proposal:weekly-plan',
-      kind: 'tree-proposal',
-      summary: 'Update the weekly plan',
-      scope: { type: 'space', spaceId: 'spc-health' },
-      allowedResolutions: ['accept', 'reject'],
-      state: 'pending',
-      decisionSurfaceId: surfaceId,
-      createdAt: '2026-08-28T10:00:00.000Z',
-    }
-    const created = SurfaceCreatedEventSchema.parse({
-      cursor: 1,
-      at: '2026-08-28T10:00:00.000Z',
-      spaceId: 'spc-health',
-      surface: {
-        ...appSurface(surfaceId, 'Review weekly plan change'),
-        pinned: true,
-      },
-      order: {
-        cursor: 1,
-        spaceId: 'spc-health',
-        pinnedSurfaceIds: [surfaceId],
-        regularSurfaceIds: [],
-      },
+    const chatInput = screen.getByRole<HTMLInputElement>('textbox', {
+      name: 'Message Veduta in Health',
     })
-    const replacement = {
-      type: 'chat.turn-replace' as const,
-      turnId: 'turn-tree-proposal',
-      spaceId: 'spc-health',
-      message: {
-        role: 'assistant' as const,
-        text: 'Awaiting your decision: Update the weekly plan.',
-        pendingDecisions: [pending],
-      },
-    }
+    chatInput.focus()
+    const { created, replacement } = treeProposalRevealFixture()
 
     act(() => {
       handlers.onChatTurnStart({
@@ -709,18 +677,32 @@ describe('App', () => {
         turnId: 'turn-tree-proposal',
         spaceId: 'spc-health',
       })
-      handlers.onSurfaceCreated({ type: 'surface.created', event: created })
+      handlers.onSurfaceCreated({
+        type: 'surface.created',
+        event: created,
+        initiatingTurn: {
+          clientId: 'pwa-tree-proposal',
+          turnId: 'turn-tree-proposal',
+        },
+      })
+    })
+
+    const focusButton = await screen.findByRole('button', {
+      name: 'Focus Proposed layout change: Weekly plan',
+    })
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    expect(location.pathname).toBe('/app/space/health')
+
+    act(() => {
       handlers.onChatTurnReplace(replacement)
       handlers.onChatTurnReplace(replacement)
     })
 
-    await waitFor(() => expect(location.pathname).toBe(`/app/space/health/surface/${surfaceId}`))
-    const focusButton = await screen.findByRole('button', {
-      name: 'Focus Review weekly plan change',
-    })
+    await screen.findByRole('article', { name: 'Update the weekly plan' })
+    expect(location.pathname).toBe('/app/space/health')
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
-    expect(focusButton.getAttribute('aria-pressed')).toBe('true')
-    expect(focusButton.closest('article')?.classList.contains('pinned')).toBe(true)
+    expect(focusButton.getAttribute('aria-pressed')).toBe('false')
+    expect(focusButton.closest('article')?.classList.contains('pinned')).toBe(false)
     expect(focusButton.closest('article')?.classList.contains('surface-reveal-highlight')).toBe(
       true,
     )
@@ -735,6 +717,40 @@ describe('App', () => {
       })
     })
     expect(scrollIntoView).toHaveBeenCalledTimes(1)
+  })
+
+  it('routes Home to one exact pinned Tree-proposal Decision Surface for its live turn', async () => {
+    const handlers = await renderConnectedEmptyHealth('pwa-tree-proposal-home')
+    const chatInput = screen.getByRole<HTMLInputElement>('textbox', { name: 'Message Veduta' })
+    chatInput.focus()
+    const { surfaceId, created, replacement } = treeProposalRevealFixture()
+
+    act(() => {
+      handlers.onChatTurnStart({
+        type: 'chat.turn-start',
+        turnId: 'turn-tree-proposal',
+        spaceId: 'spc-health',
+      })
+      handlers.onSurfaceCreated({
+        type: 'surface.created',
+        event: created,
+        initiatingTurn: {
+          clientId: 'pwa-tree-proposal-home',
+          turnId: 'turn-tree-proposal',
+        },
+      })
+    })
+    expect(scrollIntoView).not.toHaveBeenCalled()
+
+    act(() => handlers.onChatTurnReplace(replacement))
+
+    await waitFor(() => expect(location.pathname).toBe(`/app/space/health/surface/${surfaceId}`))
+    const focusButton = await screen.findByRole('button', {
+      name: 'Focus Proposed layout change: Weekly plan',
+    })
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    expect(focusButton.getAttribute('aria-pressed')).toBe('true')
+    expect(document.activeElement).toBe(chatInput)
   })
 
   it('does not reveal a Decision Surface recovered from snapshot or lifecycle state', async () => {
@@ -989,6 +1005,70 @@ describe('App', () => {
     expect(
       within(screen.getByRole('link', { name: /Health/ })).queryByLabelText(/pending/),
     ).toBeNull()
+  })
+
+  it('dismisses one Pending decision from Home, its owning Space, and chat through shared state', async () => {
+    const handlers = await renderConnectedEmptyHealth('pwa-dismiss')
+    const decisionSurface = SurfaceCreatedEventSchema.parse({
+      cursor: 1,
+      at: '2026-08-25T10:00:00.000Z',
+      spaceId: 'spc-health',
+      surface: appSurface('srf-decision-dismiss', 'Review weekly report'),
+      order: {
+        cursor: 1,
+        spaceId: 'spc-health',
+        pinnedSurfaceIds: [],
+        regularSurfaceIds: ['srf-decision-dismiss'],
+      },
+    })
+    const pending: PendingDecision = {
+      id: 'approval:effect-dismiss',
+      kind: 'approval',
+      summary: 'Send the weekly report',
+      scope: { type: 'space', spaceId: 'spc-health' },
+      allowedResolutions: ['approve', 'reject'],
+      state: 'pending',
+      decisionSurfaceId: 'srf-decision-dismiss',
+      createdAt: '2026-08-25T10:00:00.000Z',
+    }
+
+    act(() => {
+      handlers.onSurfaceCreated({ type: 'surface.created', event: decisionSurface })
+      handlers.onChatTurnStart({ type: 'chat.turn-start', turnId: 'turn-dismiss' })
+      handlers.onChatTurnEnd({
+        type: 'chat.turn-end',
+        turnId: 'turn-dismiss',
+        message: {
+          role: 'assistant',
+          text: 'The weekly report needs approval.',
+          pendingDecisions: [pending],
+        },
+      })
+    })
+
+    fireEvent.click(await screen.findByRole('link', { name: 'Home' }))
+    fireEvent.click(await screen.findByRole('button', { name: '1 decision awaits review' }))
+    const shellDecision = document.querySelector<HTMLElement>('.pending-decision-notification')
+    if (!shellDecision) throw new Error('shell Pending decision presentation missing')
+    expect(document.querySelector('.chat-pending-decision')).not.toBeNull()
+
+    fireEvent.click(
+      within(shellDecision).getByRole('button', { name: 'Dismiss Send the weekly report' }),
+    )
+
+    expect(screen.queryByRole('button', { name: '1 decision awaits review' })).toBeNull()
+    expect(
+      within(screen.getByRole('link', { name: /Health/ })).queryByLabelText(/pending decision/),
+    ).toBeNull()
+    expect(document.querySelector('.chat-pending-decision')).toBeNull()
+
+    fireEvent.click(screen.getByRole('link', { name: /Health/ }))
+    expect(screen.queryByRole('region', { name: 'Pending decisions' })).toBeNull()
+
+    vi.mocked(fetchPendingDecisions).mockResolvedValueOnce({ revision: 2, decisions: [pending] })
+    await act(async () => handlers.onHello(1, 'pwa-dismiss'))
+    expect(screen.queryByRole('region', { name: 'Pending decisions' })).toBeNull()
+    expect(document.querySelector('.chat-pending-decision')).toBeNull()
   })
 
   it('coalesces repeated shell and chat quick actions for the same decision', async () => {
@@ -1473,6 +1553,41 @@ function createdOrder(cursor: number, surfaceId: string) {
     spaceId: 'spc-health',
     pinnedSurfaceIds: [],
     regularSurfaceIds: [surfaceId],
+  }
+}
+
+function treeProposalRevealFixture() {
+  const surfaceId = 'srf-tree-proposal-1'
+  const pending: PendingDecision = {
+    id: 'tree-proposal:1',
+    kind: 'tree-proposal',
+    summary: 'Update the weekly plan',
+    scope: { type: 'space', spaceId: 'spc-health' },
+    allowedResolutions: ['accept', 'reject'],
+    state: 'pending',
+    decisionSurfaceId: surfaceId,
+    createdAt: '2026-08-28T10:00:00.000Z',
+  }
+  const created = SurfaceCreatedEventSchema.parse({
+    cursor: 1,
+    at: '2026-08-28T10:00:00.000Z',
+    spaceId: 'spc-health',
+    surface: appSurface(surfaceId, 'Proposed layout change: Weekly plan'),
+    order: createdOrder(1, surfaceId),
+  })
+  return {
+    surfaceId,
+    created,
+    replacement: {
+      type: 'chat.turn-replace' as const,
+      turnId: 'turn-tree-proposal',
+      spaceId: 'spc-health',
+      message: {
+        role: 'assistant' as const,
+        text: 'Awaiting your decision: Update the weekly plan.',
+        pendingDecisions: [pending],
+      },
+    },
   }
 }
 

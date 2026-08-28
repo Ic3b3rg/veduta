@@ -1,22 +1,22 @@
 import type { PendingDecision, PendingDecisionResolution } from '@veduta/protocol'
 import { useId, useState } from 'react'
 import { Link } from 'react-router-dom'
+import type { PendingDecisionNotification } from './pending-decision-presentation.ts'
 
-export interface PendingDecisionNotification {
-  decision: PendingDecision
-  reviewPath?: string
-}
+export type { PendingDecisionNotification } from './pending-decision-presentation.ts'
 
 interface PendingDecisionPresentationProps {
   notifications: readonly PendingDecisionNotification[]
   resolvingDecisionIds: ReadonlySet<string>
   onResolve: (decisionId: string, resolution: PendingDecisionResolution) => Promise<void> | void
+  onDismiss: (decisionId: string) => void
 }
 
 export function PendingDecisionStrip({
   notifications,
   resolvingDecisionIds,
   onResolve,
+  onDismiss,
 }: PendingDecisionPresentationProps) {
   const [expanded, setExpanded] = useState(false)
   const contentId = useId()
@@ -36,16 +36,13 @@ export function PendingDecisionStrip({
         <span aria-hidden="true">{expanded ? '−' : '+'}</span>
       </button>
       {expanded && (
-        <div id={contentId} className="pending-decision-list">
-          {notifications.map((notification) => (
-            <PendingDecisionNotificationCard
-              key={notification.decision.id}
-              notification={notification}
-              resolving={resolvingDecisionIds.has(notification.decision.id)}
-              onResolve={onResolve}
-            />
-          ))}
-        </div>
+        <PendingDecisionList
+          id={contentId}
+          notifications={notifications}
+          resolvingDecisionIds={resolvingDecisionIds}
+          onResolve={onResolve}
+          onDismiss={onDismiss}
+        />
       )}
     </section>
   )
@@ -55,6 +52,7 @@ export function SpacePendingDecisionNotifications({
   notifications,
   resolvingDecisionIds,
   onResolve,
+  onDismiss,
 }: PendingDecisionPresentationProps) {
   const headingId = useId()
   if (notifications.length === 0) return null
@@ -65,16 +63,12 @@ export function SpacePendingDecisionNotifications({
         <h2 id={headingId}>Pending decisions</h2>
         <span>{notifications.length}</span>
       </div>
-      <div className="pending-decision-list">
-        {notifications.map((notification) => (
-          <PendingDecisionNotificationCard
-            key={notification.decision.id}
-            notification={notification}
-            resolving={resolvingDecisionIds.has(notification.decision.id)}
-            onResolve={onResolve}
-          />
-        ))}
-      </div>
+      <PendingDecisionList
+        notifications={notifications}
+        resolvingDecisionIds={resolvingDecisionIds}
+        onResolve={onResolve}
+        onDismiss={onDismiss}
+      />
     </section>
   )
 }
@@ -84,11 +78,13 @@ export function PendingDecisionControls({
   reviewPath,
   resolving,
   onResolve,
+  onDismiss,
 }: {
   decision: PendingDecision
   reviewPath?: string
   resolving: boolean
   onResolve: (decisionId: string, resolution: PendingDecisionResolution) => Promise<void> | void
+  onDismiss: (decisionId: string) => void
 }) {
   return (
     <div className="pending-decision-actions">
@@ -112,6 +108,13 @@ export function PendingDecisionControls({
           Review
         </Link>
       )}
+      <button
+        type="button"
+        aria-label={`Dismiss ${decision.summary}`}
+        onClick={() => onDismiss(decision.id)}
+      >
+        Dismiss
+      </button>
     </div>
   )
 }
@@ -120,10 +123,12 @@ function PendingDecisionNotificationCard({
   notification,
   resolving,
   onResolve,
+  onDismiss,
 }: {
   notification: PendingDecisionNotification
   resolving: boolean
   onResolve: PendingDecisionPresentationProps['onResolve']
+  onDismiss: PendingDecisionPresentationProps['onDismiss']
 }) {
   return (
     <article className="pending-decision-notification" aria-label={notification.decision.summary}>
@@ -133,8 +138,31 @@ function PendingDecisionNotificationCard({
         {...(notification.reviewPath === undefined ? {} : { reviewPath: notification.reviewPath })}
         resolving={resolving}
         onResolve={onResolve}
+        onDismiss={onDismiss}
       />
     </article>
+  )
+}
+
+function PendingDecisionList({
+  id,
+  notifications,
+  resolvingDecisionIds,
+  onResolve,
+  onDismiss,
+}: PendingDecisionPresentationProps & { id?: string }) {
+  return (
+    <div {...(id === undefined ? {} : { id })} className="pending-decision-list">
+      {notifications.map((notification) => (
+        <PendingDecisionNotificationCard
+          key={notification.decision.id}
+          notification={notification}
+          resolving={resolvingDecisionIds.has(notification.decision.id)}
+          onResolve={onResolve}
+          onDismiss={onDismiss}
+        />
+      ))}
+    </div>
   )
 }
 

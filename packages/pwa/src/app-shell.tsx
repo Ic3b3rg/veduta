@@ -17,9 +17,8 @@ import { NotificationBell } from './notification-bell.tsx'
 import {
   PendingDecisionStrip,
   SpacePendingDecisionNotifications,
-  type PendingDecisionNotification,
 } from './pending-decision-notifications.tsx'
-import { placePendingDecisions } from './pending-decision-placement.ts'
+import { presentPendingDecisions } from './pending-decision-presentation.ts'
 import { latestPendingDecisionFeedback } from './pending-decision-state.ts'
 import type { BrowserInstallPromptEvent, QueuedFastAction } from './pwa-storage.ts'
 import { SpaceSection } from './space-section.tsx'
@@ -48,6 +47,7 @@ interface AppShellProps {
   surfaceRevealFeedbackKeys: Record<string, string>
   surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback>
   pendingDecisions: PendingDecision[]
+  dismissedDecisionIds: ReadonlySet<string>
   resolvingDecisionIds: ReadonlySet<string>
   chatEntries: ChatMessage[]
   streamingEntries: { turnId: string; text: string }[]
@@ -71,6 +71,7 @@ interface AppShellProps {
     decisionId: string,
     resolution: PendingDecisionResolution,
   ) => Promise<void> | void
+  onDismissPendingDecision: (decisionId: string) => void
   onSend: (message: string) => boolean
 }
 
@@ -94,6 +95,7 @@ export function AppShell({
   surfaceRevealFeedbackKeys,
   surfaceUpdateFeedbacks,
   pendingDecisions,
+  dismissedDecisionIds,
   resolvingDecisionIds,
   chatEntries,
   streamingEntries,
@@ -110,6 +112,7 @@ export function AppShell({
   onSurfaceRevealFeedbackShown,
   onError,
   onResolvePendingDecision,
+  onDismissPendingDecision,
   onSend,
 }: AppShellProps) {
   const focusedSpace = route.kind === 'space' ? route.space : undefined
@@ -122,37 +125,9 @@ export function AppShell({
       ? `${focusedSpace.name} Space`
       : 'Home'
   const pendingDecisionFeedback = latestPendingDecisionFeedback(chatEntries)
-  const placement = placePendingDecisions(pendingDecisions, spaces)
-  const assignedByDecisionId = new Map(
-    placement.assigned.map((assigned) => [assigned.decision.id, assigned]),
-  )
-  const pendingDecisionReviewPaths = new Map(
-    placement.assigned.map(({ decision, space, surface }) => [
-      decision.id,
-      clientPath.surface(space.slug, surface.id),
-    ]),
-  )
-  const globalPendingNotifications: PendingDecisionNotification[] = placement.pending.map(
-    (decision) => {
-      const assigned = assignedByDecisionId.get(decision.id)
-      return {
-        decision,
-        ...(assigned === undefined
-          ? {}
-          : { reviewPath: clientPath.surface(assigned.space.slug, assigned.surface.id) }),
-      }
-    },
-  )
-  const focusedPendingNotifications: PendingDecisionNotification[] = placement.assigned
-    .filter(({ space }) => space.id === focusedSpace?.id)
-    .map(({ decision, space, surface }) => ({
-      decision,
-      reviewPath: clientPath.surface(space.slug, surface.id),
-    }))
-  const pendingDecisionCounts = new Map<string, number>()
-  for (const { space } of placement.assigned) {
-    pendingDecisionCounts.set(space.id, (pendingDecisionCounts.get(space.id) ?? 0) + 1)
-  }
+  const pendingDecisionPresentation = presentPendingDecisions(pendingDecisions, spaces)
+  const focusedPendingNotifications =
+    (focusedSpace && pendingDecisionPresentation.notificationsBySpaceId.get(focusedSpace.id)) ?? []
 
   return (
     <div className="app-shell">
@@ -235,14 +210,15 @@ export function AppShell({
           {route.kind === 'home' && !routeRecovery && (
             <>
               <PendingDecisionStrip
-                notifications={globalPendingNotifications}
+                notifications={pendingDecisionPresentation.globalNotifications}
                 resolvingDecisionIds={resolvingDecisionIds}
                 onResolve={onResolvePendingDecision}
+                onDismiss={onDismissPendingDecision}
               />
               <HomeSpaceGrid
                 spaces={spaces}
                 loadState={homeSpacesLoadState}
-                pendingDecisionCounts={pendingDecisionCounts}
+                pendingDecisionCounts={pendingDecisionPresentation.countsBySpaceId}
                 onRetry={onRetrySpaces}
               />
             </>
@@ -253,6 +229,7 @@ export function AppShell({
               notifications={focusedPendingNotifications}
               resolvingDecisionIds={resolvingDecisionIds}
               onResolve={onResolvePendingDecision}
+              onDismiss={onDismissPendingDecision}
             />
           )}
 
@@ -283,9 +260,11 @@ export function AppShell({
         focusedSpace={focusedSpace}
         focusToken={focusChatToken}
         focusOnRouteChange={focusChatOnRouteChange}
-        pendingDecisionReviewPaths={pendingDecisionReviewPaths}
+        pendingDecisionReviewPaths={pendingDecisionPresentation.reviewPaths}
+        dismissedDecisionIds={dismissedDecisionIds}
         resolvingDecisionIds={resolvingDecisionIds}
         onResolvePendingDecision={onResolvePendingDecision}
+        onDismissPendingDecision={onDismissPendingDecision}
         onSend={onSend}
       />
     </div>

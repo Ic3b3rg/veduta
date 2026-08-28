@@ -8,7 +8,7 @@ interface PendingTurns {
 }
 
 /** Owns the initiating-tab-only, one-shot presentation state for live Surface creation. */
-export function useSurfaceCreationFeedback() {
+export function useSurfaceCreationFeedback(wasFeedbackShown?: (feedbackKey: string) => boolean) {
   const [feedbackKeys, setFeedbackKeys] = useState<Record<string, string>>({})
   const consumedKeysRef = useRef(new Set<string>())
 
@@ -28,13 +28,18 @@ export function useSurfaceCreationFeedback() {
       }
 
       const surfaceId = message.event.surface.id
-      const feedbackKey = JSON.stringify([correlation.clientId, correlation.turnId, surfaceId])
+      const feedbackKey = surfaceRevealFeedbackKey(
+        correlation.clientId,
+        correlation.turnId,
+        surfaceId,
+      )
       if (consumedKeysRef.current.has(feedbackKey)) return
 
       consumedKeysRef.current.add(feedbackKey)
+      if (wasFeedbackShown?.(feedbackKey) === true) return
       setFeedbackKeys((current) => ({ ...current, [surfaceId]: feedbackKey }))
     },
-    [],
+    [wasFeedbackShown],
   )
 
   const acknowledge = useCallback((surfaceId: string, feedbackKey: string) => {
@@ -47,4 +52,13 @@ export function useSurfaceCreationFeedback() {
   }, [])
 
   return { feedbackKeys, registerLiveCreation, acknowledge }
+}
+
+/** Identifies one visual reveal across every live presentation source. */
+export function surfaceRevealFeedbackKey(
+  clientId: string,
+  turnId: string,
+  surfaceId: string,
+): string {
+  return JSON.stringify([clientId, turnId, surfaceId])
 }

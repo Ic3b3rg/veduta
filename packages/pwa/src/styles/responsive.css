@@ -13,15 +13,13 @@
   }
 
   .topbar,
-  .space-heading,
-  .approval-card {
+  .space-heading {
     align-items: stretch;
     grid-template-columns: 1fr;
   }
 
   .topbar,
   .space-heading,
-  .approval-card,
   .shell-layout {
     display: grid;
   }
@@ -144,7 +142,6 @@
   .surface-card,
   .pending-decision-strip,
   .space-pending-decisions,
-  .approval-card,
   .route-recovery,
   .notif-guide,
   .chat-dock {

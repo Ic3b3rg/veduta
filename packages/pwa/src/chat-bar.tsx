@@ -12,8 +12,10 @@ export function ChatBar({
   focusToken,
   focusOnRouteChange,
   pendingDecisionReviewPaths,
+  dismissedDecisionIds,
   resolvingDecisionIds,
   onResolvePendingDecision,
+  onDismissPendingDecision,
   onSend,
 }: {
   entries: ChatMessage[]
@@ -25,11 +27,13 @@ export function ChatBar({
   focusToken: string
   focusOnRouteChange: boolean
   pendingDecisionReviewPaths: ReadonlyMap<string, string>
+  dismissedDecisionIds: ReadonlySet<string>
   resolvingDecisionIds: ReadonlySet<string>
   onResolvePendingDecision: (
     decisionId: string,
     resolution: PendingDecisionResolution,
   ) => Promise<void> | void
+  onDismissPendingDecision: (decisionId: string) => void
   onSend: (text: string) => boolean
 }) {
   const [text, setText] = useState('')
@@ -78,37 +82,39 @@ export function ChatBar({
             setIsAtBottom(nextIsAtBottom)
           }}
         >
-          {entries.map((entry, index) => (
-            <div
-              key={`${entry.role}-${index}`}
-              className={`chat-entry ${entry.role}`}
-              data-decision-feedback-id={entry.decisionFeedbackId}
-            >
-              <strong>{entry.role === 'user' ? 'you' : 'veduta'}</strong>
-              <span>{entry.text}</span>
-              {entry.targets && entry.targets.length > 0 && (
-                <nav className="chat-result-links" aria-label="Results">
-                  {entry.targets.map((target) => {
-                    const label = `Open ${target.spaceName}${
-                      target.surfaceTitle === undefined ? '' : ` · ${target.surfaceTitle}`
-                    }`
-                    const href =
-                      target.surfaceId === undefined
-                        ? clientPath.space(target.spaceSlug)
-                        : clientPath.surface(target.spaceSlug, target.surfaceId)
-                    return (
-                      <Link key={`${target.spaceId}:${target.surfaceId ?? ''}`} to={href}>
-                        {label}
-                      </Link>
-                    )
-                  })}
-                </nav>
-              )}
-              {entry.decisionFeedbackId === undefined &&
-                entry.pendingDecisions &&
-                entry.pendingDecisions.length > 0 && (
+          {entries.map((entry, index) => {
+            const visibleDecisions = (entry.pendingDecisions ?? []).filter(
+              (decision) => decision.state !== 'pending' || !dismissedDecisionIds.has(decision.id),
+            )
+            return (
+              <div
+                key={`${entry.role}-${index}`}
+                className={`chat-entry ${entry.role}`}
+                data-decision-feedback-id={entry.decisionFeedbackId}
+              >
+                <strong>{entry.role === 'user' ? 'you' : 'veduta'}</strong>
+                <span>{entry.text}</span>
+                {entry.targets && entry.targets.length > 0 && (
+                  <nav className="chat-result-links" aria-label="Results">
+                    {entry.targets.map((target) => {
+                      const label = `Open ${target.spaceName}${
+                        target.surfaceTitle === undefined ? '' : ` · ${target.surfaceTitle}`
+                      }`
+                      const href =
+                        target.surfaceId === undefined
+                          ? clientPath.space(target.spaceSlug)
+                          : clientPath.surface(target.spaceSlug, target.surfaceId)
+                      return (
+                        <Link key={`${target.spaceId}:${target.surfaceId ?? ''}`} to={href}>
+                          {label}
+                        </Link>
+                      )
+                    })}
+                  </nav>
+                )}
+                {entry.decisionFeedbackId === undefined && visibleDecisions.length > 0 && (
                   <section className="chat-pending-decisions" aria-label="Pending decisions">
-                    {entry.pendingDecisions.map((decision) => {
+                    {visibleDecisions.map((decision) => {
                       const reviewPath = pendingDecisionReviewPaths.get(decision.id)
                       return (
                         <article key={decision.id} className="chat-pending-decision">
@@ -119,6 +125,7 @@ export function ChatBar({
                               {...(reviewPath === undefined ? {} : { reviewPath })}
                               resolving={resolvingDecisionIds.has(decision.id)}
                               onResolve={onResolvePendingDecision}
+                              onDismiss={onDismissPendingDecision}
                             />
                           ) : (
                             <span className="chat-pending-decision-outcome">
@@ -132,8 +139,9 @@ export function ChatBar({
                     })}
                   </section>
                 )}
-            </div>
-          ))}
+              </div>
+            )
+          })}
           {streamingEntries.map((turn) => (
             <div key={`streaming-${turn.turnId}`} className="chat-entry assistant streaming">
               <strong>veduta</strong>

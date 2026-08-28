@@ -62,8 +62,10 @@ function renderChatBar(
         focusToken="initial"
         focusOnRouteChange
         pendingDecisionReviewPaths={pendingDecisionReviewPaths}
+        dismissedDecisionIds={new Set()}
         resolvingDecisionIds={resolvingDecisionIds}
         onResolvePendingDecision={onResolvePendingDecision}
+        onDismissPendingDecision={vi.fn()}
         onSend={vi.fn(() => true)}
       />
     </MemoryRouter>

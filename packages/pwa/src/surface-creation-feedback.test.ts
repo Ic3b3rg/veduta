@@ -74,4 +74,21 @@ describe('useSurfaceCreationFeedback', () => {
 
     expect(result.current.feedbackKeys).toEqual({})
   })
+
+  it('does not request a second reveal when another live source already showed the correlation', () => {
+    const feedbackKey = JSON.stringify(['pwa-1', 'turn-1', 'srf-created'])
+    const { result } = renderHook(() =>
+      useSurfaceCreationFeedback((candidate) => candidate === feedbackKey),
+    )
+
+    act(() =>
+      result.current.registerLiveCreation(
+        createdMessage('srf-created', { clientId: 'pwa-1', turnId: 'turn-1' }),
+        'pwa-1',
+        new Map([['turn-1', {}]]),
+      ),
+    )
+
+    expect(result.current.feedbackKeys).toEqual({})
+  })
 })

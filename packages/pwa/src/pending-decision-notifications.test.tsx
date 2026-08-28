@@ -13,6 +13,7 @@ afterEach(cleanup)
 describe('PendingDecisionStrip', () => {
   it('expands one accessible global summary into exact quick actions and safe Review links', () => {
     const onResolve = vi.fn()
+    const onDismiss = vi.fn()
     const notifications: PendingDecisionNotification[] = [
       {
         decision: decision('approval:effect-1', 'Send the signed contract'),
@@ -44,6 +45,7 @@ describe('PendingDecisionStrip', () => {
           notifications={notifications}
           resolvingDecisionIds={new Set()}
           onResolve={onResolve}
+          onDismiss={onDismiss}
         />
       </MemoryRouter>,
     )
@@ -73,10 +75,14 @@ describe('PendingDecisionStrip', () => {
     )
     fireEvent.click(within(travel).getByRole('button', { name: 'Accept Create Space “Travel”' }))
     fireEvent.click(within(update).getByRole('button', { name: 'Apply Install Veduta 2.0.0' }))
+    fireEvent.click(
+      within(contract).getByRole('button', { name: 'Dismiss Send the signed contract' }),
+    )
 
     expect(onResolve).toHaveBeenNthCalledWith(1, 'approval:effect-1', 'approve')
     expect(onResolve).toHaveBeenNthCalledWith(2, 'space-proposal:proposal-1', 'accept')
     expect(onResolve).toHaveBeenNthCalledWith(3, 'update-offer:2.0.0', 'apply')
+    expect(onDismiss).toHaveBeenCalledWith('approval:effect-1')
   })
 })
 
