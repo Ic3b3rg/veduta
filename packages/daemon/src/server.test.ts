@@ -1703,6 +1703,29 @@ describe('trust layer wiring (issue #14)', () => {
         frame.type === 'approval.card',
     )!
     expect(cardFrame.card.level).toBe('L1')
+    await vi.waitFor(() => {
+      expect(socket.sent.some((frame) => frame.type === 'chat.turn-end')).toBe(true)
+    })
+    const turnEnd = socket.sent.find(
+      (frame): frame is Extract<GatewayServerMessage, { type: 'chat.turn-end' }> =>
+        frame.type === 'chat.turn-end',
+    )!
+    expect(turnEnd.message).toMatchObject({
+      text: 'Awaiting your decision: Send message to alice@example.com.',
+      pendingDecisions: [
+        {
+          id: `approval:${cardFrame.card.id}`,
+          kind: 'approval',
+          state: 'pending',
+        },
+      ],
+    })
+    expect(
+      socket.sent
+        .filter((frame) => frame.type === 'chat.turn-delta')
+        .map((frame) => frame.text)
+        .join(''),
+    ).not.toContain('Done — send_message completed.')
     const surfaceId = cardFrame.card.surfaceId
     await app.inject({ method: 'GET', url: '/api/pending-decisions' })
     expect(store.getSurface(surfaceId)?.spaceId).toBe('spc-health')

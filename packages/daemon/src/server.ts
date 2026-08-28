@@ -1,6 +1,6 @@
 import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
-import { pendingDecisionFeedback, UpdatePinningSchema } from '@veduta/protocol'
+import { UpdatePinningSchema } from '@veduta/protocol'
 import type { FastifyInstance } from 'fastify'
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -70,6 +70,7 @@ import { loadNotificationsConfig } from './notifications-config.ts'
 import { registerOnboardingRoutes } from './onboarding-routes.ts'
 import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
 import { registerPendingDecisionRoutes } from './pending-decision-routes.ts'
+import { startPendingDecisionLifecycle } from './pending-decision-lifecycle.ts'
 import { PendingDecisionService } from './pending-decision-service.ts'
 import { PiAgentRunner, PiJsonlSessionStore } from './pi-agent-runner.ts'
 import {
@@ -1127,26 +1128,13 @@ export function buildServer(options: ServerOptions = {}) {
     ],
     ready: Promise.all([decisionRecovery, updateRecovery]),
   })
-  const refreshPendingDecisions = () => {
-    void pendingDecisions.refresh().catch((error) => {
-      console.error('Pending decision lifecycle refresh failed', error)
-    })
-  }
-  const disposePendingDecisionLifecycle = [
-    pendingDecisions.onLifecycle(({ revision, decision }) => {
-      gateway.broadcastPendingDecision({
-        revision,
-        decision,
-        message: pendingDecisionFeedback(decision),
-      })
-    }),
-    trust.onChange(refreshPendingDecisions),
-    store.onSurfaceEvent(refreshPendingDecisions),
-  ]
-  refreshPendingDecisions()
-  app.addHook('onClose', () => {
-    for (const dispose of disposePendingDecisionLifecycle) dispose()
+  const disposePendingDecisionLifecycle = startPendingDecisionLifecycle({
+    decisions: pendingDecisions,
+    gateway,
+    trust,
+    store,
   })
+  app.addHook('onClose', disposePendingDecisionLifecycle)
 
   notificationSettings.start()
   notificationCenter.start()
@@ -1216,6 +1204,7 @@ export function buildServer(options: ServerOptions = {}) {
     templateEngine,
     scheduler,
     spawnWorkerTool,
+    pendingDecisions,
   })
 
   // The real chat loop (issue #37): every chat entry point — the global

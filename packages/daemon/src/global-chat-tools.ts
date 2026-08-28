@@ -29,6 +29,7 @@ export interface GlobalChatTurnHooks {
   onSpaceEntered?: (space: Space) => void
   onResultTarget?: (target: ChatResultTarget) => void
   onPendingDecision?: (decision: PendingDecision) => void
+  onPendingDecisionObserved?: (decisionId: string) => void
 }
 
 export interface GlobalChatToolsOptions {

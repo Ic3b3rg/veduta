@@ -88,6 +88,18 @@ export class PendingDecisionService {
     })
   }
 
+  /** Reads one exact workflow-owned decision without requiring a full cross-workflow refresh. */
+  async get(id: string): Promise<PendingDecision | undefined> {
+    await this.ready
+    const parsedId = parsePendingDecisionId(id)
+    const adapter = parsedId === undefined ? undefined : this.adapters.get(parsedId.kind)
+    if (!adapter) return undefined
+    const decision = await adapter.get(id)
+    return decision === undefined
+      ? undefined
+      : this.parseAdapterDecision(decision, adapter.kind, id)
+  }
+
   /** Reconciles workflow-owned state and publishes each changed decision exactly once. */
   refresh(): Promise<void> {
     const refresh = this.refreshTail.then(() => this.collectAndPublish())

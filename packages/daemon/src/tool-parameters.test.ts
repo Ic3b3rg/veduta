@@ -125,6 +125,7 @@ function buildRealRegistry(): { tools: ToolDef[]; dispose: () => void } {
     templateEngine,
     scheduler,
     spawnWorkerTool,
+    pendingDecisions: { get: async () => undefined },
   })(ACTIVE_SPACE_ID)
 
   return {

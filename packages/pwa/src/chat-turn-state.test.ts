@@ -1,3 +1,4 @@
+import type { ChatMessage } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import {
   applyTurnFrame,
@@ -107,6 +108,48 @@ describe('applyTurnFrame', () => {
 
     expect(result.turns.has('turn-1')).toBe(false)
     expect(result.completed).toEqual({ role: 'assistant', text: 'the complete final answer' })
+  })
+
+  it('replaces streamed model text with authoritative Pending-decision state', () => {
+    const midway = turns({
+      turnId: 'turn-1',
+      spaceId: 'spc-home',
+      text: 'Done — the action succeeded.',
+    })
+    const message: ChatMessage = {
+      role: 'assistant',
+      text: 'Awaiting your decision: Send message.',
+      pendingDecisions: [
+        {
+          id: 'approval:effect-1',
+          kind: 'approval',
+          summary: 'Send message',
+          scope: { type: 'space', spaceId: 'spc-home' },
+          allowedResolutions: ['approve', 'reject'],
+          state: 'pending',
+          createdAt: '2026-08-25T10:00:00.000Z',
+        },
+      ],
+    }
+
+    const replaced = applyTurnFrame(midway, {
+      type: 'chat.turn-replace',
+      turnId: 'turn-1',
+      spaceId: 'spc-home',
+      message,
+    })
+    const afterLateDelta = applyTurnFrame(replaced.turns, {
+      type: 'chat.turn-delta',
+      turnId: 'turn-1',
+      spaceId: 'spc-home',
+      text: 'Done.',
+    })
+
+    expect(afterLateDelta.turns.get('turn-1')).toMatchObject({
+      text: message.text,
+      replacement: message,
+    })
+    expect(interruptTurns(afterLateDelta.turns)).toEqual([message])
   })
 
   it('removes the turn and produces a readable error entry on chat.turn-error', () => {

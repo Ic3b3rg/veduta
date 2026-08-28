@@ -60,6 +60,14 @@ class RecordingAdapter implements PendingDecisionAdapter {
 }
 
 describe('PendingDecisionService', () => {
+  it('reads one exact authoritative decision from its owning workflow', async () => {
+    const service = new PendingDecisionService({ adapters: [new RecordingAdapter()] })
+
+    await expect(service.get('approval:effect-1')).resolves.toEqual(pendingApproval())
+    await expect(service.get('approval:missing')).resolves.toBeUndefined()
+    await expect(service.get('not-a-pending-decision')).resolves.toBeUndefined()
+  })
+
   it('lists validated decisions from every registered workflow adapter', async () => {
     const approval = new RecordingAdapter()
     const tree: PendingDecisionAdapter = {

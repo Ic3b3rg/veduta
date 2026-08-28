@@ -1,7 +1,12 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SurfaceSchema, type GatewayServerMessage } from '@veduta/protocol'
+import {
+  MAX_CHAT_PENDING_DECISION_REFERENCES,
+  PENDING_DECISION_FALLBACK_FEEDBACK,
+  SurfaceSchema,
+  type GatewayServerMessage,
+} from '@veduta/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { defineTool, type ToolContext, type ToolDef } from './agent-runner.ts'
@@ -156,6 +161,29 @@ function buildHarness(
               createdAt: '2026-08-25T10:00:00.000Z',
             })
             return { content: 'proposal ready' }
+          },
+        }),
+        defineTool({
+          name: 'test_unprojected_decision',
+          description: 'observe a Pending decision unavailable to this chat projection',
+          schema: z
+            .object({
+              count: z
+                .number()
+                .int()
+                .min(1)
+                .max(MAX_CHAT_PENDING_DECISION_REFERENCES + 1)
+                .default(1),
+            })
+            .strict(),
+          level: 'L0',
+          egressDomains: [],
+          handler: ({ count }) => {
+            for (let index = 0; index < count; index += 1) {
+              const suffix = index === 0 ? '' : `-${index + 1}`
+              hooks?.onPendingDecisionObserved?.(`approval:effect-unavailable${suffix}`)
+            }
+            return { content: 'decision observed' }
           },
         }),
       ]
@@ -996,8 +1024,10 @@ describe('createChatLoop', () => {
   it('returns a pending Space proposal for one-tap resolution without entering a Space', async () => {
     const h = harness()
     h.fake.setResponses([
-      { message: fakeToolCall('test_proposal', {}) },
-      { message: fakeText('Travel needs a new Space.') },
+      {
+        message: fakeTextAndToolCall('Done — the Travel Space was created.', 'test_proposal', {}),
+      },
+      { message: fakeText('Done — the Travel Space was created.') },
     ])
 
     await h.chatLoop.handleChatMessage(chatEvent({ text: 'Plan a trip to Japan' }))
@@ -1006,7 +1036,7 @@ describe('createChatLoop', () => {
       type: 'chat.turn-end',
       message: {
         role: 'assistant',
-        text: 'Travel needs a new Space.',
+        text: 'Awaiting your decision: Create Space “Travel”.',
         pendingDecisions: [
           {
             id: 'space-proposal:proposal-test',
@@ -1016,6 +1046,25 @@ describe('createChatLoop', () => {
         ],
       },
     })
+    const replacementIndex = h.frames.findIndex(({ frame }) => frame.type === 'chat.turn-replace')
+    expect(replacementIndex).toBeGreaterThan(0)
+    expect(h.frames[replacementIndex]?.frame).toMatchObject({
+      type: 'chat.turn-replace',
+      message: {
+        text: 'Awaiting your decision: Create Space “Travel”.',
+        pendingDecisions: [{ id: 'space-proposal:proposal-test' }],
+      },
+    })
+    expect(
+      h.frames
+        .slice(0, replacementIndex)
+        .filter(({ frame }) => frame.type === 'chat.turn-delta')
+        .map(({ frame }) => (frame as { text: string }).text)
+        .join(''),
+    ).toContain('Done — the Travel Space was created.')
+    expect(
+      h.frames.slice(replacementIndex + 1).filter(({ frame }) => frame.type === 'chat.turn-delta'),
+    ).toEqual([])
     for (const space of h.store.listSpaces()) {
       expect(
         h.store
@@ -1023,6 +1072,86 @@ describe('createChatLoop', () => {
           .filter((event) => event.payload?.['correlationId'] !== undefined),
       ).toEqual([])
     }
+  })
+
+  it('retains the exact id when an observed Pending decision cannot be projected', async () => {
+    const h = harness()
+    h.fake.setResponses([
+      {
+        message: fakeTextAndToolCall(
+          'Done — the operation completed.',
+          'test_unprojected_decision',
+          {},
+        ),
+      },
+      { message: fakeText('Done — the operation completed.') },
+    ])
+
+    await h.chatLoop.handleChatMessage(chatEvent({ text: 'Run the operation' }))
+
+    expect(h.frames.find(({ frame }) => frame.type === 'chat.turn-replace')?.frame).toMatchObject({
+      type: 'chat.turn-replace',
+      message: {
+        text: PENDING_DECISION_FALLBACK_FEEDBACK,
+        pendingDecisionIds: ['approval:effect-unavailable'],
+      },
+    })
+    expect(h.frames.at(-1)?.frame).toMatchObject({
+      type: 'chat.turn-end',
+      message: {
+        text: PENDING_DECISION_FALLBACK_FEEDBACK,
+        pendingDecisionIds: ['approval:effect-unavailable'],
+      },
+    })
+  })
+
+  it('keeps an unprojected Pending decision visible beside a projected one', async () => {
+    const h = harness()
+    h.fake.setResponses([
+      { message: fakeTextAndToolCall('First decision.', 'test_proposal', {}) },
+      {
+        message: fakeTextAndToolCall('Second decision.', 'test_unprojected_decision', {}),
+      },
+      { message: fakeText('Both decisions are ready.') },
+    ])
+
+    await h.chatLoop.handleChatMessage(chatEvent({ text: 'Prepare both operations' }))
+
+    expect(h.frames.at(-1)?.frame).toMatchObject({
+      type: 'chat.turn-end',
+      message: {
+        text: `Awaiting your decision: Create Space “Travel”.\n${PENDING_DECISION_FALLBACK_FEEDBACK}`,
+        pendingDecisions: [{ id: 'space-proposal:proposal-test' }],
+        pendingDecisionIds: ['approval:effect-unavailable'],
+      },
+    })
+  })
+
+  it('caps observed Pending-decision references and still delivers a valid final frame', async () => {
+    const h = harness()
+    h.fake.setResponses([
+      {
+        message: fakeTextAndToolCall('Many decisions.', 'test_unprojected_decision', {
+          count: MAX_CHAT_PENDING_DECISION_REFERENCES,
+        }),
+      },
+      { message: fakeTextAndToolCall('One more decision.', 'test_proposal', {}) },
+      { message: fakeText('The decisions are ready.') },
+    ])
+
+    await h.chatLoop.handleChatMessage(chatEvent({ text: 'Prepare the operations' }))
+
+    const final = h.frames.at(-1)?.frame
+    expect(final?.type).toBe('chat.turn-end')
+    if (final?.type !== 'chat.turn-end') throw new Error('expected a completed turn')
+    expect(
+      (final.message.pendingDecisions?.length ?? 0) +
+        (final.message.pendingDecisionIds?.length ?? 0),
+    ).toBe(MAX_CHAT_PENDING_DECISION_REFERENCES)
+    expect(final.message.pendingDecisionIds).toHaveLength(MAX_CHAT_PENDING_DECISION_REFERENCES)
+    expect(final.message.pendingDecisions).toBeUndefined()
+    expect(final.message.text).toBe(PENDING_DECISION_FALLBACK_FEEDBACK)
+    expect(h.frames.some(({ frame }) => frame.type === 'chat.turn-error')).toBe(false)
   })
 
   it('unknown spaceId: a turn-start frame precedes the turn-error frame, same turnId, nothing else', async () => {

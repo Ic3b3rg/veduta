@@ -26,9 +26,9 @@ const pendingApproval = {
 describe('PendingDecisionSchema', () => {
   it('validates one safe channel-neutral decision contract', () => {
     expect(PendingDecisionSchema.parse(pendingApproval)).toEqual(pendingApproval)
-    expect(PendingDecisionListSchema.parse({ decisions: [pendingApproval] })).toEqual({
-      decisions: [pendingApproval],
-    })
+    expect(PendingDecisionListSchema.safeParse({ decisions: [pendingApproval] }).success).toBe(
+      false,
+    )
     expect(PendingDecisionListSchema.parse({ revision: 4, decisions: [pendingApproval] })).toEqual({
       revision: 4,
       decisions: [pendingApproval],

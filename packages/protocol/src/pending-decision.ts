@@ -52,6 +52,8 @@ const TERMINAL_FEEDBACK_PREFIXES: Record<PendingDecisionOutcome, string> = {
   refused: 'Refused',
 }
 
+export const PENDING_DECISION_FALLBACK_FEEDBACK = 'A decision is awaiting your review.'
+
 export interface ParsedPendingDecisionId {
   kind: z.infer<typeof PendingDecisionKindSchema>
   nativeId: string
@@ -102,6 +104,16 @@ export function pendingDecisionFeedback(decision: PendingDecision): string {
     TERMINAL_FEEDBACK_PREFIXES[decision.outcome],
     decision.summary,
   )
+}
+
+/** Formats safe chat text from validated projections plus any ids that could not be projected. */
+export function pendingDecisionChatFeedback(
+  decisions: readonly PendingDecision[],
+  hasUnprojectedDecision: boolean,
+): string {
+  const feedback = decisions.map(pendingDecisionFeedback)
+  if (hasUnprojectedDecision) feedback.push(PENDING_DECISION_FALLBACK_FEEDBACK)
+  return feedback.join('\n')
 }
 
 function pendingDecisionFeedbackSentence(prefix: string, summary: string): string {
@@ -211,7 +223,7 @@ export const PendingDecisionSchema = z
 
 export const PendingDecisionListSchema = z
   .object({
-    revision: z.number().int().nonnegative().optional(),
+    revision: z.number().int().nonnegative(),
     decisions: z.array(PendingDecisionSchema),
   })
   .strict()

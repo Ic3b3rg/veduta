@@ -4,6 +4,7 @@
 // networking, routing, and live-state seams. Lower-level helpers keep their
 // exhaustive coverage in their own colocated tests.
 import {
+  PENDING_DECISION_FALLBACK_FEEDBACK,
   SurfaceCreatedEventSchema,
   SurfaceMovedEventSchema,
   SurfacePatchEventSchema,
@@ -732,7 +733,7 @@ describe('App', () => {
       ),
     )
     expect(await screen.findByRole('button', { name: /Travel/ })).toBeDefined()
-    expect(screen.getByText('Accepted')).toBeDefined()
+    expect(screen.getAllByText('Accepted: Create Space “Travel”.')).toHaveLength(2)
     expect(screen.queryByRole('button', { name: 'Accept Create Space “Travel”' })).toBeNull()
     expect(location.pathname).toBe('/')
   })
@@ -763,11 +764,18 @@ describe('App', () => {
     }
 
     act(() => {
-      handlers.onChatMessage({
-        type: 'chat.message',
+      handlers.onChatTurnStart({ type: 'chat.turn-start', turnId: 'turn-approval' })
+      handlers.onChatTurnDelta({
+        type: 'chat.turn-delta',
+        turnId: 'turn-approval',
+        text: 'Done — send_message completed.',
+      })
+      handlers.onChatTurnReplace({
+        type: 'chat.turn-replace',
+        turnId: 'turn-approval',
         message: {
           role: 'assistant',
-          text: 'This action needs approval.',
+          text: 'Awaiting your decision: Send message to alice@example.com.',
           pendingDecisions: [pending],
         },
       })
@@ -797,6 +805,7 @@ describe('App', () => {
         exact: true,
       }),
     ).toHaveLength(2)
+    expect(screen.queryByText('Done — send_message completed.')).toBeNull()
     expect(screen.queryByRole('heading', { name: 'Send message' })).toBeNull()
 
     act(() => {
@@ -821,6 +830,85 @@ describe('App', () => {
       document.querySelectorAll('[data-decision-feedback-id="approval:effect-1"]'),
     ).toHaveLength(2)
     expect(screen.queryByText('In progress: Send message to alice@example.com.')).toBeNull()
+
+    act(() => {
+      handlers.onChatTurnEnd({
+        type: 'chat.turn-end',
+        turnId: 'turn-approval',
+        message: {
+          role: 'assistant',
+          text: 'Done — send_message completed.',
+          pendingDecisions: [pending],
+        },
+      })
+    })
+
+    expect(
+      await screen.findAllByText('Executed: Send message to alice@example.com.', { exact: true }),
+    ).toHaveLength(2)
+    expect(screen.queryByText('Done — send_message completed.')).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: 'Approve Send message to alice@example.com' }),
+    ).toBeNull()
+  })
+
+  it('replaces an unprojected decision fallback when its terminal lifecycle arrives', async () => {
+    const handlers = await renderConnectedEmptyHealth('pwa-unprojected-outcome')
+    const terminal: PendingDecision = {
+      id: 'approval:effect-unavailable',
+      kind: 'approval',
+      summary: 'Send message to alice@example.com',
+      scope: { type: 'space', spaceId: 'spc-health' },
+      allowedResolutions: ['approve', 'reject'],
+      state: 'terminal',
+      outcome: 'executed',
+      decisionSurfaceId: 'srf-approval-unavailable',
+      createdAt: '2026-08-25T10:00:00.000Z',
+      decisionAt: '2026-08-25T10:01:00.000Z',
+      resolvedAt: '2026-08-25T10:01:01.000Z',
+      resolvedBy: 'trusted:user',
+    }
+
+    act(() => {
+      handlers.onChatTurnStart({ type: 'chat.turn-start', turnId: 'turn-unprojected' })
+      handlers.onChatTurnReplace({
+        type: 'chat.turn-replace',
+        turnId: 'turn-unprojected',
+        message: {
+          role: 'assistant',
+          text: PENDING_DECISION_FALLBACK_FEEDBACK,
+          pendingDecisionIds: [terminal.id],
+        },
+      })
+      handlers.onChatTurnEnd({
+        type: 'chat.turn-end',
+        turnId: 'turn-unprojected',
+        message: {
+          role: 'assistant',
+          text: PENDING_DECISION_FALLBACK_FEEDBACK,
+          pendingDecisionIds: [terminal.id],
+        },
+      })
+    })
+
+    expect(await screen.findByText(PENDING_DECISION_FALLBACK_FEEDBACK)).toBeDefined()
+
+    act(() => {
+      handlers.onPendingDecisionLifecycle({
+        type: 'pending-decision.lifecycle',
+        revision: 1,
+        decision: terminal,
+        message: 'Executed: Send message to alice@example.com.',
+      })
+    })
+
+    expect(screen.queryByText(PENDING_DECISION_FALLBACK_FEEDBACK)).toBeNull()
+    expect(
+      await screen.findAllByText('Executed: Send message to alice@example.com.', { exact: true }),
+    ).toHaveLength(2)
+    expect(
+      document.querySelectorAll('[data-decision-feedback-id="approval:effect-unavailable"]'),
+    ).toHaveLength(2)
   })
 
   it('reconciles a known Pending decision after reconnect without duplicating chat feedback', async () => {
@@ -901,6 +989,37 @@ describe('App', () => {
     expect(
       await screen.findAllByText('Accepted: Create Space “Travel”.', { exact: true }),
     ).toHaveLength(2)
+    expect(document.querySelectorAll('.chat-entry[data-decision-feedback-id]')).toHaveLength(1)
+  })
+
+  it('recovers an outcome first observed while this PWA was offline without duplicating it', async () => {
+    const handlers = await renderConnectedEmptyHealth('pwa-offline-outcome')
+    await waitFor(() => expect(fetchPendingDecisions).toHaveBeenCalledOnce())
+    const terminal: PendingDecision = {
+      id: 'tree-proposal:17',
+      kind: 'tree-proposal',
+      summary: 'Change the “Weekly plan” Surface tree',
+      scope: { type: 'space', spaceId: 'spc-health' },
+      allowedResolutions: ['accept', 'reject'],
+      state: 'terminal',
+      outcome: 'stale',
+      createdAt: '2026-08-25T10:00:00.000Z',
+      resolvedAt: '2026-08-25T10:04:00.000Z',
+      resolvedBy: 'trusted:user',
+    }
+    const snapshot = { revision: 4, decisions: [terminal] }
+
+    vi.mocked(fetchPendingDecisions).mockResolvedValueOnce(snapshot)
+    await act(async () => handlers.onHello(0, 'pwa-offline-outcome'))
+
+    expect(
+      await screen.findAllByText(
+        'Refused because it became stale: Change the “Weekly plan” Surface tree.',
+      ),
+    ).toHaveLength(2)
+
+    vi.mocked(fetchPendingDecisions).mockResolvedValueOnce(snapshot)
+    await act(async () => handlers.onHello(0, 'pwa-offline-outcome'))
     expect(document.querySelectorAll('.chat-entry[data-decision-feedback-id]')).toHaveLength(1)
   })
 

@@ -479,6 +479,7 @@ function connectWithFakeSocket(handlerOverrides: Partial<GatewayHandlers>) {
     onChatMessage: vi.fn(),
     onChatTurnStart: vi.fn(),
     onChatTurnDelta: vi.fn(),
+    onChatTurnReplace: vi.fn(),
     onChatTurnEnd: vi.fn(),
     onChatTurnError: vi.fn(),
     onPendingDecisionLifecycle: vi.fn(),
@@ -554,6 +555,35 @@ describe('connectGateway chat.turn-* dispatch', () => {
     deliver(socket, frame)
 
     expect(onChatTurnDelta).toHaveBeenCalledWith(frame)
+  })
+
+  it('dispatches chat.turn-replace to onChatTurnReplace', () => {
+    const onChatTurnReplace = vi.fn()
+    const { socket } = connectWithFakeSocket({ onChatTurnReplace })
+    const frame = {
+      type: 'chat.turn-replace',
+      turnId: 'turn-1',
+      spaceId: 'spc-home',
+      message: {
+        role: 'assistant',
+        text: 'Awaiting your decision: Send message.',
+        pendingDecisions: [
+          {
+            id: 'approval:effect-1',
+            kind: 'approval',
+            summary: 'Send message',
+            scope: { type: 'space', spaceId: 'spc-home' },
+            allowedResolutions: ['approve', 'reject'],
+            state: 'pending',
+            createdAt: '2026-08-25T10:00:00.000Z',
+          },
+        ],
+      },
+    }
+
+    deliver(socket, frame)
+
+    expect(onChatTurnReplace).toHaveBeenCalledWith(frame)
   })
 
   it('dispatches chat.turn-end to onChatTurnEnd, message intact', () => {

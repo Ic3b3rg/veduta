@@ -118,6 +118,78 @@ describe('Gateway protocol', () => {
         message: 'The model says it probably ran.',
       }).success,
     ).toBe(false)
+    const { outcome: _outcome, ...terminalWithoutOutcome } = frame.decision
+    expect(() =>
+      PendingDecisionLifecycleMessageSchema.safeParse({
+        ...frame,
+        decision: terminalWithoutOutcome,
+      }),
+    ).not.toThrow()
+  })
+
+  it('accepts an authoritative replacement for an in-flight chat turn', () => {
+    const frame = {
+      type: 'chat.turn-replace',
+      turnId: 'turn-1',
+      spaceId: 'spc-work',
+      message: {
+        role: 'assistant',
+        text: 'Awaiting your decision: Send message to alice@example.com.',
+        pendingDecisions: [
+          {
+            id: 'approval:effect-1',
+            kind: 'approval',
+            summary: 'Send message to alice@example.com',
+            scope: { type: 'space', spaceId: 'spc-work' },
+            allowedResolutions: ['approve', 'reject'],
+            state: 'pending',
+            createdAt: '2026-08-25T10:00:00.000Z',
+          },
+        ],
+      },
+    }
+
+    expect(GatewayServerMessageSchema.parse(frame)).toEqual(frame)
+    expect(
+      GatewayServerMessageSchema.safeParse({
+        ...frame,
+        message: { ...frame.message, text: 'Done — send_message completed.' },
+      }).success,
+    ).toBe(false)
+
+    const fallback = {
+      type: 'chat.turn-replace',
+      turnId: 'turn-2',
+      message: {
+        role: 'assistant',
+        text: 'A decision is awaiting your review.',
+        pendingDecisionIds: ['approval:effect-unavailable'],
+      },
+    }
+    expect(GatewayServerMessageSchema.parse(fallback)).toEqual(fallback)
+    expect(
+      GatewayServerMessageSchema.safeParse({
+        ...fallback,
+        message: { role: 'assistant', text: 'A decision is awaiting your review.' },
+      }).success,
+    ).toBe(false)
+
+    const mixed = {
+      ...frame,
+      turnId: 'turn-3',
+      message: {
+        ...frame.message,
+        text: `${frame.message.text}\nA decision is awaiting your review.`,
+        pendingDecisionIds: ['approval:effect-unavailable'],
+      },
+    }
+    expect(GatewayServerMessageSchema.parse(mixed)).toEqual(mixed)
+    expect(
+      GatewayServerMessageSchema.safeParse({
+        ...mixed,
+        message: { ...mixed.message, text: frame.message.text },
+      }).success,
+    ).toBe(false)
   })
 
   it('rejects an ApprovalCard missing surfaceId or expiresAt', () => {

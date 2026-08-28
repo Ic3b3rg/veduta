@@ -26,6 +26,7 @@ export interface GatewayHandlers {
   onChatMessage(message: Extract<GatewayServerMessage, { type: 'chat.message' }>): void
   onChatTurnStart(message: Extract<GatewayServerMessage, { type: 'chat.turn-start' }>): void
   onChatTurnDelta(message: Extract<GatewayServerMessage, { type: 'chat.turn-delta' }>): void
+  onChatTurnReplace(message: Extract<GatewayServerMessage, { type: 'chat.turn-replace' }>): void
   onChatTurnEnd(message: Extract<GatewayServerMessage, { type: 'chat.turn-end' }>): void
   onChatTurnError(message: Extract<GatewayServerMessage, { type: 'chat.turn-error' }>): void
   onPendingDecisionLifecycle(
@@ -108,6 +109,9 @@ function dispatchGatewayMessage(handlers: GatewayHandlers, message: GatewayServe
       break
     case 'chat.turn-delta':
       handlers.onChatTurnDelta(message)
+      break
+    case 'chat.turn-replace':
+      handlers.onChatTurnReplace(message)
       break
     case 'chat.turn-end':
       handlers.onChatTurnEnd(message)

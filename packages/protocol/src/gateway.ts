@@ -2,7 +2,11 @@ import { z } from 'zod'
 import { AuthSessionTokenSchema } from './auth.ts'
 import { ChatClientMessageSchema, ChatMessageSchema } from './chat.ts'
 import { ActionInvocationSchema, PatchSchema } from './patch.ts'
-import { pendingDecisionFeedback, PendingDecisionSchema } from './pending-decision.ts'
+import {
+  pendingDecisionChatFeedback,
+  pendingDecisionFeedback,
+  PendingDecisionSchema,
+} from './pending-decision.ts'
 import { SpaceSchema } from './space.ts'
 import { FreshnessSchema, RelativeTimeValiditySchema, SurfaceSchema } from './surface.ts'
 
@@ -177,7 +181,8 @@ function refineMatchingEventOrder(label: string) {
 
 // Turn-lifecycle frames for the streamed Agent chat turn (issue #37): a turn
 // opens with `chat.turn-start`, streams its answer as zero or more
-// `chat.turn-delta` fragments, then closes with exactly one of
+// `chat.turn-delta` fragments, may replace model text with authoritative
+// daemon state through `chat.turn-replace`, then closes with exactly one of
 // `chat.turn-end` (the complete final message) or `chat.turn-error`.
 // `chat.message` remains for system notices, which are never streamed. Every
 // frame carries `spaceId` so a client can scope a delta to its Space without
@@ -194,6 +199,17 @@ export const ChatTurnDeltaMessageSchema = z.object({
   spaceId: z.string().optional(),
   text: z.string(),
 })
+
+const ChatTurnReplaceMessageObjectSchema = z.object({
+  type: z.literal('chat.turn-replace'),
+  turnId: z.string().min(1),
+  spaceId: z.string().optional(),
+  message: ChatMessageSchema,
+})
+
+export const ChatTurnReplaceMessageSchema = ChatTurnReplaceMessageObjectSchema.superRefine(
+  refineChatTurnReplaceMessage,
+)
 
 export const ChatTurnEndMessageSchema = z.object({
   type: z.literal('chat.turn-end'),
@@ -276,6 +292,7 @@ const GatewayServerMessageObjectSchema = z.discriminatedUnion('type', [
   }),
   ChatTurnStartMessageSchema,
   ChatTurnDeltaMessageSchema,
+  ChatTurnReplaceMessageObjectSchema,
   ChatTurnEndMessageSchema,
   ChatTurnErrorMessageSchema,
   PendingDecisionLifecycleMessageObjectSchema,
@@ -304,13 +321,52 @@ export const GatewayServerMessageSchema = GatewayServerMessageObjectSchema.super
     if (message.type === 'pending-decision.lifecycle') {
       refinePendingDecisionLifecycleMessage(message, context)
     }
+    if (message.type === 'chat.turn-replace') {
+      refineChatTurnReplaceMessage(message, context)
+    }
   },
 )
+
+function refineChatTurnReplaceMessage(
+  frame: z.infer<typeof ChatTurnReplaceMessageObjectSchema>,
+  context: z.RefinementCtx,
+): void {
+  if (frame.message.role !== 'assistant') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['message', 'role'],
+      message: 'turn replacement must be daemon-authored assistant text',
+    })
+  }
+  const decisions = frame.message.pendingDecisions ?? []
+  const unprojectedIds = frame.message.pendingDecisionIds ?? []
+  if (decisions.length === 0 && unprojectedIds.length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['message'],
+      message: 'turn replacement must reference at least one Pending decision',
+    })
+  }
+  if (
+    decisions.some((decision) => decision.state === 'terminal' && decision.outcome === undefined)
+  ) {
+    return
+  }
+  const expected = pendingDecisionChatFeedback(decisions, unprojectedIds.length > 0)
+  if (frame.message.text !== expected) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['message', 'text'],
+      message: 'turn replacement text must be derived from Pending decision state',
+    })
+  }
+}
 
 function refinePendingDecisionLifecycleMessage(
   lifecycle: z.infer<typeof PendingDecisionLifecycleMessageObjectSchema>,
   context: z.RefinementCtx,
 ): void {
+  if (lifecycle.decision.state === 'terminal' && lifecycle.decision.outcome === undefined) return
   if (lifecycle.message === pendingDecisionFeedback(lifecycle.decision)) return
   context.addIssue({
     code: z.ZodIssueCode.custom,
@@ -335,6 +391,7 @@ export type SurfaceMovedEvent = z.infer<typeof SurfaceMovedEventSchema>
 export type ChatTurnCorrelation = z.infer<typeof ChatTurnCorrelationSchema>
 export type ChatTurnStartMessage = z.infer<typeof ChatTurnStartMessageSchema>
 export type ChatTurnDeltaMessage = z.infer<typeof ChatTurnDeltaMessageSchema>
+export type ChatTurnReplaceMessage = z.infer<typeof ChatTurnReplaceMessageSchema>
 export type ChatTurnEndMessage = z.infer<typeof ChatTurnEndMessageSchema>
 export type ChatTurnErrorMessage = z.infer<typeof ChatTurnErrorMessageSchema>
 export type PendingDecisionLifecycleMessage = z.infer<typeof PendingDecisionLifecycleMessageSchema>

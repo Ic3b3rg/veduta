@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import type {
-  ChatResultTarget,
-  GatewayServerMessage,
-  PendingDecision,
-  Space,
+import {
+  MAX_CHAT_PENDING_DECISION_REFERENCES,
+  pendingDecisionChatFeedback,
+  type ChatResultTarget,
+  type GatewayServerMessage,
+  type PendingDecision,
+  type Space,
 } from '@veduta/protocol'
 import type { SessionContextFilter, SessionMessage, SessionStore, ToolDef } from './agent-runner.ts'
 import type { NormalizedChannelEvent } from './channel-adapter.ts'
@@ -312,8 +314,34 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
     const enteredSpaces = new Map<string, Space>()
     const resultTargets: ChatResultTarget[] = []
     const pendingDecisions: PendingDecision[] = []
-    const globalHooks: GlobalChatTurnHooks | undefined =
-      spaceId === undefined
+    const pendingDecisionIds = new Set<string>()
+
+    const authoritativePendingMessage = () => {
+      const projectedIds = new Set(pendingDecisions.map((decision) => decision.id))
+      const unprojectedIds = [...pendingDecisionIds].filter((id) => !projectedIds.has(id))
+      return {
+        role: 'assistant' as const,
+        text: pendingDecisionChatFeedback(pendingDecisions, unprojectedIds.length > 0),
+        ...(pendingDecisions.length === 0 ? {} : { pendingDecisions }),
+        ...(unprojectedIds.length === 0 ? {} : { pendingDecisionIds: unprojectedIds }),
+      }
+    }
+
+    const publishPendingReplacement = () => {
+      try {
+        options.send(event.clientId, {
+          type: 'chat.turn-replace',
+          turnId,
+          ...spaceField,
+          message: authoritativePendingMessage(),
+        })
+      } catch (error) {
+        console.error('chat loop turn observer failed', error)
+      }
+    }
+
+    const turnHooks: GlobalChatTurnHooks = {
+      ...(spaceId === undefined
         ? {
             onSpaceEntered(space) {
               if (enteredSpaces.has(space.id)) return
@@ -328,22 +356,39 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
             onResultTarget(target) {
               addResultTarget(resultTargets, target)
             },
-            onPendingDecision(decision) {
-              const existing = pendingDecisions.findIndex(
-                (candidate) => candidate.id === decision.id,
-              )
-              if (existing >= 0) pendingDecisions[existing] = decision
-              else if (pendingDecisions.length < 10) pendingDecisions.push(decision)
-            },
           }
-        : undefined
+        : {}),
+      onPendingDecision(decision) {
+        const existing = pendingDecisions.findIndex((candidate) => candidate.id === decision.id)
+        if (existing >= 0) {
+          pendingDecisions[existing] = decision
+        } else {
+          if (
+            !pendingDecisionIds.has(decision.id) &&
+            pendingDecisionIds.size >= MAX_CHAT_PENDING_DECISION_REFERENCES
+          ) {
+            return
+          }
+          pendingDecisions.push(decision)
+        }
+        pendingDecisionIds.add(decision.id)
+        publishPendingReplacement()
+      },
+      onPendingDecisionObserved(decisionId) {
+        if (pendingDecisions.some((decision) => decision.id === decisionId)) return
+        if (pendingDecisionIds.has(decisionId)) return
+        if (pendingDecisionIds.size >= MAX_CHAT_PENDING_DECISION_REFERENCES) return
+        pendingDecisionIds.add(decisionId)
+        publishPendingReplacement()
+      },
+    }
     options.send(event.clientId, { type: 'chat.turn-start', turnId, ...spaceField })
 
     try {
       const sessionId = sessionIdFor(spaceId)
       const runner = await getRunner(sessionId, spaceId)
       const { systemPrompt, contextOrigins } = buildContext(spaceId)
-      const turnTools = options.toolsFor(spaceId, globalHooks)
+      const turnTools = options.toolsFor(spaceId, turnHooks)
 
       if (spaceId !== undefined) {
         options.store.spacesEngine.appendEvent(spaceId, {
@@ -414,6 +459,10 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
           pendingSeparator = false
           currentSegment += agentEvent.text
           guarded(() => {
+            // Once a tool has produced a Pending decision, only the daemon-derived
+            // lifecycle text may be visible. The model's closing status is still
+            // accumulated for session continuity but is never streamed to clients.
+            if (pendingDecisionIds.size > 0) return
             if (emitSeparator) {
               options.send(event.clientId, {
                 type: 'chat.turn-delta',
@@ -479,6 +528,18 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
       }
 
       const finalText = finalTextOf(segments, lastTurnEnd?.text)
+      const finalMessage =
+        pendingDecisionIds.size === 0
+          ? {
+              role: 'assistant' as const,
+              text: finalText,
+              ...(resultTargets.length === 0 ? {} : { targets: resultTargets }),
+            }
+          : {
+              ...authoritativePendingMessage(),
+              ...(resultTargets.length === 0 ? {} : { targets: resultTargets }),
+            }
+      const authoritativeText = finalMessage.text
 
       if (spaceId !== undefined) {
         // A turn that read untrusted content mid-turn must not launder its
@@ -488,13 +549,13 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
         const assistantOrigin = effectiveOrigin(lastTurnEnd?.origins ?? [], 'trusted:system')
         options.store.spacesEngine.appendEvent(spaceId, {
           type: 'turn',
-          text: finalText,
+          text: authoritativeText,
           origin: assistantOrigin,
           payload: { role: 'assistant', toolCalls },
         })
       } else {
         appendGlobalTerminalEvents(enteredSpaces, {
-          text: finalText,
+          text: authoritativeText,
           origin: effectiveOrigin(lastTurnEnd?.origins ?? [], 'trusted:system'),
           payload: { role: 'assistant', correlationId: turnId, toolCalls },
         })
@@ -504,12 +565,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
         type: 'chat.turn-end',
         turnId,
         ...spaceField,
-        message: {
-          role: 'assistant',
-          text: finalText,
-          ...(resultTargets.length === 0 ? {} : { targets: resultTargets }),
-          ...(pendingDecisions.length === 0 ? {} : { pendingDecisions }),
-        },
+        message: finalMessage,
       })
     } catch (error) {
       const errorText = sanitizeErrorText(error)

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { ChatMessageSchema } from './chat.ts'
+import { ChatMessageSchema, MAX_CHAT_PENDING_DECISION_REFERENCES } from './chat.ts'
+import { PENDING_DECISION_FALLBACK_FEEDBACK } from './pending-decision.ts'
 
 describe('ChatMessageSchema result targets', () => {
   it('accepts bounded Space targets with an optional complete Surface target', () => {
@@ -110,6 +111,67 @@ describe('ChatMessageSchema result targets', () => {
     expect(ChatMessageSchema.safeParse({ ...feedback, role: 'user' }).success).toBe(false)
     expect(
       ChatMessageSchema.safeParse({ ...feedback, text: 'The model says it probably ran.' }).success,
+    ).toBe(false)
+  })
+
+  it('carries an exact id when a Pending decision cannot be projected', () => {
+    const fallback = {
+      role: 'assistant',
+      text: PENDING_DECISION_FALLBACK_FEEDBACK,
+      pendingDecisionIds: ['approval:effect-unavailable'],
+    }
+
+    expect(ChatMessageSchema.parse(fallback)).toEqual(fallback)
+    expect(
+      ChatMessageSchema.safeParse({ ...fallback, text: 'The model says approval is pending.' })
+        .success,
+    ).toBe(false)
+    expect(ChatMessageSchema.safeParse({ ...fallback, role: 'user' }).success).toBe(false)
+    expect(
+      ChatMessageSchema.safeParse({
+        ...fallback,
+        pendingDecisionIds: ['approval:effect-unavailable', 'approval:effect-unavailable'],
+      }).success,
+    ).toBe(false)
+    expect(
+      ChatMessageSchema.safeParse({ ...fallback, pendingDecisionIds: ['not-a-decision-id'] })
+        .success,
+    ).toBe(false)
+  })
+
+  it('keeps unprojected Pending decisions visible beside projected decisions', () => {
+    const mixed = {
+      role: 'assistant',
+      text: `Awaiting your decision: Create Space “Travel”.\n${PENDING_DECISION_FALLBACK_FEEDBACK}`,
+      pendingDecisions: [
+        {
+          id: 'space-proposal:proposal-1',
+          kind: 'space-proposal',
+          summary: 'Create Space “Travel”',
+          scope: { type: 'global' },
+          allowedResolutions: ['accept', 'reject'],
+          state: 'pending',
+          createdAt: '2026-08-25T10:00:00.000Z',
+        },
+      ],
+      pendingDecisionIds: ['approval:effect-unavailable'],
+    }
+
+    expect(ChatMessageSchema.parse(mixed)).toEqual(mixed)
+    expect(
+      ChatMessageSchema.safeParse({
+        ...mixed,
+        text: 'Awaiting your decision: Create Space “Travel”.',
+      }).success,
+    ).toBe(false)
+    expect(
+      ChatMessageSchema.safeParse({
+        ...mixed,
+        pendingDecisionIds: Array.from(
+          { length: MAX_CHAT_PENDING_DECISION_REFERENCES },
+          (_unused, index) => `approval:effect-unavailable-${index}`,
+        ),
+      }).success,
     ).toBe(false)
   })
 })
