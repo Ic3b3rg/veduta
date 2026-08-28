@@ -31,7 +31,7 @@ class FakeApprovalSource implements ApprovalDecisionSource {
     return id === this.record.id ? this.record : undefined
   }
 
-  async resolve(id: string, resolution: 'approve' | 'reject'): Promise<void> {
+  async resolvePrepared(id: string, resolution: 'approve' | 'reject'): Promise<void> {
     this.resolutions.push({ id, resolution })
     this.record = {
       ...this.record,

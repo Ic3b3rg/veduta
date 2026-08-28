@@ -649,7 +649,20 @@ export class TrustLayer {
       this.claimAndReject(row)
       return
     }
-    await this.claimAndApprove(row)
+    await this.claimAndApprove(row, 'surface')
+  }
+
+  /** Resolves a compact-channel action from the persisted prepared input only. */
+  async resolvePrepared(approvalId: string, decision: 'approve' | 'reject'): Promise<void> {
+    const row = this.store.getRawRow(approvalId)
+    if (!row) throw new Error(`trust layer: unknown approval "${approvalId}"`)
+    if (row.status !== 'pending') return
+
+    if (decision === 'reject') {
+      this.claimAndReject(row)
+      return
+    }
+    await this.claimAndApprove(row, 'prepared')
   }
 
   private claimAndReject(row: ApprovalRow): void {
@@ -686,25 +699,36 @@ export class TrustLayer {
     this.notifyChange()
   }
 
-  private async claimAndApprove(row: ApprovalRow): Promise<void> {
+  private async claimAndApprove(
+    row: ApprovalRow,
+    inputSource: 'surface' | 'prepared',
+  ): Promise<void> {
     const entry = this.registry.get(row.toolName)
     if (!entry)
       throw new Error(
         `trust layer: cannot approve — tool "${row.toolName}" is no longer registered`,
       )
-    if (row.surfaceId === undefined)
+    if (inputSource === 'surface' && row.surfaceId === undefined)
       throw new Error(`trust layer: approval "${row.id}" has no card surface`)
 
     const provenance = rowProvenance(row)
-    const editedState = this.port.readEditedFields(row.surfaceId)
     const originalInput = provenance.input as Record<string, unknown>
-    const editableKeys = entry.meta.editableKeys ?? []
-    const mergedInput = { ...originalInput, ...extractEditedInput(editedState, editableKeys) }
-    const validated = entry.tool.schema.safeParse(mergedInput)
+    const editedState =
+      inputSource === 'surface' && row.surfaceId !== undefined
+        ? this.port.readEditedFields(row.surfaceId)
+        : undefined
+    const candidateInput =
+      editedState === undefined
+        ? originalInput
+        : {
+            ...originalInput,
+            ...extractEditedInput(editedState, entry.meta.editableKeys ?? []),
+          }
+    const validated = entry.tool.schema.safeParse(candidateInput)
 
     if (!validated.success) {
       const message = validated.error.message
-      this.port.patchValidationError(row.surfaceId, message)
+      if (row.surfaceId !== undefined) this.port.patchValidationError(row.surfaceId, message)
       this.store.insertAudit(
         {
           kind: 'approval.edit_rejected',
@@ -716,7 +740,7 @@ export class TrustLayer {
           originChain: provenance.originChain,
           ...(provenance.trigger !== undefined ? { trigger: provenance.trigger } : {}),
           contextHash: provenance.contextHash,
-          input: mergedInput,
+          input: candidateInput,
           ...(row.spaceId !== undefined ? { spaceId: row.spaceId } : {}),
         },
         this.nowIso(),
@@ -732,7 +756,7 @@ export class TrustLayer {
     // from any live state: the grant is only as trustworthy as what the
     // model actually saw when the call was made.
     const eligible = !hasUntrusted(originChain) && row.effectiveOrigin === 'trusted:user'
-    const wantsAllowlist = editedState[DECISION_ALLOWLIST_CHECKBOX_KEY] === true
+    const wantsAllowlist = editedState?.[DECISION_ALLOWLIST_CHECKBOX_KEY] === true
     const allowlistParams = entry.meta.allowlistParams
     const grantAllowlist =
       wantsAllowlist && eligible && row.level === 'L1' && allowlistParams !== undefined

@@ -14,7 +14,7 @@ const SUMMARY_MAX_CHARS = 500
 export interface ApprovalDecisionSource {
   listApprovalDecisions(): ApprovalDecisionRecord[]
   getApprovalDecision(id: string): ApprovalDecisionRecord | undefined
-  resolve(id: string, resolution: 'approve' | 'reject'): Promise<void>
+  resolvePrepared(id: string, resolution: 'approve' | 'reject'): Promise<void>
 }
 
 export class ApprovalPendingDecisionAdapter implements PendingDecisionAdapter {
@@ -44,7 +44,7 @@ export class ApprovalPendingDecisionAdapter implements PendingDecisionAdapter {
     }
     const nativeId = pendingDecisionNativeId(id, this.kind)
     if (nativeId === undefined) throw new Error(`invalid approval Pending decision id: ${id}`)
-    await this.source.resolve(nativeId, resolution)
+    await this.source.resolvePrepared(nativeId, resolution)
     const record = this.source.getApprovalDecision(nativeId)
     if (!record) throw new Error(`approval disappeared after resolution: ${nativeId}`)
     return this.toDecision(record)

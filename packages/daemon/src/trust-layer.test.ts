@@ -372,6 +372,31 @@ describe('decision matrix', () => {
     expect(allowedDecision?.allowlistRuleId).toBe(ruleId)
   })
 
+  it('quick approval executes the prepared input unchanged and cannot create an allowlist rule', async () => {
+    const executed: unknown[] = []
+    const layer = createLayer()
+    const tool = sendMessageTool((input) => executed.push(input))
+    layer.register(tool, sendMessageMeta)
+
+    await callWrapped(
+      layer,
+      tool,
+      { to: 'alice@example.com', body: 'prepared text' },
+      toolContext({ spaceId: 'spc-test' }),
+    )
+    const surfaceId = port.onlySurfaceId()
+    const approvalId = port.surfaces.get(surfaceId)?.approval.id
+    if (!approvalId) throw new Error('expected the approval id')
+    port.setField(surfaceId, fieldStateKey('body'), 'edited on the Decision Surface')
+    port.setField(surfaceId, DECISION_ALLOWLIST_CHECKBOX_KEY, true)
+
+    await layer.resolvePrepared(approvalId, 'approve')
+
+    expect(executed).toEqual([{ to: 'alice@example.com', body: 'prepared text' }])
+    expect(layer.listAllowlistRules()).toEqual([])
+    expect(port.surfaces.get(surfaceId)?.archived).toBe(true)
+  })
+
   it('L2 always cards, even with a matching allowlist rule (allowlist ignored)', async () => {
     const layer = createLayer()
     const tool = transferFundsTool()
