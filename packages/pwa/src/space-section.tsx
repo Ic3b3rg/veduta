@@ -10,21 +10,21 @@ export function SpaceSection({
   authToken,
   focused,
   focusedSurfaceId,
-  surfaceCreationFeedbackKeys,
+  surfaceRevealFeedbackKeys,
   surfaceUpdateFeedbacks,
   onFocus,
   onMoveSurface,
   onPatched,
   onQueueFastAction,
   onTogglePin,
-  onSurfaceCreationFeedbackShown,
+  onSurfaceRevealFeedbackShown,
   onError,
 }: {
   space: SpaceWithSurfaces
   authToken: string | undefined
   focused: boolean
   focusedSurfaceId: string | undefined
-  surfaceCreationFeedbackKeys: Record<string, string>
+  surfaceRevealFeedbackKeys: Record<string, string>
   surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback>
   onFocus: (space: SpaceWithSurfaces, surface?: Surface) => void
   onMoveSurface: (
@@ -35,7 +35,7 @@ export function SpaceSection({
   onPatched: (surface: Surface, affectedAtomIds?: readonly string[]) => void
   onQueueFastAction: (action: QueuedFastAction) => void
   onTogglePin: (surface: Surface, pinned: boolean) => void
-  onSurfaceCreationFeedbackShown: (surfaceId: string, feedbackKey: string) => void
+  onSurfaceRevealFeedbackShown: (surfaceId: string, feedbackKey: string) => void
   onError: (message: string) => void
 }) {
   const surfaces = space.surfaces
@@ -62,7 +62,7 @@ export function SpaceSection({
             surface={surface}
             token={authToken}
             selected={surface.id === focusedSurfaceId}
-            creationFeedbackKey={surfaceCreationFeedbackKeys[surface.id]}
+            revealFeedbackKey={surfaceRevealFeedbackKeys[surface.id]}
             updateFeedback={surfaceUpdateFeedbacks[surface.id]}
             canMoveUp={index > 0}
             canMoveDown={index < surfaces.length - 1}
@@ -72,8 +72,8 @@ export function SpaceSection({
             onPatched={onPatched}
             onQueueFastAction={onQueueFastAction}
             onTogglePin={(pinned) => onTogglePin(surface, pinned)}
-            onCreationFeedbackShown={(feedbackKey) =>
-              onSurfaceCreationFeedbackShown(surface.id, feedbackKey)
+            onRevealFeedbackShown={(feedbackKey) =>
+              onSurfaceRevealFeedbackShown(surface.id, feedbackKey)
             }
             onError={onError}
           />

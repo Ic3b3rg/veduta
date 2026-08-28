@@ -398,8 +398,9 @@ describe('decision matrix', () => {
   })
 
   it('L2 always cards, even with a matching allowlist rule (allowlist ignored)', async () => {
+    const executed: unknown[] = []
     const layer = createLayer()
-    const tool = transferFundsTool()
+    const tool = transferFundsTool((input) => executed.push(input))
     layer.register(tool, transferFundsMeta)
     // Seed a rule directly: L2 approvals never offer the checkbox, so this
     // proves the level check, not just the UI, keeps L2 out of the allowlist.
@@ -419,6 +420,14 @@ describe('decision matrix', () => {
     )
     expect(result.content).toMatch(/needs your approval/)
     expect(port.surfaces.size).toBe(1)
+
+    const surfaceId = port.onlySurfaceId()
+    const approvalId = port.surfaces.get(surfaceId)?.approval.id
+    if (!approvalId) throw new Error('expected the L2 approval id')
+    await layer.resolvePrepared(approvalId, 'approve')
+
+    expect(executed).toEqual([{ to: 'bob', amountUsd: 10 }])
+    expect(layer.listAllowlistRules()).toHaveLength(1)
   })
 
   it('any untrusted origin in the snapshot forces a card, allowlist ignored', async () => {

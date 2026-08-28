@@ -9,6 +9,7 @@ import { useCallback, useRef, type Dispatch, type SetStateAction } from 'react'
 import { ApiResponseError, fetchPendingDecisions } from './api.ts'
 import {
   applyPendingDecisionFeedback,
+  mergePendingDecisionProjection,
   reconcilePendingDecisionSnapshot,
 } from './pending-decision-state.ts'
 import { CHAT_HISTORY_LIMIT } from './pwa-storage.ts'
@@ -23,6 +24,7 @@ interface PendingDecisionSyncOptions {
 
 interface PendingDecisionSync {
   showPendingDecisionFeedback: (decision: PendingDecision, message: string) => void
+  observeProjectedDecisions: (decisions: readonly PendingDecision[]) => void
   handlePendingDecisionLifecycle: (lifecycle: PendingDecisionLifecycleMessage) => void
   refreshPendingDecisionSnapshot: () => void
   cancelPendingDecisionSnapshot: () => void
@@ -35,10 +37,25 @@ export function usePendingDecisionSync(options: PendingDecisionSyncOptions): Pen
   const syncingRef = useRef(false)
   const syncGenerationRef = useRef(0)
   const bufferRef = useRef<PendingDecisionLifecycleMessage[]>([])
+  const projectedDuringSyncRef = useRef<PendingDecision[]>([])
+
+  const observeProjectedDecisions = useCallback(
+    (decisions: readonly PendingDecision[]) => {
+      if (decisions.length === 0) return
+      if (syncingRef.current) {
+        projectedDuringSyncRef.current = mergePendingDecisionProjection(
+          projectedDuringSyncRef.current,
+          decisions,
+        )
+      }
+      setDecisions((current) => mergePendingDecisionProjection(current, decisions))
+    },
+    [setDecisions],
+  )
 
   const showPendingDecisionFeedback = useCallback(
     (decision: PendingDecision, message: string) => {
-      setDecisions((current) => upsertPendingDecision(current, decision))
+      setDecisions((current) => mergePendingDecisionProjection(current, [decision]))
       setChatEntries((entries) =>
         applyPendingDecisionFeedback(entries, { decision, message }).slice(-CHAT_HISTORY_LIMIT),
       )
@@ -73,12 +90,14 @@ export function usePendingDecisionSync(options: PendingDecisionSyncOptions): Pen
     syncingRef.current = true
     revisionRef.current = -1
     bufferRef.current = []
+    projectedDuringSyncRef.current = []
 
     const replayBufferedLifecycle = () => {
       const buffered = bufferRef.current
         .slice()
         .sort((left, right) => left.revision - right.revision)
       bufferRef.current = []
+      projectedDuringSyncRef.current = []
       syncingRef.current = false
       for (const lifecycle of buffered) acceptLifecycle(lifecycle)
     }
@@ -87,7 +106,10 @@ export function usePendingDecisionSync(options: PendingDecisionSyncOptions): Pen
       .then((snapshot) => {
         if (generation !== syncGenerationRef.current) return
         revisionRef.current = snapshot.revision
-        setDecisions(snapshot.decisions)
+        setDecisions(
+          mergePendingDecisionProjection(snapshot.decisions, projectedDuringSyncRef.current),
+        )
+        projectedDuringSyncRef.current = []
         setChatEntries((entries) =>
           reconcilePendingDecisionSnapshot(entries, snapshot.decisions).slice(-CHAT_HISTORY_LIMIT),
         )
@@ -98,6 +120,7 @@ export function usePendingDecisionSync(options: PendingDecisionSyncOptions): Pen
         if (generation !== syncGenerationRef.current) return
         if (error instanceof ApiResponseError && error.status === 401) {
           bufferRef.current = []
+          projectedDuringSyncRef.current = []
           syncingRef.current = false
           onUnauthorized()
           return
@@ -111,24 +134,16 @@ export function usePendingDecisionSync(options: PendingDecisionSyncOptions): Pen
     syncGenerationRef.current += 1
     syncingRef.current = false
     bufferRef.current = []
+    projectedDuringSyncRef.current = []
   }, [])
 
   return {
     showPendingDecisionFeedback,
+    observeProjectedDecisions,
     handlePendingDecisionLifecycle,
     refreshPendingDecisionSnapshot,
     cancelPendingDecisionSnapshot,
   }
-}
-
-function upsertPendingDecision(
-  decisions: readonly PendingDecision[],
-  decision: PendingDecision,
-): PendingDecision[] {
-  return [...decisions.filter((candidate) => candidate.id !== decision.id), decision].sort(
-    (left, right) =>
-      right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id),
-  )
 }
 
 function reconcileApprovalCards(

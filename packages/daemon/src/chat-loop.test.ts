@@ -1065,6 +1065,23 @@ describe('createChatLoop', () => {
     expect(
       h.frames.slice(replacementIndex + 1).filter(({ frame }) => frame.type === 'chat.turn-delta'),
     ).toEqual([])
+    const pendingFrames = h.frames.filter(
+      ({ frame }) =>
+        (frame.type === 'chat.turn-replace' || frame.type === 'chat.turn-end') &&
+        frame.message.pendingDecisions?.some(
+          (decision) => decision.id === 'space-proposal:proposal-test',
+        ),
+    )
+    expect(new Set(pendingFrames.map(({ clientId }) => clientId))).toEqual(new Set(['c1']))
+    expect(
+      new Set(
+        pendingFrames.flatMap(({ frame }) =>
+          frame.type === 'chat.turn-replace' || frame.type === 'chat.turn-end'
+            ? [frame.turnId]
+            : [],
+        ),
+      ).size,
+    ).toBe(1)
     for (const space of h.store.listSpaces()) {
       expect(
         h.store

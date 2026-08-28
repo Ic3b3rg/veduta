@@ -128,6 +128,22 @@ describe('usePendingDecisionSync', () => {
     expect(result.current.chatEntries).toBe(settled)
   })
 
+  it('keeps a live chat projection that arrives while an older snapshot is in flight', async () => {
+    const snapshot = deferred<PendingDecisionList>()
+    vi.mocked(fetchPendingDecisions).mockReturnValueOnce(snapshot.promise)
+    const { result } = renderHook(() => useHarness(vi.fn()))
+
+    act(() => {
+      result.current.refreshPendingDecisionSnapshot()
+      result.current.observeProjectedDecisions([pending])
+    })
+    expect(result.current.decisions).toEqual([pending])
+
+    await act(async () => snapshot.resolve({ revision: 0, decisions: [] }))
+
+    expect(result.current.decisions).toEqual([pending])
+  })
+
   it('drops a cancelled snapshot and every frame buffered for that generation', async () => {
     const snapshot = deferred<PendingDecisionList>()
     vi.mocked(fetchPendingDecisions).mockReturnValueOnce(snapshot.promise)

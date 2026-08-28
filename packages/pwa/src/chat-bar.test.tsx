@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { ApprovalCard, ChatMessage } from '@veduta/protocol'
+import type { ChatMessage, PendingDecision } from '@veduta/protocol'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -43,12 +43,12 @@ afterEach(() => {
   Reflect.deleteProperty(HTMLElement.prototype, 'scrollTop')
 })
 
-const noApprovalCards: ApprovalCard[] = []
-
 function renderChatBar(
   entries: ChatMessage[],
   streamingEntries: { turnId: string; text: string }[],
   onResolvePendingDecision = vi.fn(async () => undefined),
+  pendingDecisionReviewPaths: ReadonlyMap<string, string> = new Map(),
+  resolvingDecisionIds: ReadonlySet<string> = new Set(),
 ) {
   const chatBar = (
     nextEntries: ChatMessage[],
@@ -58,10 +58,11 @@ function renderChatBar(
       <ChatBar
         entries={nextEntries}
         streamingEntries={nextStreamingEntries}
-        approvalCards={noApprovalCards}
         focusedSpace={undefined}
         focusToken="initial"
-        onDismissApprovalCards={vi.fn()}
+        focusOnRouteChange
+        pendingDecisionReviewPaths={pendingDecisionReviewPaths}
+        resolvingDecisionIds={resolvingDecisionIds}
         onResolvePendingDecision={onResolvePendingDecision}
         onSend={vi.fn(() => true)}
       />
@@ -258,6 +259,35 @@ describe('ChatBar', () => {
       expect(onResolvePendingDecision).toHaveBeenCalledWith('space-proposal:proposal-1', 'accept'),
     )
     expect(location.pathname).toBe('/')
+  })
+
+  it('reviews an assigned chat decision through its exact Decision Surface', () => {
+    const pendingDecision: PendingDecision = {
+      id: 'tree-proposal:proposal-1',
+      kind: 'tree-proposal',
+      summary: 'Update the weekly plan',
+      scope: { type: 'space', spaceId: 'spc-health' },
+      allowedResolutions: ['accept', 'reject'],
+      state: 'pending',
+      decisionSurfaceId: 'srf-decision-1',
+      createdAt: '2026-08-25T10:00:00.000Z',
+    }
+    renderChatBar(
+      [
+        {
+          role: 'assistant',
+          text: 'The weekly plan needs review.',
+          pendingDecisions: [pendingDecision],
+        },
+      ],
+      [],
+      vi.fn(async () => undefined),
+      new Map([[pendingDecision.id, '/app/space/health/surface/srf-decision-1']]),
+    )
+
+    expect(
+      screen.getByRole('link', { name: 'Review Update the weekly plan' }).getAttribute('href'),
+    ).toBe('/app/space/health/surface/srf-decision-1')
   })
 
   it('renders a streaming entry with the accumulated text and the in-progress affordance', () => {

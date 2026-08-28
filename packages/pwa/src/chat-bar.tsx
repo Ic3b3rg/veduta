@@ -1,17 +1,18 @@
-import type { ApprovalCard, ChatMessage, PendingDecisionResolution } from '@veduta/protocol'
+import type { ChatMessage, PendingDecisionResolution } from '@veduta/protocol'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { SpaceWithSurfaces } from './api.ts'
-import { ApprovalCards } from './approval-cards.tsx'
 import { clientPath } from './client-router.tsx'
+import { PendingDecisionControls } from './pending-decision-notifications.tsx'
 
 export function ChatBar({
   entries,
   streamingEntries,
-  approvalCards,
   focusedSpace,
   focusToken,
-  onDismissApprovalCards,
+  focusOnRouteChange,
+  pendingDecisionReviewPaths,
+  resolvingDecisionIds,
   onResolvePendingDecision,
   onSend,
 }: {
@@ -20,10 +21,11 @@ export function ChatBar({
    * rendered after `entries` -- a turn only lands in `entries` once
    * `chat.turn-end`/`chat.turn-error` closes it. */
   streamingEntries: { turnId: string; text: string }[]
-  approvalCards: ApprovalCard[]
   focusedSpace: SpaceWithSurfaces | undefined
   focusToken: string
-  onDismissApprovalCards: (cards: ApprovalCard[]) => void
+  focusOnRouteChange: boolean
+  pendingDecisionReviewPaths: ReadonlyMap<string, string>
+  resolvingDecisionIds: ReadonlySet<string>
   onResolvePendingDecision: (
     decisionId: string,
     resolution: PendingDecisionResolution,
@@ -32,14 +34,13 @@ export function ChatBar({
 }) {
   const [text, setText] = useState('')
   const [isAtBottom, setIsAtBottom] = useState(true)
-  const [resolvingDecisionIds, setResolvingDecisionIds] = useState<Set<string>>(new Set())
   const inputRef = useRef<HTMLInputElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
   const followsLatestRef = useRef(true)
 
   useEffect(() => {
-    inputRef.current?.focus()
-  }, [focusToken])
+    if (focusOnRouteChange) inputRef.current?.focus()
+  }, [focusOnRouteChange, focusToken])
 
   useLayoutEffect(() => {
     const log = logRef.current
@@ -60,20 +61,6 @@ export function ChatBar({
     setText('')
   }
 
-  const resolveDecision = async (decisionId: string, resolution: PendingDecisionResolution) => {
-    if (resolvingDecisionIds.has(decisionId)) return
-    setResolvingDecisionIds((current) => new Set(current).add(decisionId))
-    try {
-      await onResolvePendingDecision(decisionId, resolution)
-    } finally {
-      setResolvingDecisionIds((current) => {
-        const next = new Set(current)
-        next.delete(decisionId)
-        return next
-      })
-    }
-  }
-
   return (
     <footer className="chat-dock" aria-label="Global chat">
       <div className="chat-log-frame">
@@ -91,9 +78,6 @@ export function ChatBar({
             setIsAtBottom(nextIsAtBottom)
           }}
         >
-          {approvalCards.length > 0 && (
-            <ApprovalCards cards={approvalCards} compact onDismiss={onDismissApprovalCards} />
-          )}
           {entries.map((entry, index) => (
             <div
               key={`${entry.role}-${index}`}
@@ -124,32 +108,28 @@ export function ChatBar({
                 entry.pendingDecisions &&
                 entry.pendingDecisions.length > 0 && (
                   <section className="chat-pending-decisions" aria-label="Pending decisions">
-                    {entry.pendingDecisions.map((decision) => (
-                      <article key={decision.id} className="chat-pending-decision">
-                        <span>{decision.summary}</span>
-                        {decision.state === 'pending' ? (
-                          <div className="chat-pending-decision-actions">
-                            {decision.allowedResolutions.map((resolution) => (
-                              <button
-                                key={resolution}
-                                type="button"
-                                disabled={resolvingDecisionIds.has(decision.id)}
-                                aria-label={`${resolutionLabel(resolution)} ${decision.summary}`}
-                                onClick={() => void resolveDecision(decision.id, resolution)}
-                              >
-                                {resolutionLabel(resolution)}
-                              </button>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="chat-pending-decision-outcome">
-                            {decision.state === 'resolving'
-                              ? 'Resolving…'
-                              : sentenceCase(decision.outcome ?? 'resolved')}
-                          </span>
-                        )}
-                      </article>
-                    ))}
+                    {entry.pendingDecisions.map((decision) => {
+                      const reviewPath = pendingDecisionReviewPaths.get(decision.id)
+                      return (
+                        <article key={decision.id} className="chat-pending-decision">
+                          <span>{decision.summary}</span>
+                          {decision.state === 'pending' ? (
+                            <PendingDecisionControls
+                              decision={decision}
+                              {...(reviewPath === undefined ? {} : { reviewPath })}
+                              resolving={resolvingDecisionIds.has(decision.id)}
+                              onResolve={onResolvePendingDecision}
+                            />
+                          ) : (
+                            <span className="chat-pending-decision-outcome">
+                              {decision.state === 'resolving'
+                                ? 'Resolving…'
+                                : sentenceCase(decision.outcome ?? 'resolved')}
+                            </span>
+                          )}
+                        </article>
+                      )
+                    })}
                   </section>
                 )}
             </div>
@@ -192,10 +172,6 @@ export function ChatBar({
       </div>
     </footer>
   )
-}
-
-function resolutionLabel(resolution: PendingDecisionResolution): string {
-  return sentenceCase(resolution)
 }
 
 function sentenceCase(value: string): string {

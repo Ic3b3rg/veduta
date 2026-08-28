@@ -42,6 +42,7 @@ function pathFromPattern(pattern: string, parameters: Record<string, string>): s
 export function useClientRouting(): {
   navigate: NavigateFunction
   locationKey: string
+  focusChatOnRouteChange: boolean
   spaceSlug: string | undefined
   surfaceId: string | undefined
 } {
@@ -53,9 +54,19 @@ export function useClientRouting(): {
   return {
     navigate,
     locationKey: location.key,
+    focusChatOnRouteChange: !preservesKeyboardFocus(location.state),
     spaceSlug: surfaceMatch?.params.spaceSlug ?? spaceMatch?.params.spaceSlug,
     surfaceId: surfaceMatch?.params.surfaceId,
   }
+}
+
+function preservesKeyboardFocus(state: unknown): boolean {
+  return (
+    typeof state === 'object' &&
+    state !== null &&
+    'preserveKeyboardFocus' in state &&
+    state.preserveKeyboardFocus === true
+  )
 }
 
 export function ClientRouteTable({

@@ -8,6 +8,7 @@ import {
   applyPendingDecisionFeedback,
   appendAuthoritativeChatEntry,
   latestPendingDecisionFeedback,
+  mergePendingDecisionProjection,
   reconcilePendingDecisionSnapshot,
 } from './pending-decision-state.ts'
 
@@ -47,6 +48,24 @@ function feedback(decision: PendingDecision, message: string) {
 }
 
 describe('Pending-decision PWA state', () => {
+  it('merges live chat projections without letting older state resurrect a decision', () => {
+    const otherPending: PendingDecision = {
+      ...pending,
+      id: 'space-proposal:proposal-travel',
+      kind: 'space-proposal',
+      summary: 'Create Space “Travel”',
+      scope: { type: 'global' },
+      allowedResolutions: ['accept', 'reject'],
+      decisionSurfaceId: undefined,
+      createdAt: '2026-08-25T10:02:00.000Z',
+    }
+
+    expect(mergePendingDecisionProjection([terminal], [pending, otherPending])).toEqual([
+      otherPending,
+      terminal,
+    ])
+  })
+
   it('adds one stable chat feedback entry and advances it through terminal state', () => {
     const inProgress = applyPendingDecisionFeedback(
       [originalMessage],

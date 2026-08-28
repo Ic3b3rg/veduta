@@ -22,7 +22,7 @@ export function SurfaceCard({
   surface,
   token,
   selected,
-  creationFeedbackKey,
+  revealFeedbackKey,
   updateFeedback,
   canMoveUp,
   canMoveDown,
@@ -32,13 +32,13 @@ export function SurfaceCard({
   onPatched,
   onQueueFastAction,
   onTogglePin,
-  onCreationFeedbackShown,
+  onRevealFeedbackShown,
   onError,
 }: {
   surface: Surface
   token?: string | undefined
   selected: boolean
-  creationFeedbackKey?: string | undefined
+  revealFeedbackKey?: string | undefined
   updateFeedback?: SurfaceUpdateFeedback | undefined
   canMoveUp: boolean
   canMoveDown: boolean
@@ -48,44 +48,47 @@ export function SurfaceCard({
   onPatched: (surface: Surface, affectedAtomIds?: readonly string[]) => void
   onQueueFastAction: (action: QueuedFastAction) => void
   onTogglePin: (pinned: boolean) => void
-  onCreationFeedbackShown: (feedbackKey: string) => void
+  onRevealFeedbackShown: (feedbackKey: string) => void
   onError: (message: string) => void
 }) {
   const theme = useCatalogTheme()
   const cardRef = useRef<HTMLElement>(null)
-  const handledCreationFeedbackRef = useRef<string | undefined>(undefined)
-  const [creationHighlighted, setCreationHighlighted] = useState(false)
+  const handledRevealFeedbackRef = useRef<string | undefined>(undefined)
+  const revealedWhileSelectedRef = useRef(false)
+  const [revealHighlighted, setRevealHighlighted] = useState(false)
   const relativeTime = useRelativeTimeStatus(surface)
 
   useEffect(() => {
-    if (!selected) return
+    if (!selected) {
+      revealedWhileSelectedRef.current = false
+      return
+    }
+    if (revealFeedbackKey !== undefined || revealedWhileSelectedRef.current) return
     const card = cardRef.current
     if (!card) return
 
     scrollSurfaceCardIntoView(card)
-  }, [selected])
+  }, [revealFeedbackKey, selected])
 
   useEffect(() => {
-    if (
-      creationFeedbackKey === undefined ||
-      handledCreationFeedbackRef.current === creationFeedbackKey
-    ) {
+    if (revealFeedbackKey === undefined || handledRevealFeedbackRef.current === revealFeedbackKey) {
       return
     }
     const card = cardRef.current
     if (!card) return
 
-    handledCreationFeedbackRef.current = creationFeedbackKey
+    handledRevealFeedbackRef.current = revealFeedbackKey
+    if (selected) revealedWhileSelectedRef.current = true
     scrollSurfaceCardIntoView(card)
-    setCreationHighlighted(true)
-    onCreationFeedbackShown(creationFeedbackKey)
-  }, [creationFeedbackKey, onCreationFeedbackShown])
+    setRevealHighlighted(true)
+    onRevealFeedbackShown(revealFeedbackKey)
+  }, [onRevealFeedbackShown, revealFeedbackKey, selected])
 
   useEffect(() => {
-    if (!creationHighlighted) return
-    const timeout = window.setTimeout(() => setCreationHighlighted(false), 2_000)
+    if (!revealHighlighted) return
+    const timeout = window.setTimeout(() => setRevealHighlighted(false), 2_000)
     return () => window.clearTimeout(timeout)
-  }, [creationHighlighted])
+  }, [revealHighlighted])
   const dispatch = (node: AtomNode, actionName: string, value?: JsonValue) => {
     const action = node.actions?.find((a) => a.name === actionName)
     if (!action) {
@@ -144,7 +147,7 @@ export function SurfaceCard({
         'surface-card',
         selected ? 'selected' : '',
         surface.pinned ? 'pinned' : '',
-        creationHighlighted ? 'creation-highlight' : '',
+        revealHighlighted ? 'surface-reveal-highlight' : '',
         relativeTime?.status === 'expired' ? 'relative-time-expired' : '',
       ]
         .filter(Boolean)

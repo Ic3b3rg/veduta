@@ -161,6 +161,7 @@
 
 .space-card-metadata p > span:first-child,
 .space-card-attention > span:first-child,
+.space-card-pending-decisions > span:first-child,
 .home-eyebrow {
   color: var(--text-muted);
   font-size: 11px;
@@ -177,18 +178,38 @@
   line-height: 1.35;
 }
 
-.space-card-attention {
+.space-card-signals {
+  display: grid;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.space-card-attention,
+.space-card-pending-decisions {
   align-items: center;
   display: flex;
   gap: 10px;
   justify-content: space-between;
-  margin-top: auto;
   min-height: 28px;
 }
 
 .space-card-attention > span:last-child:not(.attention-badge) {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.space-card-pending-decisions strong {
+  align-items: center;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  border-radius: 999px;
+  color: var(--warning-text);
+  display: inline-flex;
+  font-size: 12px;
+  justify-content: center;
+  min-height: 26px;
+  min-width: 26px;
+  padding: 6px 9px;
 }
 
 .first-space-invitation,

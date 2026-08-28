@@ -53,6 +53,8 @@ import type { HomeSpacesLoadState } from './home-space-grid.tsx'
 import { AppShell, type AppRouteSelection } from './app-shell.tsx'
 import { homeBlockedByStatusFailure } from './onboarding-state.ts'
 import { appendAuthoritativeChatEntry } from './pending-decision-state.ts'
+import { usePendingDecisionReveal } from './pending-decision-reveal.ts'
+import { placePendingDecisions } from './pending-decision-placement.ts'
 import {
   AUTH_TOKEN_KEY,
   CHAT_HISTORY_LIMIT,
@@ -88,6 +90,7 @@ function RoutedApp() {
   const {
     navigate,
     locationKey,
+    focusChatOnRouteChange,
     spaceSlug: focusedSpaceSlug,
     surfaceId: focusedSurfaceId,
   } = useClientRouting()
@@ -98,8 +101,9 @@ function RoutedApp() {
   )
   const [error, setError] = useState<string | null>(null)
   const [chatEntries, setChatEntries] = useState<ChatMessage[]>(readChatHistory)
-  const [approvalCards, setApprovalCards] = useState<ApprovalCard[]>([])
-  const [, setPendingDecisions] = useState<PendingDecision[]>([])
+  const [, setApprovalCards] = useState<ApprovalCard[]>([])
+  const [pendingDecisions, setPendingDecisions] = useState<PendingDecision[]>([])
+  const [resolvingDecisionIds, setResolvingDecisionIds] = useState<Set<string>>(new Set())
   const [queuedChat, setQueuedChat] = useState(readQueuedChat)
   const [queuedFastActions, setQueuedFastActions] = useState(readQueuedFastActions)
   const [authToken, setAuthToken] = useState<string | undefined>(
@@ -124,9 +128,22 @@ function RoutedApp() {
     registerLiveCreation,
     acknowledge: acknowledgeSurfaceCreationFeedback,
   } = useSurfaceCreationFeedback()
+  const {
+    requests: pendingDecisionRevealRequests,
+    revealKeys: pendingDecisionRevealKeys,
+    registerLiveTurn: registerLivePendingDecision,
+    acknowledge: acknowledgePendingDecisionReveal,
+    dismissDecision: dismissPendingDecisionReveal,
+    cancelAll: cancelPendingDecisionReveals,
+  } = usePendingDecisionReveal()
+  const surfaceRevealFeedbackKeys = useMemo(
+    () => ({ ...surfaceCreationFeedbackKeys, ...pendingDecisionRevealKeys }),
+    [pendingDecisionRevealKeys, surfaceCreationFeedbackKeys],
+  )
   const [onboardingRetryToken, setOnboardingRetryToken] = useState(0)
   const [spacesRetryToken, setSpacesRetryToken] = useState(0)
   const gatewayRef = useRef<GatewayConnection | null>(null)
+  const resolvingDecisionIdsRef = useRef(new Set<string>())
   const spacesRef = useRef<SpaceWithSurfaces[]>(cachedHome?.spaces ?? [])
   const surfaceCursorRef = useRef(cachedHome?.surfaceCursor ?? 0)
   const surfaceOrderCursorsRef = useRef<Record<string, number>>(
@@ -136,6 +153,7 @@ function RoutedApp() {
   )
   const fastFeedbackSequenceRef = useRef(0)
   const streamingTurnsRef = useRef<Map<string, StreamingTurn>>(new Map())
+  const navigatedPendingDecisionRevealKeysRef = useRef(new Set<string>())
   // Last clientId this tab was assigned by the Gateway (issue 037), sent
   // back on the next reconnect hello so the daemon re-binds the same
   // session to the new socket instead of allocating a fresh id -- see
@@ -152,6 +170,7 @@ function RoutedApp() {
 
   const {
     showPendingDecisionFeedback,
+    observeProjectedDecisions,
     handlePendingDecisionLifecycle,
     refreshPendingDecisionSnapshot,
     cancelPendingDecisionSnapshot,
@@ -162,6 +181,15 @@ function RoutedApp() {
     setDecisions: setPendingDecisions,
     onUnauthorized: resetUnauthorizedSession,
   })
+  const handleLivePendingDecisionLifecycle = useCallback(
+    (lifecycle: Parameters<typeof handlePendingDecisionLifecycle>[0]) => {
+      if (lifecycle.decision.state !== 'pending') {
+        dismissPendingDecisionReveal(lifecycle.decision.id)
+      }
+      handlePendingDecisionLifecycle(lifecycle)
+    },
+    [dismissPendingDecisionReveal, handlePendingDecisionLifecycle],
+  )
 
   const replaceSpaces = useCallback(
     (next: SpaceWithSurfaces[], cursor = surfaceCursorRef.current) => {
@@ -187,12 +215,17 @@ function RoutedApp() {
   // the connection effect below.
   const applyIncomingTurnFrame = useCallback(
     (frame: ChatTurnFrame) => {
+      registerLivePendingDecision(frame, clientIdRef.current, streamingTurnsRef.current)
+      if (frame.type === 'chat.turn-replace' || frame.type === 'chat.turn-end') {
+        const projected = frame.message.pendingDecisions ?? []
+        observeProjectedDecisions(projected)
+      }
       const result = applyTurnFrame(streamingTurnsRef.current, frame)
       streamingTurnsRef.current = result.turns
       setStreamingTurns(result.turns)
       if (result.completed) appendChatEntry(result.completed)
     },
-    [appendChatEntry],
+    [appendChatEntry, observeProjectedDecisions, registerLivePendingDecision],
   )
 
   // localStorage writes live in effects so setState updaters stay pure.
@@ -441,6 +474,7 @@ function RoutedApp() {
       const completed = interruptTurns(streamingTurnsRef.current)
       streamingTurnsRef.current = new Map()
       setStreamingTurns(new Map())
+      cancelPendingDecisionReveals()
       for (const entry of completed) appendChatEntry(entry)
       scheduleReconnect()
     }
@@ -487,7 +521,7 @@ function RoutedApp() {
         onChatTurnReplace: applyIncomingTurnFrame,
         onChatTurnEnd: applyIncomingTurnFrame,
         onChatTurnError: applyIncomingTurnFrame,
-        onPendingDecisionLifecycle: handlePendingDecisionLifecycle,
+        onPendingDecisionLifecycle: handleLivePendingDecisionLifecycle,
         onApprovalCard(message) {
           setApprovalCards((prev) =>
             prev.some((card) => card.id === message.card.id) ? prev : [...prev, message.card],
@@ -545,12 +579,13 @@ function RoutedApp() {
       closedByApp = true
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
       cancelPendingDecisionSnapshot()
+      cancelPendingDecisionReveals()
       gatewayRef.current?.close()
     }
   }, [
     handleSurfaceStreamEvent,
     handleSurfaceCreatedMessage,
-    handlePendingDecisionLifecycle,
+    handleLivePendingDecisionLifecycle,
     appendChatEntry,
     applyIncomingTurnFrame,
     acceptCanonicalSnapshot,
@@ -559,6 +594,7 @@ function RoutedApp() {
     refetchAndReplay,
     refreshPendingDecisionSnapshot,
     cancelPendingDecisionSnapshot,
+    cancelPendingDecisionReveals,
     resetUnauthorizedSession,
     spacesRetryToken,
   ])
@@ -679,6 +715,35 @@ function RoutedApp() {
   )
   const focusedSpaceId = focusedSpace?.id
   const focusChatToken = `${locationKey}:${focusedSpaceId ?? ''}:${focusedSurfaceId ?? ''}`
+  const pendingDecisionPlacement = useMemo(
+    () => placePendingDecisions(pendingDecisions, spaces),
+    [pendingDecisions, spaces],
+  )
+
+  useEffect(() => {
+    for (const [surfaceId, request] of Object.entries(pendingDecisionRevealRequests)) {
+      const revealKey = request.key
+      if (navigatedPendingDecisionRevealKeysRef.current.has(revealKey)) continue
+      const assigned = pendingDecisionPlacement.assigned.find(
+        ({ decision, surface }) => decision.id === request.decisionId && surface.id === surfaceId,
+      )
+      if (assigned === undefined) continue
+
+      navigatedPendingDecisionRevealKeysRef.current.add(revealKey)
+      if (focusedSpaceId !== assigned.space.id || focusedSurfaceId !== surfaceId) {
+        navigate(clientPath.surface(assigned.space.slug, surfaceId), {
+          state: { preserveKeyboardFocus: true },
+        })
+      }
+      break
+    }
+  }, [
+    focusedSpaceId,
+    focusedSurfaceId,
+    navigate,
+    pendingDecisionPlacement,
+    pendingDecisionRevealRequests,
+  ])
 
   useEffect(() => {
     if (!focusedSpaceId) return
@@ -709,32 +774,41 @@ function RoutedApp() {
       .catch((e: Error) => setError(`"${surface?.title ?? surfaceId}" move failed: ${e.message}`))
   }
 
-  const resolveChatPendingDecision = async (
+  const resolveVisiblePendingDecision = async (
     decisionId: string,
     resolution: PendingDecisionResolution,
   ) => {
-    let decision: PendingDecision
+    if (resolvingDecisionIdsRef.current.has(decisionId)) return
+    resolvingDecisionIdsRef.current.add(decisionId)
+    setResolvingDecisionIds((current) => new Set(current).add(decisionId))
+
     try {
       const result = await resolvePendingDecision(decisionId, resolution, authToken)
-      decision = result.decision
+      const decision = result.decision
+      if (decision.state !== 'pending') dismissPendingDecisionReveal(decision.id)
+      showPendingDecisionFeedback(decision, pendingDecisionFeedback(decision))
+
+      if (decision.kind === 'space-proposal' && decision.outcome === 'accepted') {
+        try {
+          const snapshot = await fetchSpaces(authToken)
+          replaceSpaces(snapshot.spaces, snapshot.surfaceCursor)
+        } catch (error) {
+          setError(error instanceof Error ? error.message : 'Space refresh failed')
+        }
+      }
     } catch (error) {
       if (error instanceof ApiResponseError && error.status === 401) {
         resetUnauthorizedSession()
         return
       }
       setError(error instanceof Error ? error.message : 'Pending decision resolution failed')
-      return
-    }
-
-    showPendingDecisionFeedback(decision, pendingDecisionFeedback(decision))
-
-    if (decision.kind === 'space-proposal' && decision.outcome === 'accepted') {
-      try {
-        const snapshot = await fetchSpaces(authToken)
-        replaceSpaces(snapshot.spaces, snapshot.surfaceCursor)
-      } catch (error) {
-        setError(error instanceof Error ? error.message : 'Space refresh failed')
-      }
+    } finally {
+      resolvingDecisionIdsRef.current.delete(decisionId)
+      setResolvingDecisionIds((current) => {
+        const next = new Set(current)
+        next.delete(decisionId)
+        return next
+      })
     }
   }
 
@@ -845,15 +919,17 @@ function RoutedApp() {
       spaces={spaces}
       homeSpacesLoadState={homeSpacesLoadState}
       route={appRouteSelection}
-      surfaceCreationFeedbackKeys={surfaceCreationFeedbackKeys}
+      surfaceRevealFeedbackKeys={surfaceRevealFeedbackKeys}
       surfaceUpdateFeedbacks={surfaceUpdateFeedbacks}
-      approvalCards={approvalCards}
+      pendingDecisions={pendingDecisions}
+      resolvingDecisionIds={resolvingDecisionIds}
       chatEntries={chatEntries}
       streamingEntries={Array.from(streamingTurns.values(), (turn) => ({
         turnId: turn.turnId,
         text: turn.text,
       }))}
       focusChatToken={focusChatToken}
+      focusChatOnRouteChange={focusChatOnRouteChange}
       onOpenModelConnections={() => navigate(clientPath.modelConnections)}
       onRetrySpaces={retrySpaces}
       onInstallDone={() => {
@@ -865,10 +941,12 @@ function RoutedApp() {
       onSurfacePatched={replaceSurface}
       onQueueFastAction={queueFastAction}
       onTogglePin={togglePin}
-      onSurfaceCreationFeedbackShown={acknowledgeSurfaceCreationFeedback}
+      onSurfaceRevealFeedbackShown={(surfaceId, feedbackKey) => {
+        acknowledgeSurfaceCreationFeedback(surfaceId, feedbackKey)
+        acknowledgePendingDecisionReveal(surfaceId, feedbackKey)
+      }}
       onError={setError}
-      onApprovalCardsChange={setApprovalCards}
-      onResolvePendingDecision={resolveChatPendingDecision}
+      onResolvePendingDecision={resolveVisiblePendingDecision}
       onSend={(message) => {
         const spaceId = focusedSpace?.id
         const sent = gatewayRef.current?.sendChat(message, spaceId) ?? false

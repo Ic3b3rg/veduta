@@ -30,7 +30,13 @@ describe('HomeSpaceGrid', () => {
       attention: 3,
     }
 
-    renderGrid([canonicalSystem, health, userNamedSystem])
+    renderGrid(
+      [canonicalSystem, health, userNamedSystem],
+      'ready',
+      vi.fn(),
+      false,
+      new Map([[health.id, 2]]),
+    )
 
     const groups = screen.getAllByRole('region')
     expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual([
@@ -60,10 +66,12 @@ describe('HomeSpaceGrid', () => {
     )
     expect(healthCard.querySelector('[data-space-description-slot]')?.textContent).toBe('')
     expect(screen.queryByText('Atom content must stay hidden')).toBeNull()
+    expect(within(healthCard).getByLabelText('2 pending decisions')).toBeDefined()
 
     const systemCard = within(systemGroup).getByRole('link', { name: /Maintenance/ })
     expect(systemCard.className).toBe(healthCard.className)
     expect(within(systemCard).getByLabelText('3 updates')).toBeDefined()
+    expect(within(systemCard).queryByLabelText(/pending decision/)).toBeNull()
   })
 
   it('uses a native link so click and keyboard activation target the matching Space route', () => {
@@ -137,13 +145,21 @@ function renderGrid(
   loadState: HomeSpacesLoadState = 'ready',
   onRetry = vi.fn(),
   withRoute = false,
+  pendingDecisionCounts: ReadonlyMap<string, number> = new Map(),
 ) {
   return render(
     <MemoryRouter initialEntries={['/']}>
       <Routes>
         <Route
           path="/"
-          element={<HomeSpaceGrid spaces={spaces} loadState={loadState} onRetry={onRetry} />}
+          element={
+            <HomeSpaceGrid
+              spaces={spaces}
+              loadState={loadState}
+              pendingDecisionCounts={pendingDecisionCounts}
+              onRetry={onRetry}
+            />
+          }
         />
         {withRoute && <Route path="/app/space/health" element={<h2>Health route</h2>} />}
       </Routes>

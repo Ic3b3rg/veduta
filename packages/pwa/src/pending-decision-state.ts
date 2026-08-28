@@ -17,6 +17,29 @@ export interface PendingDecisionFeedback {
   message: string
 }
 
+/** Merges live projections by exact id while preserving the most advanced lifecycle state. */
+export function mergePendingDecisionProjection(
+  current: readonly PendingDecision[],
+  incoming: readonly PendingDecision[],
+): PendingDecision[] {
+  const decisionsById = new Map(current.map((decision) => [decision.id, decision]))
+
+  for (const decision of incoming) {
+    const known = decisionsById.get(decision.id)
+    if (
+      known === undefined ||
+      decisionStateRank(decision.state) >= decisionStateRank(known.state)
+    ) {
+      decisionsById.set(decision.id, decision)
+    }
+  }
+
+  return [...decisionsById.values()].sort(
+    (left, right) =>
+      right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id),
+  )
+}
+
 /** Applies daemon-owned feedback and creates at most one stable chat entry per decision id. */
 export function applyPendingDecisionFeedback(
   entries: ChatMessage[],

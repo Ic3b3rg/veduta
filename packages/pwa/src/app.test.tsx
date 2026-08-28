@@ -5,6 +5,7 @@
 // exhaustive coverage in their own colocated tests.
 import {
   PENDING_DECISION_FALLBACK_FEEDBACK,
+  SurfaceArchivedEventSchema,
   SurfaceCreatedEventSchema,
   SurfaceMovedEventSchema,
   SurfacePatchEventSchema,
@@ -14,7 +15,7 @@ import {
   type PendingDecisionList,
 } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ApiModule from './api.ts'
 import {
@@ -121,6 +122,7 @@ async function renderConnectedEmptyHealth(clientId: string) {
   vi.mocked(fetchOnboardingStatus).mockResolvedValue(
     fromPartial<OnboardingStatus>({ required: false, completed: true }),
   )
+  vi.mocked(fetchPendingDecisions).mockResolvedValue({ revision: 0, decisions: [] })
   vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
 
   render(<App />)
@@ -652,10 +654,148 @@ describe('App', () => {
     const focusButton = await screen.findByRole('button', { name: 'Focus Weekly groceries' })
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
     expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' })
-    expect(focusButton.closest('article')?.classList.contains('creation-highlight')).toBe(true)
+    expect(focusButton.closest('article')?.classList.contains('surface-reveal-highlight')).toBe(
+      true,
+    )
     expect(focusButton.getAttribute('aria-pressed')).toBe('false')
     expect(document.activeElement).toBe(chatInput)
     expect(location.pathname).toBe('/app/space/health')
+  })
+
+  it('reveals one exact pinned Tree-proposal Decision Surface for the initiating live turn', async () => {
+    const handlers = await renderConnectedEmptyHealth('pwa-tree-proposal')
+    const chatInput = screen.getByRole<HTMLInputElement>('textbox', { name: 'Message Veduta' })
+    chatInput.focus()
+    const surfaceId = 'srf-decision-weekly-plan'
+    const pending: PendingDecision = {
+      id: 'tree-proposal:weekly-plan',
+      kind: 'tree-proposal',
+      summary: 'Update the weekly plan',
+      scope: { type: 'space', spaceId: 'spc-health' },
+      allowedResolutions: ['accept', 'reject'],
+      state: 'pending',
+      decisionSurfaceId: surfaceId,
+      createdAt: '2026-08-28T10:00:00.000Z',
+    }
+    const created = SurfaceCreatedEventSchema.parse({
+      cursor: 1,
+      at: '2026-08-28T10:00:00.000Z',
+      spaceId: 'spc-health',
+      surface: {
+        ...appSurface(surfaceId, 'Review weekly plan change'),
+        pinned: true,
+      },
+      order: {
+        cursor: 1,
+        spaceId: 'spc-health',
+        pinnedSurfaceIds: [surfaceId],
+        regularSurfaceIds: [],
+      },
+    })
+    const replacement = {
+      type: 'chat.turn-replace' as const,
+      turnId: 'turn-tree-proposal',
+      spaceId: 'spc-health',
+      message: {
+        role: 'assistant' as const,
+        text: 'Awaiting your decision: Update the weekly plan.',
+        pendingDecisions: [pending],
+      },
+    }
+
+    act(() => {
+      handlers.onChatTurnStart({
+        type: 'chat.turn-start',
+        turnId: 'turn-tree-proposal',
+        spaceId: 'spc-health',
+      })
+      handlers.onSurfaceCreated({ type: 'surface.created', event: created })
+      handlers.onChatTurnReplace(replacement)
+      handlers.onChatTurnReplace(replacement)
+    })
+
+    await waitFor(() => expect(location.pathname).toBe(`/app/space/health/surface/${surfaceId}`))
+    const focusButton = await screen.findByRole('button', {
+      name: 'Focus Review weekly plan change',
+    })
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    expect(focusButton.getAttribute('aria-pressed')).toBe('true')
+    expect(focusButton.closest('article')?.classList.contains('pinned')).toBe(true)
+    expect(focusButton.closest('article')?.classList.contains('surface-reveal-highlight')).toBe(
+      true,
+    )
+    expect(document.activeElement).toBe(chatInput)
+
+    act(() => {
+      handlers.onChatTurnEnd({
+        type: 'chat.turn-end',
+        turnId: 'turn-tree-proposal',
+        spaceId: 'spc-health',
+        message: replacement.message,
+      })
+    })
+    expect(scrollIntoView).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not reveal a Decision Surface recovered from snapshot or lifecycle state', async () => {
+    const surfaceId = 'srf-background-decision'
+    const surface = appSurface(surfaceId, 'Background decision')
+    const pending: PendingDecision = {
+      id: 'approval:background',
+      kind: 'approval',
+      summary: 'Publish the background report',
+      scope: { type: 'space', spaceId: 'spc-health' },
+      allowedResolutions: ['approve', 'reject'],
+      state: 'pending',
+      decisionSurfaceId: surfaceId,
+      createdAt: '2026-08-28T10:00:00.000Z',
+    }
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
+    vi.mocked(fetchSpaces).mockResolvedValue({
+      surfaceCursor: 1,
+      spaces: [
+        {
+          id: 'spc-health',
+          slug: 'health',
+          name: 'Health',
+          archived: false,
+          attention: 0,
+          attentionRevision: 0,
+          surfaces: [surface],
+        },
+      ],
+    })
+    vi.mocked(fetchPendingDecisions).mockResolvedValue({ revision: 1, decisions: [pending] })
+    vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+      fromPartial<OnboardingStatus>({ required: false, completed: true }),
+    )
+    vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
+
+    render(<App />)
+    await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+    const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
+    if (!handlers) throw new Error('Gateway handlers were not registered')
+    await act(async () => handlers.onHello(1, 'pwa-background'))
+
+    expect(await screen.findByRole('button', { name: '1 decision awaits review' })).toBeDefined()
+    expect(location.pathname).toBe('/')
+    expect(scrollIntoView).not.toHaveBeenCalled()
+
+    act(() => {
+      handlers.onPendingDecisionLifecycle({
+        type: 'pending-decision.lifecycle',
+        revision: 2,
+        decision: pending,
+        message: 'Awaiting your decision: Publish the background report.',
+      })
+    })
+    fireEvent.click(screen.getByRole('link', { name: /Health/ }))
+
+    const focusButton = await screen.findByRole('button', { name: 'Focus Background decision' })
+    expect(focusButton.closest('article')?.classList.contains('surface-reveal-highlight')).toBe(
+      false,
+    )
+    expect(scrollIntoView).not.toHaveBeenCalled()
   })
 
   it('accepts a chat Space proposal through the common decision API without changing route', async () => {
@@ -736,6 +876,191 @@ describe('App', () => {
     expect(screen.getAllByText('Accepted: Create Space “Travel”.')).toHaveLength(2)
     expect(screen.queryByRole('button', { name: 'Accept Create Space “Travel”' })).toBeNull()
     expect(location.pathname).toBe('/')
+  })
+
+  it('places Pending decisions globally and only in the Space proven by their Decision Surface', async () => {
+    const handlers = await renderConnectedEmptyHealth('pwa-placement')
+    const decisionSurface = SurfaceCreatedEventSchema.parse({
+      cursor: 1,
+      at: '2026-08-25T10:00:00.000Z',
+      spaceId: 'spc-health',
+      surface: {
+        ...appSurface('srf-decision-health', 'Review hydration change'),
+        pinned: true,
+      },
+      order: {
+        cursor: 1,
+        spaceId: 'spc-health',
+        pinnedSurfaceIds: ['srf-decision-health'],
+        regularSurfaceIds: [],
+      },
+    })
+    const assigned: PendingDecision = {
+      id: 'tree-proposal:hydration-change',
+      kind: 'tree-proposal',
+      summary: 'Update the hydration tracker',
+      scope: { type: 'space', spaceId: 'spc-health' },
+      allowedResolutions: ['accept', 'reject'],
+      state: 'pending',
+      decisionSurfaceId: 'srf-decision-health',
+      createdAt: '2026-08-25T10:00:00.000Z',
+    }
+    const unassigned: PendingDecision = {
+      id: 'space-proposal:travel',
+      kind: 'space-proposal',
+      summary: 'Create Space “Travel”',
+      scope: { type: 'global' },
+      allowedResolutions: ['accept', 'reject'],
+      state: 'pending',
+      createdAt: '2026-08-25T10:01:00.000Z',
+    }
+
+    act(() => {
+      handlers.onSurfaceCreated({ type: 'surface.created', event: decisionSurface })
+      handlers.onPendingDecisionLifecycle({
+        type: 'pending-decision.lifecycle',
+        revision: 1,
+        decision: assigned,
+        message: 'Awaiting your decision: Update the hydration tracker.',
+      })
+      handlers.onPendingDecisionLifecycle({
+        type: 'pending-decision.lifecycle',
+        revision: 2,
+        decision: unassigned,
+        message: 'Awaiting your decision: Create Space “Travel”.',
+      })
+    })
+
+    const summary = await screen.findByRole('button', { name: '2 decisions await review' })
+    const healthCard = screen.getByRole('link', { name: /Health/ })
+    expect(within(healthCard).getByLabelText('1 pending decision')).toBeDefined()
+    fireEvent.click(summary)
+
+    const assignedGlobal = screen.getByRole('article', {
+      name: 'Update the hydration tracker',
+    })
+    const unassignedGlobal = screen.getByRole('article', { name: 'Create Space “Travel”' })
+    expect(
+      within(assignedGlobal)
+        .getByRole('link', { name: 'Review Update the hydration tracker' })
+        .getAttribute('href'),
+    ).toBe('/app/space/health/surface/srf-decision-health')
+    expect(within(unassignedGlobal).queryByRole('link', { name: /Review/ })).toBeNull()
+
+    fireEvent.click(healthCard)
+
+    const spaceNotifications = await screen.findByRole('region', { name: 'Pending decisions' })
+    expect(within(spaceNotifications).getByText('Update the hydration tracker')).toBeDefined()
+    expect(within(spaceNotifications).queryByText('Create Space “Travel”')).toBeNull()
+    fireEvent.click(
+      within(spaceNotifications).getByRole('link', {
+        name: 'Review Update the hydration tracker',
+      }),
+    )
+
+    await waitFor(() =>
+      expect(location.pathname).toBe('/app/space/health/surface/srf-decision-health'),
+    )
+    expect(
+      screen
+        .getByRole('button', { name: 'Focus Review hydration change' })
+        .getAttribute('aria-pressed'),
+    ).toBe('true')
+
+    act(() => {
+      handlers.onSurfaceArchived(
+        SurfaceArchivedEventSchema.parse({
+          cursor: 2,
+          at: '2026-08-25T10:02:00.000Z',
+          spaceId: 'spc-health',
+          surfaceId: 'srf-decision-health',
+          order: {
+            cursor: 2,
+            spaceId: 'spc-health',
+            pinnedSurfaceIds: [],
+            regularSurfaceIds: [],
+          },
+        }),
+      )
+    })
+    fireEvent.click(await screen.findByRole('link', { name: 'Back to Home' }))
+
+    expect(await screen.findByRole('button', { name: '2 decisions await review' })).toBeDefined()
+    expect(
+      within(screen.getByRole('link', { name: /Health/ })).queryByLabelText(/pending/),
+    ).toBeNull()
+  })
+
+  it('coalesces repeated shell and chat quick actions for the same decision', async () => {
+    const handlers = await renderConnectedEmptyHealth('pwa-decision-race')
+    const pending: PendingDecision = {
+      id: 'approval:effect-race',
+      kind: 'approval',
+      summary: 'Send the weekly report',
+      scope: { type: 'space', spaceId: 'spc-health' },
+      allowedResolutions: ['approve', 'reject'],
+      state: 'pending',
+      decisionSurfaceId: 'srf-decision-race',
+      createdAt: '2026-08-25T10:00:00.000Z',
+    }
+    const terminal: PendingDecision = {
+      ...pending,
+      state: 'terminal',
+      outcome: 'executed',
+      decisionAt: '2026-08-25T10:01:00.000Z',
+      resolvedAt: '2026-08-25T10:01:01.000Z',
+      resolvedBy: 'trusted:user',
+    }
+    let finishResolution:
+      ((value: Awaited<ReturnType<typeof resolvePendingDecision>>) => void) | undefined
+    vi.mocked(resolvePendingDecision).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishResolution = resolve
+      }),
+    )
+
+    act(() => {
+      handlers.onChatTurnStart({ type: 'chat.turn-start', turnId: 'turn-race' })
+      handlers.onChatTurnEnd({
+        type: 'chat.turn-end',
+        turnId: 'turn-race',
+        message: {
+          role: 'assistant',
+          text: 'The weekly report needs approval.',
+          pendingDecisions: [pending],
+        },
+      })
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: '1 decision awaits review' }))
+    const shellDecision = document.querySelector<HTMLElement>('.pending-decision-notification')
+    const chatDecision = document.querySelector<HTMLElement>('.chat-pending-decision')
+    if (!shellDecision || !chatDecision) throw new Error('Pending decision presentations missing')
+
+    fireEvent.click(
+      within(shellDecision).getByRole('button', { name: 'Approve Send the weekly report' }),
+    )
+    fireEvent.click(
+      within(chatDecision).getByRole('button', { name: 'Approve Send the weekly report' }),
+    )
+
+    expect(resolvePendingDecision).toHaveBeenCalledTimes(1)
+    expect(
+      within(shellDecision).getByRole<HTMLButtonElement>('button', {
+        name: 'Approve Send the weekly report',
+      }).disabled,
+    ).toBe(true)
+    expect(
+      within(chatDecision).getByRole<HTMLButtonElement>('button', {
+        name: 'Approve Send the weekly report',
+      }).disabled,
+    ).toBe(true)
+
+    await act(async () => finishResolution?.({ decision: terminal, replayed: false }))
+
+    expect(screen.queryByRole('button', { name: '1 decision awaits review' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Approve Send the weekly report' })).toBeNull()
+    expect(screen.getAllByText('Executed: Send the weekly report.')).toHaveLength(2)
   })
 
   it('shows one convergent Pending-decision outcome in chat and the fixed shell', async () => {
@@ -1060,7 +1385,9 @@ describe('App', () => {
     await waitFor(() =>
       expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'center' }),
     )
-    expect(focusButton.closest('article')?.classList.contains('creation-highlight')).toBe(true)
+    expect(focusButton.closest('article')?.classList.contains('surface-reveal-highlight')).toBe(
+      true,
+    )
   })
 
   it('renders the status-unavailable screen instead of Home when the onboarding status fetch fails on a production session', async () => {

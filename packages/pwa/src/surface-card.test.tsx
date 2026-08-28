@@ -36,7 +36,7 @@ describe('SurfaceCard relative-time validity', () => {
         onPatched={vi.fn()}
         onQueueFastAction={vi.fn()}
         onTogglePin={vi.fn()}
-        onCreationFeedbackShown={vi.fn()}
+        onRevealFeedbackShown={vi.fn()}
         onError={vi.fn()}
       />,
     )
@@ -74,7 +74,7 @@ describe('SurfaceCard material hierarchy', () => {
         onPatched={vi.fn()}
         onQueueFastAction={vi.fn()}
         onTogglePin={vi.fn()}
-        onCreationFeedbackShown={vi.fn()}
+        onRevealFeedbackShown={vi.fn()}
         onError={vi.fn()}
       />,
     )

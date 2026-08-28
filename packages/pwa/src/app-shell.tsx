@@ -1,12 +1,11 @@
 import type {
-  ApprovalCard,
   ChatMessage,
+  PendingDecision,
   PendingDecisionResolution,
   Surface,
   SurfaceMoveDirection,
 } from '@veduta/protocol'
 import { Link } from 'react-router-dom'
-import { ApprovalCards } from './approval-cards.tsx'
 import type { SpaceWithSurfaces } from './api.ts'
 import { AttentionBadge } from './attention-badge.tsx'
 import { ChatBar } from './chat-bar.tsx'
@@ -15,6 +14,12 @@ import { clientPath } from './client-router.tsx'
 import { HomeSpaceGrid, type HomeSpacesLoadState } from './home-space-grid.tsx'
 import { InstallButton } from './install-button.tsx'
 import { NotificationBell } from './notification-bell.tsx'
+import {
+  PendingDecisionStrip,
+  SpacePendingDecisionNotifications,
+  type PendingDecisionNotification,
+} from './pending-decision-notifications.tsx'
+import { placePendingDecisions } from './pending-decision-placement.ts'
 import { latestPendingDecisionFeedback } from './pending-decision-state.ts'
 import type { BrowserInstallPromptEvent, QueuedFastAction } from './pwa-storage.ts'
 import { SpaceSection } from './space-section.tsx'
@@ -40,12 +45,14 @@ interface AppShellProps {
   spaces: SpaceWithSurfaces[]
   homeSpacesLoadState: HomeSpacesLoadState
   route: AppRouteSelection
-  surfaceCreationFeedbackKeys: Record<string, string>
+  surfaceRevealFeedbackKeys: Record<string, string>
   surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback>
-  approvalCards: ApprovalCard[]
+  pendingDecisions: PendingDecision[]
+  resolvingDecisionIds: ReadonlySet<string>
   chatEntries: ChatMessage[]
   streamingEntries: { turnId: string; text: string }[]
   focusChatToken: string
+  focusChatOnRouteChange: boolean
   onOpenModelConnections: () => void
   onRetrySpaces: () => void
   onInstallDone: () => void
@@ -58,9 +65,8 @@ interface AppShellProps {
   onSurfacePatched: (surface: Surface, affectedAtomIds?: readonly string[]) => void
   onQueueFastAction: (action: QueuedFastAction) => void
   onTogglePin: (surface: Surface, pinned: boolean) => void
-  onSurfaceCreationFeedbackShown: (surfaceId: string, feedbackKey: string) => void
+  onSurfaceRevealFeedbackShown: (surfaceId: string, feedbackKey: string) => void
   onError: (message: string) => void
-  onApprovalCardsChange: (cards: ApprovalCard[]) => void
   onResolvePendingDecision: (
     decisionId: string,
     resolution: PendingDecisionResolution,
@@ -85,12 +91,14 @@ export function AppShell({
   spaces,
   homeSpacesLoadState,
   route,
-  surfaceCreationFeedbackKeys,
+  surfaceRevealFeedbackKeys,
   surfaceUpdateFeedbacks,
-  approvalCards,
+  pendingDecisions,
+  resolvingDecisionIds,
   chatEntries,
   streamingEntries,
   focusChatToken,
+  focusChatOnRouteChange,
   onOpenModelConnections,
   onRetrySpaces,
   onInstallDone,
@@ -99,9 +107,8 @@ export function AppShell({
   onSurfacePatched,
   onQueueFastAction,
   onTogglePin,
-  onSurfaceCreationFeedbackShown,
+  onSurfaceRevealFeedbackShown,
   onError,
-  onApprovalCardsChange,
   onResolvePendingDecision,
   onSend,
 }: AppShellProps) {
@@ -115,6 +122,37 @@ export function AppShell({
       ? `${focusedSpace.name} Space`
       : 'Home'
   const pendingDecisionFeedback = latestPendingDecisionFeedback(chatEntries)
+  const placement = placePendingDecisions(pendingDecisions, spaces)
+  const assignedByDecisionId = new Map(
+    placement.assigned.map((assigned) => [assigned.decision.id, assigned]),
+  )
+  const pendingDecisionReviewPaths = new Map(
+    placement.assigned.map(({ decision, space, surface }) => [
+      decision.id,
+      clientPath.surface(space.slug, surface.id),
+    ]),
+  )
+  const globalPendingNotifications: PendingDecisionNotification[] = placement.pending.map(
+    (decision) => {
+      const assigned = assignedByDecisionId.get(decision.id)
+      return {
+        decision,
+        ...(assigned === undefined
+          ? {}
+          : { reviewPath: clientPath.surface(assigned.space.slug, assigned.surface.id) }),
+      }
+    },
+  )
+  const focusedPendingNotifications: PendingDecisionNotification[] = placement.assigned
+    .filter(({ space }) => space.id === focusedSpace?.id)
+    .map(({ decision, space, surface }) => ({
+      decision,
+      reviewPath: clientPath.surface(space.slug, surface.id),
+    }))
+  const pendingDecisionCounts = new Map<string, number>()
+  for (const { space } of placement.assigned) {
+    pendingDecisionCounts.set(space.id, (pendingDecisionCounts.get(space.id) ?? 0) + 1)
+  }
 
   return (
     <div className="app-shell">
@@ -192,17 +230,29 @@ export function AppShell({
               <p>{routeRecovery.message}</p>
               <Link to={clientPath.home}>Back to Home</Link>
             </section>
-          ) : (
-            approvalCards.length > 0 && (
-              <ApprovalCards cards={approvalCards} onDismiss={onApprovalCardsChange} />
-            )
-          )}
+          ) : null}
 
           {route.kind === 'home' && !routeRecovery && (
-            <HomeSpaceGrid
-              spaces={spaces}
-              loadState={homeSpacesLoadState}
-              onRetry={onRetrySpaces}
+            <>
+              <PendingDecisionStrip
+                notifications={globalPendingNotifications}
+                resolvingDecisionIds={resolvingDecisionIds}
+                onResolve={onResolvePendingDecision}
+              />
+              <HomeSpaceGrid
+                spaces={spaces}
+                loadState={homeSpacesLoadState}
+                pendingDecisionCounts={pendingDecisionCounts}
+                onRetry={onRetrySpaces}
+              />
+            </>
+          )}
+
+          {focusedSpace && !routeRecovery && (
+            <SpacePendingDecisionNotifications
+              notifications={focusedPendingNotifications}
+              resolvingDecisionIds={resolvingDecisionIds}
+              onResolve={onResolvePendingDecision}
             />
           )}
 
@@ -213,14 +263,14 @@ export function AppShell({
               authToken={authToken}
               focused={space.id === focusedSpace?.id}
               focusedSurfaceId={focusedSurfaceId}
-              surfaceCreationFeedbackKeys={surfaceCreationFeedbackKeys}
+              surfaceRevealFeedbackKeys={surfaceRevealFeedbackKeys}
               surfaceUpdateFeedbacks={surfaceUpdateFeedbacks}
               onFocus={onFocusSpace}
               onMoveSurface={onMoveSurface}
               onPatched={onSurfacePatched}
               onQueueFastAction={onQueueFastAction}
               onTogglePin={onTogglePin}
-              onSurfaceCreationFeedbackShown={onSurfaceCreationFeedbackShown}
+              onSurfaceRevealFeedbackShown={onSurfaceRevealFeedbackShown}
               onError={onError}
             />
           ))}
@@ -230,10 +280,11 @@ export function AppShell({
       <ChatBar
         entries={chatEntries}
         streamingEntries={streamingEntries}
-        approvalCards={approvalCards}
         focusedSpace={focusedSpace}
         focusToken={focusChatToken}
-        onDismissApprovalCards={onApprovalCardsChange}
+        focusOnRouteChange={focusChatOnRouteChange}
+        pendingDecisionReviewPaths={pendingDecisionReviewPaths}
+        resolvingDecisionIds={resolvingDecisionIds}
         onResolvePendingDecision={onResolvePendingDecision}
         onSend={onSend}
       />

@@ -45,6 +45,20 @@
     gap: 8px;
   }
 
+  .pending-decision-notification {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .pending-decision-actions {
+    justify-content: flex-start;
+  }
+
+  .pending-decision-actions button,
+  .pending-decision-actions a {
+    min-height: 44px;
+  }
+
   .space-heading .space-badge {
     justify-self: start;
   }
@@ -117,6 +131,8 @@
 @media (pointer: coarse) {
   .topbar-actions button,
   .topbar-actions select,
+  .pending-decision-actions button,
+  .pending-decision-actions a,
   .surface-toolbar button {
     min-height: 44px;
   }
@@ -126,6 +142,8 @@
   .topbar,
   .space-rail,
   .surface-card,
+  .pending-decision-strip,
+  .space-pending-decisions,
   .approval-card,
   .route-recovery,
   .notif-guide,

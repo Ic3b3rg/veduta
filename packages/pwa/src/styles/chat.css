@@ -122,11 +122,6 @@
   padding: 10px;
 }
 
-.chat-pending-decision-actions {
-  display: flex;
-  gap: 8px;
-}
-
 .chat-pending-decision-outcome {
   color: var(--muted);
   font-size: 13px;

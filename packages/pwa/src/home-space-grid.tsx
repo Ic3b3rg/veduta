@@ -10,10 +10,12 @@ export type HomeSpacesLoadState = 'loading' | 'ready' | 'error'
 export function HomeSpaceGrid({
   spaces,
   loadState,
+  pendingDecisionCounts = new Map(),
   onRetry,
 }: {
   spaces: SpaceWithSurfaces[]
   loadState: HomeSpacesLoadState
+  pendingDecisionCounts?: ReadonlyMap<string, number>
   onRetry: () => void
 }) {
   const groups = homeSpaceGroups(spaces)
@@ -44,7 +46,11 @@ export function HomeSpaceGrid({
   return (
     <div className="home-space-groups">
       {groups.userSpaces.length > 0 && (
-        <SpaceGroup label="Your Spaces" spaces={groups.userSpaces} />
+        <SpaceGroup
+          label="Your Spaces"
+          spaces={groups.userSpaces}
+          pendingDecisionCounts={pendingDecisionCounts}
+        />
       )}
 
       {groups.userSpaces.length === 0 && groups.systemSpaces.length > 0 && (
@@ -56,7 +62,12 @@ export function HomeSpaceGrid({
       )}
 
       {groups.systemSpaces.length > 0 ? (
-        <SpaceGroup label="System" spaces={groups.systemSpaces} secondary />
+        <SpaceGroup
+          label="System"
+          spaces={groups.systemSpaces}
+          pendingDecisionCounts={pendingDecisionCounts}
+          secondary
+        />
       ) : (
         <HomeRecovery
           heading="System Space unavailable"
@@ -71,10 +82,12 @@ export function HomeSpaceGrid({
 function SpaceGroup({
   label,
   spaces,
+  pendingDecisionCounts,
   secondary = false,
 }: {
   label: string
   spaces: HomeSpaceSummary[]
+  pendingDecisionCounts: ReadonlyMap<string, number>
   secondary?: boolean
 }) {
   return (
@@ -89,7 +102,10 @@ function SpaceGroup({
       <ul className="home-space-grid" role="list">
         {spaces.map((space) => (
           <li key={space.id}>
-            <SpaceCard space={space} />
+            <SpaceCard
+              space={space}
+              pendingDecisionCount={pendingDecisionCounts.get(space.id) ?? 0}
+            />
           </li>
         ))}
       </ul>
@@ -97,7 +113,13 @@ function SpaceGroup({
   )
 }
 
-function SpaceCard({ space }: { space: HomeSpaceSummary }) {
+function SpaceCard({
+  space,
+  pendingDecisionCount,
+}: {
+  space: HomeSpaceSummary
+  pendingDecisionCount: number
+}) {
   return (
     <Link className="space-card" to={clientPath.space(space.slug)}>
       <div className="space-card-heading">
@@ -126,9 +148,21 @@ function SpaceCard({ space }: { space: HomeSpaceSummary }) {
         </p>
       </div>
 
-      <div className="space-card-attention">
-        <span>Attention</span>
-        {space.attention > 0 ? <AttentionBadge count={space.attention} /> : <span>Clear</span>}
+      <div className="space-card-signals">
+        <div className="space-card-attention">
+          <span>Attention</span>
+          {space.attention > 0 ? <AttentionBadge count={space.attention} /> : <span>Clear</span>}
+        </div>
+        {pendingDecisionCount > 0 && (
+          <div className="space-card-pending-decisions">
+            <span>Pending decisions</span>
+            <strong
+              aria-label={`${pendingDecisionCount} pending ${pendingDecisionCount === 1 ? 'decision' : 'decisions'}`}
+            >
+              {pendingDecisionCount}
+            </strong>
+          </div>
+        )}
       </div>
     </Link>
   )
