@@ -38,6 +38,24 @@ single source of truth for coding agents; `CLAUDE.md` just imports it.
   nothing. Put durable rationale in an ADR, the `issues/NNN-*.md` spec, `docs/references/`, or
   the comment itself — then cite that. Enforced by `dead-references.test.ts`.
 
+## Execution guardrails
+
+- Before proposing or implementing a change, read the relevant issue and comments, its matching
+  specification under `issues/`, related issues, `CONTEXT.md`, `ARCHITECTURE.md`, and applicable
+  ADRs. Check for an existing general solution before proposing a duplicate vertical fix.
+- If the intended product behavior or acceptance criteria are materially ambiguous, or canonical
+  sources conflict, stop and ask for clarification before coding.
+- Automated checks are necessary but not sufficient for behavior changes. Verify the exact
+  user-visible scenario at runtime with clean test data, including refresh or reconnect behavior
+  and relevant error paths when applicable.
+- Manual QA instructions must exercise the changed behavior end to end. For user-facing changes,
+  default to UI instructions; include terminal or API steps only when explicitly requested.
+- Before claiming completion, confirm that checks passed, runtime behavior was verified, persistent
+  test artifacts were removed, and the worktree, remote, and issue tracker states are accurately
+  reported. Never imply that a commit was pushed or an issue closed without verifying it.
+- Keep communication proportional: explain the task context before implementation details, avoid
+  redundant confirmations, and stop asking questions once the required decisions are settled.
+
 ## Repo map
 
 - `packages/protocol` — shared zod schemas (Space, Surface, Atom tree, actions, patches).

@@ -1,10 +1,14 @@
 # Veduta
 
-A self-hosted personal agent with a home-first interface: persistent Surfaces per life area maintained by a single agent, with a global chat as the editing tool.
+A self-hosted visual personal Agent with a home-first interface: persistent Surfaces per life area maintained by a single Agent, with global chat as the editing tool.
 
 ## Language
 
 ### Structure
+
+**Visual personal Agent**:
+Veduta's product category: a personal Agent directed through chat whose ongoing work is visible, durable, and operable through Home, Spaces, and Surfaces.
+_Avoid_: chatbot, chat-first assistant, dashboard builder
 
 **Space**:
 Namespace for a life area (Health, Work, Home...): holds dedicated memory, Surfaces, and Automations. Created with user confirmation, archived, never deleted.
