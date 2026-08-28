@@ -1,9 +1,11 @@
 import {
+  FastSurfaceActionResultSchema,
   MoveSurfaceResultSchema,
   PinSurfaceResultSchema,
   SurfaceSnapshotSchema,
   SurfaceSchema,
   type AtomNode,
+  type FastSurfaceActionResult,
   type JsonObject,
   type JsonValue,
   type Surface,
@@ -18,7 +20,7 @@ import { authHeaders, getJson, postJson } from './api-http.ts'
 export type SpaceWithSurfaces = SurfaceSnapshot['spaces'][number]
 
 const SurfaceActionResponseSchema = z.union([
-  z.object({ surface: SurfaceSchema }),
+  FastSurfaceActionResultSchema,
   z.object({ turn: z.object({ id: z.string().min(1) }).passthrough() }),
 ])
 
@@ -78,7 +80,7 @@ export async function invokeFastAction(
   value: JsonValue,
   token?: string,
   idempotencyKey?: string,
-): Promise<Surface> {
+): Promise<FastSurfaceActionResult> {
   const result = await invokeSurfaceAction(
     surfaceId,
     nodeId,
@@ -87,7 +89,7 @@ export async function invokeFastAction(
     token,
     idempotencyKey,
   )
-  if ('surface' in result) return result.surface
+  if ('surface' in result) return result
   throw new Error(`fast action "${name}" did not return a Surface`)
 }
 

@@ -45,7 +45,7 @@ export function SurfaceCard({
   onFocus: () => void
   onMoveUp: () => void
   onMoveDown: () => void
-  onPatched: (surface: Surface, affectedAtomIds?: readonly string[]) => void
+  onPatched: (surface: Surface, affectedAtomIds?: readonly string[], surfaceCursor?: number) => void
   onQueueFastAction: (action: QueuedFastAction) => void
   onTogglePin: (pinned: boolean) => void
   onRevealFeedbackShown: (feedbackKey: string) => void
@@ -118,7 +118,7 @@ export function SurfaceCard({
           : affectedAtomIdsForStateKey(optimistic.tree, action.stateKey),
       )
       invokeFastAction(surface.id, node.id, actionName, value, token, idempotencyKey)
-        .then(onPatched)
+        .then(({ surface: updated, surfaceCursor }) => onPatched(updated, undefined, surfaceCursor))
         .catch((e: Error) => {
           onQueueFastAction({
             id: idempotencyKey,

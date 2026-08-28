@@ -62,7 +62,11 @@ interface AppShellProps {
     surfaceId: string,
     direction: SurfaceMoveDirection,
   ) => void
-  onSurfacePatched: (surface: Surface, affectedAtomIds?: readonly string[]) => void
+  onSurfacePatched: (
+    surface: Surface,
+    affectedAtomIds?: readonly string[],
+    surfaceCursor?: number,
+  ) => void
   onQueueFastAction: (action: QueuedFastAction) => void
   onTogglePin: (surface: Surface, pinned: boolean) => void
   onSurfaceRevealFeedbackShown: (surfaceId: string, feedbackKey: string) => void

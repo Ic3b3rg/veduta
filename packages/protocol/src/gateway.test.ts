@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ApprovalCardSchema,
+  FastSurfaceActionResultSchema,
   GatewayClientMessageSchema,
   GatewayServerMessageSchema,
   MoveSurfaceRequestSchema,
@@ -16,6 +17,28 @@ import {
 } from './index.ts'
 
 describe('Gateway protocol', () => {
+  it('pairs a fast Surface action result with the authoritative Surface cursor', () => {
+    const result = {
+      surface: {
+        id: 'srf-groceries',
+        spaceId: 'spc-health',
+        title: 'Groceries',
+        tree: { id: 'root', type: 'Box' as const, children: [] },
+        state: { milk: true },
+        freshness: { updatedAt: '2026-07-03T10:00:00.000Z', updatedBy: 'user' as const },
+      },
+      surfaceCursor: 7,
+    }
+
+    expect(FastSurfaceActionResultSchema.parse(result)).toEqual({
+      ...result,
+      surface: { ...result.surface, pinned: false, pinnable: true },
+    })
+    expect(FastSurfaceActionResultSchema.safeParse({ ...result, surfaceCursor: -1 }).success).toBe(
+      false,
+    )
+  })
+
   it('defaults hello replay cursors safely', () => {
     expect(GatewayClientMessageSchema.parse({ type: 'hello' })).toEqual({
       type: 'hello',

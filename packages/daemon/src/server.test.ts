@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fromPartial } from '@total-typescript/shoehorn'
 import {
+  FastSurfaceActionResultSchema,
   GatewayServerMessageSchema,
   MoveSurfaceResultSchema,
   PendingDecisionListSchema,
@@ -1140,8 +1141,9 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
       payload: { nodeId: 'item-milk', name: 'toggle', payload: { value: true } },
     })
     expect(res.statusCode).toBe(200)
-    const { surface } = res.json() as { surface: { state: Record<string, unknown> } }
-    expect(surface.state['milk']).toBe(true)
+    const result = FastSurfaceActionResultSchema.parse(res.json())
+    expect(result.surface.state['milk']).toBe(true)
+    expect(result.surfaceCursor).toBe(baseline + 1)
     const events = store.eventLog('spc-health')
     expect(events.at(-1)?.text).toContain('milk')
     expect(store.surfaceEventsAfter(baseline)).toMatchObject([
@@ -1156,6 +1158,69 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
       },
     ])
     expect(store.llmCallCount()).toBe(0)
+  })
+
+  it('retries the same HTTP request without duplicating its handler or Space Event', async () => {
+    const { app, store } = buildServer()
+    const baseline = store.latestSurfaceCursor()
+    let handlerCalls = 0
+    const dispose = store.onFastMutation((notice) => {
+      if (notice.surfaceId === 'srf-groceries' && notice.stateKey === 'milk') handlerCalls += 1
+    })
+    const request = {
+      method: 'POST' as const,
+      url: '/api/surfaces/srf-groceries/actions',
+      payload: {
+        nodeId: 'item-milk',
+        name: 'toggle',
+        payload: { value: true },
+        idempotencyKey: 'pwa-groceries-milk-on',
+      },
+    }
+
+    const first = await app.inject(request)
+    store.patchState(
+      'srf-groceries',
+      [{ target: 'state', op: 'replace', path: '/milk', value: false }],
+      { updatedBy: 'job' },
+    )
+    const retry = await app.inject(request)
+
+    expect(first.statusCode).toBe(200)
+    expect(retry.statusCode).toBe(200)
+    const firstResult = FastSurfaceActionResultSchema.parse(first.json())
+    const retryResult = FastSurfaceActionResultSchema.parse(retry.json())
+    expect(firstResult.surface.state['milk']).toBe(true)
+    expect(firstResult.surfaceCursor).toBe(baseline + 1)
+    expect(retryResult.surface.state['milk']).toBe(false)
+    expect(retryResult.surfaceCursor).toBe(baseline + 2)
+    expect(handlerCalls).toBe(1)
+    expect(
+      store
+        .eventLog('spc-health')
+        .filter(
+          (event) =>
+            event.type === 'fast_path' &&
+            event.payload?.['surfaceId'] === 'srf-groceries' &&
+            event.payload?.['stateKey'] === 'milk',
+        ),
+    ).toHaveLength(1)
+    expect(
+      store
+        .surfaceEventsAfter(baseline)
+        .filter(
+          (entry) =>
+            entry.kind === 'patch' &&
+            entry.event.patch.surfaceId === 'srf-groceries' &&
+            entry.event.patch.operations.some(
+              (operation) =>
+                operation.path === '/milk' && 'value' in operation && operation.value === true,
+            ),
+        ),
+    ).toHaveLength(1)
+
+    dispose()
+    await app.close()
   })
 
   it('rejects an action the node does not declare as fast (403)', async () => {
