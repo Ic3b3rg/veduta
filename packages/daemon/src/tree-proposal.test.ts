@@ -2,8 +2,12 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SurfaceSchema, type AtomNode, type PatchOperation, type Surface } from '@veduta/protocol'
+import { fromPartial } from '@total-typescript/shoehorn'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { ToolContext } from './agent-runner.ts'
+import type { SurfaceEngineEvent } from './surface-engine.ts'
 import { Store } from './store.ts'
+import { TurnTaintAccumulator } from './taint.ts'
 import {
   DECISION_ACCEPT_KEY,
   DECISION_REJECT_KEY,
@@ -124,6 +128,46 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
 
     expect(card?.state[DECISION_ACCEPT_KEY]).toBe(false)
     expect(card?.state[DECISION_REJECT_KEY]).toBe(false)
+  })
+
+  it('carries exact live chat correlation from a pinned patch_tree call to its real Decision Surface', async () => {
+    const targetId = 'srf-correlated-tree-target'
+    store.createSurface(targetSurface(targetId, 2), 'agent')
+    store.setPinned(targetId, true, { origin: 'trusted:user', updatedBy: 'user' })
+    const version = store.getSurfaceVersion(targetId)
+    if (!version) throw new Error('expected Surface version')
+    const patchTree = store.surfaceTools().find((tool) => tool.name === 'patch_tree')
+    if (!patchTree) throw new Error('missing patch_tree tool')
+    const observed: SurfaceEngineEvent[] = []
+    store.onSurfaceEvent((event) => observed.push(event))
+
+    await patchTree.handler(
+      patchTree.schema.parse({
+        surfaceId: targetId,
+        expectedTreeVersion: version.treeVersion,
+        operations: [addCaptionOperation('/children/2', 'proposed from chat')],
+      }),
+      fromPartial<ToolContext>({
+        toolCallId: 'call-correlated-tree-proposal',
+        origin: 'trusted:user',
+        taint: new TurnTaintAccumulator(['trusted:user']),
+        initiatingTurn: { clientId: 'pwa-tree', turnId: 'turn-tree' },
+      }),
+    )
+
+    const proposal = store.listTreeProposals({ surfaceId: targetId })[0]
+    if (!proposal) throw new Error('expected a real Tree proposal')
+    const decisionSurfaceId = treeProposalSurfaceId(proposal.id)
+    expect(store.getSurface(decisionSurfaceId)).toBeDefined()
+    expect(
+      observed.find(
+        (event) => event.kind === 'created' && event.event.surface.id === decisionSurfaceId,
+      ),
+    ).toMatchObject({
+      kind: 'created',
+      initiatingTurn: { clientId: 'pwa-tree', turnId: 'turn-tree' },
+      event: { surface: { id: decisionSurfaceId, spaceId: 'spc-health' } },
+    })
   })
 
   it('previews a Button whose action changed, not just its Atom type (an Atom-type list alone made a changed action indistinguishable from an unrelated same-shape replacement)', () => {

@@ -354,7 +354,9 @@ export class SurfaceEngine {
   private readonly hasSpace: (spaceId: string) => boolean
   private readonly appendSpaceEvent: (spaceId: string, input: AppendSpaceEventInput) => unknown
   private readonly surfaceEventObservers = new Set<(event: SurfaceEngineEvent) => void>()
-  private readonly treeProposalObservers = new Set<(proposal: TreeProposal) => void>()
+  private readonly treeProposalObservers = new Set<
+    (proposal: TreeProposal, initiatingTurn?: ChatTurnCorrelation) => void
+  >()
 
   constructor(options: SurfaceEngineOptions) {
     mkdirSync(options.rootDir, { recursive: true })
@@ -514,7 +516,9 @@ export class SurfaceEngine {
    * its preview Surface — the same shape as `onSurfaceEvent`, kept separate
    * because a Tree proposal is not itself a `SurfaceEngineEvent`.
    */
-  onTreeProposal(observer: (proposal: TreeProposal) => void): () => void {
+  onTreeProposal(
+    observer: (proposal: TreeProposal, initiatingTurn?: ChatTurnCorrelation) => void,
+  ): () => void {
     this.treeProposalObservers.add(observer)
     return () => this.treeProposalObservers.delete(observer)
   }
@@ -900,6 +904,8 @@ export class SurfaceEngine {
       updatedBy: SurfaceWriteActor
       origin?: Origin
       bypassPin?: true
+      /** Forwarded only to a live Tree-proposal card notification; never persisted. */
+      initiatingTurn?: ChatTurnCorrelation
     },
   ): SurfaceMutation | TreeProposalRecorded {
     assertPatchTarget(operations, 'tree')
@@ -923,6 +929,9 @@ export class SurfaceEngine {
           expectedTreeVersion: options.expectedTreeVersion,
           updatedBy: options.updatedBy,
           ...(options.origin === undefined ? {} : { origin: options.origin }),
+          ...(options.initiatingTurn === undefined
+            ? {}
+            : { initiatingTurn: options.initiatingTurn }),
         })
       }
     }
@@ -1085,6 +1094,9 @@ export class SurfaceEngine {
             expectedTreeVersion: input.expectedTreeVersion,
             updatedBy: 'agent',
             origin: effectiveToolWriteOrigin(context.taint.origins(), context.origin),
+            ...(context.initiatingTurn === undefined
+              ? {}
+              : { initiatingTurn: context.initiatingTurn }),
           })
           // A pinned Surface is not an error: the Agent must be told plainly
           // that the tree change is a proposal awaiting the user, not retry
@@ -1264,7 +1276,12 @@ export class SurfaceEngine {
   private recordTreeProposal(
     surface: Surface,
     operations: PatchOperation[],
-    options: { expectedTreeVersion: number; updatedBy: SurfaceWriteActor; origin?: Origin },
+    options: {
+      expectedTreeVersion: number
+      updatedBy: SurfaceWriteActor
+      origin?: Origin
+      initiatingTurn?: ChatTurnCorrelation
+    },
   ): TreeProposalRecorded {
     this.buildPatchedSurface(surface, surface.id, operations, options.updatedBy)
 
@@ -1305,7 +1322,7 @@ export class SurfaceEngine {
     // inside it — so `TreeProposalSurfaceManager` only ever observes a
     // proposal that a concurrent reader could already see.
     const proposal = this.getTreeProposal(proposalId)
-    if (proposal) this.notifyTreeProposal(proposal)
+    if (proposal) this.notifyTreeProposal(proposal, options.initiatingTurn)
 
     return { proposed: true, proposalId, surfaceId: surface.id }
   }
@@ -1431,10 +1448,10 @@ export class SurfaceEngine {
    * Mirrors `SpacesEngine.notifyMemoryWrite`'s same per-observer `try`/
    * `catch`, for the same reason.
    */
-  private notifyTreeProposal(proposal: TreeProposal): void {
+  private notifyTreeProposal(proposal: TreeProposal, initiatingTurn?: ChatTurnCorrelation): void {
     for (const observer of this.treeProposalObservers) {
       try {
-        observer(proposal)
+        observer(proposal, initiatingTurn)
       } catch (error) {
         console.error('tree proposal observer failed', error)
       }

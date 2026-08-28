@@ -1,4 +1,10 @@
-import { SurfaceSchema, type AtomNode, type PatchOperation, type Surface } from '@veduta/protocol'
+import {
+  SurfaceSchema,
+  type AtomNode,
+  type ChatTurnCorrelation,
+  type PatchOperation,
+  type Surface,
+} from '@veduta/protocol'
 import {
   DECISION_ERROR_CAPTION_NODE_ID,
   DECISION_ERROR_CAPTION_PATH,
@@ -246,7 +252,9 @@ export class TreeProposalSurfaceManager {
     this.onError =
       options.onError ?? ((error) => console.error('tree proposal: resolution failed', error))
     this.resolutions = new SerializedWorkQueue(this.onError)
-    this.unsubscribeProposal = this.store.onTreeProposal((proposal) => this.createCard(proposal))
+    this.unsubscribeProposal = this.store.onTreeProposal((proposal, initiatingTurn) =>
+      this.createCard(proposal, initiatingTurn),
+    )
     this.unsubscribeFastMutation = this.store.onFastMutation((notice) =>
       this.handleFastMutation(notice),
     )
@@ -351,7 +359,7 @@ export class TreeProposalSurfaceManager {
    * durably recorded (which would invite the Agent to retry and record a
    * duplicate).
    */
-  private createCard(proposal: TreeProposal): void {
+  private createCard(proposal: TreeProposal, initiatingTurn?: ChatTurnCorrelation): void {
     const target = this.store.getSurface(proposal.surfaceId)
     if (!target) {
       this.onError(
@@ -367,7 +375,11 @@ export class TreeProposalSurfaceManager {
       // Daemon-owned (the same structural-defense contract as approval
       // cards): the Agent must never be able to rewrite this card's preview
       // or pre-set its `decision.*` state after the human has read it.
-      this.store.createSurface(surface, 'job', { origin: 'trusted:system', daemonOwned: true })
+      this.store.createSurface(surface, 'job', {
+        origin: 'trusted:system',
+        daemonOwned: true,
+        ...(initiatingTurn === undefined ? {} : { initiatingTurn }),
+      })
     } catch (error) {
       this.onError(error)
     }

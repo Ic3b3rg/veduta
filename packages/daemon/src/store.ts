@@ -2,6 +2,7 @@ import {
   SYSTEM_SPACE_ID,
   SurfaceSnapshotSchema,
   findDeclaredAction,
+  type ChatTurnCorrelation,
   type JsonValue,
   type PatchOperation,
   type Space,
@@ -162,7 +163,9 @@ export class Store {
    * commits. `TreeProposalSurfaceManager` is the sole subscriber in
    * production: one central hook, never a manual broadcast.
    */
-  onTreeProposal(observer: (proposal: TreeProposal) => void): () => void {
+  onTreeProposal(
+    observer: (proposal: TreeProposal, initiatingTurn?: ChatTurnCorrelation) => void,
+  ): () => void {
     return this.surfaceEngine.onTreeProposal(observer)
   }
 
@@ -253,6 +256,7 @@ export class Store {
       updatedBy: 'agent' | 'user' | 'job'
       origin?: Origin
       bypassPin?: true
+      initiatingTurn?: ChatTurnCorrelation
     },
   ): SurfaceMutation | TreeProposalRecorded {
     return this.surfaceEngine.patchTree(surfaceId, operations, options)
