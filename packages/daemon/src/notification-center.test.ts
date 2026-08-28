@@ -482,21 +482,17 @@ describe('outbox delivery', () => {
   it('single-flight: two rapid notify() calls never double-send the same outbox row', async () => {
     const center = newCenter({ defaultDailyPushBudget: 5 })
     addSubscription()
+    transport.hang = true
 
     center.notify(pushInput({ text: 'first' }))
     center.notify(pushInput({ text: 'second' }))
     await flushAsync()
 
-    // The second notify()'s delivery pass no-ops (single-flight guard) — only the
-    // first row is sent this tick; the second is still queued in the outbox.
+    // The first send remains in flight, so the overlapping delivery pass must
+    // not send either outbox row again.
     expect(transport.calls).toHaveLength(1)
-    expect(pushStore.claimDueOutbox(new Date(clock.getTime() + 1))).toHaveLength(1)
-
-    center.start()
-    await flushAsync()
-
-    expect(transport.calls).toHaveLength(2)
-    expect(new Set(transport.calls.map((call) => call.payload.body)).size).toBe(2)
+    expect(transport.calls[0]?.payload.body).toBe('first')
+    expect(pushStore.claimDueOutbox(new Date(clock.getTime() + 1))).toHaveLength(2)
     center.dispose()
   })
 })

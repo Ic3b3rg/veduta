@@ -307,11 +307,11 @@ describe('App routing', () => {
 
     act(() => history.back())
     await waitFor(() => expect(location.pathname).toBe('/app/space/health'))
-    expect(screen.getByRole('button', { name: 'Focus Hydration' })).toBeDefined()
+    expect(await screen.findByRole('button', { name: 'Focus Hydration' })).toBeDefined()
 
     act(() => history.forward())
     await waitFor(() => expect(location.pathname).toBe('/app/space/work'))
-    expect(screen.getByRole('button', { name: 'Focus Roadmap' })).toBeDefined()
+    expect(await screen.findByRole('button', { name: 'Focus Roadmap' })).toBeDefined()
 
     fireEvent.click(screen.getByRole('link', { name: 'Home' }))
     await waitFor(() => expect(location.pathname).toBe('/'))
