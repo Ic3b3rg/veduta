@@ -252,7 +252,10 @@ ownership of group membership, confirmed mutations, and local Pin feedback; this
 visual contract and prevents those additions from reintroducing a visible Focus action or changing
 route semantics.
 
-The approved prototype is on branch `prototype/incumbent-ui-polish`. Its final prototype commit is
-`e332bd4`; the branch also contains the preceding wordmark and shell-refinement commits. The full
-repository check passed with 2,943 tests, type checking, formatting, linting, and production builds,
-and the PWA was reviewed at 320-pixel phone and 1440-pixel desktop widths.
+The approved prototype is on branch
+[`prototype/incumbent-ui-polish`](https://github.com/Ic3b3rg/veduta/tree/prototype/incumbent-ui-polish).
+Its final prototype commit is
+[`e332bd4`](https://github.com/Ic3b3rg/veduta/commit/e332bd4323425ad8018d4ec868ff3ab1e3145d69);
+the branch also contains the preceding wordmark and shell-refinement commits. The full repository
+check passed with 2,943 tests, type checking, formatting, linting, and production builds, and the
+PWA was reviewed at 320-pixel phone and 1440-pixel desktop widths.
