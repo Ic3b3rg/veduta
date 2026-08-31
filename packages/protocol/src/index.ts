@@ -1,4 +1,12 @@
-export { ActionSchema, type Action, type ActionInput } from './action.ts'
+export {
+  ActionSchema,
+  FormSubmitActionSchema,
+  FormSubmitPayloadSchema,
+  type Action,
+  type ActionInput,
+  type FormSubmitAction,
+  type FormSubmitPayload,
+} from './action.ts'
 export { applySurfacePatch, applySurfacePatchEvent } from './apply-patch.ts'
 export {
   AuthDeviceSchema,
@@ -23,6 +31,9 @@ export {
   pendingSlotVariants,
   PendingSlotVariantSchema,
   PendingAtomPropsSchema,
+  InputAtomPropsSchema,
+  TextareaAtomPropsSchema,
+  FormAtomPropsSchema,
   MIN_PENDING_SLOT_TIMEOUT_MS,
   DEFAULT_PENDING_SLOT_TIMEOUT_MS,
   MAX_PENDING_SLOT_TIMEOUT_MS,
@@ -30,6 +41,9 @@ export {
   type AtomNode,
   type PendingSlotVariant,
   type PendingAtomProps,
+  type InputAtomProps,
+  type TextareaAtomProps,
+  type FormAtomProps,
 } from './atom.ts'
 export {
   SurfaceSchema,
@@ -158,6 +172,7 @@ export {
   findAtom,
   findDeclaredAction,
   findDeclaredFastAction,
+  findDeclaredFastFormAction,
   findDeclaredAgentAction,
 } from './tree.ts'
 export {

@@ -1,5 +1,6 @@
 import {
   SYSTEM_SPACE_ID,
+  FormSubmitPayloadSchema,
   SurfaceSnapshotSchema,
   findDeclaredAction,
   type ChatTurnCorrelation,
@@ -54,7 +55,8 @@ export interface FastMutationNotice {
   mutation: SurfaceMutation
 }
 
-export type SurfaceActionErrorCode = 'unknown_surface' | 'undeclared_action' | 'missing_value'
+export type SurfaceActionErrorCode =
+  'unknown_surface' | 'undeclared_action' | 'missing_value' | 'invalid_payload'
 
 export class SurfaceActionError extends Error {
   constructor(
@@ -179,6 +181,15 @@ export class Store {
     return this.surfaceEngine.applyFastAction(surfaceId, stateKey, value, idempotencyKey)
   }
 
+  /** Fast path: atomically commit every text value owned by one Form. */
+  applyFastFormAction(
+    surfaceId: string,
+    values: Record<string, string>,
+    idempotencyKey?: string,
+  ): SurfaceMutation {
+    return this.surfaceEngine.applyFastFormAction(surfaceId, values, idempotencyKey)
+  }
+
   invokeSurfaceAction(surfaceId: string, invocation: ActionInvocation): SurfaceActionResult {
     const surface = this.getSurface(surfaceId)
     if (!surface) throw new SurfaceActionError('unknown_surface', `unknown Surface: ${surfaceId}`)
@@ -192,6 +203,18 @@ export class Store {
 
     if (action.path === 'agent') {
       return { path: 'agent', turn: this.surfaceEngine.enqueueAgentAction(surface, invocation) }
+    }
+
+    if (action.stateKeys !== undefined) {
+      const values = parseFormSubmitValues(action.name, action.stateKeys, invocation.payload)
+      const mutation = this.applyFastFormAction(surfaceId, values, invocation.idempotencyKey)
+      if (!mutation.duplicate) {
+        for (const [stateKey, value] of Object.entries(values)) {
+          const notice = { surfaceId, stateKey, value, mutation }
+          for (const observer of this.fastMutationObservers) observer(notice)
+        }
+      }
+      return { path: 'fast', mutation }
     }
 
     if (action.stateKey === undefined) {
@@ -411,4 +434,42 @@ export class Store {
   readGlobalDocs(): { soul: string; user: string } {
     return this.spacesEngine.readGlobalDocs()
   }
+}
+
+function parseFormSubmitValues(
+  actionName: string,
+  stateKeys: readonly string[],
+  payload: ActionInvocation['payload'],
+): Record<string, string> {
+  const parsed = FormSubmitPayloadSchema.safeParse(payload)
+  if (!parsed.success) {
+    throw new SurfaceActionError(
+      'invalid_payload',
+      `Form action "${actionName}" requires one string value for every text field`,
+    )
+  }
+
+  const submittedKeys = Object.keys(parsed.data.value)
+  if (
+    submittedKeys.length !== stateKeys.length ||
+    stateKeys.some((stateKey) => !Object.prototype.hasOwnProperty.call(parsed.data.value, stateKey))
+  ) {
+    throw new SurfaceActionError(
+      'invalid_payload',
+      `Form action "${actionName}" must submit exactly: ${stateKeys.join(', ')}`,
+    )
+  }
+
+  const values: Record<string, string> = {}
+  for (const stateKey of stateKeys) {
+    const value = parsed.data.value[stateKey]
+    if (value === undefined) {
+      throw new SurfaceActionError(
+        'invalid_payload',
+        `Form action "${actionName}" is missing "${stateKey}"`,
+      )
+    }
+    values[stateKey] = value
+  }
+  return values
 }

@@ -6,7 +6,7 @@ import {
   type Surface,
   type SurfaceRelativeTimeStatus,
 } from '@veduta/protocol'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   fastActionIdempotencyKey,
   freshnessLabel,
@@ -53,6 +53,7 @@ export function SurfaceCard({
 }) {
   const theme = useCatalogTheme()
   const cardRef = useRef<HTMLElement>(null)
+  const [formActionKeyFor, clearFormActionScope] = useFormActionRetryKeys()
   const handledRevealFeedbackRef = useRef<string | undefined>(undefined)
   const revealedWhileSelectedRef = useRef(false)
   const [revealHighlighted, setRevealHighlighted] = useState(false)
@@ -89,56 +90,87 @@ export function SurfaceCard({
     const timeout = window.setTimeout(() => setRevealHighlighted(false), 2_000)
     return () => window.clearTimeout(timeout)
   }, [revealHighlighted])
-  const dispatch = (node: AtomNode, actionName: string, value?: JsonValue) => {
-    const action = node.actions?.find((a) => a.name === actionName)
-    if (!action) {
-      onError(`"${surface.title}" update failed: undeclared action "${actionName}"`)
-      return
-    }
-
-    if (action.path === 'fast') {
-      if (value === undefined) {
-        onError(
-          `"${surface.title}" update failed: fast action "${actionName}" did not provide a value`,
-        )
+  const dispatch = useCallback(
+    (node: AtomNode, actionName: string, value?: JsonValue) => {
+      const action = node.actions?.find((a) => a.name === actionName)
+      if (!action) {
+        onError(`"${surface.title}" update failed: undeclared action "${actionName}"`)
         return
       }
-      const idempotencyKey = fastActionIdempotencyKey({
-        surfaceId: surface.id,
-        surfaceUpdatedAt: surface.freshness.updatedAt,
-        nodeId: node.id,
-        actionName,
-        value,
-      })
-      const optimistic = optimisticFastSurface(surface, node, actionName, value)
-      onPatched(
-        optimistic,
-        action.stateKey === undefined
-          ? [node.id]
-          : affectedAtomIdsForStateKey(optimistic.tree, action.stateKey),
-      )
-      invokeFastAction(surface.id, node.id, actionName, value, token, idempotencyKey)
-        .then(({ surface: updated, surfaceCursor }) => onPatched(updated, undefined, surfaceCursor))
-        .catch((e: Error) => {
-          onQueueFastAction({
-            id: idempotencyKey,
-            surfaceId: surface.id,
-            nodeId: node.id,
-            actionName,
-            value,
-            idempotencyKey,
-            at: new Date().toISOString(),
-          })
-          onError(`"${surface.title}" update queued: ${e.message}`)
-        })
-      return
-    }
 
-    const payload = value === undefined ? action.payload : { ...action.payload, value }
-    invokeSurfaceAction(surface.id, node.id, actionName, payload, token).catch((e: Error) =>
-      onError(`"${surface.title}" action failed: ${e.message}`),
-    )
-  }
+      if (action.path === 'fast') {
+        if (value === undefined) {
+          const error = new Error(`fast action "${actionName}" did not provide a value`)
+          onError(`"${surface.title}" update failed: ${error.message}`)
+          return action.stateKeys === undefined ? undefined : Promise.reject(error)
+        }
+        const idempotencyKey = fastActionIdempotencyKey({
+          surfaceId: surface.id,
+          surfaceUpdatedAt: surface.freshness.updatedAt,
+          nodeId: node.id,
+          actionName,
+          value,
+        })
+
+        if (action.stateKeys !== undefined) {
+          if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+            const error = new Error(`Form action "${actionName}" did not provide text fields`)
+            onError(`"${surface.title}" update failed: ${error.message}`)
+            return Promise.reject(error)
+          }
+
+          const formActionScope = JSON.stringify({ nodeId: node.id, actionName })
+          const formActionFingerprint = `${formActionScope}:${JSON.stringify(value)}`
+          const retryKey = formActionKeyFor(formActionFingerprint, idempotencyKey)
+
+          return invokeFastAction(surface.id, node.id, actionName, value, token, retryKey)
+            .then(({ surface: updated, surfaceCursor }) => {
+              clearFormActionScope(formActionScope)
+              onPatched(
+                updated,
+                affectedAtomIdsForStateKeys(updated.tree, action.stateKeys ?? []),
+                surfaceCursor,
+              )
+            })
+            .catch((error: Error) => {
+              onError(`"${surface.title}" update failed: ${error.message}`)
+              throw error
+            })
+        }
+
+        const optimistic = optimisticFastSurface(surface, node, actionName, value)
+        onPatched(
+          optimistic,
+          action.stateKey === undefined
+            ? [node.id]
+            : affectedAtomIdsForStateKey(optimistic.tree, action.stateKey),
+        )
+        invokeFastAction(surface.id, node.id, actionName, value, token, idempotencyKey)
+          .then(({ surface: updated, surfaceCursor }) =>
+            onPatched(updated, undefined, surfaceCursor),
+          )
+          .catch((e: Error) => {
+            onQueueFastAction({
+              id: idempotencyKey,
+              surfaceId: surface.id,
+              nodeId: node.id,
+              actionName,
+              value,
+              idempotencyKey,
+              at: new Date().toISOString(),
+            })
+            onError(`"${surface.title}" update queued: ${e.message}`)
+          })
+        return
+      }
+
+      const payload = value === undefined ? action.payload : { ...action.payload, value }
+      invokeSurfaceAction(surface.id, node.id, actionName, payload, token).catch((e: Error) =>
+        onError(`"${surface.title}" action failed: ${e.message}`),
+      )
+    },
+    [clearFormActionScope, formActionKeyFor, onError, onPatched, onQueueFastAction, surface, token],
+  )
 
   return (
     <article
@@ -216,6 +248,41 @@ export function SurfaceCard({
       </div>
     </article>
   )
+}
+
+function affectedAtomIdsForStateKeys(tree: AtomNode, stateKeys: readonly string[]): string[] {
+  return Array.from(
+    new Set(stateKeys.flatMap((stateKey) => affectedAtomIdsForStateKey(tree, stateKey))),
+  )
+}
+
+function useFormActionRetryKeys(): readonly [
+  (fingerprint: string, fallback: string) => string,
+  (scope: string) => void,
+] {
+  const keysRef = useRef(new Map<string, string>())
+  const keyFor = useCallback((fingerprint: string, fallback: string) => {
+    const retryKey = keysRef.current.get(fingerprint) ?? fallback
+    keysRef.current.set(fingerprint, retryKey)
+    trimFormActionKeys(keysRef.current)
+    return retryKey
+  }, [])
+  const clearScope = useCallback((scope: string) => {
+    clearFormActionKeysForScope(keysRef.current, scope)
+  }, [])
+  return [keyFor, clearScope]
+}
+
+function trimFormActionKeys(keys: Map<string, string>): void {
+  const oldest = keys.size > 32 ? keys.keys().next().value : undefined
+  if (oldest !== undefined) keys.delete(oldest)
+}
+
+function clearFormActionKeysForScope(keys: Map<string, string>, scope: string): void {
+  const prefix = `${scope}:`
+  for (const fingerprint of keys.keys()) {
+    if (fingerprint.startsWith(prefix)) keys.delete(fingerprint)
+  }
 }
 
 function scrollSurfaceCardIntoView(card: HTMLElement): void {

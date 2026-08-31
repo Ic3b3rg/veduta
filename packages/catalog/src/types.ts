@@ -14,7 +14,7 @@ export interface RenderContext {
   /** Design-system theme. Defaults to light. */
   theme?: CatalogTheme
   /** Dispatch a declared action. The renderer never decides fast vs agent — the Atom's declaration does (ADR-0003). */
-  dispatch: (node: AtomNode, actionName: string, value?: JsonValue) => void
+  dispatch: (node: AtomNode, actionName: string, value?: JsonValue) => void | Promise<void>
   /** Transient visual feedback supplied by the Surface host; never persisted in the Surface. */
   motion?: {
     update?: SurfaceUpdateFeedback

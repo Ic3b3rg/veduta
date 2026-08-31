@@ -527,8 +527,16 @@ describe('renderNode', () => {
           binding: 'cadence',
           props: { label: 'Cadence', options: ['daily', 'weekly'] },
         },
-        { id: 'input', type: 'Input', binding: 'title', props: { label: 'Title' } },
-        { id: 'textarea', type: 'Textarea', binding: 'notes', props: { label: 'Notes' } },
+        {
+          id: 'text-form',
+          type: 'Form',
+          props: { label: 'Details', submitLabel: 'Save' },
+          actions: [{ name: 'submit', path: 'fast', stateKeys: ['title', 'notes'] }],
+          children: [
+            { id: 'input', type: 'Input', binding: 'title', props: { label: 'Title' } },
+            { id: 'textarea', type: 'Textarea', binding: 'notes', props: { label: 'Notes' } },
+          ],
+        },
         {
           id: 'automation',
           type: 'Automation',
@@ -957,6 +965,7 @@ describe('renderNode', () => {
     fireEvent.click(screen.getByRole('radio', { name: /weekly/i }))
     fireEvent.change(screen.getByLabelText('Title input'), { target: { value: 'Updated' } })
     fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'Bring fruit' } })
+    fireEvent.click(screen.getByRole('button', { name: /save plan/i }))
     fireEvent.click(screen.getByRole('switch', { name: /water reminder/i }))
 
     expect(
@@ -970,8 +979,7 @@ describe('renderNode', () => {
       ['date-picker', 'change', '2026-07-04'],
       ['priority-select', 'change', 'high'],
       ['cadence-radio', 'change', 'weekly'],
-      ['title-input', 'change', 'Updated'],
-      ['notes-textarea', 'change', 'Bring fruit'],
+      ['edit-form', 'submit', { title: 'Updated', notes: 'Bring fruit' }],
       ['water-automation', 'toggle', false],
     ])
   })
