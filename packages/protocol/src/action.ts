@@ -39,6 +39,7 @@ export const ActionSchema = z
     /** For an atomic Form submit: every state key mutated by the payload. */
     stateKeys: StateKeysSchema.optional(),
   })
+  .strict()
   .superRefine((action, ctx) => {
     if (action.path === 'fast' && action.stateKey === undefined && action.stateKeys === undefined) {
       ctx.addIssue({

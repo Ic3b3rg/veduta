@@ -176,6 +176,18 @@ describe('Form text Atom protocol', () => {
     expect(result.success).toBe(false)
   })
 
+  it('rejects unsupported Form action fields before they can be stripped', () => {
+    const result = AtomNodeSchema.safeParse({
+      id: 'profile-form',
+      type: 'Form',
+      props: { label: 'Profile', submitLabel: 'Save' },
+      actions: [{ name: 'submit', path: 'fast', stateKeys: ['name'], unexpected: true }],
+      children: [{ id: 'name', type: 'Input', binding: 'name', props: { label: 'Name' } }],
+    })
+
+    expect(result.success).toBe(false)
+  })
+
   it.each([
     { binding: 'name' },
     { children: undefined },
