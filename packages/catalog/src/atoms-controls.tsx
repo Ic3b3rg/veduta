@@ -1,8 +1,7 @@
-import type { FormEvent, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import {
   actionValue,
   boundValue,
-  boundedNumber,
   choicesFrom,
   findAction,
   motionContent,
@@ -136,67 +135,5 @@ export function RadioGroupAtom({ node, ctx }: AtomProps): ReactNode {
         ))}
       </div>
     </fieldset>
-  )
-}
-
-export function InputAtom({ node, ctx }: AtomProps): ReactNode {
-  const tokens = tokensFor(ctx.theme)
-  const value = text(boundValue(node, ctx) ?? node.props?.['value'])
-  const action = findAction(node, ['change', 'input', 'set'])
-  return (
-    <label style={fieldStyle(tokens)}>
-      <span {...motionContent('label')} style={labelStyle(tokens)}>
-        {text(node.props?.['label'])}
-      </span>
-      <input
-        {...motionContent('value')}
-        aria-label={text(node.props?.['label'])}
-        type={optionalText(node.props?.['inputType']) ?? 'text'}
-        placeholder={optionalText(node.props?.['placeholder'])}
-        value={value}
-        onChange={(event) => action && ctx.dispatch(node, action.name, event.currentTarget.value)}
-        style={controlStyle(tokens)}
-      />
-    </label>
-  )
-}
-
-export function TextareaAtom({ node, ctx }: AtomProps): ReactNode {
-  const tokens = tokensFor(ctx.theme)
-  const value = text(boundValue(node, ctx) ?? node.props?.['value'])
-  const action = findAction(node, ['change', 'input', 'set'])
-  return (
-    <label style={fieldStyle(tokens)}>
-      <span {...motionContent('label')} style={labelStyle(tokens)}>
-        {text(node.props?.['label'])}
-      </span>
-      <textarea
-        {...motionContent('value')}
-        aria-label={text(node.props?.['label'])}
-        placeholder={optionalText(node.props?.['placeholder'])}
-        value={value}
-        onChange={(event) => action && ctx.dispatch(node, action.name, event.currentTarget.value)}
-        rows={boundedNumber(node.props?.['rows'], 3, 2, 12)}
-        style={{ ...controlStyle(tokens), resize: 'vertical' }}
-      />
-    </label>
-  )
-}
-
-export function FormAtom({ node, ctx, children }: AtomProps): ReactNode {
-  const tokens = tokensFor(ctx.theme)
-  const action = findAction(node, ['submit'])
-  const submit = (event: FormEvent) => {
-    event.preventDefault()
-    if (action) ctx.dispatch(node, action.name, actionValue(action))
-  }
-  return (
-    <form
-      aria-label={optionalText(node.props?.['label'])}
-      onSubmit={submit}
-      style={{ display: 'grid', gap: tokens.space.md }}
-    >
-      {children}
-    </form>
   )
 }

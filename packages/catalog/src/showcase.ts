@@ -73,7 +73,8 @@ export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
       {
         id: 'edit-form',
         type: 'Form',
-        props: { label: 'Plan details' },
+        props: { label: 'Plan details', submitLabel: 'Save plan' },
+        actions: [{ name: 'submit', path: 'fast', stateKeys: ['title', 'notes'] }],
         children: [
           { id: 'title-label', type: 'Label', props: { text: 'Title input' } },
           {
@@ -81,14 +82,12 @@ export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
             type: 'Input',
             binding: 'title',
             props: { label: 'Title input', placeholder: 'Plan title' },
-            actions: [{ name: 'change', path: 'fast', stateKey: 'title' }],
           },
           {
             id: 'notes-textarea',
             type: 'Textarea',
             binding: 'notes',
             props: { label: 'Notes', rows: 3 },
-            actions: [{ name: 'change', path: 'fast', stateKey: 'notes' }],
           },
           {
             id: 'regenerate-button',
