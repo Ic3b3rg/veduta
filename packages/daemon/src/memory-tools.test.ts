@@ -7,7 +7,7 @@ import type { ToolContext } from './agent-runner.ts'
 import { MemoryConfigSchema } from './memory-config.ts'
 import { MemoryIndex } from './memory-index.ts'
 import { MemoryRetrieval } from './memory-retrieval.ts'
-import { createMemoryTools } from './memory-tools.ts'
+import { MAX_WRITTEN_FACT_CHARS, createMemoryTools } from './memory-tools.ts'
 import { seedSpaces } from './seed.ts'
 import { SpacesEngine } from './spaces-engine.ts'
 import { TurnTaintAccumulator, type Origin } from './taint.ts'
@@ -217,6 +217,33 @@ describe('memory tools', () => {
         },
       ],
     })
+  })
+
+  it('can refine an imported fact longer than the new-fact write limit', async () => {
+    const engine = new SpacesEngine({
+      rootDir: await tempRoot(),
+      now: fixedNow,
+      seed: seedSpaces(),
+    })
+    const importedFact = `Legacy profile detail ${'x'.repeat(MAX_WRITTEN_FACT_CHARS)}`
+    engine.writeFact('spc-health', importedFact, 'untrusted:import')
+    const writeFact = requireTool(
+      createMemoryTools(engine, { activeSpaceId: 'spc-health' }),
+      'write_fact',
+    )
+
+    const result = await writeFact.handler(
+      writeFact.schema.parse({ fact: 'Current profile detail', supersedes: importedFact }),
+      toolContext('write-import-refinement', 'trusted:user'),
+    )
+
+    expect(result.content).toBe('FACTS update: Current profile detail')
+    expect(engine.readFacts('spc-health').active.map((fact) => fact.text)).toEqual([
+      'Current profile detail',
+    ])
+    expect(engine.readFacts('spc-health').superseded.map((fact) => fact.text)).toEqual([
+      importedFact,
+    ])
   })
 
   it('renders untrusted events inside delimiters in read_recent and search_log results', async () => {

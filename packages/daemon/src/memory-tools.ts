@@ -83,7 +83,10 @@ function isReservedEventType(type: string): boolean {
 
 const WriteFactSchema = SpaceScopedSchema.extend({
   fact: z.string().trim().min(1).max(MAX_WRITTEN_FACT_CHARS),
-  supersedes: z.string().trim().min(1).max(MAX_WRITTEN_FACT_CHARS).optional(),
+  // This selects persisted state rather than writing new text. Imported and
+  // manually maintained FACTS can predate the write cap, so every active fact
+  // must remain addressable by its exact text.
+  supersedes: z.string().trim().min(1).optional(),
 })
 
 const AppendEventSchema = SpaceScopedSchema.extend({
