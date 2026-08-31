@@ -162,3 +162,4 @@ blocker is closed.
 | 135 | [Pull-based personal Mailbox roadmap](135-pull-based-personal-mailbox.md)                            | Proactivity  |
 | 136 | [Global chat multi-Space work](136-global-chat-multi-space.md)                                       | Core         |
 | 137 | [Focused chat Space proposal](137-focused-chat-space-proposal.md)                                    | Core         |
+| 142 | [Atomic Form text submit](142-form-text-edits-submit-atomically.md)                                  | Core         |
