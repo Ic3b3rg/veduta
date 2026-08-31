@@ -38,6 +38,7 @@ import {
   parseFactsMarkdown,
   searchFacts as searchFactsDocument,
   type CuratorOperation,
+  type CuratorOptions,
   type FactRecord,
   type FactsDocument,
 } from './facts.ts'
@@ -275,19 +276,16 @@ export class SpacesEngine {
   }
 
   /**
-   * `options.mode: 'conservative'` (issues/021-advanced-memory.md's nightly
-   * Reflection) is forwarded verbatim to `curateFact`: the Reflection must
-   * never falsely supersede a still-valid fact the way the default mode's
-   * topic-similarity heuristic sometimes does (`facts.ts`'s `curateFact`
-   * doc comment), so it opts out of that branch entirely rather than this
-   * method silently deciding the mode on the caller's behalf. Every
-   * existing caller omits `options` and keeps the default mode unchanged.
+   * `options.supersedes` is forwarded to `curateFact` for a refinement whose
+   * replacement intent cannot be established from a contradiction. The
+   * target must match one active fact exactly after normalisation; a stale or
+   * unknown target fails instead of silently adding a conflicting claim.
    */
   writeFact(
     spaceId: string,
     factText: string,
     origin?: Origin,
-    options?: { mode?: 'default' | 'conservative' },
+    options?: CuratorOptions,
   ): WriteFactResult {
     const space = this.requireSpace(spaceId)
     const date = this.today()

@@ -22,9 +22,9 @@ import { effectiveOrigin, type Origin } from './taint.ts'
  * compute" for every active, non-System Space. Once a night (default 04:00
  * user-local, docs/adr/0006-file-based-memory.md), it distills the day's
  * Event log into summaries and a small number of higher-level insights,
- * consolidates FACTS losslessly through the AUDN Curator in its
- * conservative mode, and demotes the least-relevant still-valid facts to
- * `dormant` to bring the injected active set back under the `low` budget
+ * consolidates FACTS losslessly through the AUDN Curator, and demotes the
+ * least-relevant still-valid facts to `dormant` to bring the injected active
+ * set back under the `low` budget
  * watermark. It never deletes, never falsely supersedes, and never hides an
  * active fact from the user: a demoted record stays on disk and in the
  * Event log, just no longer injected by default (`facts.ts`).
@@ -334,9 +334,7 @@ export class Reflection {
         continue
       }
 
-      const result = this.store.spacesEngine.writeFact(spaceId, fact.text, evidence.origin, {
-        mode: 'conservative',
-      })
+      const result = this.store.spacesEngine.writeFact(spaceId, fact.text, evidence.origin)
       if (result.operation === 'reactivate') {
         reactivated += 1
       } else if (result.operation === 'noop') {

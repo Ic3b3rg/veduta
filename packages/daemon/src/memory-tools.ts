@@ -83,6 +83,10 @@ function isReservedEventType(type: string): boolean {
 
 const WriteFactSchema = SpaceScopedSchema.extend({
   fact: z.string().trim().min(1).max(MAX_WRITTEN_FACT_CHARS),
+  // This selects persisted state rather than writing new text. Imported and
+  // manually maintained FACTS can predate the write cap, so every active fact
+  // must remain addressable by its exact text.
+  supersedes: z.string().trim().min(1).optional(),
 })
 
 const AppendEventSchema = SpaceScopedSchema.extend({
@@ -155,7 +159,7 @@ export function createMemoryTools(
     defineTool({
       name: 'write_fact',
       description:
-        'Write one durable FACTS entry for the active Space. The Curator decides Add, Update, Supersede, or Noop.',
+        'Write one durable FACTS entry for the active Space. The Curator supersedes only established contradictions. For a refinement, pass supersedes with the exact active fact text this write replaces.',
       schema: WriteFactSchema,
       level: 'L0',
       egressDomains: [],
@@ -165,6 +169,7 @@ export function createMemoryTools(
           spaceId,
           input.fact,
           effectiveToolWriteOrigin(context.taint.origins(), context.origin),
+          input.supersedes === undefined ? undefined : { supersedes: input.supersedes },
         )
         return {
           content: `FACTS ${result.operation}: ${result.fact.text}`,

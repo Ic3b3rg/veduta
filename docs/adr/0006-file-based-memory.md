@@ -4,6 +4,12 @@ For each Space: `FACTS.md` (curated bi-temporal facts, always injected), an appe
 
 Adopted grafts from the literature: bi-temporal facts with `## Superseded` (Zep/TOKI), an Add/Update/Supersede/Noop Curator on writes (Mem0), offline nightly Reflection (sleep-time compute, ~5x less compute at runtime), a time-aware index (LongMemEval), an abstention rule in SOUL ("if it's not in memory, say so").
 
+The Curator treats topic proximity only as a candidate lookup. It retires an active fact only when
+it establishes a contradiction or when `write_fact` explicitly names that fact through
+`supersedes`; an unknown explicit target fails. This keeps `## Superseded` equivalent to "no longer
+true" without guessing that two values on the same topic represent one claim. The full rationale is
+recorded in [issue 034](../../issues/034-curator-false-supersede.md).
+
 Status: accepted
 
 ## Amendment (issue 021): the `dormant` state, and a working set

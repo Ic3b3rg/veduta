@@ -506,14 +506,13 @@ describe('SpacesEngine taint tracking', () => {
     const engine = new SpacesEngine({ rootDir, now: fixedNow })
     const space = engine.createSpace({ name: 'Health' })
 
-    // Same topic key ⇒ the second write supersedes the first: the tainted
+    // An established contradiction supersedes the first write: the tainted
     // fact moves to Superseded but stays visible in the projected FACTS
     // text, so a later turn must keep gating on it.
-    const tainted = engine.writeFact(space.id, 'Meeting moved to Friday', 'untrusted:gmail')
+    const tainted = engine.writeFact(space.id, 'I hate celery', 'untrusted:gmail')
     expect(tainted.fact.origin).toBe('untrusted:gmail')
-    const superseding = engine.writeFact(space.id, 'Meeting moved to Monday')
-    // Both curator outcomes move the previous fact to Superseded.
-    expect(['update', 'supersede']).toContain(superseding.operation)
+    const superseding = engine.writeFact(space.id, 'I like celery now')
+    expect(superseding.operation).toBe('supersede')
 
     expect(engine.readFacts(space.id).superseded.some((fact) => fact.origin)).toBe(true)
     expect(engine.contextOrigins(space.id)).toContain('untrusted:gmail')

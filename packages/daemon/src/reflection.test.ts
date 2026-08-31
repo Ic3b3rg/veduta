@@ -189,8 +189,8 @@ describe('runReflection: demotion to the low budget', () => {
   })
 })
 
-describe('runReflection: conservative Curator mode', () => {
-  it('keeps two non-contradicting facts sharing a topic key, which the default mode would collapse', async () => {
+describe('runReflection: Curator consolidation', () => {
+  it('keeps two non-contradicting facts sharing a topic key', async () => {
     const config = memoryConfig()
     clock = new Date('2026-07-08T03:00:00.000Z')
     const costEvent = store.spacesEngine.appendEvent(HEALTH, {

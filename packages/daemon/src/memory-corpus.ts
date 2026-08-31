@@ -220,9 +220,9 @@ export const CORPUS_ABSENT_TOPICS: readonly string[] = ['chess tournament', 'scu
 
 /** The FACTS entries written through `SpacesEngine.writeFact`/`demoteFacts`, with the `noted` date every write actually receives. */
 export interface CorpusFacts {
-  /** Ends up active: the same-topic update below supersedes `supersededText`. */
+  /** Ends up active: the explicit refinement below supersedes `supersededText`. */
   activeText: string
-  /** Ends up in `## Superseded` once the update above lands. */
+  /** Ends up in `## Superseded` once the explicit refinement above lands. */
   supersededText: string
   /** Written active, then moved to `## Dormant` by an explicit `demoteFacts` call. */
   dormantText: string
@@ -299,10 +299,12 @@ export function seedMemoryCorpus(engine: SpacesEngine): { spaceId: string; event
     payload: CORPUS_READER_SUMMARY_EVENT.payload,
   })
 
-  // Written in this order so the same-topic update lands second and
+  // Written in this order so the explicit refinement lands second and
   // supersedes the first: see `CorpusFacts`'s doc comment.
   engine.writeFact(space.id, CORPUS_FACTS.supersededText)
-  engine.writeFact(space.id, CORPUS_FACTS.activeText)
+  engine.writeFact(space.id, CORPUS_FACTS.activeText, undefined, {
+    supersedes: CORPUS_FACTS.supersededText,
+  })
   engine.writeFact(space.id, CORPUS_FACTS.dormantText)
 
   const document = engine.readFacts(space.id)
