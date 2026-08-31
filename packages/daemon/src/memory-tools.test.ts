@@ -187,6 +187,38 @@ describe('memory tools', () => {
     )
   })
 
+  it('refines an active fact only when write_fact names the exact fact it supersedes', async () => {
+    const engine = new SpacesEngine({
+      rootDir: await tempRoot(),
+      now: fixedNow,
+      seed: seedSpaces(),
+    })
+    engine.writeFact('spc-health', 'I weigh 82kg')
+    const writeFact = requireTool(
+      createMemoryTools(engine, { activeSpaceId: 'spc-health' }),
+      'write_fact',
+    )
+
+    const result = await writeFact.handler(
+      writeFact.schema.parse({ fact: 'I weigh 80kg', supersedes: 'I weigh 82kg' }),
+      toolContext('write-refinement', 'trusted:user'),
+    )
+
+    expect(result.content).toBe('FACTS update: I weigh 80kg')
+    expect(engine.readFacts('spc-health')).toEqual({
+      active: [{ text: 'I weigh 80kg', noted: '2026-07-03' }],
+      dormant: [],
+      superseded: [
+        {
+          text: 'I weigh 82kg',
+          noted: '2026-07-03',
+          supersededAt: '2026-07-03',
+          supersededBy: 'I weigh 80kg',
+        },
+      ],
+    })
+  })
+
   it('renders untrusted events inside delimiters in read_recent and search_log results', async () => {
     const engine = new SpacesEngine({
       rootDir: await tempRoot(),

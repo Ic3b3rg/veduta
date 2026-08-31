@@ -34,6 +34,11 @@ export interface CuratorResult {
   previous?: FactRecord
 }
 
+export interface CuratorOptions {
+  /** Exact text of the active fact that this write intentionally replaces. */
+  supersedes?: string
+}
+
 const STOP_WORDS = new Set([
   'a',
   'about',
@@ -130,23 +135,18 @@ export function formatFactsMarkdown(document: FactsDocument, fallbackDate: strin
  * AUDN Curator (docs/adr/0006-file-based-memory.md): Add, Update, Supersede,
  * Noop — plus Reactivate for a fact restated while it is dormant.
  *
- * `options.mode: 'conservative'` (used by the nightly Reflection,
- * issues/021-advanced-memory.md) skips the topic-similarity branch entirely
- * and only ever noops, reactivates or adds. `topicKey` matches on the first
- * two non-stopwords, so in the default mode "gym membership costs 40 euro"
- * replaces an active "gym membership expires in June" and pushes a
- * still-true fact into `## Superseded` even though nothing here actually
- * contradicted it — a known defect of the default topic-similarity
- * heuristic, tracked separately and left unchanged by this function.
- * Reflection must never falsely supersede, so it opts into the conservative
- * mode instead of relying on that heuristic.
+ * Topic proximity only narrows the search for an established contradiction;
+ * it never authorizes retirement by itself. A refinement that the comparison
+ * cannot establish must identify the exact active fact it replaces through
+ * `options.supersedes`, so the writer states the intent instead of the Curator
+ * guessing it (issues/034-curator-false-supersede.md).
  */
 export function curateFact(
   document: FactsDocument,
   factText: string,
   noted: string,
   origin?: Origin,
-  options?: { mode?: 'default' | 'conservative' },
+  options?: CuratorOptions,
 ): CuratorResult {
   const text = normalizeWhitespace(factText)
   if (!text) throw new Error('fact text is required')
@@ -154,12 +154,11 @@ export function curateFact(
   const active = document.active.map((fact) => ({ ...fact }))
   const dormant = document.dormant.map((fact) => ({ ...fact }))
   const superseded = document.superseded.map((fact) => ({ ...fact }))
-  const mode = options?.mode ?? 'default'
 
-  // A fact restated while dormant is reactivated rather than added again,
-  // in both modes: without this, the user restating a fact they already
-  // told us (now sitting quietly in `dormant`) would create a duplicate
-  // active record instead of resurfacing the one that already exists.
+  // A fact restated while dormant is reactivated rather than added again:
+  // without this, the user restating a fact they already told us (now
+  // sitting quietly in `dormant`) would create a duplicate active record
+  // instead of resurfacing the one that already exists.
   const dormantIndex = dormant.findIndex(
     (candidate) => normalizeFactText(candidate.text) === normalizeFactText(text),
   )
@@ -184,16 +183,44 @@ export function curateFact(
     return { operation: 'noop', document: { active, dormant, superseded }, fact: exact }
   }
 
-  if (mode === 'conservative') {
+  if (options?.supersedes !== undefined) {
+    const supersededText = normalizeFactText(options.supersedes)
+    const supersededIndex = active.findIndex(
+      (candidate) => normalizeFactText(candidate.text) === supersededText,
+    )
+    const previous = supersededIndex === -1 ? undefined : active[supersededIndex]
+    if (!supersededText || !previous) {
+      throw new Error(`cannot supersede unknown active fact: ${options.supersedes}`)
+    }
+
+    const nextActive = [...active]
+    nextActive.splice(supersededIndex, 1, fact)
     return {
-      operation: 'add',
-      document: { active: [...active, fact], dormant, superseded },
+      operation: 'update',
+      document: {
+        active: nextActive,
+        dormant,
+        superseded: [
+          ...superseded,
+          {
+            ...previous,
+            noted: previous.noted ?? noted,
+            supersededAt: noted,
+            supersededBy: text,
+          },
+        ],
+      },
       fact,
+      previous,
     }
   }
 
   const key = topicKey(text)
-  const relatedIndex = key ? active.findIndex((candidate) => topicKey(candidate.text) === key) : -1
+  const relatedIndex = key
+    ? active.findIndex(
+        (candidate) => topicKey(candidate.text) === key && contradicts(candidate.text, text),
+      )
+    : -1
 
   if (relatedIndex === -1) {
     return {
@@ -212,12 +239,11 @@ export function curateFact(
     }
   }
 
-  const operation = contradicts(previous.text, text) ? 'supersede' : 'update'
   const nextActive = [...active]
   nextActive.splice(relatedIndex, 1, fact)
 
   return {
-    operation,
+    operation: 'supersede',
     document: {
       active: nextActive,
       dormant,
@@ -417,19 +443,6 @@ function normalizeFactText(text: string): string {
   return wordsIn(text).join(' ')
 }
 
-/**
- * Unicode-aware word extraction. `\p{L}`/`\p{N}` (with the `u` flag) match a
- * letter or digit in any script, not just ASCII. The previous `[a-z0-9]+`
- * regex matched nothing at all for text with no ASCII letters or digits —
- * Japanese, Greek, Cyrillic — so `normalizeFactText` and `topicKey` both
- * collapsed to `''` for every such fact: today they wrongly supersede each
- * other via the exact-match branch in `curateFact`, and under the
- * conservative mode added for the nightly Reflection (issues/021-advanced-memory.md)
- * they would instead wrongly noop each other — either way, a real fact is
- * lost. `normalize('NFC')` runs first so a combining-mark sequence and its
- * precomposed equivalent match identically. For ASCII input this produces
- * byte-identical output to the old regex.
- */
 /**
  * Word runs for comparison and search: NFC-normalized, lowercased, split on
  * anything outside `\p{L}\p{N}`. Deliberately Unicode-aware rather than

@@ -122,42 +122,54 @@ describe('AUDN Curator', () => {
     expect(result.document.active).toEqual([{ text: 'I like oats.', noted: '2026-06-01' }])
   })
 
-  describe('conservative mode (nightly Reflection, issues/021-advanced-memory.md)', () => {
-    it('adds a fact on the same topic instead of guessing it updates or supersedes', () => {
-      const first = curateFact(emptyFactsDocument(), 'gym membership expires in June', '2026-07-01')
-      const conservative = curateFact(
-        first.document,
-        'gym membership costs 40 euro',
-        '2026-07-05',
-        undefined,
-        { mode: 'conservative' },
-      )
+  it('keeps topic-related facts active when they do not contradict each other', () => {
+    const first = curateFact(emptyFactsDocument(), 'gym membership expires in June', '2026-07-01')
+    const second = curateFact(first.document, 'gym membership costs 40 euro', '2026-07-05')
 
-      expect(conservative.operation).toBe('add')
-      expect(conservative.document.active).toEqual([
-        { text: 'gym membership expires in June', noted: '2026-07-01' },
-        { text: 'gym membership costs 40 euro', noted: '2026-07-05' },
-      ])
-      expect(conservative.document.superseded).toEqual([])
+    expect(second.operation).toBe('add')
+    expect(second.document.active).toEqual([
+      { text: 'gym membership expires in June', noted: '2026-07-01' },
+      { text: 'gym membership costs 40 euro', noted: '2026-07-05' },
+    ])
+    expect(second.document.superseded).toEqual([])
+  })
+
+  it('refines a claim only when the caller explicitly identifies the fact it replaces', () => {
+    const first = curateFact(emptyFactsDocument(), 'I weigh 82kg', '2026-07-01')
+    const implicit = curateFact(first.document, 'I weigh 80kg', '2026-07-05')
+    const explicit = curateFact(first.document, 'I weigh 80kg', '2026-07-05', undefined, {
+      supersedes: 'I weigh 82kg',
     })
 
-    it('the same call in default mode still pushes the still-true fact into superseded', () => {
-      const first = curateFact(emptyFactsDocument(), 'gym membership expires in June', '2026-07-01')
-      const defaultMode = curateFact(first.document, 'gym membership costs 40 euro', '2026-07-05')
+    expect(implicit.operation).toBe('add')
+    expect(implicit.document.active).toEqual([
+      { text: 'I weigh 82kg', noted: '2026-07-01' },
+      { text: 'I weigh 80kg', noted: '2026-07-05' },
+    ])
+    expect(implicit.document.superseded).toEqual([])
 
-      expect(defaultMode.operation).not.toBe('add')
-      expect(defaultMode.document.active).toEqual([
-        { text: 'gym membership costs 40 euro', noted: '2026-07-05' },
-      ])
-      expect(defaultMode.document.superseded).toEqual([
-        {
-          text: 'gym membership expires in June',
-          noted: '2026-07-01',
-          supersededAt: '2026-07-05',
-          supersededBy: 'gym membership costs 40 euro',
-        },
-      ])
-    })
+    expect(explicit.operation).toBe('update')
+    expect(explicit.document.active).toEqual([{ text: 'I weigh 80kg', noted: '2026-07-05' }])
+    expect(explicit.document.superseded).toEqual([
+      {
+        text: 'I weigh 82kg',
+        noted: '2026-07-01',
+        supersededAt: '2026-07-05',
+        supersededBy: 'I weigh 80kg',
+      },
+    ])
+  })
+
+  it('rejects an explicit refinement whose active target is stale or unknown', () => {
+    const first = curateFact(emptyFactsDocument(), 'I weigh 82kg', '2026-07-01')
+
+    expect(() =>
+      curateFact(first.document, 'I weigh 80kg', '2026-07-05', undefined, {
+        supersedes: 'I weigh 81kg',
+      }),
+    ).toThrow('cannot supersede unknown active fact: I weigh 81kg')
+    expect(first.document.active).toEqual([{ text: 'I weigh 82kg', noted: '2026-07-01' }])
+    expect(first.document.superseded).toEqual([])
   })
 
   it('does not let two distinct non-Latin facts collapse into the same topic', () => {
