@@ -46,43 +46,20 @@
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
 }
 
-.topbar h1,
+.product-wordmark,
 .auth-shell h1 {
   line-height: 1.1;
   margin: 0;
 }
 
-.topbar h1 {
-  align-items: center;
-  display: flex;
+.product-wordmark {
   font-size: 21px;
-  gap: 9px;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.03em;
 }
 
 .auth-shell h1 {
   font-size: 24px;
   letter-spacing: 0;
-}
-
-.topbar h1::before {
-  background: var(--accent);
-  border-radius: 3px;
-  box-shadow:
-    0 0 0 4px var(--accent-soft-bg),
-    0 0 18px var(--accent-glow);
-  content: '';
-  height: 8px;
-  transform: rotate(45deg);
-  width: 8px;
-}
-
-.topbar p {
-  color: var(--text-muted);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  margin: 5px 0 0 17px;
-  text-transform: uppercase;
 }
 
 .topbar-actions {

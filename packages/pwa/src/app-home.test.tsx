@@ -40,6 +40,35 @@ beforeEach(() => {
 afterEach(resetAppTestBrowser)
 
 describe('App Home', () => {
+  it('keeps the product wordmark free of environment implementation details', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
+    vi.mocked(fetchSpaces).mockResolvedValue({
+      surfaceCursor: 0,
+      spaces: [
+        {
+          id: SYSTEM_SPACE_ID,
+          slug: 'system',
+          name: 'System',
+          archived: false,
+          attention: 0,
+          attentionRevision: 0,
+          surfaces: [],
+        },
+      ],
+    })
+    vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+      fromPartial<OnboardingStatus>({ required: false, completed: true }),
+    )
+    vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
+
+    render(<App />)
+
+    const banner = await screen.findByRole('banner')
+    expect(within(banner).getByRole('heading', { name: 'Veduta' })).toBeDefined()
+    expect(within(banner).queryByText('Loopback profile')).toBeNull()
+    expect(within(banner).queryByText('Passkey session')).toBeNull()
+  })
+
   it('renders metadata-only Space cards that converge on live Surface lifecycle', async () => {
     vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
     vi.mocked(fetchSpaces).mockResolvedValue({

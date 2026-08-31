@@ -34,7 +34,6 @@ export type AppRouteSelection =
     }
 
 interface AppShellProps {
-  authMode: 'dev' | 'production' | undefined
   authToken: string | undefined
   gatewayOnline: boolean
   queuedCount: number
@@ -86,7 +85,6 @@ interface RouteRecovery {
 
 /** The fixed PWA shell; App owns networking and persistence and supplies route-derived selection. */
 export function AppShell({
-  authMode,
   authToken,
   gatewayOnline,
   queuedCount,
@@ -139,10 +137,7 @@ export function AppShell({
         Skip to {mainContentName} content
       </a>
       <header className="topbar">
-        <div>
-          <h1>Veduta</h1>
-          <p>{authMode === 'production' ? 'Passkey session' : 'Loopback profile'}</p>
-        </div>
+        <h1 className="product-wordmark">Veduta</h1>
         <div className="topbar-actions" aria-live="polite">
           <span className={gatewayOnline ? 'status-pill online' : 'status-pill'}>
             {gatewayOnline ? 'Live' : 'Offline-ready'}

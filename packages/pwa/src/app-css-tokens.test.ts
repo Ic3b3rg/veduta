@@ -152,6 +152,10 @@ describe('dark status text aliases reference the raw catalog status tokens', () 
 })
 
 describe('topbar action hierarchy', () => {
+  it('does not synthesize a decorative mark beside the Veduta wordmark', () => {
+    expect(appCss).not.toContain('.topbar h1::before')
+  })
+
   it('keeps the Install action accented instead of applying the secondary glass material', () => {
     const installBlock = extractBlock(appCss, /\.install-button\s*{([^}]*)}/)
 
