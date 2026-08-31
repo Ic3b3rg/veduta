@@ -1,4 +1,4 @@
-import { expect, test, type BrowserContext, type Page } from '@playwright/test'
+import { expect, test, type BrowserContext, type Page, type Route } from '@playwright/test'
 import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stack.ts'
 
 /**
@@ -18,6 +18,7 @@ import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stac
  *   Issue #134 - the Meals projection carries explicit relative-time validity,
  *                a durable occurrence-dated source record, and no expired UI.
  *   Issue #67 - a pinned patch_tree Pending decision is revealed only in the initiating tab.
+ *   Issue #142 - Form text stays local until one atomic, retryable submit and survives reload.
  *
  * Also covers the Space Event log (ADR-0003: every fast-path mutation
  * appends to it) via `GET /api/spaces/spc-health/events` -- both right
@@ -442,6 +443,113 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       observerContext = undefined
     })
 
+    await test.step('Form text submits atomically, retries visibly, and survives reload (issue 142)', async () => {
+      const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
+      await chatInput.fill('send to alice@example.com: original draft')
+      await page.getByRole('button', { name: 'Send' }).click()
+
+      const approvalTitle = 'Approval required: Send message to alice@example.com'
+      const approval = surfaceCard(page, approvalTitle)
+      await expect(approval).toBeVisible()
+      const approvalSurface = await fetchSurfaceByTitle(page, stack!.origin, approvalTitle)
+      const body = approval.getByRole('textbox', { name: 'Body' })
+      const save = approval.getByRole('button', { name: 'Save edits' })
+      await expect(body).toHaveValue('original draft')
+
+      const actionRequests: Record<string, unknown>[] = []
+      let failNextSubmit = true
+      const actionRoute = '**/api/surfaces/*/actions'
+      const handleAction = async (route: Route) => {
+        const requestBody: unknown = route.request().postDataJSON()
+        if (
+          !isRecord(requestBody) ||
+          requestBody['nodeId'] !== 'editable-fields-form' ||
+          requestBody['name'] !== 'submit'
+        ) {
+          await route.continue()
+          return
+        }
+
+        actionRequests.push(requestBody)
+        if (failNextSubmit) {
+          failNextSubmit = false
+          await route.fulfill({
+            status: 503,
+            contentType: 'application/json',
+            body: JSON.stringify({ error: 'Temporary Form failure.' }),
+          })
+          return
+        }
+        await route.continue()
+      }
+      await page.route(actionRoute, handleAction)
+
+      try {
+        const eventsBefore = formSubmitEvents(
+          await fetchSpaceEvents(page, stack!.origin),
+          approvalSurface.id,
+        ).length
+
+        await body.fill('edited and retained')
+
+        expect(actionRequests).toHaveLength(0)
+        expect(
+          formSubmitEvents(await fetchSpaceEvents(page, stack!.origin), approvalSurface.id),
+        ).toHaveLength(eventsBefore)
+
+        // Keyboard submit fails before reaching the daemon: the local draft and
+        // explicit error remain available for a pointer-triggered retry.
+        await body.press('Enter')
+        await expect.poll(() => actionRequests.length).toBe(1)
+        await expect(approval.getByRole('alert')).toHaveText('Temporary Form failure.')
+        await expect(body).toHaveValue('edited and retained')
+        expect(
+          formSubmitEvents(await fetchSpaceEvents(page, stack!.origin), approvalSurface.id),
+        ).toHaveLength(eventsBefore)
+
+        await save.click()
+        await expect.poll(() => actionRequests.length).toBe(2)
+        await expect(approval.getByRole('alert')).toHaveCount(0)
+
+        expect(actionRequests[0]?.['idempotencyKey']).toBe(actionRequests[1]?.['idempotencyKey'])
+        expect(actionRequests[1]).toMatchObject({
+          payload: { value: { 'field.body': 'edited and retained' } },
+        })
+        await expect
+          .poll(async () => {
+            const persisted = await fetchSurface(page, stack!.origin, approvalSurface.id)
+            return persisted.state['field.body']
+          })
+          .toBe('edited and retained')
+
+        const submitEvents = formSubmitEvents(
+          await fetchSpaceEvents(page, stack!.origin),
+          approvalSurface.id,
+        )
+        expect(submitEvents).toHaveLength(eventsBefore + 1)
+        expect(submitEvents.at(-1)?.payload).toMatchObject({
+          stateKeys: ['field.body'],
+          values: { 'field.body': 'edited and retained' },
+        })
+
+        await page.reload()
+        await expect(page.locator('.status-pill.online')).toHaveText('Live')
+        const reloadedApproval = surfaceCard(page, approvalTitle)
+        await expect(reloadedApproval.getByRole('textbox', { name: 'Body' })).toHaveValue(
+          'edited and retained',
+        )
+
+        // Keep the rest of the serial journey free of an unrelated pending approval.
+        await reloadedApproval.getByRole('button', { name: 'Reject', exact: true }).click()
+        await expect(reloadedApproval).toHaveCount(0)
+        await page.goto(`${stack!.origin}/app/space/health`)
+        await expect(page.locator('.status-pill.online')).toHaveText('Live')
+        await expect(page.getByRole('button', { name: 'Focus Groceries' })).toBeVisible()
+      } finally {
+        await page.unroute(actionRoute, handleAction)
+      }
+    })
+
     await test.step('restart persistence (AC3): stop, start a NEW runner on the same base dir/port', async () => {
       await stack!.stop()
       const restarted = await startLocalVpsStack({
@@ -526,7 +634,10 @@ interface SpaceEventEntry {
   text: string
   payload?: {
     role?: string
+    surfaceId?: string
+    stateKeys?: string[]
     toolCalls?: Array<{ toolName?: string }>
+    values?: Record<string, unknown>
   }
 }
 
@@ -548,6 +659,7 @@ async function fetchSpaceEvents(page: Page, origin: string): Promise<SpaceEventE
 
 interface SnapshotSurface {
   id: string
+  title: string
   state: Record<string, unknown>
   validity?: {
     kind: string
@@ -565,6 +677,24 @@ async function fetchSurface(
   origin: string,
   surfaceId: string,
 ): Promise<SnapshotSurface> {
+  const surfaces = await fetchSurfaces(page, origin)
+  const surface = surfaces.find(({ id }) => id === surfaceId)
+  if (!surface) throw new Error(`snapshot did not contain Surface ${surfaceId}`)
+  return surface
+}
+
+async function fetchSurfaceByTitle(
+  page: Page,
+  origin: string,
+  title: string,
+): Promise<SnapshotSurface> {
+  const surfaces = await fetchSurfaces(page, origin)
+  const surface = surfaces.find((candidate) => candidate.title === title)
+  if (!surface) throw new Error(`snapshot did not contain Surface titled ${title}`)
+  return surface
+}
+
+async function fetchSurfaces(page: Page, origin: string): Promise<SnapshotSurface[]> {
   const token = await page.evaluate(() => localStorage.getItem('veduta.authToken'))
   const response = await page.request.get(`${origin}/api/spaces`, {
     headers: token ? { authorization: `Bearer ${token}` } : {},
@@ -573,9 +703,20 @@ async function fetchSurface(
   const body = (await response.json()) as {
     spaces: Array<{ surfaces: SnapshotSurface[] }>
   }
-  const surface = body.spaces.flatMap((space) => space.surfaces).find(({ id }) => id === surfaceId)
-  if (!surface) throw new Error(`snapshot did not contain Surface ${surfaceId}`)
-  return surface
+  return body.spaces.flatMap((space) => space.surfaces)
+}
+
+function formSubmitEvents(events: SpaceEventEntry[], surfaceId: string): SpaceEventEntry[] {
+  return events.filter(
+    (event) =>
+      event.type === 'fast_path' &&
+      event.payload?.surfaceId === surfaceId &&
+      Array.isArray(event.payload.stateKeys),
+  )
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** The Event log entry the mock chat->Surface demo's meal patch produces (`SurfaceEngine.patchState`). */

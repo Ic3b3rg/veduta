@@ -15,7 +15,7 @@ import {
   type SurfaceMoveDirection,
 } from '@veduta/protocol'
 import { z } from 'zod'
-import { authHeaders, getJson, postJson } from './api-http.ts'
+import { authHeaders, errorMessageFromBody, getJson, postJson } from './api-http.ts'
 
 export type SpaceWithSurfaces = SurfaceSnapshot['spaces'][number]
 
@@ -111,7 +111,17 @@ export async function invokeSurfaceAction(
       ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
     }),
   })
-  if (!response.ok) throw new Error(`Surface action failed: ${response.status}`)
+  if (!response.ok) {
+    let body: unknown
+    try {
+      body = await response.json()
+    } catch {
+      body = undefined
+    }
+    throw new Error(
+      errorMessageFromBody(response.status, `/api/surfaces/${surfaceId}/actions`, body),
+    )
+  }
   return SurfaceActionResponseSchema.parse(await response.json())
 }
 
