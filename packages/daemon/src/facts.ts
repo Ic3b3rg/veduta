@@ -154,34 +154,17 @@ export function curateFact(
   const active = document.active.map((fact) => ({ ...fact }))
   const dormant = document.dormant.map((fact) => ({ ...fact }))
   const superseded = document.superseded.map((fact) => ({ ...fact }))
+  const normalizedText = normalizeFactText(text)
+  const fact: FactRecord = { text, noted, ...(origin === undefined ? {} : { origin }) }
 
-  // A fact restated while dormant is reactivated rather than added again:
-  // without this, the user restating a fact they already told us (now
-  // sitting quietly in `dormant`) would create a duplicate active record
-  // instead of resurfacing the one that already exists.
   const dormantIndex = dormant.findIndex(
-    (candidate) => normalizeFactText(candidate.text) === normalizeFactText(text),
+    (candidate) => normalizeFactText(candidate.text) === normalizedText,
   )
   const dormantMatch = dormantIndex === -1 ? undefined : dormant[dormantIndex]
-  if (dormantMatch) {
-    const { dormantAt: _dormantAt, ...reactivated } = dormantMatch
-    const nextDormant = [...dormant]
-    nextDormant.splice(dormantIndex, 1)
-    return {
-      operation: 'reactivate',
-      document: { active: [...active, reactivated], dormant: nextDormant, superseded },
-      fact: reactivated,
-    }
-  }
-
-  const fact: FactRecord = { text, noted, ...(origin === undefined ? {} : { origin }) }
-  const exact = active.find(
-    (candidate) => normalizeFactText(candidate.text) === normalizeFactText(text),
+  const exactIndex = active.findIndex(
+    (candidate) => normalizeFactText(candidate.text) === normalizedText,
   )
-
-  if (exact) {
-    return { operation: 'noop', document: { active, dormant, superseded }, fact: exact }
-  }
+  const exact = exactIndex === -1 ? undefined : active[exactIndex]
 
   if (options?.supersedes !== undefined) {
     const supersededText = normalizeFactText(options.supersedes)
@@ -193,36 +176,68 @@ export function curateFact(
       throw new Error(`cannot supersede unknown active fact: ${options.supersedes}`)
     }
 
+    if (exactIndex === supersededIndex && exact) {
+      return { operation: 'noop', document: { active, dormant, superseded }, fact: exact }
+    }
+
+    let replacement = fact
     const nextActive = [...active]
-    nextActive.splice(supersededIndex, 1, fact)
+    let nextDormant = dormant
+    if (exact) {
+      replacement = exact
+      nextActive.splice(supersededIndex, 1)
+    } else if (dormantMatch) {
+      const { dormantAt: _dormantAt, ...reactivated } = dormantMatch
+      replacement = reactivated
+      nextDormant = [...dormant]
+      nextDormant.splice(dormantIndex, 1)
+      nextActive.splice(supersededIndex, 1, reactivated)
+    } else {
+      nextActive.splice(supersededIndex, 1, fact)
+    }
+
     return {
       operation: 'update',
       document: {
         active: nextActive,
-        dormant,
-        superseded: [
-          ...superseded,
-          {
-            ...previous,
-            noted: previous.noted ?? noted,
-            supersededAt: noted,
-            supersededBy: text,
-          },
-        ],
+        dormant: nextDormant,
+        superseded: [...superseded, supersededFact(previous, noted, replacement.text)],
       },
-      fact,
+      fact: replacement,
       previous,
     }
   }
 
+  // A fact restated while dormant is reactivated rather than added again:
+  // without this, the user restating a fact they already told us (now
+  // sitting quietly in `dormant`) would create a duplicate active record
+  // instead of resurfacing the one that already exists.
+  if (dormantMatch) {
+    const { dormantAt: _dormantAt, ...reactivated } = dormantMatch
+    const nextDormant = [...dormant]
+    nextDormant.splice(dormantIndex, 1)
+    return {
+      operation: 'reactivate',
+      document: { active: [...active, reactivated], dormant: nextDormant, superseded },
+      fact: reactivated,
+    }
+  }
+
+  if (exact) {
+    return { operation: 'noop', document: { active, dormant, superseded }, fact: exact }
+  }
+
   const key = topicKey(text)
-  const relatedIndex = key
-    ? active.findIndex(
-        (candidate) => topicKey(candidate.text) === key && contradicts(candidate.text, text),
-      )
-    : -1
+  const contradictions = key
+    ? active
+        .map((candidate, index) => ({ candidate, index }))
+        .filter(
+          ({ candidate }) => topicKey(candidate.text) === key && contradicts(candidate.text, text),
+        )
+    : []
+  const firstContradiction = contradictions[0]
 
-  if (relatedIndex === -1) {
+  if (!firstContradiction) {
     return {
       operation: 'add',
       document: { active: [...active, fact], dormant, superseded },
@@ -230,17 +245,9 @@ export function curateFact(
     }
   }
 
-  const previous = active[relatedIndex]
-  if (!previous) {
-    return {
-      operation: 'add',
-      document: { active: [...active, fact], dormant, superseded },
-      fact,
-    }
-  }
-
-  const nextActive = [...active]
-  nextActive.splice(relatedIndex, 1, fact)
+  const contradictionIndexes = new Set(contradictions.map(({ index }) => index))
+  const nextActive = active.filter((_candidate, index) => !contradictionIndexes.has(index))
+  nextActive.splice(firstContradiction.index, 0, fact)
 
   return {
     operation: 'supersede',
@@ -249,16 +256,11 @@ export function curateFact(
       dormant,
       superseded: [
         ...superseded,
-        {
-          ...previous,
-          noted: previous.noted ?? noted,
-          supersededAt: noted,
-          supersededBy: text,
-        },
+        ...contradictions.map(({ candidate }) => supersededFact(candidate, noted, text)),
       ],
     },
     fact,
-    previous,
+    previous: firstContradiction.candidate,
   }
 }
 
@@ -416,6 +418,15 @@ function factRecord(input: FactRecord): FactRecord {
     ...(input.supersededAt === undefined ? {} : { supersededAt: input.supersededAt }),
     ...(input.supersededBy === undefined ? {} : { supersededBy: input.supersededBy }),
     ...(input.origin === undefined ? {} : { origin: input.origin }),
+  }
+}
+
+function supersededFact(previous: FactRecord, noted: string, supersededBy: string): FactRecord {
+  return {
+    ...previous,
+    noted: previous.noted ?? noted,
+    supersededAt: noted,
+    supersededBy,
   }
 }
 

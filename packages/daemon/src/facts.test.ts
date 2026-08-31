@@ -98,6 +98,30 @@ describe('AUDN Curator', () => {
     ])
   })
 
+  it('supersedes every active contradiction on the same topic', () => {
+    const first = curateFact(emptyFactsDocument(), 'I like green tea', '2026-07-01')
+    const second = curateFact(first.document, 'I prefer green tea with meals', '2026-07-02')
+    const third = curateFact(second.document, 'I hate green tea', '2026-07-03')
+
+    expect(second.operation).toBe('add')
+    expect(third.operation).toBe('supersede')
+    expect(third.document.active).toEqual([{ text: 'I hate green tea', noted: '2026-07-03' }])
+    expect(third.document.superseded).toEqual([
+      {
+        text: 'I like green tea',
+        noted: '2026-07-01',
+        supersededAt: '2026-07-03',
+        supersededBy: 'I hate green tea',
+      },
+      {
+        text: 'I prefer green tea with meals',
+        noted: '2026-07-02',
+        supersededAt: '2026-07-03',
+        supersededBy: 'I hate green tea',
+      },
+    ])
+  })
+
   it('keeps exact repeats as Noop and writes dates for every formatted fact', () => {
     const first = curateFact(emptyFactsDocument(), 'I like oats', '2026-07-01')
     const second = curateFact(first.document, 'I like oats', '2026-07-03')
@@ -137,7 +161,7 @@ describe('AUDN Curator', () => {
   it('refines a claim only when the caller explicitly identifies the fact it replaces', () => {
     const first = curateFact(emptyFactsDocument(), 'I weigh 82kg', '2026-07-01')
     const implicit = curateFact(first.document, 'I weigh 80kg', '2026-07-05')
-    const explicit = curateFact(first.document, 'I weigh 80kg', '2026-07-05', undefined, {
+    const explicit = curateFact(implicit.document, 'I weigh 80kg', '2026-07-05', undefined, {
       supersedes: 'I weigh 82kg',
     })
 
@@ -160,16 +184,44 @@ describe('AUDN Curator', () => {
     ])
   })
 
+  it('reactivates an existing dormant replacement named by an explicit refinement', () => {
+    const document = {
+      active: [{ text: 'I weigh 82kg', noted: '2026-07-01' }],
+      dormant: [{ text: 'I weigh 80kg', noted: '2026-06-01', dormantAt: '2026-07-02' }],
+      superseded: [],
+    }
+
+    const result = curateFact(document, 'I weigh 80kg', '2026-07-05', undefined, {
+      supersedes: 'I weigh 82kg',
+    })
+
+    expect(result.operation).toBe('update')
+    expect(result.document.active).toEqual([{ text: 'I weigh 80kg', noted: '2026-06-01' }])
+    expect(result.document.dormant).toEqual([])
+    expect(result.document.superseded).toEqual([
+      {
+        text: 'I weigh 82kg',
+        noted: '2026-07-01',
+        supersededAt: '2026-07-05',
+        supersededBy: 'I weigh 80kg',
+      },
+    ])
+  })
+
   it('rejects an explicit refinement whose active target is stale or unknown', () => {
     const first = curateFact(emptyFactsDocument(), 'I weigh 82kg', '2026-07-01')
+    const withReplacement = curateFact(first.document, 'I weigh 80kg', '2026-07-05')
 
     expect(() =>
-      curateFact(first.document, 'I weigh 80kg', '2026-07-05', undefined, {
+      curateFact(withReplacement.document, 'I weigh 80kg', '2026-07-05', undefined, {
         supersedes: 'I weigh 81kg',
       }),
     ).toThrow('cannot supersede unknown active fact: I weigh 81kg')
-    expect(first.document.active).toEqual([{ text: 'I weigh 82kg', noted: '2026-07-01' }])
-    expect(first.document.superseded).toEqual([])
+    expect(withReplacement.document.active).toEqual([
+      { text: 'I weigh 82kg', noted: '2026-07-01' },
+      { text: 'I weigh 80kg', noted: '2026-07-05' },
+    ])
+    expect(withReplacement.document.superseded).toEqual([])
   })
 
   it('does not let two distinct non-Latin facts collapse into the same topic', () => {
