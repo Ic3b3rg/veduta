@@ -589,17 +589,6 @@
   padding: 12px 0 0 !important;
 }
 
-.surface-focus {
-  font-size: 12px;
-  min-height: 30px;
-  padding: 5px 8px;
-}
-
-.surface-focus[aria-pressed='true'] {
-  background: var(--accent-soft-bg);
-  border-color: var(--accent-soft);
-}
-
 .surface-order {
   display: flex;
   flex: 0 0 auto;
@@ -613,10 +602,13 @@
 }
 
 .surface-pin {
+  align-items: center;
+  display: inline-flex;
   flex: 0 0 auto;
-  font-size: 12px;
+  justify-content: center;
   min-height: 30px;
-  padding: 5px 8px;
+  min-width: 30px;
+  padding: 5px;
 }
 
 .surface-pin[aria-pressed='true'] {

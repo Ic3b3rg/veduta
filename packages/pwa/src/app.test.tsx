@@ -195,11 +195,12 @@ describe('App', () => {
 
     render(<App />)
 
-    const focusButtons = await screen.findAllByRole('button', { name: /^Focus Gateway/ })
-    expect(focusButtons.map((button) => button.getAttribute('aria-label'))).toEqual([
-      'Focus Gateway first',
-      'Focus Gateway second',
+    const surfaces = await screen.findAllByRole('article', { name: /^Gateway .* Surface$/ })
+    expect(surfaces.map((surface) => surface.getAttribute('aria-label'))).toEqual([
+      'Gateway first Surface',
+      'Gateway second Surface',
     ])
+    expect(screen.queryByRole('button', { name: /^Focus Gateway/ })).toBeNull()
     expect(localStorage.getItem(SURFACE_ORDER_KEY)).toBeNull()
   })
 
@@ -272,9 +273,9 @@ describe('App', () => {
 
     expect(
       screen
-        .getAllByRole('button', { name: /^Focus Gateway/ })
-        .map((button) => button.getAttribute('aria-label')),
-    ).toEqual(['Focus Gateway first', 'Focus Gateway second'])
+        .getAllByRole('article', { name: /^Gateway .* Surface$/ })
+        .map((surface) => surface.getAttribute('aria-label')),
+    ).toEqual(['Gateway first Surface', 'Gateway second Surface'])
   })
 
   it('renders a selected-subscription Surface, streamed confirmation, and follow-up patch live', async () => {
@@ -350,7 +351,7 @@ describe('App', () => {
       })
     })
 
-    expect(await screen.findByRole('button', { name: 'Focus Hydration' })).toBeDefined()
+    expect(await screen.findByRole('article', { name: 'Hydration Surface' })).toBeDefined()
     expect(screen.getByText('Needs water')).toBeDefined()
     expect(screen.getByText('Hydration Surface created.')).toBeDefined()
     atomAnimations.length = 0
@@ -465,7 +466,7 @@ describe('App', () => {
 
     render(<App />)
 
-    expect(await screen.findByRole('button', { name: 'Focus Meals' })).toBeDefined()
+    expect(await screen.findByRole('article', { name: 'Meals Surface' })).toBeDefined()
     await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
     const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
     if (!handlers) throw new Error('Gateway handlers were not registered')
@@ -876,13 +877,13 @@ describe('App', () => {
       handlers.onSurfaceCreated(correlatedMessage)
     })
 
-    const focusButton = await screen.findByRole('button', { name: 'Focus Weekly groceries' })
+    const surfaceArticle = await screen.findByRole('article', {
+      name: 'Weekly groceries Surface',
+    })
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
     expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' })
-    expect(focusButton.closest('article')?.classList.contains('surface-reveal-highlight')).toBe(
-      true,
-    )
-    expect(focusButton.getAttribute('aria-pressed')).toBe('false')
+    expect(surfaceArticle.classList.contains('surface-reveal-highlight')).toBe(true)
+    expect(surfaceArticle.getAttribute('aria-current')).toBeNull()
     expect(document.activeElement).toBe(chatInput)
     expect(location.pathname).toBe('/app/space/health')
   })
@@ -912,8 +913,8 @@ describe('App', () => {
       })
     })
 
-    const focusButton = await screen.findByRole('button', {
-      name: 'Focus Proposed layout change: Weekly plan',
+    const surfaceArticle = await screen.findByRole('article', {
+      name: 'Proposed layout change: Weekly plan Surface',
     })
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
     expect(location.pathname).toBe('/app/space/health')
@@ -926,11 +927,9 @@ describe('App', () => {
     await screen.findByRole('article', { name: 'Update the weekly plan' })
     expect(location.pathname).toBe('/app/space/health')
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
-    expect(focusButton.getAttribute('aria-pressed')).toBe('false')
-    expect(focusButton.closest('article')?.classList.contains('pinned')).toBe(false)
-    expect(focusButton.closest('article')?.classList.contains('surface-reveal-highlight')).toBe(
-      true,
-    )
+    expect(surfaceArticle.getAttribute('aria-current')).toBeNull()
+    expect(surfaceArticle.classList.contains('pinned')).toBe(false)
+    expect(surfaceArticle.classList.contains('surface-reveal-highlight')).toBe(true)
     expect(document.activeElement).toBe(chatInput)
 
     act(() => {
@@ -970,11 +969,11 @@ describe('App', () => {
     act(() => handlers.onChatTurnReplace(replacement))
 
     await waitFor(() => expect(location.pathname).toBe(`/app/space/health/surface/${surfaceId}`))
-    const focusButton = await screen.findByRole('button', {
-      name: 'Focus Proposed layout change: Weekly plan',
+    const surfaceArticle = await screen.findByRole('article', {
+      name: 'Proposed layout change: Weekly plan Surface',
     })
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
-    expect(focusButton.getAttribute('aria-pressed')).toBe('true')
+    expect(surfaceArticle.getAttribute('aria-current')).toBe('true')
     expect(document.activeElement).toBe(chatInput)
   })
 
@@ -1032,10 +1031,10 @@ describe('App', () => {
     })
     fireEvent.click(screen.getByRole('link', { name: /Health/ }))
 
-    const focusButton = await screen.findByRole('button', { name: 'Focus Background decision' })
-    expect(focusButton.closest('article')?.classList.contains('surface-reveal-highlight')).toBe(
-      false,
-    )
+    const surfaceArticle = await screen.findByRole('article', {
+      name: 'Background decision Surface',
+    })
+    expect(surfaceArticle.classList.contains('surface-reveal-highlight')).toBe(false)
     expect(scrollIntoView).not.toHaveBeenCalled()
   })
 
@@ -1204,8 +1203,8 @@ describe('App', () => {
     )
     expect(
       screen
-        .getByRole('button', { name: 'Focus Review hydration change' })
-        .getAttribute('aria-pressed'),
+        .getByRole('article', { name: 'Review hydration change Surface' })
+        .getAttribute('aria-current'),
     ).toBe('true')
 
     act(() => {
@@ -1686,13 +1685,13 @@ describe('App', () => {
       })
     })
 
-    const focusButton = await screen.findByRole('button', { name: 'Focus Reduced motion' })
+    const surfaceArticle = await screen.findByRole('article', {
+      name: 'Reduced motion Surface',
+    })
     await waitFor(() =>
       expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'center' }),
     )
-    expect(focusButton.closest('article')?.classList.contains('surface-reveal-highlight')).toBe(
-      true,
-    )
+    expect(surfaceArticle.classList.contains('surface-reveal-highlight')).toBe(true)
   })
 
   it('renders the status-unavailable screen instead of Home when the onboarding status fetch fails on a production session', async () => {

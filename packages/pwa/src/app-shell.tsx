@@ -55,7 +55,7 @@ interface AppShellProps {
   onOpenModelConnections: () => void
   onRetrySpaces: () => void
   onInstallDone: () => void
-  onFocusSpace: (space: SpaceWithSurfaces, surface?: Surface) => void
+  onFocusSpace: (space: SpaceWithSurfaces) => void
   onMoveSurface: (
     space: SpaceWithSurfaces,
     surfaceId: string,
@@ -251,7 +251,6 @@ export function AppShell({
               focusedSurfaceId={focusedSurfaceId}
               surfaceRevealFeedbackKeys={surfaceRevealFeedbackKeys}
               surfaceUpdateFeedbacks={surfaceUpdateFeedbacks}
-              onFocus={onFocusSpace}
               onMoveSurface={onMoveSurface}
               onPatched={onSurfacePatched}
               onQueueFastAction={onQueueFastAction}

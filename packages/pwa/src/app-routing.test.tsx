@@ -160,9 +160,9 @@ async function expectFocusedHealthRoute(path: string, surfaceSelected: boolean):
       'true',
     ),
   )
-  expect(screen.getByRole('button', { name: 'Focus Hydration' }).getAttribute('aria-pressed')).toBe(
-    String(surfaceSelected),
-  )
+  const surface = screen.getByRole('article', { name: 'Hydration Surface' })
+  expect(surface.getAttribute('aria-current')).toBe(surfaceSelected ? 'true' : null)
+  expect(screen.queryByRole('button', { name: 'Focus Hydration' })).toBeNull()
   expect(location.pathname).toBe(path)
 }
 
@@ -264,8 +264,8 @@ describe('App routing', () => {
 
     render(<App />)
 
-    expect(await screen.findByRole('button', { name: 'Focus Hydration' })).toBeDefined()
-    expect(screen.queryByRole('button', { name: 'Focus Roadmap' })).toBeNull()
+    expect(await screen.findByRole('article', { name: 'Hydration Surface' })).toBeDefined()
+    expect(screen.queryByRole('article', { name: 'Roadmap Surface' })).toBeNull()
     expect(screen.getByRole('heading', { name: 'Health', level: 2 })).toBeDefined()
     expect(screen.queryByRole('heading', { name: 'Work', level: 2 })).toBeNull()
     expect(screen.getByRole('button', { name: /Work/ })).toBeDefined()
@@ -282,8 +282,8 @@ describe('App routing', () => {
 
     expect(await screen.findByRole('heading', { name: heading, level: 2 })).toBeDefined()
     expect(screen.getByRole('link', { name: 'Back to Home' })).toBeDefined()
-    expect(screen.queryByRole('button', { name: 'Focus Hydration' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Focus Roadmap' })).toBeNull()
+    expect(screen.queryByRole('article', { name: 'Hydration Surface' })).toBeNull()
+    expect(screen.queryByRole('article', { name: 'Roadmap Surface' })).toBeNull()
     expect(location.pathname).toBe(path)
 
     fireEvent.click(screen.getByRole('link', { name: 'Back to Home' }))
@@ -297,29 +297,29 @@ describe('App routing', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /Health/ }))
     await waitFor(() => expect(location.pathname).toBe('/app/space/health'))
-    expect(screen.getByRole('button', { name: 'Focus Hydration' })).toBeDefined()
-    expect(screen.queryByRole('button', { name: 'Focus Roadmap' })).toBeNull()
+    expect(screen.getByRole('article', { name: 'Hydration Surface' })).toBeDefined()
+    expect(screen.queryByRole('article', { name: 'Roadmap Surface' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: /Work/ }))
     await waitFor(() => expect(location.pathname).toBe('/app/space/work'))
-    expect(screen.getByRole('button', { name: 'Focus Roadmap' })).toBeDefined()
-    expect(screen.queryByRole('button', { name: 'Focus Hydration' })).toBeNull()
+    expect(screen.getByRole('article', { name: 'Roadmap Surface' })).toBeDefined()
+    expect(screen.queryByRole('article', { name: 'Hydration Surface' })).toBeNull()
 
     act(() => history.back())
     await waitFor(() => expect(location.pathname).toBe('/app/space/health'))
-    expect(await screen.findByRole('button', { name: 'Focus Hydration' })).toBeDefined()
+    expect(await screen.findByRole('article', { name: 'Hydration Surface' })).toBeDefined()
 
     act(() => history.forward())
     await waitFor(() => expect(location.pathname).toBe('/app/space/work'))
-    expect(await screen.findByRole('button', { name: 'Focus Roadmap' })).toBeDefined()
+    expect(await screen.findByRole('article', { name: 'Roadmap Surface' })).toBeDefined()
 
     fireEvent.click(screen.getByRole('link', { name: 'Home' }))
     await waitFor(() => expect(location.pathname).toBe('/'))
     const home = screen.getByRole('main', { name: 'Home' })
     expect(within(home).getByRole('link', { name: /Health/ })).toBeDefined()
     expect(within(home).getByRole('link', { name: /Work/ })).toBeDefined()
-    expect(within(home).queryByRole('button', { name: 'Focus Hydration' })).toBeNull()
-    expect(within(home).queryByRole('button', { name: 'Focus Roadmap' })).toBeNull()
+    expect(within(home).queryByRole('article', { name: 'Hydration Surface' })).toBeNull()
+    expect(within(home).queryByRole('article', { name: 'Roadmap Surface' })).toBeNull()
   })
 
   it('visibly positions the Surface requested by the nested route', async () => {
@@ -330,7 +330,7 @@ describe('App routing', () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: 'Focus Hydration' }).getAttribute('aria-pressed'),
+        screen.getByRole('article', { name: 'Hydration Surface' }).getAttribute('aria-current'),
       ).toBe('true'),
     )
     expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({
@@ -340,6 +340,7 @@ describe('App routing', () => {
   })
 
   it('derives global and Space chat scope only from the active route', async () => {
+    const serviceWorkerMessages = installServiceWorkerMessages()
     const sendChat = vi.fn(() => true)
     vi.mocked(connectGateway).mockReturnValue({ close: vi.fn(), sendChat })
     mockReadyApp(healthAndWorkSpaces())
@@ -359,7 +360,7 @@ describe('App routing', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     expect(sendChat).toHaveBeenLastCalledWith('Space question', 'spc-health')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Focus Hydration' }))
+    navigateFromServiceWorker(serviceWorkerMessages, '/app/space/health/surface/srf-hydration')
     await waitFor(() => expect(location.pathname).toBe('/app/space/health/surface/srf-hydration'))
     const surfaceChat = screen.getByRole('textbox', { name: 'Message Veduta in Health' })
     fireEvent.change(surfaceChat, { target: { value: 'Surface-route question' } })
@@ -428,7 +429,7 @@ describe('App routing', () => {
     expect(await screen.findByText('On track')).toBeDefined()
     expect(screen.queryByText('Needs water')).toBeNull()
     expect(
-      screen.getByRole('button', { name: 'Focus Hydration' }).getAttribute('aria-pressed'),
+      screen.getByRole('article', { name: 'Hydration Surface' }).getAttribute('aria-current'),
     ).toBe('true')
   })
 

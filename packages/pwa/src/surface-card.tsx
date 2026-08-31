@@ -26,7 +26,6 @@ export function SurfaceCard({
   updateFeedback,
   canMoveUp,
   canMoveDown,
-  onFocus,
   onMoveUp,
   onMoveDown,
   onPatched,
@@ -42,7 +41,6 @@ export function SurfaceCard({
   updateFeedback?: SurfaceUpdateFeedback | undefined
   canMoveUp: boolean
   canMoveDown: boolean
-  onFocus: () => void
   onMoveUp: () => void
   onMoveDown: () => void
   onPatched: (surface: Surface, affectedAtomIds?: readonly string[], surfaceCursor?: number) => void
@@ -152,18 +150,11 @@ export function SurfaceCard({
       ]
         .filter(Boolean)
         .join(' ')}
+      aria-label={`${surface.title} Surface`}
+      aria-current={selected ? 'true' : undefined}
     >
       <div className="surface-toolbar">
-        <button
-          type="button"
-          className="surface-focus"
-          onClick={onFocus}
-          aria-label={`Focus ${surface.title}`}
-          aria-pressed={selected}
-        >
-          Focus
-        </button>
-        <div className="surface-order">
+        <div className="surface-order" role="group" aria-label={`Reorder ${surface.title}`}>
           <button
             type="button"
             onClick={onMoveUp}
@@ -187,9 +178,10 @@ export function SurfaceCard({
             className="surface-pin"
             onClick={() => onTogglePin(!surface.pinned)}
             aria-pressed={surface.pinned}
-            aria-label={`${surface.pinned ? 'Pinned' : 'Pin'} ${surface.title}`}
+            aria-label={`Pin ${surface.title}`}
+            title={surface.pinned ? 'Unpin' : 'Pin'}
           >
-            {surface.pinned ? 'Pinned' : 'Pin'}
+            <PinIcon />
           </button>
         )}
       </div>
@@ -215,6 +207,15 @@ export function SurfaceCard({
         updated {freshnessLabel(surface.freshness.updatedAt)} by {surface.freshness.updatedBy}
       </div>
     </article>
+  )
+}
+
+function PinIcon() {
+  return (
+    <svg className="button-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M6 3h8l-1 5 2 3H5l2-3-1-5Z" />
+      <path d="M10 11v6" />
+    </svg>
   )
 }
 

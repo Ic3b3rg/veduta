@@ -12,7 +12,6 @@ export function SpaceSection({
   focusedSurfaceId,
   surfaceRevealFeedbackKeys,
   surfaceUpdateFeedbacks,
-  onFocus,
   onMoveSurface,
   onPatched,
   onQueueFastAction,
@@ -26,7 +25,6 @@ export function SpaceSection({
   focusedSurfaceId: string | undefined
   surfaceRevealFeedbackKeys: Record<string, string>
   surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback>
-  onFocus: (space: SpaceWithSurfaces, surface?: Surface) => void
   onMoveSurface: (
     space: SpaceWithSurfaces,
     surfaceId: string,
@@ -66,7 +64,6 @@ export function SpaceSection({
             updateFeedback={surfaceUpdateFeedbacks[surface.id]}
             canMoveUp={index > 0}
             canMoveDown={index < surfaces.length - 1}
-            onFocus={() => onFocus(space, surface)}
             onMoveUp={() => onMoveSurface(space, surface.id, 'up')}
             onMoveDown={() => onMoveSurface(space, surface.id, 'down')}
             onPatched={onPatched}

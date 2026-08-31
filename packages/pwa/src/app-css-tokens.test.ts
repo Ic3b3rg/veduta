@@ -222,6 +222,9 @@ describe('compact mobile shell geometry', () => {
     expect(appCss).toMatch(
       /@media \(max-width: 560px\)[\s\S]*?\.chat-scroll-to-bottom\s*{[^}]*height:\s*44px;/,
     )
+    expect(appCss).toMatch(
+      /@media \(max-width: 560px\)[\s\S]*?\.surface-pin\s*{[^}]*min-width:\s*44px;/,
+    )
   })
 })
 

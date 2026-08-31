@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { SurfaceSchema } from '@veduta/protocol'
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SurfaceCard } from './surface-card.tsx'
 
@@ -30,7 +30,6 @@ describe('SurfaceCard relative-time validity', () => {
         selected={false}
         canMoveUp={false}
         canMoveDown={false}
-        onFocus={vi.fn()}
         onMoveUp={vi.fn()}
         onMoveDown={vi.fn()}
         onPatched={vi.fn()}
@@ -68,7 +67,6 @@ describe('SurfaceCard material hierarchy', () => {
         selected={true}
         canMoveUp={false}
         canMoveDown={false}
-        onFocus={vi.fn()}
         onMoveUp={vi.fn()}
         onMoveDown={vi.fn()}
         onPatched={vi.fn()}
@@ -81,10 +79,51 @@ describe('SurfaceCard material hierarchy', () => {
 
     const card = container.querySelector('article.surface-card')
     expect(card?.classList.contains('pinned')).toBe(true)
+    expect(card?.getAttribute('aria-current')).toBe('true')
+    const pin = screen.getByRole('button', { name: 'Pin Daily spending' })
+    expect(pin.getAttribute('aria-pressed')).toBe('true')
+    expect(pin.getAttribute('title')).toBe('Unpin')
 
     const content = card?.querySelector(':scope > .surface-content')
     expect(content).not.toBeNull()
     expect(content?.querySelector(':scope > [data-veduta-theme="light"]')).not.toBeNull()
+  })
+
+  it('keeps ordering controls on the left and exposes Pin as an icon-only action', () => {
+    const surface = SurfaceSchema.parse({
+      ...relativeSurface(),
+      pinned: false,
+      pinnable: true,
+    })
+    const { container } = render(
+      <SurfaceCard
+        surface={surface}
+        selected={false}
+        canMoveUp={true}
+        canMoveDown={true}
+        onMoveUp={vi.fn()}
+        onMoveDown={vi.fn()}
+        onPatched={vi.fn()}
+        onQueueFastAction={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRevealFeedbackShown={vi.fn()}
+        onError={vi.fn()}
+      />,
+    )
+
+    const toolbar = container.querySelector('.surface-toolbar')
+    expect(toolbar).not.toBeNull()
+    expect(
+      within(toolbar as HTMLElement)
+        .getAllByRole('button')
+        .map((button) => button.getAttribute('aria-label')),
+    ).toEqual(['Move Daily spending up', 'Move Daily spending down', 'Pin Daily spending'])
+    expect(screen.queryByRole('button', { name: 'Focus Daily spending' })).toBeNull()
+
+    const pin = screen.getByRole('button', { name: 'Pin Daily spending' })
+    expect(pin.textContent).toBe('')
+    expect(pin.querySelector('svg')).not.toBeNull()
+    expect(pin.getAttribute('title')).toBe('Pin')
   })
 })
 

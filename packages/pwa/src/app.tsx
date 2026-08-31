@@ -761,8 +761,8 @@ function RoutedApp() {
       .catch(() => undefined)
   }, [focusedSpaceId, authToken, replaceSpaces])
 
-  const focusSpace = (space: SpaceWithSurfaces, surface?: Surface) => {
-    navigate(surface ? clientPath.surface(space.slug, surface.id) : clientPath.space(space.slug))
+  const focusSpace = (space: SpaceWithSurfaces) => {
+    navigate(clientPath.space(space.slug))
   }
 
   const moveSurface = (

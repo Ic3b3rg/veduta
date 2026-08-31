@@ -92,7 +92,6 @@
     flex-direction: row;
   }
 
-  .surface-focus,
   .surface-order button,
   .surface-pin {
     min-height: 44px;
@@ -151,6 +150,10 @@
   .topbar-model-connections > span,
   .notif-bell-button > span {
     display: none;
+  }
+
+  .surface-pin {
+    min-width: 44px;
   }
 
   .chat-log {
