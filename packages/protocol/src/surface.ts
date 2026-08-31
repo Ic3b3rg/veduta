@@ -88,6 +88,8 @@ const SurfaceObjectSchema = z.object({
 
 export const SurfaceSchema = SurfaceObjectSchema.superRefine((surface, ctx) => {
   validateNodeBindings(surface.tree, surface.state, ['tree'], ctx)
+  validateTextFormTree(surface.tree, false, ['tree'], ctx)
+  validateTextFormState(surface.tree, surface.state, ctx)
   validateRelativeTimeContract(surface, ctx)
 }).transform(normalizeRelativeTimeOccurrences)
 
@@ -160,7 +162,7 @@ export function formatSurfaceIssues(issues: ZodIssue[]): string[] {
 
 /**
  * A key an Atom node reaches into typed state for: either its own `binding`,
- * or a `path: 'fast'` action's `stateKey`. Shared by `SurfaceSchema` (checked
+ * or a `path: 'fast'` action's `stateKey`/`stateKeys`. Shared by `SurfaceSchema` (checked
  * against `state`'s own keys) and `SurfaceTemplateSchema` in `template.ts`
  * (checked against the Template's `stateKeys` names) so both validate the
  * same tree shape without duplicating the traversal.
@@ -180,12 +182,24 @@ export function collectNodeBindingRefs(
   }
 
   node.actions?.forEach((action, index) => {
-    if (action.path !== 'fast' || action.stateKey === undefined) return
-    refs.push({
-      kind: 'fastAction',
-      key: action.stateKey,
-      actionName: action.name,
-      path: [...path, 'actions', index, 'stateKey'],
+    if (action.path !== 'fast') return
+
+    if (action.stateKey !== undefined) {
+      refs.push({
+        kind: 'fastAction',
+        key: action.stateKey,
+        actionName: action.name,
+        path: [...path, 'actions', index, 'stateKey'],
+      })
+    }
+
+    action.stateKeys?.forEach((stateKey, stateKeyIndex) => {
+      refs.push({
+        kind: 'fastAction',
+        key: stateKey,
+        actionName: action.name,
+        path: [...path, 'actions', index, 'stateKeys', stateKeyIndex],
+      })
     })
   })
 
@@ -212,6 +226,120 @@ function validateNodeBindings(
 
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ref.path, message })
   }
+}
+
+export function validateTextFormTree(
+  node: AtomNode,
+  insideForm: boolean,
+  path: (string | number)[],
+  ctx: z.RefinementCtx,
+): void {
+  if (node.type === 'Form' && insideForm) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path,
+      message: 'Forms cannot be nested',
+    })
+  }
+
+  if ((node.type === 'Input' || node.type === 'Textarea') && !insideForm) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path,
+      message: `${node.type} must belong to a Form`,
+    })
+  }
+
+  if (node.type === 'Form') {
+    validateFormFields(node, path, ctx)
+  }
+
+  const descendantsInsideForm = insideForm || node.type === 'Form'
+  node.children?.forEach((child, index) => {
+    validateTextFormTree(child, descendantsInsideForm, [...path, 'children', index], ctx)
+  })
+}
+
+function validateTextFormState(node: AtomNode, state: JsonObject, ctx: z.RefinementCtx): void {
+  if (
+    (node.type === 'Input' || node.type === 'Textarea') &&
+    node.binding !== undefined &&
+    hasStateKey(state, node.binding) &&
+    typeof state[node.binding] !== 'string'
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['state', node.binding],
+      message: `Form text state "${node.binding}" must be a string`,
+    })
+  }
+
+  node.children?.forEach((child) => validateTextFormState(child, state, ctx))
+}
+
+interface FormTextFieldRef {
+  binding: string
+  path: (string | number)[]
+}
+
+function validateFormFields(form: AtomNode, path: (string | number)[], ctx: z.RefinementCtx): void {
+  const fields = collectOwnedFormFields(form, path)
+  if (fields.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [...path, 'children'],
+      message: 'Form requires at least one owned Input or Textarea',
+    })
+  }
+
+  const fieldBindings = new Set<string>()
+  for (const field of fields) {
+    if (fieldBindings.has(field.binding)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: field.path,
+        message: `Form text binding "${field.binding}" is duplicated`,
+      })
+    }
+    fieldBindings.add(field.binding)
+  }
+
+  const stateKeys = form.actions?.[0]?.stateKeys
+  if (stateKeys === undefined) return
+
+  const targetBindings = new Set(stateKeys)
+  const missing = [...fieldBindings].filter((binding) => !targetBindings.has(binding))
+  const extra = [...targetBindings].filter((binding) => !fieldBindings.has(binding))
+  if (missing.length === 0 && extra.length === 0) return
+
+  const differences = [
+    ...(missing.length === 0 ? [] : [`missing: ${formatQuotedList(missing)}`]),
+    ...(extra.length === 0 ? [] : [`extra: ${formatQuotedList(extra)}`]),
+  ]
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: [...path, 'actions', 0, 'stateKeys'],
+    message: `Form submit targets must match its text fields (${differences.join('; ')})`,
+  })
+}
+
+function collectOwnedFormFields(form: AtomNode, path: (string | number)[]): FormTextFieldRef[] {
+  const fields: FormTextFieldRef[] = []
+
+  form.children?.forEach((child, index) => {
+    const childPath = [...path, 'children', index]
+    if (child.type === 'Form') return
+    if ((child.type === 'Input' || child.type === 'Textarea') && child.binding !== undefined) {
+      fields.push({ binding: child.binding, path: [...childPath, 'binding'] })
+    }
+    fields.push(...collectOwnedFormFields(child, childPath))
+  })
+
+  return fields
+}
+
+function formatQuotedList(values: string[]): string {
+  return values.map((value) => `"${value}"`).join(', ')
 }
 
 function validateRelativeTimeContract(

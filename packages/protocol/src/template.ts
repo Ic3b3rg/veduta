@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { AtomNodeSchema } from './atom.ts'
-import { collectNodeBindingRefs } from './surface.ts'
+import { collectNodeBindingRefs, validateTextFormTree } from './surface.ts'
 
 /**
  * A Template is a saved Atom composition: a proven Surface tree the Agent
@@ -59,6 +59,8 @@ export const SurfaceTemplateSchema = z
   })
   .superRefine((template, ctx) => {
     const knownKeys = new Set(template.stateKeys)
+
+    validateTextFormTree(template.tree, false, ['tree'], ctx)
 
     for (const ref of collectNodeBindingRefs(template.tree, ['tree'])) {
       if (knownKeys.has(ref.key)) continue

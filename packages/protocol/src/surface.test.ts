@@ -1,11 +1,46 @@
 import { describe, expect, it } from 'vitest'
 import {
   ActionSchema,
+  FormSubmitPayloadSchema,
   SurfaceSchema,
   SurfaceValidationError,
   parseSurface,
   surfaceRelativeTimeStatus,
 } from './index.ts'
+
+const textFormSurface = {
+  id: 'srf-profile',
+  spaceId: 'spc-home',
+  title: 'Profile',
+  tree: {
+    id: 'profile-form',
+    type: 'Form',
+    props: { label: 'Profile details', submitLabel: 'Save profile' },
+    actions: [
+      {
+        name: 'submit',
+        path: 'fast',
+        stateKeys: ['displayName', 'bio'],
+      },
+    ],
+    children: [
+      {
+        id: 'display-name',
+        type: 'Input',
+        binding: 'displayName',
+        props: { label: 'Display name', placeholder: 'Ada' },
+      },
+      {
+        id: 'bio',
+        type: 'Textarea',
+        binding: 'bio',
+        props: { label: 'Biography', rows: 4 },
+      },
+    ],
+  },
+  state: { displayName: 'Ada', bio: 'First programmer' },
+  freshness: { updatedAt: '2026-08-31T20:00:00.000Z', updatedBy: 'agent' },
+}
 
 const shoppingChecklistWithChart = {
   id: 'srf-groceries',
@@ -50,6 +85,155 @@ const shoppingChecklistWithChart = {
 }
 
 describe('SurfaceSchema', () => {
+  it('accepts one submit-only Form with multiple text fields', () => {
+    const parsed = SurfaceSchema.parse(textFormSurface)
+
+    expect(parsed.tree.actions).toEqual([
+      {
+        name: 'submit',
+        path: 'fast',
+        payload: {},
+        stateKeys: ['displayName', 'bio'],
+      },
+    ])
+  })
+
+  it('rejects a text control outside a Form', () => {
+    const result = SurfaceSchema.safeParse({
+      ...shoppingChecklistWithChart,
+      tree: {
+        id: 'orphan-input',
+        type: 'Input',
+        binding: 'title',
+        props: { label: 'Title' },
+      },
+      state: { title: 'Shopping list' },
+    })
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ['tree'],
+          message: 'Input must belong to a Form',
+        }),
+      )
+    }
+  })
+
+  it('rejects a Form whose committed text value is not a string', () => {
+    const result = SurfaceSchema.safeParse({
+      id: 'srf-profile',
+      spaceId: 'spc-home',
+      title: 'Profile',
+      tree: {
+        id: 'profile-form',
+        type: 'Form',
+        props: { label: 'Profile details', submitLabel: 'Save profile' },
+        actions: [{ name: 'submit', path: 'fast', stateKeys: ['bio'] }],
+        children: [
+          {
+            id: 'bio',
+            type: 'Textarea',
+            binding: 'bio',
+            props: { label: 'Biography' },
+          },
+        ],
+      },
+      state: { bio: 42 },
+      freshness: { updatedAt: '2026-08-31T20:00:00.000Z', updatedBy: 'agent' },
+    })
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ['state', 'bio'],
+          message: 'Form text state "bio" must be a string',
+        }),
+      )
+    }
+  })
+
+  it.each([
+    {
+      stateKeys: ['displayName'],
+      message: 'Form submit targets must match its text fields (missing: "bio")',
+    },
+    {
+      stateKeys: ['displayName', 'bio', 'nickname'],
+      message: 'Form submit targets must match its text fields (extra: "nickname")',
+    },
+  ])('rejects incomplete Form submit targets: $message', ({ stateKeys, message }) => {
+    const candidate = JSON.parse(JSON.stringify(textFormSurface))
+    candidate.tree.actions[0].stateKeys = stateKeys
+    candidate.state.nickname = 'Countess of Lovelace'
+
+    const result = SurfaceSchema.safeParse(candidate)
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ['tree', 'actions', 0, 'stateKeys'],
+          message,
+        }),
+      )
+    }
+  })
+
+  it('rejects duplicate text bindings within one Form', () => {
+    const candidate = JSON.parse(JSON.stringify(textFormSurface))
+    candidate.tree.children[1].binding = 'displayName'
+    candidate.tree.actions[0].stateKeys = ['displayName']
+
+    const result = SurfaceSchema.safeParse(candidate)
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ['tree', 'children', 1, 'binding'],
+          message: 'Form text binding "displayName" is duplicated',
+        }),
+      )
+    }
+  })
+
+  it('rejects nested Forms and Forms without a text field', () => {
+    const candidate = JSON.parse(JSON.stringify(textFormSurface))
+    candidate.tree.children = [
+      {
+        id: 'nested-form',
+        type: 'Form',
+        props: { label: 'Nested', submitLabel: 'Save nested' },
+        actions: [{ name: 'submit', path: 'fast', stateKeys: ['bio'] }],
+        children: [
+          { id: 'nested-bio', type: 'Textarea', binding: 'bio', props: { label: 'Biography' } },
+        ],
+      },
+    ]
+    candidate.tree.actions[0].stateKeys = ['displayName']
+
+    const result = SurfaceSchema.safeParse(candidate)
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ['tree', 'children'],
+            message: 'Form requires at least one owned Input or Textarea',
+          }),
+          expect.objectContaining({
+            path: ['tree', 'children', 0],
+            message: 'Forms cannot be nested',
+          }),
+        ]),
+      )
+    }
+  })
+
   it('accepts a shopping checklist with a chart and round-trips it', () => {
     const parsed = SurfaceSchema.parse(shoppingChecklistWithChart)
     expect(SurfaceSchema.parse(JSON.parse(JSON.stringify(parsed)))).toEqual(parsed)
@@ -280,6 +464,24 @@ describe('ActionSchema', () => {
     expect(result.success).toBe(false)
   })
 
+  it('rejects duplicate atomic state targets', () => {
+    const result = ActionSchema.safeParse({
+      name: 'submit',
+      path: 'fast',
+      stateKeys: ['name', 'name'],
+    })
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ['stateKeys', 1],
+          message: 'duplicate state key "name"',
+        }),
+      )
+    }
+  })
+
   it('accepts a declared action payload', () => {
     expect(
       ActionSchema.parse({
@@ -289,4 +491,19 @@ describe('ActionSchema', () => {
       }).payload,
     ).toEqual({ reason: 'stale-surface' })
   })
+})
+
+describe('FormSubmitPayloadSchema', () => {
+  it('accepts a complete string field map', () => {
+    expect(FormSubmitPayloadSchema.parse({ value: { displayName: 'Ada', bio: '' } })).toEqual({
+      value: { displayName: 'Ada', bio: '' },
+    })
+  })
+
+  it.each([{ value: { displayName: 42 } }, { value: { displayName: 'Ada' }, unexpected: true }])(
+    'rejects a malformed submitted payload',
+    (payload) => {
+      expect(FormSubmitPayloadSchema.safeParse(payload).success).toBe(false)
+    },
+  )
 })

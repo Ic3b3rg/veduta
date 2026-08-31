@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { AtomNodeSchema } from './atom.ts'
-import { findAtom, findDeclaredFastAction } from './tree.ts'
+import { findAtom, findDeclaredFastAction, findDeclaredFastFormAction } from './tree.ts'
 
 const tree = AtomNodeSchema.parse({
   id: 'root',
@@ -13,6 +13,17 @@ const tree = AtomNodeSchema.parse({
       binding: 'milk',
       actions: [{ name: 'toggle', path: 'fast', stateKey: 'milk' }, { name: 'explain' }],
     },
+  ],
+})
+
+const formTree = AtomNodeSchema.parse({
+  id: 'profile-form',
+  type: 'Form',
+  props: { label: 'Profile', submitLabel: 'Save' },
+  actions: [{ name: 'submit', path: 'fast', stateKeys: ['name', 'bio'] }],
+  children: [
+    { id: 'name', type: 'Input', binding: 'name', props: { label: 'Name' } },
+    { id: 'bio', type: 'Textarea', binding: 'bio', props: { label: 'Biography' } },
   ],
 })
 
@@ -36,5 +47,20 @@ describe('findDeclaredFastAction', () => {
   it('does not resolve undeclared actions or unknown nodes', () => {
     expect(findDeclaredFastAction(tree, 'milk', 'delete')).toBeUndefined()
     expect(findDeclaredFastAction(tree, 'ghost', 'toggle')).toBeUndefined()
+  })
+})
+
+describe('findDeclaredFastFormAction', () => {
+  it('resolves the atomic submit declaration with all state keys', () => {
+    expect(findDeclaredFastFormAction(formTree, 'profile-form', 'submit')).toEqual({
+      name: 'submit',
+      path: 'fast',
+      payload: {},
+      stateKeys: ['name', 'bio'],
+    })
+  })
+
+  it('does not treat a single-key fast action as a Form submit', () => {
+    expect(findDeclaredFastFormAction(tree, 'milk', 'toggle')).toBeUndefined()
   })
 })

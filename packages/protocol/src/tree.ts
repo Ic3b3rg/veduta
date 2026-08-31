@@ -38,6 +38,20 @@ export function findDeclaredFastAction(
   return { ...action, path: 'fast', stateKey: action.stateKey }
 }
 
+/** Resolve the atomic fast submit declared by a Form. */
+export function findDeclaredFastFormAction(
+  root: AtomNode,
+  nodeId: string,
+  actionName: string,
+): (Action & { path: 'fast'; stateKeys: string[] }) | undefined {
+  const node = findAtom(root, nodeId)
+  if (node?.type !== 'Form') return undefined
+
+  const action = node.actions?.find((candidate) => candidate.name === actionName)
+  if (!action || action.path !== 'fast' || action.stateKeys === undefined) return undefined
+  return { ...action, path: 'fast', stateKeys: action.stateKeys }
+}
+
 /** Resolve an Agent-path action declared by a node. */
 export function findDeclaredAgentAction(
   root: AtomNode,

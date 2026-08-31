@@ -82,6 +82,61 @@ describe('SurfaceTemplateSchema', () => {
     }
   })
 
+  it('accepts a structurally complete Form Template', () => {
+    const template = {
+      ...validTemplate,
+      tree: {
+        id: 'profile-form',
+        type: 'Form',
+        props: { label: 'Profile', submitLabel: 'Save' },
+        actions: [{ name: 'submit', path: 'fast', stateKeys: ['name', 'bio'] }],
+        children: [
+          { id: 'name', type: 'Input', binding: 'name', props: { label: 'Name' } },
+          { id: 'bio', type: 'Textarea', binding: 'bio', props: { label: 'Biography' } },
+        ],
+      },
+      stateKeys: ['name', 'bio'],
+    }
+
+    expect(SurfaceTemplateSchema.safeParse(template).success).toBe(true)
+  })
+
+  it.each([
+    {
+      tree: {
+        id: 'orphan',
+        type: 'Input',
+        binding: 'name',
+        props: { label: 'Name' },
+      },
+      message: 'Input must belong to a Form',
+    },
+    {
+      tree: {
+        id: 'profile-form',
+        type: 'Form',
+        props: { label: 'Profile', submitLabel: 'Save' },
+        actions: [{ name: 'submit', path: 'fast', stateKeys: ['name'] }],
+        children: [
+          { id: 'name', type: 'Input', binding: 'name', props: { label: 'Name' } },
+          { id: 'bio', type: 'Textarea', binding: 'bio', props: { label: 'Biography' } },
+        ],
+      },
+      message: 'Form submit targets must match its text fields (missing: "bio")',
+    },
+  ])('rejects a structurally incomplete Form Template', ({ tree, message }) => {
+    const result = SurfaceTemplateSchema.safeParse({
+      ...validTemplate,
+      tree,
+      stateKeys: ['name', 'bio'],
+    })
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(expect.objectContaining({ message }))
+    }
+  })
+
   it('rejects an id outside the grammar', () => {
     const bad = { ...validTemplate, id: 'not-valid' }
     expect(SurfaceTemplateSchema.safeParse(bad).success).toBe(false)
