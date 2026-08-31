@@ -78,9 +78,11 @@ export function NotificationBell({ token }: { token: string | undefined }) {
         <button
           type="button"
           className="notif-bell-button"
+          aria-label="Enable notifications"
           onClick={() => setShowGuide((prev) => !prev)}
         >
-          Enable notifications
+          <NotificationIcon />
+          <span>Enable notifications</span>
         </button>
         {showGuide && (
           <div
@@ -114,13 +116,28 @@ export function NotificationBell({ token }: { token: string | undefined }) {
 
   return (
     <div className="notif-bell">
-      <button type="button" className="notif-bell-button" onClick={() => void onEnable()}>
-        Enable notifications
+      <button
+        type="button"
+        className="notif-bell-button"
+        aria-label="Enable notifications"
+        onClick={() => void onEnable()}
+      >
+        <NotificationIcon />
+        <span>Enable notifications</span>
       </button>
       {status === 'denied' && (
         <p className="notif-bell-note">Notifications are blocked in the browser settings.</p>
       )}
       {status === 'error' && <p className="notif-bell-note">Couldn't enable — try again.</p>}
     </div>
+  )
+}
+
+function NotificationIcon() {
+  return (
+    <svg className="button-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M5.5 8a4.5 4.5 0 0 1 9 0c0 4 1.5 4.5 1.5 4.5H4S5.5 12 5.5 8Z" />
+      <path d="M8.5 15a1.75 1.75 0 0 0 3 0" />
+    </svg>
   )
 }

@@ -89,16 +89,7 @@ describe('derived aliases are declared once, in the base block, at the expected 
     ['--accent', 'var(--catalog-color-accent)'],
     ['--accent-text', 'var(--catalog-color-accent-text)'],
     ['--focus', 'var(--catalog-color-focus)'],
-    ['--glass-panel', 'color-mix(in srgb, var(--catalog-color-surface) 82%, transparent)'],
-    [
-      '--glass-panel-raised',
-      'color-mix(in srgb, var(--catalog-color-surface-raised) 90%, transparent)',
-    ],
-    ['--glass-border', 'color-mix(in srgb, var(--catalog-color-text) 10%, transparent)'],
-    ['--glass-highlight', 'color-mix(in srgb, var(--catalog-color-text) 7%, transparent)'],
-    ['--accent-glow', 'color-mix(in srgb, var(--catalog-color-accent) 18%, transparent)'],
-    ['--success-glow', 'color-mix(in srgb, var(--catalog-color-success) 10%, transparent)'],
-    ['--chat-dock-bg', 'var(--glass-panel-raised)'],
+    ['--chat-dock-bg', 'var(--surface)'],
   ]
 
   for (const [name, expected] of aliases) {
@@ -156,12 +147,81 @@ describe('topbar action hierarchy', () => {
     expect(appCss).not.toContain('.topbar h1::before')
   })
 
-  it('keeps the Install action accented instead of applying the secondary glass material', () => {
+  it('keeps the Install action accented instead of applying the secondary material', () => {
     const installBlock = extractBlock(appCss, /\.install-button\s*{([^}]*)}/)
 
-    expect(appCss).toContain('.topbar-actions > button:not(.install-button),')
+    expect(appCss).toContain('.topbar-utilities > button:not(.install-button),')
     expect(declarationValue(installBlock, 'background')).toBe('var(--accent)')
     expect(declarationValue(installBlock, 'color')).toBe('var(--accent-text)')
+  })
+})
+
+describe('solid shell materials', () => {
+  it('does not depend on blur or glass-only aliases', () => {
+    expect(appCss).not.toMatch(/--glass-|backdrop-filter/)
+  })
+})
+
+describe('button interaction states', () => {
+  it('routes neutral hover and active colors through overridable variant properties', () => {
+    const buttonBlock = extractBlock(appCss, /button\s*{([^}]*)}/)
+    const hoverBlock = extractBlock(appCss, /button:hover:not\(:disabled\)\s*{([^}]*)}/)
+    const activeBlock = extractBlock(appCss, /button:active:not\(:disabled\)\s*{([^}]*)}/)
+
+    expect(declarationValue(buttonBlock, '--button-hover-bg')).toBe('var(--control-hover)')
+    expect(declarationValue(buttonBlock, '--button-active-bg')).toBe(
+      'color-mix(in srgb, var(--text) 8%, var(--surface))',
+    )
+    expect(declarationValue(hoverBlock, 'background')).toBe('var(--button-hover-bg)')
+    expect(declarationValue(activeBlock, 'background')).toBe('var(--button-active-bg)')
+  })
+
+  it('gives every primary button a contrast-preserving interaction variant', () => {
+    const installBlock = extractBlock(appCss, /\.install-button\s*{([^}]*)}/)
+    const chatAndAuthBlock = extractBlock(
+      appCss,
+      /\.chat-compose button,\s*\.auth-form button\s*{([^}]*)}/,
+    )
+    const wizardBlock = extractBlock(appCss, /\.wizard-actions button\s*{([^}]*)}/)
+
+    for (const block of [installBlock, chatAndAuthBlock, wizardBlock]) {
+      expect(declarationValue(block, '--button-hover-bg')).toBe('var(--accent-hover)')
+      expect(declarationValue(block, '--button-active-bg')).toBe('var(--accent-active)')
+    }
+
+    expect(declarationValue(baseBlock, '--accent-hover')).toBe(
+      'color-mix(in srgb, var(--accent) 88%, black 12%)',
+    )
+    expect(declarationValue(darkBlock, '--accent-hover')).toBe(
+      'color-mix(in srgb, var(--accent) 88%, white 12%)',
+    )
+  })
+})
+
+describe('compact mobile shell geometry', () => {
+  it('lets the topbar scroll away on narrower viewports', () => {
+    expect(appCss).toMatch(
+      /@media \(max-width: 960px\)[\s\S]*?\.topbar\s*{[^}]*position:\s*static;/,
+    )
+  })
+
+  it('keeps a compact, wrapping multi-row chat history on narrow phones', () => {
+    expect(appCss).toMatch(
+      /@media \(max-width: 560px\)[\s\S]*?\.chat-log\s*{[^}]*max-height:\s*48px;/,
+    )
+    expect(appCss).not.toMatch(/\.chat-entry span\s*{[^}]*white-space:\s*nowrap;/)
+  })
+
+  it('keeps narrow-phone utility controls touchable and the rail on one row', () => {
+    expect(appCss).toMatch(
+      /@media \(max-width: 560px\)[\s\S]*?\.space-rail\s*{[^}]*minmax\(92px, 1fr\)/,
+    )
+    expect(appCss).toMatch(
+      /@media \(max-width: 560px\)[\s\S]*?\.topbar-utilities > button\.topbar-model-connections,[\s\S]*?min-height:\s*44px;/,
+    )
+    expect(appCss).toMatch(
+      /@media \(max-width: 560px\)[\s\S]*?\.chat-scroll-to-bottom\s*{[^}]*height:\s*44px;/,
+    )
   })
 })
 

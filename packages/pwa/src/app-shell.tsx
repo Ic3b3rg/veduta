@@ -139,16 +139,26 @@ export function AppShell({
       <header className="topbar">
         <h1 className="product-wordmark">Veduta</h1>
         <div className="topbar-actions" aria-live="polite">
-          <span className={gatewayOnline ? 'status-pill online' : 'status-pill'}>
-            {gatewayOnline ? 'Live' : 'Offline-ready'}
-          </span>
-          {queuedCount > 0 && <span className="status-pill pending">{queuedCount} queued</span>}
+          <div className="topbar-status">
+            <span className={gatewayOnline ? 'status-pill online' : 'status-pill'}>
+              {gatewayOnline ? 'Live' : 'Offline-ready'}
+            </span>
+            {queuedCount > 0 && <span className="status-pill pending">{queuedCount} queued</span>}
+          </div>
           <ChatModelSelects token={authToken} />
-          <button type="button" onClick={onOpenModelConnections}>
-            Model connections
-          </button>
-          <NotificationBell token={authToken} />
-          {showInstallGuide && <InstallButton prompt={installPrompt} onDone={onInstallDone} />}
+          <div className="topbar-utilities">
+            <button
+              type="button"
+              className="topbar-model-connections"
+              aria-label="Model connections"
+              onClick={onOpenModelConnections}
+            >
+              <SettingsIcon />
+              <span>Model connections</span>
+            </button>
+            <NotificationBell token={authToken} />
+            {showInstallGuide && <InstallButton prompt={installPrompt} onDone={onInstallDone} />}
+          </div>
         </div>
       </header>
 
@@ -267,6 +277,17 @@ export function AppShell({
         onSend={onSend}
       />
     </div>
+  )
+}
+
+function SettingsIcon() {
+  return (
+    <svg className="button-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M4 5h5m3 0h4M4 10h2m3 0h7M4 15h7m3 0h2" />
+      <circle cx="10.5" cy="5" r="1.5" />
+      <circle cx="7.5" cy="10" r="1.5" />
+      <circle cx="12.5" cy="15" r="1.5" />
+    </svg>
   )
 }
 

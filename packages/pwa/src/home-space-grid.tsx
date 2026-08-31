@@ -55,7 +55,6 @@ export function HomeSpaceGrid({
 
       {groups.userSpaces.length === 0 && groups.systemSpaces.length > 0 && (
         <section className="first-space-invitation" aria-label="Create your first Space from chat">
-          <p className="home-eyebrow">Make Home yours</p>
           <h2>Create your first Space from chat</h2>
           <p>Tell Veduta which part of life you want to see at a glance.</p>
         </section>
@@ -124,7 +123,9 @@ function SpaceCard({
     <Link className="space-card" to={clientPath.space(space.slug)}>
       <div className="space-card-heading">
         <h3>{space.name}</h3>
-        <span aria-hidden="true">→</span>
+        <svg className="space-card-arrow" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+          <path d="m8 5 5 5-5 5" />
+        </svg>
       </div>
 
       <span className="space-card-description" data-space-description-slot aria-hidden="true" />
@@ -146,24 +147,22 @@ function SpaceCard({
             </time>
           )}
         </p>
-      </div>
-
-      <div className="space-card-signals">
         <div className="space-card-attention">
           <span>Attention</span>
           {space.attention > 0 ? <AttentionBadge count={space.attention} /> : <span>Clear</span>}
         </div>
-        {pendingDecisionCount > 0 && (
-          <div className="space-card-pending-decisions">
-            <span>Pending decisions</span>
-            <strong
-              aria-label={`${pendingDecisionCount} pending ${pendingDecisionCount === 1 ? 'decision' : 'decisions'}`}
-            >
-              {pendingDecisionCount}
-            </strong>
-          </div>
-        )}
       </div>
+
+      {pendingDecisionCount > 0 && (
+        <div className="space-card-pending-decisions">
+          <span>Pending decisions</span>
+          <strong
+            aria-label={`${pendingDecisionCount} pending ${pendingDecisionCount === 1 ? 'decision' : 'decisions'}`}
+          >
+            {pendingDecisionCount}
+          </strong>
+        </div>
+      )}
     </Link>
   )
 }

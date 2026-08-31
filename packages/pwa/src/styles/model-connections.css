@@ -78,23 +78,26 @@
    pills. */
 .chat-model-selects {
   align-items: center;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 6px;
+  grid-template-columns: minmax(72px, 0.7fr) minmax(120px, 1.3fr);
+  min-width: 220px;
 }
 
 .chat-model-selects select {
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  background: var(--catalog-color-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   font-size: 12px;
-  max-width: 160px;
-  min-height: 30px;
-  padding: 4px 6px;
+  max-width: 100%;
+  min-height: 34px;
+  min-width: 0;
+  padding: 5px 8px;
 }
 
 .chat-model-selects .error {
-  flex-basis: 100%;
   font-size: 12px;
+  grid-column: 1 / -1;
   margin: 0;
 }
 

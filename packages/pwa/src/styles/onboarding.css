@@ -72,6 +72,8 @@
 }
 
 .wizard-actions button {
+  --button-hover-bg: var(--accent-hover);
+  --button-active-bg: var(--accent-active);
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-text);
@@ -80,6 +82,8 @@
 
 .wizard-actions button.wizard-skip,
 .wizard-skip {
+  --button-hover-bg: var(--control-hover);
+  --button-active-bg: color-mix(in srgb, var(--text) 8%, var(--surface));
   background: var(--surface);
   border-color: var(--border-strong);
   color: var(--text);

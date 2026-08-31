@@ -1,6 +1,6 @@
 @media (max-width: 960px) {
   .app-shell {
-    padding: 10px 10px 224px;
+    padding: 8px 8px 172px;
   }
 
   .wizard-shell {
@@ -13,34 +13,39 @@
   }
 
   .topbar,
-  .space-heading {
-    align-items: stretch;
-    grid-template-columns: 1fr;
-  }
-
-  .topbar,
-  .space-heading,
   .shell-layout {
     display: grid;
   }
 
-  .topbar-actions {
-    justify-content: flex-start;
-  }
-
   .topbar {
-    gap: 12px;
-    padding: 10px;
+    align-items: center;
+    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 8px;
     position: static;
   }
 
-  .topbar-actions > button,
-  .topbar-actions .notif-bell-button {
-    min-height: 44px;
+  .topbar-actions {
+    display: contents;
   }
 
-  .space-heading {
-    gap: 8px;
+  .topbar-status {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .topbar .chat-model-selects {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    max-width: none;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .topbar-utilities {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-content: flex-start;
   }
 
   .pending-decision-notification {
@@ -57,25 +62,29 @@
     min-height: 44px;
   }
 
-  .space-heading .space-badge {
-    justify-self: start;
-  }
-
   .shell-layout {
     grid-template-columns: 1fr;
   }
 
   .space-rail {
-    grid-auto-columns: minmax(140px, 1fr);
-    grid-auto-flow: column;
-    overflow-x: auto;
+    grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
     padding: 6px;
     position: static;
-    scrollbar-width: thin;
   }
 
   .space-button {
-    min-width: 140px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 58px;
+    min-width: 0;
+  }
+
+  .space-button > span:first-child {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .surface-toolbar {
@@ -94,7 +103,7 @@
   }
 
   .chat-entry {
-    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-columns: 44px minmax(0, 1fr);
   }
 
   .chat-compose {
@@ -112,41 +121,70 @@
   }
 
   .chat-dock {
-    bottom: 10px;
-    padding: 8px;
-    width: calc(100% - 20px);
+    bottom: 8px;
+    padding: 6px;
+    width: calc(100% - 16px);
   }
 
-  .chat-model-selects {
-    max-width: 100%;
+  .chat-log {
+    max-height: 72px;
+  }
+}
+
+@media (max-width: 560px) {
+  .app-shell {
+    padding-bottom: 132px;
   }
 
-  .chat-model-selects select {
+  .space-rail {
+    grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  }
+
+  .topbar-utilities > button.topbar-model-connections,
+  .topbar-utilities .notif-bell-button {
+    justify-content: center;
     min-height: 44px;
+    padding: 0;
+    width: 44px;
+  }
+
+  .topbar-model-connections > span,
+  .notif-bell-button > span {
+    display: none;
+  }
+
+  .chat-log {
+    max-height: 48px;
+  }
+
+  .chat-scroll-to-bottom {
+    bottom: 2px;
+    height: 44px;
+    min-height: 44px;
+    right: 0;
+    width: 44px;
+  }
+
+  .chat-scroll-to-bottom svg {
+    height: 16px;
+    width: 16px;
+  }
+
+  .home-space-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .home-space-group.secondary .home-space-grid {
+    max-width: none;
   }
 }
 
 @media (pointer: coarse) {
-  .topbar-actions button,
-  .topbar-actions select,
+  .topbar-utilities button,
+  .chat-model-selects select,
   .pending-decision-actions button,
   .pending-decision-actions a,
   .surface-toolbar button {
     min-height: 44px;
-  }
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .topbar,
-  .space-rail,
-  .surface-card,
-  .pending-decision-strip,
-  .space-pending-decisions,
-  .route-recovery,
-  .notif-guide,
-  .chat-dock {
-    backdrop-filter: none;
-    background: var(--surface);
-    -webkit-backdrop-filter: none;
   }
 }
