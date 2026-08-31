@@ -162,3 +162,4 @@ blocker is closed.
 | 135 | [Pull-based personal Mailbox roadmap](135-pull-based-personal-mailbox.md)                            | Proactivity  |
 | 136 | [Global chat multi-Space work](136-global-chat-multi-space.md)                                       | Core         |
 | 137 | [Focused chat Space proposal](137-focused-chat-space-proposal.md)                                    | Core         |
+| 157 | [Product-first Precision Tool UI](157-product-first-precision-tool-ui.md)                            | Polish       |
