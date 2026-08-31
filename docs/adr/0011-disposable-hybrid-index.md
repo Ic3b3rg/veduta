@@ -141,12 +141,14 @@ implementation would be unearned complexity.
 Sleep-time compute as a visible Automation, per [ADR-0005](0005-event-driven-proactivity.md)'s rule
 that proactivity is inspectable and switchable off.
 
-- **Conservative Curator mode.** The default Curator matches on a topic key of the first two
-  non-stopwords and replaces the active record — so "gym membership expires in June" and "gym
-  membership costs 40 euro" evict each other although neither contradicts the other. Issue 021
-  requires the Reflection to never falsely supersede, so it takes only exact-dedupe, reactivate and
-  add. The defect on the interactive `write_fact` path is pre-existing and tracked on its own; it
-  was deliberately not rewritten under cover of this issue.
+- **One conservative Curator contract.** Topic proximity only narrows the search for an established
+  contradiction; it never authorizes retirement on its own. Exact repeats noop, genuine
+  contradictions supersede, and other topic-related facts coexist. A refinement uses
+  `write_fact.supersedes` to identify the exact active fact it replaces; a stale target fails. A
+  value-level heuristic was rejected because multiple values on one topic can be distinct claims.
+  The Reflection uses the same contract rather than a separate mode, so every write path preserves
+  the guarantee that a still-valid fact is never falsely superseded
+  ([issue 034](../../issues/034-curator-false-supersede.md)).
 - **Evidence, validated.** A distilled fact carries the source references it came from; each is
   kept only if it dereferences and belongs to the window being distilled. A fact left with no valid
   reference is dropped, because a claim whose evidence is not in the window it was distilled from is

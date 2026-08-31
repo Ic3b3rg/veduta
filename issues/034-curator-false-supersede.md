@@ -29,10 +29,10 @@ supersession from the literature deliberately — it only works if supersession 
 
 Found while implementing [#21](021-advanced-memory.md). The nightly Reflection must never falsely
 supersede — it feeds model-extracted facts through the Curator in bulk, which would amplify this — so
-#21 added a **conservative** Curator mode (exact dedupe, reactivate, add only) and uses it for the
-Reflection. The interactive `write_fact` path was left **unchanged** on purpose: changing it changes
-user-visible memory behaviour and deserves its own review rather than riding along inside another
-issue. Recorded in [ADR-0011](../docs/adr/0011-disposable-hybrid-index.md).
+#21 initially added and used a **conservative** Curator mode (exact dedupe, reactivate, add only) for
+the Reflection. The interactive `write_fact` path was left **unchanged** on purpose: changing it
+changes user-visible memory behaviour and deserves its own review rather than riding along inside
+another issue. Recorded in [ADR-0011](../docs/adr/0011-disposable-hybrid-index.md).
 
 ## Tasks
 
@@ -48,6 +48,19 @@ issue. Recorded in [ADR-0011](../docs/adr/0011-disposable-hybrid-index.md).
   Curator guessing it. Pick one and record why.
 - Consider whether the conservative mode introduced by #21 becomes the only mode once the default is
   fixed, and delete the option if it does — two modes that agree are one mode.
+
+## Implementation decision
+
+Refinements use an explicit optional `supersedes` argument on `write_fact`. Its value identifies the
+exact active fact text the new fact replaces, after the Curator's existing text normalisation. An
+unknown or stale target fails the write instead of silently adding a conflicting claim.
+
+A value-level heuristic was rejected because a changed number does not establish that two facts are
+the same claim: a current weight, target weight, and historical weight can legitimately share a
+topic. Writer-declared replacement intent is deterministic and reviewable. Topic proximity now only
+narrows the search for an established contradiction; without a contradiction or explicit target,
+both facts remain active. The Reflection uses this same Curator contract, so the separate
+`conservative` mode is removed.
 
 ## Acceptance criteria
 
