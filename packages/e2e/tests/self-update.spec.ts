@@ -7,7 +7,12 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
-import { UpdateMarkerSchema, type UpdateMarker } from '../../protocol/src/update.ts'
+import { CURRENT_DATA_VERSION } from '../../daemon/src/update/data-version.ts'
+import {
+  SurfaceSnapshotSchema,
+  UpdateMarkerSchema,
+  type UpdateMarker,
+} from '../../protocol/src/index.ts'
 import {
   buildManifest,
   buildReleaseArtifact,
@@ -99,12 +104,18 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
     // recording an offer.
     badSigningCert = signSigningKeyCert(keys, attackerKeys)
 
-    const release = buildReleaseMetadata(artifact, { dataVersion: 1, notesMarker: NOTES_MARKER })
+    const release = buildReleaseMetadata(artifact, {
+      dataVersion: CURRENT_DATA_VERSION,
+      notesMarker: NOTES_MARKER,
+    })
     const signed = signReleaseMetadata(release, keys.signing)
     goodReleaseBytes = signed.releaseBytes
     goodReleaseSig = signed.releaseSig
 
-    const release2 = buildReleaseMetadata(artifact2, { dataVersion: 1, notesMarker: NOTES_MARKER })
+    const release2 = buildReleaseMetadata(artifact2, {
+      dataVersion: CURRENT_DATA_VERSION,
+      notesMarker: NOTES_MARKER,
+    })
     const signed2 = signReleaseMetadata(release2, keys.signing)
     good2ReleaseBytes = signed2.releaseBytes
     good2ReleaseSig = signed2.releaseSig
@@ -148,6 +159,9 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
 
       const preEvents = await fetchSpaceEvents(page, stack.origin, 'spc-health')
       expect(preEvents.length).toBeGreaterThan(0)
+      const preSystemEvents = await fetchSpaceEvents(page, stack.origin, 'spc-system')
+      const preCheckActions = countCheckNowActions(preSystemEvents)
+      const preAvailableEvents = countAvailableUpdates(preSystemEvents)
 
       await focusSystemSpace(page)
       const updates = surfaceCard(page, 'Updates')
@@ -155,6 +169,42 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
       await updates.getByRole('button', { name: 'Check now' }).click()
       await expect(updates.getByText(RELEASE_VERSION)).toBeVisible({ timeout: 30_000 })
       await expect(updates.getByText(`Test release notes: ${NOTES_MARKER}`)).toBeVisible()
+
+      await expect
+        .poll(
+          async () => {
+            const events = await fetchSpaceEvents(page, stack!.origin, 'spc-system')
+            return {
+              actions: countCheckNowActions(events) - preCheckActions,
+              handlers: countAvailableUpdates(events) - preAvailableEvents,
+            }
+          },
+          { timeout: 30_000 },
+        )
+        .toEqual({ actions: 1, handlers: 1 })
+      await expect
+        .poll(() => cachedSurfaceBoolean(page, 'srf-update', 'check.requested'))
+        .toBe(false)
+
+      // A completed one-shot action must remain repeatable without a reload
+      // after its realtime reset and HTTP response have reconciled
+      // (`issues/045-repeat-fast-action-delivery.md`).
+      await updates.getByRole('button', { name: 'Check now' }).click()
+      await expect
+        .poll(
+          async () => {
+            const events = await fetchSpaceEvents(page, stack!.origin, 'spc-system')
+            return {
+              actions: countCheckNowActions(events) - preCheckActions,
+              handlers: countAvailableUpdates(events) - preAvailableEvents,
+            }
+          },
+          { timeout: 30_000 },
+        )
+        .toEqual({ actions: 2, handlers: 2 })
+      await expect
+        .poll(() => cachedSurfaceBoolean(page, 'srf-update', 'check.requested'))
+        .toBe(false)
 
       await updates.getByRole('button', { name: 'Apply update' }).click()
 
@@ -171,9 +221,16 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
         .toBe(RELEASE_VERSION)
 
       const health = await fetchHealth(page, stack.origin)
-      expect(health).toMatchObject({ version: RELEASE_VERSION, dataVersion: 1 })
+      expect(health).toMatchObject({
+        version: RELEASE_VERSION,
+        dataVersion: CURRENT_DATA_VERSION,
+      })
 
       await page.reload()
+      await page
+        .getByRole('complementary', { name: 'Spaces' })
+        .getByRole('button', { name: 'Health' })
+        .click()
       await expect(page.getByRole('heading', { name: 'Health' })).toBeVisible()
       await expect(page.getByRole('button', { name: 'Focus Meals' })).toBeVisible()
       await expect(page.getByRole('button', { name: 'Focus Groceries' })).toBeVisible()
@@ -730,6 +787,9 @@ async function onboardMinimal(page: Page, stack: LocalVpsStack): Promise<void> {
   await page.getByRole('button', { name: 'Finish' }).click()
 
   await stack.waitForReadyLine()
+  const healthLink = page.getByRole('main', { name: 'Home' }).getByRole('link', { name: /Health/ })
+  await expect(healthLink).toBeVisible({ timeout: 60_000 })
+  await healthLink.click()
   await expect(page.getByRole('button', { name: 'Focus Meals' })).toBeVisible({ timeout: 60_000 })
 }
 
@@ -754,7 +814,44 @@ async function authToken(page: Page): Promise<string | null> {
 interface SpaceEventEntry {
   type: string
   text: string
-  payload?: { outcome?: string; reason?: string; failedStage?: string; resultId?: string }
+  payload?: {
+    outcome?: string
+    reason?: string
+    failedStage?: string
+    resultId?: string
+    surfaceId?: string
+    stateKey?: string
+    value?: unknown
+  }
+}
+
+function countCheckNowActions(events: readonly SpaceEventEntry[]): number {
+  return events.filter(
+    (event) =>
+      event.type === 'fast_path' &&
+      event.payload?.surfaceId === 'srf-update' &&
+      event.payload.stateKey === 'check.requested' &&
+      event.payload.value === true,
+  ).length
+}
+
+function countAvailableUpdates(events: readonly SpaceEventEntry[]): number {
+  return events.filter((event) => event.type === 'update.available').length
+}
+
+async function cachedSurfaceBoolean(
+  page: Page,
+  surfaceId: string,
+  stateKey: string,
+): Promise<boolean | undefined> {
+  const raw = await page.evaluate(() => localStorage.getItem('veduta.homeSnapshot'))
+  if (raw === null) return undefined
+  const snapshot = SurfaceSnapshotSchema.parse(JSON.parse(raw))
+  const surface = snapshot.spaces
+    .flatMap((space) => space.surfaces)
+    .find((candidate) => candidate.id === surfaceId)
+  const value = surface?.state[stateKey]
+  return typeof value === 'boolean' ? value : undefined
 }
 
 /** Reads a Space's Event log (ADR-0003) the way the PWA would -- same pattern as `local-vps.spec.ts`'s `fetchSpaceEvents`, generalized over `spaceId` since this suite reads both `spc-health` and `spc-system`. */

@@ -372,9 +372,12 @@ describe('App routing', () => {
     const spaces = interactiveHealthSpaces()
     const hydration = spaces[0]!.surfaces[0]!
     vi.mocked(invokeFastAction).mockResolvedValue({
-      ...hydration,
-      state: { status: 'Needs water', water: true },
-      freshness: { updatedAt: '2026-08-16T10:01:00.000Z', updatedBy: 'user' },
+      surface: {
+        ...hydration,
+        state: { status: 'Needs water', water: true },
+        freshness: { updatedAt: '2026-08-16T10:01:00.000Z', updatedBy: 'user' },
+      },
+      surfaceCursor: 1,
     })
     mockReadyApp(spaces)
 

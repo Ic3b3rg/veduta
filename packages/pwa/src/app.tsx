@@ -127,6 +127,13 @@ function RoutedApp() {
   const gatewayRef = useRef<GatewayConnection | null>(null)
   const spacesRef = useRef<SpaceWithSurfaces[]>(cachedHome?.spaces ?? [])
   const surfaceCursorRef = useRef(cachedHome?.surfaceCursor ?? 0)
+  // An HTTP fast-action response is a Surface snapshot, but it is not a
+  // replay checkpoint for unrelated Surfaces. Track its authoritative cursor
+  // per Surface so the same freshness rule can order it against realtime
+  // `surface.patch` delivery without advancing the global reconnect cursor.
+  const surfacePatchCursorsRef = useRef<Record<string, number>>(
+    surfacePatchCursorsForSnapshot(cachedHome?.spaces ?? [], cachedHome?.surfaceCursor ?? 0),
+  )
   const surfaceOrderCursorsRef = useRef<Record<string, number>>(
     Object.fromEntries(
       (cachedHome?.spaces ?? []).map((space) => [space.id, cachedHome?.surfaceCursor ?? 0]),
@@ -236,7 +243,12 @@ function RoutedApp() {
   useEffect(() => persistQueuedFastActions(queuedFastActions), [queuedFastActions])
 
   const replaceSurface = useCallback(
-    (updated: Surface, affectedAtomIds?: readonly string[]) => {
+    (updated: Surface, affectedAtomIds?: readonly string[], surfaceCursor?: number) => {
+      if (surfaceCursor !== undefined) {
+        const currentCursor = surfacePatchCursorsRef.current[updated.id] ?? 0
+        if (surfaceCursor <= currentCursor) return
+        surfacePatchCursorsRef.current[updated.id] = surfaceCursor
+      }
       if (affectedAtomIds && affectedAtomIds.length > 0) {
         fastFeedbackSequenceRef.current += 1
         setSurfaceUpdateFeedbacks((current) => ({
@@ -264,6 +276,10 @@ function RoutedApp() {
       localStorage.removeItem(SURFACE_ORDER_KEY)
       surfaceOrderCursorsRef.current = Object.fromEntries(
         snapshot.spaces.map((space) => [space.id, snapshot.surfaceCursor]),
+      )
+      surfacePatchCursorsRef.current = surfacePatchCursorsForSnapshot(
+        snapshot.spaces,
+        snapshot.surfaceCursor,
       )
       replaceSpaces(snapshot.spaces, snapshot.surfaceCursor)
       setHomeSpacesLoadState('ready')
@@ -353,17 +369,29 @@ function RoutedApp() {
           snapshot.surfaceCursor,
           buffered,
         )
+        surfacePatchCursorsRef.current = surfacePatchCursorsForSnapshot(
+          snapshot.spaces,
+          snapshot.surfaceCursor,
+        )
         const unresolved = new Set(replay.unresolved)
         for (const streamEvent of buffered) {
           if (unresolved.has(streamEvent) || streamEvent.event.cursor <= snapshot.surfaceCursor) {
             continue
           }
           const order = surfaceOrderForStreamEvent(streamEvent)
-          if (!order) continue
-          surfaceOrderCursorsRef.current[order.spaceId] = Math.max(
-            surfaceOrderCursorsRef.current[order.spaceId] ?? 0,
-            order.cursor,
-          )
+          if (order) {
+            surfaceOrderCursorsRef.current[order.spaceId] = Math.max(
+              surfaceOrderCursorsRef.current[order.spaceId] ?? 0,
+              order.cursor,
+            )
+          }
+          if (streamEvent.type === 'surface.patch') {
+            const surfaceId = streamEvent.event.patch.surfaceId
+            surfacePatchCursorsRef.current[surfaceId] = Math.max(
+              surfacePatchCursorsRef.current[surfaceId] ?? 0,
+              streamEvent.event.cursor,
+            )
+          }
         }
         replaceSpaces(replay.spaces, replay.cursor)
         for (const unresolved of replay.unresolved) {
@@ -384,6 +412,17 @@ function RoutedApp() {
       }
 
       try {
+        if (streamEvent.type === 'surface.patch') {
+          const surfaceId = streamEvent.event.patch.surfaceId
+          const currentCursor = surfacePatchCursorsRef.current[surfaceId] ?? 0
+          if (streamEvent.event.cursor <= currentCursor) {
+            replaceSpaces(
+              spacesRef.current,
+              Math.max(surfaceCursorRef.current, streamEvent.event.cursor),
+            )
+            return
+          }
+        }
         const previousSurface =
           streamEvent.type === 'surface.patch'
             ? findSurface(spacesRef.current, streamEvent.event.patch.surfaceId)
@@ -404,6 +443,10 @@ function RoutedApp() {
         }
         if (order) {
           surfaceOrderCursorsRef.current[order.spaceId] = order.cursor
+        }
+        if (streamEvent.type === 'surface.patch') {
+          surfacePatchCursorsRef.current[streamEvent.event.patch.surfaceId] =
+            streamEvent.event.cursor
         }
         if (streamEvent.type === 'surface.patch' && previousSurface) {
           const nextSurface = findSurface(result.spaces, streamEvent.event.patch.surfaceId)
@@ -644,7 +687,7 @@ function RoutedApp() {
       const remaining: QueuedFastAction[] = []
       for (const action of queuedFastActions) {
         try {
-          const updated = await invokeFastAction(
+          const result = await invokeFastAction(
             action.surfaceId,
             action.nodeId,
             action.actionName,
@@ -652,7 +695,7 @@ function RoutedApp() {
             authToken,
             action.idempotencyKey,
           )
-          if (!cancelled) replaceSurface(updated)
+          if (!cancelled) replaceSurface(result.surface, undefined, result.surfaceCursor)
         } catch {
           remaining.push(action)
         }
@@ -811,7 +854,7 @@ function RoutedApp() {
           )
           navigate(clientPath.home, { replace: true })
           fetchSpaces(authToken)
-            .then((snapshot) => replaceSpaces(snapshot.spaces, snapshot.surfaceCursor))
+            .then(acceptCanonicalSnapshot)
             .catch((e: Error) => setError(e.message))
         }}
       />
@@ -914,4 +957,13 @@ function surfaceStreamEventErrorMessage(streamEvent: SurfaceStreamEvent): string
     case 'surface.moved':
       return `Move result could not be applied for Surface: ${streamEvent.event.surfaceId}`
   }
+}
+
+function surfacePatchCursorsForSnapshot(
+  spaces: readonly SpaceWithSurfaces[],
+  surfaceCursor: number,
+): Record<string, number> {
+  return Object.fromEntries(
+    spaces.flatMap((space) => space.surfaces.map((surface) => [surface.id, surfaceCursor])),
+  )
 }

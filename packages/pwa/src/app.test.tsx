@@ -9,10 +9,12 @@ import {
   SurfaceCreatedEventSchema,
   SurfaceMovedEventSchema,
   SurfacePatchEventSchema,
+  type FastSurfaceActionResult,
   type ModelConnectionsSnapshot,
   type OnboardingStatus,
   type PendingDecision,
   type PendingDecisionList,
+  type Surface,
 } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -589,9 +591,12 @@ describe('App', () => {
     )
     vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
     vi.mocked(invokeFastAction).mockResolvedValue({
-      ...groceries,
-      state: { milk: true },
-      freshness: { updatedAt: '2026-08-20T10:00:01.000Z', updatedBy: 'user' },
+      surface: {
+        ...groceries,
+        state: { milk: true },
+        freshness: { updatedAt: '2026-08-20T10:00:01.000Z', updatedBy: 'user' },
+      },
+      surfaceCursor: 1,
     })
 
     render(<App />)
@@ -612,6 +617,226 @@ describe('App', () => {
       { nodeId: 'milk', contentKey: null, targetTag: 'LABEL', duration: 720 },
       { nodeId: 'milk', contentKey: 'value', targetTag: 'INPUT', duration: 240 },
     ])
+  })
+
+  it.each([
+    { delivery: 'HTTP before realtime', realtimeFirst: false },
+    { delivery: 'realtime before HTTP', realtimeFirst: true },
+  ])(
+    'keeps a newer one-shot reset authoritative with $delivery delivery',
+    async ({ realtimeFirst }) => {
+      window.history.replaceState({}, '', '/app/space/system')
+      const initial = oneShotActionSurface()
+      const response = deferred<FastSurfaceActionResult>()
+      const reset = {
+        ...initial,
+        state: { 'check.requested': false },
+        freshness: { updatedAt: '2026-08-20T10:00:02.000Z', updatedBy: 'job' as const },
+      }
+      vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
+      vi.mocked(fetchSpaces).mockResolvedValue({
+        surfaceCursor: 0,
+        spaces: [
+          {
+            id: 'spc-system',
+            slug: 'system',
+            name: 'System',
+            archived: false,
+            attention: 0,
+            attentionRevision: 0,
+            surfaces: [initial],
+          },
+        ],
+      })
+      vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+        fromPartial<OnboardingStatus>({ required: false, completed: true }),
+      )
+      vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
+      vi.mocked(invokeFastAction)
+        .mockImplementationOnce(() => response.promise)
+        .mockResolvedValueOnce({ surface: reset, surfaceCursor: 3 })
+
+      render(<App />)
+      const checkNow = await screen.findByRole('button', { name: 'Check now' })
+      await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+      const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
+      if (!handlers) throw new Error('Gateway handlers were not registered')
+
+      fireEvent.click(checkNow)
+      await waitFor(() => expect(invokeFastAction).toHaveBeenCalledTimes(1))
+      expect(
+        screen.getByRole<HTMLInputElement>('checkbox', { name: 'Check request state' }).checked,
+      ).toBe(true)
+
+      const resetEvent = SurfacePatchEventSchema.parse({
+        cursor: 2,
+        at: '2026-08-20T10:00:02.000Z',
+        spaceId: 'spc-system',
+        patch: {
+          surfaceId: initial.id,
+          operations: [{ target: 'state', op: 'replace', path: '/check.requested', value: false }],
+        },
+        freshness: reset.freshness,
+      })
+      const httpResult = {
+        surface: {
+          ...initial,
+          state: { 'check.requested': true },
+          freshness: { updatedAt: '2026-08-20T10:00:01.000Z', updatedBy: 'user' as const },
+        },
+        surfaceCursor: 1,
+      }
+
+      if (realtimeFirst) {
+        act(() => handlers.onSurfacePatch(resetEvent))
+        await act(async () => {
+          response.resolve(httpResult)
+          await response.promise
+        })
+      } else {
+        await act(async () => {
+          response.resolve(httpResult)
+          await response.promise
+        })
+        act(() => handlers.onSurfacePatch(resetEvent))
+      }
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole<HTMLInputElement>('checkbox', { name: 'Check request state' }).checked,
+        ).toBe(false)
+        expect(screen.getByText(/by job$/)).toBeDefined()
+      })
+
+      fireEvent.click(checkNow)
+      await waitFor(() => expect(invokeFastAction).toHaveBeenCalledTimes(2))
+      const firstKey = vi.mocked(invokeFastAction).mock.calls[0]?.[5]
+      const secondKey = vi.mocked(invokeFastAction).mock.calls[1]?.[5]
+      expect(firstKey).toEqual(expect.any(String))
+      expect(secondKey).toEqual(expect.any(String))
+      expect(secondKey).not.toBe(firstKey)
+    },
+  )
+
+  it('keeps the highest per-Surface cursor after replaying an out-of-order refetch buffer', async () => {
+    window.history.replaceState({}, '', '/app/space/system')
+    const initial = oneShotActionSurface()
+    const actionResponse = deferred<FastSurfaceActionResult>()
+    const refetchSnapshot = deferred<Awaited<ReturnType<typeof fetchSpaces>>>()
+    const discoveredSurface: Surface = {
+      id: 'srf-discovered-during-refetch',
+      spaceId: 'spc-system',
+      title: 'Discovered during refetch',
+      tree: { id: 'root', type: 'Box' },
+      state: { status: 'snapshot' },
+      freshness: { updatedAt: '2026-08-20T10:00:00.000Z', updatedBy: 'agent' },
+      pinned: false,
+      pinnable: true,
+    }
+    const initialSnapshot = {
+      surfaceCursor: 0,
+      spaces: [
+        {
+          id: 'spc-system',
+          slug: 'system',
+          name: 'System',
+          archived: false,
+          attention: 0,
+          attentionRevision: 0,
+          surfaces: [initial],
+        },
+      ],
+    }
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
+    vi.mocked(fetchSpaces)
+      .mockResolvedValueOnce(initialSnapshot)
+      .mockImplementationOnce(() => refetchSnapshot.promise)
+    vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+      fromPartial<OnboardingStatus>({ required: false, completed: true }),
+    )
+    vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
+    vi.mocked(invokeFastAction).mockImplementationOnce(() => actionResponse.promise)
+
+    render(<App />)
+    const checkNow = await screen.findByRole('button', { name: 'Check now' })
+    await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+    const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
+    if (!handlers) throw new Error('Gateway handlers were not registered')
+
+    fireEvent.click(checkNow)
+    await waitFor(() => expect(invokeFastAction).toHaveBeenCalledOnce())
+
+    act(() => {
+      handlers.onSurfacePatch(
+        SurfacePatchEventSchema.parse({
+          cursor: 4,
+          at: '2026-08-20T10:00:04.000Z',
+          spaceId: 'spc-system',
+          patch: {
+            surfaceId: discoveredSurface.id,
+            operations: [{ target: 'state', op: 'replace', path: '/status', value: 'replayed' }],
+          },
+          freshness: { updatedAt: '2026-08-20T10:00:04.000Z', updatedBy: 'agent' },
+        }),
+      )
+      handlers.onSurfacePatch(
+        SurfacePatchEventSchema.parse({
+          cursor: 3,
+          at: '2026-08-20T10:00:03.000Z',
+          spaceId: 'spc-system',
+          patch: {
+            surfaceId: initial.id,
+            operations: [
+              { target: 'state', op: 'replace', path: '/check.requested', value: false },
+            ],
+          },
+          freshness: { updatedAt: '2026-08-20T10:00:03.000Z', updatedBy: 'job' },
+        }),
+      )
+      handlers.onSurfacePatch(
+        SurfacePatchEventSchema.parse({
+          cursor: 1,
+          at: '2026-08-20T10:00:01.000Z',
+          spaceId: 'spc-system',
+          patch: {
+            surfaceId: initial.id,
+            operations: [{ target: 'state', op: 'replace', path: '/check.requested', value: true }],
+          },
+          freshness: { updatedAt: '2026-08-20T10:00:01.000Z', updatedBy: 'user' },
+        }),
+      )
+    })
+    await waitFor(() => expect(fetchSpaces).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      refetchSnapshot.resolve({
+        surfaceCursor: 0,
+        spaces: [{ ...initialSnapshot.spaces[0]!, surfaces: [initial, discoveredSurface] }],
+      })
+      await refetchSnapshot.promise
+    })
+    await waitFor(() => {
+      expect(
+        screen.getByRole<HTMLInputElement>('checkbox', { name: 'Check request state' }).checked,
+      ).toBe(false)
+    })
+
+    await act(async () => {
+      actionResponse.resolve({
+        surface: {
+          ...initial,
+          state: { 'check.requested': true },
+          freshness: { updatedAt: '2026-08-20T10:00:02.000Z', updatedBy: 'user' },
+        },
+        surfaceCursor: 2,
+      })
+      await actionResponse.promise
+    })
+
+    expect(
+      screen.getByRole<HTMLInputElement>('checkbox', { name: 'Check request state' }).checked,
+    ).toBe(false)
+    expect(screen.getByText(/by job$/)).toBeDefined()
   })
 
   it('centres and highlights a correlated chat-created Surface once without changing focus, route, or selection', async () => {
@@ -1554,6 +1779,51 @@ function createdOrder(cursor: number, surfaceId: string) {
     pinnedSurfaceIds: [],
     regularSurfaceIds: [surfaceId],
   }
+}
+
+function oneShotActionSurface(): Surface {
+  return {
+    id: 'srf-update-test',
+    spaceId: 'spc-system',
+    title: 'Updates',
+    tree: {
+      id: 'root',
+      type: 'Box',
+      children: [
+        {
+          id: 'check-now',
+          type: 'Button',
+          props: { label: 'Check now' },
+          actions: [
+            {
+              name: 'check',
+              path: 'fast',
+              stateKey: 'check.requested',
+              payload: { value: true },
+            },
+          ],
+        },
+        {
+          id: 'check-request-state',
+          type: 'Checkbox',
+          binding: 'check.requested',
+          props: { label: 'Check request state' },
+        },
+      ],
+    },
+    state: { 'check.requested': false },
+    freshness: { updatedAt: '2026-08-20T10:00:00.000Z', updatedBy: 'job' },
+    pinned: false,
+    pinnable: true,
+  }
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((settle) => {
+    resolve = settle
+  })
+  return { promise, resolve }
 }
 
 function treeProposalRevealFixture() {

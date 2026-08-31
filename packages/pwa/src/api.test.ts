@@ -10,6 +10,7 @@ import {
   fetchOnboardingStatus,
   fetchSpaces,
   freshnessLabel,
+  invokeFastAction,
   optimisticFastSurface,
   moveSurface,
   pinSurface,
@@ -177,6 +178,39 @@ function buildSurface(overrides: Partial<Surface> = {}): Surface {
     ...overrides,
   })
 }
+
+describe('invokeFastAction', () => {
+  it('returns the Surface together with its authoritative Surface cursor', async () => {
+    const surface = buildSurface({ state: { requested: true } })
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      return new Response(JSON.stringify({ surface, surfaceCursor: 9 }), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await invokeFastAction(
+      'srf-meals',
+      'check-now',
+      'check',
+      true,
+      'test-token',
+      'fast-check-1',
+    )
+
+    expect(result).toEqual({ surface, surfaceCursor: 9 })
+    const call = fetchMock.mock.calls[0]
+    if (call === undefined) throw new Error('fetch was not called')
+    const [path, init] = call
+    expect(path).toBe('/api/surfaces/srf-meals/actions')
+    expect(init?.method).toBe('POST')
+    expect(init?.headers).toMatchObject({ authorization: 'Bearer test-token' })
+    expect(JSON.parse(init?.body as string)).toEqual({
+      nodeId: 'check-now',
+      name: 'check',
+      payload: { value: true },
+      idempotencyKey: 'fast-check-1',
+    })
+  })
+})
 
 describe('pinSurface', () => {
   it('posts { pinned } and parses the authoritative mutation result', async () => {

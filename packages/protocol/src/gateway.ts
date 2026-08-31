@@ -58,6 +58,16 @@ export const PinSurfaceResultSchema = z.object({
   order: SurfaceOrderSchema,
 })
 
+/**
+ * A fast-path HTTP response is a Surface snapshot at one point in the
+ * Gateway's authoritative Surface event stream. The PWA compares this cursor
+ * with realtime delivery before accepting the full Surface value.
+ */
+export const FastSurfaceActionResultSchema = z.object({
+  surface: SurfaceSchema,
+  surfaceCursor: GatewayCursorSchema,
+})
+
 export const SpaceWithSurfacesSchema = SpaceSchema.extend({
   surfaces: z.array(SurfaceSchema),
   attention: z.number().int().min(0).default(0),
@@ -381,6 +391,7 @@ export type SurfaceMoveDirection = z.infer<typeof SurfaceMoveDirectionSchema>
 export type MoveSurfaceRequest = z.infer<typeof MoveSurfaceRequestSchema>
 export type MoveSurfaceResult = z.infer<typeof MoveSurfaceResultSchema>
 export type PinSurfaceResult = z.infer<typeof PinSurfaceResultSchema>
+export type FastSurfaceActionResult = z.infer<typeof FastSurfaceActionResultSchema>
 export type SpaceWithSurfaces = z.infer<typeof SpaceWithSurfacesSchema>
 export type SurfaceSnapshot = z.infer<typeof SurfaceSnapshotSchema>
 export type SurfacePatchEvent = z.infer<typeof SurfacePatchEventSchema>

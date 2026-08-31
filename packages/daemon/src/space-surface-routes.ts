@@ -1,5 +1,6 @@
 import {
   ActionInvocationSchema,
+  FastSurfaceActionResultSchema,
   MoveSurfaceRequestSchema,
   MoveSurfaceResultSchema,
   PinSurfaceResultSchema,
@@ -63,7 +64,11 @@ export function registerSpaceSurfaceRoutes(
     try {
       const result = store.invokeSurfaceAction(surfaceId, parsed.data)
       if (result.path === 'agent') return reply.status(202).send({ turn: result.turn })
-      return { surface: result.mutation.surface }
+      const surface = store.getSurface(surfaceId) ?? result.mutation.surface
+      return FastSurfaceActionResultSchema.parse({
+        surface,
+        surfaceCursor: store.latestSurfaceCursor(),
+      })
     } catch (error) {
       if (error instanceof SurfaceActionError) {
         return reply.status(statusForSurfaceActionError(error)).send({ error: error.message })

@@ -19,15 +19,15 @@ idempotency for retries or creating duplicate fast-path Events.
 
 ## Acceptance criteria
 
-- [ ] Repeated taps of one one-shot fast action in a single page session invoke its handler once per
+- [x] Repeated taps of one one-shot fast action in a single page session invoke its handler once per
       tap without a reload.
-- [ ] An older HTTP action response cannot overwrite a newer realtime Surface patch.
-- [ ] Retrying the same network request remains idempotent and does not duplicate the handler or
+- [x] An older HTTP action response cannot overwrite a newer realtime Surface patch.
+- [x] Retrying the same network request remains idempotent and does not duplicate the handler or
       Space Event.
-- [ ] The Updates Surface's `Check now` action works on consecutive taps.
-- [ ] A PWA state test reproduces both HTTP/realtime delivery orders, and a browser journey covers
+- [x] The Updates Surface's `Check now` action works on consecutive taps.
+- [x] A PWA state test reproduces both HTTP/realtime delivery orders, and a browser journey covers
       the user-visible regression.
-- [ ] `pnpm check` passes, followed by the relevant browser E2E job.
+- [x] `pnpm check` passes, followed by the relevant browser E2E job.
 
 ## Out of scope
 
