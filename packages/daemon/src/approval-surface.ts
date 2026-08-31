@@ -30,6 +30,7 @@ import {
 
 const SUMMARY_MAX_CHARS = 500
 const APPROVAL_CARD_SURFACE_PREFIX = 'srf-approval-'
+const EDITABLE_FIELDS_FORM_NODE_ID = 'editable-fields-form'
 
 export function approvalCardSurfaceId(approvalId: string): string {
   return `${APPROVAL_CARD_SURFACE_PREFIX}${approvalId}`
@@ -76,7 +77,7 @@ export function buildApprovalCardSurface(
     // Fixed at index 3 (`DECISION_ERROR_CAPTION_PATH`) so `patchValidationError` can
     // replace it without needing to search the tree for it.
     { id: DECISION_ERROR_CAPTION_NODE_ID, type: 'Caption', props: { text: '' } },
-    ...card.editableFields.map((field) => editableFieldNode(field.key, field.value)),
+    ...(card.editableFields.length === 0 ? [] : [editableFieldsFormNode(card.editableFields)]),
     ...(card.showAllowlistCheckbox ? [allowlistCheckboxNode(approval.toolName)] : []),
     {
       id: 'decisions',
@@ -90,7 +91,7 @@ export function buildApprovalCardSurface(
 
   const state: Record<string, JsonValue> = {}
   for (const field of card.editableFields) {
-    state[fieldStateKey(field.key)] = toJsonValue(field.value)
+    state[fieldStateKey(field.key)] = editableTextValue(field.key, field.value)
   }
   state[DECISION_APPROVE_KEY] = false
   state[DECISION_REJECT_KEY] = false
@@ -116,21 +117,37 @@ function metaCaptionText(card: ApprovalCardModel): string {
   return parts.join(' · ')
 }
 
-function editableFieldNode(key: string, value: unknown): AtomNode {
+function editableFieldsFormNode(fields: ApprovalCardModel['editableFields']): AtomNode {
+  return {
+    id: EDITABLE_FIELDS_FORM_NODE_ID,
+    type: 'Form',
+    props: { label: 'Editable approval fields', submitLabel: 'Save edits' },
+    actions: [
+      {
+        name: 'submit',
+        path: 'fast',
+        payload: {},
+        stateKeys: fields.map((field) => fieldStateKey(field.key)),
+      },
+    ],
+    children: fields.map((field) =>
+      editableFieldNode(field.key, editableTextValue(field.key, field.value)),
+    ),
+  }
+}
+
+function editableFieldNode(key: string, value: string): AtomNode {
   const stateKey = fieldStateKey(key)
   return {
     id: `field-${key}`,
     type: fieldAtomType(value),
     props: { label: humanizeKey(key) },
     binding: stateKey,
-    actions: [{ name: 'change', path: 'fast', stateKey, payload: {} }],
   }
 }
 
-function fieldAtomType(value: unknown): 'Input' | 'Textarea' {
-  return typeof value === 'string' && (value.length > 80 || value.includes('\n'))
-    ? 'Textarea'
-    : 'Input'
+function fieldAtomType(value: string): 'Input' | 'Textarea' {
+  return value.length > 80 || value.includes('\n') ? 'Textarea' : 'Input'
 }
 
 function humanizeKey(key: string): string {
@@ -153,8 +170,9 @@ function truncate(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max)}…`
 }
 
-function toJsonValue(value: unknown): JsonValue {
-  return value === undefined ? null : (value as JsonValue)
+function editableTextValue(key: string, value: unknown): string {
+  if (typeof value === 'string') return value
+  throw new Error(`approval editable field "${key}" must contain text`)
 }
 
 // ---------------------------------------------------------------------------

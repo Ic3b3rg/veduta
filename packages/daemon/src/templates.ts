@@ -269,8 +269,9 @@ export interface SurfaceFromTemplateOptions {
 
 /**
  * Instantiates a Surface from a Template: the tree verbatim, state seeded
- * with the supplied values plus `null` for every declared `stateKey` the
- * caller did not provide (so `SurfaceSchema`'s binding validation passes).
+ * with the supplied values plus an empty string for missing Form text fields
+ * and `null` for every other declared `stateKey` the caller did not provide
+ * (so `SurfaceSchema`'s binding validation passes).
  * Rejects a supplied state key absent from the Template's `stateKeys` — an
  * instantiation must not smuggle unbound data in. Clock-free: the caller
  * supplies `updatedAt`/`updatedBy`.
@@ -281,6 +282,12 @@ export function surfaceFromTemplate(
 ): Surface {
   const providedState = options.state ?? {}
   const stateKeySet = new Set(template.stateKeys)
+  const textStateKeys = new Set<string>()
+  walkAtomTree(template.tree, (node) => {
+    if ((node.type === 'Input' || node.type === 'Textarea') && node.binding !== undefined) {
+      textStateKeys.add(node.binding)
+    }
+  })
 
   for (const key of Object.keys(providedState)) {
     if (!stateKeySet.has(key)) {
@@ -290,7 +297,13 @@ export function surfaceFromTemplate(
 
   const state: JsonObject = {}
   for (const key of template.stateKeys) {
-    state[key] = providedState[key] ?? null
+    if (Object.prototype.hasOwnProperty.call(providedState, key)) {
+      const value = providedState[key]
+      if (value === undefined) throw new Error(`state key "${key}" has no JSON value`)
+      state[key] = value
+    } else {
+      state[key] = textStateKeys.has(key) ? '' : null
+    }
   }
 
   const candidate = {
@@ -456,13 +469,15 @@ export interface SanitizedImportedTemplate {
  * (issues/022-emergent-templates.md), in a fixed order: (1) the iterative
  * cap walk above, on the raw JSON; (2) schema parse; (3) `neutralizeDelimiters`
  * over every attacker-reachable string reachable from the parsed Template —
- * name, intent, node ids, bindings, action names, a fast action's `stateKey`,
+ * name, intent, node ids, bindings, action names, a fast action's `stateKey`
+ * or `stateKeys`,
  * every prop value *and* prop object key (`sanitizeProps`, applied
  * recursively so a nested object's keys are covered too), every string
  * inside an action `payload` (values and keys, same `sanitizeProps`),
  * `stateKeys`, `dataProps`, and the provenance source ids — `binding`
  * included, because `SurfaceTemplateSchema` cross-checks every binding (and
- * every fast action's `stateKey`) against the (also neutralized) `stateKeys`,
+ * every fast action's `stateKey` or `stateKeys`) against the (also
+ * neutralized) Template `stateKeys`,
  * so leaving either un-neutralized would make a `<<<`-carrying one fail that
  * check with an opaque schema error instead of coming out clean; (4) every
  * `path: 'agent'` action stripped from the tree — an imported bundle
@@ -517,6 +532,9 @@ function sanitizeAndFilterNode(node: AtomNode): SanitizedNode {
       ...action,
       name: neutralizeDelimiters(action.name),
       ...(action.stateKey !== undefined ? { stateKey: neutralizeDelimiters(action.stateKey) } : {}),
+      ...(action.stateKeys !== undefined
+        ? { stateKeys: action.stateKeys.map(neutralizeDelimiters) }
+        : {}),
       payload: sanitizeProps(action.payload),
     }))
   const props = node.props === undefined ? undefined : sanitizeProps(node.props)

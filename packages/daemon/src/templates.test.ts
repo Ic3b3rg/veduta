@@ -1,4 +1,4 @@
-import type { AtomNode, Surface, SurfaceTemplate } from '@veduta/protocol'
+import { SurfaceSchema, type AtomNode, type Surface, type SurfaceTemplate } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { describe, expect, it } from 'vitest'
 import {
@@ -197,10 +197,47 @@ describe('templateFromSurface / surfaceFromTemplate round trip', () => {
     ).toThrow(/ghost/)
   })
 
+  it('preserves an atomic Form contract and seeds missing text fields with strings', () => {
+    const formTemplate = templateFromSurface(profileSurface(), {
+      savedBy: 'stability',
+      savedAt: '2026-07-10T00:00:00.000Z',
+      origin: 'trusted:user',
+    })
+
+    expect(formTemplate.tree.actions?.[0]?.stateKeys).toEqual(['displayName', 'bio'])
+    const instantiated = surfaceFromTemplate(formTemplate, {
+      surfaceId: 'srf-profile-copy',
+      spaceId: 'spc-other',
+      updatedAt: '2026-07-11T00:00:00.000Z',
+      updatedBy: 'agent',
+    })
+    expect(instantiated.state).toEqual({ bio: '', displayName: '' })
+  })
+
   function SurfaceIsValid(surface: Surface): boolean {
     return surface.tree.id === 'root' && surface.spaceId === 'spc-other'
   }
 })
+
+function profileSurface(): Surface {
+  return SurfaceSchema.parse({
+    id: 'srf-profile',
+    spaceId: 'spc-health',
+    title: 'Profile',
+    tree: {
+      id: 'profile-form',
+      type: 'Form',
+      props: { label: 'Profile', submitLabel: 'Save' },
+      actions: [{ name: 'submit', path: 'fast', stateKeys: ['displayName', 'bio'] }],
+      children: [
+        { id: 'name', type: 'Input', binding: 'displayName', props: { label: 'Name' } },
+        { id: 'bio', type: 'Textarea', binding: 'bio', props: { label: 'Biography' } },
+      ],
+    },
+    state: { displayName: 'Ada', bio: 'First programmer' },
+    freshness: { updatedAt: '2026-07-01T00:00:00.000Z', updatedBy: 'user' },
+  })
+}
 
 describe('prop reduction', () => {
   const template = templateFromSurface(tracker(), {
@@ -504,6 +541,32 @@ describe('sanitizeImportedTemplate', () => {
     const stateKey = template.tree.actions?.[0]?.stateKey
     expect(stateKey).not.toContain('<<<')
     expect(template.stateKeys).toEqual([stateKey])
+  })
+
+  it("neutralizes <<< in a Form action's stateKeys with its fields and Template stateKeys", () => {
+    const raw = validRawTemplate({
+      tree: {
+        id: 'profile-form',
+        type: 'Form',
+        props: { label: 'Profile', submitLabel: 'Save' },
+        actions: [{ name: 'submit', path: 'fast', stateKeys: ['displayName<<<injected'] }],
+        children: [
+          {
+            id: 'name',
+            type: 'Input',
+            binding: 'displayName<<<injected',
+            props: { label: 'Name' },
+          },
+        ],
+      },
+      stateKeys: ['displayName<<<injected'],
+    })
+
+    const { template } = sanitizeImportedTemplate(raw, 'import')
+    const stateKeys = template.tree.actions?.[0]?.stateKeys
+    expect(stateKeys?.[0]).not.toContain('<<<')
+    expect(template.stateKeys).toEqual(stateKeys)
+    expect(template.tree.children?.[0]?.binding).toBe(stateKeys?.[0])
   })
 
   it('neutralizes <<< in an action payload value and in a payload object key', () => {

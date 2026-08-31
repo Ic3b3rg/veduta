@@ -974,6 +974,34 @@ export class SurfaceEngine {
     return mutation
   }
 
+  applyFastFormAction(
+    surfaceId: string,
+    values: Record<string, string>,
+    idempotencyKey?: string,
+  ): SurfaceMutation {
+    const duplicate = idempotencyKey ? this.findIdempotentMutation(idempotencyKey) : undefined
+    if (duplicate) return duplicate
+
+    const surface = this.requireActiveSurface(surfaceId)
+    const entries = Object.entries(values)
+    const stateKeys = entries.map(([stateKey]) => stateKey)
+    const operations: PatchOperation[] = entries.map(([stateKey, value]) => ({
+      target: 'state',
+      op: Object.prototype.hasOwnProperty.call(surface.state, stateKey) ? 'replace' : 'add',
+      path: statePath(stateKey),
+      value,
+    }))
+    return this.patchSurface(surfaceId, operations, {
+      updatedBy: 'user',
+      eventType: 'fast_path',
+      eventText: (patched) =>
+        `${patched.title}: submitted ${stateKeys.length} Form ${stateKeys.length === 1 ? 'field' : 'fields'}`,
+      updateTreeVersion: false,
+      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+      eventPayload: { surfaceId, stateKeys, values },
+    })
+  }
+
   enqueueAgentAction(surface: Surface, invocation: ActionInvocation): QueuedAgentTurn {
     const atom = findAtom(surface.tree, invocation.nodeId)
     const action = findDeclaredAgentAction(surface.tree, invocation.nodeId, invocation.name)

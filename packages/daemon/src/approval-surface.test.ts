@@ -89,8 +89,14 @@ describe('buildApprovalCardSurface', () => {
     const field = findNode(surface.tree, 'field-body')
     expect(field?.type).toBe('Input')
     expect(field?.binding).toBe(fieldStateKey('body'))
-    expect(field?.actions).toEqual([
-      { name: 'change', path: 'fast', stateKey: fieldStateKey('body'), payload: {} },
+    expect(field?.actions).toBeUndefined()
+    expect(findNode(surface.tree, 'editable-fields-form')?.actions).toEqual([
+      {
+        name: 'submit',
+        path: 'fast',
+        payload: {},
+        stateKeys: [fieldStateKey('body')],
+      },
     ])
     expect(surface.state[fieldStateKey('body')]).toBe('hello')
 
@@ -152,6 +158,15 @@ describe('buildApprovalCardSurface', () => {
       cardModel({ editableFields: [{ key: 'body', value: 'line one\nline two' }] }),
     )
     expect(findNode(surface.tree, 'field-body')?.type).toBe('Textarea')
+  })
+
+  it('rejects a non-text editable field instead of rendering an invalid Input', () => {
+    expect(() =>
+      buildApprovalCardSurface(
+        pendingApproval(),
+        cardModel({ editableFields: [{ key: 'amount', value: 42 }] }),
+      ),
+    ).toThrow('approval editable field "amount" must contain text')
   })
 
   it('starts the validation-error Caption empty at the fixed index patchValidationError relies on', () => {
@@ -281,6 +296,17 @@ function pressButton(surfaceId: string, nodeId: string): void {
   store.invokeSurfaceAction(surfaceId, { nodeId, name: 'press', payload: { value: true } })
 }
 
+function submitEditedFields(surfaceId: string, fields: Record<string, string>): void {
+  const value = Object.fromEntries(
+    Object.entries(fields).map(([key, fieldValue]) => [fieldStateKey(key), fieldValue]),
+  )
+  store.invokeSurfaceAction(surfaceId, {
+    nodeId: 'editable-fields-form',
+    name: 'submit',
+    payload: { value },
+  })
+}
+
 describe('ApprovalSurfaceManager (real Store + TrustLayer)', () => {
   it('resolves approve on a fast-path click on the Approve button', async () => {
     const executed: unknown[] = []
@@ -325,11 +351,7 @@ describe('ApprovalSurfaceManager (real Store + TrustLayer)', () => {
       { to: 'a@b.com', body: 'hello' },
     )
 
-    store.invokeSurfaceAction(surfaceId, {
-      nodeId: 'field-body',
-      name: 'change',
-      payload: { value: 'edited text' },
-    })
+    submitEditedFields(surfaceId, { body: 'edited text' })
     pressButton(surfaceId, 'decision-approve')
     await manager.flush()
 
@@ -344,11 +366,7 @@ describe('ApprovalSurfaceManager (real Store + TrustLayer)', () => {
       { to: 'a@b.com', body: 'hello' },
     )
 
-    store.invokeSurfaceAction(surfaceId, {
-      nodeId: 'field-body',
-      name: 'change',
-      payload: { value: '' }, // violates z.string().min(1)
-    })
+    submitEditedFields(surfaceId, { body: '' }) // violates z.string().min(1)
     pressButton(surfaceId, 'decision-approve')
     await manager.flush()
 
@@ -360,11 +378,7 @@ describe('ApprovalSurfaceManager (real Store + TrustLayer)', () => {
     expect(errorText as string).not.toBe('')
 
     // Fixing the field and approving again now goes through.
-    store.invokeSurfaceAction(surfaceId, {
-      nodeId: 'field-body',
-      name: 'change',
-      payload: { value: 'fixed' },
-    })
+    submitEditedFields(surfaceId, { body: 'fixed' })
     pressButton(surfaceId, 'decision-approve')
     await manager.flush()
 
@@ -435,11 +449,7 @@ describe('ApprovalSurfaceManager (real Store + TrustLayer)', () => {
       to: 'a@b.com',
       body: 'hello',
     })
-    store.invokeSurfaceAction(surfaceId, {
-      nodeId: 'field-body',
-      name: 'change',
-      payload: { value: 'edited' },
-    })
+    submitEditedFields(surfaceId, { body: 'edited' })
 
     const fields = manager.readEditedFields(surfaceId)
     expect(fields[fieldStateKey('body')]).toBe('edited')

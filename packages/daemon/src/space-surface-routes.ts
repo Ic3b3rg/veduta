@@ -116,6 +116,6 @@ export function registerSpaceSurfaceRoutes(
 
 function statusForSurfaceActionError(error: SurfaceActionError): number {
   if (error.code === 'unknown_surface') return 404
-  if (error.code === 'missing_value') return 400
+  if (error.code === 'missing_value' || error.code === 'invalid_payload') return 400
   return 403
 }
