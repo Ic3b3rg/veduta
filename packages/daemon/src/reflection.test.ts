@@ -1,9 +1,10 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { projectFacts } from './facts-projection.ts'
+import { withDirectoryMode } from './filesystem.test-helpers.ts'
 import { MemoryConfigSchema, type MemoryConfig } from './memory-config.ts'
 import { formatSourceRef, MemoryIndex } from './memory-index.ts'
 import { Reflection, type ReflectionDistiller } from './reflection.ts'
@@ -396,14 +397,11 @@ describe('runReflection: failure handling', () => {
     const factsPath = join(spaceDir, 'FACTS.md')
     const before = readFileSync(factsPath)
 
-    chmodSync(spaceDir, 0o500)
-    try {
+    await withDirectoryMode(spaceDir, 0o500, async () => {
       await expect(reflection.runReflection(HEALTH, 1, clock.toISOString())).rejects.toThrow(
         /EACCES|permission denied/i,
       )
-    } finally {
-      chmodSync(spaceDir, 0o700)
-    }
+    })
 
     expect(readFileSync(factsPath)).toEqual(before)
     expect(store.readFacts(HEALTH).active.map((fact) => fact.text)).toEqual(['I like oats'])

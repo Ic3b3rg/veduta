@@ -1,8 +1,9 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { factRecordIds, formatFactsMarkdown, type FactsDocument } from './facts.ts'
+import { withDirectoryMode } from './filesystem.test-helpers.ts'
 import { SpacesEngine } from './spaces-engine.ts'
 
 describe('FACTS persistence boundary (issues/129-secret-safe-atomic-facts-writes.md)', () => {
@@ -83,7 +84,29 @@ _None yet._
       expect(readFileSync(factsPath, 'utf8')).toBe(before)
     })
 
-    it('restores the previous bytes when the directory durability check fails after rename', () => {
+    it('redacts a hidden legacy credential before an ordinary read reaches model context', () => {
+      const { engine, factsPath, spaceId } = createHarness()
+      const credential = `sk-\u200B${'a'.repeat(16)}`
+      const before = formatFactsMarkdown(
+        {
+          active: [{ text: `Remember ${credential}`, noted: '2026-06-01' }],
+          dormant: [],
+          superseded: [],
+        },
+        '2026-07-01',
+      )
+      writeFileSync(factsPath, before)
+
+      const facts = engine.readFacts(spaceId)
+      const context = engine.assembleContext(spaceId)
+
+      expect(facts.active[0]?.text).toBe('Remember [redacted]')
+      expect(context).toContain('Remember [redacted]')
+      expect(context).not.toContain(`sk-${'a'.repeat(16)}`)
+      expect(readFileSync(factsPath, 'utf8')).toBe(before)
+    })
+
+    it('restores the previous bytes when the directory durability check fails after rename', async () => {
       const { engine, factsPath, spaceDir, spaceId } = createHarness()
       engine.writeFact(spaceId, 'I like oats')
       const before = readFileSync(factsPath)
@@ -91,7 +114,7 @@ _None yet._
 
       // Write + execute allow the temporary file and rename to complete, but
       // no read bit makes the following parent-directory open fail.
-      withDirectoryMode(spaceDir, 0o300, () => {
+      await withDirectoryMode(spaceDir, 0o300, () => {
         expect(() => engine.writeFact(spaceId, 'I like rice')).toThrow(/EACCES|permission denied/i)
       })
 
@@ -200,7 +223,7 @@ _None yet._
       expect(engine.getSpace(source.id)?.archived).toBe(false)
     })
 
-    it('leaves both Spaces unchanged when replacement cannot start', () => {
+    it('leaves both Spaces unchanged when replacement cannot start', async () => {
       const rootDir = tempRoot()
       const engine = new SpacesEngine({ rootDir, now: fixedNow })
       const target = engine.createSpace({ name: 'Health' })
@@ -210,7 +233,7 @@ _None yet._
       const targetPath = factsPath(rootDir, target.slug)
       const before = readFileSync(targetPath)
 
-      withDirectoryMode(targetDir, 0o500, () => {
+      await withDirectoryMode(targetDir, 0o500, () => {
         expect(() => engine.mergeSpaces(target.id, source.id)).toThrow(/EACCES|permission denied/i)
       })
 
@@ -298,7 +321,7 @@ _None yet._
       expect(engine.readRecent(spaceId, 20)).toHaveLength(eventCount)
     })
 
-    it('leaves FACTS and the Event log unchanged when replacement cannot start', () => {
+    it('leaves FACTS and the Event log unchanged when replacement cannot start', async () => {
       const { engine, factsPath, spaceDir, spaceId } = createHarness()
       engine.writeFact(spaceId, 'I like oats')
       const document = engine.readFacts(spaceId)
@@ -306,7 +329,7 @@ _None yet._
       const before = readFileSync(factsPath)
       const eventCount = engine.readRecent(spaceId, 20).length
 
-      withDirectoryMode(spaceDir, 0o500, () => {
+      await withDirectoryMode(spaceDir, 0o500, () => {
         expect(() => engine.demoteFacts(spaceId, [targetId!])).toThrow(/EACCES|permission denied/i)
       })
 
@@ -352,13 +375,4 @@ function factsPath(rootDir: string, slug: string): string {
 
 function writeFactsFile(rootDir: string, slug: string, document: FactsDocument): void {
   writeFileSync(factsPath(rootDir, slug), formatFactsMarkdown(document, '2026-07-01'))
-}
-
-function withDirectoryMode<T>(path: string, mode: number, operation: () => T): T {
-  chmodSync(path, mode)
-  try {
-    return operation()
-  } finally {
-    chmodSync(path, 0o700)
-  }
 }

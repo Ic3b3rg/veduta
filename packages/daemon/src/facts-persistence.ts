@@ -23,9 +23,10 @@ export function sanitizeAndValidateFactText(factText: string): string {
   return sanitized
 }
 
-/** Sanitizes raw Markdown before headings, metadata, or origins are interpreted. */
-export function parseSanitizedFactsMarkdown(markdown: string): FactsDocument {
-  return parseFactsMarkdown(stripForbiddenUnicode(markdown))
+/** Sanitizes and redacts raw Markdown before it can reach a reader or model context. */
+export function parseSafeFactsMarkdown(markdown: string): FactsDocument {
+  const sanitized = stripForbiddenUnicode(markdown)
+  return parseFactsMarkdown(defaultRedactor.redactText(sanitized))
 }
 
 /** Sanitizes and rejects secrets before parsing a document that will be rewritten. */

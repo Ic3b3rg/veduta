@@ -41,7 +41,7 @@ import {
   type FactsDocument,
 } from './facts.ts'
 import {
-  parseSanitizedFactsMarkdown,
+  parseSafeFactsMarkdown,
   persistFactsDocument,
   readFactsDocumentForRewrite,
   sanitizeAndValidateFactsDocument,
@@ -273,9 +273,7 @@ export class SpacesEngine {
   }
 
   readFacts(spaceId: string): FactsDocument {
-    return parseSanitizedFactsMarkdown(
-      readFileSync(this.factsPath(this.requireSpace(spaceId)), 'utf8'),
-    )
+    return parseSafeFactsMarkdown(readFileSync(this.factsPath(this.requireSpace(spaceId)), 'utf8'))
   }
 
   /**
