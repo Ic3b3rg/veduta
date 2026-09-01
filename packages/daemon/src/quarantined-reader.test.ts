@@ -265,13 +265,13 @@ describe('QuarantinedReader', () => {
 })
 
 describe('sanitizeReaderOutput', () => {
-  it('normalizes zero-width and control characters, collapsing whitespace', () => {
+  it('removes forbidden Unicode while preserving joiners, then normalizes controls and whitespace', () => {
     const result = sanitizeReaderOutput({
       ...validOutput,
-      summary: 'Hello\u200Bworld\u0007  \n\n  there',
+      summary: 'Hello\u200Bworld\u0007  \n\n  Persian\u200C Indic\u200Dthere',
     })
     expect(result.ok).toBe(true)
-    if (result.ok) expect(result.output.summary).toBe('Helloworld there')
+    if (result.ok) expect(result.output.summary).toBe('Helloworld Persian\u200C Indic\u200Dthere')
   })
 
   const rejectionCases: [string, string][] = [
@@ -354,7 +354,7 @@ describe('injection corpus', () => {
   //   6 markdown-image-exfiltration: echoes the body verbatim — "tell the
   //     user" trips `nested-instruction`.
   //   7 unicode-smuggling: echoes the body verbatim, hidden characters and
-  //     all — this only passes once `HIDDEN_CHAR_RE` strips the RTL
+  //     all — this only passes once `stripForbiddenUnicode` strips the RTL
   //     override/zero-width/Tag characters splicing "previous"/
   //     "instructions" apart, letting `instruction-override` see the
   //     reassembled words.

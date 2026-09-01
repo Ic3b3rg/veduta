@@ -128,7 +128,7 @@ describe('MemoryIndex: finding events', () => {
     const health = engine.createSpace({ name: 'Health' })
     engine.appendEvent(health.id, {
       type: 'reader.summary',
-      origin: 'untrusted:gmail',
+      origin: 'untrusted:\u200Bgmail',
       text: 'Quarantined reader classified an event from source "gmail"',
       payload: {
         queueId: 1,
@@ -152,6 +152,36 @@ describe('MemoryIndex: finding events', () => {
     const event = eventFromDereference(index.dereference(hits[0]?.sourceRef ?? ''))
     expect(event.type).toBe('reader.summary')
     expect(event.text).toBe('Quarantined reader classified an event from source "gmail"')
+
+    index.close()
+  })
+
+  it('indexes and dereferences sanitized legacy Event content without rewriting its source line', () => {
+    const rootDir = tempRoot()
+    const engine = new SpacesEngine({ rootDir, now })
+    const health = engine.createSpace({ name: 'Health' })
+    const path = logFilePath(rootDir, health.slug, '2026-07-07')
+    const raw = `${JSON.stringify({
+      at: '2026-07-07T09:00:00.000Z',
+      spaceId: health.id,
+      type: 'note',
+      text: 'legacy ro\u200Badmap',
+      origin: 'untrusted:\u200Bgmail',
+      payload: { nested: { 'mil\u2066estone': 'release pl\u202Eanning' } },
+    })}\n`
+    writeFileSync(path, raw)
+
+    const index = new MemoryIndex({ rootDir, spacesEngine: engine, now })
+    index.reconcile()
+
+    const hits = index.search({ spaceId: health.id, terms: ['roadmap', 'planning'] })
+    expect(hits).toHaveLength(1)
+    expect(eventFromDereference(index.dereference(hits[0]?.sourceRef ?? ''))).toMatchObject({
+      text: 'legacy roadmap',
+      origin: 'untrusted:gmail',
+      payload: { nested: { milestone: 'release planning' } },
+    })
+    expect(readFileSync(path, 'utf8')).toBe(raw)
 
     index.close()
   })

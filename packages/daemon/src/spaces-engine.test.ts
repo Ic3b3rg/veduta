@@ -19,6 +19,7 @@ import {
 } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import { factRecordIds, formatFactsMarkdown, type FactsDocument } from './facts.ts'
+import { stripForbiddenUnicode } from './forbidden-unicode.ts'
 import { seedSpaces } from './seed.ts'
 import { renderEventForContext, SpacesEngine } from './spaces-engine.ts'
 import { Store } from './store.ts'
@@ -636,6 +637,144 @@ describe('SpacesEngine occurredAt (issues/021-advanced-memory.md)', () => {
     // An event without occurredAt renders exactly as it did before this field existed.
     const plain = engine.appendEvent(space.id, { text: 'Plain event' })
     expect(renderEventForContext(plain)).toBe(`- ${plain.at} [turn] [trusted:system] Plain event`)
+  })
+})
+
+describe('SpacesEngine forbidden Unicode persistence boundary', () => {
+  it('sanitizes every Event string, payload key, and nested leaf before secret redaction', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+
+    const event = engine.appendEvent(space.id, {
+      type: 'sync.sk-\u200Babcdefgh12345678',
+      text: 'credential sk-\u200Babcdefgh12345678 and Persian\u200C text',
+      at: '2026-07-\u200B04T12:00:00.000Z',
+      occurredAt: '2026-07-01T12:00:00+0\u200B2:00',
+      payload: {
+        'sub\u200Bject': 'ro\u202Eadmap',
+        'sk-\u200Bijklmnop87654321': 'secret-bearing key',
+        nested: [{ 'ta\u2066g': 'sk-\u200Babcdefgh12345678' }, ['kept\u200Djoiner']],
+      },
+    })
+
+    expect(event).toMatchObject({
+      type: 'sync.[redacted]',
+      text: 'credential [redacted] and Persian\u200C text',
+      occurredAt: '2026-07-01T10:00:00.000Z',
+      payload: {
+        subject: 'roadmap',
+        '[redacted]': 'secret-bearing key',
+        nested: [{ tag: '[redacted]' }, ['kept\u200Djoiner']],
+      },
+    })
+
+    const log = readFileSync(join(rootDir, 'spaces', space.slug, 'log', '2026-07-04.jsonl'), 'utf8')
+    expect(log).toBe(stripForbiddenUnicode(log))
+    expect(log).not.toContain('sk-abcdefgh12345678')
+    expect(log).toContain('Persian\u200C text')
+    expect(log).toContain('kept\u200Djoiner')
+  })
+
+  it('rejects a sanitized payload-key collision without appending or notifying observers', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+    const logPath = join(rootDir, 'spaces', space.slug, 'log', '2026-07-03.jsonl')
+    const before = readFileSync(logPath, 'utf8')
+    const notices: string[] = []
+    engine.onMemoryWrite((notice) => notices.push(notice.kind))
+
+    expect(() =>
+      engine.appendEvent(space.id, {
+        text: 'must not persist',
+        payload: { account: 'first', 'acc\u200Bount': 'second' },
+      }),
+    ).toThrow(/forbidden Unicode.*key collision/i)
+
+    expect(readFileSync(logPath, 'utf8')).toBe(before)
+    expect(notices).toEqual([])
+  })
+
+  it('rejects a payload-key collision caused by redaction without appending or notifying observers', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+    const logPath = join(rootDir, 'spaces', space.slug, 'log', '2026-07-03.jsonl')
+    const before = readFileSync(logPath, 'utf8')
+    const notices: string[] = []
+    engine.onMemoryWrite((notice) => notices.push(notice.kind))
+
+    expect(() =>
+      engine.appendEvent(space.id, {
+        text: 'must not persist',
+        payload: {
+          'sk-\u200Babcdefgh12345678': 'first',
+          'sk-\u200Bijklmnop87654321': 'second',
+        },
+      }),
+    ).toThrow(/secret redaction.*key collision/i)
+
+    expect(readFileSync(logPath, 'utf8')).toBe(before)
+    expect(notices).toEqual([])
+  })
+
+  it('rejects required Event text that becomes empty without persisting anything', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+    const logPath = join(rootDir, 'spaces', space.slug, 'log', '2026-07-03.jsonl')
+    const before = readFileSync(logPath, 'utf8')
+
+    expect(() => engine.appendEvent(space.id, { text: '\u200B\u202E\u{E0069}' })).toThrow(
+      /Event text is empty after forbidden Unicode sanitization/,
+    )
+
+    expect(readFileSync(logPath, 'utf8')).toBe(before)
+  })
+
+  it('sanitizes legacy Event content for context without rewriting its log line or origin', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+    const logPath = join(rootDir, 'spaces', space.slug, 'log', '2026-07-02.jsonl')
+    const raw = `${JSON.stringify({
+      at: '2026-07-02T09:00:00.000Z',
+      spaceId: space.id,
+      type: 'reader.summary',
+      text: 'legacy sk-\u200Babcdefgh12345678 summary',
+      origin: 'untrusted:\u200Bgmail',
+      payload: {
+        reader: {
+          'sum\u200Bmary': 'team ro\u202Eadmap sk-\u200Babcdefgh12345678',
+          language: 'Persian\u200C text',
+        },
+      },
+    })}\n`
+    writeFileSync(logPath, raw)
+
+    const context = engine.assembleContext(space.id, 100)
+
+    expect(context).toBe(stripForbiddenUnicode(context))
+    expect(context).toContain('[untrusted:gmail]')
+    expect(context).toContain('summary: team roadmap [redacted]')
+    expect(context).not.toContain('sk-abcdefgh12345678')
+    expect(context).toContain('language: Persian\u200C text')
+    expect(readFileSync(logPath, 'utf8')).toBe(raw)
+  })
+
+  it('sanitizes and redacts a legacy Event passed directly to the context renderer', () => {
+    const rendered = renderEventForContext({
+      at: '2026-07-02T09:00:00.000Z',
+      spaceId: 'spc-health',
+      type: 'sync.sk-\u200Babcdefgh12345678',
+      text: 'legacy sk-\u200Bijklmnop87654321 summary',
+      origin: 'trusted:system',
+    })
+
+    expect(rendered).toContain('[sync.-redacted-]')
+    expect(rendered).toContain('legacy [redacted] summary')
+    expect(rendered).not.toMatch(/sk-[A-Za-z0-9_-]{8,}/)
   })
 })
 

@@ -24,7 +24,6 @@ import {
   SurfaceSchema,
   SurfaceTemplateIdSchema,
   SurfaceTemplateSchema,
-  type JsonObject,
   type Space,
   type Surface,
   type SurfaceTemplate,
@@ -43,12 +42,12 @@ import {
   type FactsDocument,
 } from './facts.ts'
 import { projectFacts } from './facts-projection.ts'
-import { defaultRedactor } from './redaction.ts'
 import {
   eventsForContext,
   parseSpaceEventLine,
   readEventsFile,
   renderEventForContext,
+  sanitizeAndRedactSpaceEvent,
   splitLogLines,
   type AppendSpaceEventInput,
   type SpaceEvent,
@@ -351,26 +350,33 @@ export class SpacesEngine {
 
   appendEvent(spaceId: string, input: AppendSpaceEventInput): SpaceEvent {
     const space = this.requireSpace(spaceId)
-    const at = input.at ?? this.nowIso()
-    const occurredAt = normalizeIsoInstant(input.occurredAt)
     // SECURITY.md §4: no secret ever appears in the Event log. Redaction
-    // happens PRE-append (ADR-0003: the log is never rewritten), so a
-    // secret that reached this call never lands durably in the first place.
+    // happens PRE-append (ADR-0003: the log is never rewritten). Forbidden
+    // Unicode is stripped first, so a hidden-character-split credential is
+    // contiguous when the redactor evaluates it.
     const correlationId = this.eventCorrelation.getStore()
     const payload =
       correlationId === undefined ? input.payload : { ...(input.payload ?? {}), correlationId }
-    const event: SpaceEvent = {
-      at,
+    const sanitized = sanitizeAndRedactSpaceEvent({
+      at: input.at ?? this.nowIso(),
       spaceId: space.id,
       type: input.type ?? 'turn',
-      text: defaultRedactor.redactText(input.text),
+      text: input.text,
       origin: input.origin ?? 'trusted:system',
+      ...(input.occurredAt === undefined ? {} : { occurredAt: input.occurredAt }),
+      ...(payload === undefined ? {} : { payload }),
+    })
+    const occurredAt = normalizeIsoInstant(sanitized.occurredAt)
+    const event: SpaceEvent = {
+      at: sanitized.at,
+      spaceId: sanitized.spaceId,
+      type: sanitized.type,
+      text: sanitized.text,
+      origin: sanitized.origin,
       ...(occurredAt === undefined ? {} : { occurredAt }),
-      ...(payload === undefined
-        ? {}
-        : { payload: defaultRedactor.redactDeep(payload) as JsonObject }),
+      ...(sanitized.payload === undefined ? {} : { payload: sanitized.payload }),
     }
-    appendFileSync(this.logPath(space, at), `${JSON.stringify(event)}\n`)
+    appendFileSync(this.logPath(space, event.at), `${JSON.stringify(event)}\n`)
     this.notifyMemoryWrite(space.id, 'event')
     return event
   }

@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { isJsonValue, type JsonObject, type JsonValue } from '@veduta/protocol'
 import {
+  sanitizeJsonObjectForForbiddenUnicode,
+  stripForbiddenUnicode,
+} from './forbidden-unicode.ts'
+import { defaultRedactor } from './redaction.ts'
+import {
   isUntrusted,
   isValidOrigin,
   untrustedDataBlock,
@@ -27,6 +32,80 @@ export interface AppendSpaceEventInput {
   occurredAt?: string
   origin?: SpaceEvent['origin']
   payload?: JsonObject
+}
+
+/**
+ * Removes forbidden Unicode from one Event before it reaches a durable or
+ * Agent-visible boundary. This deliberately does not redact secrets; callers
+ * that persist must sanitize first and redact second so split credentials are
+ * joined before the redactor evaluates them.
+ */
+export function sanitizeSpaceEvent(event: SpaceEvent): SpaceEvent {
+  const at = sanitizeRequiredEventString('at', event.at)
+  const spaceId = sanitizeRequiredEventString('spaceId', event.spaceId)
+  const type = sanitizeRequiredEventString('type', event.type)
+  const text = sanitizeRequiredEventString('text', event.text)
+  const origin = sanitizeRequiredEventString('origin', event.origin)
+  if (!isValidOrigin(origin)) throw new Error('invalid Event log origin')
+  const occurredAt =
+    event.occurredAt === undefined ? undefined : stripForbiddenUnicode(event.occurredAt)
+  const payload =
+    event.payload === undefined ? undefined : sanitizeJsonObjectForForbiddenUnicode(event.payload)
+
+  return {
+    at,
+    spaceId,
+    type,
+    text,
+    origin,
+    ...(occurredAt === undefined ? {} : { occurredAt }),
+    ...(payload === undefined ? {} : { payload }),
+  }
+}
+
+/** Applies the durable Event ordering: forbidden Unicode first, secrets second. */
+export function sanitizeAndRedactSpaceEvent(event: SpaceEvent): SpaceEvent {
+  const sanitized = sanitizeSpaceEvent(event)
+  return {
+    ...sanitized,
+    type: defaultRedactor.redactText(sanitized.type),
+    text: defaultRedactor.redactText(sanitized.text),
+    ...(sanitized.payload === undefined ? {} : { payload: redactEventPayload(sanitized.payload) }),
+  }
+}
+
+export class SecretRedactionKeyCollisionError extends Error {
+  constructor() {
+    super('Secret redaction caused an Event payload key collision')
+    this.name = 'SecretRedactionKeyCollisionError'
+  }
+}
+
+function redactEventPayload(payload: JsonObject): JsonObject {
+  const keys = new Set<string>()
+  const entries: [string, JsonValue][] = []
+  for (const [key, value] of Object.entries(payload)) {
+    const redactedKey = defaultRedactor.redactText(key)
+    if (keys.has(redactedKey)) throw new SecretRedactionKeyCollisionError()
+    keys.add(redactedKey)
+    entries.push([redactedKey, redactEventJsonValue(value)])
+  }
+  return Object.fromEntries(entries)
+}
+
+function redactEventJsonValue(value: JsonValue): JsonValue {
+  if (typeof value === 'string') return defaultRedactor.redactText(value)
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(redactEventJsonValue)
+  return redactEventPayload(value)
+}
+
+function sanitizeRequiredEventString(field: string, value: string): string {
+  const sanitized = stripForbiddenUnicode(value)
+  if (sanitized.length === 0) {
+    throw new Error(`Event ${field} is empty after forbidden Unicode sanitization`)
+  }
+  return sanitized
 }
 
 function readerSummaryBlock(event: SpaceEvent): string | undefined {
@@ -60,7 +139,8 @@ function renderEventType(type: string): string {
 }
 
 /** The canonical taint-aware Event rendering used in all Agent context. */
-export function renderEventForContext(event: SpaceEvent): string {
+export function renderEventForContext(input: SpaceEvent): string {
+  const event = sanitizeAndRedactSpaceEvent(input)
   const occurred = event.occurredAt === undefined ? '' : ` (occurred ${event.occurredAt})`
   const type = renderEventType(event.type)
   if (!isUntrusted(event.origin)) {
@@ -110,21 +190,33 @@ function parseSpaceEvent(input: unknown): SpaceEvent {
   const spaceId = stringValue(input['spaceId'])
   const type = stringValue(input['type'])
   const text = stringValue(input['text'])
-  const origin = input['origin']
+  const rawOrigin = stringValue(input['origin'])
   if (!at || !spaceId || !type || !text) throw new Error('invalid Event log entry')
+  if (rawOrigin === undefined) throw new Error('invalid Event log origin')
+  const origin = stripForbiddenUnicode(rawOrigin)
   if (!isValidOrigin(origin)) throw new Error('invalid Event log origin')
   const payload = isJsonObject(input['payload']) ? input['payload'] : undefined
-  // Invalid legacy source timestamps are dropped while the Event remains
-  // readable. The append-only log cannot be rewritten in place (ADR-0003).
-  const occurredAt = normalizeIsoInstant(stringValue(input['occurredAt']))
-  return {
+  const rawOccurredAt = stringValue(input['occurredAt'])
+  const sanitized = sanitizeAndRedactSpaceEvent({
     at,
     spaceId,
     type,
     text,
     origin,
-    ...(occurredAt === undefined ? {} : { occurredAt }),
+    ...(rawOccurredAt === undefined ? {} : { occurredAt: rawOccurredAt }),
     ...(payload === undefined ? {} : { payload }),
+  })
+  // Invalid legacy source timestamps are dropped while the Event remains
+  // readable. The append-only log cannot be rewritten in place (ADR-0003).
+  const occurredAt = normalizeIsoInstant(sanitized.occurredAt)
+  return {
+    at: sanitized.at,
+    spaceId: sanitized.spaceId,
+    type: sanitized.type,
+    text: sanitized.text,
+    origin: sanitized.origin,
+    ...(occurredAt === undefined ? {} : { occurredAt }),
+    ...(sanitized.payload === undefined ? {} : { payload: sanitized.payload }),
   }
 }
 
