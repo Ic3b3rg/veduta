@@ -34,7 +34,6 @@ import {
   emptyFactsDocument,
   factRecordIds,
   formatFactsMarkdown,
-  parseFactsMarkdown,
   searchFacts as searchFactsDocument,
   type CuratorOperation,
   type CuratorOptions,
@@ -42,9 +41,11 @@ import {
   type FactsDocument,
 } from './facts.ts'
 import {
+  parseSanitizedFactsMarkdown,
   persistFactsDocument,
-  prepareFactsDocument,
-  prepareFactTextForWrite,
+  readFactsDocumentForRewrite,
+  sanitizeAndValidateFactsDocument,
+  sanitizeAndValidateFactText,
 } from './facts-persistence.ts'
 import { projectFacts } from './facts-projection.ts'
 import {
@@ -257,7 +258,7 @@ export class SpacesEngine {
     if (targetSpaceId === sourceSpaceId) throw new Error('cannot merge a Space into itself')
     const target = this.requireSpace(targetSpaceId)
     const source = this.requireSpace(sourceSpaceId)
-    const sourceFacts = this.readFacts(source.id)
+    const sourceFacts = readFactsDocumentForRewrite(this.factsPath(source))
 
     this.mergeFacts(target.id, sourceFacts)
     this.moveSurfaces(source.id, target.id)
@@ -272,7 +273,9 @@ export class SpacesEngine {
   }
 
   readFacts(spaceId: string): FactsDocument {
-    return parseFactsMarkdown(readFileSync(this.factsPath(this.requireSpace(spaceId)), 'utf8'))
+    return parseSanitizedFactsMarkdown(
+      readFileSync(this.factsPath(this.requireSpace(spaceId)), 'utf8'),
+    )
   }
 
   /**
@@ -289,13 +292,15 @@ export class SpacesEngine {
   ): WriteFactResult {
     const space = this.requireSpace(spaceId)
     const date = this.today()
-    const document = prepareFactsDocument(this.readFacts(space.id))
-    const preparedFactText = prepareFactTextForWrite(factText)
-    const preparedOptions =
+    const document = sanitizeAndValidateFactsDocument(
+      readFactsDocumentForRewrite(this.factsPath(space)),
+    )
+    const sanitizedFactText = sanitizeAndValidateFactText(factText)
+    const sanitizedOptions =
       options?.supersedes === undefined
         ? undefined
-        : { supersedes: prepareFactTextForWrite(options.supersedes) }
-    const result = curateFact(document, preparedFactText, date, origin, preparedOptions)
+        : { supersedes: sanitizeAndValidateFactText(options.supersedes) }
+    const result = curateFact(document, sanitizedFactText, date, origin, sanitizedOptions)
     if (result.operation !== 'noop') {
       persistFactsDocument(this.factsPath(space), result.document, date)
       // Fired after its `fact.write` Event log echo below, not straight
@@ -333,7 +338,7 @@ export class SpacesEngine {
   demoteFacts(spaceId: string, ids: string[]): FactRecord[] {
     const space = this.requireSpace(spaceId)
     const date = this.today()
-    const document = this.readFacts(space.id)
+    const document = readFactsDocumentForRewrite(this.factsPath(space))
     const recordIds = factRecordIds(document, date)
     const idSet = new Set(ids)
     const matchedIds = document.active
@@ -855,8 +860,10 @@ export class SpacesEngine {
       return
     }
     const target = this.requireSpace(targetSpaceId)
-    const source = prepareFactsDocument(sourceDocument)
-    let document = prepareFactsDocument(this.readFacts(target.id))
+    const source = sanitizeAndValidateFactsDocument(sourceDocument)
+    let document = sanitizeAndValidateFactsDocument(
+      readFactsDocumentForRewrite(this.factsPath(target)),
+    )
     for (const fact of source.active) {
       // A merged fact keeps its origin: a Space merge must never launder
       // an untrusted fact into an unmarked one.
