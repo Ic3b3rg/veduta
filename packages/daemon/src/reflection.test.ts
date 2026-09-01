@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
@@ -375,6 +375,39 @@ describe('runReflection: failure handling', () => {
     const report = await reflection.runReflection(HEALTH, 1, scheduledFor)
     expect(report?.eventCount).toBe(1)
     expect(store.readFacts(HEALTH).active.map((fact) => fact.text)).toContain('Recovered fact.')
+  })
+
+  it('a failed demotion replacement leaves FACTS bytes intact and writes no terminal marker', async () => {
+    const config = memoryConfig({ budget: { low: 1 } })
+    const reflection = new Reflection({
+      store,
+      scheduler,
+      index,
+      config,
+      distiller: nothingDistiller,
+      now,
+    })
+    clock = new Date('2026-07-01T04:00:00.000Z')
+    store.spacesEngine.writeFact(HEALTH, 'I like oats')
+    clock = new Date('2026-07-08T03:00:00.000Z')
+    store.spacesEngine.appendEvent(HEALTH, { type: 'note', text: 'Opens the Reflection window.' })
+    clock = new Date('2026-07-08T04:00:00.000Z')
+    const spaceDir = join(rootDir, 'spaces', 'health')
+    const factsPath = join(spaceDir, 'FACTS.md')
+    const before = readFileSync(factsPath)
+
+    chmodSync(spaceDir, 0o500)
+    try {
+      await expect(reflection.runReflection(HEALTH, 1, clock.toISOString())).rejects.toThrow(
+        /EACCES|permission denied/i,
+      )
+    } finally {
+      chmodSync(spaceDir, 0o700)
+    }
+
+    expect(readFileSync(factsPath)).toEqual(before)
+    expect(store.readFacts(HEALTH).active.map((fact) => fact.text)).toEqual(['I like oats'])
+    expect(store.eventLog(HEALTH).some((event) => event.type === 'reflection.done')).toBe(false)
   })
 })
 

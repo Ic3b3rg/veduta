@@ -1152,6 +1152,108 @@ describe('SpacesEngine demoteFacts (issues/021-advanced-memory.md)', () => {
     expect(engine.readRecent(space.id, 20)).toHaveLength(beforeCount)
     expect(engine.readFacts(space.id).active.map((fact) => fact.text)).toEqual(['I like rice'])
   })
+
+  it('sanitizes and preserves every FACTS section while moving the selected record', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+    writeFactsFile(rootDir, space.slug, {
+      active: [{ text: 'I like o\u200Bats', noted: '2026-\u200B06-01', origin: 'untrusted:gmail' }],
+      dormant: [
+        { text: 'Existing dor\u202Emant', noted: '2026-05-01', dormantAt: '2026-\u200B06-02' },
+      ],
+      superseded: [
+        {
+          text: 'Previous preference',
+          noted: '2026-04-01',
+          supersededAt: '2026-05-01',
+          supersededBy: 'Current pref\u2066erence',
+          origin: 'untrusted:import',
+        },
+      ],
+    })
+    const before = engine.readFacts(space.id)
+    const targetId = factRecordIds(before, '2026-07-03').get(before.active[0]!)
+    expect(targetId).toBeDefined()
+
+    const demoted = engine.demoteFacts(space.id, [targetId!])
+
+    expect(demoted).toEqual([
+      {
+        text: 'I like oats',
+        noted: '2026-06-01',
+        dormantAt: '2026-07-03',
+        origin: 'untrusted:gmail',
+      },
+    ])
+    expect(engine.readFacts(space.id)).toEqual({
+      active: [],
+      dormant: [
+        { text: 'Existing dormant', noted: '2026-05-01', dormantAt: '2026-06-02' },
+        {
+          text: 'I like oats',
+          noted: '2026-06-01',
+          dormantAt: '2026-07-03',
+          origin: 'untrusted:gmail',
+        },
+      ],
+      superseded: [
+        {
+          text: 'Previous preference',
+          noted: '2026-04-01',
+          supersededAt: '2026-05-01',
+          supersededBy: 'Current preference',
+          origin: 'untrusted:import',
+        },
+      ],
+    })
+  })
+
+  it('rejects a credential in any retained section without moving a record or appending an Event', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+    writeFactsFile(rootDir, space.slug, {
+      active: [{ text: 'I like oats', noted: '2026-06-01' }],
+      dormant: [{ text: `Remember sk-${'a'.repeat(16)}`, noted: '2026-05-01' }],
+      superseded: [],
+    })
+    const document = engine.readFacts(space.id)
+    const targetId = factRecordIds(document, '2026-07-03').get(document.active[0]!)
+    const factsPath = join(rootDir, 'spaces', space.slug, 'FACTS.md')
+    const before = readFileSync(factsPath)
+    const eventCount = engine.readRecent(space.id, 20).length
+
+    expect(() => engine.demoteFacts(space.id, [targetId!])).toThrow(
+      'Secrets cannot be stored in FACTS',
+    )
+
+    expect(readFileSync(factsPath)).toEqual(before)
+    expect(engine.readRecent(space.id, 20)).toHaveLength(eventCount)
+  })
+
+  it('leaves FACTS and the Event log unchanged when demotion replacement cannot start', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+    engine.writeFact(space.id, 'I like oats')
+    const document = engine.readFacts(space.id)
+    const targetId = factRecordIds(document, '2026-07-03').get(document.active[0]!)
+    const spaceDir = join(rootDir, 'spaces', space.slug)
+    const factsPath = join(spaceDir, 'FACTS.md')
+    const before = readFileSync(factsPath)
+    const eventCount = engine.readRecent(space.id, 20).length
+
+    chmodSync(spaceDir, 0o500)
+    try {
+      expect(() => engine.demoteFacts(space.id, [targetId!])).toThrow(/EACCES|permission denied/i)
+    } finally {
+      chmodSync(spaceDir, 0o700)
+    }
+
+    expect(readFileSync(factsPath)).toEqual(before)
+    expect(engine.readRecent(space.id, 20)).toHaveLength(eventCount)
+  })
 })
 
 describe('Store memory contract', () => {

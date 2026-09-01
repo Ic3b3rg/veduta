@@ -342,17 +342,18 @@ export class SpacesEngine {
     const result = demoteFactsDocument(document, ids, date)
     if (result.demoted.length === 0) return []
 
-    writeFileSync(this.factsPath(space), formatFactsMarkdown(result.document, date))
+    const persisted = persistFactsDocument(this.factsPath(space), result.document, date)
+    const demoted = persisted.dormant.slice(-result.demoted.length)
     this.appendEvent(space.id, {
       type: 'fact.demote',
       text: 'Reflection moved facts to dormant to keep the active set within budget.',
-      payload: { ids: matchedIds, count: result.demoted.length },
+      payload: { ids: matchedIds, count: demoted.length },
     })
     // After the `fact.demote` Event log entry above, matching `writeFact`:
     // a 'fact' notice means the whole operation, event echo included, is
     // durable — not merely that `FACTS.md` itself was rewritten.
     this.notifyMemoryWrite(space.id, 'fact')
-    return result.demoted
+    return demoted
   }
 
   appendEvent(spaceId: string, input: AppendSpaceEventInput): SpaceEvent {
