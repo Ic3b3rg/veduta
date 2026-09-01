@@ -87,20 +87,26 @@ _None yet._
     it('redacts a hidden legacy credential before an ordinary read reaches model context', () => {
       const { engine, factsPath, spaceId } = createHarness()
       const credential = `sk-\u200B${'a'.repeat(16)}`
-      const before = formatFactsMarkdown(
-        {
-          active: [{ text: `Remember ${credential}`, noted: '2026-06-01' }],
-          dormant: [],
-          superseded: [],
-        },
-        '2026-07-01',
-      )
+      const before = `# FACTS
+
+- Remember ${credential} (noted: 2026-06-01) — origin: untrusted:${credential}
+
+## Dormant
+
+_None yet._
+
+## Superseded
+
+_None yet._
+`
       writeFileSync(factsPath, before)
 
       const facts = engine.readFacts(spaceId)
       const context = engine.assembleContext(spaceId)
 
       expect(facts.active[0]?.text).toBe('Remember [redacted]')
+      expect(facts.active[0]?.origin).toBe('untrusted:redacted')
+      expect(engine.contextOrigins(spaceId)).toContain('untrusted:redacted')
       expect(context).toContain('Remember [redacted]')
       expect(context).not.toContain(`sk-${'a'.repeat(16)}`)
       expect(readFileSync(factsPath, 'utf8')).toBe(before)

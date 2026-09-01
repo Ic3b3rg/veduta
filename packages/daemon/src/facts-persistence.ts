@@ -10,7 +10,7 @@ import {
 } from './facts.ts'
 import { stripForbiddenUnicode } from './forbidden-unicode.ts'
 import { defaultRedactor } from './redaction.ts'
-import { isValidOrigin } from './taint.ts'
+import { isValidOrigin, type Origin } from './taint.ts'
 
 const SECRET_ERROR =
   'Secrets cannot be stored in FACTS. Remove the credential and try the write again.'
@@ -26,7 +26,12 @@ export function sanitizeAndValidateFactText(factText: string): string {
 /** Sanitizes and redacts raw Markdown before it can reach a reader or model context. */
 export function parseSafeFactsMarkdown(markdown: string): FactsDocument {
   const sanitized = stripForbiddenUnicode(markdown)
-  return parseFactsMarkdown(defaultRedactor.redactText(sanitized))
+  const document = parseFactsMarkdown(sanitized)
+  return {
+    active: document.active.map(redactFactRecordForRead),
+    dormant: document.dormant.map(redactFactRecordForRead),
+    superseded: document.superseded.map(redactFactRecordForRead),
+  }
 }
 
 /** Sanitizes and rejects secrets before parsing a document that will be rewritten. */
@@ -75,6 +80,31 @@ function sanitizeAndValidateFactRecord(fact: FactRecord): FactRecord {
     ...(supersededBy === undefined ? {} : { supersededBy }),
     ...(originText === undefined ? {} : { origin: originText }),
   }
+}
+
+function redactFactRecordForRead(fact: FactRecord): FactRecord {
+  const noted = redactOptionalText(fact.noted)
+  const dormantAt = redactOptionalText(fact.dormantAt)
+  const supersededAt = redactOptionalText(fact.supersededAt)
+  const supersededBy = redactOptionalText(fact.supersededBy)
+  const origin = redactOriginForRead(fact.origin)
+  return {
+    text: defaultRedactor.redactText(fact.text),
+    ...(noted === undefined ? {} : { noted }),
+    ...(dormantAt === undefined ? {} : { dormantAt }),
+    ...(supersededAt === undefined ? {} : { supersededAt }),
+    ...(supersededBy === undefined ? {} : { supersededBy }),
+    ...(origin === undefined ? {} : { origin }),
+  }
+}
+
+function redactOptionalText(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : defaultRedactor.redactText(value)
+}
+
+function redactOriginForRead(origin: Origin | undefined): Origin | undefined {
+  if (origin === undefined) return undefined
+  return defaultRedactor.redactText(origin) === origin ? origin : 'untrusted:redacted'
 }
 
 function sanitizeOptionalText(value: string | undefined): string | undefined {
