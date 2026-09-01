@@ -206,6 +206,125 @@ describe('SpacesEngine layout and lifecycle', () => {
       'I used to track calories',
     )
   })
+
+  it('sanitizes and preserves every FACTS section, record field, origin, and order in a merge', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const target = engine.createSpace({ name: 'Health' })
+    const source = engine.createSpace({ name: 'Food' })
+    writeFactsFile(rootDir, target.slug, {
+      active: [
+        { text: 'Target a\u200Bctive', noted: '2026-\u200B06-01', origin: 'untrusted:gmail' },
+      ],
+      dormant: [
+        {
+          text: 'Target dor\u202Emant',
+          noted: '2026-05-01',
+          dormantAt: '2026-\u200B06-02',
+          origin: 'untrusted:import',
+        },
+      ],
+      superseded: [
+        {
+          text: 'Target old',
+          noted: '2026-04-01',
+          supersededAt: '2026-05-01',
+          supersededBy: 'Target n\u200Bew',
+          origin: 'untrusted:external',
+        },
+      ],
+    })
+    writeFactsFile(rootDir, source.slug, {
+      active: [{ text: 'Source ac\u2066tive', noted: '2026-06-03', origin: 'untrusted:import' }],
+      dormant: [{ text: 'Source dor\u200Bmant', noted: '2026-05-03', dormantAt: '2026-06-04' }],
+      superseded: [
+        {
+          text: 'Source old',
+          noted: '2026-04-03',
+          supersededAt: '2026-05-03',
+          supersededBy: 'Source n\u200Bew',
+        },
+      ],
+    })
+
+    engine.mergeSpaces(target.id, source.id)
+
+    expect(engine.readFacts(target.id)).toEqual({
+      active: [
+        { text: 'Target active', noted: '2026-06-01', origin: 'untrusted:gmail' },
+        { text: 'Source active', noted: '2026-06-03', origin: 'untrusted:import' },
+      ],
+      dormant: [
+        {
+          text: 'Target dormant',
+          noted: '2026-05-01',
+          dormantAt: '2026-06-02',
+          origin: 'untrusted:import',
+        },
+        { text: 'Source dormant', noted: '2026-05-03', dormantAt: '2026-06-04' },
+      ],
+      superseded: [
+        {
+          text: 'Target old',
+          noted: '2026-04-01',
+          supersededAt: '2026-05-01',
+          supersededBy: 'Target new',
+          origin: 'untrusted:external',
+        },
+        {
+          text: 'Source old',
+          noted: '2026-04-03',
+          supersededAt: '2026-05-03',
+          supersededBy: 'Source new',
+        },
+      ],
+    })
+  })
+
+  it('rejects a credential from a merged Space without changing or archiving either Space', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const target = engine.createSpace({ name: 'Health' })
+    const source = engine.createSpace({ name: 'Food' })
+    writeFactsFile(rootDir, source.slug, {
+      active: [{ text: `Remember sk-${'a'.repeat(16)}`, noted: '2026-06-03' }],
+      dormant: [],
+      superseded: [],
+    })
+    const targetPath = join(rootDir, 'spaces', target.slug, 'FACTS.md')
+    const sourcePath = join(rootDir, 'spaces', source.slug, 'FACTS.md')
+    const targetBefore = readFileSync(targetPath)
+    const sourceBefore = readFileSync(sourcePath)
+
+    expect(() => engine.mergeSpaces(target.id, source.id)).toThrow(
+      'Secrets cannot be stored in FACTS',
+    )
+
+    expect(readFileSync(targetPath)).toEqual(targetBefore)
+    expect(readFileSync(sourcePath)).toEqual(sourceBefore)
+    expect(engine.getSpace(source.id)?.archived).toBe(false)
+  })
+
+  it('leaves both Spaces unchanged when the merged FACTS replacement cannot start', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const target = engine.createSpace({ name: 'Health' })
+    const source = engine.createSpace({ name: 'Food' })
+    engine.writeFact(source.id, 'I like barley')
+    const targetDir = join(rootDir, 'spaces', target.slug)
+    const targetPath = join(targetDir, 'FACTS.md')
+    const before = readFileSync(targetPath)
+
+    chmodSync(targetDir, 0o500)
+    try {
+      expect(() => engine.mergeSpaces(target.id, source.id)).toThrow(/EACCES|permission denied/i)
+    } finally {
+      chmodSync(targetDir, 0o700)
+    }
+
+    expect(readFileSync(targetPath)).toEqual(before)
+    expect(engine.getSpace(source.id)?.archived).toBe(false)
+  })
 })
 
 describe('SpacesEngine Templates', () => {

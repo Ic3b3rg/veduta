@@ -259,11 +259,7 @@ export class SpacesEngine {
     const source = this.requireSpace(sourceSpaceId)
     const sourceFacts = this.readFacts(source.id)
 
-    this.mergeActiveFacts(target.id, sourceFacts.active)
-    // Dormant facts are still valid, just not injected by default (facts.ts):
-    // dropping them on a merge would be destructive forgetting of a fact the
-    // user never contradicted, which ARCHITECTURE.md §7 forbids.
-    this.copyDormantAndSupersededFacts(target.id, sourceFacts.dormant, sourceFacts.superseded)
+    this.mergeFacts(target.id, sourceFacts)
     this.moveSurfaces(source.id, target.id)
     this.moveTemplates(source.id, target.id)
     this.archiveSpace(source.id)
@@ -849,39 +845,30 @@ export class SpacesEngine {
     return updated
   }
 
-  /**
-   * Appends the source Space's dormant and superseded records onto the
-   * target's own — neither state is injected into context by default, but
-   * both are still valid, on-disk facts (`facts.ts`), so a merge must carry
-   * them across rather than dropping them.
-   */
-  private copyDormantAndSupersededFacts(
-    targetSpaceId: string,
-    dormant: FactRecord[],
-    superseded: FactRecord[],
-  ): void {
-    if (dormant.length === 0 && superseded.length === 0) return
-    const target = this.requireSpace(targetSpaceId)
-    const document = this.readFacts(target.id)
-    const merged = {
-      active: document.active,
-      dormant: [...document.dormant, ...dormant],
-      superseded: [...document.superseded, ...superseded],
+  private mergeFacts(targetSpaceId: string, sourceDocument: FactsDocument): void {
+    if (
+      sourceDocument.active.length === 0 &&
+      sourceDocument.dormant.length === 0 &&
+      sourceDocument.superseded.length === 0
+    ) {
+      return
     }
-    writeFileSync(this.factsPath(target), formatFactsMarkdown(merged, this.today()))
-    this.notifyMemoryWrite(target.id, 'fact')
-  }
-
-  private mergeActiveFacts(targetSpaceId: string, facts: FactRecord[]): void {
-    if (facts.length === 0) return
     const target = this.requireSpace(targetSpaceId)
-    let document = this.readFacts(target.id)
-    for (const fact of facts) {
+    const source = prepareFactsDocument(sourceDocument)
+    let document = prepareFactsDocument(this.readFacts(target.id))
+    for (const fact of source.active) {
       // A merged fact keeps its origin: a Space merge must never launder
       // an untrusted fact into an unmarked one.
       document = curateFact(document, fact.text, fact.noted ?? this.today(), fact.origin).document
     }
-    writeFileSync(this.factsPath(target), formatFactsMarkdown(document, this.today()))
+    // Dormant facts are still valid and superseded facts preserve history:
+    // dropping either on merge would be destructive forgetting.
+    document = {
+      active: document.active,
+      dormant: [...document.dormant, ...source.dormant],
+      superseded: [...document.superseded, ...source.superseded],
+    }
+    persistFactsDocument(this.factsPath(target), document, this.today())
     this.notifyMemoryWrite(target.id, 'fact')
   }
 
