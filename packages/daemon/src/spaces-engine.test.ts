@@ -1,5 +1,6 @@
 import {
   appendFileSync,
+  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -775,6 +776,43 @@ describe('SpacesEngine forbidden Unicode persistence boundary', () => {
     expect(rendered).toContain('[sync.-redacted-]')
     expect(rendered).toContain('legacy [redacted] summary')
     expect(rendered).not.toMatch(/sk-[A-Za-z0-9_-]{8,}/)
+  })
+})
+
+describe('SpacesEngine FACTS persistence boundary (issues/129-secret-safe-atomic-facts-writes.md)', () => {
+  it('sanitizes a proposed fact before Curator comparison', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+    engine.writeFact(space.id, 'I like oats')
+    const factsPath = join(rootDir, 'spaces', space.slug, 'FACTS.md')
+    const before = readFileSync(factsPath, 'utf8')
+
+    const result = engine.writeFact(space.id, 'I like o\u200Bats')
+
+    expect(result.operation).toBe('noop')
+    expect(result.fact.text).toBe('I like oats')
+    expect(readFileSync(factsPath, 'utf8')).toBe(before)
+  })
+
+  it('leaves the previous FACTS bytes intact when durable replacement cannot start', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+    engine.writeFact(space.id, 'I like oats')
+    const spaceDir = join(rootDir, 'spaces', space.slug)
+    const factsPath = join(spaceDir, 'FACTS.md')
+    const before = readFileSync(factsPath)
+
+    chmodSync(spaceDir, 0o500)
+    try {
+      expect(() => engine.writeFact(space.id, 'I like rice')).toThrow(/EACCES|permission denied/i)
+    } finally {
+      chmodSync(spaceDir, 0o700)
+    }
+
+    expect(readFileSync(factsPath)).toEqual(before)
+    expect(engine.readFacts(space.id).active.map((fact) => fact.text)).toEqual(['I like oats'])
   })
 })
 

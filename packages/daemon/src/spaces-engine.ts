@@ -41,6 +41,11 @@ import {
   type FactRecord,
   type FactsDocument,
 } from './facts.ts'
+import {
+  persistFactsDocument,
+  prepareFactsDocument,
+  prepareFactTextForWrite,
+} from './facts-persistence.ts'
 import { projectFacts } from './facts-projection.ts'
 import {
   eventsForContext,
@@ -288,9 +293,15 @@ export class SpacesEngine {
   ): WriteFactResult {
     const space = this.requireSpace(spaceId)
     const date = this.today()
-    const result = curateFact(this.readFacts(space.id), factText, date, origin, options)
+    const document = prepareFactsDocument(this.readFacts(space.id))
+    const preparedFactText = prepareFactTextForWrite(factText)
+    const preparedOptions =
+      options?.supersedes === undefined
+        ? undefined
+        : { supersedes: prepareFactTextForWrite(options.supersedes) }
+    const result = curateFact(document, preparedFactText, date, origin, preparedOptions)
     if (result.operation !== 'noop') {
-      writeFileSync(this.factsPath(space), formatFactsMarkdown(result.document, date))
+      persistFactsDocument(this.factsPath(space), result.document, date)
       // Fired after its `fact.write` Event log echo below, not straight
       // after the FACTS write, matching `demoteFacts`: a 'fact' notice means
       // "this write, including the Event log entry that records it, is

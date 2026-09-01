@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -88,6 +89,30 @@ describe('memory tools', () => {
     )
 
     expect(searched.content).toContain('User logged dinner')
+  })
+
+  it.each([
+    ['plain', `sk-${'a'.repeat(16)}`],
+    ['hidden-character-split', `sk-\u200B${'a'.repeat(16)}`],
+  ])('returns an explicit model-visible error for a %s credential', async (_kind, credential) => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow, seed: seedSpaces() })
+    const writeFact = requireTool(
+      createMemoryTools(engine, { activeSpaceId: 'spc-health' }),
+      'write_fact',
+    )
+    const factsPath = join(rootDir, 'spaces', 'health', 'FACTS.md')
+    const before = readFileSync(factsPath, 'utf8')
+
+    expect(() =>
+      writeFact.handler(
+        writeFact.schema.parse({ fact: `Remember credential ${credential}` }),
+        toolContext(`write-${_kind}`, 'trusted:user'),
+      ),
+    ).toThrow('Secrets cannot be stored in FACTS')
+
+    expect(readFileSync(factsPath, 'utf8')).toBe(before)
+    expect(readFileSync(factsPath, 'utf8')).not.toContain('[redacted]')
   })
 
   it('declares every memory tool L0 (daemon-internal, no outbound effect)', async () => {
