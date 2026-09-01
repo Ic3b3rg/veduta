@@ -26,9 +26,25 @@ _Avoid_: canvas, artifact, widget (ambiguous), dashboard (reserved for Home)
 The Agent's core capability of creating, recomposing, or archiving a persistent Surface by composing validated Atoms in response to user intent. It includes keeping visually useful structured answers — such as estimates, comparisons, summaries, breakdowns, progress, plans, and timelines — persistently visible through each Space's drill-down from Home while preserving the concise chat answer. Every Model connection eligible to power the Agent provides this capability.
 _Avoid_: generative UI (ambiguous), generated markup, text-only mode
 
+**Surface presentation**:
+The responsive placement of a Surface card within its Space, independent of its Atom tree and typed state. A Surface uses either `standard` or `full` presentation; `full` spans the available Space row. Presentation is also distinct from Pin, which adds stability and prominence semantics.
+_Avoid_: width, CSS layout, dashboard size, Atom layout
+
 **Home**:
 The primary screen of the PWA: shows every active Space as an at-a-glance metadata summary, with each Space's Surfaces available after drill-down. It is what the user sees "at first glance upon opening".
 _Avoid_: generic dashboard, feed
+
+**Chat scope**:
+The context boundary of a chat turn: global or one Space. A global turn may selectively work across multiple Spaces, while a Space-scoped turn belongs to exactly that Space.
+_Avoid_: chat room, Space agent, conversation mode
+
+**Chat timeline**:
+The Gateway-owned durable, paginated user-visible conversation for one Chat scope, retained across reloads, restarts, authenticated devices, and Space archival. Veduta has one global Chat timeline and one separate timeline per Space; each contains user messages, final Agent replies, readable terminal errors, and identity-stable Pending decision feedback, but never Agent session internals, Trace details, or Event log records.
+_Avoid_: session transcript, Event log, unified chat history
+
+**Chat submission**:
+One identity-stable attempt by the user to add a message to a Chat timeline. It becomes one Agent turn only after durable Gateway acceptance, and retrying the same submission never creates another turn.
+_Avoid_: outgoing message, local queue entry, Agent turn before acceptance
 
 **Atom**:
 UI component from the closed catalog (Button, Row, Chart, Checkbox... ~24 ChatKit-style + Progress, Stat, ListItem, Automation). The Agent composes Atoms, it does not generate markup.
@@ -83,6 +99,10 @@ _Avoid_: crewmate, persistent subagent, team
 **Fast path**:
 A Surface interaction handled deterministically by the daemon, with no LLM: it mutates the state and logs an event to the Space's Event log.
 _Avoid_: direct action, shortcut
+
+**Surface commit**:
+The indivisible domain outcome in which one validated Surface mutation and its matching Space Event become recoverably durable. Partial persistence is a recovery state, never a final success or failure.
+_Avoid_: SQLite commit, Surface write, Event append
 
 **Agent path**:
 A Surface action that requires judgment and goes through the Agent ("regenerate the plan").
@@ -233,8 +253,8 @@ The self-hosted daemon: serves the PWA, owns sessions, Spaces, the scheduler, ev
 _Avoid_: server (generic), backend
 
 **Bridge**:
-A ChannelAdapter to a messenger (Telegram/WhatsApp): quick input and notifications with deep links to the Home. Replies short, never rich content.
-_Avoid_: primary channel, bot (as a product)
+A messenger integration such as Slack, Signal, Telegram, or WhatsApp: quick input, short text replies, notifications, and deep links to the Home without replacing the PWA as the primary visual client. Bidirectional text is the current product guarantee; any provider-native rich projection is a separate future decision.
+_Avoid_: primary channel, bot (as a product), ChannelAdapter (implementation detail)
 
 **BYOK**:
 One Model connection method: the user supplies an LLM provider API key. A provider subscription is a different Model connection method.

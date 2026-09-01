@@ -78,6 +78,23 @@ meal logic in the protocol or catalog, storing only the current projection, and 
 domain events or Heartbeats at midnight. Each would either hide semantics, lose history, duplicate a
 query engine, or make correctness depend on unrelated background activity.
 
+## Semantic Atom acceptance and Surface presentation (issue #140)
+
+Protocol-valid now means visibly renderable and, for interactive Atoms, operable. Every catalog
+Atom has one type-specific contract for props, children, bindings, bound value shapes, and actions;
+the Gateway rejects unsupported semantics before persistence instead of relying on the catalog to
+ignore fields it does not understand. The visible `UnknownAtom` fallback remains protection against
+client-version skew or corrupt input, not a successful authoring path. Every complete result is
+revalidated after creation, state mutation, recomposition, Template reuse, or Tree-proposal
+application, and the Agent may report success only from the authoritative committed outcome.
+
+Input and Textarea use a local draft owned by their nearest Form and dispatch the complete draft
+only on submit; keystrokes are not durable mutations. Chart v1 is one explicitly keyed series in
+`line` or `bar` form. A Surface also owns `presentation: standard | full`, separate from its Atom
+tree, typed state, Pin, and canonical order. The Agent chooses presentation at creation and may
+change it later only for an explicit current user request; models never author CSS, percentages, or
+grid instructions.
+
 ## Considered Options
 
 - Free-form generated HTML/JSX in a sandbox: rejected for v1 — not diffable, inconsistent, hallucination-prone. It returns post-v1 only as a sandboxed escape hatch for the long tail.

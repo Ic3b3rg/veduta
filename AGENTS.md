@@ -22,7 +22,9 @@ single source of truth for coding agents; `CLAUDE.md` just imports it.
 - Use the canonical vocabulary from `CONTEXT.md` (Space, Surface, Atom, fast path, quarantined
   reader…) in code, comments, and docs. The `_Avoid_` terms listed there are banned.
 - Respect the anti-requirements (`ARCHITECTURE.md` §7): no agent hierarchies, no free-form
-  generated HTML in Surfaces, no knowledge graphs, no rich content in messenger Bridges.
+  generated HTML in Surfaces, no knowledge graphs, and no provider-native rich projections in
+  messenger Bridges under the current architecture. Any future Bridge projection requires
+  separate research and an accepted ADR first.
 - Never import `pi-agent-core` outside the AgentRunner wrapper (ADR-0004). The daemon and
   workers talk only to our own interfaces (`AgentRunner`, `ModelRef`, `ToolDef`, `SessionStore`).
 - Every fast-path mutation must append to the Space's Event log (ADR-0003): the Agent must find

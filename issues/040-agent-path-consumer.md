@@ -56,4 +56,4 @@ the UI from click to outcome.
 
 ## Blocked by
 
-None — builds on completed issues #7 and #37.
+- #156 — queued Agent-path acceptance must use the common recoverable Surface-commit boundary.

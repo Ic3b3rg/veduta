@@ -32,3 +32,4 @@ contracts and close any recovery gaps they expose.
 - #109
 - #110
 - #111
+- #155

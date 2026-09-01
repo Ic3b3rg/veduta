@@ -29,11 +29,21 @@ Mailbox:       135 parent; 120 quiesce → 121 passive Gmail → 122 Gmail Skill
 Surfaces:      042 focused-read-tools → 134 relative-time views → 095 visible-space-answers
 Decisions:     096 contract → 097 outcomes → (067 Home, 098 chat)
 Character:     099 parent; 100 policy → 101 migration; (101,098) → 102 identity → (103 Space → 105 undo, 104 onboarding)
-Ordering:      106 parent → 108 canonical-order → (109 groups, 110 mutations, 111 reveal) → 112 recovery
+Ordering:      106 parent → 108 canonical-order → (109 groups, 110 mutations, 111 reveal)
+               (109,110,111,155) → 112 recovery
 Visibility:    (037 agent-loop,042 focused-tools) → 107 chat-created-surface-focus
 Chat:          136 global multi-Space → 137 focused Space proposal
 System:        063 parent → 113 invariant → (114 usage,115 devices,116 authoring); (114,115) → 117 projections
 Home:          033 parent → 064 router → 065 routes; (065,117) → 066 grid → (067 decisions,068 activity) → 069 narrow
+Maintenance:   (045,139) → 155 PWA live-state runtime
+Surfaces:      140 parent; 142 Form submit → (145 Charts,146 controls,147 plans,148 remaining Atoms)
+               (155,156) → 161 typed Actions → 146 controls
+               139 → 143 presentation; (143,145,146,147,148) → 150 honest authoring
+Chat timeline: 141 parent; 155 → 144 focused persistence → 149 scopes → 151 pagination
+               151 → (152 recovery,153 Pending updates) → 154 Gateway authority
+Durability:    156 recoverable Surface commits → (040 Agent path,085 fast-path Trace)
+Visual:        157 parent; 162 contract → (163 shell/Home/Space,165 Chat/Pending,166 setup)
+               (109,110,111,162) → 164 Surface chrome; (163,164,165,166) → 167 contract
 ```
 
 Parallelizable roots are described by the explicit `Blocked by` section in each specification.
@@ -162,4 +172,29 @@ blocker is closed.
 | 135 | [Pull-based personal Mailbox roadmap](135-pull-based-personal-mailbox.md)                            | Proactivity  |
 | 136 | [Global chat multi-Space work](136-global-chat-multi-space.md)                                       | Core         |
 | 137 | [Focused chat Space proposal](137-focused-chat-space-proposal.md)                                    | Core         |
+| 139 | [Gateway-owned PWA transport](139-gateway-owned-pwa-transport.md)                                    | Maintenance  |
+| 140 | [Operable Surface authoring](140-operable-surface-authoring.md)                                      | Core         |
+| 141 | [Durable scoped Chat timelines](141-durable-chat-timelines.md)                                       | Core         |
 | 142 | [Atomic Form text submit](142-form-text-edits-submit-atomically.md)                                  | Core         |
+| 143 | [Persisted Surface presentation](143-persist-surface-presentation.md)                                | Core         |
+| 144 | [Durable focused-Space Chat turns](144-persist-focused-space-chat-turns.md)                          | Core         |
+| 145 | [Truthful one-series Charts](145-render-one-series-charts.md)                                        | Core         |
+| 146 | [Operable selection and action controls](146-operable-selection-and-action-controls.md)              | Core         |
+| 147 | [Complete structured plans](147-render-structured-plans.md)                                          | Core         |
+| 148 | [Contracted remaining Atoms](148-contract-remaining-atoms.md)                                        | Core         |
+| 149 | [Separate Chat scopes](149-separate-chat-scopes.md)                                                  | Core         |
+| 150 | [Honest Surface authoring contract](150-close-generic-atom-acceptance.md)                            | Core         |
+| 151 | [Paginated Chat timelines](151-page-chat-timelines.md)                                               | Core         |
+| 152 | [Recoverable Chat turns](152-recover-chat-turns.md)                                                  | Core         |
+| 153 | [In-place Pending decisions](153-update-pending-decisions-in-place.md)                               | Core         |
+| 154 | [Gateway-owned Chat authority](154-retire-browser-local-chat-authority.md)                           | Core         |
+| 155 | [PWA live-state runtime](155-deepen-pwa-live-state-runtime.md)                                       | Maintenance  |
+| 156 | [Recoverable Surface commits](156-recoverable-surface-commits.md)                                    | Core         |
+| 157 | [Product-first Precision Tool UI](157-product-first-precision-tool-ui.md)                            | Polish       |
+| 161 | [Typed deterministic Surface Actions](161-typed-deterministic-surface-actions.md)                    | Core         |
+| 162 | [Precision Tool visual contract](162-precision-tool-visual-contract.md)                              | Polish       |
+| 163 | [Precision Tool shell, Home, and Space](163-precision-tool-shell-home-space.md)                      | Polish       |
+| 164 | [Precision Tool Surface chrome](164-precision-tool-surface-chrome.md)                                | Polish       |
+| 165 | [Precision Tool Chat and Pending decisions](165-precision-tool-chat-pending.md)                      | Polish       |
+| 166 | [Precision Tool onboarding and Model connections](166-precision-tool-onboarding-connections.md)      | Polish       |
+| 167 | [Precision Tool visual-system contract](167-contract-precision-tool-visual-system.md)                | Polish       |

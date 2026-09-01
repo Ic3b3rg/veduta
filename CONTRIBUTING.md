@@ -22,7 +22,7 @@ pnpm dev        # Gateway on loopback + PWA with hot reload
 ## Ground rules
 
 - **English only** in the repo: docs, code, comments, commit messages, issues.
-- **Respect the glossary** ([CONTEXT.md](CONTEXT.md)) and the **anti-requirements** ([ARCHITECTURE.md §7](ARCHITECTURE.md)): no agent hierarchies, no free-form generated HTML, no knowledge graphs, no rich content in messenger Bridges.
+- **Respect the glossary** ([CONTEXT.md](CONTEXT.md)) and the **anti-requirements** ([ARCHITECTURE.md §7](ARCHITECTURE.md)): no agent hierarchies, no free-form generated HTML, no knowledge graphs, and no provider-native rich projections in messenger Bridges under the current architecture. Any future Bridge projection requires separate research and an accepted ADR first.
 - **One issue, one PR**, small and reviewable. Every PR states which acceptance criteria it satisfies.
 - Architectural changes require an ADR (see [docs/adr/](docs/adr/) for the format): state the trade-off, not just the choice.
 - Tests accompany code. For test data with partial objects, prefer `@total-typescript/shoehorn` over `as` casts.

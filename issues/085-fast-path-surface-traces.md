@@ -22,6 +22,7 @@ Make each authenticated fast-path Surface interaction a root Trace whose meaning
 ## Blocked by
 
 - #84 — reuses the committed Surface and Event log observation seams introduced for complete Agent turns.
+- #156 — observes only delivered Surface commits after cross-store recovery completes.
 
 ## Delivery constraints
 

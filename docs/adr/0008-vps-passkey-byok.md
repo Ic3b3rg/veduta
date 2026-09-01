@@ -8,6 +8,7 @@ Status: accepted
 
 - [ADR-0014](0014-subscription-inference-boundary.md) replaces BYOK as the only real-model setup path with Model connections: subscription-backed and BYOK connections share one Gateway-owned boundary.
 - [ADR-0015](0015-vps-access-modes.md) separates the VPS profile from browser exposure. A VPS may use Public, Tunnel, or Tailnet access; a public domain is no longer an invariant of the profile.
+- [ADR-0028](0028-concrete-bridge-extension-seam.md) replaces the requirement that the Gateway be born with a generic `ChannelAdapter` and narrows the permanent exclusion of rich Bridge content: the Gateway owns the PWA transport directly, and the first concrete messenger Bridge defines the extension seam for later Bridges. Short text and Home deep links remain the committed baseline; provider-native rich projections stay prohibited under the current architecture but may be reconsidered through separate research and an accepted ADR.
 
 ## Considered Options
 
