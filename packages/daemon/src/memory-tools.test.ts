@@ -1,10 +1,11 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { describe, expect, it } from 'vitest'
 import type { ToolContext } from './agent-runner.ts'
+import { formatFactsMarkdown } from './facts.ts'
 import { projectFacts } from './facts-projection.ts'
 import { MemoryConfigSchema } from './memory-config.ts'
 import { MemoryIndex } from './memory-index.ts'
@@ -400,6 +401,64 @@ describe('memory tools', () => {
       )
       expect(result.content).toContain('<<<UNTRUSTED data from gmail>>>')
       expect(result.origins).toEqual(['untrusted:gmail'])
+      index.close()
+    })
+
+    it('recovers an omitted legacy superseded fact without rewriting it or pre-tainting context', async () => {
+      const rootDir = await tempRoot()
+      const engine = new SpacesEngine({ rootDir, now: fixedNow, seed: seedSpaces() })
+      const factsPath = join(rootDir, 'spaces', 'health', 'FACTS.md')
+      const oversizedLegacyText = `archived needle\u200Bword ${'x'.repeat(2_100)}`
+      const rawFacts = formatFactsMarkdown(
+        {
+          active: [{ text: 'Current preference', noted: '2026-07-03' }],
+          dormant: [{ text: 'Still valid when requested', noted: '2026-06-01' }],
+          superseded: [
+            {
+              text: oversizedLegacyText,
+              noted: '2026-05-01',
+              supersededAt: '2026-07-01',
+              origin: 'untrusted:gmail',
+            },
+          ],
+        },
+        '2026-07-03',
+      )
+      writeFileSync(factsPath, rawFacts)
+
+      const initialContext = engine.assembleContext('spc-health')
+      expect(initialContext).not.toContain('archived needleword')
+      expect(initialContext).toContain(
+        '- 1 superseded record omitted; use search_memory for omitted history.',
+      )
+      expect(engine.contextOrigins('spc-health')).not.toContain('untrusted:gmail')
+
+      const index = new MemoryIndex({ rootDir, spacesEngine: engine, now: fixedNow })
+      index.reconcile()
+      const retrieval = new MemoryRetrieval({
+        index,
+        spacesEngine: engine,
+        config: MemoryConfigSchema.parse({}),
+        now: fixedNow,
+      })
+      const searchMemory = requireTool(
+        createMemoryTools(engine, { activeSpaceId: 'spc-health', retrieval }),
+        'search_memory',
+      )
+
+      const result = await searchMemory.handler(
+        searchMemory.schema.parse({ query: 'needleword', kind: 'fact' }),
+        toolContext('search-omitted-fact', 'trusted:user'),
+      )
+
+      expect(result.content).toContain('fact: archived needleword')
+      expect(result.origins).toEqual(['untrusted:gmail'])
+      expect(engine.readFacts('spc-health')).toMatchObject({
+        active: [{ text: 'Current preference' }],
+        dormant: [{ text: 'Still valid when requested' }],
+        superseded: [{ text: oversizedLegacyText.replace('\u200B', '') }],
+      })
+      expect(readFileSync(factsPath, 'utf8')).toBe(rawFacts)
       index.close()
     })
   })

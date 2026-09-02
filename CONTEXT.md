@@ -159,7 +159,7 @@ _Avoid_: main polling, tick loop
 ### Memory
 
 **FACTS**:
-The curated file of a Space's durable facts, small and always injected into context. Bi-temporal facts: every fact carries its date. Three states: **active** (injected), **dormant** (valid and on disk, not injected, retrieved on demand), **superseded** (replaced, in `## Superseded`). Nothing is ever deleted.
+The curated file of a Space's durable facts. Bi-temporal facts: every fact carries its date. Three states: **active** (injected in full under rendered-text watermarks), **dormant** (valid and on disk, not injected, retrieved on demand), **superseded** (replaced, complete on disk and in the hybrid index). Each turn receives a bounded superseded working set: at most the 20 most recently superseded complete records that fit a 2,000 UTF-16-code-unit rendered tail, plus a content-free omission count. Omitted records remain recoverable through `search_memory`; only injected or explicitly retrieved untrusted records taint the turn. Nothing is ever deleted.
 _Avoid_: memory (generic), knowledge base
 
 **Dormant**:

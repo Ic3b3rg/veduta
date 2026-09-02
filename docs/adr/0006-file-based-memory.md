@@ -1,6 +1,6 @@
 # File-based memory: files are the truth, indexes are disposable
 
-For each Space: `FACTS.md` (curated bi-temporal facts, always injected), an append-only Event log (recent entries in context, long tail via time-aware hybrid search), `INSTRUCTIONS.md`; globally, `USER.md` and `SOUL.md`. Tabular data lives in the typed state of the Surfaces, not in memory files. The design is defensible against the academic SOTA: at personal scale, files beat or match dedicated systems (Letta "filesystem 74% vs Mem0 68.5%"; ConvoMem; MemDelta), which win only on cost/latency — already captured by "a small FACTS always injected". Evidence and benchmark wars: `docs/references/06-memory-research.md`.
+For each Space: `FACTS.md` (curated bi-temporal facts whose bounded working set is injected), an append-only Event log (recent entries in context, long tail via time-aware hybrid search), `INSTRUCTIONS.md`; globally, `USER.md` and `SOUL.md`. Tabular data lives in the typed state of the Surfaces, not in memory files. The design is defensible against the academic SOTA: at personal scale, files beat or match dedicated systems (Letta "filesystem 74% vs Mem0 68.5%"; ConvoMem; MemDelta), which win only on cost/latency — already captured by a small FACTS working set injected on each turn. Evidence and benchmark wars: `docs/references/06-memory-research.md`.
 
 Adopted grafts from the literature: bi-temporal facts with `## Superseded` (Zep/TOKI), an Add/Update/Supersede/Noop Curator on writes (Mem0), offline nightly Reflection (sleep-time compute, ~5x less compute at runtime), a time-aware index (LongMemEval), an abstention rule in SOUL ("if it's not in memory, say so").
 
@@ -30,6 +30,25 @@ One consequence worth stating here: because FACTS is a read model over an append
 guarantee that "every claim, date and origin is preserved" is a property of the **Event log**, not of
 `FactRecord`. A fact carries one date and one origin; the log carries the whole trail, and a
 `fact.evidence` entry keeps that trail growing even when the Curator answers `noop`.
+
+## Amendment (issue 131): bounded superseded working set
+
+The active FACTS projection remains complete and governed by its rendered-text watermarks; this
+projection never silently truncates an active record. The `## Superseded` history is also complete
+on disk, but only a bounded tail is injected on every turn. The projection considers the 20 records
+with the most recent `supersededAt` values, puts missing dates last, and uses file order to break
+ties. It then renders those candidates newest first, including only complete records that fit a
+2,000 UTF-16-code-unit tail budget. The budget includes the `Superseded:` framing, untrusted-data
+wrappers, record separators, and the content-free omission marker. A candidate that does not fit is
+skipped without preventing a smaller, older candidate from fitting; no record is ever sliced.
+
+Omitted records are not forgotten. They remain unchanged in `FACTS.md`, remain indexed by the
+disposable hybrid index, and are recovered by `search_memory`, which dereferences the original
+record. The injected text and context origins come from the same selected records, so an omitted
+untrusted record does not taint a turn until retrieval returns it with its origin. The shared
+forbidden-Unicode sanitizer applies when legacy FACTS are read for projection and indexing and
+again at the common fact renderer, without rewriting the source file. The executable contract is
+specified in [issue 131](../../issues/131-bounded-superseded-facts-tail.md).
 
 ## Considered Options
 
