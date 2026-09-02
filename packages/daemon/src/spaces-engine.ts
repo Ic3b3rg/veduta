@@ -48,6 +48,8 @@ import {
   sanitizeAndValidateFactText,
 } from './facts-persistence.ts'
 import { projectFacts } from './facts-projection.ts'
+import { loadMemoryConfig, type MemoryBudget } from './memory-config.ts'
+import { MemoryHealthStore, type MemoryHealthState } from './memory-health.ts'
 import {
   eventsForContext,
   parseSpaceEventLine,
@@ -74,6 +76,7 @@ export interface SpacesEngineOptions {
   rootDir?: string
   now?: () => Date
   seed?: { spaces: Space[]; surfaces: Surface[] }
+  memoryBudget?: MemoryBudget
 }
 
 export interface WriteFactResult {
@@ -118,6 +121,7 @@ export class SpacesEngine {
   readonly rootDir: string
   private readonly now: () => Date
   private readonly proposals: SpaceProposalStore
+  private readonly memoryHealthStore: MemoryHealthStore
   private readonly eventCorrelation = new AsyncLocalStorage<string>()
   private readonly memoryWriteObservers = new Set<(notice: MemoryWriteNotice) => void>()
 
@@ -125,6 +129,11 @@ export class SpacesEngine {
     this.rootDir = options.rootDir ?? defaultDataDir()
     this.now = options.now ?? (() => new Date())
     this.ensureBaseLayout()
+    this.memoryHealthStore = new MemoryHealthStore({
+      rootDir: this.rootDir,
+      budget: options.memoryBudget ?? loadMemoryConfig(this.rootDir).budget,
+      now: this.now,
+    })
     this.proposals = new SpaceProposalStore({
       rootDir: this.rootDir,
       now: this.now,
@@ -133,6 +142,7 @@ export class SpacesEngine {
       },
     })
     if (options.seed && this.listAllSpaces().length === 0) this.seed(options.seed)
+    this.auditMemoryHealth()
   }
 
   listSpaces(): Space[] {
@@ -249,7 +259,9 @@ export class SpacesEngine {
 
   restoreSpace(spaceId: string): Space {
     this.assertOrdinarySpaceLifecycle(spaceId, 'restore')
-    return this.updateSpace(spaceId, { archived: false }, 'Restored Space')
+    const restored = this.updateSpace(spaceId, { archived: false }, 'Restored Space')
+    this.auditMemoryHealth(spaceId)
+    return restored
   }
 
   mergeSpaces(targetSpaceId: string, sourceSpaceId: string): Space {
@@ -274,6 +286,36 @@ export class SpacesEngine {
 
   readFacts(spaceId: string): FactsDocument {
     return parseSafeFactsMarkdown(readFileSync(this.factsPath(this.requireSpace(spaceId)), 'utf8'))
+  }
+
+  /** Durable rendered-FACTS health consumed by the Gateway-owned Memory health Surface. */
+  memoryHealth(): MemoryHealthState {
+    return this.memoryHealthStore.snapshot()
+  }
+
+  /**
+   * Re-measures FACTS without rewriting them. Construction calls the full
+   * inventory form for boot/restore recovery; `restoreSpace` calls the
+   * focused form before returning the Space to active use.
+   */
+  auditMemoryHealth(spaceId?: string): MemoryHealthState {
+    if (spaceId !== undefined) {
+      const space = this.requireSpace(spaceId)
+      if (space.id !== SYSTEM_SPACE_ID) {
+        this.memoryHealthStore.update(space.id, projectFacts(this.readFacts(space.id)).activeSize)
+      }
+      return this.memoryHealth()
+    }
+
+    this.memoryHealthStore.reconcile(
+      this.listAllSpaces()
+        .filter((space) => space.id !== SYSTEM_SPACE_ID)
+        .map((space) => ({
+          spaceId: space.id,
+          activeSize: projectFacts(this.readFacts(space.id)).activeSize,
+        })),
+    )
+    return this.memoryHealth()
   }
 
   /**
@@ -310,6 +352,7 @@ export class SpacesEngine {
         text: `FACTS ${result.operation}: ${result.fact.text}`,
         ...(origin === undefined ? {} : { origin }),
       })
+      this.memoryHealthStore.update(space.id, projectFacts(result.document).activeSize)
       this.notifyMemoryWrite(space.id, 'fact')
     }
     return {
@@ -352,6 +395,7 @@ export class SpacesEngine {
       text: 'Reflection moved facts to dormant to keep the active set within budget.',
       payload: { ids: matchedIds, count: demoted.length },
     })
+    this.memoryHealthStore.update(space.id, projectFacts(persisted).activeSize)
     // After the `fact.demote` Event log entry above, matching `writeFact`:
     // a 'fact' notice means the whole operation, event echo included, is
     // durable — not merely that `FACTS.md` itself was rewritten.
@@ -839,6 +883,7 @@ export class SpacesEngine {
       this.spacePath(parsed, INSTRUCTIONS_FILE),
       instructions ?? defaultInstructions(parsed.name),
     )
+    if (parsed.id !== SYSTEM_SPACE_ID) this.auditMemoryHealth(parsed.id)
   }
 
   private updateSpace(spaceId: string, patch: Pick<Space, 'archived'>, eventText: string): Space {
@@ -874,7 +919,8 @@ export class SpacesEngine {
       dormant: [...document.dormant, ...source.dormant],
       superseded: [...document.superseded, ...source.superseded],
     }
-    persistFactsDocument(this.factsPath(target), document, this.today())
+    const persisted = persistFactsDocument(this.factsPath(target), document, this.today())
+    this.memoryHealthStore.update(target.id, projectFacts(persisted).activeSize)
     this.notifyMemoryWrite(target.id, 'fact')
   }
 

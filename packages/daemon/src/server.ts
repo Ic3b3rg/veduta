@@ -435,6 +435,7 @@ export function buildServer(options: ServerOptions = {}) {
     now,
     rootDir: dataDir,
     timeZone: memoryConfig.timezone,
+    memoryBudget: memoryConfig.budget,
   })
   // The secrets resolver for the whole daemon (issue #15): the vault
   // when configured and openable, `secret://env/...` alone otherwise, with
