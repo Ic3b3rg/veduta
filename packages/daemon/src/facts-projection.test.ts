@@ -3,6 +3,29 @@ import { describe, expect, it } from 'vitest'
 import { emptyFactsDocument, type FactsDocument } from './facts.ts'
 import { projectFacts } from './facts-projection.ts'
 
+const SUPERSEDED_PREFIX = '\n\nSuperseded:\n'
+const TRUSTED_SUPERSEDED_SUFFIX = ' (noted: 2026-01-01; superseded: 2026-02-01)'
+const SINGLE_OMISSION = '\n- 1 superseded record omitted; use search_memory for omitted history.'
+
+function projectSupersededBoundary(targetSize: number) {
+  const text = 'x'.repeat(
+    targetSize -
+      SUPERSEDED_PREFIX.length -
+      '- '.length -
+      TRUSTED_SUPERSEDED_SUFFIX.length -
+      SINGLE_OMISSION.length,
+  )
+  const projection = projectFacts({
+    active: [],
+    dormant: [],
+    superseded: [
+      { text, noted: '2026-01-01', supersededAt: '2026-02-01' },
+      { text: `oversized-${'y'.repeat(2_000)}`, supersededAt: '2026-01-01' },
+    ],
+  })
+  return { projection, supersededTail: projection.text.slice(projection.activeSize), text }
+}
+
 describe('projectFacts', () => {
   it('renders an empty document with the standard placeholder lines and zero active size beyond them', () => {
     const projection = projectFacts(emptyFactsDocument())
@@ -43,6 +66,135 @@ describe('projectFacts', () => {
     expect(projection.text).toContain(
       '- I like porridge (noted: 2026-06-01; superseded: 2026-07-02)',
     )
+  })
+
+  it('injects only the 20 most recently superseded records and reports every omission', () => {
+    const document: FactsDocument = {
+      active: [],
+      dormant: [],
+      superseded: Array.from({ length: 100 }, (_, index) => ({
+        text: `fact-${index}`,
+        noted: '2026-01-01',
+        supersededAt: new Date(Date.UTC(2026, 0, index + 1)).toISOString().slice(0, 10),
+      })),
+    }
+
+    const projection = projectFacts(document)
+    const renderedRecords = projection.text.match(/^- fact-\d+/gm) ?? []
+    const supersededTail = projection.text.slice(projection.activeSize)
+
+    expect(renderedRecords).toEqual(
+      Array.from({ length: 20 }, (_, offset) => `- fact-${99 - offset}`),
+    )
+    expect(projection.text).toContain(
+      '- 80 superseded records omitted; use search_memory for omitted history.',
+    )
+    expect(supersededTail.length).toBeLessThanOrEqual(2_000)
+  })
+
+  it('includes a complete record whose rendered tail is exactly 2,000 UTF-16 code units', () => {
+    const { supersededTail, text } = projectSupersededBoundary(2_000)
+
+    expect(supersededTail).toBe(
+      `${SUPERSEDED_PREFIX}- ${text}${TRUSTED_SUPERSEDED_SUFFIX}${SINGLE_OMISSION}`,
+    )
+    expect(supersededTail).toHaveLength(2_000)
+  })
+
+  it('omits a record whose rendered tail is one UTF-16 code unit over budget without slicing it', () => {
+    const { supersededTail, text } = projectSupersededBoundary(2_001)
+
+    expect(supersededTail).not.toContain(text)
+    expect(supersededTail).toContain(
+      '- 2 superseded records omitted; use search_memory for omitted history.',
+    )
+    expect(supersededTail.length).toBeLessThanOrEqual(2_000)
+  })
+
+  it('skips an oversized recent record and continues with older complete records that fit', () => {
+    const projection = projectFacts({
+      active: [],
+      dormant: [],
+      superseded: [
+        {
+          text: `oversized-${'x'.repeat(2_000)}`,
+          noted: '2026-01-01',
+          supersededAt: '2026-03-01',
+          origin: 'untrusted:webhook',
+        },
+        {
+          text: 'older fact that still fits',
+          noted: '2026-01-01',
+          supersededAt: '2026-02-01',
+          origin: 'untrusted:gmail',
+        },
+      ],
+    })
+
+    expect(projection.text).not.toContain('oversized-')
+    expect(projection.text).toContain('fact: older fact that still fits')
+    expect(projection.text).toContain(
+      '- 1 superseded record omitted; use search_memory for omitted history.',
+    )
+    expect(projection.origins).toEqual(['untrusted:gmail'])
+  })
+
+  it('uses file order to break equal supersededAt ties and treats missing dates as oldest', () => {
+    const projection = projectFacts({
+      active: [],
+      dormant: [],
+      superseded: [
+        { text: 'same-date-first', supersededAt: '2026-03-01' },
+        { text: 'undated-first' },
+        { text: 'newest', supersededAt: '2026-04-01' },
+        { text: 'same-date-second', supersededAt: '2026-03-01' },
+        { text: 'undated-second' },
+      ],
+    })
+
+    const positions = [
+      'newest',
+      'same-date-first',
+      'same-date-second',
+      'undated-first',
+      'undated-second',
+    ].map((text) => projection.text.indexOf(`- ${text} (`))
+
+    expect(positions.every((position) => position >= 0)).toBe(true)
+    expect(positions).toEqual([...positions].sort((left, right) => left - right))
+  })
+
+  it('does not truncate active facts when only the superseded tail exceeds its budget', () => {
+    const activeText = `active-${'a'.repeat(2_100)}`
+    const projection = projectFacts({
+      active: [{ text: activeText, noted: '2026-01-01' }],
+      dormant: [],
+      superseded: [{ text: `old-${'x'.repeat(2_000)}`, supersededAt: '2026-02-01' }],
+    })
+
+    expect(projection.text).toContain(activeText)
+    expect(projection.activeSize).toBeGreaterThan(2_000)
+    expect(projection.text.slice(projection.activeSize).length).toBeLessThanOrEqual(2_000)
+  })
+
+  it('strips forbidden Unicode from rendered legacy FACTS fields', () => {
+    const projection = projectFacts({
+      active: [{ text: 'active\u202Etext', noted: '2026-\u200B01-01' }],
+      dormant: [],
+      superseded: [
+        {
+          text: 'old\u2066text',
+          noted: '2025-\uFEFF12-01',
+          supersededAt: '2026-\u200F02-01',
+          origin: 'untrusted:gmail',
+        },
+      ],
+    })
+
+    expect(projection.text).toContain('- activetext (noted: 2026-01-01)')
+    expect(projection.text).toContain('fact: oldtext')
+    expect(projection.text).not.toMatch(/[\u200B\u200F\u202E\u2066\uFEFF]/u)
+    expect(projection.origins).toEqual(['untrusted:gmail'])
   })
 
   it('renders an untrusted active fact inside the delimited block, never on the plain line, and reports its origin', () => {

@@ -183,10 +183,13 @@ require was pulled forward:
 - the `low` watermark, measured over the **rendered** active projection in UTF-16 code units,
   `O(projection length)`, no tokenizer;
 - one shared projection: `projectFacts` returns the injected text, the taint origins and the rendered
-  active size from a single traversal of the document, so those three can never disagree about what
-  was rendered. (Context assembly and taint collection still call it separately, each on its own
-  `readFacts` — the guarantee is that they cannot diverge in _what_ they compute, not that the work
-  happens once per turn.)
+  active size from the same projection of the document, so those three can never disagree about
+  what was rendered. (Context assembly and taint collection still call it separately, each on its
+  own `readFacts` — the guarantee is that they cannot diverge in _what_ they compute, not that the
+  work happens once per turn.) Issue 131 extended that projection with a bounded superseded working
+  set: it considers at most the 20 most recently superseded records, injects only complete
+  renderings within a 2,000 UTF-16-code-unit tail, and derives taint only from the selected records
+  ([issue 131](../../issues/131-bounded-superseded-facts-tail.md)).
 - 032's **live-taint write rule**. Without it, 021's requirement that retrieval "grows the turn's
   live taint" would have been decorative: `write_fact` and `append_event` derived their origin from
   the turn's _start_, so a trusted turn could retrieve an untrusted dormant fact and persist a clean
@@ -196,8 +199,8 @@ require was pulled forward:
 
 Left to 032, and not needed here because 021 ships no truncation of the injected set: the `high` and
 `hard` watermarks and the over-cap `write_fact` error, the Unicode hard-gate, secret redaction in
-`writeFact`, atomic FACTS writes, the bounded superseded tail, the human-file size warning, and the
-boot migration for files already over `hard`.
+`writeFact`, atomic FACTS writes, the human-file size warning, and the boot migration for files
+already over `hard`.
 
 ## The pre-compaction flush is a seam
 
