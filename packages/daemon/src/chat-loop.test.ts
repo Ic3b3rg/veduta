@@ -28,6 +28,7 @@ import { PiJsonlSessionStore } from './pi-agent-runner.ts'
 import { Store } from './store.ts'
 import { ensureSystemSpace } from './system-space.ts'
 import { TemplateEngine } from './template-engine.ts'
+import { textBetweenMarkers } from './text-section.test-helpers.ts'
 
 /**
  * Integration harness for the chat loop (issue #37): a real `Store`,
@@ -397,6 +398,42 @@ describe('createChatLoop', () => {
     ])
     expect(h.store.eventLog(health.id)).toEqual(healthEventsBefore)
     expect(h.toolsForCalls).toContain(system.id)
+  })
+
+  it('bounds the System Space Event context and keeps an omitted origin out of live turn taint', async () => {
+    const h = harness()
+    const system = ensureSystemSpace(h.store.spacesEngine)
+    h.store.spacesEngine.appendEvent(system.id, {
+      type: 'budget.system',
+      text: `oversized-system-event-${'x'.repeat(8_000)}`,
+      origin: 'untrusted:webhook',
+    })
+    let systemPrompt = ''
+    h.fake.setResponses([
+      {
+        factory: (context) => {
+          systemPrompt = context.systemPrompt ?? ''
+          return fakeTextAndToolCall('Checking status.', 'test_tool', { value: 'status' })
+        },
+      },
+      { message: fakeText('System status checked.') },
+    ])
+
+    await h.chatLoop.handleChatMessage(
+      chatEvent({ text: 'Check the System status', spaceId: system.id }),
+    )
+
+    const eventSection = textBetweenMarkers(
+      systemPrompt,
+      '# Recent Event log',
+      '\n\n# User life-area Spaces',
+    )
+    expect(eventSection.length).toBeLessThanOrEqual(8_000)
+    expect(eventSection).not.toContain('oversized-system-event-')
+    expect(eventSection).toContain(
+      '1 Event record omitted from automatic context under the 20-Event and 8,000 UTF-16-code-unit rendered limits',
+    )
+    expect(h.toolContexts[0]?.origins).not.toContain('untrusted:webhook')
   })
 
   it('an observer failure (send throwing on the first delta) never fails the turn, still delivers later frames, and never triggers failover (issue #37 fix)', async () => {

@@ -1,5 +1,6 @@
 import { wordsIn, type FactRecord } from './facts.ts'
 import { factLineWithOriginMark } from './facts-projection.ts'
+import { stripForbiddenUnicode } from './forbidden-unicode.ts'
 import type { MemoryConfig } from './memory-config.ts'
 import {
   type DereferenceResult,
@@ -10,6 +11,7 @@ import {
   type MemoryTimeBasis,
 } from './memory-index.ts'
 import { renderEventForContext, type SpaceEvent, type SpacesEngine } from './spaces-engine.ts'
+import { MODEL_VISIBLE_MEMORY_BUDGET, projectBoundedRecords } from './rendered-record-budget.ts'
 import { extractTemporalRange } from './temporal-query.ts'
 import type { Origin } from './taint.ts'
 
@@ -73,6 +75,12 @@ export interface MemorySearchOutcome {
   unresolved: string[]
   /** The range actually applied, when one was extracted or supplied. */
   range?: { from: string; to: string }
+}
+
+export interface MemoryOutcomeProjection {
+  text: string
+  hits: MemoryHit[]
+  omitted: MemoryHit[]
 }
 
 /**
@@ -185,25 +193,32 @@ export class MemoryRetrieval {
 
   /** Renders an outcome for a tool result / the Agent's context, taint-aware. */
   renderOutcome(outcome: MemorySearchOutcome): string {
-    const lines: string[] = []
-    if (outcome.range) {
-      lines.push(`Time range applied: ${outcome.range.from} to ${outcome.range.to}`)
+    return this.projectOutcome(outcome).text
+  }
+
+  /** Renders and selects hits together so omitted content contributes no live taint. */
+  projectOutcome(outcome: MemorySearchOutcome): MemoryOutcomeProjection {
+    const prefixLines = outcome.range
+      ? [`Time range applied: ${outcome.range.from} to ${outcome.range.to}`]
+      : []
+    const unresolvedCountLine =
+      outcome.unresolved.length === 0
+        ? undefined
+        : `${outcome.unresolved.length} reference(s) could not be resolved.`
+    const projection = projectBoundedRecords({
+      records: outcome.hits,
+      renderRecord: renderHit,
+      renderOmission: renderMemoryOmission,
+      // A clear line supports the abstention rule when no hit resolves.
+      emptyText: 'No matching memory found for this query.',
+      prefixLines,
+      suffixLines: unresolvedCountLine === undefined ? [] : [unresolvedCountLine],
+    })
+    return {
+      text: expandUnresolvedReferences(projection.text, outcome.unresolved, unresolvedCountLine),
+      hits: projection.included,
+      omitted: projection.omitted,
     }
-    if (outcome.hits.length === 0) {
-      // A clear, unambiguous line rather than silence: the Agent's
-      // abstention rule ("say you don't know and do not invent it",
-      // spaces-engine.ts's ABSTENTION_RULE) only fires reliably when the
-      // absence of a match is itself visible in the rendered context.
-      lines.push('No matching memory found for this query.')
-    } else {
-      for (const hit of outcome.hits) lines.push(renderHit(hit))
-    }
-    if (outcome.unresolved.length > 0) {
-      lines.push(
-        `${outcome.unresolved.length} reference(s) could not be resolved: ${outcome.unresolved.join(', ')}`,
-      )
-    }
-    return lines.join('\n')
   }
 
   /**
@@ -362,4 +377,33 @@ function renderHit(hit: MemoryHit): string {
       ? renderEventForContext(hit.record.event)
       : factLineWithOriginMark(hit.record.fact, `noted: ${hit.record.fact.noted ?? 'undated'}`)
   return `- (${metadata})\n${body}`
+}
+
+function renderMemoryOmission(omitted: readonly MemoryHit[]): string {
+  const first = omitted[0]
+  if (!first) throw new Error('a memory omission marker requires one omitted result')
+  const noun = omitted.length === 1 ? 'result' : 'results'
+  return (
+    `- ${omitted.length} memory ${noun} omitted by the ` +
+    `${MODEL_VISIBLE_MEMORY_BUDGET.toLocaleString('en-US')} UTF-16-code-unit rendered budget ` +
+    `(first omitted ref: ${safeSourceRef(first.sourceRef)}); ` +
+    'narrow the query to retrieve omitted records.'
+  )
+}
+
+function safeSourceRef(sourceRef: string): string {
+  return stripForbiddenUnicode(sourceRef).replace(/\s+/g, ' ').slice(0, 200)
+}
+
+function expandUnresolvedReferences(
+  text: string,
+  unresolved: readonly string[],
+  countLine: string | undefined,
+): string {
+  if (countLine === undefined || !text.endsWith(countLine)) return text
+  const detailedLine = `${unresolved.length} reference(s) could not be resolved: ${unresolved
+    .map(safeSourceRef)
+    .join(', ')}`
+  const detailed = `${text.slice(0, -countLine.length)}${detailedLine}`
+  return detailed.length <= MODEL_VISIBLE_MEMORY_BUDGET ? detailed : text
 }

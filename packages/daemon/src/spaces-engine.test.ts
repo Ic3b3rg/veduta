@@ -27,6 +27,7 @@ import { seedSpaces } from './seed.ts'
 import { renderEventForContext, SpacesEngine } from './spaces-engine.ts'
 import { Store } from './store.ts'
 import { untrustedOrigin } from './taint.ts'
+import { textBetweenMarkers } from './text-section.test-helpers.ts'
 
 describe('SpacesEngine layout and lifecycle', () => {
   it('creates the file-backed Space layout with global USER and SOUL files', async () => {
@@ -410,7 +411,7 @@ describe('SpacesEngine Templates', () => {
 })
 
 describe('SpacesEngine taint tracking', () => {
-  it('renders the origin mark on every Event log line in eventsForContext', async () => {
+  it('renders the origin mark on every Event log line in automatic context', async () => {
     const rootDir = await tempRoot()
     const engine = new SpacesEngine({ rootDir, now: fixedNow })
     const space = engine.createSpace({ name: 'Health' })
@@ -608,6 +609,179 @@ describe('SpacesEngine taint tracking', () => {
     // Only the real closing token survives; the forged one was broken.
     expect(block).toContain('<< <END data>>>')
     expect(block.split('<<<END data>>>').length - 1).toBe(1)
+  })
+})
+
+describe('SpacesEngine automatic Event context budget (issue 132)', () => {
+  const renderedBudget = 8_000
+
+  it('includes one complete Event at the exact cap and omits cap+1 without changing the log', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const exactSpace = engine.createSpace({ name: 'Exact Boundary' })
+    const sectionFraming = '# Recent Event log\n\n'.length
+    const existingExactRecords = engine
+      .readRecent(exactSpace.id, 20)
+      .map(renderEventForContext)
+      .join('\n')
+    const exactRecordFraming =
+      renderEventForContext({
+        at: fixedNow().toISOString(),
+        spaceId: exactSpace.id,
+        type: 'budget.boundary',
+        text: 'x',
+        origin: 'trusted:system',
+      }).length - 1
+    const exactTextLength =
+      renderedBudget -
+      sectionFraming -
+      existingExactRecords.length -
+      (existingExactRecords ? 1 : 0) -
+      exactRecordFraming
+    const exactText = '😀'.repeat(Math.floor(exactTextLength / 2)) + 'x'.repeat(exactTextLength % 2)
+
+    engine.appendEvent(exactSpace.id, {
+      type: 'budget.boundary',
+      text: exactText,
+      origin: 'trusted:system',
+    })
+
+    const exactSection = recentEventSection(engine.assembleContext(exactSpace.id))
+    expect(exactSection).toHaveLength(renderedBudget)
+    expect(exactSection.endsWith(exactText)).toBe(true)
+
+    const overSpace = engine.createSpace({ name: 'Cap Plus One Boundary' })
+    const existingOverRecords = engine
+      .readRecent(overSpace.id, 20)
+      .map(renderEventForContext)
+      .join('\n')
+    const overRecordFraming =
+      renderEventForContext({
+        at: fixedNow().toISOString(),
+        spaceId: overSpace.id,
+        type: 'budget.boundary',
+        text: 'x',
+        origin: 'trusted:system',
+      }).length - 1
+    const overTextLength =
+      renderedBudget +
+      1 -
+      sectionFraming -
+      existingOverRecords.length -
+      (existingOverRecords ? 1 : 0) -
+      overRecordFraming
+    const overText = `cap-plus-one-${'y'.repeat(overTextLength - 'cap-plus-one-'.length)}`
+    engine.appendEvent(overSpace.id, {
+      type: 'budget.boundary',
+      text: overText,
+      origin: 'trusted:system',
+    })
+
+    const overSection = recentEventSection(engine.assembleContext(overSpace.id))
+    expect(overSection.length).toBeLessThanOrEqual(renderedBudget)
+    expect(overSection).not.toContain('cap-plus-one-')
+    expect(overSection).toContain(
+      '1 Event record omitted from automatic context under the 20-Event and 8,000 UTF-16-code-unit rendered limits',
+    )
+    expect(overSection).toContain(
+      'first omitted: recorded 2026-07-03T12:00:00.000Z; type budget.boundary; origin trusted:system',
+    )
+    expect(engine.readRecent(overSpace.id, 1)[0]?.text).toBe(overText)
+  })
+
+  it('keeps at most the 20 newest Events and displays the selected set chronologically', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+    for (let index = 0; index < 25; index += 1) {
+      engine.appendEvent(space.id, {
+        type: 'budget.order',
+        text: `event-${String(index).padStart(2, '0')}`,
+      })
+    }
+
+    const section = recentEventSection(engine.assembleContext(space.id, 100))
+    expect(section.match(/event-\d{2}/g)).toEqual(
+      Array.from({ length: 20 }, (_, index) => `event-${String(index + 5).padStart(2, '0')}`),
+    )
+    expect(section).toContain('6 Event records omitted from automatic context')
+    expect(section.length).toBeLessThanOrEqual(renderedBudget)
+  })
+
+  it('backfills past an oversized Event until the newest 20 complete records are selected', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+    engine.appendEvent(space.id, {
+      type: 'budget.backfill',
+      text: 'backfill-event-00',
+      origin: 'untrusted:gmail',
+    })
+    for (let index = 1; index <= 20; index += 1) {
+      engine.appendEvent(space.id, {
+        type: 'budget.backfill',
+        text:
+          index === 10
+            ? `backfill-event-10-oversized-${'z'.repeat(renderedBudget)}`
+            : `backfill-event-${String(index).padStart(2, '0')}`,
+        ...(index === 10 ? { origin: 'untrusted:webhook' as const } : {}),
+      })
+    }
+
+    const projection = engine.recentEventsForContext(space.id)
+
+    expect(projection.events).toHaveLength(20)
+    expect(projection.text).toContain('backfill-event-00')
+    expect(projection.text).not.toContain('backfill-event-10-oversized')
+    expect(projection.text.match(/backfill-event-\d{2}/g)).toHaveLength(20)
+    expect(projection.origins).toContain('untrusted:gmail')
+    expect(projection.origins).not.toContain('untrusted:webhook')
+    expect(projection.text).toContain('2 Event records omitted from automatic context')
+    expect(projection.text.length).toBeLessThanOrEqual(renderedBudget)
+  })
+
+  it('skips an oversized recent payload, continues with older records, and excludes its origin', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow })
+    const space = engine.createSpace({ name: 'Health' })
+    engine.appendEvent(space.id, {
+      type: 'budget.older',
+      text: 'older complete Event',
+      origin: 'untrusted:gmail',
+    })
+    engine.appendEvent(space.id, {
+      type: 'reader.summary',
+      text: 'oversized Event body',
+      origin: 'untrusted:webhook',
+      payload: {
+        reader: { summary: `large-payload-marker-${'z'.repeat(renderedBudget)}` },
+      },
+    })
+    engine.appendEvent(space.id, {
+      type: 'budget.newer',
+      text: 'newer complete Event',
+      origin: 'untrusted:calendar',
+    })
+
+    const section = recentEventSection(engine.assembleContext(space.id))
+    const origins = engine.contextOrigins(space.id)
+
+    expect(section.length).toBeLessThanOrEqual(renderedBudget)
+    expect(section).not.toContain('large-payload-marker')
+    expect(section).not.toContain('oversized Event body')
+    expect(section).toContain(
+      '1 Event record omitted from automatic context under the 20-Event and 8,000 UTF-16-code-unit rendered limits',
+    )
+    expect(section).toContain(
+      'first omitted: recorded 2026-07-03T12:00:00.000Z; type reader.summary; origin untrusted:webhook',
+    )
+    expect(section.indexOf('older complete Event')).toBeLessThan(
+      section.indexOf('newer complete Event'),
+    )
+    expect(origins).toContain('untrusted:gmail')
+    expect(origins).toContain('untrusted:calendar')
+    expect(origins).not.toContain('untrusted:webhook')
+    expect(engine.readRecent(space.id, 3)[1]?.payload?.['reader']).toBeDefined()
   })
 })
 
@@ -1190,6 +1364,10 @@ function trustedFactForActiveSize(activeSize: number): string {
 
 async function tempRoot(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'veduta-spaces-'))
+}
+
+function recentEventSection(context: string): string {
+  return textBetweenMarkers(context, '# Recent Event log', '\n\n# INSTRUCTIONS')
 }
 
 function sharedSurface(spaceId: string, title: string): Surface {

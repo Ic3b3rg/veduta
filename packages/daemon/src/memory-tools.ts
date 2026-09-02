@@ -2,8 +2,9 @@ import { z } from 'zod'
 import { JsonObjectSchema } from '@veduta/protocol'
 import { defineTool, type ToolDef } from './agent-runner.ts'
 import type { MemoryRetrieval } from './memory-retrieval.ts'
-import { renderEventForContext, type SpaceEvent, type SpacesEngine } from './spaces-engine.ts'
-import { effectiveToolWriteOrigin, type Origin } from './taint.ts'
+import { projectEventToolResult } from './space-events.ts'
+import type { SpacesEngine } from './spaces-engine.ts'
+import { effectiveToolWriteOrigin } from './taint.ts'
 
 export interface MemoryToolOptions {
   activeSpaceId?: string
@@ -196,7 +197,12 @@ export function createMemoryTools(
       handler(input) {
         const spaceId = resolveSpaceId(input.spaceId, options.activeSpaceId)
         const events = engine.readRecent(spaceId, input.limit)
-        return { content: formatEvents(events), details: { events }, origins: eventOrigins(events) }
+        const projection = projectEventToolResult(events)
+        return {
+          content: projection.text,
+          details: { events },
+          origins: projection.origins,
+        }
       },
     }),
     defineTool({
@@ -208,7 +214,12 @@ export function createMemoryTools(
       handler(input) {
         const spaceId = resolveSpaceId(input.spaceId, options.activeSpaceId)
         const events = engine.searchLog(spaceId, input.query, input.limit)
-        return { content: formatEvents(events), details: { events }, origins: eventOrigins(events) }
+        const projection = projectEventToolResult(events)
+        return {
+          content: projection.text,
+          details: { events },
+          origins: projection.origins,
+        }
       },
     }),
     ...(retrieval === undefined
@@ -233,16 +244,17 @@ export function createMemoryTools(
                 ...(input.order === undefined ? {} : { order: input.order }),
                 ...(input.timeBasis === undefined ? {} : { timeBasis: input.timeBasis }),
               })
+              const projection = retrieval.projectOutcome(outcome)
               return {
-                content: retrieval.renderOutcome(outcome),
+                content: projection.text,
                 details: outcome,
                 // Every hit's own origin (never the query's), so a turn that
                 // starts trusted but retrieves an untrusted fact or event
                 // through this tool is tainted for whatever it does next —
                 // the same mechanism `read_recent`/`search_log` already use
-                // (see `eventOrigins` below), just fed from `MemoryHit.origins`
-                // instead of a list of `SpaceEvent`s.
-                origins: outcome.hits.flatMap((hit) => hit.origins),
+                // through their bounded projections, just fed from
+                // `MemoryHit.origins` instead of `SpaceEvent.origin`.
+                origins: projection.hits.flatMap((hit) => hit.origins),
               }
             },
           }),
@@ -257,26 +269,4 @@ function resolveSpaceId(
   const spaceId = inputSpaceId ?? activeSpaceId
   if (!spaceId) throw new Error('active Space is required for this memory tool')
   return spaceId
-}
-
-/**
- * Tool results enter the turn's context too: read-side tools render events
- * through the same taint-aware renderer as `assembleContext`, so untrusted
- * text pulled up via `read_recent`/`search_log` still arrives origin-marked
- * and inside delimiters — and, since `ToolResult.origins` reports the origin
- * of every event rendered, the runner folds them into the turn's live
- * `taint` accumulator too. That closes what used to be a runtime re-gating
- * gap here: a turn that starts trusted but reads an untrusted event through
- * one of these tools is tainted, from that point on, for whatever it does
- * next — read at execution time via `ToolContext.taint`, not a pre-turn
- * snapshot.
- */
-function formatEvents(events: SpaceEvent[]): string {
-  if (events.length === 0) return 'No matching Event log entries.'
-  return events.map(renderEventForContext).join('\n')
-}
-
-/** Every origin of the rendered events, for `ToolResult.origins`. */
-function eventOrigins(events: SpaceEvent[]): Origin[] {
-  return events.map((event) => event.origin)
 }

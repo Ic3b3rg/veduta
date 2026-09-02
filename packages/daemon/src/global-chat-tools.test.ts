@@ -19,6 +19,7 @@ import { SurfaceReadError } from './surface-engine.ts'
 import { ensureSystemSpace, SYSTEM_SPACE_ID } from './system-space.ts'
 import { TurnTaintAccumulator, gateToolsForOrigins } from './taint.ts'
 import { templateTools, TemplateEngine } from './template-engine.ts'
+import { textBetweenMarkers } from './text-section.test-helpers.ts'
 import type { ApprovalCardPort, PendingApproval } from './trust-contracts.ts'
 import { isTrustWrapped, TrustLayer } from './trust-layer.ts'
 
@@ -166,6 +167,37 @@ describe('createGlobalChatTools', () => {
     expect(
       h.store.eventLog(h.health.id).find((event) => event.text === 'A correlated plan note'),
     ).toMatchObject({ payload: { correlationId: 'turn-test' } })
+  })
+
+  it('enter_space returns one bounded context and omits the origins of records it could not render', async () => {
+    const h = harness()
+    h.store.spacesEngine.appendEvent(h.health.id, {
+      type: 'budget.enter',
+      text: 'complete entered-space Event',
+      origin: 'untrusted:gmail',
+    })
+    h.store.spacesEngine.appendEvent(h.health.id, {
+      type: 'budget.enter',
+      text: `oversized-enter-space-${'x'.repeat(8_000)}`,
+      origin: 'untrusted:webhook',
+    })
+    const enterSpace = toolNamed(h.tools, 'enter_space')
+
+    const result = await enterSpace.handler(
+      enterSpace.schema.parse({ spaceId: h.health.id }),
+      context('call-bounded-enter'),
+    )
+    const eventSection = textBetweenMarkers(
+      result.content,
+      '# Recent Event log',
+      '\n\n# INSTRUCTIONS',
+    )
+
+    expect(eventSection.length).toBeLessThanOrEqual(8_000)
+    expect(eventSection).toContain('complete entered-space Event')
+    expect(eventSection).not.toContain('oversized-enter-space-')
+    expect(result.origins).toContain('untrusted:gmail')
+    expect(result.origins).not.toContain('untrusted:webhook')
   })
 
   it('rejects System, unknown, and archived Spaces without entering or writing them', () => {

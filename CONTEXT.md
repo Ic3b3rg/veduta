@@ -175,7 +175,12 @@ The read-side interface over the hybrid index: a query, a time range extracted i
 _Avoid_: RAG, semantic search, lookup
 
 **Event log**:
-The append-only stream of a Space's events (from the fast path and from turns). Recent portion in context, long tail via hybrid search. It is the provenance: it is never rewritten.
+The append-only stream of a Space's events (from the fast path and from turns). Automatic context
+selects at most the 20 newest complete Events that fit an 8,000 UTF-16-code-unit rendered section,
+then presents them chronologically. `read_recent`, `search_log`, and `search_memory` apply the same
+rendered limit to complete results in query order. The automatic omission count includes both Events
+outside the 20-record working set and records excluded by size. Omitted records remain unchanged and
+retrievable, and only rendered records contribute live taint. It is the provenance: it is never rewritten.
 _Avoid_: history, diary
 
 **INSTRUCTIONS**:

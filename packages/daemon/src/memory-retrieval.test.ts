@@ -296,6 +296,30 @@ describe('MemoryRetrieval: stale handling', () => {
 })
 
 describe('MemoryRetrieval: renderOutcome', () => {
+  it('preserves unresolved source references when the complete diagnostic fits the budget', () => {
+    const { retrieval } = setup()
+    const sourceRef = 'event:spc-health:2026-07-03.jsonl:7'
+
+    const rendered = retrieval.renderOutcome({ hits: [], unresolved: [sourceRef] })
+
+    expect(rendered).toContain(`1 reference(s) could not be resolved: ${sourceRef}`)
+    expect(rendered.length).toBeLessThanOrEqual(8_000)
+  })
+
+  it('falls back to a bounded unresolved-reference count when the full diagnostic cannot fit', () => {
+    const { retrieval } = setup()
+    const unresolved = Array.from(
+      { length: 100 },
+      (_, index) => `event:spc-health:${'x'.repeat(190)}:${index}`,
+    )
+
+    const rendered = retrieval.renderOutcome({ hits: [], unresolved })
+
+    expect(rendered).toContain('100 reference(s) could not be resolved.')
+    expect(rendered).not.toContain(unresolved[0])
+    expect(rendered.length).toBeLessThanOrEqual(8_000)
+  })
+
   it('keeps untrusted event text inside the delimited block and reports "nothing found" for an empty outcome', () => {
     const { engine, index, retrieval } = setup()
     const health = engine.createSpace({ name: 'Health' })
