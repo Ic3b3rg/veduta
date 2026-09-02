@@ -23,6 +23,7 @@ import { AUDIT_SURFACE_ID } from './audit-surface.ts'
 import { AuthStore, type PasskeyRelyingParty, type StoredPasskey } from './auth-store.ts'
 import { SYSTEM_AUTOMATIONS_SURFACE_ID } from './automations-surface.ts'
 import { CONNECTED_DEVICES_SURFACE_ID } from './connected-devices-surface.ts'
+import { projectFacts } from './facts-projection.ts'
 import { HEARTBEAT_SURFACE_ID } from './heartbeat-surface.ts'
 import { NoAvailableModelError, loadRoutingConfig, saveRoutingConfig } from './model-routing.ts'
 import { NOTIFICATION_SETTINGS_SURFACE_ID } from './notification-settings-surface.ts'
@@ -2323,6 +2324,39 @@ describe('memory engines wiring (issues/021-advanced-memory.md)', () => {
       .listAutomations(SYSTEM_SPACE_ID)
       .filter((automation) => automation.handler === 'reflection')
     expect(secondReflectionJobs).toHaveLength(1)
+    await second.app.close()
+  })
+
+  it('audits an existing over-hard FACTS file at Gateway restart without changing or blocking the Space', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-memory-over-hard-'))
+    await writeFile(
+      join(dataDir, 'memory.json'),
+      JSON.stringify({ budget: { low: 100, high: 200, hard: 300 } }),
+    )
+    const first = buildServer({ dataDir, now: fixedNow })
+    const legacyFact = 'x'.repeat(58)
+    first.store.writeFact('spc-health', legacyFact)
+    expect(projectFacts(first.store.readFacts('spc-health')).activeSize).toBe(80)
+    const factsPath = join(dataDir, 'spaces', 'health', 'FACTS.md')
+    const before = await readFile(factsPath)
+    await first.app.close()
+
+    await writeFile(
+      join(dataDir, 'memory.json'),
+      JSON.stringify({ budget: { low: 30, high: 40, hard: 60 } }),
+    )
+    const second = buildServer({ dataDir, now: fixedNow })
+
+    expect(second.store.spacesEngine.memoryHealth().spaces['spc-health']).toMatchObject({
+      activeSize: 80,
+      watermark: 'over-hard',
+      reflectionPending: true,
+      overHardRecovery: true,
+    })
+    expect(second.store.searchFacts('spc-health', legacyFact)).toHaveLength(1)
+    expect(await readFile(factsPath)).toEqual(before)
+    expect(second.store.llmCallCount()).toBe(0)
+
     await second.app.close()
   })
 
