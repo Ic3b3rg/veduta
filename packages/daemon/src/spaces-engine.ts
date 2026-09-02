@@ -49,7 +49,12 @@ import {
 } from './facts-persistence.ts'
 import { projectFacts } from './facts-projection.ts'
 import { loadMemoryConfig, type MemoryBudget } from './memory-config.ts'
-import { MemoryHealthStore, type MemoryHealthState } from './memory-health.ts'
+import {
+  MemoryHealthPersistenceError,
+  MemoryHealthStore,
+  type MemoryHealthState,
+  type SpaceActiveProjection,
+} from './memory-health.ts'
 import {
   eventsForContext,
   parseSpaceEventLine,
@@ -304,12 +309,12 @@ export class SpacesEngine {
     if (spaceId !== undefined) {
       const space = this.requireSpace(spaceId)
       if (space.id !== SYSTEM_SPACE_ID) {
-        this.memoryHealthStore.update(space.id, projectFacts(this.readFacts(space.id)).activeSize)
+        this.updateMemoryHealth(space.id, projectFacts(this.readFacts(space.id)).activeSize)
       }
       return this.memoryHealth()
     }
 
-    this.memoryHealthStore.reconcile(
+    this.reconcileMemoryHealth(
       this.listAllSpaces()
         .filter((space) => space.id !== SYSTEM_SPACE_ID)
         .map((space) => ({
@@ -318,6 +323,37 @@ export class SpacesEngine {
         })),
     )
     return this.memoryHealth()
+  }
+
+  private updateMemoryHealth(spaceId: string, activeSize: number): void {
+    this.containMemoryHealthPersistenceFailure(() => {
+      this.memoryHealthStore.update(spaceId, activeSize)
+    })
+  }
+
+  private reconcileMemoryHealth(projections: SpaceActiveProjection[]): void {
+    this.containMemoryHealthPersistenceFailure(() => {
+      this.memoryHealthStore.reconcile(projections)
+    })
+  }
+
+  /**
+   * Memory health is a rebuildable projection, so its I/O cannot turn a
+   * domain mutation that already committed into a reported failure. Both
+   * store operations update their in-memory assessment before attempting the
+   * durable replace; a later mutation, explicit audit, or boot retries the
+   * complete snapshot.
+   */
+  private containMemoryHealthPersistenceFailure(operation: () => void): void {
+    try {
+      operation()
+    } catch (error) {
+      if (!(error instanceof MemoryHealthPersistenceError)) throw error
+      console.error(
+        'memory health persistence failed; continuing with the current in-memory assessment',
+        error,
+      )
+    }
   }
 
   /**
@@ -361,7 +397,7 @@ export class SpacesEngine {
         text: `FACTS ${result.operation}: ${result.fact.text}`,
         ...(origin === undefined ? {} : { origin }),
       })
-      this.memoryHealthStore.update(space.id, candidateProjection.activeSize)
+      this.updateMemoryHealth(space.id, candidateProjection.activeSize)
       this.notifyMemoryWrite(space.id, 'fact')
     }
     return {
@@ -404,7 +440,7 @@ export class SpacesEngine {
       text: 'Reflection moved facts to dormant to keep the active set within budget.',
       payload: { ids: matchedIds, count: demoted.length },
     })
-    this.memoryHealthStore.update(space.id, projectFacts(persisted).activeSize)
+    this.updateMemoryHealth(space.id, projectFacts(persisted).activeSize)
     // After the `fact.demote` Event log entry above, matching `writeFact`:
     // a 'fact' notice means the whole operation, event echo included, is
     // durable — not merely that `FACTS.md` itself was rewritten.
@@ -929,7 +965,7 @@ export class SpacesEngine {
       superseded: [...document.superseded, ...source.superseded],
     }
     const persisted = persistFactsDocument(this.factsPath(target), document, this.today())
-    this.memoryHealthStore.update(target.id, projectFacts(persisted).activeSize)
+    this.updateMemoryHealth(target.id, projectFacts(persisted).activeSize)
     this.notifyMemoryWrite(target.id, 'fact')
   }
 

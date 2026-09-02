@@ -44,6 +44,13 @@ export interface SpaceActiveProjection {
   activeSize: number
 }
 
+export class MemoryHealthPersistenceError extends Error {
+  constructor(cause: unknown) {
+    super(`memory health state could not be persisted: ${errorText(cause)}`, { cause })
+    this.name = 'MemoryHealthPersistenceError'
+  }
+}
+
 /**
  * Durable, rebuildable health for the rendered active FACTS working set.
  *
@@ -144,7 +151,11 @@ export class MemoryHealthStore {
   }
 
   private persist(): void {
-    writeJsonAtomicDurable(this.path, this.state)
+    try {
+      writeJsonAtomicDurable(this.path, this.state)
+    } catch (error) {
+      throw new MemoryHealthPersistenceError(error)
+    }
   }
 }
 
