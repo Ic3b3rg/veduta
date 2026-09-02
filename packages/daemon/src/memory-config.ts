@@ -5,6 +5,43 @@ import { TIME_OF_DAY_RE } from './cron.ts'
 import { readJsonFile } from './json-file.ts'
 import { assertTimeZone } from './timezone.ts'
 
+export const DEFAULT_MEMORY_BUDGET = {
+  low: 4000,
+  high: 6000,
+  hard: 8000,
+} as const
+
+export const MemoryBudgetSchema = z
+  .object({
+    /** UTF-16 code units of the rendered active FACTS projection. Reflection
+     * must bring the active set back under this by demoting the
+     * least-relevant still-valid facts to `dormant`. */
+    low: z.number().int().positive().default(DEFAULT_MEMORY_BUDGET.low),
+    /** Crossing this watermark marks the Space's next Reflection pending. */
+    high: z.number().int().positive().default(DEFAULT_MEMORY_BUDGET.high),
+    /** The largest rendered active projection an ordinary write may reach. */
+    hard: z.number().int().positive().default(DEFAULT_MEMORY_BUDGET.hard),
+  })
+  .strict()
+  .superRefine((budget, context) => {
+    if (budget.low >= budget.high) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'memory budget low must be less than high',
+        path: ['low'],
+      })
+    }
+    if (budget.high >= budget.hard) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'memory budget high must be less than hard',
+        path: ['high'],
+      })
+    }
+  })
+
+export type MemoryBudget = z.infer<typeof MemoryBudgetSchema>
+
 /**
  * Memory configuration (issue #21): `<rootDir>/memory.json`.
  * `SpaceSchema` has no notion of a user timezone today, so this is where
@@ -51,15 +88,7 @@ export const MemoryConfigSchema = z
       })
       .strict()
       .default({}),
-    budget: z
-      .object({
-        /** UTF-16 code units of the rendered active FACTS projection. Reflection
-         * must bring the active set back under this by demoting the
-         * least-relevant still-valid facts to `dormant`. */
-        low: z.number().int().positive().default(4000),
-      })
-      .strict()
-      .default({}),
+    budget: MemoryBudgetSchema.default({}),
   })
   .strict()
 

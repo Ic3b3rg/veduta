@@ -16,6 +16,7 @@ import type { ToolDef } from './agent-runner.ts'
 import type { FactsDocument } from './facts.ts'
 import { seedSpaces } from './seed.ts'
 import type { RelativeTimeAuthoring } from './relative-time-surface.ts'
+import type { MemoryBudget } from './memory-config.ts'
 import type { Origin } from './taint.ts'
 import { SpacesEngine, type FactSearchHit, type SpaceEvent } from './spaces-engine.ts'
 import {
@@ -39,6 +40,8 @@ export interface StoreOptions {
   now?: () => Date
   /** Global user timezone used by every relative-time Surface projection. */
   timeZone?: string
+  /** Rendered active FACTS low/high/hard watermarks. */
+  memoryBudget?: MemoryBudget
 }
 
 export type SurfaceActionResult =
@@ -91,6 +94,7 @@ export class Store {
       now: this.now,
       seed: { spaces: seed.spaces, surfaces: [] },
       ...(options.rootDir === undefined ? {} : { rootDir: options.rootDir }),
+      ...(options.memoryBudget === undefined ? {} : { memoryBudget: options.memoryBudget }),
     })
     const persistedSurfaces = this.spacesEngine.listPersistedSurfaces()
     this.surfaceEngine = new SurfaceEngine({

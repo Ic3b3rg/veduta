@@ -17,9 +17,12 @@ import {
   type Surface,
   type SurfaceTemplate,
 } from '@veduta/protocol'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { factRecordIds, formatFactsMarkdown, type FactsDocument } from './facts.ts'
+import { projectFacts } from './facts-projection.ts'
+import { withDirectoryMode } from './filesystem.test-helpers.ts'
 import { stripForbiddenUnicode } from './forbidden-unicode.ts'
+import type { MemoryBudget } from './memory-config.ts'
 import { seedSpaces } from './seed.ts'
 import { renderEventForContext, SpacesEngine } from './spaces-engine.ts'
 import { Store } from './store.ts'
@@ -956,6 +959,151 @@ describe('SpacesEngine onMemoryWrite (issues/021-advanced-memory.md, docs/adr/00
   })
 })
 
+describe('SpacesEngine FACTS watermark health (issues/130-facts-high-hard-watermarks.md)', () => {
+  const budget: MemoryBudget = { low: 30, high: 40, hard: 60 }
+
+  it('marks a high crossing pending without demotion or an immediate model call and persists it across restart', async () => {
+    const rootDir = await tempRoot()
+    const store = new Store({ rootDir, now: fixedNow, memoryBudget: budget })
+    const fact = trustedFactForActiveSize(41)
+
+    store.writeFact('spc-health', fact)
+
+    expect(projectFacts(store.readFacts('spc-health')).activeSize).toBe(41)
+    expect(store.readFacts('spc-health').active.map((record) => record.text)).toEqual([fact])
+    expect(store.readFacts('spc-health').dormant).toEqual([])
+    expect(store.llmCallCount()).toBe(0)
+    expect(store.spacesEngine.memoryHealth().spaces['spc-health']).toMatchObject({
+      activeSize: 41,
+      watermark: 'over-high',
+      reflectionPending: true,
+      overHardRecovery: false,
+    })
+
+    const restarted = new SpacesEngine({ rootDir, now: fixedNow, memoryBudget: budget })
+    expect(restarted.memoryHealth().spaces['spc-health']?.reflectionPending).toBe(true)
+  })
+
+  it('audits a legacy over-hard archived Space at boot and again on restore without changing FACTS', async () => {
+    const rootDir = await tempRoot()
+    const generousBudget: MemoryBudget = { low: 100, high: 200, hard: 300 }
+    const first = new SpacesEngine({
+      rootDir,
+      now: fixedNow,
+      seed: seedSpaces(),
+      memoryBudget: generousBudget,
+    })
+    const fact = trustedFactForActiveSize(80)
+    first.writeFact('spc-health', fact)
+    first.archiveSpace('spc-health')
+    const factsPath = join(rootDir, 'spaces', 'health', 'FACTS.md')
+    const before = readFileSync(factsPath, 'utf8')
+    rmSync(join(rootDir, 'memory-health.json'))
+
+    const restarted = new SpacesEngine({ rootDir, now: fixedNow, memoryBudget: budget })
+
+    expect(readFileSync(factsPath, 'utf8')).toBe(before)
+    expect(restarted.memoryHealth().spaces['spc-health']).toMatchObject({
+      activeSize: 80,
+      watermark: 'over-hard',
+      reflectionPending: true,
+      overHardRecovery: true,
+    })
+
+    restarted.restoreSpace('spc-health')
+
+    expect(restarted.searchFacts('spc-health', fact)).toHaveLength(1)
+    expect(restarted.memoryHealth().spaces['spc-health']?.reflectionPending).toBe(true)
+    expect(readFileSync(factsPath, 'utf8')).toBe(before)
+  })
+
+  it('keeps committed FACTS mutations successful when derived health persistence fails', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({ rootDir, now: fixedNow, seed: seedSpaces() })
+    const target = engine.createSpace({ name: 'Target' })
+    const source = engine.createSpace({ name: 'Source' })
+    engine.writeFact(source.id, 'I like barley')
+    const notices: { spaceId: string; kind: 'event' | 'fact' }[] = []
+    engine.onMemoryWrite((notice) => notices.push(notice))
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    try {
+      await withDirectoryMode(rootDir, 0o500, () => {
+        expect(() => engine.writeFact('spc-health', 'I like rice')).not.toThrow()
+        const document = engine.readFacts('spc-health')
+        const active = document.active[0]
+        expect(active).toBeDefined()
+        const id =
+          active === undefined ? undefined : factRecordIds(document, '2026-07-03').get(active)
+        expect(id).toBeDefined()
+        expect(() => engine.demoteFacts('spc-health', id === undefined ? [] : [id])).not.toThrow()
+        expect(() => engine.mergeSpaces(target.id, source.id)).not.toThrow()
+      })
+
+      expect(engine.readFacts('spc-health').active).toEqual([])
+      expect(engine.readFacts('spc-health').dormant.map((fact) => fact.text)).toContain(
+        'I like rice',
+      )
+      expect(engine.searchFacts(target.id, 'barley')).toHaveLength(1)
+      expect(engine.getSpace(source.id)?.archived).toBe(true)
+      expect(notices.filter((notice) => notice.kind === 'fact')).toEqual([
+        { spaceId: 'spc-health', kind: 'fact' },
+        { spaceId: 'spc-health', kind: 'fact' },
+        { spaceId: target.id, kind: 'fact' },
+      ])
+      expect(error).toHaveBeenCalled()
+
+      engine.auditMemoryHealth()
+      expect(JSON.parse(readFileSync(join(rootDir, 'memory-health.json'), 'utf8'))).toEqual(
+        engine.memoryHealth(),
+      )
+    } finally {
+      error.mockRestore()
+    }
+  })
+
+  it('does not let derived health persistence block boot, Space creation, or restore', async () => {
+    const rootDir = await tempRoot()
+    const first = new SpacesEngine({
+      rootDir,
+      now: fixedNow,
+      seed: seedSpaces(),
+      memoryBudget: { low: 100, high: 200, hard: 300 },
+    })
+    const fact = trustedFactForActiveSize(80)
+    first.writeFact('spc-health', fact)
+    first.archiveSpace('spc-health')
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    try {
+      const { restarted, createdId } = await withDirectoryMode(rootDir, 0o500, () => {
+        const restarted = new SpacesEngine({ rootDir, now: fixedNow, memoryBudget: budget })
+        const created = restarted.createSpace({ name: 'Created During Health Failure' })
+        expect(() => restarted.restoreSpace('spc-health')).not.toThrow()
+        return { restarted, createdId: created.id }
+      })
+
+      expect(restarted.getSpace('spc-health')?.archived).toBe(false)
+      expect(restarted.getSpace(createdId)).toBeDefined()
+      expect(restarted.searchFacts('spc-health', fact)).toHaveLength(1)
+      expect(restarted.memoryHealth().spaces['spc-health']).toMatchObject({
+        activeSize: 80,
+        watermark: 'over-hard',
+        reflectionPending: true,
+        overHardRecovery: true,
+      })
+      expect(error).toHaveBeenCalled()
+
+      restarted.auditMemoryHealth()
+      expect(JSON.parse(readFileSync(join(rootDir, 'memory-health.json'), 'utf8'))).toEqual(
+        restarted.memoryHealth(),
+      )
+    } finally {
+      error.mockRestore()
+    }
+  })
+})
+
 describe('SpacesEngine demoteFacts (issues/021-advanced-memory.md)', () => {
   it('moves the record to Dormant, appends a fact.demote event, and returns the demoted records', async () => {
     const rootDir = await tempRoot()
@@ -1031,6 +1179,13 @@ describe('Store memory contract', () => {
 
 function fixedNow(): Date {
   return new Date('2026-07-03T12:00:00.000Z')
+}
+
+function trustedFactForActiveSize(activeSize: number): string {
+  const renderedMetadata = '-  (noted: 2026-07-03)'
+  const textLength = activeSize - renderedMetadata.length
+  if (textLength < 1) throw new Error(`active size ${activeSize} cannot hold one rendered fact`)
+  return 'x'.repeat(textLength)
 }
 
 async function tempRoot(): Promise<string> {

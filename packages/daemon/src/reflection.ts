@@ -292,6 +292,10 @@ export class Reflection {
     const boundary =
       this.latestCompletedThrough(spaceId, scanFloor, scheduledFor) ?? previousOccurrence
     const windowEvents = this.collectWindowEvents(spaceId, boundary, scheduledFor)
+    const memoryHealth = this.store.spacesEngine.auditMemoryHealth(spaceId).spaces[spaceId]
+    const pendingDemotion = memoryHealth?.reflectionPending
+      ? this.demoteToBudget(spaceId)
+      : undefined
 
     if (windowEvents.length === 0) {
       this.appendTerminal(spaceId, 'reflection.skip', automationId, scheduledFor)
@@ -306,7 +310,7 @@ export class Reflection {
         consolidated: 0,
         reactivated: 0,
         droppedWithoutEvidence: 0,
-        demoted: 0,
+        demoted: pendingDemotion?.demoted ?? 0,
         activeSize: projection.activeSize,
         underBudget: projection.activeSize <= this.config.budget.low,
       }
@@ -344,7 +348,11 @@ export class Reflection {
       }
     }
 
-    const demotion = this.demoteToBudget(spaceId)
+    const finalDemotion = this.demoteToBudget(spaceId)
+    const demotion = {
+      ...finalDemotion,
+      demoted: (pendingDemotion?.demoted ?? 0) + finalDemotion.demoted,
+    }
     if (!demotion.underBudget) {
       this.store.spacesEngine.appendEvent(spaceId, {
         type: 'reflection.overBudget',

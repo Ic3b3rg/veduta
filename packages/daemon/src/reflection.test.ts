@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { formatFactsMarkdown } from './facts.ts'
 import { projectFacts } from './facts-projection.ts'
 import { withDirectoryMode } from './filesystem.test-helpers.ts'
 import { MemoryConfigSchema, type MemoryConfig } from './memory-config.ts'
@@ -187,6 +188,70 @@ describe('runReflection: demotion to the low budget', () => {
     expect(after.superseded).toEqual([])
     expect(after.dormant).toHaveLength(1)
     expect(after.dormant[0]?.text).toBe('The only active fact on record right now.')
+  })
+
+  it('compacts a boot-audited over-hard Space on the next scheduled Reflection even with an empty event window', async () => {
+    const config = memoryConfig({ budget: { low: 30, high: 40, hard: 60 } })
+    const recoveryRoot = mkdtempSync(join(tmpdir(), 'veduta-reflection-recovery-'))
+    const recoveryStore = new Store({
+      rootDir: recoveryRoot,
+      now,
+      memoryBudget: config.budget,
+    })
+    ensureSystemSpace(recoveryStore.spacesEngine)
+    const recoveryScheduler = new Scheduler({ rootDir: recoveryRoot, store: recoveryStore, now })
+    const recoveryIndex = new MemoryIndex({
+      rootDir: recoveryRoot,
+      spacesEngine: recoveryStore.spacesEngine,
+      now,
+    })
+
+    try {
+      const legacyDocument = {
+        active: [{ text: 'x'.repeat(58), noted: '2026-06-01' }],
+        dormant: [],
+        superseded: [],
+      }
+      expect(projectFacts(legacyDocument).activeSize).toBe(80)
+      writeFileSync(
+        join(recoveryRoot, 'spaces', 'health', 'FACTS.md'),
+        formatFactsMarkdown(legacyDocument, '2026-06-01'),
+      )
+      recoveryStore.spacesEngine.auditMemoryHealth(HEALTH)
+      expect(recoveryStore.spacesEngine.memoryHealth().spaces[HEALTH]).toMatchObject({
+        activeSize: 80,
+        reflectionPending: true,
+        overHardRecovery: true,
+      })
+
+      clock = new Date('2026-07-08T04:00:00.000Z')
+      const reflection = new Reflection({
+        store: recoveryStore,
+        scheduler: recoveryScheduler,
+        index: recoveryIndex,
+        config,
+        distiller: nothingDistiller,
+        now,
+      })
+      const report = await reflection.runReflection(HEALTH, 1, clock.toISOString())
+
+      expect(report?.eventCount).toBe(0)
+      expect(report?.demoted).toBe(1)
+      expect(report?.underBudget).toBe(true)
+      expect(recoveryStore.readFacts(HEALTH).active).toEqual([])
+      expect(recoveryStore.readFacts(HEALTH).dormant).toHaveLength(1)
+      expect(recoveryStore.spacesEngine.memoryHealth().spaces[HEALTH]).toMatchObject({
+        activeSize: 22,
+        watermark: 'within-low',
+        reflectionPending: false,
+        overHardRecovery: false,
+      })
+    } finally {
+      recoveryScheduler.stop()
+      recoveryIndex.close()
+      recoveryStore.close()
+      rmSync(recoveryRoot, { recursive: true, force: true })
+    }
   })
 })
 

@@ -23,20 +23,6 @@ const SpaceScopedSchema = z.object({
 })
 
 /**
- * Cap on one written fact, matching the cap the nightly Reflection already
- * applies to a distilled fact. Without it, a single write just under the `low`
- * watermark leaves the next Reflection no way to fit the projection except by
- * demoting everything else — the user's own facts go dormant first, because
- * demotion ranks oldest-noted first, and the injected set empties out. Nothing
- * is destroyed (the records stay in `## Dormant` and every demotion is logged)
- * but the Agent stops seeing them, and an injected turn can trigger it. The
- * `hard` watermark that would also refuse the write belongs to
- * issues/032-facts-hygiene-context-budget.md; this cap is what keeps the gap
- * from being exploitable in the meantime.
- */
-export const MAX_WRITTEN_FACT_CHARS = 1000
-
-/**
  * Event types the daemon reserves for its own bookkeeping. An Agent tool must
  * not be able to mint one, because the daemon reads several of these back as
  * state, and a forged entry would let untrusted content steer it through its
@@ -82,10 +68,11 @@ function isReservedEventType(type: string): boolean {
 }
 
 const WriteFactSchema = SpaceScopedSchema.extend({
-  fact: z.string().trim().min(1).max(MAX_WRITTEN_FACT_CHARS),
-  // This selects persisted state rather than writing new text. Imported and
-  // manually maintained FACTS can predate the write cap, so every active fact
-  // must remain addressable by its exact text.
+  // The rendered active projection's configured hard watermark is the one
+  // write budget. There is deliberately no second per-fact character cap.
+  fact: z.string().trim().min(1),
+  // This selects persisted state rather than writing new text, so every
+  // active fact must remain addressable by its exact text.
   supersedes: z.string().trim().min(1).optional(),
 })
 
@@ -159,7 +146,7 @@ export function createMemoryTools(
     defineTool({
       name: 'write_fact',
       description:
-        'Write one durable FACTS entry for the active Space. The Curator supersedes only established contradictions. For a refinement, pass supersedes with the exact active fact text this write replaces.',
+        'Write one durable FACTS entry for the active Space. The Curator supersedes only established contradictions, and the rendered active projection must stay within its hard watermark unless this write strictly reduces an existing over-hard file. For a refinement, pass supersedes with the exact active fact text this write replaces.',
       schema: WriteFactSchema,
       level: 'L0',
       egressDomains: [],

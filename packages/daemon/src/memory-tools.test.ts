@@ -5,10 +5,11 @@ import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { describe, expect, it } from 'vitest'
 import type { ToolContext } from './agent-runner.ts'
+import { projectFacts } from './facts-projection.ts'
 import { MemoryConfigSchema } from './memory-config.ts'
 import { MemoryIndex } from './memory-index.ts'
 import { MemoryRetrieval } from './memory-retrieval.ts'
-import { MAX_WRITTEN_FACT_CHARS, createMemoryTools } from './memory-tools.ts'
+import { createMemoryTools } from './memory-tools.ts'
 import { seedSpaces } from './seed.ts'
 import { SpacesEngine } from './spaces-engine.ts'
 import { TurnTaintAccumulator, type Origin } from './taint.ts'
@@ -244,13 +245,13 @@ describe('memory tools', () => {
     })
   })
 
-  it('can refine an imported fact longer than the new-fact write limit', async () => {
+  it('can refine an imported fact longer than the removed 1000-character interim limit', async () => {
     const engine = new SpacesEngine({
       rootDir: await tempRoot(),
       now: fixedNow,
       seed: seedSpaces(),
     })
-    const importedFact = `Legacy profile detail ${'x'.repeat(MAX_WRITTEN_FACT_CHARS)}`
+    const importedFact = `Legacy profile detail ${'x'.repeat(1001)}`
     engine.writeFact('spc-health', importedFact, 'untrusted:import')
     const writeFact = requireTool(
       createMemoryTools(engine, { activeSpaceId: 'spc-health' }),
@@ -428,7 +429,7 @@ async function tempRoot(): Promise<string> {
 }
 
 describe('write and append schemas bound what an injected turn can persist', () => {
-  it('rejects a fact long enough to consume the whole injected budget on its own', async () => {
+  it('lets the rendered hard watermark replace the interim per-fact character cap', async () => {
     const engine = new SpacesEngine({
       rootDir: await tempRoot(),
       now: fixedNow,
@@ -437,11 +438,15 @@ describe('write and append schemas bound what an injected turn can persist', () 
     const tools = createMemoryTools(engine, { activeSpaceId: 'spc-health' })
     const writeFact = requireTool(tools, 'write_fact')
 
-    // Just under the default `low` watermark: uncapped, the next Reflection
-    // could only fit the projection by demoting every genuine fact instead.
-    const oversized = 'x'.repeat(3900)
-    expect(writeFact.schema.safeParse({ fact: oversized }).success).toBe(false)
+    const formerlyOversized = 'x'.repeat(3900)
+    expect(writeFact.schema.safeParse({ fact: formerlyOversized }).success).toBe(true)
     expect(writeFact.schema.safeParse({ fact: 'I like oats' }).success).toBe(true)
+
+    await writeFact.handler(
+      writeFact.schema.parse({ fact: formerlyOversized }),
+      toolContext('write-formerly-oversized', 'trusted:user'),
+    )
+    expect(engine.readFacts('spc-health').active[0]?.text).toBe(formerlyOversized)
   })
 
   it('rejects an event type reserved for the daemon, and any type that is not an identifier', async () => {
@@ -489,3 +494,136 @@ describe('write and append schemas bound what an injected turn can persist', () 
     }
   })
 })
+
+describe('write_fact rendered hard watermark', () => {
+  const budget = { low: 30, high: 40, hard: 60 }
+
+  it('accepts exactly hard and rejects hard+1 explicitly without persisting the candidate', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({
+      rootDir,
+      now: fixedNow,
+      seed: seedSpaces(),
+      memoryBudget: budget,
+    })
+    const other = engine.createSpace({ name: 'Other' })
+    const writeFact = requireTool(
+      createMemoryTools(engine, { activeSpaceId: 'spc-health' }),
+      'write_fact',
+    )
+
+    const exactlyHard = trustedFactForActiveSize(60)
+    await writeFact.handler(
+      writeFact.schema.parse({ fact: exactlyHard }),
+      toolContext('write-exactly-hard', 'trusted:user'),
+    )
+    expect(projectFacts(engine.readFacts('spc-health')).activeSize).toBe(60)
+
+    const hardPlusOne = trustedFactForActiveSize(61)
+    const otherFactsPath = join(rootDir, 'spaces', other.slug, 'FACTS.md')
+    const beforeBytes = readFileSync(otherFactsPath)
+    const beforeEvents = engine.readRecent(other.id, 20)
+
+    expect(() =>
+      writeFact.handler(
+        writeFact.schema.parse({ spaceId: other.id, fact: hardPlusOne }),
+        toolContext('write-hard-plus-one', 'trusted:user'),
+      ),
+    ).toThrow(/would be 61 UTF-16 code units.*hard watermark.*60/i)
+
+    expect(readFileSync(otherFactsPath)).toEqual(beforeBytes)
+    expect(engine.readRecent(other.id, 20)).toEqual(beforeEvents)
+    expect(engine.readFacts(other.id).active).toEqual([])
+  })
+
+  it('while already over hard accepts Noop and strict reduction but rejects same-size and growth', async () => {
+    const rootDir = await tempRoot()
+    const generousBudget = { low: 100, high: 200, hard: 300 }
+    const first = new SpacesEngine({
+      rootDir,
+      now: fixedNow,
+      seed: seedSpaces(),
+      memoryBudget: generousBudget,
+    })
+    const original = trustedFactForActiveSize(80, 'x')
+    first.writeFact('spc-health', original)
+
+    const engine = new SpacesEngine({ rootDir, now: fixedNow, memoryBudget: budget })
+    const writeFact = requireTool(
+      createMemoryTools(engine, { activeSpaceId: 'spc-health' }),
+      'write_fact',
+    )
+    const factsPath = join(rootDir, 'spaces', 'health', 'FACTS.md')
+    const originalBytes = readFileSync(factsPath)
+
+    const noop = await writeFact.handler(
+      writeFact.schema.parse({ fact: original }),
+      toolContext('write-over-hard-noop', 'trusted:user'),
+    )
+    expect(noop.content).toBe(`FACTS noop: ${original}`)
+    expect(readFileSync(factsPath)).toEqual(originalBytes)
+
+    for (const [kind, candidate] of [
+      ['same-size', trustedFactForActiveSize(80, 'y')],
+      ['growing', trustedFactForActiveSize(81, 'z')],
+    ] as const) {
+      expect(() =>
+        writeFact.handler(
+          writeFact.schema.parse({ fact: candidate, supersedes: original }),
+          toolContext(`write-over-hard-${kind}`, 'trusted:user'),
+        ),
+      ).toThrow(/already above the hard watermark.*strictly size-reducing/i)
+      expect(readFileSync(factsPath)).toEqual(originalBytes)
+    }
+
+    const reduced = trustedFactForActiveSize(79, 'r')
+    const result = await writeFact.handler(
+      writeFact.schema.parse({ fact: reduced, supersedes: original }),
+      toolContext('write-over-hard-reduction', 'trusted:user'),
+    )
+
+    expect(result.content).toBe(`FACTS update: ${reduced}`)
+    expect(projectFacts(engine.readFacts('spc-health')).activeSize).toBe(79)
+    expect(engine.memoryHealth().spaces['spc-health']).toMatchObject({
+      watermark: 'over-hard',
+      reflectionPending: true,
+      overHardRecovery: true,
+    })
+  })
+
+  it('counts untrusted origin labels and spotlighting wrappers, not raw fact text alone', async () => {
+    const renderedSize = projectFacts({
+      active: [{ text: 'x', noted: '2026-07-03', origin: 'untrusted:gmail' }],
+      dormant: [],
+      superseded: [],
+    }).activeSize
+    const wrapperBudget = { low: 30, high: renderedSize - 2, hard: renderedSize - 1 }
+    const rootDir = await tempRoot()
+    const engine = new SpacesEngine({
+      rootDir,
+      now: fixedNow,
+      seed: seedSpaces(),
+      memoryBudget: wrapperBudget,
+    })
+    const writeFact = requireTool(
+      createMemoryTools(engine, { activeSpaceId: 'spc-health' }),
+      'write_fact',
+    )
+
+    expect('x'.length).toBeLessThan(wrapperBudget.hard)
+    expect(() =>
+      writeFact.handler(
+        writeFact.schema.parse({ fact: 'x' }),
+        toolContext('write-untrusted-wrapper', 'untrusted:gmail'),
+      ),
+    ).toThrow(new RegExp(`would be ${renderedSize} UTF-16 code units`))
+    expect(engine.readFacts('spc-health').active).toEqual([])
+  })
+})
+
+function trustedFactForActiveSize(activeSize: number, character = 'x'): string {
+  const renderedMetadata = '-  (noted: 2026-07-03)'
+  const textLength = activeSize - renderedMetadata.length
+  if (textLength < 1) throw new Error(`active size ${activeSize} cannot hold one rendered fact`)
+  return character.repeat(textLength)
+}

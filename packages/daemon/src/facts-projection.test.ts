@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks'
 import { describe, expect, it } from 'vitest'
 import { emptyFactsDocument, type FactsDocument } from './facts.ts'
 import { projectFacts } from './facts-projection.ts'
@@ -134,5 +135,48 @@ describe('projectFacts', () => {
 
     expect(activeSection).toBeDefined()
     expect(projection.activeSize).toBe((activeSection ?? '').length)
+  })
+
+  it('measures UTF-16 code units, so one astral symbol counts as two', () => {
+    const ascii = projectFacts({
+      active: [{ text: 'a', noted: '2026-07-01' }],
+      dormant: [],
+      superseded: [],
+    })
+    const astral = projectFacts({
+      active: [{ text: '😀', noted: '2026-07-01' }],
+      dormant: [],
+      superseded: [],
+    })
+
+    expect(astral.activeSize - ascii.activeSize).toBe(1)
+  })
+
+  it('keeps a wrapper-heavy near-hard projection below one millisecond p95', () => {
+    const document: FactsDocument = {
+      active: Array.from({ length: 60 }, (_, index) => ({
+        text: 'x'.repeat(50),
+        noted: '2026-07-03',
+        ...(index % 4 === 0 ? { origin: 'untrusted:gmail' as const } : {}),
+      })),
+      dormant: [],
+      superseded: [],
+    }
+    const projection = projectFacts(document)
+    expect(projection.activeSize).toBeGreaterThan(7000)
+    expect(projection.activeSize).toBeLessThan(8000)
+
+    for (let index = 0; index < 100; index += 1) projectFacts(document)
+    const samples: number[] = []
+    for (let index = 0; index < 500; index += 1) {
+      const startedAt = performance.now()
+      projectFacts(document)
+      samples.push(performance.now() - startedAt)
+    }
+    samples.sort((left, right) => left - right)
+    const p95 = samples[Math.ceil(samples.length * 0.95) - 1]
+
+    expect(p95).toBeDefined()
+    expect(p95).toBeLessThan(1)
   })
 })
