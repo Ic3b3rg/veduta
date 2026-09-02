@@ -18,7 +18,7 @@ import { SOURCE_NAME_RE, neutralizeDelimiters, untrustedOrigin } from './taint.t
  * extracts schema-validated structured data. Only that structured output,
  * sanitized against a deterministic tripwire, ever reaches the Agent
  * (rendered inside delimited untrusted blocks by
- * `spaces-engine.ts#eventsForContext`). An instruction injected into the
+ * `space-events.ts#projectRecentEventsForContext`). An instruction injected into the
  * source content can at most corrupt a data field; it can never steer the
  * Agent that holds the tools, because the Agent never sees the raw text.
  */

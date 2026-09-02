@@ -12,7 +12,7 @@ import { MemoryIndex } from './memory-index.ts'
 import { MemoryRetrieval } from './memory-retrieval.ts'
 import { createMemoryTools } from './memory-tools.ts'
 import { seedSpaces } from './seed.ts'
-import { SpacesEngine } from './spaces-engine.ts'
+import { renderEventForContext, SpacesEngine } from './spaces-engine.ts'
 import { TurnTaintAccumulator, type Origin } from './taint.ts'
 
 /**
@@ -304,6 +304,96 @@ describe('memory tools', () => {
     }
   })
 
+  it('renders an exact-cap read_recent result and never slices a cap+1 Event', async () => {
+    const engine = new SpacesEngine({
+      rootDir: await tempRoot(),
+      now: fixedNow,
+      seed: seedSpaces(),
+    })
+    const sample = engine.appendEvent('spc-health', {
+      type: 'budget.boundary',
+      text: 'x',
+    })
+    const recordFraming = renderEventForContext(sample).length - sample.text.length
+    const exactText = 'x'.repeat(8_000 - recordFraming)
+    engine.appendEvent('spc-health', { type: sample.type, text: exactText })
+    const readRecent = requireTool(
+      createMemoryTools(engine, { activeSpaceId: 'spc-health' }),
+      'read_recent',
+    )
+
+    const exact = await readRecent.handler(
+      readRecent.schema.parse({ limit: 1 }),
+      toolContext('read-exact-cap', 'trusted:user'),
+    )
+    expect(exact.content).toHaveLength(8_000)
+    expect(exact.content.endsWith(exactText)).toBe(true)
+
+    const overText = `tool-cap-plus-one-${'y'.repeat(
+      exactText.length + 1 - 'tool-cap-plus-one-'.length,
+    )}`
+    engine.appendEvent('spc-health', { type: sample.type, text: overText })
+    const over = await readRecent.handler(
+      readRecent.schema.parse({ limit: 1 }),
+      toolContext('read-cap-plus-one', 'trusted:user'),
+    )
+
+    expect(over.content.length).toBeLessThanOrEqual(8_000)
+    expect(over.content).not.toContain('tool-cap-plus-one-')
+    expect(over.content).toContain(
+      '1 Event record omitted by the 8,000 UTF-16-code-unit rendered budget',
+    )
+    expect(engine.readRecent('spc-health', 1)[0]?.text).toBe(overText)
+  })
+
+  it.each(['read_recent', 'search_log'])(
+    '%s skips oversized Events, preserves result order, and reports only rendered origins',
+    async (name) => {
+      const engine = new SpacesEngine({
+        rootDir: await tempRoot(),
+        now: fixedNow,
+        seed: seedSpaces(),
+      })
+      engine.appendEvent('spc-health', {
+        type: 'budget.tool',
+        text: 'budget-query older complete result',
+        origin: 'untrusted:gmail',
+      })
+      engine.appendEvent('spc-health', {
+        type: 'budget.tool',
+        text: `budget-query oversized-result-${'z'.repeat(8_000)}`,
+        origin: 'untrusted:webhook',
+      })
+      engine.appendEvent('spc-health', {
+        type: 'budget.tool',
+        text: `budget-query second-oversized-result-${'q'.repeat(8_000)}`,
+        origin: 'untrusted:import',
+      })
+      engine.appendEvent('spc-health', {
+        type: 'budget.tool',
+        text: 'budget-query newer complete result',
+        origin: 'untrusted:calendar',
+      })
+      const tool = requireTool(createMemoryTools(engine, { activeSpaceId: 'spc-health' }), name)
+      const input = name === 'search_log' ? { query: 'budget-query', limit: 4 } : { limit: 4 }
+
+      const result = await tool.handler(
+        tool.schema.parse(input),
+        toolContext(`${name}-budget`, 'trusted:user'),
+      )
+
+      expect(result.content.length).toBeLessThanOrEqual(8_000)
+      expect(result.content).not.toContain('oversized-result-')
+      expect(result.content).toContain(
+        '2 Event records omitted by the 8,000 UTF-16-code-unit rendered budget',
+      )
+      expect(result.content.indexOf('older complete result')).toBeLessThan(
+        result.content.indexOf('newer complete result'),
+      )
+      expect(result.origins).toEqual(['untrusted:gmail', 'untrusted:calendar'])
+    },
+  )
+
   describe('write-path laundering guard (docs/SECURITY.md §3.2, issues/032-facts-hygiene-context-budget.md)', () => {
     it('write_fact persists the live-taint origin, not the origin fixed at turn start', async () => {
       const engine = new SpacesEngine({
@@ -459,6 +549,111 @@ describe('memory tools', () => {
         superseded: [{ text: oversizedLegacyText.replace('\u200B', '') }],
       })
       expect(readFileSync(factsPath, 'utf8')).toBe(rawFacts)
+      index.close()
+    })
+
+    it('bounds search_memory while preserving hit order and excluding omitted origins', async () => {
+      const rootDir = await tempRoot()
+      const engine = new SpacesEngine({ rootDir, now: fixedNow, seed: seedSpaces() })
+      const index = new MemoryIndex({ rootDir, spacesEngine: engine, now: fixedNow })
+      engine.appendEvent('spc-health', {
+        type: 'budget.memory',
+        text: 'memory-budget-query oldest complete hit',
+        origin: 'untrusted:gmail',
+        at: '2026-07-03T09:00:00.000Z',
+      })
+      engine.appendEvent('spc-health', {
+        type: 'budget.memory',
+        text: `memory-budget-query oversized-memory-hit-${'z'.repeat(8_000)}`,
+        origin: 'untrusted:webhook',
+        at: '2026-07-03T10:00:00.000Z',
+      })
+      engine.appendEvent('spc-health', {
+        type: 'budget.memory',
+        text: 'memory-budget-query newest complete hit',
+        origin: 'untrusted:calendar',
+        at: '2026-07-03T11:00:00.000Z',
+      })
+      index.reconcile()
+      const retrieval = new MemoryRetrieval({
+        index,
+        spacesEngine: engine,
+        config: MemoryConfigSchema.parse({}),
+        now: fixedNow,
+      })
+      const outcome = retrieval.search({
+        spaceId: 'spc-health',
+        query: 'memory-budget-query',
+        order: 'recency',
+        limit: 3,
+      })
+      const oversizedRef = outcome.hits.find(
+        (hit) =>
+          hit.record.type === 'event' && hit.record.event.text.includes('oversized-memory-hit'),
+      )?.sourceRef
+      expect(oversizedRef).toBeDefined()
+      const searchMemory = requireTool(
+        createMemoryTools(engine, { activeSpaceId: 'spc-health', retrieval }),
+        'search_memory',
+      )
+
+      const result = await searchMemory.handler(
+        searchMemory.schema.parse({
+          query: 'memory-budget-query',
+          order: 'recency',
+          limit: 3,
+        }),
+        toolContext('search-memory-budget', 'trusted:user'),
+      )
+
+      expect(result.content.length).toBeLessThanOrEqual(8_000)
+      expect(result.content).not.toContain('oversized-memory-hit-')
+      expect(result.content).toContain(
+        '1 memory result omitted by the 8,000 UTF-16-code-unit rendered budget',
+      )
+      expect(result.content).toContain(`first omitted ref: ${oversizedRef}`)
+      expect(result.content.indexOf('newest complete hit')).toBeLessThan(
+        result.content.indexOf('oldest complete hit'),
+      )
+      expect(result.origins).toEqual(['untrusted:calendar', 'untrusted:gmail'])
+      index.close()
+    })
+
+    it('reports an oversized FACTS record without slicing, deleting, or importing its origin', async () => {
+      const rootDir = await tempRoot()
+      const engine = new SpacesEngine({
+        rootDir,
+        now: fixedNow,
+        seed: seedSpaces(),
+        memoryBudget: { low: 10_000, high: 15_000, hard: 20_000 },
+      })
+      const oversizedFact = `oversized-fact-query ${'f'.repeat(8_000)}`
+      engine.writeFact('spc-health', oversizedFact, 'untrusted:gmail')
+      const index = new MemoryIndex({ rootDir, spacesEngine: engine, now: fixedNow })
+      index.reconcile()
+      const retrieval = new MemoryRetrieval({
+        index,
+        spacesEngine: engine,
+        config: MemoryConfigSchema.parse({}),
+        now: fixedNow,
+      })
+      const searchMemory = requireTool(
+        createMemoryTools(engine, { activeSpaceId: 'spc-health', retrieval }),
+        'search_memory',
+      )
+
+      const result = await searchMemory.handler(
+        searchMemory.schema.parse({ query: 'oversized-fact-query', kind: 'fact' }),
+        toolContext('search-oversized-fact', 'trusted:user'),
+      )
+
+      expect(result.content.length).toBeLessThanOrEqual(8_000)
+      expect(result.content).not.toContain('oversized-fact-query')
+      expect(result.content).toContain(
+        '1 memory result omitted by the 8,000 UTF-16-code-unit rendered budget',
+      )
+      expect(result.origins).toEqual([])
+      expect(engine.readFacts('spc-health').active[0]?.text).toBe(oversizedFact)
       index.close()
     })
   })

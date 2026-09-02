@@ -56,8 +56,9 @@ import {
   type SpaceActiveProjection,
 } from './memory-health.ts'
 import {
-  eventsForContext,
+  AUTOMATIC_EVENT_LIMIT,
   parseSpaceEventLine,
+  projectRecentEventsForContext,
   readEventsFile,
   renderEventForContext,
   sanitizeAndRedactSpaceEvent,
@@ -88,6 +89,11 @@ export interface WriteFactResult {
   operation: CuratorOperation
   fact: FactRecord
   previous?: FactRecord
+}
+
+export interface AssembledSpaceContext {
+  text: string
+  origins: Origin[]
 }
 
 /**
@@ -514,25 +520,37 @@ export class SpacesEngine {
   }
 
   assembleContext(spaceId: string, recentLimit = 20): string {
+    return this.assembleContextWithOrigins(spaceId, recentLimit).text
+  }
+
+  /** Builds the model-visible Space context and its live taint from one projection. */
+  assembleContextWithOrigins(spaceId: string, recentLimit = 20): AssembledSpaceContext {
     const space = this.requireSpace(spaceId)
-    const facts = this.readFacts(space.id)
-    const recentEvents = this.readRecent(space.id, recentLimit)
-    return [
+    const facts = projectFacts(this.readFacts(space.id))
+    const events = this.recentEventsForContext(space.id, recentLimit)
+    const text = [
       section('SOUL', readOrEmpty(this.globalPath('SOUL.md'))),
       section('USER', readOrEmpty(this.globalPath('USER.md'))),
       section(
         'Active Space',
         `${space.name} (${space.slug})\n${SPACE_GRANULARITY_RULE}\n${TIMER_RULE}`,
       ),
-      section('FACTS', projectFacts(facts).text),
-      section('Recent Event log', eventsForContext(recentEvents)),
+      section('FACTS', facts.text),
+      events.text,
       section('INSTRUCTIONS', readOrEmpty(this.spacePath(space, INSTRUCTIONS_FILE))),
     ].join('\n\n')
+    return { text, origins: [...new Set([...events.origins, ...facts.origins])] }
+  }
+
+  /** Projects only the automatic Recent Event log section and matching origins. */
+  recentEventsForContext(spaceId: string, recentLimit = 20) {
+    const limit = Math.max(0, Math.min(AUTOMATIC_EVENT_LIMIT, Math.floor(recentLimit)))
+    return projectRecentEventsForContext(this.readAllEvents(spaceId), limit)
   }
 
   /**
-   * The origins actually feeding a turn's context: the events `assembleContext`
-   * reads via `readRecent`, plus the untrusted origins reported by
+   * The origins actually feeding a turn's context: the Events selected for
+   * its bounded Recent Event log, plus the untrusted origins reported by
    * `projectFacts` — the same single traversal that produces the FACTS text
    * injected into that same context, so the two can never disagree about
    * what a turn saw (issues/032-facts-hygiene-context-budget.md). Dormant
@@ -544,11 +562,7 @@ export class SpacesEngine {
    * what the Agent can see.
    */
   contextOrigins(spaceId: string, recentLimit = 20): Origin[] {
-    const recentEvents = this.readRecent(spaceId, recentLimit)
-    const origins = new Set<Origin>()
-    for (const event of recentEvents) origins.add(event.origin)
-    for (const origin of projectFacts(this.readFacts(spaceId)).origins) origins.add(origin)
-    return [...origins]
+    return this.assembleContextWithOrigins(spaceId, recentLimit).origins
   }
 
   /**

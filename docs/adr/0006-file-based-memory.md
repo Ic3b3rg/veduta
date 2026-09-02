@@ -50,6 +50,24 @@ forbidden-Unicode sanitizer applies when legacy FACTS are read for projection an
 again at the common fact renderer, without rewriting the source file. The executable contract is
 specified in [issue 131](../../issues/131-bounded-superseded-facts-tail.md).
 
+## Amendment (issue 132): bounded model-visible Event and retrieval records
+
+The append-only Event log remains complete, but its automatic turn projection is bounded. It
+scans Events from newest to oldest, greedily selects at most 20 complete rendered records under an
+8,000 UTF-16-code-unit budget, and displays the selected records chronologically. An oversized
+Event is skipped so an older complete Event can still enter the working set. The budget includes
+the Recent Event log heading, record framing, provenance labels, untrusted-data wrappers, and any
+omission marker. A record is never sliced to fit, and the marker counts every Event outside the
+selected working set.
+
+The model-visible results of `read_recent`, `search_log`, and `search_memory` use the same 8,000-unit
+budget. They retain their query semantics and result order, skip a complete result that does not
+fit, continue with later results that do, and report a content-free omission count plus safe
+identifying metadata for the first omission. The original Event or FACTS record stays unchanged and
+retrievable. Rendering and origin selection are one projection, so only content that actually
+entered the turn contributes to its live taint. Legacy records pass through the shared forbidden
+Unicode sanitizer at render time; the append-only source is never rewritten.
+
 ## Considered Options
 
 - Knowledge graph (Zep/Graphiti-style): rejected — contested gains, high cost, useless below ~150 conversations per Space.

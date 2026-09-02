@@ -57,8 +57,8 @@ export function createGlobalChatTools(options: GlobalChatToolsOptions): ToolDef[
       egressDomains: [],
       handler(input, context) {
         const space = resolveActiveSpace(options.store, input.spaceId)
-        const content = options.store.assembleSpaceContext(space.id)
-        const origins = options.store.spacesEngine.contextOrigins(space.id)
+        const projection = options.store.assembleSpaceContextWithOrigins(space.id)
+        const { text: content, origins } = projection
         if (!enteredSpaceIds.has(space.id)) {
           options.hooks?.onSpaceEntered?.(space)
           enteredSpaceIds.add(space.id)

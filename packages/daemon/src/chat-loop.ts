@@ -14,7 +14,7 @@ import { sanitizeErrorText } from './model-routing.ts'
 import { PiAgentRunner } from './pi-agent-runner.ts'
 import type { ProviderBridge } from './pi-provider-bridge.ts'
 import type { GlobalChatTurnHooks } from './global-chat-tools.ts'
-import { ABSTENTION_RULE, renderEventForContext } from './spaces-engine.ts'
+import { ABSTENTION_RULE } from './spaces-engine.ts'
 import type { Store } from './store.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { effectiveOrigin, type Origin } from './taint.ts'
@@ -260,36 +260,33 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
       const docs = options.store.readGlobalDocs()
       const space = options.store.getSpace(SYSTEM_SPACE_ID)
       if (!space) throw new Error(`unknown Space: ${SYSTEM_SPACE_ID}`)
-      const recentEvents = options.store.spacesEngine.readRecent(SYSTEM_SPACE_ID, 20)
-      const recent =
-        recentEvents.length === 0
-          ? 'No recent Event log entries.'
-          : recentEvents.map(renderEventForContext).join('\n')
+      const recent = options.store.spacesEngine.recentEventsForContext(SYSTEM_SPACE_ID)
       return {
         systemPrompt: [
           `# SOUL\n\n${docs.soul.trim()}`,
           `# USER\n\n${docs.user.trim()}`,
           `# Active Space\n\n${space.name} (${space.slug}; id: ${space.id})`,
-          `# Recent Event log\n\n${recent}`,
+          recent.text,
           `# User life-area Spaces\n\n${activeLifeAreaRoster(options.store)}`,
           ABSTENTION_RULE,
           clock,
           TOOL_BOUNDARY,
           SYSTEM_CHAT_PREAMBLE,
         ].join('\n\n'),
-        contextOrigins: Array.from(new Set(recentEvents.map((event) => event.origin))),
+        contextOrigins: Array.from(new Set(recent.origins)),
       }
     }
     if (spaceId !== undefined) {
+      const spaceContext = options.store.assembleSpaceContextWithOrigins(spaceId)
       return {
         systemPrompt: [
-          options.store.assembleSpaceContext(spaceId),
+          spaceContext.text,
           ABSTENTION_RULE,
           clock,
           TOOL_BOUNDARY,
           SPACE_CHAT_PREAMBLE,
         ].join('\n\n'),
-        contextOrigins: options.store.spacesEngine.contextOrigins(spaceId),
+        contextOrigins: spaceContext.origins,
       }
     }
     const docs = options.store.readGlobalDocs()

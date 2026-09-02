@@ -5,6 +5,7 @@ import {
   stripForbiddenUnicode,
 } from './forbidden-unicode.ts'
 import { defaultRedactor } from './redaction.ts'
+import { MODEL_VISIBLE_MEMORY_BUDGET, projectBoundedRecords } from './rendered-record-budget.ts'
 import {
   isUntrusted,
   isValidOrigin,
@@ -33,6 +34,15 @@ export interface AppendSpaceEventInput {
   origin?: SpaceEvent['origin']
   payload?: JsonObject
 }
+
+export interface EventRecordProjection {
+  text: string
+  events: SpaceEvent[]
+  omitted: SpaceEvent[]
+  origins: Origin[]
+}
+
+export const AUTOMATIC_EVENT_LIMIT = 20
 
 /**
  * Removes forbidden Unicode from one Event before it reaches a durable or
@@ -152,9 +162,79 @@ export function renderEventForContext(input: SpaceEvent): string {
   return `${line}\n${block}`
 }
 
-export function eventsForContext(events: SpaceEvent[]): string {
-  if (events.length === 0) return 'No recent events.'
-  return events.map(renderEventForContext).join('\n')
+/** The complete Recent Event log section injected automatically into a turn. */
+export function projectRecentEventsForContext(
+  events: readonly SpaceEvent[],
+  requestedLimit = AUTOMATIC_EVENT_LIMIT,
+): EventRecordProjection {
+  const limit = Math.max(0, Math.min(AUTOMATIC_EVENT_LIMIT, Math.floor(requestedLimit)))
+  const projection = projectBoundedRecords({
+    // A caller explicitly requesting zero Events gets the ordinary empty
+    // projection. Otherwise scan newest-first until the bounded working set
+    // is full, so an oversized Event does not block an older complete one.
+    records: limit === 0 ? [] : events,
+    renderRecord: renderEventForContext,
+    renderOmission: renderAutomaticEventOmission,
+    emptyText: 'No recent events.',
+    prefixLines: ['# Recent Event log', ''],
+    selection: 'end',
+    maxRecords: limit,
+  })
+  return eventRecordProjection(projection)
+}
+
+/** A bounded model-visible result for `read_recent` and `search_log`. */
+export function projectEventToolResult(events: readonly SpaceEvent[]): EventRecordProjection {
+  const projection = projectBoundedRecords({
+    records: events,
+    renderRecord: renderEventForContext,
+    renderOmission: renderBudgetEventOmission,
+    emptyText: 'No matching Event log entries.',
+  })
+  return eventRecordProjection(projection)
+}
+
+function eventRecordProjection(projection: {
+  text: string
+  included: SpaceEvent[]
+  omitted: SpaceEvent[]
+}): EventRecordProjection {
+  return {
+    text: projection.text,
+    events: projection.included,
+    omitted: projection.omitted,
+    origins: projection.included.map((event) => event.origin),
+  }
+}
+
+function renderAutomaticEventOmission(omitted: readonly SpaceEvent[]): string {
+  return renderEventOmission(
+    omitted,
+    `omitted from automatic context under the ${AUTOMATIC_EVENT_LIMIT}-Event and ` +
+      `${MODEL_VISIBLE_MEMORY_BUDGET.toLocaleString('en-US')} UTF-16-code-unit rendered limits`,
+  )
+}
+
+function renderBudgetEventOmission(omitted: readonly SpaceEvent[]): string {
+  return renderEventOmission(
+    omitted,
+    `omitted by the ${MODEL_VISIBLE_MEMORY_BUDGET.toLocaleString('en-US')} ` +
+      'UTF-16-code-unit rendered budget',
+  )
+}
+
+function renderEventOmission(omitted: readonly SpaceEvent[], reason: string): string {
+  const first = omitted[0]
+  if (!first) throw new Error('an Event omission marker requires one omitted record')
+  const event = sanitizeAndRedactSpaceEvent(first)
+  const recordedAt = normalizeIsoInstant(event.at) ?? 'unknown'
+  const type = renderEventType(event.type) || 'unknown'
+  const noun = omitted.length === 1 ? 'record' : 'records'
+  return (
+    `- ${omitted.length} Event ${noun} ${reason} ` +
+    `(first omitted: recorded ${recordedAt}; type ${type}; origin ${event.origin}); ` +
+    'use search_log or search_memory to retrieve omitted records.'
+  )
 }
 
 /**
