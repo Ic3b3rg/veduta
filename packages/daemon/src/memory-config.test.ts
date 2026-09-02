@@ -15,11 +15,11 @@ describe('loadMemoryConfig', () => {
     rmSync(rootDir, { recursive: true, force: true })
   })
 
-  it('defaults to UTC, an enabled 4:00 reflection and a 4000-unit budget', () => {
+  it('defaults to UTC, an enabled 4:00 reflection and 4000/6000/8000-unit watermarks', () => {
     expect(loadMemoryConfig(rootDir)).toEqual({
       timezone: 'UTC',
       reflection: { enabled: true, time: '04:00' },
-      budget: { low: 4000 },
+      budget: { low: 4000, high: 6000, hard: 8000 },
     })
   })
 
@@ -29,14 +29,25 @@ describe('loadMemoryConfig', () => {
       JSON.stringify({
         timezone: 'Europe/Rome',
         reflection: { enabled: false, time: '03:30' },
-        budget: { low: 2000 },
+        budget: { low: 2000, high: 3000, hard: 5000 },
       }),
     )
     expect(loadMemoryConfig(rootDir)).toEqual({
       timezone: 'Europe/Rome',
       reflection: { enabled: false, time: '03:30' },
-      budget: { low: 2000 },
+      budget: { low: 2000, high: 3000, hard: 5000 },
     })
+  })
+
+  it.each([
+    [{ low: 4000, high: 4000, hard: 8000 }, 'low must be less than high'],
+    [{ low: 5000, high: 4000, hard: 8000 }, 'low must be less than high'],
+    [{ low: 4000, high: 8000, hard: 8000 }, 'high must be less than hard'],
+    [{ low: 4000, high: 9000, hard: 8000 }, 'high must be less than hard'],
+  ])('rejects unordered budget watermarks %j', (budget, message) => {
+    writeFileSync(join(rootDir, 'memory.json'), JSON.stringify({ budget }))
+
+    expect(() => loadMemoryConfig(rootDir)).toThrow(message)
   })
 
   it('rejects an unknown timezone, naming the bad value', () => {
