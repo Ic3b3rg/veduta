@@ -121,6 +121,7 @@ export class SpacesEngine {
   readonly rootDir: string
   private readonly now: () => Date
   private readonly proposals: SpaceProposalStore
+  private readonly memoryBudget: MemoryBudget
   private readonly memoryHealthStore: MemoryHealthStore
   private readonly eventCorrelation = new AsyncLocalStorage<string>()
   private readonly memoryWriteObservers = new Set<(notice: MemoryWriteNotice) => void>()
@@ -129,9 +130,10 @@ export class SpacesEngine {
     this.rootDir = options.rootDir ?? defaultDataDir()
     this.now = options.now ?? (() => new Date())
     this.ensureBaseLayout()
+    this.memoryBudget = options.memoryBudget ?? loadMemoryConfig(this.rootDir).budget
     this.memoryHealthStore = new MemoryHealthStore({
       rootDir: this.rootDir,
-      budget: options.memoryBudget ?? loadMemoryConfig(this.rootDir).budget,
+      budget: this.memoryBudget,
       now: this.now,
     })
     this.proposals = new SpaceProposalStore({
@@ -342,6 +344,13 @@ export class SpacesEngine {
         : { supersedes: sanitizeAndValidateFactText(options.supersedes) }
     const result = curateFact(document, sanitizedFactText, date, origin, sanitizedOptions)
     if (result.operation !== 'noop') {
+      const currentSize = projectFacts(document).activeSize
+      const candidateProjection = projectFacts(result.document)
+      assertFactWriteWithinHardWatermark(
+        currentSize,
+        candidateProjection.activeSize,
+        this.memoryBudget.hard,
+      )
       persistFactsDocument(this.factsPath(space), result.document, date)
       // Fired after its `fact.write` Event log echo below, not straight
       // after the FACTS write, matching `demoteFacts`: a 'fact' notice means
@@ -352,7 +361,7 @@ export class SpacesEngine {
         text: `FACTS ${result.operation}: ${result.fact.text}`,
         ...(origin === undefined ? {} : { origin }),
       })
-      this.memoryHealthStore.update(space.id, projectFacts(result.document).activeSize)
+      this.memoryHealthStore.update(space.id, candidateProjection.activeSize)
       this.notifyMemoryWrite(space.id, 'fact')
     }
     return {
@@ -1253,6 +1262,29 @@ function section(title: string, body: string): string {
   return trimmed.toLowerCase().startsWith(heading.toLowerCase())
     ? trimmed
     : `${heading}\n\n${trimmed}`
+}
+
+/**
+ * The rendered active projection is the only interactive FACTS write budget.
+ * Reaching `hard` is valid. A legacy/restored file already above it remains
+ * recoverable: Noop bypasses this check in `writeFact`, while every persisted
+ * candidate must make strict progress toward the configured watermark.
+ */
+function assertFactWriteWithinHardWatermark(
+  currentSize: number,
+  candidateSize: number,
+  hard: number,
+): void {
+  if (currentSize <= hard && candidateSize > hard) {
+    throw new Error(
+      `FACTS write rejected: the rendered active projection would be ${candidateSize} UTF-16 code units, above the hard watermark of ${hard}.`,
+    )
+  }
+  if (currentSize > hard && candidateSize >= currentSize) {
+    throw new Error(
+      `FACTS write rejected: the rendered active projection is already above the hard watermark (${currentSize} > ${hard}); only Noop or a strictly size-reducing write is allowed while recovering (candidate: ${candidateSize}).`,
+    )
+  }
 }
 
 function errorText(error: unknown): string {
