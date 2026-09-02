@@ -3,6 +3,29 @@ import { describe, expect, it } from 'vitest'
 import { emptyFactsDocument, type FactsDocument } from './facts.ts'
 import { projectFacts } from './facts-projection.ts'
 
+const SUPERSEDED_PREFIX = '\n\nSuperseded:\n'
+const TRUSTED_SUPERSEDED_SUFFIX = ' (noted: 2026-01-01; superseded: 2026-02-01)'
+const SINGLE_OMISSION = '\n- 1 superseded record omitted; use search_memory for omitted history.'
+
+function projectSupersededBoundary(targetSize: number) {
+  const text = 'x'.repeat(
+    targetSize -
+      SUPERSEDED_PREFIX.length -
+      '- '.length -
+      TRUSTED_SUPERSEDED_SUFFIX.length -
+      SINGLE_OMISSION.length,
+  )
+  const projection = projectFacts({
+    active: [],
+    dormant: [],
+    superseded: [
+      { text, noted: '2026-01-01', supersededAt: '2026-02-01' },
+      { text: `oversized-${'y'.repeat(2_000)}`, supersededAt: '2026-01-01' },
+    ],
+  })
+  return { projection, supersededTail: projection.text.slice(projection.activeSize), text }
+}
+
 describe('projectFacts', () => {
   it('renders an empty document with the standard placeholder lines and zero active size beyond them', () => {
     const projection = projectFacts(emptyFactsDocument())
@@ -70,40 +93,16 @@ describe('projectFacts', () => {
   })
 
   it('includes a complete record whose rendered tail is exactly 2,000 UTF-16 code units', () => {
-    const prefix = '\n\nSuperseded:\n'
-    const suffix = ' (noted: 2026-01-01; superseded: 2026-02-01)'
-    const omission = '\n- 1 superseded record omitted; use search_memory for omitted history.'
-    const text = 'x'.repeat(2_000 - prefix.length - '- '.length - suffix.length - omission.length)
+    const { supersededTail, text } = projectSupersededBoundary(2_000)
 
-    const projection = projectFacts({
-      active: [],
-      dormant: [],
-      superseded: [
-        { text, noted: '2026-01-01', supersededAt: '2026-02-01' },
-        { text: `oversized-${'y'.repeat(2_000)}`, supersededAt: '2026-01-01' },
-      ],
-    })
-    const supersededTail = projection.text.slice(projection.activeSize)
-
-    expect(supersededTail).toBe(`${prefix}- ${text}${suffix}${omission}`)
+    expect(supersededTail).toBe(
+      `${SUPERSEDED_PREFIX}- ${text}${TRUSTED_SUPERSEDED_SUFFIX}${SINGLE_OMISSION}`,
+    )
     expect(supersededTail).toHaveLength(2_000)
   })
 
   it('omits a record whose rendered tail is one UTF-16 code unit over budget without slicing it', () => {
-    const prefix = '\n\nSuperseded:\n'
-    const suffix = ' (noted: 2026-01-01; superseded: 2026-02-01)'
-    const omission = '\n- 1 superseded record omitted; use search_memory for omitted history.'
-    const text = 'x'.repeat(2_001 - prefix.length - '- '.length - suffix.length - omission.length)
-
-    const projection = projectFacts({
-      active: [],
-      dormant: [],
-      superseded: [
-        { text, noted: '2026-01-01', supersededAt: '2026-02-01' },
-        { text: `oversized-${'y'.repeat(2_000)}`, supersededAt: '2026-01-01' },
-      ],
-    })
-    const supersededTail = projection.text.slice(projection.activeSize)
+    const { supersededTail, text } = projectSupersededBoundary(2_001)
 
     expect(supersededTail).not.toContain(text)
     expect(supersededTail).toContain(

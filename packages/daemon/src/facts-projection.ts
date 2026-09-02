@@ -72,21 +72,27 @@ export function projectFacts(document: FactsDocument): FactsProjection {
         })
   const activeSize = active.join('\n').length
 
-  const superseded = projectSupersededFacts(document.superseded)
-  for (const fact of superseded.records) recordOrigin(fact)
+  const selectedSuperseded = selectSupersededFacts(document.superseded)
+  for (const { fact } of selectedSuperseded) recordOrigin(fact)
+  const omittedCount = document.superseded.length - selectedSuperseded.length
+  const supersededLines =
+    document.superseded.length === 0
+      ? ['No superseded facts.']
+      : [
+          ...selectedSuperseded.map(({ line }) => line),
+          ...(omittedCount === 0 ? [] : [supersededOmissionLine(omittedCount)]),
+        ]
 
-  const text = `${active.join('\n')}${SUPERSEDED_PREFIX}${superseded.lines.join('\n')}`
+  const text = `${active.join('\n')}${SUPERSEDED_PREFIX}${supersededLines.join('\n')}`
   return { text, origins, activeSize }
 }
 
-interface SupersededProjection {
-  lines: string[]
-  records: FactRecord[]
+interface SelectedSupersededFact {
+  fact: FactRecord
+  line: string
 }
 
-function projectSupersededFacts(facts: FactRecord[]): SupersededProjection {
-  if (facts.length === 0) return { lines: ['No superseded facts.'], records: [] }
-
+function selectSupersededFacts(facts: FactRecord[]): SelectedSupersededFact[] {
   const candidates = facts
     .map((fact, index) => ({ fact, index }))
     .sort((left, right) => {
@@ -97,25 +103,21 @@ function projectSupersededFacts(facts: FactRecord[]): SupersededProjection {
     })
     .slice(0, SUPERSEDED_RECORD_LIMIT)
 
-  const lines: string[] = []
-  const records: FactRecord[] = []
+  const selected: SelectedSupersededFact[] = []
   for (const { fact } of candidates) {
     const supersededAt = fact.supersededAt ? `; superseded: ${fact.supersededAt}` : ''
     const line = factLineWithOriginMark(fact, `noted: ${fact.noted ?? 'undated'}${supersededAt}`)
-    const nextLines = [...lines, line]
-    const omittedCount = facts.length - nextLines.length
-    const completeLines =
-      omittedCount === 0 ? nextLines : [...nextLines, supersededOmissionLine(omittedCount)]
+    const nextSelected = [...selected, { fact, line }]
+    const omittedCount = facts.length - nextSelected.length
+    const completeLines = nextSelected.map(({ line: selectedLine }) => selectedLine)
+    if (omittedCount > 0) completeLines.push(supersededOmissionLine(omittedCount))
 
     if (`${SUPERSEDED_PREFIX}${completeLines.join('\n')}`.length <= SUPERSEDED_TAIL_LIMIT) {
-      lines.push(line)
-      records.push(fact)
+      selected.push({ fact, line })
     }
   }
 
-  const omittedCount = facts.length - records.length
-  if (omittedCount > 0) lines.push(supersededOmissionLine(omittedCount))
-  return { lines, records }
+  return selected
 }
 
 function supersededOmissionLine(count: number): string {
