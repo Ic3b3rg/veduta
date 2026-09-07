@@ -28,7 +28,6 @@ interface PendingDecisionControllerOptions {
   authToken: string | undefined
   spaces: readonly SpaceWithSurfaces[]
   focusedSpaceId: string | undefined
-  focusedSurfaceId: string | undefined
   setChatEntries: Dispatch<SetStateAction<ChatMessage[]>>
   onUnauthorized: () => void
   onReplaceSpaces: (spaces: SpaceWithSurfaces[], cursor: number) => void
@@ -43,7 +42,6 @@ export function usePendingDecisionController(options: PendingDecisionControllerO
     authToken,
     spaces,
     focusedSpaceId,
-    focusedSurfaceId,
     setChatEntries,
     onUnauthorized,
     onReplaceSpaces,
@@ -99,12 +97,13 @@ export function usePendingDecisionController(options: PendingDecisionControllerO
       if (assigned === undefined) continue
 
       navigatedRevealKeysRef.current.add(request.key)
-      if (focusedSpaceId !== assigned.space.id || focusedSurfaceId !== surfaceId) {
+      // In the current Space, the card reveals itself without changing URL or focus.
+      if (focusedSpaceId !== assigned.space.id) {
         onRevealSurface(assigned.space.slug, surfaceId)
       }
       break
     }
-  }, [focusedSpaceId, focusedSurfaceId, onRevealSurface, placement, revealRequests])
+  }, [focusedSpaceId, onRevealSurface, placement, revealRequests])
 
   const resolve = useCallback(
     async (decisionId: string, resolution: PendingDecisionResolution) => {
