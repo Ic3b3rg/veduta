@@ -75,9 +75,20 @@ export function initializeSchedulerSchema(db: DatabaseSync): void {
       automation_id integer not null references automations(id),
       scheduled_for text not null,
       started_at text not null,
+      recurring_outcome_json text,
+      retry_at text,
       outcome text,
       finished_at text,
       primary key (automation_id, scheduled_for)
+    );
+
+    create table if not exists automation_outcome_target_cleanups (
+      automation_id integer not null,
+      space_id text not null,
+      surface_id text not null,
+      origin text not null,
+      cleared_at text not null,
+      primary key (automation_id, space_id, surface_id)
     );
   `)
 
@@ -87,6 +98,8 @@ export function initializeSchedulerSchema(db: DatabaseSync): void {
   ensureSqliteColumn(db, 'automations', 'handler', 'text')
   ensureSqliteColumn(db, 'automations', 'target_surface_id', 'text')
   ensureSqliteColumn(db, 'automations', 'timezone', 'text')
+  ensureSqliteColumn(db, 'automation_runs', 'recurring_outcome_json', 'text')
+  ensureSqliteColumn(db, 'automation_runs', 'retry_at', 'text')
 }
 
 export function automationFromRow(row: Record<string, unknown>): Automation {

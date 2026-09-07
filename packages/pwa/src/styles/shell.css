@@ -337,6 +337,125 @@
   max-width: 220px;
 }
 
+.automation-outcome-notifications {
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.1);
+  background: var(--glass-panel);
+  border: 1px solid var(--accent-soft);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px var(--glass-highlight),
+    0 14px 36px var(--surface-shadow);
+  overflow: hidden;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.1);
+}
+
+.automation-outcome-notifications-heading {
+  align-items: center;
+  background: var(--accent-soft-bg);
+  color: var(--accent);
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 14px;
+}
+
+.automation-outcome-notifications-heading h2 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.automation-outcome-notifications-heading span {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.automation-outcome-notification-list {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.automation-outcome-notification {
+  align-items: center;
+  background: color-mix(in srgb, var(--glass-highlight) 34%, transparent);
+  border: 1px solid var(--glass-border);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px 12px;
+}
+
+.automation-outcome-notification.failed {
+  border-left-color: var(--danger-border);
+}
+
+.automation-outcome-notification.recovered {
+  border-left-color: var(--success-border);
+}
+
+.automation-outcome-notification-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.automation-outcome-notification-copy h3,
+.automation-outcome-notification-copy p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.automation-outcome-notification-copy h3 {
+  font-size: 14px;
+}
+
+.automation-outcome-notification-copy p {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.automation-outcome-notification-meta {
+  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 11px;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.automation-outcome-notification-meta span {
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.automation-outcome-notification-count {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.automation-outcome-notification-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.automation-outcome-notification-actions button {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.automation-outcome-notification-actions button:first-child {
+  background: var(--accent-soft-bg);
+  border-color: var(--accent-soft);
+  color: var(--accent);
+}
+
 .shell-layout {
   align-items: start;
   display: grid;
@@ -573,6 +692,74 @@
   background: var(--surface);
   border-color: var(--border-strong);
   color: var(--text-soft);
+}
+
+.automation-outcome-status {
+  background: var(--accent-soft-bg);
+  border: 1px solid var(--accent-soft);
+  border-radius: 8px;
+  color: var(--text-soft);
+  display: grid;
+  gap: 8px;
+  margin: 10px 12px 0;
+  padding: 10px 12px;
+}
+
+.automation-outcome-status.failed {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+
+.automation-outcome-status.recovered {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
+.automation-outcome-status-latest {
+  display: grid;
+  gap: 3px;
+}
+
+.automation-outcome-status-latest strong {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.automation-outcome-status-latest span,
+.automation-outcome-status-error {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.automation-outcome-status dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.automation-outcome-status dl div {
+  display: grid;
+  gap: 2px;
+}
+
+.automation-outcome-status dt {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.automation-outcome-status dd {
+  font-size: 12px;
+  margin: 0;
+}
+
+.automation-outcome-status-error {
+  border-top: 1px solid currentColor;
+  margin: 0;
+  padding-top: 8px;
 }
 
 @keyframes surface-reveal-highlight {

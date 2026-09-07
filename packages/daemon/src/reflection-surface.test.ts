@@ -125,5 +125,14 @@ describe('ReflectionSurfaceManager', () => {
     expect(text).toContain('Logged two meals and a workout.')
     expect(text).toContain('Energy dips mid-afternoon most days.')
     expect(text).toContain('"label":"Consolidated","value":"2"')
+    expect(
+      store
+        .eventLog(HEALTH)
+        .find(
+          (event) =>
+            event.type === 'surface.patch_tree' &&
+            event.payload?.['surfaceId'] === reflectionSurfaceId(HEALTH_SLUG),
+        )?.payload,
+    ).toMatchObject({ automationProjection: true })
   })
 })

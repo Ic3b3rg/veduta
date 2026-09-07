@@ -3,6 +3,7 @@ import {
   GatewayClientMessageSchema,
   GatewayServerMessageSchema,
   type ApprovalCard,
+  type AutomationOutcomeNotificationLifecycleMessage,
   type GatewayClientMessage,
   type GatewayServerMessage,
   type PendingDecisionLifecycleMessage,
@@ -193,6 +194,13 @@ export class GatewayHub {
   /** Broadcasts daemon-authored decision progress/outcome; HTTP list recovery covers offline clients. */
   broadcastPendingDecision(lifecycle: Omit<PendingDecisionLifecycleMessage, 'type'>): void {
     this.pwa.broadcast({ type: 'pending-decision.lifecycle', ...lifecycle })
+  }
+
+  /** Broadcasts confirmed durable In-app notification state; HTTP snapshots recover missed frames. */
+  broadcastAutomationOutcomeNotification(
+    lifecycle: Omit<AutomationOutcomeNotificationLifecycleMessage, 'type'>,
+  ): void {
+    this.pwa.broadcast({ type: 'automation-outcome-notification.lifecycle', ...lifecycle })
   }
 
   /**

@@ -43,6 +43,10 @@ describe('client route table', () => {
   it.each([
     ['/app/space/health', { spaceSlug: 'health', surfaceId: null }],
     ['/app/space/health/surface/srf-meals', { spaceSlug: 'health', surfaceId: 'srf-meals' }],
+    [
+      '/app/space/health/surface/_?surfaceIdUtf16=002e002e',
+      { spaceSlug: 'health', surfaceId: '..' },
+    ],
   ])('derives route parameters from %s', async (path, expected) => {
     renderRoute(path)
 
@@ -55,6 +59,9 @@ describe('client route table', () => {
     expect(clientPath.space('health records')).toBe('/app/space/health%20records')
     expect(clientPath.surface('health records', 'srf/meals')).toBe(
       '/app/space/health%20records/surface/srf%2Fmeals',
+    )
+    expect(clientPath.surface('health', '..')).toBe(
+      '/app/space/health/surface/_?surfaceIdUtf16=002e002e',
     )
   })
 })

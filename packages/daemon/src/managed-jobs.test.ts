@@ -186,6 +186,38 @@ describe('reconcileManagedJobs', () => {
     expect(armedJobsFor(HANDLER)).toHaveLength(1)
   })
 
+  it('migrates a legacy survivor target in place without switching it back on', () => {
+    const desired = new Map([['0 4 * * *', 'Nightly Reflection at 04:00']])
+    const legacy = scheduler.createManagedJob({
+      spaceId: HEALTH,
+      cron: '0 4 * * *',
+      description: 'Nightly Reflection at 04:00',
+      handler: HANDLER,
+    })
+    scheduler.setEnabled(HEALTH, legacy.id, false, 'tool')
+
+    reconcileManagedJobs({
+      scheduler,
+      spaceId: HEALTH,
+      handler: HANDLER,
+      enabled: true,
+      desired,
+      targetSurfaceId: 'srf-health-automations',
+    })
+
+    const jobs = jobsFor(HANDLER)
+    expect(jobs).toHaveLength(1)
+    expect(jobs[0]).toMatchObject({
+      id: legacy.id,
+      status: 'armed',
+      enabled: false,
+      targetSurfaceId: 'srf-health-automations',
+    })
+    expect(
+      store.eventLog(HEALTH).filter((event) => event.type === 'automation.configure-target'),
+    ).toHaveLength(1)
+  })
+
   it('enabled: false cancels every armed job of the handler and creates nothing', () => {
     const desired = new Map([
       ['0 4 * * *', 'Nightly Reflection at 04:00'],

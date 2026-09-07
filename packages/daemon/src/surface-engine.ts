@@ -2,6 +2,9 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
+  AUTOMATION_OUTCOMES_STATE_KEY,
+  AutomationOutcomeStatusesSchema,
+  type AutomationOutcomeKind,
   AtomNodeSchema,
   JsonObjectSchema,
   PatchOperationSchema,
@@ -192,6 +195,19 @@ export class SurfaceTreeConflictError extends Error {
       `tree version conflict for Surface ${surfaceId}: expected ${expectedTreeVersion}, actual ${actualTreeVersion}`,
     )
     this.name = 'SurfaceTreeConflictError'
+  }
+}
+
+export class SurfaceVersionConflictError extends Error {
+  constructor(
+    readonly surfaceId: string,
+    readonly expectedVersion: number,
+    readonly actualVersion: number,
+  ) {
+    super(
+      `version conflict for Surface ${surfaceId}: expected ${expectedVersion}, actual ${actualVersion}`,
+    )
+    this.name = 'SurfaceVersionConflictError'
   }
 }
 
@@ -534,6 +550,9 @@ export class SurfaceEngine {
   ): Surface {
     const daemonOwned = options?.daemonOwned ?? false
     const surface = this.surfaceForWrite(input, updatedBy, daemonOwned)
+    if (Object.prototype.hasOwnProperty.call(surface.state, AUTOMATION_OUTCOMES_STATE_KEY)) {
+      throw new Error('Automation outcome state is owned by the Gateway')
+    }
     this.requireKnownSpace(surface.spaceId)
     this.assertSpaceWritableByAgent(surface.spaceId, surface.id, updatedBy)
     // See `CreateSurfaceOptions.contentOrigin`: default to this call's own
@@ -865,6 +884,7 @@ export class SurfaceEngine {
       updatedBy: SurfaceWriteActor
       origin?: Origin
       relativeTime?: RelativeTimeAuthoring
+      eventPayload?: JsonObject
     },
   ): SurfaceMutation {
     assertPatchTarget(operations, 'state')
@@ -873,9 +893,74 @@ export class SurfaceEngine {
       eventType: 'surface.patch_state',
       eventText: (surface) => `Patched state for Surface "${surface.title}"`,
       updateTreeVersion: false,
+      ...(options.eventPayload === undefined ? {} : { eventPayload: options.eventPayload }),
       ...(options.relativeTime === undefined ? {} : { relativeTime: options.relativeTime }),
       ...(options.origin === undefined ? {} : { origin: options.origin }),
     })
+  }
+
+  /**
+   * Commits one recurring Automation occurrence through the same validated,
+   * recoverable Surface/Event boundary as every other state mutation.
+   */
+  commitAutomationOutcome(
+    surfaceId: string,
+    operations: PatchOperation[],
+    options: {
+      automationId: number
+      scheduledFor: string
+      kind: AutomationOutcomeKind
+      summary: string
+      idempotencyKey: string
+      expectedVersion?: number
+      origin?: Origin
+      checkedAt?: string
+      historyId?: string
+      recordInHistory?: boolean
+      notificationIntent?: JsonObject
+    },
+  ): SurfaceMutation {
+    assertPatchTarget(operations, 'state')
+    const duplicate = this.findAutomationOutcomeIdempotentMutation(options.idempotencyKey)
+    if (duplicate) return duplicate
+
+    return this.patchSurface(surfaceId, operations, {
+      updatedBy: 'job',
+      eventType: 'automation.outcome',
+      eventText: () =>
+        `Automation ${options.automationId} recorded a ${options.kind} Surface outcome`,
+      updateTreeVersion: false,
+      automationOutcomeIdempotencyKey: options.idempotencyKey,
+      allowAutomationOutcomeState: true,
+      ...(options.expectedVersion === undefined
+        ? {}
+        : { expectedVersion: options.expectedVersion }),
+      eventPayload: {
+        surfaceId,
+        automationId: options.automationId,
+        scheduledFor: options.scheduledFor,
+        kind: options.kind,
+        summary: options.summary,
+        ...(options.checkedAt === undefined ? {} : { checkedAt: options.checkedAt }),
+        ...(options.historyId === undefined ? {} : { historyId: options.historyId }),
+        ...(options.recordInHistory === undefined
+          ? {}
+          : { recordInHistory: options.recordInHistory }),
+        ...(options.notificationIntent === undefined
+          ? {}
+          : { notificationIntent: options.notificationIntent }),
+      },
+      ...(options.origin === undefined ? {} : { origin: options.origin }),
+    })
+  }
+
+  /** Dry-runs producer-authored state operations before an outcome is claimed durably. */
+  validateAutomationOutcomeOperations(surfaceId: string, operations: PatchOperation[]): void {
+    assertPatchTarget(operations, 'state')
+    assertAutomationOutcomeStateNotPatched(operations)
+    this.assertWritableByAgent(surfaceId, 'job')
+    const current = this.requireActiveSurface(surfaceId)
+    this.buildPatchedSurface(current, surfaceId, operations, 'job')
   }
 
   /**
@@ -904,6 +989,7 @@ export class SurfaceEngine {
       updatedBy: SurfaceWriteActor
       origin?: Origin
       bypassPin?: true
+      eventPayload?: JsonObject
       /** Forwarded only to a live Tree-proposal card notification; never persisted. */
       initiatingTurn?: ChatTurnCorrelation
     },
@@ -941,6 +1027,7 @@ export class SurfaceEngine {
       eventType: 'surface.patch_tree',
       eventText: (surface) => `Patched tree for Surface "${surface.title}"`,
       updateTreeVersion: true,
+      ...(options.eventPayload === undefined ? {} : { eventPayload: options.eventPayload }),
       ...(options.origin === undefined ? {} : { origin: options.origin }),
     })
   }
@@ -1165,14 +1252,31 @@ export class SurfaceEngine {
       eventText: (surface: Surface) => string
       updateTreeVersion: boolean
       idempotencyKey?: string
+      automationOutcomeIdempotencyKey?: string
       eventPayload?: JsonObject
       origin?: Origin
       relativeTime?: RelativeTimeAuthoring
+      allowAutomationOutcomeState?: true
+      expectedVersion?: number
     },
   ): SurfaceMutation {
+    if (options.allowAutomationOutcomeState !== true) {
+      assertAutomationOutcomeStateNotPatched(operations)
+    }
     this.assertWritableByAgent(surfaceId, options.updatedBy)
     const mutation = this.runWrite(() => {
       const current = this.requireActiveSurface(surfaceId)
+      const currentVersion = this.requireVersion(surfaceId)
+      if (
+        options.expectedVersion !== undefined &&
+        currentVersion.version !== options.expectedVersion
+      ) {
+        throw new SurfaceVersionConflictError(
+          surfaceId,
+          options.expectedVersion,
+          currentVersion.version,
+        )
+      }
       const { patch, patched } = this.buildPatchedSurface(
         current,
         surfaceId,
@@ -1180,7 +1284,12 @@ export class SurfaceEngine {
         options.updatedBy,
         options.relativeTime,
       )
-      const currentVersion = this.requireVersion(surfaceId)
+      if (options.allowAutomationOutcomeState === true) {
+        const statuses = AutomationOutcomeStatusesSchema.safeParse(
+          patched.state[AUTOMATION_OUTCOMES_STATE_KEY],
+        )
+        if (!statuses.success) throw new Error('invalid Automation outcome state')
+      }
       const nextVersion = currentVersion.version + 1
       const nextTreeVersion = options.updateTreeVersion
         ? currentVersion.treeVersion + 1
@@ -1234,6 +1343,12 @@ export class SurfaceEngine {
       )
       const event = this.insertPatchEvent(patched, patch)
       if (options.idempotencyKey) this.rememberIdempotencyKey(options.idempotencyKey, event.cursor)
+      if (options.automationOutcomeIdempotencyKey) {
+        this.rememberAutomationOutcomeIdempotencyKey(
+          options.automationOutcomeIdempotencyKey,
+          event.cursor,
+        )
+      }
       this.appendSpaceEvent(patched.spaceId, {
         at: patched.freshness.updatedAt,
         type: options.eventType,
@@ -1358,6 +1473,19 @@ export class SurfaceEngine {
   private findIdempotentMutation(idempotencyKey: string): SurfaceMutation | undefined {
     const row = this.db
       .prepare('select event_cursor from idempotency_keys where key = ?')
+      .get(idempotencyKey)
+    if (!row) return undefined
+    const event = this.eventByCursor(requiredNumber(row, 'event_cursor'))
+    const surface = this.getSurface(event.patch.surfaceId)
+    if (!surface) throw new Error(`unknown Surface: ${event.patch.surfaceId}`)
+    return { surface, event, duplicate: true }
+  }
+
+  private findAutomationOutcomeIdempotentMutation(
+    idempotencyKey: string,
+  ): SurfaceMutation | undefined {
+    const row = this.db
+      .prepare('select event_cursor from automation_outcome_idempotency_keys where key = ?')
       .get(idempotencyKey)
     if (!row) return undefined
     const event = this.eventByCursor(requiredNumber(row, 'event_cursor'))
@@ -1492,6 +1620,12 @@ export class SurfaceEngine {
       .run(key, eventCursor)
   }
 
+  private rememberAutomationOutcomeIdempotencyKey(key: string, eventCursor: number): void {
+    this.db
+      .prepare('insert into automation_outcome_idempotency_keys (key, event_cursor) values (?, ?)')
+      .run(key, eventCursor)
+  }
+
   private surfaceForWrite(
     input: Surface | CreateSurfaceInput,
     updatedBy: SurfaceWriteActor,
@@ -1577,6 +1711,104 @@ export class SurfaceEngine {
   isDaemonOwned(surfaceId: string): boolean {
     const row = this.db.prepare('select daemon_owned from surfaces where id = ?').get(surfaceId)
     return row !== undefined && requiredNumber(row, 'daemon_owned') === 1
+  }
+
+  /**
+   * Adopts a deterministic projection created by an older release. Archived
+   * rows are restored, non-System pins are cleared, and authorable content is
+   * replaced by the caller's canonical projection in one replayable event.
+   */
+  adoptCanonicalDaemonSurface(input: Surface, origin: Origin): Surface {
+    const row = this.db.prepare('select * from surfaces where id = ?').get(input.id)
+    if (!row) {
+      return this.createSurface(input, 'job', { daemonOwned: true, origin })
+    }
+    const existing = surfaceFromRow(row)
+    if (existing.spaceId !== input.spaceId) {
+      throw new Error(`canonical Surface identity belongs to another Space: ${input.id}`)
+    }
+    const archived = requiredNumber(row, 'archived') === 1
+    if (!archived && requiredNumber(row, 'daemon_owned') === 1) return existing
+
+    const outcomeStatuses = AutomationOutcomeStatusesSchema.safeParse(
+      existing.state[AUTOMATION_OUTCOMES_STATE_KEY],
+    )
+    const pinned = input.spaceId === SYSTEM_SPACE_ID && existing.pinned
+    const at = this.nowIso()
+    const adopted = SurfaceSchema.parse({
+      ...input,
+      state: {
+        ...input.state,
+        ...(outcomeStatuses.success
+          ? { [AUTOMATION_OUTCOMES_STATE_KEY]: outcomeStatuses.data }
+          : {}),
+      },
+      pinned,
+      pinnable: isSurfacePinnable(true, input.spaceId),
+      freshness: { updatedAt: at, updatedBy: 'job' },
+    })
+    const event = this.runWrite(() => {
+      const currentOrder = this.readSurfaceOrder(input.spaceId)
+      const version = requiredNumber(row, 'version') + 1
+      const treeVersion = requiredNumber(row, 'tree_version') + 1
+      this.db
+        .prepare(
+          `update surfaces
+           set title = ?, tree_json = ?, state_json = ?, version = ?, tree_version = ?,
+               updated_at = ?, updated_by = 'job', archived = 0, daemon_owned = 1, pinned = ?,
+               tree_updated_at = ?, content_origin = ?, validity_json = ?
+           where id = ?`,
+        )
+        .run(
+          adopted.title,
+          JSON.stringify(adopted.tree),
+          JSON.stringify(adopted.state),
+          version,
+          treeVersion,
+          at,
+          pinned ? 1 : 0,
+          at,
+          origin,
+          adopted.validity === undefined ? null : JSON.stringify(adopted.validity),
+          adopted.id,
+        )
+      const withoutCanonical = {
+        pinned: currentOrder.pinnedSurfaceIds.filter((id) => id !== adopted.id),
+        regular: currentOrder.regularSurfaceIds.filter((id) => id !== adopted.id),
+      }
+      const wasRegular = currentOrder.regularSurfaceIds.includes(adopted.id)
+      const wasPinned = currentOrder.pinnedSurfaceIds.includes(adopted.id)
+      const pinnedSurfaceIds = pinned
+        ? wasPinned
+          ? currentOrder.pinnedSurfaceIds
+          : [adopted.id, ...withoutCanonical.pinned]
+        : withoutCanonical.pinned
+      const regularSurfaceIds = pinned
+        ? withoutCanonical.regular
+        : wasRegular
+          ? currentOrder.regularSurfaceIds
+          : [adopted.id, ...withoutCanonical.regular]
+      const order = this.writeSurfaceOrder(
+        adopted.spaceId,
+        pinnedSurfaceIds,
+        regularSurfaceIds,
+        this.latestSurfaceCursor() + 1,
+      )
+      this.appendSpaceEvent(adopted.spaceId, {
+        at,
+        type: 'surface.adopt',
+        text: `Adopted canonical daemon Surface "${adopted.title}"`,
+        origin,
+        payload: {
+          surfaceId: adopted.id,
+          restored: archived,
+          unpinned: existing.pinned && !pinned,
+        },
+      })
+      return this.insertCreatedEvent(adopted, order)
+    })
+    this.notifySurfaceEvent({ kind: 'created', event })
+    return adopted
   }
 
   /**
@@ -1864,6 +2096,19 @@ function assertPatchTarget(operations: PatchOperation[], target: 'state' | 'tree
   const wrongTarget = operations.find((operation) => operation.target !== target)
   if (wrongTarget) {
     throw new Error(`${target} patch cannot include ${wrongTarget.target} operation`)
+  }
+}
+
+function assertAutomationOutcomeStateNotPatched(operations: PatchOperation[]): void {
+  const reservedPath = `/${AUTOMATION_OUTCOMES_STATE_KEY}`
+  if (
+    operations.some(
+      (operation) =>
+        operation.target === 'state' &&
+        (operation.path === reservedPath || operation.path.startsWith(`${reservedPath}/`)),
+    )
+  ) {
+    throw new Error('Automation outcome state is owned by the Gateway')
   }
 }
 

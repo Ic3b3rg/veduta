@@ -499,6 +499,70 @@ describe('runOccurrence', () => {
     expect(reflection.lastReport(work.id)?.summaries).toEqual(['Work summary.'])
     expect(reflection.lastReport(HEALTH)).toBeUndefined()
   })
+
+  it('reconstructs the same meaningful outcome from terminal markers on replay', async () => {
+    const config = memoryConfig()
+    clock = new Date('2026-07-08T03:00:00.000Z')
+    store.spacesEngine.appendEvent(HEALTH, { type: 'note', text: 'I drank tea.' })
+    clock = new Date('2026-07-08T04:00:00.000Z')
+    const scheduledFor = clock.toISOString()
+    let calls = 0
+    const reflection = new Reflection({
+      store,
+      scheduler,
+      index,
+      config,
+      now,
+      distiller: async (input) => {
+        calls += 1
+        return {
+          summaries: [],
+          insights: [],
+          facts: [{ text: 'I drink tea.', sourceRefs: [input.events[0]!.sourceRef] }],
+        }
+      },
+    })
+
+    const first = await reflection.runOccurrence(1, scheduledFor)
+    const replay = await reflection.runOccurrence(1, scheduledFor)
+
+    expect(first).toContain('changed:1')
+    expect(replay).toContain('changed:1')
+    expect(replay).toContain('skipped:1')
+    expect(calls).toBe(1)
+  })
+
+  it('treats summary-only Reflection output as meaningful on first run and replay', async () => {
+    const config = memoryConfig()
+    clock = new Date('2026-07-08T03:00:00.000Z')
+    store.spacesEngine.appendEvent(HEALTH, { type: 'note', text: 'I took a long walk.' })
+    clock = new Date('2026-07-08T04:00:00.000Z')
+    const scheduledFor = clock.toISOString()
+    let calls = 0
+    const reflection = new Reflection({
+      store,
+      scheduler,
+      index,
+      config,
+      now,
+      distiller: async () => {
+        calls += 1
+        return { summaries: ['A long walk was logged.'], insights: [], facts: [] }
+      },
+    })
+
+    const first = await reflection.runOccurrence(1, scheduledFor)
+    const replay = await reflection.runOccurrence(1, scheduledFor)
+
+    expect(first).toContain('changed:1')
+    expect(replay).toContain('changed:1')
+    expect(calls).toBe(1)
+    expect(
+      store.eventLog(HEALTH).find((event) => event.type === 'reflection.done')?.payload?.[
+        'contentChanged'
+      ],
+    ).toBe(true)
+  })
 })
 
 describe('runReflection: taint', () => {
@@ -602,6 +666,40 @@ describe('register', () => {
 
     const terminal = store.eventLog(HEALTH).find((event) => event.type === 'reflection.done')
     expect(terminal).toBeDefined()
+    expect(
+      scheduler
+        .listAutomations(SYSTEM_SPACE_ID)
+        .find((automation) => automation.handler === 'reflection')?.lastOutcome,
+    ).toBe('changed')
+    expect(scheduler.outcomeService.list(SYSTEM_SPACE_ID).notifications).toMatchObject([
+      { kind: 'changed' },
+    ])
+  })
+
+  it('maps a no-event scheduled run to unchanged without a notification', async () => {
+    const reflection = new Reflection({
+      store,
+      scheduler,
+      index,
+      config: memoryConfig(),
+      distiller: nothingDistiller,
+      now,
+    })
+    clock = new Date('2026-07-07T22:00:00.000Z')
+    reflection.register()
+    reflection.reconcileJobs()
+    const job = scheduler
+      .listAutomations(SYSTEM_SPACE_ID)
+      .find((automation) => automation.handler === 'reflection')
+    if (!job) throw new Error('missing Reflection Automation')
+
+    clock = new Date('2026-07-08T04:00:01.000Z')
+    await scheduler.runDue()
+
+    expect(
+      scheduler.listAutomations(SYSTEM_SPACE_ID).find((item) => item.id === job.id),
+    ).toMatchObject({ lastOutcome: 'unchanged' })
+    expect(scheduler.outcomeService.list(SYSTEM_SPACE_ID).notifications).toEqual([])
   })
 })
 

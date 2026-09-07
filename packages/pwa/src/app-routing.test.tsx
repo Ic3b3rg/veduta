@@ -2,7 +2,9 @@
 //
 // App-level integration tests for navigation sources and guarded routes.
 import {
+  AutomationOutcomeNotificationSchema,
   SurfacePatchEventSchema,
+  type AutomationOutcomeNotificationActionResult,
   type ModelConnectionsSnapshot,
   type OnboardingStatus,
 } from '@veduta/protocol'
@@ -21,12 +23,14 @@ vi.mock('./api.ts', async (importOriginal) => {
 import { App } from './app.tsx'
 import {
   connectGateway,
+  fetchAutomationOutcomeNotifications,
   fetchAuthStatus,
   fetchModelConnections,
   fetchOnboardingStatus,
   fetchSpaces,
   finishOnboarding,
   invokeFastAction,
+  openAutomationOutcomeNotification,
   type SpaceWithSurfaces,
 } from './api.ts'
 
@@ -155,15 +159,13 @@ function navigateFromServiceWorker(messages: EventTarget, url: string): void {
 }
 
 async function expectFocusedHealthRoute(path: string, surfaceSelected: boolean): Promise<void> {
-  await waitFor(() =>
-    expect(screen.getByRole('button', { name: /Health/ }).getAttribute('aria-pressed')).toBe(
-      'true',
-    ),
-  )
-  expect(screen.getByRole('button', { name: 'Focus Hydration' }).getAttribute('aria-pressed')).toBe(
-    String(surfaceSelected),
-  )
-  expect(location.pathname).toBe(path)
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: /Health/ }).getAttribute('aria-pressed')).toBe('true')
+    expect(
+      screen.getByRole('button', { name: 'Focus Hydration' }).getAttribute('aria-pressed'),
+    ).toBe(String(surfaceSelected))
+    expect(location.pathname).toBe(path)
+  })
 }
 
 describe('App routing', () => {
@@ -430,6 +432,73 @@ describe('App routing', () => {
     expect(
       screen.getByRole('button', { name: 'Focus Hydration' }).getAttribute('aria-pressed'),
     ).toBe('true')
+  })
+
+  it('opens a recurring Automation outcome only after the server confirms it', async () => {
+    window.history.replaceState({}, '', '/app/space/health')
+    const notification = AutomationOutcomeNotificationSchema.parse({
+      id: 'aon-hydration',
+      revision: 1,
+      spaceId: 'spc-health',
+      spaceSlug: 'health',
+      automationId: 7,
+      surfaceId: 'srf-hydration',
+      kind: 'changed',
+      title: 'Hydration updated',
+      summary: 'A new hydration entry was added.',
+      coalesceKey: 'hydration-entries',
+      occurrenceCount: 1,
+      state: 'unread',
+      createdAt: '2026-09-02T16:30:00.000Z',
+      updatedAt: '2026-09-02T16:30:00.000Z',
+      href: '/app/space/health/surface/srf-hydration',
+    })
+    vi.mocked(fetchAutomationOutcomeNotifications).mockResolvedValue({
+      revision: 1,
+      notifications: [notification],
+    })
+    const openedResult: AutomationOutcomeNotificationActionResult = {
+      revision: 2,
+      notification: { ...notification, revision: 2, state: 'opened' },
+    }
+    let confirmOpen: ((result: AutomationOutcomeNotificationActionResult) => void) | undefined
+    const openConfirmation = new Promise<AutomationOutcomeNotificationActionResult>((resolve) => {
+      confirmOpen = resolve
+    })
+    vi.mocked(openAutomationOutcomeNotification).mockReturnValue(openConfirmation)
+    mockReadyApp(healthSpaces())
+
+    render(<App />)
+
+    await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+    const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
+    if (!handlers) throw new Error('Gateway handlers were not registered')
+    act(() => handlers.onHello(0, 'client-1'))
+
+    expect(await screen.findByRole('region', { name: 'Automation updates' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Open Surface for Hydration updated' }))
+
+    await waitFor(() =>
+      expect(openAutomationOutcomeNotification).toHaveBeenCalledWith(
+        'spc-health',
+        'aon-hydration',
+        undefined,
+      ),
+    )
+    expect(location.pathname).toBe('/app/space/health')
+    expect(
+      screen.getByRole('button', { name: 'Focus Hydration' }).getAttribute('aria-pressed'),
+    ).toBe('false')
+
+    const resolveOpen = confirmOpen
+    if (!resolveOpen) throw new Error('Open confirmation was not registered')
+    await act(async () => {
+      resolveOpen(openedResult)
+      await openConfirmation
+    })
+
+    await expectFocusedHealthRoute('/app/space/health/surface/srf-hydration', true)
+    expect(screen.queryByRole('region', { name: 'Automation updates' })).toBeNull()
   })
 
   it('routes service-worker navigation messages through the client router', async () => {

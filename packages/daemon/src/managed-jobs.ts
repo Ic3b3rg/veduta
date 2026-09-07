@@ -19,6 +19,8 @@ export interface ManagedJobSpec {
   desired: Map<string, string>
   /** Optional IANA zone the cron fields are interpreted in; absent means UTC. */
   timezone?: string
+  /** Surface that receives the family's structured recurring outcome. */
+  targetSurfaceId?: string
 }
 
 /** `(cron, timezone)` pair identity, joined so it can key a `Map`/`Set`. */
@@ -44,7 +46,7 @@ function jobKey(cron: string, timezone: string | undefined): string {
  * unchanged by this generalization.
  */
 export function reconcileManagedJobs(spec: ManagedJobSpec): void {
-  const { scheduler, spaceId, handler, enabled, desired, timezone } = spec
+  const { scheduler, spaceId, handler, enabled, desired, timezone, targetSurfaceId } = spec
 
   const jobs = scheduler
     .listAutomations(spaceId)
@@ -81,6 +83,9 @@ export function reconcileManagedJobs(spec: ManagedJobSpec): void {
       scheduler.cancel(spaceId, job.id, 'trusted:system')
     } else {
       survivorKeys.add(key)
+      if (job.targetSurfaceId !== targetSurfaceId) {
+        scheduler.configureManagedJobTarget(spaceId, job.id, targetSurfaceId, 'trusted:system')
+      }
     }
   }
 
@@ -92,6 +97,7 @@ export function reconcileManagedJobs(spec: ManagedJobSpec): void {
         cron,
         description,
         handler,
+        ...(targetSurfaceId === undefined ? {} : { targetSurfaceId }),
         ...(timezone === undefined ? {} : { timezone }),
       },
       'trusted:system',

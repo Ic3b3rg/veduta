@@ -168,11 +168,12 @@ export function projectRecentEventsForContext(
   requestedLimit = AUTOMATIC_EVENT_LIMIT,
 ): EventRecordProjection {
   const limit = Math.max(0, Math.min(AUTOMATIC_EVENT_LIMIT, Math.floor(requestedLimit)))
+  const contextEvents = events.filter(isAutomaticContextEvent)
   const projection = projectBoundedRecords({
     // A caller explicitly requesting zero Events gets the ordinary empty
     // projection. Otherwise scan newest-first until the bounded working set
     // is full, so an oversized Event does not block an older complete one.
-    records: limit === 0 ? [] : events,
+    records: limit === 0 ? [] : contextEvents,
     renderRecord: renderEventForContext,
     renderOmission: renderAutomaticEventOmission,
     emptyText: 'No recent events.',
@@ -181,6 +182,31 @@ export function projectRecentEventsForContext(
     maxRecords: limit,
   })
   return eventRecordProjection(projection)
+}
+
+function isAutomaticContextEvent(event: SpaceEvent): boolean {
+  if (event.type.startsWith('automation.notification.')) return false
+  if (event.type === 'automation.outcome.delivery-failed') return false
+  if (event.type === 'heartbeat.sweep') return false
+  if (event.type === 'reflection.done' || event.type === 'reflection.skip') return false
+  if (
+    (event.type === 'surface.patch_state' || event.type === 'surface.patch_tree') &&
+    event.payload?.['automationProjection'] === true
+  ) {
+    return false
+  }
+  if (
+    (event.type === 'automation.fire' ||
+      event.type === 'automation.skip' ||
+      event.type === 'automation.recover') &&
+    // Pre-#91 rows did not record the kind. Exclude that legacy ambiguity
+    // fail-closed so old recurring briefings cannot re-enter default context;
+    // new one-shot reminders explicitly identify themselves as timers.
+    event.payload?.['automationKind'] !== 'timer'
+  ) {
+    return false
+  }
+  return !(event.type === 'automation.outcome' && event.payload?.['kind'] === 'unchanged')
 }
 
 /** A bounded model-visible result for `read_recent` and `search_log`. */

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { ActionSchema, FormSubmitActionSchema, type Action } from './action.ts'
+import { AutomationRunHistorySchema } from './automation-outcome.ts'
 import { JsonObjectSchema, type JsonObject } from './json.ts'
 
 /**
@@ -119,6 +120,15 @@ export const FormAtomPropsSchema = z
 
 export type FormAtomProps = z.infer<typeof FormAtomPropsSchema>
 
+export const AutomationAtomPropsSchema = z
+  .object({
+    history: AutomationRunHistorySchema.optional(),
+    historyBinding: z.string().min(1).max(160).optional(),
+  })
+  .passthrough()
+
+export type AutomationAtomProps = z.infer<typeof AutomationAtomPropsSchema>
+
 /**
  * The parsed shape of a node: `actions[].path` is always materialized
  * (the schema defaults it to "agent" at parse time). Inputs may omit
@@ -161,7 +171,19 @@ function validateAtomNode(node: PendingAtomCandidate, ctx: z.RefinementCtx): voi
   validateInputAtom(node, ctx)
   validateTextareaAtom(node, ctx)
   validateFormAtom(node, ctx)
+  validateAutomationAtom(node, ctx)
   validateAtomicActions(node, ctx)
+}
+
+function validateAutomationAtom(node: PendingAtomCandidate, ctx: z.RefinementCtx): void {
+  if (node.type !== 'Automation') return
+
+  const props = AutomationAtomPropsSchema.safeParse(node.props ?? {})
+  if (!props.success) {
+    for (const issue of props.error.issues) {
+      ctx.addIssue({ ...issue, path: ['props', ...issue.path] })
+    }
+  }
 }
 
 function validateAtomicActions(node: PendingAtomCandidate, ctx: z.RefinementCtx): void {

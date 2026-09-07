@@ -48,12 +48,25 @@
     grid-template-columns: 1fr;
   }
 
+  .automation-outcome-notification {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
   .pending-decision-actions {
+    justify-content: flex-start;
+  }
+
+  .automation-outcome-notification-actions {
     justify-content: flex-start;
   }
 
   .pending-decision-actions button,
   .pending-decision-actions a {
+    min-height: 44px;
+  }
+
+  .automation-outcome-notification-actions button {
     min-height: 44px;
   }
 
@@ -131,6 +144,7 @@
   .topbar-actions select,
   .pending-decision-actions button,
   .pending-decision-actions a,
+  .automation-outcome-notification-actions button,
   .surface-toolbar button {
     min-height: 44px;
   }
@@ -142,6 +156,7 @@
   .surface-card,
   .pending-decision-strip,
   .space-pending-decisions,
+  .automation-outcome-notifications,
   .route-recovery,
   .notif-guide,
   .chat-dock {

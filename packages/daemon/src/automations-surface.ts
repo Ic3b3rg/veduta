@@ -1,4 +1,11 @@
-import { SYSTEM_SPACE_ID, SurfaceSchema, type AtomNode, type Surface } from '@veduta/protocol'
+import {
+  SYSTEM_SPACE_ID,
+  SurfaceSchema,
+  type AtomNode,
+  type AutomationRunHistoryEntry,
+  type JsonValue,
+  type Surface,
+} from '@veduta/protocol'
 
 /**
  * The per-Space "Automations" Surface (issue #11, ADR-0005): every job
@@ -12,6 +19,7 @@ export interface AutomationListItem {
   description: string
   enabled: boolean
   scheduleText: string
+  history?: AutomationRunHistoryEntry[]
 }
 
 export const AUTOMATIONS_LIST_NODE_ID = 'automations-list'
@@ -32,14 +40,25 @@ export function automationStateKey(id: number): string {
   return `job-${id}`
 }
 
+export function automationHistoryStateKey(id: number): string {
+  return `history-${id}`
+}
+
+export function isAutomationProjectionStateKey(stateKey: string): boolean {
+  return automationIdFromStateKey(stateKey) !== undefined || /^history-\d+$/.test(stateKey)
+}
+
 export function automationIdFromStateKey(stateKey: string): number | undefined {
   const match = /^job-(\d+)$/.exec(stateKey)
   return match ? Number(match[1]) : undefined
 }
 
-export function automationsState(automations: AutomationListItem[]): Record<string, boolean> {
+export function automationsState(automations: AutomationListItem[]): Record<string, JsonValue> {
   return Object.fromEntries(
-    automations.map((automation) => [automationStateKey(automation.id), automation.enabled]),
+    automations.flatMap((automation) => [
+      [automationStateKey(automation.id), automation.enabled],
+      [automationHistoryStateKey(automation.id), automation.history ?? []],
+    ]),
   )
 }
 
@@ -51,7 +70,11 @@ export function automationsListNode(automations: AutomationListItem[]): AtomNode
           id: `automation-${automation.id}`,
           type: 'Automation',
           binding: automationStateKey(automation.id),
-          props: { label: automation.description, schedule: automation.scheduleText },
+          props: {
+            label: automation.description,
+            schedule: automation.scheduleText,
+            historyBinding: automationHistoryStateKey(automation.id),
+          },
           actions: [
             {
               name: 'toggle',

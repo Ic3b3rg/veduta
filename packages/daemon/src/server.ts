@@ -36,7 +36,7 @@ import { GatewayHub } from './gateway.ts'
 import { CalendarSource, GmailSource, GoogleTokenProvider } from './google-sources.ts'
 import { loadHeartbeatConfig } from './heartbeat-config.ts'
 import { HeartbeatSurfaceManager } from './heartbeat-surface.ts'
-import { Heartbeat } from './heartbeat.ts'
+import { Heartbeat, type HeartbeatOptions } from './heartbeat.ts'
 import { loadIngestionConfig } from './ingestion-config.ts'
 import { registerIngestionRoutes } from './ingestion-routes.ts'
 import { loadMemoryConfig } from './memory-config.ts'
@@ -70,6 +70,7 @@ import { loadNotificationsConfig } from './notifications-config.ts'
 import { registerOnboardingRoutes } from './onboarding-routes.ts'
 import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
 import { registerPendingDecisionRoutes } from './pending-decision-routes.ts'
+import { registerAutomationOutcomeRoutes } from './automation-outcome-routes.ts'
 import { startPendingDecisionLifecycle } from './pending-decision-lifecycle.ts'
 import { PendingDecisionService } from './pending-decision-service.ts'
 import { PiAgentRunner, PiJsonlSessionStore } from './pi-agent-runner.ts'
@@ -136,6 +137,8 @@ export interface ServerOptions {
    * generated-or-loaded VAPID keypair.
    */
   pushTransport?: PushTransport
+  /** Injectable Heartbeat completion for deterministic integration tests and local profiles. */
+  heartbeatComplete?: HeartbeatOptions['complete']
   /**
    * The execution profile this daemon is running under (issue 023,
    * `docs/adr/0009-local-vps-profile.md`), identifying which onboarding
@@ -605,18 +608,6 @@ export function buildServer(options: ServerOptions = {}) {
     now,
     onEscalation: (spaceId, text, context) => {
       gateway.broadcastSystemNotice(text)
-      // Daemon-managed handler jobs carry no Agent decision — attributing
-      // an "Agent-armed" justification to them would fabricate provenance,
-      // so they surface as a badge, never a push.
-      if (context?.managed) {
-        notificationCenter.notify({
-          level: 'badge',
-          spaceId,
-          text,
-          ...(context.origin ? { origin: context.origin } : {}),
-        })
-        return
-      }
       // Timer escalations are always urgent: the
       // Agent's explicit act of arming the timer is the decision, and the
       // justification traces straight back to it.
@@ -632,6 +623,12 @@ export function buildServer(options: ServerOptions = {}) {
       })
     },
     judge: () => 'unknown',
+  })
+  const disposeAutomationOutcomeLifecycle = scheduler.outcomeService.onLifecycle((event) =>
+    gateway.broadcastAutomationOutcomeNotification(event),
+  )
+  app.addHook('onClose', async () => {
+    disposeAutomationOutcomeLifecycle()
   })
 
   // The trust layer (issue #14, ADR-0007): the code-level decision
@@ -989,9 +986,9 @@ export function buildServer(options: ServerOptions = {}) {
     // Dev stub, same rationale as the scheduler.judge stub and the mock
     // quarantined reader: the real Agent-loop wiring replaces this with a
     // live triage/reasoning completion.
-    complete: () => Promise.resolve({ text: '{"status":"nothing"}' }),
+    complete:
+      options.heartbeatComplete ?? (() => Promise.resolve({ text: '{"status":"nothing"}' })),
     onEscalation: (spaceId, text, context) => {
-      gateway.broadcastSystemNotice(text)
       // Heartbeat escalations are never urgent. The
       // triage model's own justification is the only acceptable one — the
       // daemon never fabricates a substitute. Should an escalation arrive
@@ -1129,19 +1126,39 @@ export function buildServer(options: ServerOptions = {}) {
     ],
     ready: Promise.all([decisionRecovery, updateRecovery]),
   })
+  scheduler.setPendingDecisionLookup((decisionId) => pendingDecisions.get(decisionId))
+  const settleTerminalDecisionOutcome = (decision: { id: string; state: string }) => {
+    if (decision.state !== 'terminal') return Promise.resolve()
+    return scheduler.outcomeService.settleDecision(decision.id, 'trusted:system')
+  }
+  const disposePendingDecisionOutcomeLifecycle = pendingDecisions.onLifecycle(({ decision }) => {
+    void settleTerminalDecisionOutcome(decision).catch((error) => {
+      console.error('Automation decision outcome settlement failed', error)
+    })
+  })
+  void pendingDecisions
+    .list()
+    .then((snapshot) => Promise.all(snapshot.decisions.map(settleTerminalDecisionOutcome)))
+    .catch((error) => {
+      console.error('Initial Automation decision outcome settlement failed', error)
+    })
   const disposePendingDecisionLifecycle = startPendingDecisionLifecycle({
     decisions: pendingDecisions,
     gateway,
     trust,
     store,
   })
-  app.addHook('onClose', disposePendingDecisionLifecycle)
+  app.addHook('onClose', () => {
+    disposePendingDecisionLifecycle()
+    disposePendingDecisionOutcomeLifecycle()
+  })
 
   notificationSettings.start()
   notificationCenter.start()
   scheduler.start()
   app.addHook('onClose', async () => {
     scheduler.stop()
+    scheduler.outcomeService.close()
     usageSurfaces.dispose()
     heartbeatSurfaces.dispose()
     reflectionSurfaces.dispose()
@@ -1412,6 +1429,7 @@ export function buildServer(options: ServerOptions = {}) {
   })
   registerPushRoutes(app, { auth, pushStore, vapid })
   registerPendingDecisionRoutes(app, { service: pendingDecisions })
+  registerAutomationOutcomeRoutes(app, { service: scheduler.outcomeService })
 
   // Onboarding wizard routes (issue #19): registered directly on `app`,
   // same as every route above, so the production `onRequest` auth hook
@@ -1519,5 +1537,6 @@ export function buildServer(options: ServerOptions = {}) {
     reflectionSurfaces,
     usageSurfaces,
     connectedDevicesSurfaces,
+    heartbeat,
   }
 }

@@ -72,6 +72,41 @@ describe('GatewayHub Surface sync', () => {
     }
   })
 
+  it('broadcasts a validated Automation outcome notification lifecycle', () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store)
+    const socket = new FakeGatewaySocket()
+    gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    gateway.broadcastAutomationOutcomeNotification({
+      revision: 4,
+      notification: {
+        id: 'aon-1',
+        revision: 4,
+        spaceId: 'spc-health',
+        spaceSlug: 'health',
+        automationId: 2,
+        surfaceId: 'srf-groceries',
+        kind: 'changed',
+        title: 'Groceries updated',
+        summary: 'Two new items',
+        coalesceKey: 'items',
+        occurrenceCount: 1,
+        state: 'unread',
+        createdAt: '2026-09-02T08:00:00.000Z',
+        updatedAt: '2026-09-02T08:00:00.000Z',
+        href: '/app/space/health/surface/srf-groceries',
+      },
+    })
+
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'automation-outcome-notification.lifecycle',
+      revision: 4,
+      notification: { id: 'aon-1', spaceId: 'spc-health' },
+    })
+  })
+
   it('replays patches after the reconnect cursor without requiring a snapshot reload', () => {
     const store = new Store()
     const gateway = new GatewayHub(store)

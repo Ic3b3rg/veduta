@@ -9,6 +9,7 @@ import {
 } from './facts.ts'
 import { projectFacts } from './facts-projection.ts'
 import { reconcileManagedJobs } from './managed-jobs.ts'
+import { SYSTEM_AUTOMATIONS_SURFACE_ID } from './automations-surface.ts'
 import type { MemoryConfig } from './memory-config.ts'
 import { formatSourceRef, type MemoryIndex } from './memory-index.ts'
 import type { Scheduler } from './scheduler.ts'
@@ -158,6 +159,23 @@ function isTerminalMarker(event: SpaceEvent): boolean {
   )
 }
 
+function reflectionReportChangedContent(report: ReflectionRunReport): boolean {
+  return (
+    report.summaries.length > 0 ||
+    report.insights.length > 0 ||
+    report.consolidated + report.reactivated + report.demoted > 0
+  )
+}
+
+function terminalMarkerChangedContent(event: SpaceEvent): boolean {
+  const contentChanged = event.payload?.['contentChanged']
+  if (typeof contentChanged === 'boolean') return contentChanged
+  return ['consolidated', 'reactivated', 'demoted'].some((key) => {
+    const value = event.payload?.[key]
+    return typeof value === 'number' && value > 0
+  })
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000
 
 /**
@@ -225,14 +243,32 @@ export class Reflection {
         ],
       ]),
       timezone: this.config.timezone,
+      targetSurfaceId: SYSTEM_AUTOMATIONS_SURFACE_ID,
     })
   }
 
   /** Wires the Scheduler's generic handler registry to `runOccurrence`. Call before `scheduler.start()`. */
   register(): void {
-    this.scheduler.registerHandler('reflection', (ctx) =>
-      this.runOccurrence(ctx.automation.id, ctx.scheduledFor),
-    )
+    this.scheduler.registerHandler('reflection', async (ctx) => {
+      const summary = await this.runOccurrence(ctx.automation.id, ctx.scheduledFor)
+      if (summary.includes('failed:')) {
+        return {
+          kind: 'failed',
+          summary: 'Nightly Reflection completed with failures',
+          coalesceKey: 'reflection-failed',
+          error: { code: 'reflection_failed', message: summary.slice(0, 240) },
+        }
+      }
+      const changed = Number(/changed:(\d+)/.exec(summary)?.[1] ?? 0)
+      return changed > 0
+        ? {
+            kind: 'changed' as const,
+            summary: `Nightly Reflection updated ${changed} Space${changed === 1 ? '' : 's'}`,
+            coalesceKey: 'reflection-updated',
+            operations: [],
+          }
+        : { kind: 'unchanged' as const, summary: 'Nightly Reflection found no new events' }
+    })
   }
 
   /**
@@ -244,21 +280,28 @@ export class Reflection {
    */
   async runOccurrence(automationId: number, scheduledFor: string): Promise<string> {
     let reflected = 0
+    let changed = 0
     let skipped = 0
     const failures: string[] = []
 
     for (const space of this.store.listSpaces()) {
       if (space.id === SYSTEM_SPACE_ID) continue
       try {
+        const completed = this.findTerminalMarker(space.id, automationId, scheduledFor)
         const report = await this.runReflection(space.id, automationId, scheduledFor)
-        if (report === undefined) skipped += 1
-        else reflected += 1
+        if (report === undefined) {
+          skipped += 1
+          if (completed && terminalMarkerChangedContent(completed)) changed += 1
+        } else if (reflectionReportChangedContent(report)) {
+          changed += 1
+        }
+        reflected += 1
       } catch (error) {
         failures.push(`${space.id}:${error instanceof Error ? error.message : String(error)}`)
       }
     }
 
-    const parts = [`reflected:${reflected}`, `skipped:${skipped}`]
+    const parts = [`reflected:${reflected}`, `changed:${changed}`, `skipped:${skipped}`]
     if (failures.length > 0) parts.push(`failed:${failures.join(',')}`)
     return parts.join(' ')
   }
@@ -298,7 +341,6 @@ export class Reflection {
       : undefined
 
     if (windowEvents.length === 0) {
-      this.appendTerminal(spaceId, 'reflection.skip', automationId, scheduledFor)
       const projection = projectFacts(this.store.spacesEngine.readFacts(spaceId))
       const report: ReflectionRunReport = {
         spaceId,
@@ -314,6 +356,13 @@ export class Reflection {
         activeSize: projection.activeSize,
         underBudget: projection.activeSize <= this.config.budget.low,
       }
+      this.appendTerminal(spaceId, 'reflection.skip', automationId, scheduledFor, {
+        consolidated: 0,
+        reactivated: 0,
+        droppedWithoutEvidence: 0,
+        demoted: report.demoted,
+        contentChanged: reflectionReportChangedContent(report),
+      })
       return this.recordReport(report)
     }
 
@@ -362,11 +411,17 @@ export class Reflection {
       })
     }
 
+    const contentChanged =
+      distilled.summaries.length > 0 ||
+      distilled.insights.length > 0 ||
+      consolidated + reactivated + demotion.demoted > 0
+
     this.appendTerminal(spaceId, 'reflection.done', automationId, scheduledFor, {
       consolidated,
       reactivated,
       droppedWithoutEvidence,
       demoted: demotion.demoted,
+      contentChanged,
     })
 
     const report: ReflectionRunReport = {
@@ -653,6 +708,7 @@ export class Reflection {
       reactivated: number
       droppedWithoutEvidence: number
       demoted: number
+      contentChanged: boolean
     },
   ): void {
     const text =

@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  AUTOMATION_OUTCOMES_STATE_KEY,
   SurfaceSchema,
   UpdateMarkerSchema,
   type AtomNode,
@@ -283,6 +284,15 @@ describe('UpdateManager.runCheck', () => {
     const surface = store.getSurface(UPDATE_SURFACE_ID)
     expect(findNode(surface!.tree, 'update-apply-button')).toBeUndefined()
     expect(surface!.state[UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY]).toBe('2026-08-05T06:30:00.000Z')
+    const projectionEvents = events.filter(
+      (event) =>
+        event.type.startsWith('surface.patch_') &&
+        event.payload?.['surfaceId'] === UPDATE_SURFACE_ID,
+    )
+    expect(projectionEvents).toHaveLength(2)
+    expect(
+      projectionEvents.every((event) => event.payload?.['automationProjection'] === true),
+    ).toBe(true)
   })
 
   it('a broken signature chain is refused as a failed check, never an offer', async () => {
@@ -386,6 +396,48 @@ describe('UpdateManager.runCheck', () => {
     expect(failure?.text).toBe('update check failed')
     expect(String(failure?.payload?.['reason'])).toContain(hostileComment)
 
+    expect(store.surfaceProvenance(UPDATE_SURFACE_ID)?.contentOrigin).toBe(
+      untrustedOrigin('update-feed'),
+    )
+  })
+
+  it('keeps hostile feed provenance on the scheduled outcome, status, and notification', async () => {
+    clock = new Date('2026-08-05T06:29:00.000Z')
+    const hostileComment = "'; DROP TABLE releases; -- <script>alert(1)</script>"
+    serveRelease(defaultRelease({ version: '1.1.0' }), { trustedComment: hostileComment })
+    manager.register()
+
+    clock = new Date('2026-08-05T06:30:00.000Z')
+    await scheduler.runDue()
+
+    const job = scheduler
+      .listAutomations(SYSTEM_SPACE_ID)
+      .find((automation) => automation.handler === 'check-updates')
+    if (!job) throw new Error('missing update check Automation')
+    const events = store.eventLog(SYSTEM_SPACE_ID)
+    expect(
+      events.find(
+        (event) =>
+          event.type === 'automation.outcome' && event.payload?.['automationId'] === job.id,
+      )?.origin,
+    ).toBe(untrustedOrigin('update-feed'))
+    expect(
+      events.find(
+        (event) =>
+          event.type === 'automation.notification.create' &&
+          event.payload?.['automationId'] === job.id,
+      )?.origin,
+    ).toBe(untrustedOrigin('update-feed'))
+    expect(store.getSurface(UPDATE_SURFACE_ID)?.state[AUTOMATION_OUTCOMES_STATE_KEY]).toMatchObject(
+      {
+        [String(job.id)]: {
+          currentError: {
+            code: 'update_check_failed',
+            message: expect.stringContaining(hostileComment),
+          },
+        },
+      },
+    )
     expect(store.surfaceProvenance(UPDATE_SURFACE_ID)?.contentOrigin).toBe(
       untrustedOrigin('update-feed'),
     )

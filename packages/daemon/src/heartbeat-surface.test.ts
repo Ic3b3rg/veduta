@@ -1,4 +1,4 @@
-import { SurfaceSchema, type AtomNode } from '@veduta/protocol'
+import { SYSTEM_SPACE_ID, SurfaceSchema, type AtomNode } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { describe, expect, it } from 'vitest'
 import type { HeartbeatMetrics } from './heartbeat.ts'
@@ -131,6 +131,16 @@ describe('HeartbeatSurfaceManager', () => {
     expect(findNode(surface!.tree, 'stat-sweeps')?.props).toMatchObject({ value: '8' })
     expect(findNode(surface!.tree, 'stat-nothing-ratio')?.props).toMatchObject({ value: '63%' })
     expect(findNode(surface!.tree, 'heartbeat-below-target')?.type).toBe('Badge')
+    expect(
+      store
+        .eventLog(SYSTEM_SPACE_ID)
+        .filter(
+          (event) =>
+            event.type === 'surface.patch_tree' &&
+            event.payload?.['surfaceId'] === HEARTBEAT_SURFACE_ID,
+        )
+        .at(-1)?.payload,
+    ).toMatchObject({ automationProjection: true })
   })
 
   it('refresh() is suitable to pass directly as onSwept without losing `this`', () => {

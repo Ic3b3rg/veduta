@@ -192,7 +192,11 @@ export class HeartbeatSurfaceManager {
         { target: 'tree', op: 'replace', path: '/children/2', value: statsNode(metrics) },
         { target: 'tree', op: 'replace', path: '/children/3', value: badgeSlotNode(metrics) },
       ],
-      { expectedTreeVersion: version.treeVersion, updatedBy: 'job' },
+      {
+        expectedTreeVersion: version.treeVersion,
+        updatedBy: 'job',
+        eventPayload: { surfaceId: HEARTBEAT_SURFACE_ID, automationProjection: true },
+      },
     )
   }
 }

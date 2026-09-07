@@ -222,7 +222,11 @@ export class ReflectionSurfaceManager {
         { target: 'tree', op: 'replace', path: '/children/2', value: statsNode(report, this.low) },
         { target: 'tree', op: 'replace', path: '/children/3', value: contentNode(report) },
       ],
-      { expectedTreeVersion: version.treeVersion, updatedBy: 'job' },
+      {
+        expectedTreeVersion: version.treeVersion,
+        updatedBy: 'job',
+        eventPayload: { surfaceId, automationProjection: true },
+      },
     )
   }
 }
