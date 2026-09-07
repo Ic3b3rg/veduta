@@ -481,6 +481,7 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
       // flip has nothing to revert to, which round 1 here sidesteps by
       // making this round 2's "first-ever update" instead.
       await focusSystemSpace(page)
+      const systemUrl = page.url()
       let updates = surfaceCard(page, 'Updates')
       await updates.getByRole('button', { name: 'Check now' }).click()
       await expect(updates.getByRole('button', { name: 'Apply update' })).toBeVisible({
@@ -495,6 +496,22 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
         })
         .toBe(RELEASE_VERSION)
       await page.reload()
+      await expect(page).toHaveURL(systemUrl)
+      await expect(page.getByRole('heading', { name: 'System', exact: true })).toBeVisible()
+      // The new daemon serves before the wrapper commits stage 2. Wait for
+      // success and journal retirement before restarting with the failure knob.
+      await expect(
+        surfaceCard(page, 'Updates').getByText(`Updated to ${RELEASE_VERSION}`, { exact: true }),
+      ).toBeVisible({ timeout: 60_000 })
+      await expect
+        .poll(() => existsSync(join(baseDir, 'updates', 'state', 'update-state.json')), {
+          timeout: 30_000,
+        })
+        .toBe(false)
+      await page
+        .getByRole('complementary', { name: 'Spaces' })
+        .getByRole('button', { name: 'Health' })
+        .click()
       await expect(page.getByRole('button', { name: 'Focus Meals' })).toBeVisible({
         timeout: 30_000,
       })

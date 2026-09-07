@@ -224,7 +224,6 @@ function RoutedApp() {
     authToken,
     spaces,
     focusedSpaceId,
-    focusedSurfaceId,
     setChatEntries,
     onUnauthorized: resetUnauthorizedSession,
     onReplaceSpaces: replaceSpaces,
