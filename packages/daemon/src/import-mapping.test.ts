@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { LEGACY_SOUL, LEGACY_SOUL_WITHOUT_TIMERS } from './legacy-character.test-helpers.ts'
 import {
   ABSTENTION_RULE,
   SPACE_GRANULARITY_RULE,
@@ -48,6 +49,17 @@ function listRecursive(root: string): string[] {
 }
 
 describe('readTargetState — purity (issue 020 AC3)', () => {
+  it.each([LEGACY_SOUL, LEGACY_SOUL_WITHOUT_TIMERS])(
+    'recognizes an untouched legacy identity without requiring overwrite',
+    (soul) => {
+      const rootDir = freshDir()
+      writeFileSync(join(rootDir, 'SOUL.md'), soul)
+      expect(readTargetState(rootDir).soulIsDefault).toBe(true)
+      writeFileSync(join(rootDir, 'SOUL.md'), soul + '\nMy custom tone.\n')
+      expect(readTargetState(rootDir).soulIsDefault).toBe(false)
+    },
+  )
+
   it('writes nothing to a completely empty directory', () => {
     const rootDir = freshDir()
     const before = listRecursive(rootDir)

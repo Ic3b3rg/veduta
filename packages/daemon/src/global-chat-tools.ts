@@ -51,13 +51,15 @@ export function createGlobalChatTools(options: GlobalChatToolsOptions): ToolDef[
     defineTool({
       name: 'enter_space',
       description:
-        "Enter one active Space by id or slug for this turn. Returns that Space's normal bounded assembled context and all of its origins. Call this before any other tool targeting the Space.",
+        'Enter one active Space by id or slug for this turn. Returns its bounded Space context and origins; global character and Gateway policy are already in the system prompt. Call this before any other tool targeting the Space.',
       schema: EnterSpaceSchema,
       level: 'L0',
       egressDomains: [],
       handler(input, context) {
         const space = resolveActiveSpace(options.store, input.spaceId)
-        const projection = options.store.assembleSpaceContextWithOrigins(space.id)
+        const projection = options.store.assembleSpaceContextWithOrigins(space.id, {
+          includeGlobal: false,
+        })
         const { text: content, origins } = projection
         if (!enteredSpaceIds.has(space.id)) {
           options.hooks?.onSpaceEntered?.(space)

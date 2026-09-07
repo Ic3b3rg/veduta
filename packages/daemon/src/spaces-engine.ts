@@ -48,6 +48,12 @@ import {
   sanitizeAndValidateFactText,
 } from './facts-persistence.ts'
 import { projectFacts } from './facts-projection.ts'
+import {
+  assembleGlobalContext,
+  characterSection,
+  defaultInstructions,
+  defaultSoul,
+} from './character-context.ts'
 import { loadMemoryConfig, type MemoryBudget } from './memory-config.ts'
 import {
   MemoryHealthPersistenceError,
@@ -75,6 +81,8 @@ import type { Origin } from './taint.ts'
 import { normalizeIsoInstant } from './timezone.ts'
 
 export { parseSpaceEventLine, renderEventForContext }
+export { defaultSoul } from './character-context.ts'
+export { ABSTENTION_RULE, SPACE_GRANULARITY_RULE, TIMER_RULE } from './gateway-policy.ts'
 export type { AppendSpaceEventInput, SpaceEvent }
 export type { SpaceProposal } from './space-proposals.ts'
 
@@ -117,16 +125,6 @@ export type FactSearchHit = ReturnType<typeof searchFactsDocument>[number]
 const SPACE_FILE = 'SPACE.json'
 const FACTS_FILE = 'FACTS.md'
 const INSTRUCTIONS_FILE = 'INSTRUCTIONS.md'
-
-export const SPACE_GRANULARITY_RULE =
-  'Space granularity rule: a Space is a life area; goals belong in Surfaces inside a Space.'
-
-export const ABSTENTION_RULE =
-  "If a user asks about something not present in USER, FACTS, INSTRUCTIONS, or recent Event log, say you don't know and do not invent it."
-
-/** ADR-0005: proactivity is timers, not promises to remember. */
-export const TIMER_RULE =
-  'Every learned deadline or habit arms a timer (arm_timer tool), never "I\'ll remember it": timers are visible Automations the user can switch off.'
 
 export class SpacesEngine {
   readonly rootDir: string
@@ -524,20 +522,20 @@ export class SpacesEngine {
   }
 
   /** Builds the model-visible Space context and its live taint from one projection. */
-  assembleContextWithOrigins(spaceId: string, recentLimit = 20): AssembledSpaceContext {
+  assembleContextWithOrigins(
+    spaceId: string,
+    recentLimit = 20,
+    options: { includeGlobal?: boolean } = {},
+  ): AssembledSpaceContext {
     const space = this.requireSpace(spaceId)
     const facts = projectFacts(this.readFacts(space.id))
     const events = this.recentEventsForContext(space.id, recentLimit)
     const text = [
-      section('SOUL', readOrEmpty(this.globalPath('SOUL.md'))),
-      section('USER', readOrEmpty(this.globalPath('USER.md'))),
-      section(
-        'Active Space',
-        `${space.name} (${space.slug})\n${SPACE_GRANULARITY_RULE}\n${TIMER_RULE}`,
-      ),
+      ...(options.includeGlobal === false ? [] : [assembleGlobalContext(this.readGlobalDocs())]),
+      section('Active Space', `${space.name} (${space.slug})`),
       section('FACTS', facts.text),
       events.text,
-      section('INSTRUCTIONS', readOrEmpty(this.spacePath(space, INSTRUCTIONS_FILE))),
+      characterSection('INSTRUCTIONS', readOrEmpty(this.spacePath(space, INSTRUCTIONS_FILE))),
     ].join('\n\n')
     return { text, origins: [...new Set([...events.origins, ...facts.origins])] }
   }
@@ -1276,34 +1274,6 @@ function uniqueTemplateId(templateId: string, sourceSlug: string, usedIds: Set<s
       return candidate
     }
   }
-}
-
-/**
- * Exported for the importer (issue 020):
- * `readTargetState` needs the literal default template text to detect
- * whether an existing `SOUL.md` is still untouched (safe to import into
- * without `--overwrite`) or was already customized by the user (a
- * conflict). Behaviour is unchanged — this is the same private helper
- * `ensureBaseLayout` always used, now also callable from outside.
- */
-export function defaultSoul(): string {
-  return `# SOUL
-
-You are Veduta's single Agent. You switch context between Spaces; you do not become a different agent per Space.
-
-${ABSTENTION_RULE}
-
-${SPACE_GRANULARITY_RULE}
-
-${TIMER_RULE}
-`
-}
-
-function defaultInstructions(spaceName: string): string {
-  return `# INSTRUCTIONS
-
-This Space is for the ${spaceName} life area. Keep goals as Surfaces inside this Space instead of creating narrower Spaces.
-`
 }
 
 function section(title: string, body: string): string {

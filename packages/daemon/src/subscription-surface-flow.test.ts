@@ -593,7 +593,9 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
     const templateEngine = new TemplateEngine({ store })
     const focusedToolsFor = (spaceId: string) =>
       createFocusedSurfaceTools({ store, templateEngine, spaceId })
-    const transport = scriptedGlobalCreateTransport(store.assembleSpaceContext(SPACE_ID))
+    const transport = scriptedGlobalCreateTransport(
+      store.assembleSpaceContextWithOrigins(SPACE_ID, { includeGlobal: false }).text,
+    )
     const sessionStore = new PiJsonlSessionStore({
       cwd: tempDir('veduta-subscription-global-cwd-'),
       sessionsRoot: tempDir('veduta-subscription-global-sessions-'),
