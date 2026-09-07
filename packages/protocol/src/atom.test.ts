@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   AtomNodeSchema,
+  MAX_AUTOMATION_RUN_HISTORY,
   MAX_PENDING_SLOT_TIMEOUT_MS,
   MIN_PENDING_SLOT_TIMEOUT_MS,
   PendingAtomPropsSchema,
@@ -77,6 +78,90 @@ describe('Pending Atom protocol', () => {
       type: 'Chart',
       props: { variant: 'future-chart-style', customOption: true },
     })
+  })
+})
+
+describe('Automation Atom protocol', () => {
+  it('keeps legacy Automation nodes without props valid', () => {
+    expect(
+      AtomNodeSchema.safeParse({
+        id: 'legacy-automation-without-props',
+        type: 'Automation',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('keeps pre-history Automation props backward compatible', () => {
+    expect(
+      AtomNodeSchema.safeParse({
+        id: 'legacy-automation',
+        type: 'Automation',
+        props: {
+          title: 'L'.repeat(140),
+          detail: 'Legacy schedule copy',
+          enabled: true,
+        },
+      }).success,
+    ).toBe(true)
+  })
+
+  it('accepts bounded, meaningful run history', () => {
+    expect(
+      AtomNodeSchema.parse({
+        id: 'automation-12',
+        type: 'Automation',
+        props: {
+          label: 'Weekly review',
+          schedule: 'Every Monday',
+          history: [
+            {
+              id: 'run-1',
+              automationId: 12,
+              scheduledFor: '2026-09-01T08:00:00.000Z',
+              kind: 'changed',
+              summary: 'Plan updated',
+              at: '2026-09-01T08:00:01.000Z',
+            },
+          ],
+        },
+      }).props,
+    ).toMatchObject({ history: [{ kind: 'changed' }] })
+  })
+
+  it('rejects routine checks and unbounded history', () => {
+    const base = {
+      id: 'run-1',
+      automationId: 12,
+      scheduledFor: '2026-09-01T08:00:00.000Z',
+      summary: 'No changes',
+      at: '2026-09-01T08:00:01.000Z',
+    }
+    expect(
+      AtomNodeSchema.safeParse({
+        id: 'automation-12',
+        type: 'Automation',
+        props: {
+          label: 'Weekly review',
+          schedule: 'Every Monday',
+          history: [{ ...base, kind: 'unchanged' }],
+        },
+      }).success,
+    ).toBe(false)
+    expect(
+      AtomNodeSchema.safeParse({
+        id: 'automation-12',
+        type: 'Automation',
+        props: {
+          label: 'Weekly review',
+          schedule: 'Every Monday',
+          history: Array.from({ length: MAX_AUTOMATION_RUN_HISTORY + 1 }, (_, index) => ({
+            ...base,
+            id: `run-${index}`,
+            kind: 'failed',
+          })),
+        },
+      }).success,
+    ).toBe(false)
   })
 })
 

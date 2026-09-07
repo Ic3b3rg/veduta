@@ -615,6 +615,95 @@ describe('SpacesEngine taint tracking', () => {
 describe('SpacesEngine automatic Event context budget (issue 132)', () => {
   const renderedBudget = 8_000
 
+  it('keeps routine Automation provenance and notification bookkeeping out of default context', async () => {
+    const engine = new SpacesEngine({ rootDir: await tempRoot(), now: fixedNow })
+    const space = engine.createSpace({ name: 'Automation context' })
+    engine.appendEvent(space.id, {
+      type: 'automation.outcome',
+      text: 'routine-check-marker',
+      payload: { automationId: 1, kind: 'unchanged' },
+    })
+    engine.appendEvent(space.id, {
+      type: 'automation.notification.coalesce',
+      text: 'notification-bookkeeping-marker',
+    })
+    engine.appendEvent(space.id, {
+      type: 'heartbeat.sweep',
+      text: 'heartbeat-sweep-marker',
+      payload: { outcome: 'nothing' },
+    })
+    engine.appendEvent(space.id, {
+      type: 'reflection.skip',
+      text: 'reflection-skip-marker',
+      payload: { automationId: 3, scheduledFor: '2026-07-03T04:00:00.000Z' },
+    })
+    engine.appendEvent(space.id, {
+      type: 'automation.fire',
+      text: 'recurring-occurrence-marker',
+      payload: { automationId: 1, automationKind: 'job' },
+    })
+    engine.appendEvent(space.id, {
+      type: 'automation.fire',
+      text: 'legacy-recurring-occurrence-marker',
+      payload: { automationId: 1, scheduledFor: '2026-07-02T08:00:00.000Z' },
+    })
+    engine.appendEvent(space.id, {
+      type: 'automation.fire',
+      text: 'timer-occurrence-marker',
+      payload: { automationId: 2, automationKind: 'timer' },
+    })
+    engine.appendEvent(space.id, {
+      type: 'automation.recover',
+      text: 'recurring-recovery-marker',
+      payload: { automationId: 1, automationKind: 'job' },
+    })
+    engine.appendEvent(space.id, {
+      type: 'surface.patch_tree',
+      text: 'automation-projection-marker',
+      payload: { surfaceId: 'srf-automations', automationProjection: true },
+    })
+    engine.appendEvent(space.id, {
+      type: 'automation.outcome',
+      text: 'meaningful-change-marker',
+      payload: { automationId: 1, kind: 'changed' },
+    })
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      engine.appendEvent(space.id, {
+        type: 'automation.outcome.delivery-failed',
+        text: `delivery-retry-marker-${attempt}`,
+        payload: { automationId: 1, scheduledFor: '2026-07-03T08:00:00.000Z' },
+      })
+    }
+
+    const context = engine.assembleContext(space.id)
+    expect(context).not.toContain('routine-check-marker')
+    expect(context).not.toContain('notification-bookkeeping-marker')
+    expect(context).not.toContain('heartbeat-sweep-marker')
+    expect(context).not.toContain('reflection-skip-marker')
+    expect(context).not.toContain('recurring-occurrence-marker')
+    expect(context).not.toContain('legacy-recurring-occurrence-marker')
+    expect(context).not.toContain('recurring-recovery-marker')
+    expect(context).not.toContain('automation-projection-marker')
+    expect(context).not.toContain('delivery-retry-marker')
+    expect(context).toContain('timer-occurrence-marker')
+    expect(context).toContain('meaningful-change-marker')
+    expect(engine.readRecent(space.id, 40).map((event) => event.text)).toEqual(
+      expect.arrayContaining([
+        'routine-check-marker',
+        'notification-bookkeeping-marker',
+        'heartbeat-sweep-marker',
+        'reflection-skip-marker',
+        'recurring-occurrence-marker',
+        'legacy-recurring-occurrence-marker',
+        'recurring-recovery-marker',
+        'automation-projection-marker',
+        'timer-occurrence-marker',
+        'meaningful-change-marker',
+        'delivery-retry-marker-24',
+      ]),
+    )
+  })
+
   it('includes one complete Event at the exact cap and omits cap+1 without changing the log', async () => {
     const rootDir = await tempRoot()
     const engine = new SpacesEngine({ rootDir, now: fixedNow })

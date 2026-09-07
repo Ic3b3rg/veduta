@@ -138,7 +138,9 @@ describe('AgentRunner Automation parity across Model connection methods (issues 
 
     expect(SurfaceSchema.parse(outcome.automationsSurface)).toEqual(outcome.automationsSurface)
     expect(outcome.automationsSurface.spaceId).toBe(AUTOMATION_PARITY_SPACE_ID)
-    expect(Object.values(outcome.automationsSurface.state)).toEqual([true, true])
+    const automationState = Object.values(outcome.automationsSurface.state)
+    expect(automationState.filter((value) => typeof value === 'boolean')).toEqual([true, true])
+    expect(automationState.filter((value) => Array.isArray(value))).toEqual([[], []])
     expect(outcome.automationsSurface.tree.children?.[1]?.children).toHaveLength(2)
 
     const automationEvents = outcome.eventLog.filter(isAutomationEvent)

@@ -32,6 +32,9 @@ export interface GatewayHandlers {
   onPendingDecisionLifecycle(
     message: Extract<GatewayServerMessage, { type: 'pending-decision.lifecycle' }>,
   ): void
+  onAutomationOutcomeNotificationLifecycle(
+    message: Extract<GatewayServerMessage, { type: 'automation-outcome-notification.lifecycle' }>,
+  ): void
   onApprovalCard(message: Extract<GatewayServerMessage, { type: 'approval.card' }>): void
   onPresence(message: Extract<GatewayServerMessage, { type: 'presence.update' }>): void
   onSpaceAttention(message: Extract<GatewayServerMessage, { type: 'space.attention' }>): void
@@ -121,6 +124,9 @@ function dispatchGatewayMessage(handlers: GatewayHandlers, message: GatewayServe
       break
     case 'pending-decision.lifecycle':
       handlers.onPendingDecisionLifecycle(message)
+      break
+    case 'automation-outcome-notification.lifecycle':
+      handlers.onAutomationOutcomeNotificationLifecycle(message)
       break
     case 'approval.card':
       handlers.onApprovalCard(message)

@@ -1,3 +1,4 @@
+import { surfaceIdFromRoute, surfacePath } from '@veduta/protocol'
 import type { ReactNode } from 'react'
 import {
   Navigate,
@@ -25,11 +26,7 @@ export const clientPath = {
     pathFromPattern(CLIENT_ROUTE_PATTERN.space, {
       spaceSlug,
     }),
-  surface: (spaceSlug: string, surfaceId: string) =>
-    pathFromPattern(CLIENT_ROUTE_PATTERN.surface, {
-      spaceSlug,
-      surfaceId,
-    }),
+  surface: (spaceSlug: string, surfaceId: string) => surfacePath(spaceSlug, surfaceId),
 } as const
 
 function pathFromPattern(pattern: string, parameters: Record<string, string>): string {
@@ -56,7 +53,7 @@ export function useClientRouting(): {
     locationKey: location.key,
     focusChatOnRouteChange: !preservesKeyboardFocus(location.state),
     spaceSlug: surfaceMatch?.params.spaceSlug ?? spaceMatch?.params.spaceSlug,
-    surfaceId: surfaceMatch?.params.surfaceId,
+    surfaceId: surfaceIdFromRoute(surfaceMatch?.params.surfaceId, location.search),
   }
 }
 

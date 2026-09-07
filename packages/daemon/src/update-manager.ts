@@ -28,7 +28,7 @@ import type { Scheduler } from './scheduler.ts'
 import type { SpaceEvent } from './spaces-engine.ts'
 import type { FastMutationNotice, Store } from './store.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
-import { untrustedOrigin, type Origin } from './taint.ts'
+import { neutralizeDelimiters, untrustedOrigin, type Origin } from './taint.ts'
 import { UpdateDecisionStore, type UpdateDecisionRecord } from './update-decisions.ts'
 import { writeJsonAtomic } from './update/update-atomic.ts'
 import { checkMonotonic, verifyReleaseChain } from './update/minisign.ts'
@@ -310,13 +310,50 @@ export class UpdateManager {
    * `reconcileJobs()`.
    */
   register(): void {
-    this.scheduler.registerHandler('check-updates', () => this.runCheck('automation'))
+    this.scheduler.registerHandler('check-updates', async () => {
+      const result = await this.runCheck('automation')
+      const origin = untrustedOrigin('update-feed')
+      if (result === 'no-update-available' || result.startsWith('offer-already-decided:')) {
+        return {
+          outcome: { kind: 'unchanged', summary: 'No new software update is available' },
+          origin,
+        }
+      }
+      if (result.startsWith('update-available:')) {
+        const version = result.slice('update-available:'.length)
+        return {
+          outcome: {
+            kind: 'decision-required',
+            summary: `Verified update ${version} is ready for review`.slice(0, 240),
+            decisionId: formatPendingDecisionId('update-offer', version),
+          },
+          origin,
+        }
+      }
+      const reason = neutralizeDelimiters(result.slice('check-failed:'.length))
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 240)
+      return {
+        outcome: {
+          kind: 'failed',
+          summary: 'Software update check failed',
+          coalesceKey: 'update-check-failed',
+          error: {
+            code: 'update_check_failed',
+            message: reason || 'The update feed could not be verified.',
+          },
+        },
+        origin,
+      }
+    })
     reconcileManagedJobs({
       scheduler: this.scheduler,
       spaceId: SYSTEM_SPACE_ID,
       handler: 'check-updates',
       enabled: true,
       desired: new Map([[timeToCron(DAILY_CHECK_TIME), 'Check for updates']]),
+      targetSurfaceId: UPDATE_SURFACE_ID,
     })
     this.ensureSurface()
     this.disposeFastMutation = this.store.onFastMutation((notice) =>
@@ -742,10 +779,14 @@ export class UpdateManager {
             value: checkedAt,
           },
         ],
-        { updatedBy: 'job', origin: 'trusted:system' },
+        {
+          updatedBy: 'job',
+          origin: 'trusted:system',
+          eventPayload: { surfaceId: UPDATE_SURFACE_ID, automationProjection: true },
+        },
       )
     }
-    this.refreshSurface()
+    this.refreshSurface(undefined, true)
   }
 
   /**
@@ -761,7 +802,7 @@ export class UpdateManager {
    * `docs/adr/0013-signed-self-update.md`: ALL feed-derived text stays
    * untrusted, not only release notes).
    */
-  private refreshSurface(forcedOrigin?: Origin): void {
+  private refreshSurface(forcedOrigin?: Origin, automationProjection = false): void {
     const origin = forcedOrigin ?? updateSurfaceContentOrigin(this.currentView.available)
     const existing = this.store.getSurface(UPDATE_SURFACE_ID)
 
@@ -786,7 +827,14 @@ export class UpdateManager {
         { target: 'tree', op: 'replace', path: '/children/3', value: outcomeSlotNode(view) },
         { target: 'tree', op: 'replace', path: '/children/4', value: buttonsRowNode(view) },
       ],
-      { expectedTreeVersion: version.treeVersion, updatedBy: 'job', origin },
+      {
+        expectedTreeVersion: version.treeVersion,
+        updatedBy: 'job',
+        origin,
+        ...(automationProjection
+          ? { eventPayload: { surfaceId: UPDATE_SURFACE_ID, automationProjection: true } }
+          : {}),
+      },
     )
   }
 

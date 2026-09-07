@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { SurfaceSchema } from '@veduta/protocol'
+import { AUTOMATION_OUTCOMES_STATE_KEY, SurfaceSchema } from '@veduta/protocol'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -86,6 +86,70 @@ describe('SurfaceCard material hierarchy', () => {
     const content = card?.querySelector(':scope > .surface-content')
     expect(content).not.toBeNull()
     expect(content?.querySelector(':scope > [data-veduta-theme="light"]')).not.toBeNull()
+  })
+})
+
+describe('SurfaceCard automation outcome status', () => {
+  it('keeps the latest run status visible on the linked Surface', () => {
+    const surface = SurfaceSchema.parse({
+      ...formSurface(),
+      state: {
+        displayName: 'Ada',
+        bio: 'First programmer',
+        [AUTOMATION_OUTCOMES_STATE_KEY]: {
+          '7': {
+            automationId: 7,
+            latest: { kind: 'failed', summary: 'Calendar provider did not respond.' },
+            lastCheckedAt: '2026-09-02T16:30:00.000Z',
+            lastSuccessfulAt: '2026-09-02T08:30:00.000Z',
+            currentError: { code: 'provider_timeout', message: 'Timed out after 30 seconds.' },
+          },
+        },
+      },
+    })
+
+    render(<SurfaceCard {...surfaceCardProps(surface)} />)
+
+    const status = screen.getByRole('region', { name: 'Automation 7 status' })
+    expect(status.textContent).toContain('Failed')
+    expect(status.textContent).toContain('Calendar provider did not respond.')
+    expect(status.textContent).toContain('Timed out after 30 seconds.')
+    expect(status.querySelector('time[datetime="2026-09-02T16:30:00.000Z"]')).not.toBeNull()
+    expect(status.querySelector('time[datetime="2026-09-02T08:30:00.000Z"]')).not.toBeNull()
+    expect(screen.getByRole('textbox', { name: 'Display name' })).toBeDefined()
+  })
+
+  it('keeps independent statuses visible when Automations share a Surface', () => {
+    const surface = SurfaceSchema.parse({
+      ...formSurface(),
+      state: {
+        displayName: 'Ada',
+        bio: 'First programmer',
+        [AUTOMATION_OUTCOMES_STATE_KEY]: {
+          '7': {
+            automationId: 7,
+            latest: { kind: 'recovered', summary: 'Calendar is reachable again.' },
+            lastCheckedAt: '2026-09-02T16:30:00.000Z',
+            lastSuccessfulAt: '2026-09-02T16:30:00.000Z',
+          },
+          '8': {
+            automationId: 8,
+            latest: { kind: 'failed', summary: 'Tasks provider did not respond.' },
+            lastCheckedAt: '2026-09-02T16:31:00.000Z',
+            currentError: { code: 'provider_timeout', message: 'Tasks timed out.' },
+          },
+        },
+      },
+    })
+
+    render(<SurfaceCard {...surfaceCardProps(surface)} />)
+
+    expect(screen.getByRole('region', { name: 'Automation 7 status' }).textContent).toContain(
+      'Calendar is reachable again.',
+    )
+    expect(screen.getByRole('region', { name: 'Automation 8 status' }).textContent).toContain(
+      'Tasks timed out.',
+    )
   })
 })
 

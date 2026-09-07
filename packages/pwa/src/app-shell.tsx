@@ -1,4 +1,5 @@
 import type {
+  AutomationOutcomeNotification,
   ChatMessage,
   PendingDecision,
   PendingDecisionResolution,
@@ -22,6 +23,7 @@ import { presentPendingDecisions } from './pending-decision-presentation.ts'
 import { latestPendingDecisionFeedback } from './pending-decision-state.ts'
 import type { BrowserInstallPromptEvent, QueuedFastAction } from './pwa-storage.ts'
 import { SpaceSection } from './space-section.tsx'
+import { SpaceAutomationOutcomeNotifications } from './space-automation-outcome-notifications.tsx'
 import type { SurfaceUpdateFeedback } from './surface-motion.ts'
 
 export type AppRouteSelection =
@@ -49,6 +51,8 @@ interface AppShellProps {
   pendingDecisions: PendingDecision[]
   dismissedDecisionIds: ReadonlySet<string>
   resolvingDecisionIds: ReadonlySet<string>
+  automationOutcomeNotifications: AutomationOutcomeNotification[]
+  pendingAutomationOutcomeNotificationIds: ReadonlySet<string>
   chatEntries: ChatMessage[]
   streamingEntries: { turnId: string; text: string }[]
   focusChatToken: string
@@ -76,6 +80,12 @@ interface AppShellProps {
     resolution: PendingDecisionResolution,
   ) => Promise<void> | void
   onDismissPendingDecision: (decisionId: string) => void
+  onOpenAutomationOutcomeNotification: (
+    notification: AutomationOutcomeNotification,
+  ) => Promise<void> | void
+  onDismissAutomationOutcomeNotification: (
+    notification: AutomationOutcomeNotification,
+  ) => Promise<void> | void
   onSend: (message: string) => boolean
 }
 
@@ -101,6 +111,8 @@ export function AppShell({
   pendingDecisions,
   dismissedDecisionIds,
   resolvingDecisionIds,
+  automationOutcomeNotifications,
+  pendingAutomationOutcomeNotificationIds,
   chatEntries,
   streamingEntries,
   focusChatToken,
@@ -117,6 +129,8 @@ export function AppShell({
   onError,
   onResolvePendingDecision,
   onDismissPendingDecision,
+  onOpenAutomationOutcomeNotification,
+  onDismissAutomationOutcomeNotification,
   onSend,
 }: AppShellProps) {
   const focusedSpace = route.kind === 'space' ? route.space : undefined
@@ -229,12 +243,20 @@ export function AppShell({
           )}
 
           {focusedSpace && !routeRecovery && (
-            <SpacePendingDecisionNotifications
-              notifications={focusedPendingNotifications}
-              resolvingDecisionIds={resolvingDecisionIds}
-              onResolve={onResolvePendingDecision}
-              onDismiss={onDismissPendingDecision}
-            />
+            <>
+              <SpaceAutomationOutcomeNotifications
+                notifications={automationOutcomeNotifications}
+                pendingIds={pendingAutomationOutcomeNotificationIds}
+                onOpen={onOpenAutomationOutcomeNotification}
+                onDismiss={onDismissAutomationOutcomeNotification}
+              />
+              <SpacePendingDecisionNotifications
+                notifications={focusedPendingNotifications}
+                resolvingDecisionIds={resolvingDecisionIds}
+                onResolve={onResolvePendingDecision}
+                onDismiss={onDismissPendingDecision}
+              />
+            </>
           )}
 
           {visibleSpaces.map((space) => (

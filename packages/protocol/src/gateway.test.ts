@@ -6,6 +6,7 @@ import {
   GatewayServerMessageSchema,
   MoveSurfaceRequestSchema,
   MoveSurfaceResultSchema,
+  AutomationOutcomeNotificationLifecycleMessageSchema,
   PendingDecisionLifecycleMessageSchema,
   PinSurfaceResultSchema,
   SurfaceArchivedEventSchema,
@@ -17,6 +18,39 @@ import {
 } from './index.ts'
 
 describe('Gateway protocol', () => {
+  it('accepts an authoritative In-app notification lifecycle frame', () => {
+    const frame = {
+      type: 'automation-outcome-notification.lifecycle' as const,
+      revision: 3,
+      notification: {
+        id: 'aon-1',
+        revision: 3,
+        spaceId: 'spc-health',
+        spaceSlug: 'health',
+        automationId: 12,
+        surfaceId: 'srf-plan',
+        kind: 'changed' as const,
+        title: 'Plan updated',
+        summary: 'Two new entries',
+        coalesceKey: 'entries',
+        occurrenceCount: 1,
+        state: 'unread' as const,
+        createdAt: '2026-09-02T08:00:00.000Z',
+        updatedAt: '2026-09-02T08:00:00.000Z',
+        href: '/app/space/health/surface/srf-plan',
+      },
+    }
+
+    expect(AutomationOutcomeNotificationLifecycleMessageSchema.parse(frame)).toEqual(frame)
+    expect(GatewayServerMessageSchema.parse(frame)).toEqual(frame)
+    expect(
+      GatewayServerMessageSchema.safeParse({
+        ...frame,
+        revision: 4,
+      }).success,
+    ).toBe(false)
+  })
+
   it('pairs a fast Surface action result with the authoritative Surface cursor', () => {
     const result = {
       surface: {

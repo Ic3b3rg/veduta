@@ -2,6 +2,7 @@ import { SYSTEM_SPACE_ID } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import {
   automationIdFromStateKey,
+  automationHistoryStateKey,
   automationsListNode,
   automationsSurface,
   automationStateKey,
@@ -32,7 +33,12 @@ describe('automationsSurface', () => {
     )
 
     expect(surface.id).toBe('srf-health-automations')
-    expect(surface.state).toEqual({ 'job-3': true, 'job-4': false })
+    expect(surface.state).toEqual({
+      'job-3': true,
+      'history-3': [],
+      'job-4': false,
+      'history-4': [],
+    })
     const list = surface.tree.children?.[1]
     expect(list?.id).toBe('automations-list')
     expect(list?.children?.map((node) => node.type)).toEqual(['Automation', 'Automation'])
@@ -40,6 +46,7 @@ describe('automationsSurface', () => {
     expect(list?.children?.[0]?.props).toEqual({
       label: 'Log my weight',
       schedule: 'once at 2026-07-08 21:00 UTC',
+      historyBinding: 'history-3',
     })
   })
 
@@ -60,6 +67,7 @@ describe('automationsSurface', () => {
 
   it('round-trips ids through state keys', () => {
     expect(automationStateKey(12)).toBe('job-12')
+    expect(automationHistoryStateKey(12)).toBe('history-12')
     expect(automationIdFromStateKey('job-12')).toBe(12)
     expect(automationIdFromStateKey('milk')).toBeUndefined()
   })
@@ -67,5 +75,29 @@ describe('automationsSurface', () => {
   it('keeps the list node id stable for single-op tree refreshes', () => {
     expect(automationsListNode([]).id).toBe('automations-list')
     expect(automationsListNode([reminder]).id).toBe('automations-list')
+  })
+
+  it('projects bounded meaningful run history through Surface state', () => {
+    const history = [
+      {
+        id: '3:2026-07-08T21:00:00.000Z',
+        automationId: 3,
+        scheduledFor: '2026-07-08T21:00:00.000Z',
+        kind: 'failed' as const,
+        summary: 'Refresh failed',
+        at: '2026-07-08T21:00:01.000Z',
+      },
+    ]
+    const node = automationsListNode([
+      {
+        ...reminder,
+        history,
+      },
+    ])
+
+    expect(node.children?.[0]?.props?.['historyBinding']).toBe('history-3')
+    expect(
+      automationsSurface(space, [{ ...reminder, history }], freshness).state['history-3'],
+    ).toEqual(history)
   })
 })

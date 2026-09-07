@@ -4,7 +4,12 @@ import { performance } from 'node:perf_hooks'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fromPartial } from '@total-typescript/shoehorn'
-import { SYSTEM_SPACE_ID, SurfaceSchema, type Surface } from '@veduta/protocol'
+import {
+  AUTOMATION_OUTCOMES_STATE_KEY,
+  SYSTEM_SPACE_ID,
+  SurfaceSchema,
+  type Surface,
+} from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import type { ToolContext } from './agent-runner.ts'
 import { Store } from './store.ts'
@@ -20,6 +25,91 @@ import {
 import { ensureSystemSpace } from './system-space.ts'
 
 describe('Surface engine store', () => {
+  it('reserves structured Automation outcome state for Gateway commits', async () => {
+    const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
+    const space = store.spacesEngine.createSpace({ name: 'Outcome ownership' })
+
+    expect(() =>
+      store.createSurface(
+        SurfaceSchema.parse({
+          ...emptySurface('srf-forged-outcome', space.id),
+          state: { [AUTOMATION_OUTCOMES_STATE_KEY]: {} },
+        }),
+        'agent',
+      ),
+    ).toThrow('owned by the Gateway')
+
+    const surfaceId = 'srf-outcome-target'
+    store.createSurface(emptySurface(surfaceId, space.id), 'agent')
+    expect(() =>
+      store.patchState(
+        surfaceId,
+        [
+          {
+            target: 'state',
+            op: 'add',
+            path: `/${AUTOMATION_OUTCOMES_STATE_KEY}`,
+            value: {},
+          },
+        ],
+        { updatedBy: 'agent' },
+      ),
+    ).toThrow('owned by the Gateway')
+    expect(() => store.applyFastAction(surfaceId, AUTOMATION_OUTCOMES_STATE_KEY, {})).toThrow(
+      'owned by the Gateway',
+    )
+
+    expect(() =>
+      store.commitAutomationOutcome(
+        surfaceId,
+        [
+          {
+            target: 'state',
+            op: 'add',
+            path: `/${AUTOMATION_OUTCOMES_STATE_KEY}`,
+            value: {
+              '1': {
+                automationId: 1,
+                lastCheckedAt: '2026-07-03T10:00:00.000Z',
+                lastSuccessfulAt: '2026-07-03T10:00:00.000Z',
+              },
+            },
+          },
+        ],
+        {
+          automationId: 1,
+          scheduledFor: '2026-07-03T10:00:00.000Z',
+          kind: 'unchanged',
+          summary: 'No changes',
+          idempotencyKey: 'outcome-owned-state-test',
+        },
+      ),
+    ).not.toThrow()
+
+    const eventCount = store.eventLog(space.id).length
+    expect(() =>
+      store.commitAutomationOutcome(
+        surfaceId,
+        [
+          {
+            target: 'state',
+            op: 'replace',
+            path: `/${AUTOMATION_OUTCOMES_STATE_KEY}`,
+            value: { bad: 'shape' },
+          },
+        ],
+        {
+          automationId: 1,
+          scheduledFor: '2026-07-03T11:00:00.000Z',
+          kind: 'changed',
+          summary: 'Invalid internal status',
+          idempotencyKey: 'outcome-invalid-state-test',
+        },
+      ),
+    ).toThrow('invalid Automation outcome state')
+    expect(store.eventLog(space.id)).toHaveLength(eventCount)
+  })
+
   it('persists Surface state and version metadata in SQLite across Store restarts', async () => {
     const rootDir = await tempRoot()
     const first = new Store({ rootDir, now: fixedNow })

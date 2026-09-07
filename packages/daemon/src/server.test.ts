@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fromPartial } from '@total-typescript/shoehorn'
 import {
+  AutomationOutcomeNotificationActionResultSchema,
+  AutomationOutcomeNotificationSnapshotSchema,
   FastSurfaceActionResultSchema,
   GatewayServerMessageSchema,
   MoveSurfaceResultSchema,
@@ -384,6 +386,155 @@ describe('Pending decision HTTP integration', () => {
   })
 })
 
+describe('Automation outcome HTTP and realtime integration', () => {
+  it('keeps a Heartbeat escalation in Space-owned notification channels without global chat', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-heartbeat-outcome-'))
+    let current = new Date('2026-09-02T08:00:00.000Z')
+    const surfaceId = 'srf-heartbeat-daily-plan'
+    const server = buildServer({
+      dataDir,
+      now: () => new Date(current),
+      heartbeatComplete: async (model) =>
+        model.tier === 'triage'
+          ? {
+              text: JSON.stringify({
+                status: 'concerns',
+                concerns: [{ spaceId: 'spc-health', surfaceId, kind: 'stale-surface' }],
+              }),
+            }
+          : {
+              text: JSON.stringify({
+                decisions: [
+                  {
+                    spaceId: 'spc-health',
+                    surfaceId,
+                    action: 'escalate',
+                    justification: 'The daily plan is stale and has no self-heal.',
+                  },
+                ],
+              }),
+            },
+    })
+    server.store.createSurface(
+      SurfaceSchema.parse({
+        id: surfaceId,
+        spaceId: 'spc-health',
+        title: 'Daily plan',
+        tree: { id: 'root', type: 'Box', children: [] },
+        state: {},
+        freshness: { updatedAt: current.toISOString(), updatedBy: 'agent' },
+      }),
+      'agent',
+    )
+    current = new Date('2026-09-03T10:00:00.000Z')
+    const socket = new SchedulerFakeSocket()
+    server.gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: server.store.latestSurfaceCursor() })
+    socket.sent.length = 0
+
+    await expect(server.heartbeat.runSweep('heartbeat-chat-isolation')).resolves.toBe('acted')
+
+    expect(socket.sent.filter((frame) => frame.type === 'chat.message')).toEqual([])
+    expect(socket.sent).toContainEqual(
+      expect.objectContaining({ type: 'space.attention', spaceId: 'spc-health' }),
+    )
+    await server.app.close()
+  })
+
+  it('persists a Space-scoped lifecycle across open and restart without chat or attention', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-automation-outcomes-'))
+    const now = () => new Date('2026-09-02T08:00:00.000Z')
+    const first = buildServer({ dataDir, now })
+    const socket = new SchedulerFakeSocket()
+    first.gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: first.store.latestSurfaceCursor() })
+    const noisyFramesBefore = socket.sent.filter(
+      (frame) => frame.type === 'chat.message' || frame.type === 'space.attention',
+    ).length
+
+    await first.scheduler.outcomeService.deliver(
+      {
+        automationId: 91,
+        spaceId: 'spc-health',
+        targetSurfaceId: 'srf-groceries',
+        description: 'Grocery monitor',
+        scheduledFor: now().toISOString(),
+        checkedAt: now().toISOString(),
+        origin: 'trusted:system',
+      },
+      {
+        kind: 'changed',
+        summary: 'Two new grocery items',
+        coalesceKey: 'grocery-items',
+        operations: [],
+      },
+    )
+
+    const listed = AutomationOutcomeNotificationSnapshotSchema.parse(
+      (
+        await first.app.inject({
+          method: 'GET',
+          url: '/api/spaces/spc-health/automation-outcome-notifications',
+        })
+      ).json(),
+    )
+    expect(listed.notifications).toMatchObject([
+      {
+        automationId: 91,
+        surfaceId: 'srf-groceries',
+        href: '/app/space/health/surface/srf-groceries',
+      },
+    ])
+    expect(socket.sent).toContainEqual(
+      expect.objectContaining({
+        type: 'automation-outcome-notification.lifecycle',
+        notification: expect.objectContaining({ state: 'unread' }),
+      }),
+    )
+    expect(
+      socket.sent.filter(
+        (frame) => frame.type === 'chat.message' || frame.type === 'space.attention',
+      ),
+    ).toHaveLength(noisyFramesBefore)
+
+    const notificationId = listed.notifications[0]!.id
+    const opened = AutomationOutcomeNotificationActionResultSchema.parse(
+      (
+        await first.app.inject({
+          method: 'POST',
+          url: `/api/spaces/spc-health/automation-outcome-notifications/${notificationId}/open`,
+        })
+      ).json(),
+    )
+    expect(opened.notification.state).toBe('opened')
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'automation-outcome-notification.lifecycle',
+      notification: { id: notificationId, state: 'opened' },
+    })
+    expect(first.store.eventLog('spc-health')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'automation.outcome' }),
+        expect.objectContaining({ type: 'automation.notification.create' }),
+        expect.objectContaining({ type: 'automation.notification.opened' }),
+      ]),
+    )
+    await first.app.close()
+
+    const second = buildServer({ dataDir, now })
+    const recovered = AutomationOutcomeNotificationSnapshotSchema.parse(
+      (
+        await second.app.inject({
+          method: 'GET',
+          url: '/api/spaces/spc-health/automation-outcome-notifications',
+        })
+      ).json(),
+    )
+    expect(recovered.revision).toBe(opened.revision)
+    expect(recovered.notifications).toEqual([])
+    await second.app.close()
+  })
+})
+
 describe('production auth boundary', () => {
   it('keeps PWA assets public but requires passkey sessions for application API routes', async () => {
     const pwaDistDir = await mkdtemp(join(tmpdir(), 'veduta-pwa-'))
@@ -425,6 +576,22 @@ describe('production auth boundary', () => {
         })
       ).statusCode,
     ).toBe(401)
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/spaces/spc-health/automation-outcome-notifications',
+        })
+      ).statusCode,
+    ).toBe(401)
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/spaces/spc-health/automation-outcome-notifications/aon-missing/dismiss',
+        })
+      ).statusCode,
+    ).toBe(401)
 
     const allowed = await app.inject({
       method: 'GET',
@@ -446,6 +613,16 @@ describe('production auth boundary', () => {
     expect(PendingDecisionListSchema.parse(pendingDecisions.json())).toEqual({
       revision: 0,
       decisions: [],
+    })
+    const automationOutcomes = await app.inject({
+      method: 'GET',
+      url: '/api/spaces/spc-health/automation-outcome-notifications',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(automationOutcomes.statusCode).toBe(200)
+    expect(AutomationOutcomeNotificationSnapshotSchema.parse(automationOutcomes.json())).toEqual({
+      revision: 0,
+      notifications: [],
     })
   })
 
@@ -2131,51 +2308,6 @@ describe('Web Push notifications (issue #18)', () => {
     })
     expect(ownDelete.statusCode).toBe(204)
     expect(pushStore.listSubscriptions()).toHaveLength(0)
-
-    await app.close()
-  })
-
-  it('a managed (handler-driven) automation escalation never reaches a push send, only a badge', async () => {
-    let clock = new Date('2026-07-08T08:00:00.000Z')
-    const transport = new NotificationFakeTransport()
-    const { app, scheduler, store, pushStore } = buildServer({
-      now: () => new Date(clock.getTime()),
-      pushTransport: transport,
-    })
-
-    const subscribed = await app.inject({
-      method: 'POST',
-      url: '/api/push/subscriptions',
-      payload: validSubscription,
-    })
-    expect(subscribed.statusCode).toBe(204)
-
-    // A managed job's overdue-escalation branch is the one reachable seam
-    // for a `context.managed === true` escalation through the public
-    // buildServer API (a registered handler is never invoked for an
-    // overdue occurrence — the overdue check runs first in
-    // `executeOccurrence`, see scheduler.ts). Scheduled to fire almost
-    // immediately, then the clock jumps forward more than 24h so the next
-    // `runDue()` treats it as overdue rather than running it.
-    scheduler.createManagedJob({
-      spaceId: 'spc-health',
-      cron: '* * * * *',
-      description: 'Managed sweep',
-      handler: 'does-not-matter-for-the-overdue-path',
-    })
-
-    clock = new Date('2026-07-10T09:00:00.000Z') // > 24h past the first minute occurrence
-    await scheduler.runDue()
-    await flushNotificationAsync()
-
-    // Managed escalations must never fabricate an "Agent-armed" push
-    // justification: they surface as a badge only.
-    expect(transport.calls).toHaveLength(0)
-    expect(pushStore.getAttention('spc-health')).toEqual({ count: 1, revision: 1 })
-    const notificationEvent = store
-      .eventLog('spc-health')
-      .find((event) => event.type === 'notification')
-    expect(notificationEvent?.payload).toMatchObject({ level: 'badge', outcome: 'badge' })
 
     await app.close()
   })

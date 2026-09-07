@@ -23,7 +23,7 @@ import { openGcm, sealGcm } from './secret-crypto.ts'
  * encrypted-at-rest snapshot of everything under a daemon's `rootDir`.
  *
  * `createBackup` stages every `*.sqlite` store directly under `rootDir`
- * (trust, surfaces, scheduler, ingestion) via `VACUUM INTO`, which yields a
+ * (trust, surfaces, scheduler, Automation outcomes, ingestion) via `VACUUM INTO`, which yields a
  * consistent single-file snapshot even while a live daemon holds an open
  * connection to the same file (this CLI is meant to run alongside a running
  * daemon, not only offline). Every other entry under `rootDir` — the
@@ -37,8 +37,11 @@ import { openGcm, sealGcm } from './secret-crypto.ts'
  * snapshot); consistency *across* the whole rootDir (e.g. a Surface write
  * and its Space Event log append landing in the same backup) is
  * crash-equivalent — the same class of guarantee the stores already
- * tolerate across a power loss (WAL + boot recovery). A quiesce mode that
- * pauses the daemon for a fully atomic snapshot is out of scope for v1.
+ * tolerate across a power loss (WAL + boot recovery). SQLite stores are
+ * staged before append-only Space Events; Automation notification intents
+ * embed their validated mutation in those Events so boot reconciliation can
+ * repair either side of an interrupted snapshot (issue #91). A quiesce mode
+ * that pauses the daemon for a fully atomic snapshot is out of scope for v1.
  *
  * FRAMING: `<outDir>/veduta-backup-<ISO>.tar.enc` is a UTF-8 JSON header
  * line `{v, salt, iv, tag}` (base64 fields) followed by `\n`, followed by
@@ -163,7 +166,12 @@ async function vacuumIntoWithRetry(sourcePath: string, destPath: string): Promis
  */
 async function stageRootDir(rootDir: string, outDir: string, stagingDir: string): Promise<void> {
   const resolvedOutDir = resolve(outDir)
-  for (const entry of readdirSync(rootDir, { withFileTypes: true })) {
+  const entries = readdirSync(rootDir, { withFileTypes: true }).sort((left, right) => {
+    const leftRank = left.isFile() && left.name.endsWith('.sqlite') ? 0 : 1
+    const rightRank = right.isFile() && right.name.endsWith('.sqlite') ? 0 : 1
+    return leftRank - rightRank || left.name.localeCompare(right.name)
+  })
+  for (const entry of entries) {
     const name = entry.name
     if (name.endsWith('-wal') || name.endsWith('-shm') || name.endsWith('.lock')) continue
     const srcPath = join(rootDir, name)

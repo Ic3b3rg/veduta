@@ -20,6 +20,12 @@ export function createAppApiMock(actual: typeof ApiModule) {
     fetchSpaces: vi.fn(),
     fetchOnboardingStatus: vi.fn(),
     fetchPendingDecisions: vi.fn(async () => ({ revision: 0, decisions: [] })),
+    fetchAutomationOutcomeNotifications: vi.fn(async () => ({
+      revision: 0,
+      notifications: [],
+    })),
+    openAutomationOutcomeNotification: vi.fn(),
+    dismissAutomationOutcomeNotification: vi.fn(),
     connectGateway: vi.fn(() => ({ close: vi.fn(), sendChat: vi.fn(() => false) })),
     invokeFastAction: vi.fn(),
     moveSurface: vi.fn(),

@@ -1,4 +1,11 @@
 import { expect, test, type BrowserContext, type Page, type Route } from '@playwright/test'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import {
+  AutomationOutcomeService,
+  type AutomationOutcomeOccurrence,
+} from '../../daemon/src/automation-outcome-service.ts'
+import { Store } from '../../daemon/src/store.ts'
 import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stack.ts'
 
 /**
@@ -550,8 +557,16 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       }
     })
 
+    await test.step('create a recurring Automation for the outcome delivery journey (issue 091)', async () => {
+      const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
+      await chatInput.fill('Create a daily automation to review my plan at 9am')
+      await page.getByRole('button', { name: 'Send' }).click()
+      await expect(surfaceCard(page, 'Automations').getByText('Review my plan')).toBeVisible()
+    })
+
     await test.step('restart persistence (AC3): stop, start a NEW runner on the same base dir/port', async () => {
       await stack!.stop()
+      await deliverAutomationOutcomeFixture(stack!.baseDir)
       const restarted = await startLocalVpsStack({
         port: stack!.port,
         baseDir: stack!.baseDir,
@@ -589,6 +604,43 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       expect(events.some(isGroceriesToggleEvent)).toBe(true)
     })
 
+    await test.step('Automation outcomes survive restart, coalesce, navigate, and dismiss accessibly (issue 091)', async () => {
+      const coalesced = page.locator('article.automation-outcome-notification', {
+        hasText: 'A second plan review update is ready',
+      })
+      await expect(coalesced.getByText('2 occurrences')).toBeVisible()
+      await expect(
+        page.locator('article.automation-outcome-notification', {
+          hasText: 'A separate plan review update is ready',
+        }),
+      ).toBeVisible()
+      await expect(
+        page.locator('.chat-entry.assistant', { hasText: 'plan review update is ready' }),
+      ).toHaveCount(0)
+
+      await coalesced
+        .getByRole('button', { name: 'Open Surface for Review my plan updated' })
+        .press('Enter')
+      await expect(page).toHaveURL(
+        `${stack!.origin}/app/space/health/surface/srf-health-automations`,
+      )
+      await expect(coalesced).toHaveCount(0)
+      await expect(
+        surfaceCard(page, 'Automations').getByRole('region', {
+          name: /^Automation \d+ status$/,
+        }),
+      ).toContainText('A separate plan review update is ready')
+
+      const separate = page.locator('article.automation-outcome-notification', {
+        hasText: 'A separate plan review update is ready',
+      })
+      const focusedUrl = page.url()
+      await separate.getByRole('button', { name: 'Dismiss Review my plan updated' }).press('Enter')
+      await expect(separate).toHaveCount(0)
+      expect(page.url()).toBe(focusedUrl)
+      await expect(page.getByRole('region', { name: 'Automation updates' })).toHaveCount(0)
+    })
+
     await test.step('login leg: clear the token, log back in with the SAME virtual authenticator', async () => {
       await page.evaluate(() => localStorage.removeItem('veduta.authToken'))
       await page.reload()
@@ -613,6 +665,61 @@ function surfaceCard(page: Page, title: string) {
   return page.locator('article.surface-card', {
     has: page.getByRole('button', { name: `Focus ${title}` }),
   })
+}
+
+async function deliverAutomationOutcomeFixture(baseDir: string): Promise<void> {
+  const dataDir = join(baseDir, 'data')
+  const schedulerDb = new DatabaseSync(join(dataDir, 'scheduler.sqlite'))
+  const row = schedulerDb
+    .prepare(
+      `select id from automations
+       where space_id = ? and kind = 'job' and description = ?
+       order by id desc limit 1`,
+    )
+    .get('spc-health', 'Review my plan')
+  schedulerDb.close()
+  const automationId = row?.['id']
+  if (typeof automationId !== 'number') throw new Error('missing outcome fixture Automation')
+
+  const store = new Store({ rootDir: dataDir })
+  const baseTime = Date.now()
+  let now = new Date(baseTime)
+  const service = new AutomationOutcomeService({ rootDir: dataDir, store, now: () => now })
+  const occurrence = (scheduledFor: string): AutomationOutcomeOccurrence => ({
+    automationId,
+    spaceId: 'spc-health',
+    targetSurfaceId: 'srf-health-automations',
+    description: 'Review my plan',
+    scheduledFor,
+    checkedAt: scheduledFor,
+    origin: 'trusted:user',
+  })
+
+  try {
+    await service.deliver(occurrence(new Date(baseTime - 3 * 60_000).toISOString()), {
+      kind: 'changed',
+      summary: 'A plan review update is ready',
+      coalesceKey: 'plan-review-update',
+      operations: [],
+    })
+    now = new Date(baseTime + 1_000)
+    await service.deliver(occurrence(new Date(baseTime - 2 * 60_000).toISOString()), {
+      kind: 'changed',
+      summary: 'A second plan review update is ready',
+      coalesceKey: 'plan-review-update',
+      operations: [],
+    })
+    now = new Date(baseTime + 2_000)
+    await service.deliver(occurrence(new Date(baseTime - 60_000).toISOString()), {
+      kind: 'changed',
+      summary: 'A separate plan review update is ready',
+      coalesceKey: 'separate-plan-review-update',
+      operations: [],
+    })
+  } finally {
+    service.close()
+    store.close()
+  }
 }
 
 /**

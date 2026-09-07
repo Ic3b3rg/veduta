@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { AuthSessionTokenSchema } from './auth.ts'
+import { AutomationOutcomeNotificationSchema } from './automation-outcome.ts'
 import { ChatClientMessageSchema, ChatMessageSchema } from './chat.ts'
 import { ActionInvocationSchema, PatchSchema } from './patch.ts'
 import {
@@ -245,6 +246,23 @@ const PendingDecisionLifecycleMessageObjectSchema = z.object({
 export const PendingDecisionLifecycleMessageSchema =
   PendingDecisionLifecycleMessageObjectSchema.superRefine(refinePendingDecisionLifecycleMessage)
 
+const AutomationOutcomeNotificationLifecycleMessageObjectSchema = z.object({
+  type: z.literal('automation-outcome-notification.lifecycle'),
+  revision: GatewayCursorSchema,
+  notification: AutomationOutcomeNotificationSchema,
+})
+
+export const AutomationOutcomeNotificationLifecycleMessageSchema =
+  AutomationOutcomeNotificationLifecycleMessageObjectSchema.superRefine((message, context) => {
+    if (message.revision !== message.notification.revision) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['notification', 'revision'],
+        message: 'notification revision must match the lifecycle revision',
+      })
+    }
+  })
+
 export const GatewayClientMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('hello'),
@@ -306,6 +324,7 @@ const GatewayServerMessageObjectSchema = z.discriminatedUnion('type', [
   ChatTurnEndMessageSchema,
   ChatTurnErrorMessageSchema,
   PendingDecisionLifecycleMessageObjectSchema,
+  AutomationOutcomeNotificationLifecycleMessageObjectSchema,
   z.object({
     type: z.literal('approval.card'),
     card: ApprovalCardSchema,
@@ -333,6 +352,16 @@ export const GatewayServerMessageSchema = GatewayServerMessageObjectSchema.super
     }
     if (message.type === 'chat.turn-replace') {
       refineChatTurnReplaceMessage(message, context)
+    }
+    if (
+      message.type === 'automation-outcome-notification.lifecycle' &&
+      message.revision !== message.notification.revision
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['notification', 'revision'],
+        message: 'notification revision must match the lifecycle revision',
+      })
     }
   },
 )
@@ -406,6 +435,9 @@ export type ChatTurnReplaceMessage = z.infer<typeof ChatTurnReplaceMessageSchema
 export type ChatTurnEndMessage = z.infer<typeof ChatTurnEndMessageSchema>
 export type ChatTurnErrorMessage = z.infer<typeof ChatTurnErrorMessageSchema>
 export type PendingDecisionLifecycleMessage = z.infer<typeof PendingDecisionLifecycleMessageSchema>
+export type AutomationOutcomeNotificationLifecycleMessage = z.infer<
+  typeof AutomationOutcomeNotificationLifecycleMessageSchema
+>
 export type PresenceStatus = z.infer<typeof PresenceStatusSchema>
 export type PresenceEntry = z.infer<typeof PresenceEntrySchema>
 export type ApprovalCard = z.infer<typeof ApprovalCardSchema>

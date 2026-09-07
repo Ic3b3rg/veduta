@@ -1,12 +1,13 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SurfaceSchema, type Surface } from '@veduta/protocol'
+import { AUTOMATION_OUTCOMES_STATE_KEY, SurfaceSchema, type Surface } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ModelRef } from './agent-runner.ts'
 import { HeartbeatConfigSchema, type HeartbeatConfig } from './heartbeat-config.ts'
 import { Heartbeat, type HeartbeatOptions } from './heartbeat.ts'
+import { HEARTBEAT_SURFACE_ID } from './heartbeat-surface.ts'
 import { ModelRouter, type RoutingConfig } from './model-routing.ts'
 import { Scheduler, type Automation } from './scheduler.ts'
 import { Store } from './store.ts'
@@ -163,6 +164,169 @@ describe('acceptance criteria', () => {
     expect(router.callLog().filter((call) => call.purpose === 'heartbeat-reasoning')).toHaveLength(
       0,
     )
+  })
+
+  it('maps a scheduled all-ignore sweep to freshness without an outcome notification', async () => {
+    const plan = planSurface()
+    store.createSurface(plan, 'agent')
+    store.createSurface(
+      SurfaceSchema.parse({
+        id: HEARTBEAT_SURFACE_ID,
+        spaceId: SYSTEM_SPACE_ID,
+        title: 'Heartbeat',
+        tree: { id: 'root', type: 'Box', children: [] },
+        state: {},
+        freshness: { updatedAt: clock.toISOString(), updatedBy: 'job' },
+      }),
+      'job',
+      { daemonOwned: true },
+    )
+    const heartbeat = makeHeartbeat({
+      config: { times: ['18:00'] },
+      complete: async (model: ModelRef) =>
+        model.tier === 'triage'
+          ? {
+              text: JSON.stringify({
+                status: 'concerns',
+                concerns: [
+                  {
+                    spaceId: HEALTH,
+                    surfaceId: plan.id,
+                    kind: 'uncovered-time-sensitive',
+                  },
+                ],
+              }),
+            }
+          : {
+              text: JSON.stringify({
+                decisions: [{ spaceId: HEALTH, surfaceId: plan.id, action: 'ignore' }],
+              }),
+            },
+    })
+    heartbeat.register()
+    heartbeat.reconcileJobs()
+    const job = scheduler
+      .listAutomations(SYSTEM_SPACE_ID)
+      .find((automation) => automation.handler === 'heartbeat')
+    if (!job) throw new Error('missing scheduled Heartbeat')
+
+    clock = new Date('2026-07-09T07:00:00.000Z')
+    await scheduler.runDue()
+
+    expect(
+      scheduler.listAutomations(SYSTEM_SPACE_ID).find((item) => item.id === job.id),
+    ).toMatchObject({ lastOutcome: 'unchanged' })
+    expect(scheduler.outcomeService.list(SYSTEM_SPACE_ID).notifications).toEqual([])
+    expect(
+      store.getSurface(HEARTBEAT_SURFACE_ID)?.state[AUTOMATION_OUTCOMES_STATE_KEY],
+    ).toMatchObject({
+      [String(job.id)]: { lastCheckedAt: '2026-07-09T07:00:00.000Z' },
+    })
+  })
+
+  it('replays a completed handler occurrence without repeating model calls or actions', async () => {
+    const plan = planSurface()
+    store.createSurface(plan, 'agent')
+    clock = new Date(clock.getTime() + 25 * HOUR_MS)
+    let calls = 0
+    const heartbeat = makeHeartbeat({
+      complete: async (model: ModelRef) => {
+        calls += 1
+        return model.tier === 'triage'
+          ? {
+              text: JSON.stringify({
+                status: 'concerns',
+                concerns: [
+                  { spaceId: HEALTH, surfaceId: plan.id, kind: 'uncovered-time-sensitive' },
+                ],
+              }),
+            }
+          : {
+              text: JSON.stringify({
+                decisions: [
+                  {
+                    spaceId: HEALTH,
+                    surfaceId: plan.id,
+                    action: 'escalate',
+                    justification: 'The plan needs attention.',
+                  },
+                ],
+              }),
+            }
+      },
+    })
+
+    await expect(heartbeat.runSweep('7::2026-07-09T06:00:00.000Z')).resolves.toBe('acted')
+    await expect(heartbeat.runSweep('7::2026-07-09T06:00:00.000Z')).resolves.toBe('acted')
+
+    expect(calls).toBe(2)
+    expect(escalations).toHaveLength(1)
+    expect(
+      store
+        .eventLog(SYSTEM_SPACE_ID)
+        .filter(
+          (event) =>
+            event.type === 'heartbeat.sweep' &&
+            event.payload?.['occurrence'] === '7::2026-07-09T06:00:00.000Z',
+        ),
+    ).toHaveLength(1)
+  })
+
+  it('reconstructs acted after a crash between an escalation effect and the sweep marker', async () => {
+    const plan = planSurface()
+    store.createSurface(plan, 'agent')
+    clock = new Date(clock.getTime() + 25 * HOUR_MS)
+    let calls = 0
+    const heartbeat = makeHeartbeat({
+      complete: async (model: ModelRef) => {
+        calls += 1
+        return model.tier === 'triage'
+          ? {
+              text: JSON.stringify({
+                status: 'concerns',
+                concerns: [{ spaceId: HEALTH, surfaceId: plan.id, kind: 'stale-surface' }],
+              }),
+            }
+          : {
+              text: JSON.stringify({
+                decisions: [
+                  {
+                    spaceId: HEALTH,
+                    surfaceId: plan.id,
+                    action: 'escalate',
+                    justification: 'The stale plan needs attention.',
+                  },
+                ],
+              }),
+            }
+      },
+    })
+    const appendEvent = store.spacesEngine.appendEvent.bind(store.spacesEngine)
+    let interrupted = false
+    store.spacesEngine.appendEvent = (spaceId, event) => {
+      if (event.type === 'heartbeat.sweep' && !interrupted) {
+        interrupted = true
+        throw new Error('simulated crash before sweep marker')
+      }
+      return appendEvent(spaceId, event)
+    }
+    const occurrence = '8::2026-07-09T06:00:00.000Z'
+
+    await expect(heartbeat.runSweep(occurrence)).rejects.toThrow(
+      'simulated crash before sweep marker',
+    )
+    await expect(heartbeat.runSweep(occurrence)).resolves.toBe('acted')
+
+    expect(calls).toBe(2)
+    expect(escalations).toHaveLength(1)
+    expect(
+      store
+        .eventLog(SYSTEM_SPACE_ID)
+        .filter(
+          (event) =>
+            event.type === 'heartbeat.sweep' && event.payload?.['occurrence'] === occurrence,
+        ),
+    ).toHaveLength(1)
   })
 
   it('#2 arms an idempotent coverage timer and escalates a stale, uncovered Surface', async () => {
@@ -431,7 +595,7 @@ describe('metrics', () => {
 
     const surface = planSurface({ id: 'srf-metrics-plan' })
     store.createSurface(surface, 'agent')
-    const actingHeartbeat = makeHeartbeat({
+    const reviewingHeartbeat = makeHeartbeat({
       complete: async (model: ModelRef) => {
         if (model.tier === 'triage') {
           return {
@@ -450,13 +614,13 @@ describe('metrics', () => {
         }
       },
     })
-    await actingHeartbeat.runSweep()
+    await reviewingHeartbeat.runSweep()
 
     const metrics = nothingHeartbeat.metrics()
     expect(metrics.sweeps).toBe(2)
-    expect(metrics.nothing).toBe(1)
-    expect(metrics.acted).toBe(1)
-    expect(metrics.nothingRatio).toBeCloseTo(0.5)
+    expect(metrics.nothing).toBe(2)
+    expect(metrics.acted).toBe(0)
+    expect(metrics.nothingRatio).toBe(1)
     expect(metrics.avgCostUsd).toBeCloseTo((0.01 + 0.05) / 2)
   })
 

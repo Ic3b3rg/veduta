@@ -517,6 +517,7 @@ function connectWithFakeSocket(handlerOverrides: Partial<GatewayHandlers>) {
     onChatTurnEnd: vi.fn(),
     onChatTurnError: vi.fn(),
     onPendingDecisionLifecycle: vi.fn(),
+    onAutomationOutcomeNotificationLifecycle: vi.fn(),
     onApprovalCard: vi.fn(),
     onPresence: vi.fn(),
     onSpaceAttention: vi.fn(),
@@ -678,6 +679,36 @@ describe('connectGateway chat.turn-* dispatch', () => {
     deliver(socket, frame)
 
     expect(onPendingDecisionLifecycle).toHaveBeenCalledWith(frame)
+  })
+
+  it('dispatches Automation outcome notification lifecycle frames intact', () => {
+    const onAutomationOutcomeNotificationLifecycle = vi.fn()
+    const { socket } = connectWithFakeSocket({ onAutomationOutcomeNotificationLifecycle })
+    const frame = {
+      type: 'automation-outcome-notification.lifecycle',
+      revision: 3,
+      notification: {
+        id: 'aon-1',
+        revision: 3,
+        spaceId: 'spc-health',
+        spaceSlug: 'health',
+        automationId: 12,
+        surfaceId: 'srf-plan',
+        kind: 'changed',
+        title: 'Plan updated',
+        summary: 'Two new entries',
+        coalesceKey: 'entries',
+        occurrenceCount: 1,
+        state: 'unread',
+        createdAt: '2026-09-02T08:00:00.000Z',
+        updatedAt: '2026-09-02T08:00:00.000Z',
+        href: '/app/space/health/surface/srf-plan',
+      },
+    }
+
+    deliver(socket, frame)
+
+    expect(onAutomationOutcomeNotificationLifecycle).toHaveBeenCalledWith(frame)
   })
 
   it('drops a frame that fails schema validation without calling any handler', () => {

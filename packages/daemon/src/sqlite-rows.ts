@@ -16,6 +16,14 @@ export function requiredNumber(row: Record<string, unknown>, key: string): numbe
   throw new Error(`expected number column ${key}`)
 }
 
+export function optionalNumber(row: Record<string, unknown>, key: string): number | undefined {
+  const value = row[key]
+  if (value === null || value === undefined) return undefined
+  if (typeof value === 'number') return value
+  if (typeof value === 'bigint') return Number(value)
+  throw new Error(`expected number column ${key}`)
+}
+
 export function optionalString(row: Record<string, unknown>, key: string): string | undefined {
   const value = row[key]
   if (value === null || value === undefined) return undefined

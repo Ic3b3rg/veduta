@@ -1,6 +1,7 @@
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { DatabaseSync } from 'node:sqlite'
-import { SYSTEM_SPACE_ID, type JsonObject, type PatchOperation } from '@veduta/protocol'
+import { type JsonObject, type PatchOperation } from '@veduta/protocol'
 import { z } from 'zod'
 import { defineTool, type ToolDef } from './agent-runner.ts'
 import {
@@ -9,15 +10,11 @@ import {
   automationsState,
   automationsSurface,
   automationsSurfaceIdForSpace,
+  isAutomationProjectionStateKey,
   type AutomationListItem,
 } from './automations-surface.ts'
 import { nextCronOccurrence, parseCron } from './cron.ts'
-import {
-  optionalString,
-  requiredNumber,
-  requiredString,
-  withImmediateTransaction,
-} from './sqlite-rows.ts'
+import { optionalString, withImmediateTransaction } from './sqlite-rows.ts'
 import {
   ConditionSchema,
   automationFromRow,
@@ -26,7 +23,16 @@ import {
   type Condition,
 } from './scheduler-persistence.ts'
 import type { FastMutationNotice, Store } from './store.ts'
-import { effectiveOrigin, isValidOrigin, toolWriteOrigin, type Origin } from './taint.ts'
+import { AutomationOutcomeService } from './automation-outcome-service.ts'
+import {
+  SchedulerOutcomeCoordinator,
+  automationOutcomeFailure,
+  type AutomationOutcomeHandler,
+  type PendingDecisionLookup,
+  type ProducedAutomationOutcome,
+  type RecurringOutcomeCheckpoint,
+} from './scheduler-outcome.ts'
+import { effectiveOrigin, toolWriteOrigin, type Origin } from './taint.ts'
 
 export { ConditionSchema }
 export type { Automation, Condition }
@@ -42,6 +48,12 @@ export type { Automation, Condition }
  * a duplicate reminder beats a lost deadline.
  */
 export type JudgeVerdict = 'yes' | 'no' | 'unknown'
+
+export type {
+  AutomationOutcomeHandlerResult,
+  AutomationOutcomeProducerResult,
+  PendingDecisionLookup,
+} from './scheduler-outcome.ts'
 
 /**
  * Answers a judgment condition. The server wires this to the triage
@@ -59,12 +71,6 @@ export interface EscalationContext {
   surfaceId?: string
   origin?: Origin
   automationId?: number
-  /**
-   * True for daemon-managed handler jobs (issue #16): their escalations
-   * carry no Agent decision, so callers must not attribute an
-   * "Agent-armed" justification to them.
-   */
-  managed: boolean
 }
 
 export interface SchedulerOptions {
@@ -112,22 +118,19 @@ export const SetAutomationEnabledSchema = z.object({
 const AUTOMATION_UNAVAILABLE = 'Automation is unavailable in this Space'
 
 export class Scheduler {
+  readonly outcomeService: AutomationOutcomeService
   private readonly db: DatabaseSync
   private readonly store: Store
   private readonly now: () => Date
   private readonly onEscalation:
     ((spaceId: string, text: string, context?: EscalationContext) => void) | undefined
   private readonly judge: JudgeFn
+  private readonly outcomes: SchedulerOutcomeCoordinator
   private disposeFastMutationObserver: (() => void) | undefined
   private timer: NodeJS.Timeout | undefined
   private running = false
   /** The run loop is armed only between start() and stop(). */
   private stopped = true
-  /** Registered daemon-owned Automation handlers (issue #16), keyed by `Automation.handler`. */
-  private readonly handlers = new Map<
-    string,
-    (ctx: { automation: Automation; scheduledFor: string }) => Promise<string> | string
-  >()
 
   constructor(options: SchedulerOptions) {
     this.db = new DatabaseSync(join(options.rootDir, 'scheduler.sqlite'))
@@ -136,8 +139,26 @@ export class Scheduler {
     this.onEscalation = options.onEscalation
     this.judge = options.judge ?? (() => 'unknown')
     initializeSchedulerSchema(this.db)
-    this.recoverInterruptedRuns()
+    this.outcomeService = new AutomationOutcomeService({
+      rootDir: options.rootDir,
+      store: options.store,
+      now: this.now,
+    })
+    this.outcomes = new SchedulerOutcomeCoordinator({
+      db: this.db,
+      store: this.store,
+      service: this.outcomeService,
+      now: this.now,
+      requireAutomation: (automationId) => this.requireAutomation(automationId),
+      appendEvent: (spaceId, type, text, payload, origin) =>
+        this.appendEvent(spaceId, type, text, payload, origin),
+    })
+    this.outcomes.recoverInterruptedRuns()
     this.ensureSurfaces()
+    this.outcomeService.recover()
+    this.ensureSurfaces()
+    this.outcomes.flushOutcomeTargetCleanups()
+    this.reconcileOutcomeTargets()
     this.subscribeToggles()
   }
 
@@ -221,9 +242,9 @@ export class Scheduler {
 
   /**
    * Internal-only counterpart to `createJob` (issue #16): creates a job
-   * wired to a registered handler instead of the generic "briefing"
-   * escalation. Deliberately not exposed as an Agent tool or through
-   * `CreateJobSchema` — only daemon code may create handler-driven jobs.
+   * wired to a registered outcome producer. Deliberately not exposed as an
+   * Agent tool or through `CreateJobSchema` — only daemon code may create
+   * handler-driven jobs.
    */
   createManagedJob(
     input: {
@@ -238,10 +259,8 @@ export class Scheduler {
     origin?: Origin,
   ): Automation {
     const handler = input.handler.trim()
-    // An empty/blank handler must never reach a row: a job with no
-    // registered handler falls through `executeOccurrence` to the
-    // generic "Scheduled briefing" escalation, silently losing the
-    // handler-driven behavior the caller intended.
+    // An empty/blank handler must never reach a row: it would turn configured
+    // work into the handlerless failure path and lose the intended producer.
     if (!handler) throw new Error('createManagedJob requires a non-empty handler name')
 
     this.requireSpace(input.spaceId)
@@ -274,25 +293,75 @@ export class Scheduler {
   }
 
   /**
+   * Migrates a daemon-managed job's outcome target without replacing the
+   * Automation. Keeping the row preserves the user's enabled choice and
+   * the occurrence schedule across additive managed-job upgrades.
+   */
+  configureManagedJobTarget(
+    spaceId: string,
+    automationId: number,
+    targetSurfaceId: string | undefined,
+    origin: Origin = 'trusted:system',
+  ): Automation {
+    const automation = this.requireAutomationInSpace(spaceId, automationId)
+    if (automation.kind !== 'job' || automation.handler === undefined) {
+      throw new Error('only daemon-managed jobs have configurable outcome targets')
+    }
+    if (automation.targetSurfaceId === targetSurfaceId) return automation
+    const previousTargets = this.outcomes.outcomeTargetSurfaceIds(automation)
+    const mutationOrigin = effectiveOrigin([automation.origin, origin], origin)
+    withImmediateTransaction(this.db, () => {
+      this.outcomes.enqueueOutcomeTargetCleanups(automation, previousTargets, mutationOrigin)
+      this.db
+        .prepare('update automations set target_surface_id = ? where id = ?')
+        .run(targetSurfaceId ?? null, automationId)
+    })
+    this.appendEvent(
+      spaceId,
+      'automation.configure-target',
+      `Updated the outcome target for Automation ${automationId}`,
+      { automationId, targetSurfaceId: targetSurfaceId ?? null },
+      mutationOrigin,
+    )
+    const updated = this.requireAutomation(automationId)
+    this.outcomes.flushOutcomeTargetCleanups(automation.id)
+    return updated
+  }
+
+  /**
    * Registers a daemon-owned Automation handler by name (issue #16): a
    * managed job's `handler` field looks up its function here at occurrence
    * time. This file is generic — it knows nothing about what any
-   * registered handler does; the returned string becomes the occurrence
-   * outcome, same as any other automation.
+   * registered handler does; every handler returns the shared structured
+   * outcome contract.
    */
-  registerHandler(
-    name: string,
-    fn: (ctx: { automation: Automation; scheduledFor: string }) => Promise<string> | string,
-  ): void {
-    this.handlers.set(name, fn)
+  registerHandler(name: string, fn: AutomationOutcomeHandler): void {
+    this.outcomes.registerHandler(name, fn)
+  }
+
+  /** Connects recurring decision references to the Gateway-owned workflow view before start(). */
+  setPendingDecisionLookup(lookup: PendingDecisionLookup): void {
+    this.outcomes.setPendingDecisionLookup(lookup)
   }
 
   cancel(spaceId: string, automationId: number, origin?: Origin): Automation {
     const automation = this.requireAutomationInSpace(spaceId, automationId)
+    const outcomeTargets =
+      automation.kind === 'job' ? this.outcomes.outcomeTargetSurfaceIds(automation) : []
     const mutationOrigin = effectiveOrigin([automation.origin, origin], origin ?? 'trusted:system')
-    this.db
-      .prepare(`update automations set status = 'cancelled', next_run_at = null where id = ?`)
-      .run(automationId)
+    withImmediateTransaction(this.db, () => {
+      this.outcomes.enqueueOutcomeTargetCleanups(automation, outcomeTargets, mutationOrigin)
+      this.db
+        .prepare(`update automations set status = 'cancelled', next_run_at = null where id = ?`)
+        .run(automationId)
+      this.db
+        .prepare(
+          `update automation_runs
+           set outcome = 'cancelled', finished_at = ?, recurring_outcome_json = null, retry_at = null
+           where automation_id = ? and finished_at is null`,
+        )
+        .run(this.nowIso(), automationId)
+    })
     this.appendEvent(
       automation.spaceId,
       'automation.cancel',
@@ -303,6 +372,7 @@ export class Scheduler {
       mutationOrigin,
     )
     this.refreshSurface(automation.spaceId, mutationOrigin)
+    this.outcomes.flushOutcomeTargetCleanups(automation.id)
     return this.requireAutomation(automationId)
   }
 
@@ -355,9 +425,26 @@ export class Scheduler {
       const now = this.nowIso()
       const due = this.db
         .prepare(
-          `select * from automations where status = 'armed' and next_run_at <= ? order by id`,
+          `select * from automations
+           where status = 'armed' and next_run_at <= ?
+             and (
+               not exists (
+                 select 1 from automation_runs
+                 where automation_runs.automation_id = automations.id
+                   and automation_runs.scheduled_for = automations.next_run_at
+                   and automation_runs.finished_at is null
+               )
+               or exists (
+                 select 1 from automation_runs
+                 where automation_runs.automation_id = automations.id
+                   and automation_runs.scheduled_for = automations.next_run_at
+                   and automation_runs.finished_at is null
+                   and automation_runs.retry_at <= ?
+               )
+             )
+           order by id`,
         )
-        .all(now)
+        .all(now, now)
         .map(automationFromRow)
       for (const automation of due) await this.runOccurrence(automation)
     } finally {
@@ -385,7 +472,7 @@ export class Scheduler {
       defineTool({
         name: 'create_job',
         description:
-          'Create a recurring job (5-field cron, UTC) that delivers a briefing on every occurrence. Visible to the user as an Automation in its Space.',
+          'Create a visible recurring Automation schedule (5-field cron, UTC). The base schedule does not perform external work; until a supported outcome producer is configured, a due occurrence records a failure in its Space.',
         schema: CreateJobSchema,
         level: 'L0',
         egressDomains: [],
@@ -440,25 +527,105 @@ export class Scheduler {
   private async runOccurrence(automation: Automation): Promise<void> {
     const scheduledFor = automation.nextRunAt
     if (!scheduledFor) return
-    if (!this.claim(automation.id, scheduledFor)) return
+    const space = this.store.getSpace(automation.spaceId)
+    if (!space) throw new Error(`unknown Space: ${automation.spaceId}`)
+    const fallbackSurfaceId = automationsSurfaceIdForSpace(space)
+    const configuredTargetSurfaceId = automation.targetSurfaceId ?? fallbackSurfaceId
+    const claimed = this.claim(automation.id, scheduledFor)
 
-    let outcome: string
-    try {
-      outcome = await this.executeOccurrence(automation, scheduledFor)
-    } catch (error) {
-      outcome = `error:${error instanceof Error ? error.message : String(error)}`.slice(0, 300)
+    let result: OccurrenceExecution
+    const recoveredOutcome = claimed
+      ? undefined
+      : this.outcomes.retryableClaimOutcome(automation.id, scheduledFor, configuredTargetSurfaceId)
+    if (!claimed && recoveredOutcome === undefined) return
+    if (recoveredOutcome !== undefined) {
+      result = {
+        storedOutcome: recoveredOutcome.outcome.kind,
+        recurringOutcome: recoveredOutcome,
+      }
+    } else {
+      try {
+        result = await this.executeOccurrence(automation, scheduledFor)
+      } catch (error) {
+        if (automation.kind === 'job') {
+          result = {
+            storedOutcome: 'failed',
+            recurringOutcome: {
+              outcome: automationOutcomeFailure(
+                'Automation execution failed',
+                'handler-error',
+                error,
+              ),
+            },
+          }
+        } else {
+          result = {
+            storedOutcome: `error:${error instanceof Error ? error.message : String(error)}`.slice(
+              0,
+              300,
+            ),
+          }
+        }
+      }
+    }
+    if (result.recurringOutcome !== undefined) {
+      const safeRecurringOutcome = this.outcomes.checkpointRecurringOutcome(
+        automation,
+        scheduledFor,
+        result.recurringOutcome,
+        configuredTargetSurfaceId,
+      )
+      result = {
+        storedOutcome: result.storedOutcome,
+        recurringOutcome: safeRecurringOutcome,
+      }
+      try {
+        const delivery = await this.outcomes.deliver(
+          automation,
+          scheduledFor,
+          safeRecurringOutcome,
+          fallbackSurfaceId,
+        )
+        result =
+          delivery.status === 'superseded'
+            ? { storedOutcome: 'skipped:configuration-changed' }
+            : {
+                storedOutcome: delivery.outcome.kind,
+                recurringOutcome: { ...safeRecurringOutcome, outcome: delivery.outcome },
+              }
+      } catch {
+        // Keep the claim and its safe producer checkpoint until an in-process
+        // backoff retry succeeds. Later occurrences cannot overtake it and
+        // `schedule()` sleeps until retry_at instead of hot-looping.
+        this.outcomes.parkClaim(automation.id, scheduledFor)
+        if (
+          !this.outcomes.hasDeliveryFailureEvent(automation.spaceId, automation.id, scheduledFor)
+        ) {
+          this.appendEvent(
+            automation.spaceId,
+            'automation.outcome.delivery-failed',
+            `Automation ${automation.id} outcome delivery failed after retry`,
+            { automationId: automation.id, scheduledFor },
+            safeRecurringOutcome.origin,
+          )
+        }
+        return
+      }
     }
     // Atomically: a finished claim always comes with the advanced
     // automation, or a crash leaves the claim unfinished and boot
     // recovery re-runs the occurrence. No half-finished zombies.
     withImmediateTransaction(this.db, () => {
-      this.finishClaim(automation.id, scheduledFor, outcome)
-      this.advance(automation, outcome)
+      this.finishClaim(automation.id, scheduledFor, result.storedOutcome)
+      this.advance(this.requireAutomation(automation.id), result.storedOutcome)
     })
     this.refreshSurface(automation.spaceId)
   }
 
-  private async executeOccurrence(automation: Automation, scheduledFor: string): Promise<string> {
+  private async executeOccurrence(
+    automation: Automation,
+    scheduledFor: string,
+  ): Promise<OccurrenceExecution> {
     // Firing events carry the automation's own provenance (default
     // trusted:system for legacy/tool-armed automations): an automation
     // born from a tainted turn re-taints every occurrence it fires.
@@ -472,17 +639,16 @@ export class Scheduler {
         : { surfaceId: automation.targetSurfaceId }),
       origin: firingOrigin,
       automationId: automation.id,
-      managed: automation.handler !== undefined,
     }
     if (!automation.enabled) {
       this.appendEvent(
         automation.spaceId,
         'automation.skip',
         `Automation "${automation.description}" was due while switched off — not run`,
-        { automationId: automation.id, scheduledFor },
+        { automationId: automation.id, scheduledFor, automationKind: automation.kind },
         firingOrigin,
       )
-      return 'skipped:disabled'
+      return { storedOutcome: 'skipped:disabled' }
     }
 
     const overdueMs = this.now().getTime() - new Date(scheduledFor).getTime()
@@ -492,26 +658,54 @@ export class Scheduler {
         automation.spaceId,
         'automation.skip',
         text,
-        { automationId: automation.id, scheduledFor },
+        { automationId: automation.id, scheduledFor, automationKind: automation.kind },
         firingOrigin,
       )
-      this.onEscalation?.(automation.spaceId, text, escalationContext)
-      return 'skipped:overdue'
+      if (automation.kind === 'timer') {
+        this.onEscalation?.(automation.spaceId, text, escalationContext)
+        return { storedOutcome: 'skipped:overdue' }
+      }
+      return {
+        storedOutcome: 'failed',
+        recurringOutcome: {
+          outcome: automationOutcomeFailure(
+            'Automation was not run after extended downtime',
+            'occurrence_overdue',
+            text,
+          ),
+        },
+      }
     }
 
     if (automation.handler) {
-      const handler = this.handlers.get(automation.handler)
-      if (!handler) {
+      const space = this.store.getSpace(automation.spaceId)
+      if (!space) throw new Error(`unknown Space: ${automation.spaceId}`)
+      const targetSurfaceId = automation.targetSurfaceId ?? automationsSurfaceIdForSpace(space)
+      const recurringOutcome = await this.outcomes.produce(
+        automation,
+        scheduledFor,
+        targetSurfaceId,
+      )
+      if (recurringOutcome === undefined) {
         this.appendEvent(
           automation.spaceId,
           'automation.skip',
           `Automation "${automation.description}" was due but its handler "${automation.handler}" is not registered — not run`,
-          { automationId: automation.id, scheduledFor },
+          { automationId: automation.id, scheduledFor, automationKind: automation.kind },
           firingOrigin,
         )
-        return 'skipped:unknown-handler'
+        return {
+          storedOutcome: 'failed',
+          recurringOutcome: {
+            outcome: automationOutcomeFailure(
+              'Automation handler is unavailable',
+              'handler_unavailable',
+              `The configured handler "${automation.handler}" is unavailable.`,
+            ),
+          },
+        }
       }
-      return await handler({ automation, scheduledFor })
+      return { storedOutcome: recurringOutcome.outcome.kind, recurringOutcome }
     }
 
     if (await this.conditionSatisfied(automation, scheduledFor)) {
@@ -519,25 +713,42 @@ export class Scheduler {
         automation.spaceId,
         'automation.fire',
         `Automation "${automation.description}" fired — condition already satisfied, no action`,
-        { automationId: automation.id, scheduledFor },
+        { automationId: automation.id, scheduledFor, automationKind: automation.kind },
         firingOrigin,
       )
-      return 'condition-met:no-action'
+      return automation.kind === 'job'
+        ? {
+            storedOutcome: 'unchanged',
+            recurringOutcome: {
+              outcome: { kind: 'unchanged', summary: 'Condition already satisfied' },
+            },
+          }
+        : { storedOutcome: 'condition-met:no-action' }
     }
 
-    const text =
-      automation.kind === 'timer'
-        ? `Reminder: ${automation.description}`
-        : `Scheduled briefing: ${automation.description}`
+    if (automation.kind === 'job') {
+      return {
+        storedOutcome: 'failed',
+        recurringOutcome: {
+          outcome: automationOutcomeFailure(
+            'Automation has no outcome producer',
+            'outcome_producer_unavailable',
+            'This recurring Automation is not connected to an outcome producer.',
+          ),
+        },
+      }
+    }
+
+    const text = `Reminder: ${automation.description}`
     this.appendEvent(
       automation.spaceId,
       'automation.fire',
       `Automation "${automation.description}" fired — escalated to the user`,
-      { automationId: automation.id, scheduledFor },
+      { automationId: automation.id, scheduledFor, automationKind: automation.kind },
       firingOrigin,
     )
     this.onEscalation?.(automation.spaceId, text, escalationContext)
-    return 'escalated'
+    return { storedOutcome: 'escalated' }
   }
 
   /**
@@ -602,7 +813,8 @@ export class Scheduler {
   private finishClaim(automationId: number, scheduledFor: string, outcome: string): void {
     this.db
       .prepare(
-        `update automation_runs set outcome = ?, finished_at = ?
+        `update automation_runs
+         set outcome = ?, finished_at = ?, recurring_outcome_json = null, retry_at = null
          where automation_id = ? and scheduled_for = ?`,
       )
       .run(outcome, this.nowIso(), automationId, scheduledFor)
@@ -610,6 +822,12 @@ export class Scheduler {
 
   private advance(automation: Automation, outcome: string): void {
     const lastRunAt = this.nowIso()
+    if (automation.status === 'cancelled') {
+      this.db
+        .prepare('update automations set last_run_at = ?, last_outcome = ? where id = ?')
+        .run(lastRunAt, outcome, automation.id)
+      return
+    }
     if (automation.kind === 'timer' || !automation.cron) {
       this.db
         .prepare(
@@ -639,53 +857,21 @@ export class Scheduler {
       .run(nextRunAt, nextRunAt, lastRunAt, outcome, automation.id)
   }
 
-  /**
-   * A claim without `finished_at` is an interrupted run (crash between
-   * claim and completion). Delete it so `runDue` re-claims: at-least-once.
-   */
-  private recoverInterruptedRuns(): void {
-    const interrupted = this.db
-      .prepare(
-        `select runs.automation_id as automation_id, runs.scheduled_for as scheduled_for,
-                automations.space_id as space_id, automations.description as description,
-                automations.origin as origin
-         from automation_runs runs
-         join automations on automations.id = runs.automation_id
-         where runs.finished_at is null`,
-      )
-      .all()
-    for (const row of interrupted) {
-      const automationId = requiredNumber(row, 'automation_id')
-      const scheduledFor = requiredString(row, 'scheduled_for')
-      this.db
-        .prepare('delete from automation_runs where automation_id = ? and scheduled_for = ?')
-        .run(automationId, scheduledFor)
-      try {
-        const storedOrigin = optionalString(row, 'origin')
-        this.appendEvent(
-          requiredString(row, 'space_id'),
-          'automation.recover',
-          `Recovered interrupted run of automation "${requiredString(row, 'description')}" — it will run again`,
-          { automationId, scheduledFor },
-          // The recovery event embeds the description too: keep its mark.
-          isValidOrigin(storedOrigin) ? storedOrigin : 'trusted:system',
-        )
-      } catch {
-        // The Space may be gone; recovery must never block boot.
-      }
-    }
+  private reconcileOutcomeTargets(): void {
+    this.outcomes.reconcileOutcomeTargets(
+      this.store.listSpaces().flatMap((space) => this.listAutomations(space.id)),
+    )
   }
 
   /**
-   * Pre-create the Automations Surface for every active Space so it is
-   * in the first snapshot: Surfaces created mid-session reach clients
-   * only on the next snapshot, patches on known Surfaces stream live.
+   * Reconcile the Automations Surface for every active Space at boot. This
+   * both puts missing Surfaces in the first snapshot and repairs a stale
+   * projection after a crash between finishing a run and refreshing its
+   * Atom history. `refreshSurface` is a no-op when projection state agrees.
    */
   private ensureSurfaces(): void {
     for (const space of this.store.listSpaces()) {
-      if (!this.store.getSurface(automationsSurfaceIdForSpace(space))) {
-        this.refreshSurface(space.id)
-      }
+      this.refreshSurface(space.id)
     }
   }
 
@@ -696,64 +882,109 @@ export class Scheduler {
     const listed = this.listAutomations(spaceId).filter(
       (automation) => automation.status !== 'cancelled',
     )
-    const items = listed.map((automation) => this.listItem(automation))
+    const histories = new Map(
+      listed.map((automation) => [
+        automation.id,
+        this.outcomeService.historyWithOrigins(automation.id),
+      ]),
+    )
+    const items = listed.map((automation) =>
+      this.listItem(
+        automation,
+        histories.get(automation.id)?.map(({ origin: _origin, ...entry }) => entry) ?? [],
+      ),
+    )
     // The Surface projection derives from every listed automation: if any of
     // them was born from a tainted turn, the projection's Space events carry
     // that mark too (issue #13 — the mark propagates to everything derived).
     const origin = effectiveOrigin(
-      [...listed.map((automation) => automation.origin), mutationOrigin],
+      [
+        ...listed.map((automation) => automation.origin),
+        ...[...histories.values()].flat().map((entry) => entry.origin),
+        mutationOrigin,
+      ],
       'trusted:system',
     )
     const surfaceId = automationsSurfaceIdForSpace(space)
-    const existing = this.store.getSurface(surfaceId)
+    let existing = this.store.getSurface(surfaceId)
 
-    if (!existing) {
-      this.store.createSurface(
+    if (!existing || !this.store.isSurfaceDaemonOwned(surfaceId)) {
+      existing = this.store.adoptCanonicalDaemonSurface(
         automationsSurface(space, items, { updatedAt: this.nowIso(), updatedBy: 'job' }),
-        'job',
-        // System jobs are Gateway-managed; life-area Automations remain ordinary Space state.
-        { origin, daemonOwned: space.id === SYSTEM_SPACE_ID },
+        origin,
       )
-      return
+    }
+    if (existing.spaceId !== space.id) {
+      throw new Error(`Automations Surface identity belongs to another Space: ${surfaceId}`)
     }
 
     // Ordered so every intermediate Surface validates (tree -> state
     // bindings): add keys, replace the list node, drop stale keys.
     const targetState = automationsState(items)
-    const setOps: PatchOperation[] = Object.entries(targetState).map(([key, value]) => ({
-      target: 'state',
-      op: Object.prototype.hasOwnProperty.call(existing.state, key) ? 'replace' : 'add',
-      path: `/${key}`,
-      value,
-    }))
+    const setOps: PatchOperation[] = Object.entries(targetState)
+      .filter(([key, value]) => !isDeepStrictEqual(existing.state[key], value))
+      .map(([key, value]) => ({
+        target: 'state',
+        op: Object.prototype.hasOwnProperty.call(existing.state, key) ? 'replace' : 'add',
+        path: `/${key}`,
+        value,
+      }))
     // Every `store.patch*` call below reaches connected clients through the
     // Gateway's central Surface-event subscription; nothing here broadcasts.
     if (setOps.length > 0) {
-      this.store.patchState(surfaceId, setOps, { updatedBy: 'job', origin })
+      this.store.patchState(surfaceId, setOps, {
+        updatedBy: 'job',
+        origin,
+        eventPayload: {
+          surfaceId,
+          operations: setOps.length,
+          automationProjection: true,
+        },
+      })
     }
 
-    const version = this.store.getSurfaceVersion(surfaceId)
-    if (!version) return
-    this.store.patchTree(
-      surfaceId,
-      [{ target: 'tree', op: 'replace', path: '/children/1', value: automationsListNode(items) }],
-      { expectedTreeVersion: version.treeVersion, updatedBy: 'job', origin },
-    )
+    const targetListNode = automationsListNode(items)
+    if (!isDeepStrictEqual(existing.tree.children?.[1], targetListNode)) {
+      const version = this.store.getSurfaceVersion(surfaceId)
+      if (!version) return
+      this.store.patchTree(
+        surfaceId,
+        [{ target: 'tree', op: 'replace', path: '/children/1', value: targetListNode }],
+        {
+          expectedTreeVersion: version.treeVersion,
+          updatedBy: 'job',
+          origin,
+          eventPayload: { surfaceId, operations: 1, automationProjection: true },
+        },
+      )
+    }
 
     const staleOps: PatchOperation[] = Object.keys(existing.state)
-      .filter((key) => automationIdFromStateKey(key) !== undefined && !(key in targetState))
+      .filter((key) => isAutomationProjectionStateKey(key) && !(key in targetState))
       .map((key) => ({ target: 'state', op: 'remove', path: `/${key}` }))
     if (staleOps.length > 0) {
-      this.store.patchState(surfaceId, staleOps, { updatedBy: 'job', origin })
+      this.store.patchState(surfaceId, staleOps, {
+        updatedBy: 'job',
+        origin,
+        eventPayload: {
+          surfaceId,
+          operations: staleOps.length,
+          automationProjection: true,
+        },
+      })
     }
   }
 
-  private listItem(automation: Automation): AutomationListItem {
+  private listItem(
+    automation: Automation,
+    history = this.outcomeService.history(automation.id),
+  ): AutomationListItem {
     return {
       id: automation.id,
       description: automation.description,
       enabled: automation.enabled,
       scheduleText: scheduleText(automation),
+      ...(history.length === 0 ? {} : { history }),
     }
   }
 
@@ -781,7 +1012,27 @@ export class Scheduler {
     if (this.stopped) return
     if (this.timer) clearTimeout(this.timer)
     const row = this.db
-      .prepare(`select min(next_run_at) as next from automations where status = 'armed'`)
+      .prepare(
+        `select min(next) as next from (
+           select automations.next_run_at as next
+           from automations
+           where automations.status = 'armed'
+             and not exists (
+               select 1 from automation_runs
+               where automation_runs.automation_id = automations.id
+                 and automation_runs.scheduled_for = automations.next_run_at
+                 and automation_runs.finished_at is null
+             )
+           union all
+           select automation_runs.retry_at as next
+           from automation_runs
+           join automations on automations.id = automation_runs.automation_id
+           where automations.status = 'armed'
+             and automation_runs.scheduled_for = automations.next_run_at
+             and automation_runs.finished_at is null
+             and automation_runs.retry_at is not null
+         )`,
+      )
       .get()
     const next = row ? optionalString(row, 'next') : undefined
     const delay = next
@@ -898,4 +1149,9 @@ function scheduleText(automation: Automation): string {
 function utcLabel(iso: string | undefined): string {
   if (!iso) return 'n/a'
   return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`
+}
+
+interface OccurrenceExecution {
+  storedOutcome: string
+  recurringOutcome?: ProducedAutomationOutcome | RecurringOutcomeCheckpoint
 }

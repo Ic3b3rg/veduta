@@ -74,6 +74,55 @@ describe('renderNode', () => {
     expect(value).toBe(true)
   })
 
+  it('renders meaningful Automation run history without hiding its control', () => {
+    const automation = AtomNodeSchema.parse({
+      id: 'calendar-sync',
+      type: 'Automation',
+      binding: 'enabled',
+      props: {
+        label: 'Calendar sync',
+        schedule: 'Every hour',
+        historyBinding: 'calendar-history',
+      },
+      actions: [{ name: 'toggle', path: 'fast', stateKey: 'enabled' }],
+    })
+    const history = [
+      {
+        id: 'run-3',
+        automationId: 7,
+        scheduledFor: '2026-09-02T16:00:00.000Z',
+        kind: 'recovered',
+        summary: 'Calendar sync recovered.',
+        at: '2026-09-02T16:00:02.000Z',
+      },
+      {
+        id: 'run-2',
+        automationId: 7,
+        scheduledFor: '2026-09-02T15:00:00.000Z',
+        kind: 'failed',
+        summary: 'Calendar provider timed out.',
+        at: '2026-09-02T15:00:30.000Z',
+      },
+    ]
+
+    render(
+      renderNode(automation, {
+        state: { enabled: true, 'calendar-history': history },
+        dispatch: vi.fn(),
+      }),
+    )
+
+    expect(screen.getByText('Run history (2)')).toBeDefined()
+    expect(screen.getByText('Recovered:')).toBeDefined()
+    expect(screen.getByText('Failed:')).toBeDefined()
+    expect(screen.getByText('Calendar sync recovered.')).toBeDefined()
+    expect(screen.getByText('Calendar provider timed out.')).toBeDefined()
+    expect(screen.getByText('Calendar sync recovered.').closest('li')?.textContent).toMatch(
+      /^Recovered: Calendar sync recovered\. — /,
+    )
+    expect(screen.getByRole('switch', { name: 'Calendar sync' })).toBeDefined()
+  })
+
   it('renders unimplemented atom types visibly instead of crashing', () => {
     const motionBrowser = installMotionBrowser(false)
     const futureTree: AtomNode = JSON.parse('{"id":"future","type":"FutureAtom"}')

@@ -67,6 +67,7 @@ import {
 import { syncPush } from './push.ts'
 import { useSurfaceCreationFeedback } from './surface-creation-feedback.ts'
 import { usePendingDecisionController } from './use-pending-decision-controller.ts'
+import { useAutomationOutcomeNotificationSync } from './use-automation-outcome-notification-sync.ts'
 import { affectedAtomIdsForPatch, type SurfaceUpdateFeedback } from './surface-motion.ts'
 import './app.css'
 
@@ -179,6 +180,32 @@ function RoutedApp() {
     },
     [navigate],
   )
+  const revealAutomationOutcomeSurface = useCallback(
+    (href: string) => {
+      navigate(href, { state: { preserveKeyboardFocus: true } })
+    },
+    [navigate],
+  )
+  const reportAutomationOutcomeNotificationError = useCallback(
+    (message: string) => setError(`Automation notification failed: ${message}`),
+    [],
+  )
+  const {
+    notifications: automationOutcomeNotifications,
+    pendingIds: pendingAutomationOutcomeNotificationIds,
+    beginConnection: beginAutomationOutcomeNotificationConnection,
+    refresh: refreshAutomationOutcomeNotifications,
+    cancel: cancelAutomationOutcomeNotificationSnapshot,
+    open: openAutomationOutcomeNotification,
+    dismiss: dismissAutomationOutcomeNotification,
+  } = useAutomationOutcomeNotificationSync({
+    authToken,
+    spaceId: focusedSpaceId,
+    focusKey: focusChatToken,
+    onOpenSurface: revealAutomationOutcomeSurface,
+    onUnauthorized: resetUnauthorizedSession,
+    onError: reportAutomationOutcomeNotificationError,
+  })
   const {
     decisions: pendingDecisions,
     dismissedDecisionIds,
@@ -514,11 +541,14 @@ function RoutedApp() {
       streamingTurnsRef.current = new Map()
       setStreamingTurns(new Map())
       cancelPendingDecisionReveals()
+      cancelAutomationOutcomeNotificationSnapshot()
       for (const entry of completed) appendChatEntry(entry)
       scheduleReconnect()
     }
 
     const startGateway = () => {
+      const handleAutomationOutcomeNotificationForConnection =
+        beginAutomationOutcomeNotificationConnection()
       gatewayRef.current = connectGateway({
         token: authToken,
         clientId: clientIdRef.current,
@@ -561,6 +591,7 @@ function RoutedApp() {
         onChatTurnEnd: applyIncomingTurnFrame,
         onChatTurnError: applyIncomingTurnFrame,
         onPendingDecisionLifecycle: handleLivePendingDecisionLifecycle,
+        onAutomationOutcomeNotificationLifecycle: handleAutomationOutcomeNotificationForConnection,
         onApprovalCard() {
           // Legacy card frames remain part of the Gateway contract; Pending-decision
           // projections and lifecycle frames own the current fixed-shell presentation.
@@ -618,12 +649,14 @@ function RoutedApp() {
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
       cancelPendingDecisionSnapshot()
       cancelPendingDecisionReveals()
+      cancelAutomationOutcomeNotificationSnapshot()
       gatewayRef.current?.close()
     }
   }, [
     handleSurfaceStreamEvent,
     handleSurfaceCreatedMessage,
     handleLivePendingDecisionLifecycle,
+    beginAutomationOutcomeNotificationConnection,
     appendChatEntry,
     applyIncomingTurnFrame,
     acceptCanonicalSnapshot,
@@ -633,8 +666,28 @@ function RoutedApp() {
     refreshPendingDecisionSnapshot,
     cancelPendingDecisionSnapshot,
     cancelPendingDecisionReveals,
+    cancelAutomationOutcomeNotificationSnapshot,
     resetUnauthorizedSession,
     spacesRetryToken,
+  ])
+
+  // Notification snapshots are scoped to the focused Space. Refresh after
+  // focus changes and every successful Gateway reconnect; lifecycle frames
+  // that arrive while the snapshot is in flight are buffered by the hook.
+  useEffect(() => {
+    cancelAutomationOutcomeNotificationSnapshot()
+    if (!gatewayOnline || focusedSpaceId === undefined || authMode === undefined) return
+    if (authMode === 'production' && authToken === undefined) return
+
+    void refreshAutomationOutcomeNotifications()
+    return cancelAutomationOutcomeNotificationSnapshot
+  }, [
+    authMode,
+    authToken,
+    cancelAutomationOutcomeNotificationSnapshot,
+    focusedSpaceId,
+    gatewayOnline,
+    refreshAutomationOutcomeNotifications,
   ])
 
   // Onboarding wizard gate (issue 019): fetched once
@@ -888,6 +941,8 @@ function RoutedApp() {
       pendingDecisions={pendingDecisions}
       dismissedDecisionIds={dismissedDecisionIds}
       resolvingDecisionIds={resolvingDecisionIds}
+      automationOutcomeNotifications={automationOutcomeNotifications}
+      pendingAutomationOutcomeNotificationIds={pendingAutomationOutcomeNotificationIds}
       chatEntries={chatEntries}
       streamingEntries={Array.from(streamingTurns.values(), (turn) => ({
         turnId: turn.turnId,
@@ -920,6 +975,8 @@ function RoutedApp() {
       onError={setError}
       onResolvePendingDecision={resolveVisiblePendingDecision}
       onDismissPendingDecision={dismissPendingDecision}
+      onOpenAutomationOutcomeNotification={openAutomationOutcomeNotification}
+      onDismissAutomationOutcomeNotification={dismissAutomationOutcomeNotification}
       onSend={(message) => {
         const spaceId = focusedSpace?.id
         const sent = gatewayRef.current?.sendChat(message, spaceId) ?? false

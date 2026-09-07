@@ -209,7 +209,7 @@ sudo chmod 0755 /etc/veduta
 
 `index.ts` reads `VEDUTA_DATA_DIR` directly, so the data root is exactly what the unit sets:
 **`/var/lib/veduta/.veduta`** (where `trust.sqlite`, `surfaces.sqlite`, `scheduler.sqlite`,
-`ingestion.sqlite`, `spaces/`, session files, `secrets.vault`, `routing.json`,
+`automation-outcomes.sqlite`, `ingestion.sqlite`, `spaces/`, session files, `secrets.vault`, `routing.json`,
 `ingestion.json`, `usage/`, and `egress-denials.jsonl` all live). The vault and backup CLIs
 must be pointed at this same path (`--root /var/lib/veduta/.veduta`) so they operate on the
 data the running daemon actually reads -- that is also what you back up and restore.

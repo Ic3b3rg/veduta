@@ -5,6 +5,7 @@ import { automationsSurfaceId } from './automations-surface.ts'
 import { nextCronOccurrence } from './cron.ts'
 import { timeToCron, type HeartbeatConfig } from './heartbeat-config.ts'
 import { reconcileManagedJobs } from './managed-jobs.ts'
+import { HEARTBEAT_SURFACE_ID } from './heartbeat-surface.ts'
 import { stripJsonCodeFence } from './model-output.ts'
 import { SpendingCapError, type ModelRouter } from './model-routing.ts'
 import type { Scheduler } from './scheduler.ts'
@@ -257,14 +258,35 @@ export class Heartbeat {
       desired: new Map(
         this.config.times.map((time) => [timeToCron(time), `Heartbeat sweep at ${time} UTC`]),
       ),
+      targetSurfaceId: HEARTBEAT_SURFACE_ID,
     })
   }
 
   /** Wires the Scheduler's generic handler registry to `runSweep`. Call before `scheduler.start()`. */
   register(): void {
-    this.scheduler.registerHandler('heartbeat', (ctx) =>
-      this.runSweep(`${ctx.automation.id}::${ctx.scheduledFor}`),
-    )
+    this.scheduler.registerHandler('heartbeat', async (ctx) => {
+      const outcome = await this.runSweep(`${ctx.automation.id}::${ctx.scheduledFor}`)
+      if (outcome === 'nothing' || outcome === 'skipped:disabled') {
+        return { kind: 'unchanged', summary: 'Heartbeat found no actionable change' }
+      }
+      if (outcome === 'acted') {
+        return {
+          kind: 'changed',
+          summary: 'Heartbeat acted on new concerns',
+          coalesceKey: 'heartbeat-concerns',
+          operations: [],
+        }
+      }
+      return {
+        kind: 'failed',
+        summary: 'Heartbeat was limited by the proactive spending cap',
+        coalesceKey: 'heartbeat-spending-cap',
+        error: {
+          code: 'proactivity_capped',
+          message: 'The proactive spending cap prevented this Heartbeat sweep.',
+        },
+      }
+    })
   }
 
   /**
@@ -332,6 +354,12 @@ export class Heartbeat {
   async runSweep(occurrence?: string): Promise<string> {
     if (!this.config.enabled) return 'skipped:disabled'
 
+    const replayed = occurrence === undefined ? undefined : this.replayedSweep(occurrence)
+    if (replayed !== undefined) return replayed
+    if (occurrence !== undefined && this.hasReplayedAction(occurrence)) {
+      return this.finishSweep('acted', {}, occurrence)
+    }
+
     if (!this.router.proactivityAllowed('triage')) {
       return this.finishSweep('skipped-capped', {}, occurrence)
     }
@@ -370,13 +398,12 @@ export class Heartbeat {
         ReasonOutputSchema,
       )
       // Same fail-safe: an unparseable reasoning completion executes zero
-      // decisions rather than acting on garbage; the sweep still counts as
-      // "acted" because triage did find concerns worth a reasoning pass.
+      // decisions rather than acting on garbage.
       const decisions = reasonCall.value?.decisions ?? []
-      this.executeDecisions(decisions, concerns)
+      const actionCount = this.executeDecisions(decisions, concerns, occurrence)
 
       return this.finishSweep(
-        'acted',
+        actionCount === 0 ? 'nothing' : 'acted',
         {
           concernCount: concerns.length,
           ...costDetails(sumCosts(triageCall.costUsd, reasonCall.costUsd)),
@@ -387,6 +414,36 @@ export class Heartbeat {
       if (!(error instanceof SpendingCapError)) throw error
       return this.finishSweep('skipped-capped', {}, occurrence)
     }
+  }
+
+  /** Reuse the durable result if the Scheduler replays a completed handler occurrence. */
+  private replayedSweep(occurrence: string): SweepOutcome | undefined {
+    const event = this.store
+      .eventLog(SYSTEM_SPACE_ID)
+      .find(
+        (candidate) =>
+          candidate.type === 'heartbeat.sweep' &&
+          candidate.origin === 'trusted:system' &&
+          candidate.payload?.['occurrence'] === occurrence,
+      )
+    const outcome = event?.payload?.['outcome']
+    return outcome === 'nothing' || outcome === 'acted' || outcome === 'skipped-capped'
+      ? outcome
+      : undefined
+  }
+
+  private hasReplayedAction(occurrence: string): boolean {
+    return this.store
+      .listSpaces()
+      .some((space) =>
+        this.store
+          .eventLog(space.id)
+          .some(
+            (event) =>
+              (event.type === 'heartbeat.action' || event.type === 'heartbeat.escalate') &&
+              event.payload?.['occurrence'] === occurrence,
+          ),
+      )
   }
 
   /**
@@ -486,23 +543,30 @@ export class Heartbeat {
   private executeDecisions(
     decisions: ReasonOutput['decisions'],
     concerns: HeartbeatConcern[],
-  ): void {
+    occurrence: string | undefined,
+  ): number {
     const byKey = new Map<string, HeartbeatConcern>()
     for (const concern of concerns)
       byKey.set(concernKey(concern.spaceId, concern.surfaceId), concern)
 
+    let actionCount = 0
     for (const decision of decisions) {
       const concern = byKey.get(concernKey(decision.spaceId, decision.surfaceId))
       if (!concern) continue
-      if (decision.action === 'arm-timer') this.armTimerForConcern(concern)
-      else if (decision.action === 'escalate') this.escalateConcern(concern, decision.justification)
+      if (decision.action === 'arm-timer' && this.armTimerForConcern(concern, occurrence)) {
+        actionCount += 1
+      } else if (decision.action === 'escalate') {
+        this.escalateConcern(concern, decision.justification, occurrence)
+        actionCount += 1
+      }
     }
+    return actionCount
   }
 
   /** Idempotent: a Surface already covered by an armed, enabled timer is left alone. */
-  private armTimerForConcern(concern: HeartbeatConcern): void {
+  private armTimerForConcern(concern: HeartbeatConcern, occurrence?: string): boolean {
     const surfaceId = concern.surfaceId
-    if (!surfaceId) return
+    if (!surfaceId) return false
 
     const covered = this.scheduler
       .listAutomations(concern.spaceId)
@@ -512,7 +576,7 @@ export class Heartbeat {
           automation.enabled &&
           automation.targetSurfaceId === surfaceId,
       )
-    if (covered) return
+    if (covered) return false
 
     const automation = this.scheduler.armTimer(
       {
@@ -527,12 +591,22 @@ export class Heartbeat {
       concern.spaceId,
       'heartbeat.action',
       `Heartbeat armed a coverage timer for a Surface (kind: ${concern.kind})`,
-      { surfaceId, kind: concern.kind, automationId: automation.id },
+      {
+        surfaceId,
+        kind: concern.kind,
+        automationId: automation.id,
+        ...(occurrence === undefined ? {} : { occurrence }),
+      },
     )
+    return true
   }
 
   /** Reserved for concerns with no self-heal: a deterministic, daemon-composed notice. */
-  private escalateConcern(concern: HeartbeatConcern, justification: string | undefined): void {
+  private escalateConcern(
+    concern: HeartbeatConcern,
+    justification: string | undefined,
+    occurrence?: string,
+  ): void {
     const text =
       concern.kind === 'stale-surface'
         ? 'Heartbeat: a Surface has gone stale with no automated self-heal available — please take a look.'
@@ -549,6 +623,7 @@ export class Heartbeat {
     this.appendSpaceEvent(concern.spaceId, 'heartbeat.escalate', text, {
       ...(concern.surfaceId === undefined ? {} : { surfaceId: concern.surfaceId }),
       kind: concern.kind,
+      ...(occurrence === undefined ? {} : { occurrence }),
     })
   }
 

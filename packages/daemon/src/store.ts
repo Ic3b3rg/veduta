@@ -4,6 +4,8 @@ import {
   SurfaceSnapshotSchema,
   findDeclaredAction,
   type ChatTurnCorrelation,
+  type AutomationOutcomeKind,
+  type JsonObject,
   type JsonValue,
   type PatchOperation,
   type Space,
@@ -131,6 +133,11 @@ export class Store {
       this.surfaceEngine.getSurface(id) ??
       this.listProjectedFactsSurfaces().find((surface) => surface.id === id)
     )
+  }
+
+  /** Returns only a persisted Surface that can participate in mutation paths. */
+  getStoredSurface(id: string): Surface | undefined {
+    return this.surfaceEngine.getSurface(id)
   }
 
   snapshot(): SurfaceSnapshot {
@@ -270,9 +277,34 @@ export class Store {
       updatedBy: 'agent' | 'user' | 'job'
       origin?: Origin
       relativeTime?: RelativeTimeAuthoring
+      eventPayload?: JsonObject
     },
   ): SurfaceMutation {
     return this.surfaceEngine.patchState(surfaceId, operations, options)
+  }
+
+  commitAutomationOutcome(
+    surfaceId: string,
+    operations: PatchOperation[],
+    options: {
+      automationId: number
+      scheduledFor: string
+      kind: AutomationOutcomeKind
+      summary: string
+      idempotencyKey: string
+      expectedVersion?: number
+      origin?: Origin
+      checkedAt?: string
+      historyId?: string
+      recordInHistory?: boolean
+      notificationIntent?: JsonObject
+    },
+  ): SurfaceMutation {
+    return this.surfaceEngine.commitAutomationOutcome(surfaceId, operations, options)
+  }
+
+  validateAutomationOutcomeOperations(surfaceId: string, operations: PatchOperation[]): void {
+    this.surfaceEngine.validateAutomationOutcomeOperations(surfaceId, operations)
   }
 
   patchTree(
@@ -284,6 +316,7 @@ export class Store {
       origin?: Origin
       bypassPin?: true
       initiatingTurn?: ChatTurnCorrelation
+      eventPayload?: JsonObject
     },
   ): SurfaceMutation | TreeProposalRecorded {
     return this.surfaceEngine.patchTree(surfaceId, operations, options)
@@ -381,6 +414,10 @@ export class Store {
    */
   isSurfaceDaemonOwned(surfaceId: string): boolean {
     return this.surfaceEngine.isDaemonOwned(surfaceId)
+  }
+
+  adoptCanonicalDaemonSurface(surface: Surface, origin: Origin): Surface {
+    return this.surfaceEngine.adoptCanonicalDaemonSurface(surface, origin)
   }
 
   surfaceTools(): ToolDef[] {

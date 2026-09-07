@@ -41,6 +41,11 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
       event_cursor integer not null references surface_events(cursor)
     );
 
+    create table if not exists automation_outcome_idempotency_keys (
+      key text primary key,
+      event_cursor integer not null references surface_events(cursor)
+    );
+
     create table if not exists surface_order_state (
       space_id text primary key,
       cursor integer not null
