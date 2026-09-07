@@ -471,8 +471,8 @@ export class Store {
     return this.spacesEngine.assembleContext(spaceId)
   }
 
-  assembleSpaceContextWithOrigins(spaceId: string) {
-    return this.spacesEngine.assembleContextWithOrigins(spaceId)
+  assembleSpaceContextWithOrigins(spaceId: string, options?: { includeGlobal?: boolean }) {
+    return this.spacesEngine.assembleContextWithOrigins(spaceId, undefined, options)
   }
 
   /** The global identity documents (SOUL/USER), for the global chat's system prompt (issue #37). */

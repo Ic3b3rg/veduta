@@ -36,7 +36,20 @@ describe('SpacesEngine layout and lifecycle', () => {
     const space = engine.createSpace({ name: 'Health' })
 
     expect(existsSync(join(rootDir, 'USER.md'))).toBe(true)
-    expect(readFileSync(join(rootDir, 'SOUL.md'), 'utf8')).toContain("say you don't know")
+    const soul = readFileSync(join(rootDir, 'SOUL.md'), 'utf8')
+    const instructions = readFileSync(
+      join(rootDir, 'spaces', space.slug, 'INSTRUCTIONS.md'),
+      'utf8',
+    )
+    expect(soul).toContain('Your name is Veduta.')
+    expect(soul).not.toContain("say you don't know")
+    expect(soul).not.toContain('Space granularity rule')
+    expect(soul).not.toContain('arm_timer')
+    expect(instructions).not.toContain('Keep goals as Surfaces')
+    const context = engine.assembleContext(space.id)
+    expect(context.match(/say you don't know/g)).toHaveLength(1)
+    expect(context.match(/Space granularity rule/g)).toHaveLength(1)
+    expect(context.match(/Every learned deadline or habit arms a timer/g)).toHaveLength(1)
     expect(existsSync(join(rootDir, 'spaces', space.slug, 'FACTS.md'))).toBe(true)
     expect(existsSync(join(rootDir, 'spaces', space.slug, 'INSTRUCTIONS.md'))).toBe(true)
     expect(existsSync(join(rootDir, 'spaces', space.slug, 'log'))).toBe(true)

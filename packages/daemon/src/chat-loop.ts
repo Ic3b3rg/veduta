@@ -14,7 +14,7 @@ import { sanitizeErrorText } from './model-routing.ts'
 import { PiAgentRunner } from './pi-agent-runner.ts'
 import type { ProviderBridge } from './pi-provider-bridge.ts'
 import type { GlobalChatTurnHooks } from './global-chat-tools.ts'
-import { ABSTENTION_RULE } from './spaces-engine.ts'
+import { assembleGlobalContext } from './character-context.ts'
 import type { Store } from './store.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { effectiveOrigin, type Origin } from './taint.ts'
@@ -26,7 +26,7 @@ import { piToolParameters } from './tool-parameters.ts'
  * gated tool registry, so it can act, not just talk.
  */
 const SPACE_CHAT_PREAMBLE =
-  "You are Veduta's Agent, answering the user's chat message inside this Space. Use the " +
+  "Answer the user's chat message inside this Space. Use the " +
   'tools available to you for Space work — reading recent events, writing facts, creating ' +
   'or updating Surfaces, arming timers — rather than only describing what you would do. ' +
   'Surface authoring also applies when a read-only question produces a structured result that is ' +
@@ -62,14 +62,10 @@ const SPACE_CHAT_PREAMBLE =
   'Surface or its visible state and is never a substitute for a Surface mutation. Only claim a ' +
   'Surface changed after a successful mutation tool result.'
 
-const TOOL_BOUNDARY =
-  'Use only the Veduta tools explicitly provided in this turn. Never call provider-native shell, ' +
-  'command, filesystem, web, MCP, or any other tool not supplied by Veduta.'
-
 const GLOBAL_SPACE_ROSTER_LIMIT = 50
 
 const GLOBAL_CHAT_PREAMBLE =
-  "You are Veduta's single Agent in the global chat. You can selectively read and act across " +
+  'In global chat, you can selectively read and act across ' +
   "active Spaces without changing the user's current route. Resolve targets honestly from the " +
   "user's request and the active roster. When exactly one existing Space is unambiguous, act " +
   'directly: call enter_space before any scoped tool, then pass that Space id or slug as spaceId. ' +
@@ -84,7 +80,7 @@ const GLOBAL_CHAT_PREAMBLE =
   'scoped to exactly one entered Space; you retain the final decision.'
 
 const SYSTEM_CHAT_PREAMBLE =
-  "You are Veduta's Agent, answering conversationally inside the canonical Gateway-owned System Space. " +
+  'Answer conversationally inside the canonical Gateway-owned System Space. ' +
   'This Space is only for Veduta status and controls. Use list_surfaces, read_surface, and ' +
   'list_automations only as read-only status tools. Only invoke a Gateway operation when a ' +
   'dedicated tool for that operation is explicitly present in this turn. Never create or patch ' +
@@ -254,7 +250,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
     const { year, month, day, hour, minute } = zonedParts(timeZone, now())
     const twoDigits = (value: number): string => String(value).padStart(2, '0')
     const clock =
-      `Current user-local date and time: ${year}-${twoDigits(month)}-${twoDigits(day)} ` +
+      `# Gateway turn policy\n\nCurrent user-local date and time: ${year}-${twoDigits(month)}-${twoDigits(day)} ` +
       `${twoDigits(hour)}:${twoDigits(minute)} (${timeZone}).`
     if (spaceId === SYSTEM_SPACE_ID) {
       const docs = options.store.readGlobalDocs()
@@ -263,14 +259,11 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
       const recent = options.store.spacesEngine.recentEventsForContext(SYSTEM_SPACE_ID)
       return {
         systemPrompt: [
-          `# SOUL\n\n${docs.soul.trim()}`,
-          `# USER\n\n${docs.user.trim()}`,
+          assembleGlobalContext(docs),
           `# Active Space\n\n${space.name} (${space.slug}; id: ${space.id})`,
           recent.text,
           `# User life-area Spaces\n\n${activeLifeAreaRoster(options.store)}`,
-          ABSTENTION_RULE,
           clock,
-          TOOL_BOUNDARY,
           SYSTEM_CHAT_PREAMBLE,
         ].join('\n\n'),
         contextOrigins: Array.from(new Set(recent.origins)),
@@ -279,24 +272,15 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
     if (spaceId !== undefined) {
       const spaceContext = options.store.assembleSpaceContextWithOrigins(spaceId)
       return {
-        systemPrompt: [
-          spaceContext.text,
-          ABSTENTION_RULE,
-          clock,
-          TOOL_BOUNDARY,
-          SPACE_CHAT_PREAMBLE,
-        ].join('\n\n'),
+        systemPrompt: [spaceContext.text, clock, SPACE_CHAT_PREAMBLE].join('\n\n'),
         contextOrigins: spaceContext.origins,
       }
     }
     const docs = options.store.readGlobalDocs()
     const systemPrompt = [
-      `# SOUL\n\n${docs.soul.trim()}`,
-      `# USER\n\n${docs.user.trim()}`,
+      assembleGlobalContext(docs),
       `# Active Spaces\n\n${activeLifeAreaRoster(options.store)}`,
-      ABSTENTION_RULE,
       clock,
-      TOOL_BOUNDARY,
       GLOBAL_CHAT_PREAMBLE,
     ].join('\n\n')
     return { systemPrompt, contextOrigins: [] }

@@ -153,6 +153,17 @@ sandbox for arbitrary commands ([ADR-0026](docs/adr/0026-skills-may-drive-genera
 
 ### 3.3 Spaces
 
+`SOUL.md` contains only the user-controlled global Agent identity, initially named Veduta;
+`INSTRUCTIONS.md` contains only that Space's character. The shared Agent path assembles Gateway
+policy separately, with character subordinate to safety, trust, tools, memory, Space granularity,
+Automations, abstention, and timing. Global chat already carries that policy and identity, so
+`enter_space` returns only the bounded Space-specific context and its origins. Runtime compatibility
+recognizes exact historical policy paragraphs without rewriting character files or changing
+unrecognized prose; the persistent migration and importer transition remain separate work
+([ADR-0018](docs/adr/0018-separate-character-from-product-rules.md),
+[issue 100](issues/100-gateway-owned-character-policy.md),
+[issue 101](issues/101-character-migration-import.md)).
+
 `spaces/<name>/`: `FACTS.md` (bi-temporal facts in three states — active, `## Dormant`, `## Superseded`), append-only Event log (recent portion in context, long tail via hybrid search with a time-aware index), `INSTRUCTIONS.md`, Surfaces and Automations. Global: `USER.md`, `SOUL.md`. Files are the truth; the SQLite FTS5 index is disposable and rebuildable with one command, and every hit dereferences the original record ([ADR-0006](docs/adr/0006-file-based-memory.md), [ADR-0011](docs/adr/0011-disposable-hybrid-index.md)). The nightly **Reflection** is the offline compaction pass: it distills the day's log, consolidates FACTS through the Curator, and demotes still-valid facts to dormant to keep the injected set bounded — a visible Automation, never a silent cleanup. Lifecycle: the Agent _proposes_ creation (one-tap confirmation), granularity = life area (goals are Surfaces, not Spaces), archival never deletion. A Space's memory is visible and editable as a Surface ("what I know about you here").
 
 ### 3.4 Surface engine
