@@ -208,7 +208,6 @@ describe('Gateway-owned character policy (issue #100)', () => {
   it('recognizes each exact legacy paragraph surrounded by custom prose without consuming nearby bytes', async () => {
     const h = harness()
     const paragraphs = LEGACY_SOUL.trimEnd().split('\n\n').slice(1)
-    paragraphs.push(LEGACY_INSTRUCTIONS.trimEnd().split('\n\n')[1]!)
     for (const paragraph of paragraphs) {
       const before = '\n  Keep my name Mira.\n\n'
       const after = '\n\nUse a gentle tone.  \n'
@@ -223,6 +222,19 @@ describe('Gateway-owned character policy (issue #100)', () => {
     }
   })
 
+  it('removes only the exact current-Space legacy template from customized Space character', async () => {
+    const h = harness()
+    const before = '\n  Be gentle here.\n\n'
+    const after = '\n\nKeep these notes.  \n'
+    const document = before + LEGACY_INSTRUCTIONS.trimEnd().split('\n\n')[1]! + after
+    writeFileSync(h.instructionsPath, document)
+    const prompt = await h.prompt('spc-health')
+    expectPolicy(prompt)
+    expect(prompt).toContain(before + after)
+    expect(prompt).not.toContain('Keep goals as Surfaces')
+    expect(readFileSync(h.instructionsPath, 'utf8')).toBe(document)
+  })
+
   it('preserves near matches and inline quotations instead of guessing at legacy policy', async () => {
     const h = harness()
     for (const paragraph of [
@@ -231,6 +243,11 @@ describe('Gateway-owned character policy (issue #100)', () => {
       ` ${LEGACY_TIMER_PARAGRAPH}`,
       LEGACY_TIMER_PARAGRAPH.replace('arms a timer', 'arms\na timer'),
       LEGACY_INSTRUCTIONS.replace('narrower Spaces.', 'smaller Spaces.'),
+      LEGACY_INSTRUCTIONS.replace(
+        'Health life area.',
+        'Health life area. Preserve these notes in this life area.',
+      ),
+      LEGACY_INSTRUCTIONS.replace('Health', 'My previous Space name'),
     ]) {
       const document = `\n  My own words.\n\n${paragraph}\n\nKeep this spacing.  \n`
       writeFileSync(h.soulPath, document)

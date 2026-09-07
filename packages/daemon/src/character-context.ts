@@ -17,11 +17,15 @@ Be clear, thoughtful, and practical when discussing ${spaceName}.
 }
 
 /** Preserve unrecognized character prose byte for byte, including surrounding whitespace. */
-export function characterSection(title: 'SOUL' | 'INSTRUCTIONS', body: string): string {
+export function characterSection(
+  title: 'SOUL' | 'INSTRUCTIONS',
+  body: string,
+  spaceName?: string,
+): string {
   body =
     title === 'SOUL' && isLegacyDefaultSoul(body)
       ? defaultSoul()
-      : withoutLegacyCharacterPolicy(body)
+      : withoutLegacyCharacterPolicy(body, spaceName)
   return documentSection(title, body)
 }
 

@@ -18,14 +18,16 @@ export function isLegacyDefaultSoul(text: string): boolean {
 }
 
 /** Match complete, byte-identical paragraphs; never trim, normalize, or match prose substrings. */
-export function withoutLegacyCharacterPolicy(text: string): string {
-  for (const paragraph of LEGACY_PARAGRAPHS) {
+export function withoutLegacyCharacterPolicy(text: string, spaceName?: string): string {
+  const paragraphs = [...LEGACY_PARAGRAPHS]
+  if (spaceName !== undefined) {
+    paragraphs.push(
+      `This Space is for the ${spaceName} life area. Keep goals as Surfaces inside this Space instead of creating narrower Spaces.`,
+    )
+  }
+  for (const paragraph of paragraphs) {
     const escaped = paragraph.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     text = text.replace(new RegExp(`(^|\n\n)${escaped}(?=\n\n|\n?$)`, 'g'), '$1')
   }
-  // The only variable in the shipped Space template was its display name.
-  return text.replace(
-    /(^|\n\n)This Space is for the [^\r\n]+ life area\. Keep goals as Surfaces inside this Space instead of creating narrower Spaces\.(?=\n\n|\n?$)/g,
-    '$1',
-  )
+  return text
 }

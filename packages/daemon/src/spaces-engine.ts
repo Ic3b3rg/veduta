@@ -535,7 +535,11 @@ export class SpacesEngine {
       section('Active Space', `${space.name} (${space.slug})`),
       section('FACTS', facts.text),
       events.text,
-      characterSection('INSTRUCTIONS', readOrEmpty(this.spacePath(space, INSTRUCTIONS_FILE))),
+      characterSection(
+        'INSTRUCTIONS',
+        readOrEmpty(this.spacePath(space, INSTRUCTIONS_FILE)),
+        space.name,
+      ),
     ].join('\n\n')
     return { text, origins: [...new Set([...events.origins, ...facts.origins])] }
   }
