@@ -102,7 +102,7 @@ describe('derived aliases are declared once, in the base block, at the expected 
     ['--glass-highlight', 'color-mix(in srgb, var(--catalog-color-text) 7%, transparent)'],
     ['--accent-glow', 'color-mix(in srgb, var(--catalog-color-accent) 18%, transparent)'],
     ['--success-glow', 'color-mix(in srgb, var(--catalog-color-success) 10%, transparent)'],
-    ['--chat-dock-bg', 'var(--glass-panel-raised)'],
+    ['--chat-dock-bg', 'color-mix(in srgb, var(--catalog-color-surface-raised) 20%, transparent)'],
   ]
 
   for (const [name, expected] of aliases) {

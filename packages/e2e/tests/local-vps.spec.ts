@@ -141,12 +141,12 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         const style = getComputedStyle(element)
         return { background: style.backgroundColor, backdrop: style.backdropFilter }
       })
-      expect(dockStyle.background).toMatch(/\/ 0\.9\)$/)
+      expect(dockStyle.background).toMatch(/\/ 0\.2\)$/)
       expect(dockStyle.backdrop).toContain('blur(')
       const composerBackground = await page
         .locator('.chat-compose [data-slot="input-group"]')
         .evaluate((element) => getComputedStyle(element).backgroundColor)
-      expect(composerBackground).toMatch(/^rgb\(/)
+      expect(composerBackground).toBe('rgba(0, 0, 0, 0)')
       const fallbackPage = await context.newPage()
       try {
         await fallbackPage.goto(page.url())

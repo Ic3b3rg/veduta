@@ -191,7 +191,7 @@
 
 .chat-compose [data-slot='input-group'] {
   align-items: end;
-  background: var(--catalog-color-surface);
+  background: transparent;
   border-color: var(--catalog-color-border);
   border-radius: 16px;
   box-shadow: none;
