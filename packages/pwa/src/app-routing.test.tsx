@@ -352,20 +352,20 @@ describe('App routing', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Message Veduta' }), {
       target: { value: 'Global question' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     expect(sendChat).toHaveBeenLastCalledWith('Global question', undefined)
 
     fireEvent.click(screen.getByRole('button', { name: /Health/ }))
     const spaceChat = await screen.findByRole('textbox', { name: 'Message Veduta in Health' })
     fireEvent.change(spaceChat, { target: { value: 'Space question' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     expect(sendChat).toHaveBeenLastCalledWith('Space question', 'spc-health')
 
     fireEvent.click(screen.getByRole('button', { name: 'Focus Hydration' }))
     await waitFor(() => expect(location.pathname).toBe('/app/space/health/surface/srf-hydration'))
     const surfaceChat = screen.getByRole('textbox', { name: 'Message Veduta in Health' })
     fireEvent.change(surfaceChat, { target: { value: 'Surface-route question' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     expect(sendChat).toHaveBeenLastCalledWith('Surface-route question', 'spc-health')
   })
 

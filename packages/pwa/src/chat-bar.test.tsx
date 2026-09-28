@@ -332,13 +332,19 @@ describe('ChatBar', () => {
   it('sends on Enter and keeps Shift+Enter for a new line', () => {
     const { onSend } = renderChatBar([], [])
     const composer = screen.getByRole('textbox', { name: 'Message Veduta' })
+    const send = screen.getByRole('button', { name: 'Send message' })
+
+    expect(send.textContent).toBe('')
+    expect((send as HTMLButtonElement).disabled).toBe(true)
 
     fireEvent.change(composer, { target: { value: 'First line\nSecond line' } })
+    expect((send as HTMLButtonElement).disabled).toBe(false)
     fireEvent.keyDown(composer, { key: 'Enter', shiftKey: true })
     expect(onSend).not.toHaveBeenCalled()
 
     fireEvent.keyDown(composer, { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith('First line\nSecond line')
     expect((composer as HTMLTextAreaElement).value).toBe('')
+    expect((send as HTMLButtonElement).disabled).toBe(true)
   })
 })

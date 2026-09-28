@@ -130,6 +130,59 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       ).toBeVisible({ timeout: 60_000 })
     })
 
+    await test.step('the chat composer grows, shrinks, and keeps its send icon reachable', async () => {
+      const input = page.getByRole('textbox', { name: 'Message Veduta' })
+      const send = page.getByRole('button', { name: 'Send message' })
+      await expect(send).toBeDisabled()
+      await expect(send).toHaveText('')
+
+      const compactHeight = await input.evaluate(
+        (element) => element.getBoundingClientRect().height,
+      )
+      await input.fill('One line\n'.repeat(20))
+      const expanded = await input.evaluate((element) => ({
+        height: element.getBoundingClientRect().height,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+      }))
+      expect(expanded.height).toBeGreaterThan(compactHeight + 100)
+      expect(expanded.scrollHeight).toBeGreaterThan(expanded.clientHeight)
+      await expect(send).toBeEnabled()
+
+      const dockHeight = await page
+        .locator('.chat-dock')
+        .evaluate((element) => element.getBoundingClientRect().height)
+      await expect
+        .poll(() =>
+          page
+            .locator('.app-shell')
+            .evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingBottom)),
+        )
+        .toBeGreaterThan(dockHeight)
+
+      await input.fill('Short')
+      expect(await input.evaluate((element) => element.getBoundingClientRect().height)).toBe(
+        compactHeight,
+      )
+
+      await page.setViewportSize({ width: 320, height: 640 })
+      await input.fill('A longer draft\n'.repeat(20))
+      const sendBounds = await send.boundingBox()
+      if (!sendBounds) throw new Error('Send button has no bounding box')
+      expect(sendBounds.x).toBeGreaterThanOrEqual(0)
+      expect(sendBounds.x + sendBounds.width).toBeLessThanOrEqual(320)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+        320,
+      )
+
+      await input.fill('')
+      expect(await input.evaluate((element) => element.getBoundingClientRect().height)).toBe(
+        compactHeight,
+      )
+      await expect(send).toBeDisabled()
+      await page.setViewportSize({ width: 1280, height: 720 })
+    })
+
     await test.step('Home links to the seeded Health Space and its Surfaces', async () => {
       await page
         .getByRole('main', { name: 'Home' })
@@ -152,7 +205,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
 
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta' })
       await chatInput.fill('aggiungi ai meals la fesa di tacchino')
-      await page.getByRole('button', { name: 'Send' }).click()
+      await page.getByRole('button', { name: 'Send message' }).click()
 
       await expectMealLogged(page)
 
@@ -232,7 +285,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
     await test.step('the exact Italian calorie question enriches Meals and agrees with chat (issue 095)', async () => {
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
       await chatInput.fill('aggiungi ai meals la colazione con ricotta, cereali e latte')
-      await page.getByRole('button', { name: 'Send' }).click()
+      await page.getByRole('button', { name: 'Send message' }).click()
       await expect(
         page
           .locator('.chat-entry.assistant')
@@ -240,7 +293,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       ).toHaveCount(1)
 
       await chatInput.fill('Quante calorie ho mangiato oggi ?')
-      await page.getByRole('button', { name: 'Send' }).click()
+      await page.getByRole('button', { name: 'Send message' }).click()
 
       const meals = surfaceCard(page, 'Meals')
       await expect(meals.getByText('Today’s calorie estimate')).toBeVisible()
@@ -262,13 +315,13 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         ]),
       )
       await chatInput.fill('La ricotta era 100 g, i cereali 40 g e il latte 200 ml')
-      await page.getByRole('button', { name: 'Send' }).click()
+      await page.getByRole('button', { name: 'Send message' }).click()
       await expect(meals.getByText('≈ 470–570 kcal')).toBeVisible()
       await expect(meals.getByText('≈ 430–650 kcal')).toHaveCount(0)
       await expect(meals.getByText('Today’s calorie estimate')).toHaveCount(1)
 
       await chatInput.fill('Non mostrare più la stima calorie')
-      await page.getByRole('button', { name: 'Send' }).click()
+      await page.getByRole('button', { name: 'Send message' }).click()
       await expect(meals.getByText('Today’s calorie estimate')).toHaveCount(0)
       await expect(meals.getByText('fesa di tacchino', { exact: true }).first()).toBeVisible()
       await expect(
@@ -279,7 +332,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
     await test.step('progressive composition publishes layout first, fills independently, then falls back (issue 029)', async () => {
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
       await chatInput.fill('show progressive surface demo')
-      await page.getByRole('button', { name: 'Send' }).click()
+      await page.getByRole('button', { name: 'Send message' }).click()
 
       const progressive = surfaceCard(page, 'Progressive trip plan')
       await expect(progressive.getByRole('status')).toHaveCount(5, { timeout: 1_100 })
@@ -459,7 +512,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
     await test.step('Form text submits atomically, retries visibly, and survives reload (issue 142)', async () => {
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
       await chatInput.fill('send to alice@example.com: original draft')
-      await page.getByRole('button', { name: 'Send' }).click()
+      await page.getByRole('button', { name: 'Send message' }).click()
 
       const approvalTitle = 'Approval required: Send message to alice@example.com'
       const approval = surfaceCard(page, approvalTitle)
@@ -566,7 +619,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
     await test.step('create a recurring Automation for the outcome delivery journey (issue 091)', async () => {
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
       await chatInput.fill('Create a daily automation to review my plan at 9am')
-      await page.getByRole('button', { name: 'Send' }).click()
+      await page.getByRole('button', { name: 'Send message' }).click()
       await expect(surfaceCard(page, 'Automations').getByText('Review my plan')).toBeVisible()
     })
 

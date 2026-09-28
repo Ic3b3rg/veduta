@@ -47,6 +47,7 @@ export function ChatBar({
   const [isAtBottom, setIsAtBottom] = useState(true)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
+  const dockRef = useRef<HTMLElement>(null)
   const followsLatestRef = useRef(true)
 
   useEffect(() => {
@@ -57,6 +58,27 @@ export function ChatBar({
     const log = logRef.current
     if (log && followsLatestRef.current) log.scrollTop = log.scrollHeight
   }, [entries, streamingEntries])
+
+  useEffect(() => {
+    const dock = dockRef.current
+    const shell = dock?.closest<HTMLElement>('.app-shell')
+    if (!dock || !shell || typeof ResizeObserver === 'undefined') return
+
+    const updateSpacing = () => {
+      shell.style.setProperty(
+        '--chat-dock-height',
+        `${Math.ceil(dock.getBoundingClientRect().height)}px`,
+      )
+    }
+    const observer = new ResizeObserver(updateSpacing)
+    observer.observe(dock)
+    updateSpacing()
+
+    return () => {
+      observer.disconnect()
+      shell.style.removeProperty('--chat-dock-height')
+    }
+  }, [])
 
   const scrollToLatest = () => {
     const log = logRef.current
@@ -73,7 +95,7 @@ export function ChatBar({
   }
 
   return (
-    <footer className="chat-dock" aria-label="Global chat">
+    <footer ref={dockRef} className="chat-dock" aria-label="Global chat">
       <div className="chat-log-frame">
         <div
           ref={logRef}
@@ -195,8 +217,16 @@ export function ChatBar({
             }}
           />
           <InputGroupAddon align="inline-end">
-            <InputGroupButton type="submit" variant="default" size="sm" disabled={!text.trim()}>
-              Send
+            <InputGroupButton
+              type="submit"
+              variant="default"
+              size="icon-sm"
+              aria-label="Send message"
+              disabled={!text.trim()}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+                <path d="M12 19V5m0 0-6 6m6-6 6 6" />
+              </svg>
             </InputGroupButton>
           </InputGroupAddon>
         </InputGroup>

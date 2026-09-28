@@ -1,6 +1,6 @@
 .app-shell {
   min-height: 100vh;
-  padding: 16px 20px 232px;
+  padding: 16px 20px max(232px, calc(var(--chat-dock-height, 0px) + 32px));
 }
 
 .skip-link {

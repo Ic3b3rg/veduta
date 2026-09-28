@@ -1,11 +1,6 @@
 .chat-dock {
-  background: var(--catalog-color-surface-raised);
-  border: 1px solid var(--catalog-color-border);
-  border-radius: calc(var(--catalog-radius-md) + 4px);
   bottom: 14px;
-  box-shadow: 0 12px 32px var(--chat-dock-shadow);
   left: 50%;
-  padding: 10px;
   position: fixed;
   transform: translateX(-50%);
   width: min(760px, calc(100% - 32px));
@@ -24,7 +19,7 @@
 .chat-log {
   display: grid;
   gap: 8px;
-  max-height: 240px;
+  max-height: min(200px, 25dvh);
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 2px;
@@ -181,18 +176,24 @@
 
 .chat-compose [data-slot='input-group'] {
   align-items: end;
-  background: var(--catalog-color-surface);
+  background: var(--catalog-color-surface-raised);
   border-color: var(--catalog-color-border);
-  border-radius: var(--catalog-radius-md);
+  border-radius: 24px;
+  box-shadow: 0 12px 32px var(--chat-dock-shadow);
+  overflow: hidden;
+  padding-top: 16px;
 }
 
 .chat-compose [data-slot='input-group-control'] {
   color: var(--catalog-color-text);
-  font: inherit;
-  line-height: 1.4;
-  max-height: 144px;
-  min-height: 46px;
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+  max-height: min(240px, 35dvh);
+  min-height: 52px;
   overflow-y: auto;
+  padding: 6px 2px 14px 18px;
+  scrollbar-width: thin;
 }
 
 .chat-compose [data-slot='input-group-control']::placeholder {
@@ -212,8 +213,25 @@
 }
 
 .chat-compose [data-slot='button'] {
-  min-height: 34px;
-  min-width: 60px;
+  border-radius: 50%;
+  height: 40px;
+  width: 40px;
+}
+
+.chat-compose [data-slot='button'] svg {
+  height: 19px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
+  width: 19px;
+}
+
+@media (pointer: coarse) {
+  .chat-compose [data-slot='button'] {
+    height: 44px;
+    width: 44px;
+  }
 }
 
 @media (max-height: 480px) {
