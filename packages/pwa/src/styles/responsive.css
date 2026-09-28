@@ -151,8 +151,8 @@
   .route-recovery,
   .notif-guide,
   .chat-dock {
+    -webkit-backdrop-filter: none;
     backdrop-filter: none;
     background: var(--surface);
-    -webkit-backdrop-filter: none;
   }
 }

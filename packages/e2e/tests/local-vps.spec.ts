@@ -130,17 +130,40 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       ).toBeVisible({ timeout: 60_000 })
     })
 
-    await test.step('the chat composer stays opaque, resizes, and keeps its send icon reachable', async () => {
+    await test.step('the chat composer stays legible over glass, resizes, and keeps its send icon reachable', async () => {
       const input = page.getByRole('textbox', { name: 'Message Veduta' })
       const send = page.getByRole('button', { name: 'Send message' })
       await expect(send).toBeDisabled()
       await expect(send).toHaveText('')
 
       await page.emulateMedia({ colorScheme: 'dark' })
-      const dockBackground = await page
-        .locator('.chat-dock')
+      const dockStyle = await page.locator('.chat-dock').evaluate((element) => {
+        const style = getComputedStyle(element)
+        return { background: style.backgroundColor, backdrop: style.backdropFilter }
+      })
+      expect(dockStyle.background).toMatch(/\/ 0\.9\)$/)
+      expect(dockStyle.backdrop).toContain('blur(')
+      const composerBackground = await page
+        .locator('.chat-compose [data-slot="input-group"]')
         .evaluate((element) => getComputedStyle(element).backgroundColor)
-      expect(dockBackground).toMatch(/^rgb\(/)
+      expect(composerBackground).toMatch(/^rgb\(/)
+      const fallbackPage = await context.newPage()
+      try {
+        await fallbackPage.goto(page.url())
+        await expect(fallbackPage.locator('.chat-dock')).toBeVisible()
+        const reducedTransparency = await context.newCDPSession(fallbackPage)
+        await reducedTransparency.send('Emulation.setEmulatedMedia', {
+          features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }],
+        })
+        const opaqueDockStyle = await fallbackPage.locator('.chat-dock').evaluate((element) => {
+          const style = getComputedStyle(element)
+          return { background: style.backgroundColor, backdrop: style.backdropFilter }
+        })
+        expect(opaqueDockStyle.background).toMatch(/^rgb\(/)
+        expect(opaqueDockStyle.backdrop).toBe('none')
+      } finally {
+        await fallbackPage.close()
+      }
       const sendStyle = await send.evaluate((element) => {
         const style = getComputedStyle(element)
         return {

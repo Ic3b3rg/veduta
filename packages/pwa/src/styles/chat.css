@@ -12,6 +12,14 @@
   z-index: 10;
 }
 
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .chat-dock {
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.1);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.1);
+    background: var(--chat-dock-bg);
+  }
+}
+
 .chat-log-frame {
   margin: 0 0 10px;
   position: relative;
