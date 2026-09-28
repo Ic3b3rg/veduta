@@ -1,6 +1,11 @@
 .chat-dock {
+  background: var(--catalog-color-surface-raised);
+  border: 1px solid var(--catalog-color-border);
+  border-radius: 20px;
   bottom: 14px;
+  box-shadow: 0 12px 32px var(--chat-dock-shadow);
   left: 50%;
+  padding: 10px;
   position: fixed;
   transform: translateX(-50%);
   width: min(760px, calc(100% - 32px));
@@ -76,6 +81,8 @@
 }
 
 .chat-entry.assistant {
+  background: var(--catalog-color-surface);
+  border-color: var(--catalog-color-border);
   box-shadow: none;
   margin-right: auto;
 }
@@ -176,10 +183,10 @@
 
 .chat-compose [data-slot='input-group'] {
   align-items: end;
-  background: var(--catalog-color-surface-raised);
+  background: var(--catalog-color-surface);
   border-color: var(--catalog-color-border);
-  border-radius: 24px;
-  box-shadow: 0 12px 32px var(--chat-dock-shadow);
+  border-radius: 16px;
+  box-shadow: none;
   overflow: hidden;
   padding-top: 16px;
 }
@@ -209,13 +216,36 @@
 
 .chat-compose [data-slot='input-group-addon'] {
   align-self: end;
+  margin-right: 0;
   padding: 6px;
 }
 
 .chat-compose [data-slot='button'] {
+  background: var(--catalog-color-surface-muted);
+  border: 1px solid var(--catalog-color-text-muted);
   border-radius: 50%;
+  box-shadow: none;
+  color: var(--catalog-color-text);
   height: 40px;
+  opacity: 1;
   width: 40px;
+}
+
+.chat-compose [data-slot='button']:hover:not(:disabled) {
+  background: var(--catalog-color-surface-raised);
+  border-color: var(--catalog-color-text-muted);
+  color: var(--catalog-color-text);
+}
+
+.chat-compose [data-slot='button']:disabled {
+  color: var(--catalog-color-text-muted);
+  opacity: 1;
+}
+
+.chat-compose [data-slot='button']:focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--catalog-color-text-muted);
+  outline-offset: 0;
 }
 
 .chat-compose [data-slot='button'] svg {

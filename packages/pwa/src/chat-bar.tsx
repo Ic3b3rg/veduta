@@ -219,7 +219,7 @@ export function ChatBar({
           <InputGroupAddon align="inline-end">
             <InputGroupButton
               type="submit"
-              variant="default"
+              variant="outline"
               size="icon-sm"
               aria-label="Send message"
               disabled={!text.trim()}

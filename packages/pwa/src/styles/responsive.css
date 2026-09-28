@@ -117,6 +117,7 @@
 
   .chat-dock {
     bottom: 10px;
+    padding: 8px;
     width: calc(100% - 20px);
   }
 

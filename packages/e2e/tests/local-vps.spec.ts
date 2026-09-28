@@ -130,11 +130,40 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       ).toBeVisible({ timeout: 60_000 })
     })
 
-    await test.step('the chat composer grows, shrinks, and keeps its send icon reachable', async () => {
+    await test.step('the chat composer stays opaque, resizes, and keeps its send icon reachable', async () => {
       const input = page.getByRole('textbox', { name: 'Message Veduta' })
       const send = page.getByRole('button', { name: 'Send message' })
       await expect(send).toBeDisabled()
       await expect(send).toHaveText('')
+
+      await page.emulateMedia({ colorScheme: 'dark' })
+      const dockBackground = await page
+        .locator('.chat-dock')
+        .evaluate((element) => getComputedStyle(element).backgroundColor)
+      expect(dockBackground).toMatch(/^rgb\(/)
+      const sendStyle = await send.evaluate((element) => {
+        const style = getComputedStyle(element)
+        return {
+          borders: [
+            style.borderTopColor,
+            style.borderRightColor,
+            style.borderBottomColor,
+            style.borderLeftColor,
+          ],
+          opacity: style.opacity,
+        }
+      })
+      expect(new Set(sendStyle.borders).size).toBe(1)
+      expect(sendStyle.opacity).toBe('1')
+      const groupBounds = await page
+        .locator('.chat-compose [data-slot="input-group"]')
+        .boundingBox()
+      const buttonBounds = await send.boundingBox()
+      if (!groupBounds || !buttonBounds) throw new Error('Composer has no bounding box')
+      expect(
+        groupBounds.x + groupBounds.width - buttonBounds.x - buttonBounds.width,
+      ).toBeGreaterThanOrEqual(6)
+      await page.emulateMedia({ colorScheme: 'light' })
 
       const compactHeight = await input.evaluate(
         (element) => element.getBoundingClientRect().height,
