@@ -13,12 +13,16 @@ cannot supply CSS or HTML.
 | DatePicker                     | Input with native `date` behavior                                 |
 | Select                         | NativeSelect                                                      |
 | Checkbox                       | Checkbox                                                          |
+| Switch                         | Switch                                                            |
 | RadioGroup                     | RadioGroup                                                        |
+| Combobox                       | Combobox with searchable labeled options                          |
 | Input, Textarea                | Input, Textarea                                                   |
 | Form                           | Button and Label with a catalog spacing recipe                    |
 | Box                            | Card                                                              |
 | Row, Col, Spacer, Transition   | Catalog spacing, radius, and motion recipes                       |
 | Divider                        | Separator                                                         |
+| Collapsible                    | Collapsible                                                       |
+| Accordion                      | Accordion with Collapsible child Atoms                            |
 | Table                          | Table primitives                                                  |
 | Title, Text, Caption, Markdown | Catalog typography recipes                                        |
 | Label                          | Label when associated with a control; typography recipe otherwise |

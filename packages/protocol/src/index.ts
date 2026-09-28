@@ -34,6 +34,10 @@ export {
   InputAtomPropsSchema,
   TextareaAtomPropsSchema,
   FormAtomPropsSchema,
+  CollapsibleAtomPropsSchema,
+  AccordionAtomPropsSchema,
+  SwitchAtomPropsSchema,
+  ComboboxAtomPropsSchema,
   AutomationAtomPropsSchema,
   MIN_PENDING_SLOT_TIMEOUT_MS,
   DEFAULT_PENDING_SLOT_TIMEOUT_MS,
@@ -45,6 +49,10 @@ export {
   type InputAtomProps,
   type TextareaAtomProps,
   type FormAtomProps,
+  type CollapsibleAtomProps,
+  type AccordionAtomProps,
+  type SwitchAtomProps,
+  type ComboboxAtomProps,
   type AutomationAtomProps,
 } from './atom.ts'
 export {

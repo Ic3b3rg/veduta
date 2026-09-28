@@ -5,6 +5,7 @@ import {
   MAX_PENDING_SLOT_TIMEOUT_MS,
   MIN_PENDING_SLOT_TIMEOUT_MS,
   PendingAtomPropsSchema,
+  SurfaceSchema,
   pendingSlotVariants,
 } from './index.ts'
 
@@ -78,6 +79,170 @@ describe('Pending Atom protocol', () => {
       type: 'Chart',
       props: { variant: 'future-chart-style', customOption: true },
     })
+  })
+})
+
+describe('Disclosure and selection Atom contracts', () => {
+  it('accepts nested disclosure Atoms and actionable controls', () => {
+    expect(
+      AtomNodeSchema.safeParse({
+        id: 'details',
+        type: 'Collapsible',
+        props: { label: 'Details', defaultOpen: true },
+        children: [{ id: 'detail-copy', type: 'Text', props: { text: 'More context' } }],
+      }).success,
+    ).toBe(true)
+    expect(
+      AtomNodeSchema.safeParse({
+        id: 'sections',
+        type: 'Accordion',
+        props: { mode: 'single' },
+        children: [
+          {
+            id: 'first',
+            type: 'Collapsible',
+            props: { label: 'First', defaultOpen: true },
+            children: [{ id: 'first-copy', type: 'Text', props: { text: 'First answer' } }],
+          },
+          {
+            id: 'second',
+            type: 'Collapsible',
+            props: { label: 'Second' },
+            children: [{ id: 'second-copy', type: 'Text', props: { text: 'Second answer' } }],
+          },
+        ],
+      }).success,
+    ).toBe(true)
+    expect(
+      AtomNodeSchema.safeParse({
+        id: 'notifications',
+        type: 'Switch',
+        binding: 'notifications',
+        props: { label: 'Notifications' },
+        actions: [{ name: 'toggle', path: 'fast', stateKey: 'notifications' }],
+      }).success,
+    ).toBe(true)
+    expect(
+      AtomNodeSchema.safeParse({
+        id: 'city',
+        type: 'Combobox',
+        binding: 'city',
+        props: {
+          label: 'City',
+          options: [
+            { label: 'Rome', value: 'rome' },
+            { label: 'Milan', value: 'milan' },
+          ],
+        },
+        actions: [{ name: 'change', path: 'fast', stateKey: 'city' }],
+      }).success,
+    ).toBe(true)
+  })
+
+  it.each([
+    { type: 'Collapsible', props: { label: '' }, children: [{ id: 't', type: 'Text' }] },
+    { type: 'Collapsible', props: { label: 'Details' }, children: [] },
+    {
+      type: 'Collapsible',
+      props: { label: 'Details', typo: true },
+      children: [{ id: 't', type: 'Text' }],
+    },
+    { type: 'Accordion', props: {}, children: [{ id: 't', type: 'Text' }] },
+    {
+      type: 'Accordion',
+      props: { mode: 'single' },
+      children: [
+        {
+          id: 'a',
+          type: 'Collapsible',
+          props: { label: 'A', defaultOpen: true },
+          children: [{ id: 'ta', type: 'Text' }],
+        },
+        {
+          id: 'b',
+          type: 'Collapsible',
+          props: { label: 'B', defaultOpen: true },
+          children: [{ id: 'tb', type: 'Text' }],
+        },
+      ],
+    },
+    { type: 'Switch', props: { label: 'Enabled' }, binding: 'enabled' },
+    {
+      type: 'Switch',
+      props: { label: 'Enabled' },
+      binding: 'enabled',
+      actions: [{ name: 'change', path: 'fast', stateKey: 'enabled' }],
+    },
+    {
+      type: 'Switch',
+      props: { label: 'Enabled' },
+      binding: 'enabled',
+      actions: [{ name: 'toggle', path: 'fast', stateKey: 'other' }],
+    },
+    {
+      type: 'Combobox',
+      props: { label: 'City', options: [] },
+      binding: 'city',
+      actions: [{ name: 'change', path: 'fast', stateKey: 'city' }],
+    },
+    {
+      type: 'Combobox',
+      props: {
+        label: 'City',
+        options: [
+          { label: 'Rome', value: 'rome' },
+          { label: 'Other Rome', value: 'rome' },
+        ],
+      },
+      binding: 'city',
+      actions: [{ name: 'change', path: 'fast', stateKey: 'city' }],
+    },
+    {
+      type: 'Combobox',
+      props: { label: 'City', options: ['Rome'] },
+      binding: 'city',
+      actions: [{ name: 'change', path: 'fast', stateKey: 'city' }],
+    },
+  ])('rejects an unusable new Atom %#', (candidate) => {
+    expect(AtomNodeSchema.safeParse({ id: 'invalid', ...candidate }).success).toBe(false)
+  })
+
+  it('rejects bound values that cannot be rendered by Switch and Combobox', () => {
+    const tree = {
+      id: 'root',
+      type: 'Col',
+      children: [
+        {
+          id: 'switch',
+          type: 'Switch',
+          binding: 'enabled',
+          props: { label: 'Enabled' },
+          actions: [{ name: 'toggle', path: 'fast', stateKey: 'enabled' }],
+        },
+        {
+          id: 'city',
+          type: 'Combobox',
+          binding: 'city',
+          props: { label: 'City', options: [{ label: 'Rome', value: 'rome' }] },
+          actions: [{ name: 'change', path: 'fast', stateKey: 'city' }],
+        },
+      ],
+    }
+    const surface = {
+      id: 'srf-controls',
+      spaceId: 'spc-home',
+      title: 'Controls',
+      tree,
+      state: { enabled: false, city: 'rome' },
+      freshness: { updatedAt: '2026-09-28T10:00:00.000Z', updatedBy: 'seed' },
+    }
+    expect(SurfaceSchema.safeParse(surface).success).toBe(true)
+    expect(
+      SurfaceSchema.safeParse({ ...surface, state: { enabled: 'false', city: 'rome' } }).success,
+    ).toBe(false)
+    expect(
+      SurfaceSchema.safeParse({ ...surface, state: { enabled: true, city: 'unknown' } }).success,
+    ).toBe(false)
   })
 })
 

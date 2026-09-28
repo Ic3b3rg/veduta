@@ -13,7 +13,7 @@ export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
       {
         id: 'showcase-caption',
         type: 'Caption',
-        props: { text: 'Generated Surface using the complete v1 Atom catalog' },
+        props: { text: 'Generated Surface using the complete Atom catalog' },
       },
       {
         id: 'showcase-pending',
@@ -147,6 +147,54 @@ export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
         actions: [{ name: 'toggle', path: 'fast', stateKey: 'milk' }],
       },
       {
+        id: 'quiet-hours-switch',
+        type: 'Switch',
+        binding: 'quietHours',
+        props: { label: 'Quiet hours' },
+        actions: [{ name: 'toggle', path: 'fast', stateKey: 'quietHours' }],
+      },
+      {
+        id: 'location-combobox',
+        type: 'Combobox',
+        binding: 'location',
+        props: {
+          label: 'Location',
+          placeholder: 'Search locations',
+          options: [
+            { label: 'Rome', value: 'rome' },
+            { label: 'Milan', value: 'milan' },
+            { label: 'Turin', value: 'turin' },
+          ],
+        },
+        actions: [{ name: 'change', path: 'fast', stateKey: 'location' }],
+      },
+      {
+        id: 'plan-details',
+        type: 'Collapsible',
+        props: { label: 'Plan details' },
+        children: [
+          { id: 'plan-details-copy', type: 'Text', props: { text: 'Shop before Saturday.' } },
+        ],
+      },
+      {
+        id: 'plan-faq',
+        type: 'Accordion',
+        children: [
+          {
+            id: 'faq-delivery',
+            type: 'Collapsible',
+            props: { label: 'When is delivery?', defaultOpen: true },
+            children: [{ id: 'delivery-copy', type: 'Text', props: { text: 'On Saturday.' } }],
+          },
+          {
+            id: 'faq-owner',
+            type: 'Collapsible',
+            props: { label: 'Who owns the list?' },
+            children: [{ id: 'owner-copy', type: 'Text', props: { text: 'Your Home Space.' } }],
+          },
+        ],
+      },
+      {
         id: 'showcase-table',
         type: 'Table',
         binding: 'tableRows',
@@ -202,6 +250,8 @@ export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
     priority: 'medium',
     cadence: 'daily',
     milk: true,
+    quietHours: false,
+    location: 'rome',
     tableRows: [
       { item: 'Milk', owner: 'Home', status: 'needed' },
       { item: 'Fruit', owner: 'Market', status: 'planned' },

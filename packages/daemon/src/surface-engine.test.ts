@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { performance } from 'node:perf_hooks'
 import { join } from 'node:path'
@@ -660,6 +660,77 @@ describe('Surface engine store', () => {
     expect(store.eventLog('spc-health').filter((event) => event.type === 'fast_path')).toHaveLength(
       1,
     )
+  })
+
+  it('persists Switch and Combobox values with one Space Event per fast-path change', async () => {
+    const rootDir = await tempRoot()
+    const store = new Store({ rootDir, now: fixedNow })
+    let restarted: Store | undefined
+    const surfaceId = 'srf-new-controls'
+    try {
+      store.createSurface(
+        SurfaceSchema.parse({
+          id: surfaceId,
+          spaceId: 'spc-health',
+          title: 'Controls',
+          tree: {
+            id: 'root',
+            type: 'Col',
+            children: [
+              {
+                id: 'quiet-hours',
+                type: 'Switch',
+                binding: 'quietHours',
+                props: { label: 'Quiet hours' },
+                actions: [{ name: 'toggle', path: 'fast', stateKey: 'quietHours' }],
+              },
+              {
+                id: 'location',
+                type: 'Combobox',
+                binding: 'location',
+                props: {
+                  label: 'Location',
+                  options: [
+                    { label: 'Rome', value: 'rome' },
+                    { label: 'Milan', value: 'milan' },
+                  ],
+                },
+                actions: [{ name: 'change', path: 'fast', stateKey: 'location' }],
+              },
+            ],
+          },
+          state: { quietHours: false, location: 'rome' },
+          freshness: { updatedAt: fixedNow().toISOString(), updatedBy: 'agent' },
+        }),
+        'agent',
+      )
+
+      store.applyFastAction(surfaceId, 'quietHours', true, 'quiet-hours-on')
+      store.applyFastAction(surfaceId, 'location', 'milan', 'location-milan')
+      expect(() => store.applyFastAction(surfaceId, 'location', 'unknown')).toThrow()
+      expect(() => store.applyFastAction(surfaceId, 'quietHours', 'on')).toThrow()
+      expect(store.getSurface(surfaceId)?.state).toMatchObject({
+        quietHours: true,
+        location: 'milan',
+      })
+      expect(
+        store
+          .eventLog('spc-health')
+          .filter(
+            (event) => event.type === 'fast_path' && event.payload?.['surfaceId'] === surfaceId,
+          ),
+      ).toHaveLength(2)
+
+      restarted = new Store({ rootDir, now: fixedNow })
+      expect(restarted.getSurface(surfaceId)?.state).toMatchObject({
+        quietHours: true,
+        location: 'milan',
+      })
+    } finally {
+      restarted?.close()
+      store.close()
+      await rm(rootDir, { recursive: true, force: true })
+    }
   })
 
   /**

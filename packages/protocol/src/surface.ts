@@ -1,5 +1,5 @@
 import { z, type ZodIssue } from 'zod'
-import { AtomNodeSchema, type AtomNode } from './atom.ts'
+import { AtomNodeSchema, ComboboxAtomPropsSchema, type AtomNode } from './atom.ts'
 import { JsonObjectSchema, type JsonObject } from './json.ts'
 
 /**
@@ -90,6 +90,7 @@ export const SurfaceSchema = SurfaceObjectSchema.superRefine((surface, ctx) => {
   validateNodeBindings(surface.tree, surface.state, ['tree'], ctx)
   validateTextFormTree(surface.tree, false, ['tree'], ctx)
   validateTextFormState(surface.tree, surface.state, ctx)
+  validateNewControlState(surface.tree, surface.state, ctx)
   validateRelativeTimeContract(surface, ctx)
 }).transform(normalizeRelativeTimeOccurrences)
 
@@ -275,6 +276,35 @@ function validateTextFormState(node: AtomNode, state: JsonObject, ctx: z.Refinem
   }
 
   node.children?.forEach((child) => validateTextFormState(child, state, ctx))
+}
+
+function validateNewControlState(node: AtomNode, state: JsonObject, ctx: z.RefinementCtx): void {
+  const binding = node.binding
+  if (binding !== undefined && hasStateKey(state, binding)) {
+    const value = state[binding]
+    if (node.type === 'Switch' && typeof value !== 'boolean') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['state', binding],
+        message: `Switch state "${binding}" must be a boolean`,
+      })
+    }
+    if (node.type === 'Combobox') {
+      const props = ComboboxAtomPropsSchema.safeParse(node.props)
+      if (
+        props.success &&
+        (typeof value !== 'string' ||
+          (value !== '' && !props.data.options.some((option) => option.value === value)))
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['state', binding],
+          message: `Combobox state "${binding}" must match an offered option or be empty`,
+        })
+      }
+    }
+  }
+  node.children?.forEach((child) => validateNewControlState(child, state, ctx))
 }
 
 interface FormTextFieldRef {

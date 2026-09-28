@@ -14,7 +14,9 @@ export const atomTypes = [
   'DatePicker',
   'Select',
   'Checkbox',
+  'Switch',
   'RadioGroup',
+  'Combobox',
   'Input',
   'Textarea',
   'Form',
@@ -24,6 +26,8 @@ export const atomTypes = [
   'Col',
   'Spacer',
   'Divider',
+  'Collapsible',
+  'Accordion',
   'Table',
   // Typography
   'Text',
@@ -120,6 +124,58 @@ export const FormAtomPropsSchema = z
 
 export type FormAtomProps = z.infer<typeof FormAtomPropsSchema>
 
+export const CollapsibleAtomPropsSchema = z
+  .object({
+    label: z.string().trim().min(1).max(120),
+    defaultOpen: z.boolean().optional(),
+  })
+  .strict()
+
+export const AccordionAtomPropsSchema = z
+  .object({ mode: z.enum(['single', 'multiple']).optional() })
+  .strict()
+
+export const SwitchAtomPropsSchema = z
+  .object({ label: z.string().trim().min(1).max(120), disabled: z.boolean().optional() })
+  .strict()
+
+export const ComboboxAtomPropsSchema = z
+  .object({
+    label: z.string().trim().min(1).max(120),
+    placeholder: z.string().max(240).optional(),
+    emptyText: z.string().max(240).optional(),
+    disabled: z.boolean().optional(),
+    options: z
+      .array(
+        z
+          .object({
+            label: z.string().trim().min(1).max(120),
+            value: z.string().min(1).max(160),
+          })
+          .strict(),
+      )
+      .min(1)
+      .superRefine((options, ctx) => {
+        const seen = new Set<string>()
+        options.forEach((option, index) => {
+          if (seen.has(option.value)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: [index, 'value'],
+              message: `duplicate Combobox option value "${option.value}"`,
+            })
+          }
+          seen.add(option.value)
+        })
+      }),
+  })
+  .strict()
+
+export type CollapsibleAtomProps = z.infer<typeof CollapsibleAtomPropsSchema>
+export type AccordionAtomProps = z.infer<typeof AccordionAtomPropsSchema>
+export type SwitchAtomProps = z.infer<typeof SwitchAtomPropsSchema>
+export type ComboboxAtomProps = z.infer<typeof ComboboxAtomPropsSchema>
+
 export const AutomationAtomPropsSchema = z
   .object({
     history: AutomationRunHistorySchema.optional(),
@@ -172,7 +228,117 @@ function validateAtomNode(node: PendingAtomCandidate, ctx: z.RefinementCtx): voi
   validateTextareaAtom(node, ctx)
   validateFormAtom(node, ctx)
   validateAutomationAtom(node, ctx)
+  validateDisclosureAtom(node, ctx)
+  validateNewControlAtom(node, ctx)
   validateAtomicActions(node, ctx)
+}
+
+function addPropsIssues(
+  result: z.SafeParseReturnType<unknown, unknown>,
+  ctx: z.RefinementCtx,
+): void {
+  if (result.success) return
+  for (const issue of result.error.issues) {
+    ctx.addIssue({ ...issue, path: ['props', ...issue.path] })
+  }
+}
+
+function rejectFields(
+  node: PendingAtomCandidate,
+  fields: readonly ('binding' | 'actions' | 'children')[],
+  message: string,
+  ctx: z.RefinementCtx,
+): void {
+  for (const field of fields) {
+    if (node[field] === undefined) continue
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message })
+  }
+}
+
+function validateDisclosureAtom(node: PendingAtomCandidate, ctx: z.RefinementCtx): void {
+  if (node.type === 'Collapsible') {
+    addPropsIssues(CollapsibleAtomPropsSchema.safeParse(node.props), ctx)
+    rejectFields(node, ['binding', 'actions'], 'Collapsible only controls local disclosure', ctx)
+    if (!node.children?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['children'],
+        message: 'Collapsible requires at least one child',
+      })
+    }
+  }
+  if (node.type !== 'Accordion') return
+  const props = AccordionAtomPropsSchema.safeParse(node.props ?? {})
+  addPropsIssues(props, ctx)
+  rejectFields(node, ['binding', 'actions'], 'Accordion only controls local disclosure', ctx)
+  if (!node.children?.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['children'],
+      message: 'Accordion requires Collapsible children',
+    })
+    return
+  }
+  let defaults = 0
+  node.children.forEach((child, index) => {
+    if (child.type !== 'Collapsible') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['children', index, 'type'],
+        message: 'Accordion children must be Collapsible Atoms',
+      })
+    }
+    if (child.props?.['defaultOpen'] === true) defaults++
+  })
+  if (props.success && props.data.mode !== 'multiple' && defaults > 1) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['children'],
+      message: 'Single Accordion can open only one child by default',
+    })
+  }
+}
+
+function validateNewControlAtom(node: PendingAtomCandidate, ctx: z.RefinementCtx): void {
+  if (node.type !== 'Switch' && node.type !== 'Combobox') return
+  addPropsIssues(
+    node.type === 'Switch'
+      ? SwitchAtomPropsSchema.safeParse(node.props)
+      : ComboboxAtomPropsSchema.safeParse(node.props),
+    ctx,
+  )
+  if (!node.binding) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['binding'],
+      message: `${node.type} requires a binding`,
+    })
+  }
+  rejectFields(node, ['children'], `${node.type} must be a leaf Atom`, ctx)
+  const actionName = node.type === 'Switch' ? 'toggle' : 'change'
+  if (node.actions?.length !== 1 || node.actions[0]?.name !== actionName) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['actions'],
+      message: `${node.type} requires exactly one ${actionName} action`,
+    })
+    return
+  }
+  const action = node.actions[0]
+  if (action.path === 'fast' && action.stateKey !== node.binding) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['actions', 0, 'stateKey'],
+      message: `${node.type} fast action must target its binding`,
+    })
+  }
+  if (action.path === 'agent' && action.stateKey !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['actions', 0, 'stateKey'],
+      message: `${node.type} agent action cannot target state directly`,
+    })
+  }
 }
 
 function validateAutomationAtom(node: PendingAtomCandidate, ctx: z.RefinementCtx): void {

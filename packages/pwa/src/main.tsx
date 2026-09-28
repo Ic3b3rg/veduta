@@ -1,12 +1,19 @@
 import { createRoot } from 'react-dom/client'
 import { App } from './app.tsx'
 import { installCatalogTokens } from './catalog-tokens.ts'
+import { CatalogShowcasePage } from './catalog-showcase.tsx'
 import { MotionShowcasePage } from './motion-showcase.tsx'
 
 installCatalogTokens()
 
 createRoot(document.getElementById('root')!).render(
-  location.pathname === '/showcase/motion' ? <MotionShowcasePage /> : <App />,
+  location.pathname === '/showcase/motion' ? (
+    <MotionShowcasePage />
+  ) : location.pathname === '/showcase/catalog' ? (
+    <CatalogShowcasePage />
+  ) : (
+    <App />
+  ),
 )
 
 // Dev is excluded: a cache-first worker would serve Vite's transformed

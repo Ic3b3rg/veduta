@@ -968,7 +968,7 @@ describe('renderNode', () => {
     expect(motionBrowser.animate).toHaveBeenCalledTimes(entranceCallCount)
   })
 
-  it('renders the full v1 Atom catalog in light and dark without UnknownAtom fallback', () => {
+  it('renders the complete Atom catalog in light and dark without UnknownAtom fallback', () => {
     const motionBrowser = installMotionBrowser(false)
     const types = new Set(collectTypes(catalogShowcaseSurface.tree))
     expect(types).toEqual(new Set(atomTypes))
@@ -983,7 +983,11 @@ describe('renderNode', () => {
     expect(light.queryByTestId('unknown-atom')).toBeNull()
     expect(light.container.querySelector('[data-veduta-theme="light"]')).not.toBeNull()
     expect(new Set(motionCalls(motionBrowser).map(({ nodeId }) => nodeId))).toEqual(
-      new Set(collectIds(catalogShowcaseSurface.tree)),
+      new Set(
+        [...light.container.querySelectorAll('[data-veduta-atom-id]')].map((element) =>
+          element.getAttribute('data-veduta-atom-id'),
+        ),
+      ),
     )
 
     light.unmount()
@@ -1036,10 +1040,6 @@ describe('renderNode', () => {
 
 function collectTypes(node: AtomNode): AtomNode['type'][] {
   return [node.type, ...(node.children ?? []).flatMap(collectTypes)]
-}
-
-function collectIds(node: AtomNode): string[] {
-  return [node.id, ...(node.children ?? []).flatMap(collectIds)]
 }
 
 function installMotionBrowser(reducedMotion: boolean) {
