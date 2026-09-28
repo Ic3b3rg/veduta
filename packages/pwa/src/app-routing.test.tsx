@@ -385,12 +385,12 @@ describe('App routing', () => {
 
     render(<App />)
 
-    const checkbox = await screen.findByRole<HTMLInputElement>('checkbox', {
+    const checkbox = await screen.findByRole('checkbox', {
       name: 'Drank water',
     })
     fireEvent.click(checkbox)
 
-    await waitFor(() => expect(checkbox.checked).toBe(true))
+    await waitFor(() => expect(checkbox.getAttribute('aria-checked')).toBe('true'))
     expect(invokeFastAction).toHaveBeenCalledWith(
       'srf-hydration',
       'water',

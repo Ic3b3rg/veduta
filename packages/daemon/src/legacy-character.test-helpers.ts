@@ -1,4 +1,4 @@
-/** Literal shipped defaults, independent of live policy (issues/100-gateway-owned-character-policy.md). */
+/** Literal shipped defaults, independent of live policy (issue #100). */
 export const LEGACY_SOUL_WITHOUT_TIMERS = `# SOUL
 
 You are Veduta's single Agent. You switch context between Spaces; you do not become a different agent per Space.

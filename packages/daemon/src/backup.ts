@@ -205,7 +205,7 @@ export interface CreateBackupOptions {
   /**
    * Parent directory for the private staging dir, in place of the system
    * tmp dir (`node:os` `tmpdir()`). The self-update transaction
-   * (`docs/adr/0013-signed-self-update.md`, `issues/043-self-update.md`)
+   * (`docs/adr/0013-signed-self-update.md`, `issue #43`)
    * passes its own `updates/tmp/` here so the disk-space guardrail's
    * per-filesystem accounting stays truthful — staging under a surprise
    * tmpfs would make that math lie about which filesystem actually needs

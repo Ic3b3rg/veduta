@@ -1,0 +1,39 @@
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+@source '../../../catalog/src';
+@source '../';
+
+/* shadcn components and Veduta's composition Atoms share catalog-owned tokens. */
+:root {
+  --radius: var(--catalog-radius-md);
+}
+
+@theme inline {
+  --color-background: var(--catalog-color-surface);
+  --color-foreground: var(--catalog-color-text);
+  --color-card: var(--catalog-color-surface-raised);
+  --color-card-foreground: var(--catalog-color-text);
+  --color-popover: var(--catalog-color-surface-raised);
+  --color-popover-foreground: var(--catalog-color-text);
+  --color-primary: var(--catalog-color-accent);
+  --color-primary-foreground: var(--catalog-color-accent-text);
+  --color-secondary: var(--catalog-color-surface-muted);
+  --color-secondary-foreground: var(--catalog-color-text);
+  --color-muted: var(--catalog-color-surface-muted);
+  --color-muted-foreground: var(--catalog-color-text-muted);
+  --color-accent: var(--catalog-color-surface-muted);
+  --color-accent-foreground: var(--catalog-color-text);
+  --color-destructive: var(--catalog-color-danger);
+  --color-border: var(--catalog-color-border);
+  --color-input: var(--catalog-color-border);
+  --color-ring: var(--catalog-color-focus);
+  --color-chart-1: var(--catalog-color-accent);
+  --color-chart-2: var(--catalog-color-success);
+  --color-chart-3: var(--catalog-color-warning);
+  --color-chart-4: var(--catalog-color-danger);
+  --color-chart-5: var(--catalog-color-text-muted);
+  --radius-sm: var(--catalog-radius-sm);
+  --radius-md: var(--catalog-radius-md);
+  --radius-lg: var(--catalog-radius-md);
+}

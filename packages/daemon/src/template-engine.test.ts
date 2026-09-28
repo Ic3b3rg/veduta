@@ -104,7 +104,7 @@ function findTool(tools: ToolDef[], name: string): ToolDef {
 }
 
 describe('TemplateEngine', () => {
-  describe('AC1 (issues/022-emergent-templates.md): reusing a tracker across Spaces', () => {
+  describe('AC1 (issue #22): reusing a tracker across Spaces', () => {
     it('pins a tracker in Space A, refuses a similar create_surface in Space B, then reuses the Template', async () => {
       const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
       const spaceA = store.spacesEngine.createSpace({ name: 'Space A' })
@@ -280,7 +280,7 @@ describe('TemplateEngine', () => {
     })
   })
 
-  describe('harvest (issues/022-emergent-templates.md: stability harvest)', () => {
+  describe('harvest (issue #22: stability harvest)', () => {
     it('templates a Surface stable for STABILITY_DAYS once, is a no-op on a second harvest, and skips daemon-owned and FACTS Surfaces', async () => {
       const rootDir = await tempRoot()
       const store = new Store({ rootDir, now: fixedNow })

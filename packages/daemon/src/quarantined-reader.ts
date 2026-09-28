@@ -318,7 +318,7 @@ export class QuarantinedReader {
       payload: { queueId, source: event.source, reader: readerOutputAsJson(output) },
       at: this.now().toISOString(),
       // Preserves the source event's occurred time through quarantine
-      // (issues/021-advanced-memory.md): `at` is when the reader recorded
+      // (issue #21): `at` is when the reader recorded
       // this summary, `occurredAt` is when the underlying email/Calendar
       // event actually happened.
       ...(event.occurredAt === undefined ? {} : { occurredAt: event.occurredAt }),

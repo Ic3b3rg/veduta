@@ -4,7 +4,7 @@ import { isUntrusted, isValidOrigin, type Origin } from './taint.ts'
 export interface FactRecord {
   text: string
   noted?: string
-  /** Set when the fact was moved out of `active` into `dormant` (issues/021-advanced-memory.md). */
+  /** Set when the fact was moved out of `active` into `dormant` (issue #21). */
   dormantAt?: string
   supersededAt?: string
   supersededBy?: string
@@ -13,7 +13,7 @@ export interface FactRecord {
 }
 
 /**
- * `dormant` is a third, non-destructive state (issues/021-advanced-memory.md):
+ * `dormant` is a third, non-destructive state (issue #21):
  * a fact that is still valid and kept on disk, but no longer injected into
  * context by default, and retrievable on demand. Unlike `superseded`, a
  * dormant fact was not contradicted or replaced — it was demoted only to
@@ -95,7 +95,7 @@ export function parseFactsMarkdown(markdown: string): FactsDocument {
   for (const rawLine of markdown.split(/\r?\n/)) {
     const line = rawLine.trim()
     // A file with no `## Dormant` heading (every FACTS.md written before
-    // issues/021-advanced-memory.md) simply parses with `dormant: []` — no
+    // issue #21) simply parses with `dormant: []` — no
     // migration step needed.
     if (/^##\s+dormant\b/i.test(line)) {
       section = 'dormant'
@@ -139,7 +139,7 @@ export function formatFactsMarkdown(document: FactsDocument, fallbackDate: strin
  * it never authorizes retirement by itself. A refinement that the comparison
  * cannot establish must identify the exact active fact it replaces through
  * `options.supersedes`, so the writer states the intent instead of the Curator
- * guessing it (issues/034-curator-false-supersede.md).
+ * guessing it (issue #34).
  */
 export function curateFact(
   document: FactsDocument,
@@ -306,7 +306,7 @@ export function factIdentityLine(fact: FactRecord, fallbackDate: string): string
  * byte-identical records can legitimately coexist in `## Superseded` (the
  * same fact noted, and later superseded, more than once); without it they
  * would collide on one id. The memory index and whatever dereferences an id
- * back to a record (issues/021-advanced-memory.md) must both call this
+ * back to a record (issue #21) must both call this
  * function rather than recompute the hash themselves, so the two sides
  * cannot disagree about what an id means.
  */
@@ -334,7 +334,7 @@ export function factRecordIds(
  * Unknown ids are ignored; `superseded` is never touched and nothing is
  * ever deleted — this is the nightly Reflection's non-destructive way of
  * bringing the active set back under budget without losing a fact that is
- * still true (issues/021-advanced-memory.md).
+ * still true (issue #21).
  */
 export function demoteFacts(
   document: FactsDocument,

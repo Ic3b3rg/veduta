@@ -60,7 +60,7 @@ import {
  * enforced in exactly one place, at the end of `settle()`, so it also covers
  * the no-valid-draft fallback and any `'skipped'` path uniformly.
  *
- * Crash consistency (`issues/017-worker-review.md`): the `worker.delivered`
+ * Crash consistency (`issue #17`): the `worker.delivered`
  * Event is the COMMIT POINT for a Worker's delivery, appended BEFORE the
  * Surface is patched — `recoverAtBoot` reconciles from that event on a
  * restart rather than assuming a `state.settled !== true` Surface is always a
@@ -583,7 +583,7 @@ export class WorkerPool {
    * daemon-authored fallback, always wins. No-ops once `dispose()` has run
    * (shutdown must never deliver) or once already settled.
    *
-   * Crash consistency (`issues/017-worker-review.md`): the `worker.delivered`
+   * Crash consistency (`issue #17`): the `worker.delivered`
    * Event is appended BEFORE the Surface is patched/marked settled — it is
    * the COMMIT POINT `recoverAtBoot` reconciles from on a restart. A crash
    * between the two now always resolves to "delivered" (reconciled from the

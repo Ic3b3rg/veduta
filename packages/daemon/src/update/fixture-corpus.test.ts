@@ -10,7 +10,7 @@ import { parseSpaceEventLine } from '../spaces-engine.ts'
 import { SurfaceEngine, type SurfaceEngineEvent } from '../surface-engine.ts'
 
 /**
- * The append-only fixture corpus (issues/043-self-update.md AC5,
+ * The append-only fixture corpus (issue #43 AC5,
  * docs/adr/0013-signed-self-update.md's two-data-regimes rationale for
  * tolerant append-only readers): every historical raw shape ever written to
  * `surface_events` or a Space's Event log, frozen forever in

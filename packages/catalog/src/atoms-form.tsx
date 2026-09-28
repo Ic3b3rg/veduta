@@ -1,8 +1,12 @@
 import type { FormEvent, ReactNode } from 'react'
 import { boundValue, boundedNumber, motionContent, optionalText, text } from './atom-helpers.ts'
-import { buttonStyle, controlStyle, fieldStyle, labelStyle } from './atom-styles.ts'
+import { fieldStyle, labelStyle } from './atom-styles.ts'
 import { tokensFor } from './design-system.ts'
 import type { AtomProps } from './types.ts'
+import { Button } from './ui/button.tsx'
+import { Input } from './ui/input.tsx'
+import { Label } from './ui/label.tsx'
+import { Textarea } from './ui/textarea.tsx'
 
 const FORM_FIELD_SELECTOR = '[data-veduta-form-field]'
 const FORM_ERROR_SELECTOR = '[data-veduta-form-error]'
@@ -13,11 +17,11 @@ export function InputAtom({ node, ctx }: AtomProps): ReactNode {
   const value = text(boundValue(node, ctx))
   const label = text(node.props?.['label'])
   return (
-    <label style={fieldStyle(tokens)}>
+    <Label style={fieldStyle(tokens)}>
       <span {...motionContent('label')} style={labelStyle(tokens)}>
         {label}
       </span>
-      <input
+      <Input
         {...motionContent('value')}
         aria-label={label}
         data-veduta-form-field
@@ -26,10 +30,9 @@ export function InputAtom({ node, ctx }: AtomProps): ReactNode {
         onChange={(event) => markFormDirty(event.currentTarget.form)}
         placeholder={optionalText(node.props?.['placeholder'])}
         ref={(element) => reconcileCanonicalValue(element, value)}
-        style={controlStyle(tokens)}
         type={optionalText(node.props?.['inputType']) ?? 'text'}
       />
-    </label>
+    </Label>
   )
 }
 
@@ -38,11 +41,11 @@ export function TextareaAtom({ node, ctx }: AtomProps): ReactNode {
   const value = text(boundValue(node, ctx))
   const label = text(node.props?.['label'])
   return (
-    <label style={fieldStyle(tokens)}>
+    <Label style={fieldStyle(tokens)}>
       <span {...motionContent('label')} style={labelStyle(tokens)}>
         {label}
       </span>
-      <textarea
+      <Textarea
         {...motionContent('value')}
         aria-label={label}
         data-veduta-form-field
@@ -52,9 +55,8 @@ export function TextareaAtom({ node, ctx }: AtomProps): ReactNode {
         placeholder={optionalText(node.props?.['placeholder'])}
         ref={(element) => reconcileCanonicalValue(element, value)}
         rows={boundedNumber(node.props?.['rows'], 3, 2, 12)}
-        style={{ ...controlStyle(tokens), resize: 'vertical' }}
       />
-    </label>
+    </Label>
   )
 }
 
@@ -105,14 +107,9 @@ export function FormAtom({ node, ctx, children }: AtomProps): ReactNode {
     >
       {children}
       <div aria-live="polite" data-veduta-form-error hidden role="alert" />
-      <button
-        {...motionContent('submit')}
-        data-veduta-form-submit
-        style={buttonStyle(tokens, undefined, false)}
-        type="submit"
-      >
+      <Button {...motionContent('submit')} data-veduta-form-submit type="submit">
         {submitLabel}
-      </button>
+      </Button>
     </form>
   )
 }

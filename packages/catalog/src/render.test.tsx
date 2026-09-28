@@ -60,7 +60,7 @@ describe('renderNode', () => {
   it('renders a validated tree with state bindings', () => {
     render(renderNode(tree, { state: { milk: true }, dispatch: vi.fn() }))
     expect(screen.getByText('Groceries')).toBeDefined()
-    expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(true)
+    expect(screen.getByRole('checkbox').getAttribute('aria-checked')).toBe('true')
   })
 
   it('dispatches the declared action on interaction, with the new value', () => {

@@ -105,7 +105,7 @@ export interface AssembledSpaceContext {
 }
 
 /**
- * A memory write as seen by an `onMemoryWrite` observer (issues/021-advanced-memory.md):
+ * A memory write as seen by an `onMemoryWrite` observer (issue #21):
  * fired only after an on-disk change actually happened, never for a noop
  * (e.g. `writeFact` restating an already-active fact fires nothing).
  */
@@ -423,7 +423,7 @@ export class SpacesEngine {
    * change, the Agent must be able to find the change in the Event log.
    * Demoting nothing (every id unknown, or `ids` empty) writes nothing and
    * appends nothing: this is the nightly Reflection's non-destructive way of
-   * bringing the active set back under budget (issues/021-advanced-memory.md).
+   * bringing the active set back under budget (issue #21).
    */
   demoteFacts(spaceId: string, ids: string[]): FactRecord[] {
     const space = this.requireSpace(spaceId)
@@ -555,7 +555,7 @@ export class SpacesEngine {
    * its bounded Recent Event log, plus the untrusted origins reported by
    * `projectFacts` — the same single traversal that produces the FACTS text
    * injected into that same context, so the two can never disagree about
-   * what a turn saw (issues/032-facts-hygiene-context-budget.md). Dormant
+   * what a turn saw (issue #32). Dormant
    * facts contribute no origin here because `projectFacts` never renders
    * them: a fact that is not injected cannot taint the turn through this
    * path (it can still taint via a tool that retrieves it, gated instead
@@ -596,7 +596,7 @@ export class SpacesEngine {
 
   /**
    * Persists a Template to `spaces/<slug>/templates/<id>.json`
-   * (issues/022-emergent-templates.md), mirroring `saveSurface`. A Template
+   * (issue #22), mirroring `saveSurface`. A Template
    * has no `spaceId` field of its own (`packages/protocol/src/template.ts`),
    * so the owning Space is the first parameter rather than something read
    * off the object. `id` doubles as the filename, and it is
@@ -660,7 +660,7 @@ export class SpacesEngine {
   /**
    * Removes one Template file. The importer's rollback is the only caller:
    * a partially written bundle must leave the Space as it was
-   * (issues/022-emergent-templates.md). A missing file is a no-op.
+   * (issue #22). A missing file is a no-op.
    */
   deleteTemplate(spaceId: string, templateId: string): void {
     const path = this.templateFilePath(spaceId, templateId)
@@ -727,7 +727,7 @@ export class SpacesEngine {
       title: 'What I know about you here',
       // Regenerated on every read from FACTS.md, never a tree the user
       // authored, so a pin toggle would be meaningless — the client must not
-      // offer it (issues/022-emergent-templates.md).
+      // offer it (issue #22).
       pinnable: false,
       tree: {
         id: 'root',
@@ -752,7 +752,7 @@ export class SpacesEngine {
   }
 
   /**
-   * Read seam for the memory index (issues/021-advanced-memory.md):
+   * Read seam for the memory index (issue #21):
    * `SpacesEngine` stays the only module that knows where a Space's files
    * live on disk (docs/adr/0006-file-based-memory.md) — the index reads log
    * files through this and the following methods instead of duplicating the
@@ -819,7 +819,7 @@ export class SpacesEngine {
    * The raw text of a 1-based line in `file`, or `undefined` when out of
    * range or the file is missing: the dereference path for the memory
    * index, which stores a `(file, line)` reference plus a hash and re-reads
-   * the original line to answer with it (issues/021-advanced-memory.md).
+   * the original line to answer with it (issue #21).
    */
   readLogLine(spaceId: string, file: string, line: number): string | undefined {
     const space = this.requireSpace(spaceId)
@@ -862,7 +862,7 @@ export class SpacesEngine {
    * Fires after a successful `appendEvent` (`'event'`) and after `writeFact`,
    * `demoteFacts`, and the `mergeSpaces` FACTS rewrites (`'fact'`) actually
    * change something on disk — never for a noop. The engine deliberately
-   * knows nothing about the memory index (issues/021-advanced-memory.md):
+   * knows nothing about the memory index (issue #21):
    * the index subscribes here instead, so the file-layout layering in
    * docs/adr/0006-file-based-memory.md holds and no caller has to remember
    * to refresh it. `writeFact` and `demoteFacts` also call `appendEvent`
@@ -877,7 +877,7 @@ export class SpacesEngine {
   /**
    * Notifies observers after a write already landed on disk. An observer's
    * failure is logged and swallowed, never propagated: the only subscriber is
-   * the disposable memory index (issues/021-advanced-memory.md), and by the
+   * the disposable memory index (issue #21), and by the
    * time this runs the Event log or `FACTS.md` write has committed. Letting a
    * full disk or a corrupt index throw from here would report a *failed*
    * mutation for something that actually succeeded, and every caller —
@@ -1106,7 +1106,7 @@ export class SpacesEngine {
    * Refuses a `path` that does not sit directly inside the Space's
    * `templates/` directory. `templateId` becomes a filename
    * (`templatePath`), and it is attacker-reachable through the future
-   * importer (issues/022-emergent-templates.md), so this check runs at
+   * importer (issue #22), so this check runs at
    * every read and write instead of trusting `SurfaceTemplateIdSchema`'s
    * regex alone to have already ruled out a traversal.
    *
@@ -1234,7 +1234,7 @@ const TEMPLATE_ID_MAX_LENGTH = 68
 const TEMPLATE_ID_MIN_LENGTH = 5
 
 /**
- * Template-specific de-collision (issues/022-emergent-templates.md).
+ * Template-specific de-collision (issue #22).
  * `uniqueSurfaceId`'s plain `${id}-from-<slug>` append can push a Surface id
  * arbitrarily long, but `SurfaceTemplateIdSchema` caps a Template id at
  * `TEMPLATE_ID_MAX_LENGTH` characters, so appending the same suffix

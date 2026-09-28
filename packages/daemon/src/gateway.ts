@@ -218,7 +218,7 @@ export class GatewayHub {
   /**
    * Delivers one Gateway frame to a specific client — the chat loop's
    * channel for a turn's lifecycle frames (start / text delta / end /
-   * error, issues/037-agent-loop-chat.md). Looks the client up and calls its
+   * error, issue #37). Looks the client up and calls its
    * own `send`, which zod-parses every outgoing frame exactly like every
    * other path out of this class. Silently no-ops when the client has
    * disconnected: a streamed turn may outlive its socket.

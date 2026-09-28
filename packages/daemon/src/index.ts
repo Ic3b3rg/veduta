@@ -31,7 +31,7 @@ async function main(): Promise<void> {
 
 /**
  * Stage 1 of the update wrapper's health check (`docs/adr/0013-signed-self-update.md`'s
- * self-update amendments, `issues/043-self-update.md` AC3): a hermetic,
+ * self-update amendments, `issue #43` AC3): a hermetic,
  * read-only inspection of an already-migrated data root, run as its own
  * process invocation rather than as a flag `start()` interprets — the
  * wrapper needs an exit code from a process that never calls `buildServer`

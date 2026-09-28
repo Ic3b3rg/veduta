@@ -600,12 +600,12 @@ describe('App', () => {
     })
 
     render(<App />)
-    const checkbox = await screen.findByRole<HTMLInputElement>('checkbox', { name: 'Milk' })
+    const checkbox = await screen.findByRole('checkbox', { name: 'Milk' })
     atomAnimations.length = 0
 
     fireEvent.click(checkbox)
 
-    await waitFor(() => expect(checkbox.checked).toBe(true))
+    await waitFor(() => expect(checkbox.getAttribute('aria-checked')).toBe('true'))
     expect(
       atomAnimations.map(({ nodeId, contentKey, targetTag, options }) => ({
         nodeId,
@@ -615,7 +615,7 @@ describe('App', () => {
       })),
     ).toEqual([
       { nodeId: 'milk', contentKey: null, targetTag: 'LABEL', duration: 720 },
-      { nodeId: 'milk', contentKey: 'value', targetTag: 'INPUT', duration: 240 },
+      { nodeId: 'milk', contentKey: 'value', targetTag: 'BUTTON', duration: 240 },
     ])
   })
 
@@ -665,8 +665,8 @@ describe('App', () => {
       fireEvent.click(checkNow)
       await waitFor(() => expect(invokeFastAction).toHaveBeenCalledTimes(1))
       expect(
-        screen.getByRole<HTMLInputElement>('checkbox', { name: 'Check request state' }).checked,
-      ).toBe(true)
+        screen.getByRole('checkbox', { name: 'Check request state' }).getAttribute('aria-checked'),
+      ).toBe('true')
 
       const resetEvent = SurfacePatchEventSchema.parse({
         cursor: 2,
@@ -703,8 +703,10 @@ describe('App', () => {
 
       await waitFor(() => {
         expect(
-          screen.getByRole<HTMLInputElement>('checkbox', { name: 'Check request state' }).checked,
-        ).toBe(false)
+          screen
+            .getByRole('checkbox', { name: 'Check request state' })
+            .getAttribute('aria-checked'),
+        ).toBe('false')
         expect(screen.getByText(/by job$/)).toBeDefined()
       })
 
@@ -817,8 +819,8 @@ describe('App', () => {
     })
     await waitFor(() => {
       expect(
-        screen.getByRole<HTMLInputElement>('checkbox', { name: 'Check request state' }).checked,
-      ).toBe(false)
+        screen.getByRole('checkbox', { name: 'Check request state' }).getAttribute('aria-checked'),
+      ).toBe('false')
     })
 
     await act(async () => {
@@ -834,8 +836,8 @@ describe('App', () => {
     })
 
     expect(
-      screen.getByRole<HTMLInputElement>('checkbox', { name: 'Check request state' }).checked,
-    ).toBe(false)
+      screen.getByRole('checkbox', { name: 'Check request state' }).getAttribute('aria-checked'),
+    ).toBe('false')
     expect(screen.getByText(/by job$/)).toBeDefined()
   })
 

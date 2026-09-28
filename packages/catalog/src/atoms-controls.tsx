@@ -9,48 +9,47 @@ import {
   propBoolean,
   text,
 } from './atom-helpers.ts'
-import {
-  buttonStyle,
-  controlStyle,
-  fieldStyle,
-  inlineControlStyle,
-  labelStyle,
-} from './atom-styles.ts'
+import { fieldStyle, inlineControlStyle, labelStyle } from './atom-styles.ts'
 import { tokensFor } from './design-system.ts'
 import type { AtomProps } from './types.ts'
+import { Button } from './ui/button.tsx'
+import { Checkbox } from './ui/checkbox.tsx'
+import { Input } from './ui/input.tsx'
+import { Label } from './ui/label.tsx'
+import { NativeSelect } from './ui/native-select.tsx'
+import { RadioGroup, RadioGroupItem } from './ui/radio-group.tsx'
 
 export function CheckboxAtom({ node, ctx }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const checked = Boolean(boundValue(node, ctx))
   const action = findAction(node, ['toggle', 'change'])
   return (
-    <label style={inlineControlStyle(tokens)}>
-      <input
+    <Label style={inlineControlStyle(tokens)}>
+      <Checkbox
         {...motionContent('value')}
-        type="checkbox"
         checked={checked}
-        onChange={() => action && ctx.dispatch(node, action.name, !checked)}
-        style={{ minHeight: 20, minWidth: 20 }}
+        onCheckedChange={(next) => action && ctx.dispatch(node, action.name, next === true)}
+        className="size-5"
       />
       <span {...motionContent('label')}>{text(node.props?.['label'])}</span>
-    </label>
+    </Label>
   )
 }
 
 export function ButtonAtom({ node, ctx }: AtomProps): ReactNode {
-  const tokens = tokensFor(ctx.theme)
   const action = findAction(node, ['press', 'click', 'submit', 'regenerate']) ?? node.actions?.[0]
   const disabled = propBoolean(node.props, 'disabled', false)
+  const variant = optionalText(node.props?.['variant'])
   return (
-    <button
+    <Button
       {...motionContent('content')}
       type="button"
       disabled={disabled}
       onClick={() => action && ctx.dispatch(node, action.name, actionValue(action))}
-      style={buttonStyle(tokens, optionalText(node.props?.['variant']), disabled)}
+      variant={variant === 'secondary' || variant === 'ghost' ? variant : 'default'}
     >
       {text(node.props?.['label'] ?? node.props?.['text'] ?? action?.name)}
-    </button>
+    </Button>
   )
 }
 
@@ -59,19 +58,18 @@ export function DatePickerAtom({ node, ctx }: AtomProps): ReactNode {
   const value = text(boundValue(node, ctx) ?? node.props?.['value'])
   const action = findAction(node, ['change', 'select', 'set'])
   return (
-    <label style={fieldStyle(tokens)}>
+    <Label style={fieldStyle(tokens)}>
       <span {...motionContent('label')} style={labelStyle(tokens)}>
         {text(node.props?.['label'])}
       </span>
-      <input
+      <Input
         {...motionContent('value')}
         aria-label={text(node.props?.['label'])}
         type="date"
         value={value}
         onChange={(event) => action && ctx.dispatch(node, action.name, event.currentTarget.value)}
-        style={controlStyle(tokens)}
       />
-    </label>
+    </Label>
   )
 }
 
@@ -80,16 +78,16 @@ export function SelectAtom({ node, ctx }: AtomProps): ReactNode {
   const value = text(boundValue(node, ctx) ?? node.props?.['value'])
   const action = findAction(node, ['change', 'select', 'set'])
   return (
-    <label style={fieldStyle(tokens)}>
+    <Label style={fieldStyle(tokens)}>
       <span {...motionContent('label')} style={labelStyle(tokens)}>
         {text(node.props?.['label'])}
       </span>
-      <select
+      <NativeSelect
         {...motionContent('value', { signature: `value:${value}` })}
         aria-label={text(node.props?.['label'])}
         value={value}
         onChange={(event) => action && ctx.dispatch(node, action.name, event.currentTarget.value)}
-        style={controlStyle(tokens)}
+        className="w-full"
       >
         {choicesFrom(node.props?.['options']).map((choice) => (
           <option
@@ -100,8 +98,8 @@ export function SelectAtom({ node, ctx }: AtomProps): ReactNode {
             {choice.label}
           </option>
         ))}
-      </select>
-    </label>
+      </NativeSelect>
+    </Label>
   )
 }
 
@@ -115,25 +113,23 @@ export function RadioGroupAtom({ node, ctx }: AtomProps): ReactNode {
       <legend {...motionContent('label')} style={labelStyle(tokens)}>
         {text(node.props?.['label'])}
       </legend>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: tokens.space.sm }}>
+      <RadioGroup
+        name={name}
+        value={value}
+        onValueChange={(next) => action && ctx.dispatch(node, action.name, next)}
+        style={{ display: 'flex', flexWrap: 'wrap', gap: tokens.space.sm }}
+      >
         {choicesFrom(node.props?.['options']).map((choice) => (
-          <label
+          <Label
             key={choice.value}
             {...motionContent(`option:${choice.value}`)}
             style={inlineControlStyle(tokens)}
           >
-            <input
-              type="radio"
-              name={name}
-              value={choice.value}
-              checked={value === choice.value}
-              onChange={() => action && ctx.dispatch(node, action.name, choice.value)}
-              style={{ minHeight: 20, minWidth: 20 }}
-            />
+            <RadioGroupItem value={choice.value} className="size-5" />
             {choice.label}
-          </label>
+          </Label>
         ))}
-      </div>
+      </RadioGroup>
     </fieldset>
   )
 }

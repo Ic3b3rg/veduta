@@ -6,7 +6,7 @@ import { writeFileAtomicDurable } from './update-atomic.ts'
 import type { UpdateHome } from './update-transaction.ts'
 
 /**
- * Success-only, idempotent housekeeping (`issues/043-self-update.md`
+ * Success-only, idempotent housekeeping (`issue #43`
  * "Retention"): pruning old releases/backups/orphaned runtimes and
  * self-updating the wrapper script, run once a transaction has actually
  * published a `success` result. Split out of `update-transaction.ts` so this

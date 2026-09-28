@@ -5,7 +5,7 @@ import type { Origin } from './taint.ts'
 
 /**
  * A pinned, fully deterministic ~3-month fixture corpus for the evaluation
- * mini-suite (issues/021-advanced-memory.md's "Evaluation" task; the
+ * mini-suite (issue #21's "Evaluation" task; the
  * temporal/update/abstention categories `docs/references/06-memory-research.md`
  * points at). Every timestamp and every string below is a literal or is
  * derived from literals by pure calendar arithmetic (`Date.UTC` on fixed
@@ -148,7 +148,7 @@ const CORPUS_FILLER_EVENTS: readonly { at: string; text: string }[] = [
 ]
 
 /**
- * The knowledge-update pair (issues/021-advanced-memory.md's "update"
+ * The knowledge-update pair (issue #21's "update"
  * category): two plain Events rather than FACTS entries, deliberately —
  * `SpacesEngine.writeFact` always stamps a fact's `noted` date from the
  * engine's own injected clock, which this suite pins to `CORPUS_NOW` for
@@ -168,7 +168,7 @@ export const CORPUS_TARGET_WEIGHT_NEWER = {
 
 /**
  * Recorded materially later than it occurred (20 days): the effective- vs
- * recorded-time check (issues/021-advanced-memory.md).
+ * recorded-time check (issue #21).
  */
 export const CORPUS_SHOULDER_EVENT = {
   text: 'Started physical therapy for my shoulder',
@@ -188,7 +188,7 @@ interface CorpusReaderSummaryEvent {
 }
 
 /**
- * A realistic `reader.summary` event (issues/021-advanced-memory.md's
+ * A realistic `reader.summary` event (issue #21's
  * fact-augmentation check): `payload.reader` matches
  * `quarantined-reader.ts`'s `ReaderOutputSchema` field-for-field (sender,
  * subject, intent, entities, deadlines, urgency, summary). Recorded three
@@ -215,7 +215,7 @@ export const CORPUS_READER_SUMMARY_EVENT: CorpusReaderSummaryEvent = {
   },
 }
 
-/** Two clearly-absent topics (issues/021-advanced-memory.md's abstention category): never mentioned anywhere else in this corpus. */
+/** Two clearly-absent topics (issue #21's abstention category): never mentioned anywhere else in this corpus. */
 export const CORPUS_ABSENT_TOPICS: readonly string[] = ['chess tournament', 'scuba diving lessons']
 
 /** The FACTS entries written through `SpacesEngine.writeFact`/`demoteFacts`, with the `noted` date every write actually receives. */

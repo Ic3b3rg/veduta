@@ -67,7 +67,7 @@ describe('reconcileByokConnections', () => {
       expect(connection.enabledForFallback).toBe(false)
     }
     // Migration never sets a selection — the routed model must stay exactly
-    // what `routing.json` already named (issues/047-model-connections.md).
+    // what `routing.json` already named (issue #47).
     expect(file.selection).toBeUndefined()
     const anthropic = file.connections.find((connection) => connection.id === 'anthropic')
     expect(anthropic?.selectedModelId).toBe('claude-sonnet-5')

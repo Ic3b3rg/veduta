@@ -59,7 +59,7 @@ const BUTTONS_ROW_NODE_ID = 'update-buttons'
 
 /**
  * The origin release-notes content carries once an offer is shown
- * (`issues/043-self-update.md` "Discovery + UI";
+ * (`issue #43` "Discovery + UI";
  * `docs/adr/0013-signed-self-update.md`): the feed is an external,
  * unverified-content source, so its free-text `notes` field is always
  * `untrusted:update-feed` while an offer is displayed — even though the

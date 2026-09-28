@@ -454,7 +454,7 @@ function calorieTreeOperation(surface: Surface): PatchOperation {
 
 /**
  * Contributor-facing journey for
- * `issues/029-progressive-surface-composition.md`. It uses the same
+ * `issue #29`. It uses the same
  * model-visible tool loop as every other Loopback behavior: publish the full
  * layout first, then emit one versioned patch per resolved region. The image
  * slot stays Pending so the catalog's bounded fallback is observable in a

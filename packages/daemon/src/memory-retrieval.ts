@@ -16,7 +16,7 @@ import { extractTemporalRange } from './temporal-query.ts'
 import type { Origin } from './taint.ts'
 
 /**
- * The dedicated retrieval interface issues/021-advanced-memory.md asks for:
+ * The dedicated retrieval interface issue #21 asks for:
  * `MemoryIndex` owns storage (FTS5, source references, dereferencing), this
  * module owns turning a natural-language query into what `MemoryIndex.search`
  * needs and turning its rows back into answer-bearing records. Splitting the
@@ -29,7 +29,7 @@ import type { Origin } from './taint.ts'
  * literature's highest-measured-gain technique, well ahead of leaning on the
  * search engine to notice "start of June" sitting in the query text.
  *
- * This is also the seam an optional embedding layer (issues/021-advanced-memory.md
+ * This is also the seam an optional embedding layer (issue #21
  * keeps it off by default) would extend: `search` would gain a second
  * candidate source — a vector index consulted alongside `MemoryIndex.search`
  * and merged into the same dereference-then-render pipeline — with no change

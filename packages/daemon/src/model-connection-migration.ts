@@ -27,7 +27,7 @@ import type { RoutingConfig, SecretResolver } from './model-routing.ts'
  * changes. `model-connection-routing.ts`'s `deriveRoutingConfig` returns the
  * base routing config completely unchanged whenever `file.selection` is
  * absent, so a freshly migrated install routes byte-identically to how it
- * routed the moment before migration ran (issues/047-model-connections.md)
+ * routed the moment before migration ran (issue #47)
  * — the only observable change is that the connection now exists.
  *
  * Idempotent: a provider that already has a connection record — its own

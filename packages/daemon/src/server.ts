@@ -455,7 +455,7 @@ export function buildServer(options: ServerOptions = {}) {
   // it exists no matter which subsystem writes to it first.
   ensureSystemSpace(store.spacesEngine)
 
-  // File-based memory (issues/021-advanced-memory.md, ADR-0006): the Event
+  // File-based memory (issue #21, ADR-0006): the Event
   // log and FACTS are already the truth on disk; `MemoryIndex` only makes
   // the long tail of them findable. Constructed early — right after the
   // Store exists — because it depends on nothing but `SpacesEngine` and the
@@ -681,7 +681,7 @@ export function buildServer(options: ServerOptions = {}) {
   const auditSurfaces = new AuditSurfaceManager({ store, trust })
   auditSurfaces.start()
 
-  // Emergent Templates (issues/022-emergent-templates.md,
+  // Emergent Templates (issue #22,
   // docs/adr/0012-emergent-templates.md): `TemplateEngine` harvests stable
   // Surfaces into Templates and backs the pin route below;
   // `TreeProposalSurfaceManager` turns a pinned Surface's Agent tree patch —
@@ -1020,7 +1020,7 @@ export function buildServer(options: ServerOptions = {}) {
   heartbeat.reconcileJobs()
   heartbeatSurfaces.start()
 
-  // The nightly Reflection (issues/021-advanced-memory.md,
+  // The nightly Reflection (issue #21,
   // docs/adr/0006-file-based-memory.md): "sleep-time compute" over the
   // MemoryIndex/config constructed near the top of this function. Mirrors
   // the Heartbeat immediately above in every way that matters for boot

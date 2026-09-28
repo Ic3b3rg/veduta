@@ -17,7 +17,7 @@ import { TurnTaintAccumulator, type Origin } from './taint.ts'
 
 /**
  * `taint` always carries a real `TurnTaintAccumulator` seeded from `origin`
- * plus any `extraTaint` (issues/032-facts-hygiene-context-budget.md's
+ * plus any `extraTaint` (issue #32's
  * write-path hardening): this is what lets a fixture simulate a turn that
  * started at `origin` but grew tainted mid-turn — e.g. a `search_memory` hit
  * surfacing an untrusted record — without the runner itself in the loop.
@@ -394,7 +394,7 @@ describe('memory tools', () => {
     },
   )
 
-  describe('write-path laundering guard (docs/SECURITY.md §3.2, issues/032-facts-hygiene-context-budget.md)', () => {
+  describe('write-path laundering guard (docs/SECURITY.md §3.2, issue #32)', () => {
     it('write_fact persists the live-taint origin, not the origin fixed at turn start', async () => {
       const engine = new SpacesEngine({
         rootDir: await tempRoot(),
@@ -728,7 +728,7 @@ describe('write and append schemas bound what an injected turn can persist', () 
       'heartbeat.sweep',
       'import.memory',
       // The daemon reads its own Template bookkeeping back too
-      // (issues/022-emergent-templates.md): a forged one could make a
+      // (issue #22): a forged one could make a
       // harvest or a reuse look like it already happened.
       'template.saved',
     ]) {

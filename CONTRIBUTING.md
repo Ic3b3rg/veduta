@@ -4,7 +4,7 @@
 
 1. **Read the design** — start with [README.md](README.md), then [ARCHITECTURE.md](ARCHITECTURE.md) and [PRD.md](PRD.md). The glossary in [CONTEXT.md](CONTEXT.md) defines the project's canonical terms: use them (and avoid the listed alternatives) in every discussion, issue, and line of code.
 2. **Challenge the design** — open a GitHub issue if you spot a flaw. Decisions are recorded in [docs/adr/](docs/adr/) with their rationale and the evidence in [docs/references/](docs/references/); challenge the reasoning, not just the conclusion.
-3. **Pick up an implementation issue** — the v1 work is broken down in [issues/](issues/) with dependency order and acceptance criteria. Comment on the corresponding GitHub issue before starting so work doesn't get duplicated.
+3. **Pick up an implementation issue** — [GitHub Issues](https://github.com/Ic3b3rg/veduta/issues) contain the dependency order and acceptance criteria. Comment on the issue before starting so work doesn't get duplicated.
 
 ## Development setup
 

@@ -9,7 +9,7 @@ import { z } from 'zod'
  * connecting a provider (API key or a subscription) and picking a model,
  * instead of two. `first-space` precedes `integrations` because every ingestion
  * source requires a target `spaceId` (`ingestion-config.ts`) — the issue's list
- * is descriptive, this order is structural. See `issues/019-onboarding-wizard.md`.
+ * is descriptive, this order is structural. See `issue #19`.
  */
 export const OnboardingStepIdSchema = z.enum([
   'migration',

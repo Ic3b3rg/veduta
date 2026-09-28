@@ -1,24 +1,22 @@
 import type { ReactNode } from 'react'
 import { align, motionContent, propBoolean, spacing } from './atom-helpers.ts'
-import { surfaceStyle } from './atom-styles.ts'
 import { tokensFor } from './design-system.ts'
 import type { AtomProps } from './types.ts'
+import { Card } from './ui/card.tsx'
+import { Separator } from './ui/separator.tsx'
 
 export function BoxAtom({ node, ctx, children }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
   return (
-    <div
+    <Card
       data-veduta-theme={tokens.mode}
       style={{
-        ...surfaceStyle(tokens),
-        display: 'flex',
-        flexDirection: 'column',
         gap: spacing(tokens, node.props?.['gap'], 'md'),
         padding: spacing(tokens, node.props?.['padding'], 'md'),
       }}
     >
       {children}
-    </div>
+    </Card>
   )
 }
 
@@ -62,18 +60,8 @@ export function SpacerAtom({ node, ctx }: AtomProps): ReactNode {
   )
 }
 
-export function DividerAtom({ ctx }: AtomProps): ReactNode {
-  const tokens = tokensFor(ctx.theme)
-  return (
-    <hr
-      style={{
-        border: 'none',
-        borderTop: `1px solid ${tokens.color.border}`,
-        margin: `${tokens.space.xs}px 0`,
-        width: '100%',
-      }}
-    />
-  )
+export function DividerAtom(): ReactNode {
+  return <Separator decorative={false} className="my-1" />
 }
 
 export function TransitionAtom({ node, children }: AtomProps): ReactNode {
@@ -87,6 +75,7 @@ export function TransitionAtom({ node, children }: AtomProps): ReactNode {
       style={{
         opacity: visible ? 1 : 0.4,
       }}
+      className="transition-opacity duration-150 motion-reduce:transition-none"
     >
       {children}
     </div>

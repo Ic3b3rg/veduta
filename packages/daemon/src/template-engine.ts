@@ -39,7 +39,7 @@ import {
  * `TemplateEngine`: harvests stable Surfaces into Templates, lets the user
  * lock one in by pinning, matches a candidate composition against what
  * already exists, and instantiates a Template into a new Surface
- * (issues/022-emergent-templates.md; docs/adr/0003-declarative-atoms.md:
+ * (issue #22; docs/adr/0003-declarative-atoms.md:
  * "good compositions get saved and reused"). Every Template save and reuse
  * appends its own Space Event log entry — the Agent must be able to find a
  * Template's origin before reasoning about the Space it lives in.
@@ -456,7 +456,7 @@ type CreateSurfaceGateInput = z.infer<typeof CreateSurfaceGateInputSchema> &
   z.infer<typeof CreateSurfaceGateExtensionSchema>
 
 /**
- * The three Template-reuse tools (issues/022-emergent-templates.md):
+ * The three Template-reuse tools (issue #22):
  * `list_templates`, `create_surface_from_template`, `pin_surface`. The
  * justification gate on `create_surface` itself ships separately as
  * `gateCreateSurfaceTool`, since it wraps the Surface-creation tool
@@ -564,7 +564,7 @@ export function templateTools(
 
 /**
  * Wraps the engine's own `create_surface` tool (`Store.surfaceTools()`)
- * with the justification gate (issues/022-emergent-templates.md): when the
+ * with the justification gate (issue #22): when the
  * proposed intent and tree signature match an existing Template above
  * threshold and no `justification` is supplied, the create is refused and
  * the message names the matching Template, its Space, and the two ways

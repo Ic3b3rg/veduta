@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { catalogCssText, catalogTokens } from '@veduta/catalog'
 
-// Drift gate for issue 024 (issues/024-shell-tokens-from-catalog.md): the
+// Drift gate for issue 024 (issue #24): the
 // shell shares colors with the catalog design system only through the
 // derived --catalog-* variables injected by main.tsx. Reading the built
 // stylesheet and static entry files from disk (rather than importing
@@ -24,6 +24,10 @@ const appCss = readCssWithImports(new URL('./app.css', import.meta.url)).replace
   /\/\*[\s\S]*?\*\//g,
   '',
 )
+const foundationCss = readFileSync(
+  new URL('./styles/foundation.css', import.meta.url),
+  'utf8',
+).replace(/\/\*[\s\S]*?\*\//g, '')
 const indexHtml = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
 const manifest = JSON.parse(
   readFileSync(new URL('../public/manifest.webmanifest', import.meta.url), 'utf8'),
@@ -39,9 +43,9 @@ function extractBlock(css: string, pattern: RegExp): string {
   return match[1]
 }
 
-const baseBlock = extractBlock(appCss, /:root\s*{([^}]*)}/)
+const baseBlock = extractBlock(foundationCss, /:root\s*{([^}]*)}/)
 const darkBlock = extractBlock(
-  appCss,
+  foundationCss,
   /@media \(prefers-color-scheme: dark\)\s*{\s*:root\s*{([^}]*)}/,
 )
 

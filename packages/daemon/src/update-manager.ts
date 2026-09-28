@@ -626,7 +626,7 @@ export class UpdateManager {
    * stage-2 window, or a transaction stuck resuming/failing repeatedly), and
    * an unswept `state/result.json` means the previous transaction's outcome
    * has not yet been durably ingested and archived. Writing a second marker
-   * on top of either is exactly the wedge `issues/043-self-update.md` rules
+   * on top of either is exactly the wedge `issue #43` rules
    * out: `update-cli run` would be left
    * juggling two competing pieces of state, forever re-resuming the stale
    * journal while a fresh marker sits unconsumed, with no SSH-free way out.

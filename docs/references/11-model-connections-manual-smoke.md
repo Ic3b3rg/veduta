@@ -1,10 +1,10 @@
 # Reference 11 — Model connections: manual smoke and decision record
 
-> Companion to [issue 047](../../issues/047-model-connections.md),
-> [issue 073](../../issues/073-chatgpt-subscription-surface-authoring.md),
-> [issue 077](../../issues/077-chatgpt-subscription-automations.md),
-> [issue 078](../../issues/078-chatgpt-subscription-workers.md),
-> [issue 079](../../issues/079-primary-connection-parity.md), the
+> Companion to [issue 047](https://github.com/Ic3b3rg/veduta/issues/47),
+> [issue 073](https://github.com/Ic3b3rg/veduta/issues/73),
+> [issue 077](https://github.com/Ic3b3rg/veduta/issues/77),
+> [issue 078](https://github.com/Ic3b3rg/veduta/issues/78),
+> [issue 079](https://github.com/Ic3b3rg/veduta/issues/79), the
 > [ADR-0014 amendment](../adr/0014-subscription-inference-boundary.md), and
 > [ADR-0016](../adr/0016-primary-agent-connections-author-surfaces.md). Automated tests cover
 > every adapter against deterministic fakes; this documents the checks that need a real account

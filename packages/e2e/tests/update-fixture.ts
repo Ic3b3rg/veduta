@@ -235,7 +235,7 @@ export function buildReleaseMetadata(
     nodeVersion: artifact.nodeVersion,
     // The runtime-jump path is not exercised by this e2e (`preCreateRuntimeDir`
     // makes `ensureRuntime` skip any download) -- small honest placeholders,
-    // per issues/043-self-update.md's AC6 (exercised instead by
+    // per issue #43's AC6 (exercised instead by
     // `update-transaction.test.ts`'s harness tests, with a fake dist server).
     nodeTarSize: 1024,
     nodeUnpackedSize: 4096,

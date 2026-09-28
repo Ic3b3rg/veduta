@@ -24,7 +24,7 @@ import {
 } from './tar-reader.ts'
 
 /**
- * `tar-reader.ts` (issues/043-self-update.md): a structured tar-header
+ * `tar-reader.ts` (issue #43): a structured tar-header
  * reader plus the containment preflight that decides an update artifact is
  * safe before any extraction. The adversarial cases below craft raw tar
  * bytes with the header builder at the bottom of this file rather than

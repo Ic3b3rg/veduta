@@ -14,7 +14,7 @@ import { sanitizeImportedTemplate, treeSignature, walkAtomTree } from './templat
 
 /**
  * Export/import of a Space's Templates as a portable JSON bundle
- * (issues/022-emergent-templates.md; docs/adr/0012-emergent-templates.md).
+ * (issue #22; docs/adr/0012-emergent-templates.md).
  * `exportTemplates` and `planTemplateImport` are read-only; `applyTemplateImport`
  * is the one write path, and it follows the import discipline recorded in
  * ADR-0012: preview-first, refusal with the exact next command instead of a

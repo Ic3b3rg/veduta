@@ -12,8 +12,8 @@ aspirational.
 
 Status: accepted
 
-Delivered by [issue 021](../../issues/021-advanced-memory.md), which also pulled forward the
-minimum of [issue 032](../../issues/032-facts-hygiene-context-budget.md) that its own acceptance
+Delivered by [issue 021](https://github.com/Ic3b3rg/veduta/issues/21), which also pulled forward the
+minimum of [issue 032](https://github.com/Ic3b3rg/veduta/issues/32) that its own acceptance
 criteria require. See "Relationship to issue 032" below.
 
 ## Source references and validated dereference
@@ -148,7 +148,7 @@ that proactivity is inspectable and switchable off.
   value-level heuristic was rejected because multiple values on one topic can be distinct claims.
   The Reflection uses the same contract rather than a separate mode, so every write path preserves
   the guarantee that a still-valid fact is never falsely superseded
-  ([issue 034](../../issues/034-curator-false-supersede.md)).
+  ([issue 034](https://github.com/Ic3b3rg/veduta/issues/34)).
 - **Evidence, validated.** A distilled fact carries the source references it came from; each is
   kept only if it dereferences and belongs to the window being distilled. A fact left with no valid
   reference is dropped, because a claim whose evidence is not in the window it was distilled from is
@@ -189,7 +189,7 @@ require was pulled forward:
   work happens once per turn.) Issue 131 extended that projection with a bounded superseded working
   set: it considers at most the 20 most recently superseded records, injects only complete
   renderings within a 2,000 UTF-16-code-unit tail, and derives taint only from the selected records
-  ([issue 131](../../issues/131-bounded-superseded-facts-tail.md)).
+  ([issue 131](https://github.com/Ic3b3rg/veduta/issues/131)).
 - 032's **live-taint write rule**. Without it, 021's requirement that retrieval "grows the turn's
   live taint" would have been decorative: `write_fact` and `append_event` derived their origin from
   the turn's _start_, so a trusted turn could retrieve an untrusted dormant fact and persist a clean

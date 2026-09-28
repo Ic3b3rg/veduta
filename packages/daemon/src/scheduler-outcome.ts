@@ -82,7 +82,7 @@ class AutomationOccurrenceSupersededError extends Error {
 
 /**
  * Owns the durable recurring-outcome protocol described by
- * `issues/091-automation-outcome-delivery.md`: producer checkpoints,
+ * `issue #91`: producer checkpoints,
  * current-configuration guards, retry, fallback, and target cleanup.
  */
 export class SchedulerOutcomeCoordinator {

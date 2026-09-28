@@ -216,7 +216,7 @@ export {
 } from './notification.ts'
 // Onboarding wizard protocol (issue 019): step ids/status, installer JSON stage
 // protocol, legacy detection, and every request/response schema for
-// `/api/onboarding/*` (see `issues/019-onboarding-wizard.md` and
+// `/api/onboarding/*` (see `issue #19` and
 // `docs/references/04-onboarding-migration.md`).
 export {
   OnboardingStepIdSchema,

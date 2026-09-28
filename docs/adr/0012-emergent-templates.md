@@ -7,7 +7,7 @@ imported bundle can never advertise a shape its own tree does not have. The
 Agent reuses Templates instead of reinventing compositions, and the user can **pin** a Surface, which
 locks its tree: state keeps updating, while a tree patch becomes a **proposal** the user accepts or
 rejects from a preview. Templates export and import as a JSON bundle, the seed of the post-v1
-registry ([issue 022](../../issues/022-emergent-templates.md), [ADR-0003](0003-declarative-atoms.md)).
+registry ([issue 022](https://github.com/Ic3b3rg/veduta/issues/22), [ADR-0003](0003-declarative-atoms.md)).
 
 Status: accepted
 
@@ -205,7 +205,7 @@ substantive change a human is being asked to approve.
 - The Agent-facing tools (`list_templates`, `create_surface_from_template`, `pin_surface`, and the
   justification gate on `create_surface`) ship as a tested seam: this daemon still has no live Agent
   loop to hand a `ToolDef[]` to, exactly as `search_memory` shipped in
-  [issue 021](../../issues/021-advanced-memory.md). What runs live is the engine, the pin route, the
+  [issue 021](https://github.com/Ic3b3rg/veduta/issues/21). What runs live is the engine, the pin route, the
   pin event and the proposal lifecycle.
 - Templates are files under the Space (`templates/<id>.json`), so they follow
   [ADR-0006](0006-file-based-memory.md): the files are the truth, a merge carries them across, and

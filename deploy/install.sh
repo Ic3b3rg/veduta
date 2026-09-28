@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Veduta installer -- automates deploy/README.md §1-3 (user/group/directory layout, the
 # secrets vault keyfile, and the systemd unit) plus Node install, checkout, build, first boot,
-# and passkey pairing. See issues/019-onboarding-wizard.md for the contract this automates.
+# and passkey pairing. See issue #19 for the contract this automates.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.sh | sudo bash

@@ -17,7 +17,7 @@ import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stac
  * test would mean re-running the slow first boot (PWA build + wizard) every
  * time. `test.step` keeps the reporter output readable despite the length.
  *
- * Acceptance criteria covered (issues/023-local-vps-profile.md):
+ * Acceptance criteria covered (issue #23):
  *   AC1 - a fresh local run boots the full stack and reaches Home.
  *   AC2 - passkey auth + a core chat flow (meal logging) updates a Surface.
  *   AC3 - restarting the stack preserves auth, the Meals entry, and the
@@ -145,10 +145,10 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       // render (app.tsx's `connectGateway`); sending chat before it opens
       // gets silently queued for a later retry instead of reaching the
       // daemon (`sendChat` returns false, app.tsx's `queuedChat`) rather
-      // than failing loudly, so wait for the "Live" status pill first --
+      // than failing loudly, so wait for the Gateway connection first --
       // otherwise this step can pass on a stale Surface if it checks only
       // static copy rather than the bound state rendered by the Atoms.
-      await expect(page.locator('.status-pill.online')).toHaveText('Live')
+      await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'true')
 
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta' })
       await chatInput.fill('aggiungi ai meals la fesa di tacchino')
@@ -335,7 +335,10 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       })
       const observerPage = await observerContext.newPage()
       await observerPage.goto(`${stack!.origin}/app/space/health`)
-      await expect(observerPage.locator('.status-pill.online')).toHaveText('Live')
+      await expect(observerPage.locator('.app-shell')).toHaveAttribute(
+        'data-gateway-online',
+        'true',
+      )
       await expect(observerPage.getByRole('button', { name: 'Focus Groceries' })).toBeVisible()
 
       await Promise.all([
@@ -387,7 +390,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(initiatingCard).not.toHaveClass(/surface-reveal-highlight/, { timeout: 3_000 })
       await page.evaluate(() => window.scrollTo(0, 0))
       await page.reload()
-      await expect(page.locator('.status-pill.online')).toHaveText('Live')
+      await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'true')
       await expect(surfaceCard(page, 'Weekly groceries')).toBeAttached()
       await expect(surfaceCard(page, 'Weekly groceries')).not.toHaveClass(
         /surface-reveal-highlight/,
@@ -400,7 +403,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
 
     await test.step('a pinned patch_tree decision reveals its real Decision Surface only in the initiating tab (issue 067)', async () => {
       const meals = surfaceCard(page, 'Meals')
-      await meals.getByRole('button', { name: 'Pin Meals' }).click()
+      await meals.getByRole('button', { name: 'Pin Meals' }).click({ timeout: 5_000 })
       await expect(meals.getByRole('button', { name: 'Pinned Meals' })).toHaveAttribute(
         'aria-pressed',
         'true',
@@ -412,7 +415,10 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       })
       const observerPage = await observerContext.newPage()
       await observerPage.goto(`${stack!.origin}/app/space/health`)
-      await expect(observerPage.locator('.status-pill.online')).toHaveText('Live')
+      await expect(observerPage.locator('.app-shell')).toHaveAttribute(
+        'data-gateway-online',
+        'true',
+      )
       const observerUrl = observerPage.url()
 
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
@@ -540,7 +546,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         })
 
         await page.reload()
-        await expect(page.locator('.status-pill.online')).toHaveText('Live')
+        await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'true')
         const reloadedApproval = surfaceCard(page, approvalTitle)
         await expect(reloadedApproval.getByRole('textbox', { name: 'Body' })).toHaveValue(
           'edited and retained',
@@ -550,7 +556,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         await reloadedApproval.getByRole('button', { name: 'Reject', exact: true }).click()
         await expect(reloadedApproval).toHaveCount(0)
         await page.goto(`${stack!.origin}/app/space/health`)
-        await expect(page.locator('.status-pill.online')).toHaveText('Live')
+        await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'true')
         await expect(page.getByRole('button', { name: 'Focus Groceries' })).toBeVisible()
       } finally {
         await page.unroute(actionRoute, handleAction)

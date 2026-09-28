@@ -219,7 +219,7 @@ export function loadRoutingConfig(rootDir: string): RoutingConfig {
  * `candidates()` adds a second, structural guarantee on top of this: once a
  * real candidate resolves, every mock entry is dropped from the attempt
  * list, so a failed real connection can never fail over onto the mock
- * (issues/047-model-connections.md).
+ * (issue #47).
  *
  * Returns a new `RuntimeRoutingConfig`; never mutates `config`.
  */
@@ -617,7 +617,7 @@ export class ModelRouter {
       ]
     })
     // A failed real connection must never be answered by the mock
-    // (issues/047-model-connections.md): once at least one non-mock
+    // (issue #47): once at least one non-mock
     // candidate resolved, every keyless mock candidate is dropped from the
     // attempt list, belt and braces alongside `withMockFallback`'s
     // append-only-when-nothing-resolves rule.

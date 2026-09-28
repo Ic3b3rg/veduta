@@ -162,7 +162,7 @@ export const mockWorkerReviewComplete: (
 
 /**
  * Content-driven dev fixture for acceptance C in
- * `issues/017-worker-review.md`: a reject-then-pass variant of
+ * `issue #17`: a reject-then-pass variant of
  * `mockWorkerReviewComplete` keyed on the REPORT DATA embedded in
  * `buildReviewPrompt`'s output, not on a call counter. A submitted draft that
  * still contains `MOCK_UNSUPPORTED_CLAIM_TEXT` (the flagged claim

@@ -46,6 +46,6 @@ The rejected alternatives are classifying by name or slug, adding a protocol-lev
 parallel model, using a bespoke administration screen, retaining request-time synthetic Surfaces,
 allowing generic Agent writes, and forbidding harmless user presentation preferences. The
 implementation slices and dependency on the Home Space grid are tracked by
-[the System Space specification](../../issues/063-system-space-genui-namespace.md).
+[the System Space specification](https://github.com/Ic3b3rg/veduta/issues/63).
 
 Status: accepted

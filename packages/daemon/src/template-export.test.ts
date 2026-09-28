@@ -132,7 +132,7 @@ describe('exportTemplates', () => {
 
 describe('planTemplateImport / applyTemplateImport', () => {
   it("exports from root A, imports into root B, and instantiating through TemplateEngine there carries B's own data — not A's — while a dropped dataProp is never silently restored", async () => {
-    // The live path end to end (issues/022-emergent-templates.md's third
+    // The live path end to end (issue #22's third
     // acceptance criterion): a pure-helper round trip would still pass even
     // if the reuse path itself were deleted, so this goes through
     // `SpacesEngine`/`Store`/`TemplateEngine` exactly as the daemon does,

@@ -9,8 +9,8 @@ import { effectiveToolWriteOrigin } from './taint.ts'
 export interface MemoryToolOptions {
   activeSpaceId?: string
   /**
-   * Enables `search_memory` (issues/021-advanced-memory.md,
-   * issues/032-facts-hygiene-context-budget.md) when supplied. Optional so
+   * Enables `search_memory` (issue #21,
+   * issue #32) when supplied. Optional so
    * existing callers that construct `createMemoryTools` with no retrieval
    * instance keep getting exactly the four tools they always have —
    * `search_memory` needs a live `MemoryIndex` behind it and must not become
@@ -38,7 +38,7 @@ const SpaceScopedSchema = z.object({
  * /`reader.discard` (whether a quarantined event was handled),
  * `approval.outcome`, `outbound.delivery`, `heartbeat.sweep` (the metrics
  * the Heartbeat Surface shows), and `template.saved`/`template.reused`/
- * `template.regenerated` (issues/022-emergent-templates.md: the daemon reads
+ * `template.regenerated` (issue #22: the daemon reads
  * its own Template bookkeeping back — a forged `template.saved` could make a
  * harvest or a reuse look like it already happened). A denylist rather than
  * an allowlist because naming its own event types is the point of
@@ -109,8 +109,8 @@ const SearchLogSchema = SpaceScopedSchema.extend({
 })
 
 /**
- * `search_memory`'s inputs (issues/021-advanced-memory.md's retrieval
- * interface, issues/032-facts-hygiene-context-budget.md's `search_facts`
+ * `search_memory`'s inputs (issue #21's retrieval
+ * interface, issue #32's `search_facts`
  * criterion): one tool over one index rather than two. A separate
  * `search_facts` tool would either duplicate this schema and handler or
  * re-implement the same dereference-and-taint pipeline against the same

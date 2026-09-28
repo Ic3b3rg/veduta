@@ -50,6 +50,7 @@ function renderChatBar(
   pendingDecisionReviewPaths: ReadonlyMap<string, string> = new Map(),
   resolvingDecisionIds: ReadonlySet<string> = new Set(),
 ) {
+  const onSend = vi.fn(() => true)
   const chatBar = (
     nextEntries: ChatMessage[],
     nextStreamingEntries: { turnId: string; text: string }[],
@@ -66,7 +67,7 @@ function renderChatBar(
         resolvingDecisionIds={resolvingDecisionIds}
         onResolvePendingDecision={onResolvePendingDecision}
         onDismissPendingDecision={vi.fn()}
-        onSend={vi.fn(() => true)}
+        onSend={onSend}
       />
     </MemoryRouter>
   )
@@ -74,6 +75,7 @@ function renderChatBar(
 
   return {
     ...view,
+    onSend,
     onResolvePendingDecision,
     rerenderChatBar(
       nextEntries: ChatMessage[],
@@ -323,7 +325,20 @@ describe('ChatBar', () => {
   it('keeps the composer usable while a turn is streaming', () => {
     renderChatBar([], [{ turnId: 'turn-1', text: 'still going' }])
 
-    const input = screen.getByRole('textbox') as HTMLInputElement
+    const input = screen.getByRole('textbox') as HTMLTextAreaElement
     expect(input.disabled).toBe(false)
+  })
+
+  it('sends on Enter and keeps Shift+Enter for a new line', () => {
+    const { onSend } = renderChatBar([], [])
+    const composer = screen.getByRole('textbox', { name: 'Message Veduta' })
+
+    fireEvent.change(composer, { target: { value: 'First line\nSecond line' } })
+    fireEvent.keyDown(composer, { key: 'Enter', shiftKey: true })
+    expect(onSend).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('First line\nSecond line')
+    expect((composer as HTMLTextAreaElement).value).toBe('')
   })
 })

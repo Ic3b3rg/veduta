@@ -1,10 +1,12 @@
 import { AutomationAtomPropsSchema, AutomationRunHistorySchema } from '@veduta/protocol'
 import type { CSSProperties, ReactNode } from 'react'
 import { actionValue, boundValue, findAction, motionContent, text } from './atom-helpers.ts'
-import { bodyTextStyle, listItemStyle, switchKnobStyle, switchStyle } from './atom-styles.ts'
+import { bodyTextStyle } from './atom-styles.ts'
 import { BadgeAtom } from './atoms-content.tsx'
 import { tokensFor } from './design-system.ts'
 import type { AtomProps } from './types.ts'
+import { Item } from './ui/item.tsx'
+import { Switch } from './ui/switch.tsx'
 
 export function ListItemAtom({ node, ctx }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
@@ -32,16 +34,24 @@ export function ListItemAtom({ node, ctx }: AtomProps): ReactNode {
     </>
   )
 
-  if (!action) return <div style={listItemStyle(tokens)}>{content}</div>
+  if (!action) {
+    return (
+      <Item variant="outline" size="sm">
+        {content}
+      </Item>
+    )
+  }
 
   return (
-    <button
-      type="button"
-      onClick={() => ctx.dispatch(node, action.name, actionValue(action))}
-      style={{ ...listItemStyle(tokens), cursor: 'pointer', textAlign: 'left', width: '100%' }}
-    >
-      {content}
-    </button>
+    <Item asChild variant="outline" size="sm">
+      <button
+        type="button"
+        onClick={() => ctx.dispatch(node, action.name, actionValue(action))}
+        className="w-full cursor-pointer text-left"
+      >
+        {content}
+      </button>
+    </Item>
   )
 }
 
@@ -62,7 +72,7 @@ export function AutomationAtom({ node, ctx }: AtomProps): ReactNode {
       ? (props.data.history ?? [])
       : []
   return (
-    <div style={listItemStyle(tokens)}>
+    <Item variant="outline" size="sm">
       <div style={{ flex: 1, minWidth: 0 }}>
         <div {...motionContent('label')} style={{ ...bodyTextStyle(tokens), fontWeight: 650 }}>
           {label}
@@ -110,18 +120,13 @@ export function AutomationAtom({ node, ctx }: AtomProps): ReactNode {
           </details>
         )}
       </div>
-      <button
+      <Switch
         {...motionContent('value')}
-        type="button"
-        role="switch"
-        aria-checked={enabled}
+        checked={enabled}
         aria-label={label}
-        onClick={() => action && ctx.dispatch(node, action.name, !enabled)}
-        style={switchStyle(tokens, enabled)}
-      >
-        <span aria-hidden="true" style={switchKnobStyle(tokens, enabled)} />
-      </button>
-    </div>
+        onCheckedChange={(next) => action && ctx.dispatch(node, action.name, next)}
+      />
+    </Item>
   )
 }
 

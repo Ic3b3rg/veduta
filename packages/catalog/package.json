@@ -7,7 +7,8 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./ui/*": "./src/ui/*.tsx"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -15,7 +16,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@veduta/protocol": "workspace:*"
+    "@veduta/protocol": "workspace:*",
+    "class-variance-authority": "^0.7.1",
+    "cn": "^0.4.0",
+    "lucide-react": "^1.48.0",
+    "radix-ui": "^1.6.7",
+    "recharts": "3.8.0"
   },
   "peerDependencies": {
     "react": "^19.0.0"

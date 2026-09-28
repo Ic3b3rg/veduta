@@ -3,7 +3,7 @@
 Date: 2026-08-11
 
 Scope: the experimental dynamic-tool boundary used by issue
-[071](../../issues/071-codex-dynamic-tool-round-trip.md). This is a sanitized protocol record,
+[071](https://github.com/Ic3b3rg/veduta/issues/71). This is a sanitized protocol record,
 not an authorization or account-data capture.
 
 ## Method

@@ -4,7 +4,7 @@ import type { Store } from './store.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 
 /**
- * The per-Space "Nightly Reflection" Surface (issues/021-advanced-memory.md):
+ * The per-Space "Nightly Reflection" Surface (issue #21):
  * a browsable, always-visible report of the last nightly run — its window,
  * the summaries and insights it distilled, and how many facts it
  * consolidated or demoted. Atoms only (ARCHITECTURE.md §7 forbids

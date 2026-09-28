@@ -4,7 +4,7 @@ import type { ReleaseMetadata } from '@veduta/protocol'
 import type { Ports } from './update-ports.ts'
 
 /**
- * The free-disk-space guardrail (`issues/043-self-update.md` AC8): refuses
+ * The free-disk-space guardrail (`issue #43` AC8): refuses
  * the whole transaction before anything is downloaded or mutated when the
  * relevant filesystems do not have enough headroom. Split out of
  * `update-transaction.ts` so the guardrail's own arithmetic is testable and
@@ -27,7 +27,7 @@ interface DiskReservation {
 /**
  * Sizes come from the signed release metadata (never a live measurement of
  * the untrusted download) plus a measured size of the live data root
- * (`issues/043-self-update.md` AC8). Reservations are grouped by filesystem
+ * (`issue #43` AC8). Reservations are grouped by filesystem
  * (`stat().dev`) before being checked against `statfs` free space, so two
  * reservations that happen to land on the same disk are not double-counted
  * as if they had independent headroom.

@@ -36,7 +36,6 @@ export type AppRouteSelection =
     }
 
 interface AppShellProps {
-  authMode: 'dev' | 'production' | undefined
   authToken: string | undefined
   gatewayOnline: boolean
   queuedCount: number
@@ -96,7 +95,6 @@ interface RouteRecovery {
 
 /** The fixed PWA shell; App owns networking and persistence and supplies route-derived selection. */
 export function AppShell({
-  authMode,
   authToken,
   gatewayOnline,
   queuedCount,
@@ -148,19 +146,13 @@ export function AppShell({
     (focusedSpace && pendingDecisionPresentation.notificationsBySpaceId.get(focusedSpace.id)) ?? []
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-gateway-online={gatewayOnline}>
       <a className="skip-link" href="#main-content">
         Skip to {mainContentName} content
       </a>
       <header className="topbar">
-        <div>
-          <h1>Veduta</h1>
-          <p>{authMode === 'production' ? 'Passkey session' : 'Loopback profile'}</p>
-        </div>
+        <h1 className="topbar-title">Veduta</h1>
         <div className="topbar-actions" aria-live="polite">
-          <span className={gatewayOnline ? 'status-pill online' : 'status-pill'}>
-            {gatewayOnline ? 'Live' : 'Offline-ready'}
-          </span>
           {queuedCount > 0 && <span className="status-pill pending">{queuedCount} queued</span>}
           <ChatModelSelects token={authToken} />
           <button type="button" onClick={onOpenModelConnections}>

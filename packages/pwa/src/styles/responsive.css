@@ -107,21 +107,12 @@
   }
 
   .chat-entry {
-    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 96%;
   }
 
   .chat-compose {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .chat-compose input {
-    width: 100%;
-  }
-
-  .chat-compose button {
-    min-width: 64px;
-    width: auto;
+    display: block;
   }
 
   .chat-dock {

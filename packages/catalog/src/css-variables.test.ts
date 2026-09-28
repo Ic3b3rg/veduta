@@ -9,6 +9,8 @@ function kebabCase(key: string): string {
 function expectedKeysFor(theme: CatalogTheme): string[] {
   return [
     ...Object.keys(catalogTokens[theme].color).map((key) => `--catalog-color-${kebabCase(key)}`),
+    ...Object.keys(catalogTokens[theme].space).map((key) => `--catalog-space-${key}`),
+    ...Object.keys(catalogTokens[theme].radius).map((key) => `--catalog-radius-${key}`),
     '--catalog-font-family',
     '--catalog-motion-fast',
     '--catalog-motion-entrance-duration',

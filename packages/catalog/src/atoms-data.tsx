@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Bar, BarChart } from 'recharts'
 import {
   boundValue,
   dataPoints,
@@ -11,58 +12,47 @@ import {
   tableRows,
   text,
 } from './atom-helpers.ts'
-import { labelStyle, surfaceStyle, tableCellStyle, tableHeaderStyle } from './atom-styles.ts'
+import { labelStyle, surfaceStyle } from './atom-styles.ts'
 import { tokensFor } from './design-system.ts'
 import type { AtomProps } from './types.ts'
+import { Card } from './ui/card.tsx'
+import { ChartContainer } from './ui/chart.tsx'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table.tsx'
 
 export function TableAtom({ node, ctx }: AtomProps): ReactNode {
-  const tokens = tokensFor(ctx.theme)
   const rows = tableRows(boundValue(node, ctx) ?? node.props?.['rows'])
   const rowKeys = motionItemKeys(rows)
   const columns = tableColumns(node.props?.['columns'], rows)
   return (
     <div style={{ overflowX: 'auto' }}>
-      <table
-        style={{
-          borderCollapse: 'collapse',
-          color: tokens.color.text,
-          minWidth: 320,
-          width: '100%',
-        }}
-      >
-        <thead>
-          <tr>
+      <Table className="min-w-80">
+        <TableHeader>
+          <TableRow>
             {columns.map((column) => (
-              <th
-                key={column}
-                {...motionContent(`column:${column}`)}
-                scope="col"
-                style={tableHeaderStyle(tokens)}
-              >
+              <TableHead key={column} {...motionContent(`column:${column}`)} scope="col">
                 {humanLabel(column)}
-              </th>
+              </TableHead>
             ))}
-          </tr>
-        </thead>
-        <tbody>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {rows.map((row, rowIndex) => (
-            <tr
+            <TableRow
               key={rowKeys[rowIndex]}
               {...motionCollectionItem(`row:${rowKeys[rowIndex] ?? rowIndex}`)}
             >
               {columns.map((column) => (
-                <td
+                <TableCell
                   key={column}
                   {...motionContent(`cell:${rowKeys[rowIndex] ?? rowIndex}:${column}`)}
-                  style={tableCellStyle(tokens)}
                 >
                   {text(row[column])}
-                </td>
+                </TableCell>
               ))}
-            </tr>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   )
 }
@@ -73,7 +63,7 @@ export function ImageAtom({ node, ctx }: AtomProps): ReactNode {
   const alt = optionalText(node.props?.['alt']) ?? optionalText(node.props?.['label']) ?? ''
   if (!src) {
     return (
-      <div
+      <Card
         {...motionContent('content')}
         role="img"
         aria-label={alt || 'Image placeholder'}
@@ -87,7 +77,7 @@ export function ImageAtom({ node, ctx }: AtomProps): ReactNode {
         }}
       >
         {alt || 'Image'}
-      </div>
+      </Card>
     )
   }
   return (
@@ -108,46 +98,32 @@ export function ImageAtom({ node, ctx }: AtomProps): ReactNode {
 export function ChartAtom({ node, ctx }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const points = dataPoints(boundValue(node, ctx) ?? node.props?.['data'])
-  const max = Math.max(...points.map((point) => point.value), 1)
+  const label = text(node.props?.['label'] ?? 'Chart')
   return (
-    <div
+    <Card
       role="img"
-      aria-label={text(node.props?.['label'] ?? 'Chart')}
+      aria-label={`${label}: ${points.map((point) => `${point.label} ${point.value}`).join(', ')}`}
       style={{
-        ...surfaceStyle(tokens),
-        display: 'flex',
-        alignItems: 'flex-end',
         gap: tokens.space.sm,
-        minHeight: 132,
         padding: tokens.space.md,
       }}
     >
-      {points.map((point) => (
-        <div
-          key={point.label}
-          {...motionContent(`point:${point.label}`)}
-          style={{
-            alignItems: 'center',
-            display: 'flex',
-            flex: 1,
-            flexDirection: 'column',
-            gap: tokens.space.xs,
-            minWidth: 28,
-          }}
-        >
-          <div
-            aria-hidden="true"
-            title={`${point.label}: ${point.value}`}
-            style={{
-              background: tokens.color.accent,
-              borderRadius: `${tokens.radius.sm}px ${tokens.radius.sm}px 0 0`,
-              height: `${Math.max(8, (point.value / max) * 88)}px`,
-              width: '100%',
-            }}
-          />
-          <span style={{ ...labelStyle(tokens), textAlign: 'center' }}>{point.label}</span>
-        </div>
-      ))}
-    </div>
+      <ChartContainer config={{ value: { label } }} className="h-32 w-full" aria-hidden="true">
+        <BarChart data={points} accessibilityLayer>
+          <Bar dataKey="value" fill="var(--catalog-color-accent)" radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ChartContainer>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: tokens.space.md }}>
+        {points.map((point) => (
+          <span
+            key={point.label}
+            {...motionContent(`point:${point.label}`)}
+            style={{ ...labelStyle(tokens), color: tokens.color.text }}
+          >
+            <span>{point.label}</span> <strong>{point.value}</strong>
+          </span>
+        ))}
+      </div>
+    </Card>
   )
 }

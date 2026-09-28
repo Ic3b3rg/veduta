@@ -9,7 +9,7 @@ import { z } from 'zod'
  * `0.146.1` (source commit `9d00bb0`), per the research in
  * `docs/references/11-model-connections-manual-smoke.md`, the dynamic-tool
  * capture in `docs/references/13-codex-dynamic-tools-0.146.1.md`, and the
- * "what to build" section of `issues/071-codex-dynamic-tool-round-trip.md`.
+ * "what to build" section of `issue #71`.
  * They are checked in rather than generated at build time: the binary is
  * absent from CI, and generation would break an offline install.
  *
@@ -29,7 +29,7 @@ import { z } from 'zod'
  * strips unknown keys. Additive upstream fields are inert to Veduta, and
  * rejecting them would turn routine protocol growth between patch releases
  * into a signed Veduta release without strengthening the boundary. This is
- * the response-parsing policy recorded by `issues/047-model-connections.md`.
+ * the response-parsing policy recorded by `issue #47`.
  * Outbound params are built by `model-connection-codex.ts`, not parsed here;
  * schemas for params Veduta controls may remain strict if one is added.
  */

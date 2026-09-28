@@ -19,7 +19,7 @@ import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { effectiveOrigin, type Origin } from './taint.ts'
 
 /**
- * The nightly Reflection (issues/021-advanced-memory.md): "sleep-time
+ * The nightly Reflection (issue #21): "sleep-time
  * compute" for every active, non-System Space. Once a night (default 04:00
  * user-local, docs/adr/0006-file-based-memory.md), it distills the day's
  * Event log into summaries and a small number of higher-level insights,
@@ -54,7 +54,7 @@ const DistilledFactSchema = z
   .strict()
 
 /**
- * `insights` is capped at 3 but has no minimum: issues/021-advanced-memory.md
+ * `insights` is capped at 3 but has no minimum: issue #21
  * asks the Reflection for "2-3 higher-level insights", but a distiller that
  * returns fewer (or none) is a quality shortfall to surface through
  * `ReflectionRunReport`, not a reason to throw away an otherwise-good
@@ -114,7 +114,7 @@ export interface ReflectionOptions {
   /**
    * Fired with a Space's id after every run that produced a report for it,
    * including a skipped (empty-window) one, so the report Surface manager can
-   * re-project. Without it the browsable report issues/021-advanced-memory.md
+   * re-project. Without it the browsable report issue #21
    * asks for would only ever show what was true at boot: the Reflection runs
    * overnight, and a daemon that stays up for a week would keep serving the
    * Surface it built on the day it started. Same shape as the Heartbeat's

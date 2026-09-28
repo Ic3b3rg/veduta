@@ -99,7 +99,7 @@ type CommittedSurfacePinMutation =
 /**
  * `patchTree`'s result when the target Surface is pinned and the caller did
  * not pass `bypassPin`: nothing was mutated, a `pending` row was recorded
- * instead (`issues/022-emergent-templates.md`). Discriminate a `patchTree`
+ * instead (`issue #22`). Discriminate a `patchTree`
  * result with `'proposed' in result` rather than a shared field, since
  * `SurfaceMutation` gains none.
  */
@@ -527,7 +527,7 @@ export class SurfaceEngine {
   /**
    * Observe every newly recorded Tree proposal exactly once, after its
    * recording transaction commits (`recordTreeProposal`,
-   * `issues/022-emergent-templates.md`). This is how
+   * `issue #22`). This is how
    * `TreeProposalSurfaceManager` learns a proposal was recorded and builds
    * its preview Surface — the same shape as `onSurfaceEvent`, kept separate
    * because a Tree proposal is not itself a `SurfaceEngineEvent`.
@@ -600,7 +600,7 @@ export class SurfaceEngine {
   }
 
   /**
-   * Locks or unlocks a Surface's tree (`issues/022-emergent-templates.md`),
+   * Locks or unlocks a Surface's tree (`issue #22`),
    * appending `surface.pin` to the Space's Event log inside the same write
    * transaction as the column update (ADR-0003: no silent state change).
    * Refuses an unknown or non-pinnable Surface with `SurfaceNotPinnableError`
@@ -729,7 +729,7 @@ export class SurfaceEngine {
   /**
    * Active, non-daemon-owned Surfaces whose tree has not changed since
    * `beforeIso`: the stability query the Template harvest
-   * (`issues/022-emergent-templates.md`) uses to decide which Surfaces are
+   * (`issue #22`) uses to decide which Surfaces are
    * candidates for a Template. This method only answers "what is stable" —
    * it does not decide whether to harvest, which stays the caller's policy.
    */
@@ -792,7 +792,7 @@ export class SurfaceEngine {
    * Resolves a `pending` Tree proposal exactly once: a guarded
    * `update ... where status = 'pending'`, so a doubled Accept/Reject click
    * can never resolve — let alone apply — the same proposal twice
-   * (`issues/022-emergent-templates.md`). Returns `undefined` when `id` is
+   * (`issue #22`). Returns `undefined` when `id` is
    * unknown or was already resolved; the caller (`tree-proposal.ts`'s
    * `TreeProposalSurfaceManager`) is responsible for actually applying an
    * `accepted` proposal via `patchTree`'s `bypassPin`.
@@ -968,7 +968,7 @@ export class SurfaceEngine {
    * case the patch is dry-applied and re-validated (`buildPatchedSurface`,
    * the same validation `patchSurface` performs on the committed path) and
    * recorded as a `pending` Tree proposal instead of mutating
-   * (`issues/022-emergent-templates.md`): the pin is a capability on the
+   * (`issue #22`): the pin is a capability on the
    * Surface, not normally a property of `updatedBy`. The canonical System
    * Space is the deliberate exception: its Pin is only a presentation
    * preference, so a Gateway manager refresh (`updatedBy: 'job'`) continues
@@ -1215,7 +1215,7 @@ export class SurfaceEngine {
           })
           // A pinned Surface is not an error: the Agent must be told plainly
           // that the tree change is a proposal awaiting the user, not retry
-          // or report a failure (issues/022-emergent-templates.md).
+          // or report a failure (issue #22).
           if ('proposed' in result) {
             return {
               content: `tree change proposed for Surface ${input.surfaceId}, awaiting the user`,
@@ -1369,7 +1369,7 @@ export class SurfaceEngine {
    * write path, above) and `recordTreeProposal` (the pinned-tree proposal
    * path, below), so an invalid patch is refused identically on both: a
    * proposal is never held for a patch the ordinary path would also have
-   * rejected (`issues/022-emergent-templates.md`).
+   * rejected (`issue #22`).
    */
   private buildPatchedSurface(
     current: Surface,
@@ -1405,7 +1405,7 @@ export class SurfaceEngine {
    * not passed `bypassPin`. Dry-applies and re-validates the patch first via
    * `buildPatchedSurface` — an invalid proposed patch throws here, at
    * proposal time, before anything is recorded, rather than being held for
-   * the human to discover only once accepted (`issues/022-emergent-templates.md`).
+   * the human to discover only once accepted (`issue #22`).
    *
    * The recorded `origin` (both the row's own column and the
    * `surface.tree_proposal` Event log entry) folds in the *target's* stored

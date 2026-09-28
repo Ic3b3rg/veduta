@@ -32,7 +32,7 @@ import { requiredString } from './sqlite-rows.ts'
 import { SpacesEngine } from './spaces-engine.ts'
 
 /**
- * Evaluation mini-suite for issue #21 (issues/021-advanced-memory.md's
+ * Evaluation mini-suite for issue #21 (issue #21's
  * "Evaluation" task): LongMemEval-inspired temporal/update/abstention
  * categories (docs/references/06-memory-research.md), run against the
  * pinned `memory-corpus.ts` fixture with `CORPUS_NOW` as the fixed clock.
@@ -106,7 +106,7 @@ describe('memory-eval: fixture integrity', () => {
   })
 })
 
-describe('memory-eval: temporal (issues/021-advanced-memory.md acceptance criterion 1)', () => {
+describe('memory-eval: temporal (issue #21 acceptance criterion 1)', () => {
   it('"start of June" returns exactly the June 1-7 records, pinned and in order, with the right weight and not the end-of-May one', () => {
     const { retrieval, spaceId } = buildCorpus()
 
@@ -150,7 +150,7 @@ describe('memory-eval: temporal (issues/021-advanced-memory.md acceptance criter
   })
 })
 
-describe('memory-eval: timezone (issues/021-advanced-memory.md acceptance criterion 1, "correct across the user timezone")', () => {
+describe('memory-eval: timezone (issue #21 acceptance criterion 1, "correct across the user timezone")', () => {
   it('shifts the start-of-June window one day earlier in Pacific/Kiritimati (UTC+14): drops June 7, gains May 31', () => {
     const { index, engine, spaceId } = buildCorpus()
     const retrieval = new MemoryRetrieval({
@@ -233,7 +233,7 @@ describe('memory-eval: update (knowledge-update category)', () => {
   })
 })
 
-describe('memory-eval: abstention (issues/021-advanced-memory.md; spaces-engine.ts ABSTENTION_RULE)', () => {
+describe('memory-eval: abstention (issue #21; spaces-engine.ts ABSTENTION_RULE)', () => {
   for (const topic of CORPUS_ABSENT_TOPICS) {
     it(`finds nothing for the absent topic "${topic}", distinct from a broken search`, () => {
       const { retrieval, spaceId } = buildCorpus()
@@ -303,7 +303,7 @@ describe('memory-eval: fact augmentation', () => {
   })
 })
 
-describe('memory-eval: rebuild determinism (issues/021-advanced-memory.md acceptance criterion 2)', () => {
+describe('memory-eval: rebuild determinism (issue #21 acceptance criterion 2)', () => {
   it('reproduces every pinned query sequence, in the same order, after the index is deleted and reconciled', () => {
     const { rootDir, engine, index, retrieval, spaceId } = buildCorpus()
 
@@ -416,7 +416,7 @@ describe('memory-eval: rebuild determinism (issues/021-advanced-memory.md accept
   })
 })
 
-describe('memory-eval: FTS5 latency (issues/021-advanced-memory.md acceptance criterion 4)', () => {
+describe('memory-eval: FTS5 latency (issue #21 acceptance criterion 4)', () => {
   it('keeps MemoryIndex.search p95 under 50ms over 200 queries after a 20-query warm-up', () => {
     const { index, spaceId } = buildCorpus()
 

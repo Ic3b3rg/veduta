@@ -6,7 +6,7 @@ import { SpacesEngine } from './spaces-engine.ts'
 
 /**
  * `pnpm --filter @veduta/daemon memory-index <rebuild|reconcile|status> [--root <dir>]`
- * (issues/021-advanced-memory.md). `run` takes injectable `argv`/`env`/`io` so it is
+ * (issue #21). `run` takes injectable `argv`/`env`/`io` so it is
  * testable without touching `process.*` and returns an exit code; `main` wires it to
  * the real process and is gated behind the file-identity check below so importing
  * this module (e.g. from a test) never executes it.

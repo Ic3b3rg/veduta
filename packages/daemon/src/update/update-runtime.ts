@@ -7,7 +7,7 @@ import { fetchChecked, remainingFetchBudgetMs, type Ports } from './update-ports
 /**
  * Ensures the Node runtime a release needs is present (issue #43,
  * `docs/adr/0013-signed-self-update.md`'s "Scope: the whole system, honestly
- * bounded" decision — `issues/043-self-update.md` AC6): downloading and
+ * bounded" decision — `issue #43` AC6): downloading and
  * verifying it when it is not. Split out of `update-transaction.ts` so the
  * runtime-fetch-and-verify concern is testable and readable on its own,
  * independent of the journal/rollback state machine.
@@ -50,7 +50,7 @@ function findShasumLine(shasumsText: string, fileName: string): string | undefin
  * anything is extracted or renamed into place — nothing is materialized for
  * a tampered tarball.
  *
- * Verification trust boundary (`issues/043-self-update.md`, AC6): when the
+ * Verification trust boundary (`issue #43`, AC6): when the
  * signed release metadata carries `nodeSha256` (`packages/protocol/src/update.ts`'s
  * `ReleaseMetadataSchema`), that SIGNED hash is authoritative — it cannot be
  * forged without the signing key, unlike `SHASUMS256.txt`, which is fetched

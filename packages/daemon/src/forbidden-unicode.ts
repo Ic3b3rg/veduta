@@ -6,7 +6,7 @@ import type { JsonObject, JsonValue } from '@veduta/protocol'
  * U+2066-U+2069, and U+E0000-U+E007F.
  * The set is intentionally narrow: U+200C (ZWNJ) and U+200D (ZWJ) are
  * legitimate writing-system and emoji joiners and must round-trip unchanged.
- * See issues/128-sanitize-forbidden-unicode.md.
+ * See issue #128.
  */
 const FORBIDDEN_UNICODE_RE =
   /[\u200B\u200E\u200F\uFEFF\u2028-\u202E\u2066-\u2069\u{E0000}-\u{E007F}]/gu

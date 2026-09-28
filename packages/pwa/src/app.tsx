@@ -925,7 +925,6 @@ function RoutedApp() {
 
   const appShell = (
     <AppShell
-      authMode={authMode}
       authToken={authToken}
       gatewayOnline={gatewayOnline}
       queuedCount={queuedCount}

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Guided provisioning for the pinned Codex binary the ChatGPT subscription Model connection
-# needs (issue #47, issues/047-model-connections.md; docs/adr/0014-subscription-inference-boundary.md).
+# needs (issue #47, issue #47; docs/adr/0014-subscription-inference-boundary.md).
 # `packages/daemon/src/codex-app-server.ts`'s `resolveCodexBinary` looks for a binary at
 # `VEDUTA_CODEX_BIN` (an absolute path override) or `<dataDir>/codex/bin/codex` (the convention
 # this script provisions) and refuses anything that is not exactly `CODEX_PINNED_VERSION` --

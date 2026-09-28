@@ -9,6 +9,8 @@ import { motionContent, optionalText } from './atom-helpers.ts'
 import { surfaceStyle } from './atom-styles.ts'
 import { tokensFor, type CatalogTokens } from './design-system.ts'
 import type { AtomProps } from './types.ts'
+import { Card } from './ui/card.tsx'
+import { Skeleton } from './ui/skeleton.tsx'
 
 const defaultLabels: Record<PendingSlotVariant, string> = {
   text: 'Text content',
@@ -157,7 +159,7 @@ function SkeletonFrame({
 }) {
   const label = props.label ?? defaultLabels[props.variant]
   return (
-    <div
+    <Card
       {...motionContent('content')}
       role="status"
       aria-busy="true"
@@ -176,7 +178,7 @@ function SkeletonFrame({
       }}
     >
       {children}
-    </div>
+    </Card>
   )
 }
 
@@ -190,7 +192,7 @@ function SkeletonShape({
   'data-pending-skeleton-line'?: string
 }) {
   return (
-    <span
+    <Skeleton
       aria-hidden="true"
       data-pending-skeleton-shape=""
       style={{
@@ -206,7 +208,7 @@ function SkeletonShape({
 
 function PendingFallback({ label, tokens }: { label?: string | undefined; tokens: CatalogTokens }) {
   return (
-    <div
+    <Card
       {...motionContent('content')}
       role="alert"
       data-testid="pending-slot-fallback"
@@ -220,6 +222,6 @@ function PendingFallback({ label, tokens }: { label?: string | undefined; tokens
       }}
     >
       {label ? `${label} unavailable` : 'Content unavailable'}
-    </div>
+    </Card>
   )
 }

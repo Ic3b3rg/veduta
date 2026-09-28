@@ -192,7 +192,7 @@ describe('GET /api/spaces', () => {
     // ticks), and its own metrics Surface is pre-created (1 more tick), plus
     // the Notification settings Surface (issue #18) pre-created in the
     // System Space (1 more tick), plus the nightly Reflection's own
-    // boot-time reconciliation (issues/021-advanced-memory.md): its single
+    // boot-time reconciliation (issue #21): its single
     // configured time arms one more managed job on the same Automations
     // Surface (2 more ticks), and its per-Space Nightly Reflection Surface is
     // pre-created for the Health Space (1 more tick), plus the persisted
@@ -2415,7 +2415,7 @@ describe('Web Push notifications (issue #18)', () => {
   })
 })
 
-describe('memory engines wiring (issues/021-advanced-memory.md)', () => {
+describe('memory engines wiring (issue #21)', () => {
   it('boots with the memory engines wired and /api/health still answers', async () => {
     const { app } = buildServer()
     const res = await app.inject({ method: 'GET', url: '/api/health' })
@@ -2527,7 +2527,7 @@ describe('memory engines wiring (issues/021-advanced-memory.md)', () => {
   })
 })
 
-describe('POST /api/surfaces/:id/pin (issues/022-emergent-templates.md)', () => {
+describe('POST /api/surfaces/:id/pin (issue #22)', () => {
   it('allows daemon-owned System Surfaces to be pinned and ordered with Space Events', async () => {
     const { app, store } = buildServer()
     const systemSurface = store.getSurface(ALLOWLIST_SURFACE_ID)
@@ -3046,7 +3046,7 @@ describe('POST /api/spaces/:spaceId/surfaces/:surfaceId/move (issue #108)', () =
   })
 })
 
-describe('tree-proposal wiring (issues/022-emergent-templates.md)', () => {
+describe('tree-proposal wiring (issue #22)', () => {
   it("a pinned Surface's Agent tree patch reaches the client as a Tree proposal card Surface (surface.created)", async () => {
     const { app, store, gateway } = buildServer()
     store.createSurface(templateTestSurface('srf-tree-target'), 'agent')
@@ -3086,7 +3086,7 @@ describe('tree-proposal wiring (issues/022-emergent-templates.md)', () => {
   })
 })
 
-describe('Emergent Templates: pre-022 data root (issues/022-emergent-templates.md)', () => {
+describe('Emergent Templates: pre-022 data root (issue #22)', () => {
   it('boots on a surfaces.sqlite without pinned/tree_updated_at/template_id/content_origin, and serves /api/health', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'veduta-pre-022-'))
     // Pre-022 schema, the same shape `surface-engine.test.ts`'s own
@@ -3167,7 +3167,7 @@ describe('Emergent Templates: pre-022 data root (issues/022-emergent-templates.m
   })
 })
 
-describe('dataVersion boot gate (issues/043-self-update.md, docs/adr/0013-signed-self-update.md)', () => {
+describe('dataVersion boot gate (issue #43, docs/adr/0013-signed-self-update.md)', () => {
   it('refuses to boot when data-version.json does not match CURRENT_DATA_VERSION', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'veduta-dataversion-refuse-'))
     await writeFile(join(dataDir, 'data-version.json'), JSON.stringify({ dataVersion: 999 }))
@@ -3455,7 +3455,7 @@ function agentActionSurface(): Surface {
   })
 }
 
-/** A minimal, pinnable Surface for the pin route and Tree-proposal tests (issues/022-emergent-templates.md). */
+/** A minimal, pinnable Surface for the pin route and Tree-proposal tests (issue #22). */
 function templateTestSurface(id: string): Surface {
   return SurfaceSchema.parse({
     id,

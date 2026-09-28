@@ -24,7 +24,7 @@ export type { MemoryIndexRow, MemoryRecordKind }
 
 /**
  * A disposable SQLite FTS5 index over one Space's Event log and FACTS
- * (issues/021-advanced-memory.md, ADR-0006): the files under
+ * (issue #21, ADR-0006): the files under
  * `SpacesEngine`'s root are the truth, this index only makes the long tail
  * findable. Deleting `memory.sqlite` (plus its `-wal`/`-shm` companions) and
  * calling `reconcile()` must be a fully supported recovery path that
@@ -74,7 +74,7 @@ export type MemoryTimeBasis = 'effective' | 'recorded'
 export type MemoryOrder = 'relevance' | 'recency'
 
 /**
- * A stable identity for one indexed record (issues/021-advanced-memory.md):
+ * A stable identity for one indexed record (issue #21):
  * an event is `event:<spaceId>/<file>#<line>` — the Event log is
  * append-only (ADR-0003), so a file plus its 1-based line number never
  * changes meaning. A fact is `fact:<spaceId>/<recordId>` — `FACTS.md` is
@@ -223,7 +223,7 @@ export class MemoryIndex {
 
   /**
    * Boot-time (and on-demand) reconciliation against the files
-   * (issues/021-advanced-memory.md): the hard part is that a record the
+   * (issue #21): the hard part is that a record the
    * index never learned about simply never matches, so this walks the
    * complete inventory in both directions rather than relying on
    * per-hit validation to notice a gap.
@@ -284,7 +284,7 @@ export class MemoryIndex {
   /**
    * Indexes every log file's unindexed tail for one Space. Calling this
    * again with nothing new is a no-op — and, on the hot path, a cheap one:
-   * `onMemoryWrite` (issues/021-advanced-memory.md) fires this after every
+   * `onMemoryWrite` (issue #21) fires this after every
    * `appendEvent`, so a Space with many days of history must not pay for a
    * `readFileSync` of every untouched daily file on every single write. All
    * of this Space's cursors are read in one query, then a file whose current
@@ -310,7 +310,7 @@ export class MemoryIndex {
   }
 
   /**
-   * Wholesale reindex of one Space's FACTS (issues/021-advanced-memory.md):
+   * Wholesale reindex of one Space's FACTS (issue #21):
    * `FACTS.md` is rewritten on every write, so a cursor over it would be
    * meaningless — deleting and reinserting every `fact:` row for this Space
    * is what guarantees a supersede or a demotion leaves no orphaned row
@@ -829,7 +829,7 @@ export class MemoryIndex {
  * The searchable text for one Event log entry: its `type`, its `text`, and
  * every string leaf of its `payload`, walking arrays and nested objects.
  * This is also the fact-augmentation layer named in
- * issues/021-advanced-memory.md and ADR-0006: a `reader.summary` event's
+ * issue #21 and ADR-0006: a `reader.summary` event's
  * `payload.reader` object (`quarantined-reader.ts`'s `ReaderOutputSchema` —
  * subject, sender, entities, deadlines, urgency, intent, summary) is walked
  * by the same generic string-leaf traversal used for every other event, so

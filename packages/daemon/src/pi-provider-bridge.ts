@@ -558,7 +558,7 @@ function streamMock(
  * pi-ai ships its own `openai-codex` provider and `openai-codex-responses`
  * api (`providers/all.js`) — deliberately NOT used here. They reproduce
  * Codex's own OAuth client identity, which
- * `issues/047-model-connections.md` records is not something Veduta may
+ * `issue #47` records is not something Veduta may
  * do (ref-11's research: a third-party product may not present itself as
  * the pinned Codex client to obtain subscription credentials outside the
  * documented `codex app-server` device-code flow). `runtime.provider` here

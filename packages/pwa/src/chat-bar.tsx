@@ -1,6 +1,13 @@
 import type { ChatMessage, PendingDecisionResolution } from '@veduta/protocol'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { Card } from '@veduta/catalog/ui/card'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupTextarea,
+} from '@veduta/catalog/ui/input-group'
 import type { SpaceWithSurfaces } from './api.ts'
 import { clientPath } from './client-router.tsx'
 import { PendingDecisionControls } from './pending-decision-notifications.tsx'
@@ -38,7 +45,7 @@ export function ChatBar({
 }) {
   const [text, setText] = useState('')
   const [isAtBottom, setIsAtBottom] = useState(true)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
   const followsLatestRef = useRef(true)
 
@@ -87,7 +94,7 @@ export function ChatBar({
               (decision) => decision.state !== 'pending' || !dismissedDecisionIds.has(decision.id),
             )
             return (
-              <div
+              <Card
                 key={`${entry.role}-${index}`}
                 className={`chat-entry ${entry.role}`}
                 data-decision-feedback-id={entry.decisionFeedbackId}
@@ -139,17 +146,17 @@ export function ChatBar({
                     })}
                   </section>
                 )}
-              </div>
+              </Card>
             )
           })}
           {streamingEntries.map((turn) => (
-            <div key={`streaming-${turn.turnId}`} className="chat-entry assistant streaming">
+            <Card key={`streaming-${turn.turnId}`} className="chat-entry assistant streaming">
               <strong>veduta</strong>
               <span>
                 {turn.text}
                 <span className="chat-streaming-cursor" data-testid="chat-streaming-cursor" />
               </span>
-            </div>
+            </Card>
           ))}
         </div>
         {!isAtBottom && (
@@ -165,19 +172,35 @@ export function ChatBar({
           </button>
         )}
       </div>
-      <div className="chat-compose">
-        <input
-          ref={inputRef}
-          aria-label={focusedSpace ? `Message Veduta in ${focusedSpace.name}` : 'Message Veduta'}
-          placeholder={focusedSpace ? `Message ${focusedSpace.name}` : 'Message Veduta'}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && send()}
-        />
-        <button type="button" onClick={send}>
-          Send
-        </button>
-      </div>
+      <form
+        className="chat-compose"
+        onSubmit={(event) => {
+          event.preventDefault()
+          send()
+        }}
+      >
+        <InputGroup>
+          <InputGroupTextarea
+            ref={inputRef}
+            aria-label={focusedSpace ? `Message Veduta in ${focusedSpace.name}` : 'Message Veduta'}
+            placeholder={focusedSpace ? `Message ${focusedSpace.name}` : 'Message Veduta'}
+            rows={1}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                send()
+              }
+            }}
+          />
+          <InputGroupAddon align="inline-end">
+            <InputGroupButton type="submit" variant="default" size="sm" disabled={!text.trim()}>
+              Send
+            </InputGroupButton>
+          </InputGroupAddon>
+        </InputGroup>
+      </form>
     </footer>
   )
 }

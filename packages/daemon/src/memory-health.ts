@@ -60,7 +60,7 @@ export class MemoryHealthPersistenceError extends Error {
  * the projection between the two watermarks before the scheduled Reflection
  * runs. `overHardRecovery` describes the current recovery condition; the
  * dependent Memory health System Surface owns user-facing history and
- * notifications (issues/133-system-space-memory-health.md).
+ * notifications (issue #133).
  */
 export class MemoryHealthStore {
   private readonly path: string

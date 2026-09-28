@@ -887,7 +887,7 @@ describe('SpacesEngine automatic Event context budget (issue 132)', () => {
   })
 })
 
-describe('SpacesEngine occurredAt (issues/021-advanced-memory.md)', () => {
+describe('SpacesEngine occurredAt (issue #21)', () => {
   it('normalizes an offset occurredAt to one ISO instant, drops an unparseable one, and renders unchanged without it', async () => {
     const rootDir = await tempRoot()
     const engine = new SpacesEngine({ rootDir, now: fixedNow })
@@ -1057,7 +1057,7 @@ describe('SpacesEngine forbidden Unicode persistence boundary', () => {
   })
 })
 
-describe('SpacesEngine memory read seam (issues/021-advanced-memory.md, docs/adr/0006-file-based-memory.md)', () => {
+describe('SpacesEngine memory read seam (issue #21, docs/adr/0006-file-based-memory.md)', () => {
   it('lists a Space log files sorted by name with byte sizes', async () => {
     const rootDir = await tempRoot()
     const engine = new SpacesEngine({ rootDir, now: fixedNow })
@@ -1187,7 +1187,7 @@ describe('SpacesEngine memory read seam (issues/021-advanced-memory.md, docs/adr
   })
 })
 
-describe('SpacesEngine onMemoryWrite (issues/021-advanced-memory.md, docs/adr/0006-file-based-memory.md)', () => {
+describe('SpacesEngine onMemoryWrite (issue #21, docs/adr/0006-file-based-memory.md)', () => {
   it('fires an event notice after appendEvent', async () => {
     const rootDir = await tempRoot()
     const engine = new SpacesEngine({ rootDir, now: fixedNow })
@@ -1235,7 +1235,7 @@ describe('SpacesEngine onMemoryWrite (issues/021-advanced-memory.md, docs/adr/00
   })
 })
 
-describe('SpacesEngine FACTS watermark health (issues/130-facts-high-hard-watermarks.md)', () => {
+describe('SpacesEngine FACTS watermark health (issue #130)', () => {
   const budget: MemoryBudget = { low: 30, high: 40, hard: 60 }
 
   it('marks a high crossing pending without demotion or an immediate model call and persists it across restart', async () => {
@@ -1380,7 +1380,7 @@ describe('SpacesEngine FACTS watermark health (issues/130-facts-high-hard-waterm
   })
 })
 
-describe('SpacesEngine demoteFacts (issues/021-advanced-memory.md)', () => {
+describe('SpacesEngine demoteFacts (issue #21)', () => {
   it('moves the record to Dormant, appends a fact.demote event, and returns the demoted records', async () => {
     const rootDir = await tempRoot()
     const engine = new SpacesEngine({ rootDir, now: fixedNow })
@@ -1514,7 +1514,7 @@ function sampleTemplate(id: string, sourceSpaceId: string): SurfaceTemplate {
  * Writes a `FactsDocument` straight to a Space's `FACTS.md`, bypassing the
  * Curator: tests use this to plant a dormant record directly, since nothing
  * in `SpacesEngine`'s public surface demotes a fact to dormant (that is the
- * nightly Reflection's job, issues/021-advanced-memory.md).
+ * nightly Reflection's job, issue #21).
  */
 function writeFactsFile(rootDir: string, slug: string, document: FactsDocument): void {
   writeFileSync(

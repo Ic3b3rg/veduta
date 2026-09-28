@@ -12,7 +12,7 @@ import {
 
 /**
  * `pnpm --filter @veduta/daemon templates <list|export|import> [--space <id>]
- * [--file <path>] [--root <dir>] [--apply]` (issues/022-emergent-templates.md;
+ * [--file <path>] [--root <dir>] [--apply]` (issue #22;
  * docs/adr/0012-emergent-templates.md). Follows `memory-index-cli.ts`'s shape:
  * injectable `argv`/`env`/`io`, `run` returns an exit code, `main` is gated
  * behind the file-identity check at the bottom so importing this module never

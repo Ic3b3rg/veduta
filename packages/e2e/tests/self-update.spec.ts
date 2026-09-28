@@ -31,7 +31,7 @@ import { cleanupStackDirs, findFreePort, startLocalVpsStack, type LocalVpsStack 
 
 /**
  * Real-browser e2e for signed self-update (issue #43,
- * `docs/adr/0013-signed-self-update.md`; `issues/043-self-update.md`
+ * `docs/adr/0013-signed-self-update.md`; `issue #43`
  * AC1-AC4). Every scenario below builds its own fresh Local VPS stack (a
  * fresh temp base dir, a fresh local feed server standing in for the real
  * gated `stable.json`) so scenarios never share update-transaction state --
@@ -41,7 +41,7 @@ import { cleanupStackDirs, findFreePort, startLocalVpsStack, type LocalVpsStack 
  * AC1/AC2/AC3 drive the Update Surface (`update-surface.ts`) through a real
  * Chromium instance, the same WebAuthn-virtual-authenticator +
  * onboarding-wizard journey `local-vps.spec.ts` already established. AC4 is
- * deliberately wrapper-level only (no browser, per issues/043-self-update.md's
+ * deliberately wrapper-level only (no browser, per issue #43's
  * own framing of the interrupted-transaction criterion): it arms a marker
  * directly and drives `deploy/veduta-run` as a raw child process so it can
  * hard-kill the whole process group mid-transaction, something the shared
@@ -188,7 +188,7 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
 
       // A completed one-shot action must remain repeatable without a reload
       // after its realtime reset and HTTP response have reconciled
-      // (`issues/045-repeat-fast-action-delivery.md`).
+      // (`issue #45`).
       await updates.getByRole('button', { name: 'Check now' }).click()
       await expect
         .poll(

@@ -44,7 +44,7 @@ describe('Form text Atoms', () => {
     const bio = screen.getByRole('textbox', { name: 'Biography' }) as HTMLTextAreaElement
     name.focus()
     expect(document.activeElement).toBe(name)
-    expect(name.style.outlineColor).not.toBe('')
+    expect(name.className).toContain('focus-visible:ring-')
 
     fireEvent.change(name, { target: { value: 'Grace' } })
     fireEvent.change(bio, { target: { value: 'Compiler pioneer' } })

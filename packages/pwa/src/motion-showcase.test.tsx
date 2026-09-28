@@ -24,9 +24,9 @@ describe('MotionShowcasePage', () => {
     expect(screen.getByText('Review update')).toBeDefined()
     expect(
       screen
-        .getAllByRole<HTMLInputElement>('checkbox', { name: 'Acknowledge update' })
-        .map(({ checked }) => checked),
-    ).toEqual([false, true])
+        .getAllByRole('checkbox', { name: 'Acknowledge update' })
+        .map((checkbox) => checkbox.getAttribute('aria-checked')),
+    ).toEqual(['false', 'true'])
 
     const contentFades = browser.calls.filter(({ keyframes }) => hasOpacityKeyframe(keyframes))
     expect(contentFades).toHaveLength(6)

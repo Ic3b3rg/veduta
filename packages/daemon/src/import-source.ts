@@ -313,7 +313,7 @@ function listUnclaimed(dir: string, subDir: string | undefined, claimedNames: st
 
 /**
  * Reads a legacy Hermes or OpenClaw install into a `LegacySourceSnapshot` per the vendor layout tables
- * documented in `issues/020-importer.md` — a pure, hardened read with zero writes anywhere ("dry-run is genuinely
+ * documented in `issue #20` — a pure, hardened read with zero writes anywhere ("dry-run is genuinely
  * read-only" starts here; `import-mapping.ts`'s `readTargetState` is the target-side half of that
  * guarantee). `notMigrated` is deliberately shallow — direct children of `dir`, and of
  * `dir/workspace` for OpenClaw — matching exactly what the plan's tables call out as

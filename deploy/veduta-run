@@ -216,7 +216,7 @@ while true; do
       # transaction journal is sitting under VEDUTA_UPDATE_HOME. That is "cannot run recovery",
       # not "nothing to do": starting any daemon here would serve against a data root the ADR
       # says must never be served with a pending transaction (docs/adr/0013-signed-self-update.md
-      # decision 4, issues/043-self-update.md). Refuse to start, loudly, and let systemd retry.
+      # decision 4, issue #43). Refuse to start, loudly, and let systemd retry.
       printf 'veduta-run: update work is pending under %s but the executor update-cli at %s is missing or not executable -- refusing to start any daemon while a marker/journal is unresolved\n' \
         "$VEDUTA_UPDATE_HOME" "$cli_tsx" >&2
       printf 'veduta-run: fix the executor release (e.g. restore its node_modules), then systemd will retry (Restart=always); recovery is idempotent\n' >&2

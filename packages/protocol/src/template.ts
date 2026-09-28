@@ -5,7 +5,7 @@ import { collectNodeBindingRefs, validateTextFormTree } from './surface.ts'
 /**
  * A Template is a saved Atom composition: a proven Surface tree the Agent
  * (or the user, by pinning) decided is worth reusing instead of
- * regenerating from scratch (issues/022-emergent-templates.md;
+ * regenerating from scratch (issue #22;
  * docs/adr/0003-declarative-atoms.md: "good compositions become saved and
  * reused Templates" — consistency across regenerations).
  *

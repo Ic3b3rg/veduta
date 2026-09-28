@@ -25,7 +25,7 @@ export interface SelfCheckOptions {
 /**
  * Stage 1 of the update wrapper's two-stage health check
  * (`docs/adr/0013-signed-self-update.md`'s self-update amendments,
- * `issues/043-self-update.md` AC3): a deep, read-only inspection of a
+ * `issue #43` AC3): a deep, read-only inspection of a
  * migrated data root that never calls `buildServer`. `buildServer` seeds the
  * Health Space, starts the scheduler, reconciles the memory index, and runs
  * ingestion recovery — all mutating — so a health check built on top of it
@@ -52,7 +52,7 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
     checkEventLogParse(rootDir),
   ]
 
-  // Harness-only failure injection for issues/043-self-update.md AC3: the
+  // Harness-only failure injection for issue #43 AC3: the
   // e2e harness needs a way to force stage 1 to fail without corrupting a
   // real data root, so it can assert the wrapper's rollback path actually
   // runs. Guarded by two separate env vars on purpose — a stray

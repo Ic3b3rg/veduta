@@ -6,7 +6,7 @@ import { factRecordIds, formatFactsMarkdown, type FactsDocument } from './facts.
 import { withDirectoryMode } from './filesystem.test-helpers.ts'
 import { SpacesEngine } from './spaces-engine.ts'
 
-describe('FACTS persistence boundary (issues/129-secret-safe-atomic-facts-writes.md)', () => {
+describe('FACTS persistence boundary (issue #129)', () => {
   describe('interactive writes', () => {
     it('sanitizes a proposed fact before Curator comparison', () => {
       const { engine, factsPath, spaceId } = createHarness()

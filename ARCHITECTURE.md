@@ -95,7 +95,7 @@ immutable snapshot and invokes typed commands; it owns routes, rendering, focus,
 presentation drafts, never a second copy of live authority. This is a deep PWA module rather than a
 generic provider Adapter or Bridge seam
 ([ADR-0031](docs/adr/0031-pwa-live-state-runtime.md),
-[issue 155](issues/155-deepen-pwa-live-state-runtime.md)).
+[issue 155](https://github.com/Ic3b3rg/veduta/issues/155)).
 
 The Gateway also owns one durable, paginated **Chat timeline** per Chat scope, independently of
 Agent sessions, Trace, and the Event log. A client-identified Chat submission leaves the PWA retry
@@ -161,8 +161,8 @@ Automations, abstention, and timing. Global chat already carries that policy and
 recognizes exact historical policy paragraphs without rewriting character files or changing
 unrecognized prose; the persistent migration and importer transition remain separate work
 ([ADR-0018](docs/adr/0018-separate-character-from-product-rules.md),
-[issue 100](issues/100-gateway-owned-character-policy.md),
-[issue 101](issues/101-character-migration-import.md)).
+[issue 100](https://github.com/Ic3b3rg/veduta/issues/100),
+[issue 101](https://github.com/Ic3b3rg/veduta/issues/101)).
 
 `spaces/<name>/`: `FACTS.md` (bi-temporal facts in three states — active, `## Dormant`, `## Superseded`), append-only Event log (recent portion in context, long tail via hybrid search with a time-aware index), `INSTRUCTIONS.md`, Surfaces and Automations. Global: `USER.md`, `SOUL.md`. Files are the truth; the SQLite FTS5 index is disposable and rebuildable with one command, and every hit dereferences the original record ([ADR-0006](docs/adr/0006-file-based-memory.md), [ADR-0011](docs/adr/0011-disposable-hybrid-index.md)). The nightly **Reflection** is the offline compaction pass: it distills the day's log, consolidates FACTS through the Curator, and demotes still-valid facts to dormant to keep the injected set bounded — a visible Automation, never a silent cleanup. Lifecycle: the Agent _proposes_ creation (one-tap confirmation), granularity = life area (goals are Surfaces, not Spaces), archival never deletion. A Space's memory is visible and editable as a Surface ("what I know about you here").
 
@@ -203,7 +203,7 @@ The daemon stamps the start of every Pending window; the catalog renders token-d
 image, stat, and chart skeletons and degrades an unresolved slot to a visible fallback when that
 persisted window expires, including after a reload. No streaming format or second parser is
 involved ([ADR-0003](docs/adr/0003-declarative-atoms.md),
-[issue 029](issues/029-progressive-surface-composition.md)).
+[issue 029](https://github.com/Ic3b3rg/veduta/issues/29)).
 
 Relative calendar views also stay inside the Surface contract. An optional `validity` descriptor
 names a separate durable source array, its effective-occurrence field, every projected state key,
@@ -213,7 +213,7 @@ normalizes occurrence instants. At the expiry boundary, readers report the view 
 PWA changes to a visible expired state on its own timer, without inventing a domain event or waiting
 for a Heartbeat. Undated legacy source records remain durable but are excluded with a visible caveat
 ([ADR-0003](docs/adr/0003-declarative-atoms.md),
-[issue 134](issues/134-relative-time-surface-views.md)).
+[issue 134](https://github.com/Ic3b3rg/veduta/issues/134)).
 
 Good compositions become **Templates** saved in the Space and reused/patched (visual consistency across regenerations): a tree that has stopped changing — or that the user **pins** — is captured without its data, matched deterministically on intent and Atom signature, and reused instead of regenerated; regenerating over a match requires a justification. A pinned Surface keeps receiving state patches, while a tree change becomes a **Tree proposal** with a preview the user accepts or rejects ([ADR-0012](docs/adr/0012-emergent-templates.md)).
 

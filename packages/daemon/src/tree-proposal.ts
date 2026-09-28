@@ -152,7 +152,7 @@ export function buildTreeProposalSurface(proposal: TreeProposal, target: Surface
  * new subtree introduces made a proposal that replaces a Button's action, or
  * a Markdown node's text, indistinguishable from an unrelated replacement of
  * the same shape — the user must be able to see what actually changed to
- * decide on it (`issues/022-emergent-templates.md`).
+ * decide on it (`issue #22`).
  */
 function operationPreviewLine(operation: PatchOperation): string {
   if (operation.target !== 'tree') {

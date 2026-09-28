@@ -10,9 +10,9 @@ import { describe, expect, it } from 'vitest'
  * is unresolvable for anyone reading the repository and discourages recording the
  * rationale where it belongs.
  *
- * Durable rationale goes in an ADR, the `issues/NNN-*.md` spec, `docs/references/`, or
+ * Durable rationale goes in an ADR, a GitHub issue, `docs/references/`, or
  * the comment itself. References to those ARE welcome and deliberately not matched
- * here: `issue #19`, `issues/020-importer.md`, `ADR-0007`, `docs/SECURITY.md §3.2`,
+ * here: `issue #19`, `ADR-0007`, `docs/SECURITY.md §3.2`,
  * `AC1`, and the `L0`/`L1`/`L2` trust vocabulary all pass.
  *
  * This test scans source text rather than parsed comments on purpose: a pointer inside
@@ -37,9 +37,14 @@ interface DeadPattern {
 
 const DEAD_PATTERNS: DeadPattern[] = [
   {
+    name: 'a path into the removed local issues directory',
+    pattern: /(?:\.\.\/)*issues\/\d{3}-[\w-]+\.md/g,
+    fix: 'cite the GitHub issue number instead',
+  },
+  {
     name: 'a path into the uncommitted tasks/ directory',
     pattern: /tasks\/(?:plan|todo)[\w.-]*\.md/g,
-    fix: 'move the rationale into an ADR or the issue spec and cite that instead',
+    fix: 'move the rationale into an ADR or GitHub issue and cite that instead',
   },
   {
     name: 'a numbered decision from a planning document',
@@ -71,7 +76,7 @@ const DEAD_PATTERNS: DeadPattern[] = [
   {
     name: 'an issue-numbered review round',
     pattern: /issue\s+#\d+\s+re-review/gi,
-    fix: 'cite the issue spec and state the invariant the review established',
+    fix: 'cite the GitHub issue and state the invariant the review established',
   },
   {
     name: 'an unspecified ADR',

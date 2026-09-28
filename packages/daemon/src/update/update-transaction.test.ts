@@ -37,7 +37,7 @@ import {
 } from './update-transaction.ts'
 
 /**
- * `update-transaction.ts` (issues/043-self-update.md; docs/adr/0013-signed-self-update.md and
+ * `update-transaction.ts` (issue #43; docs/adr/0013-signed-self-update.md and
  * its "Amendments" section): the recoverable, journaled update transaction —
  * verify, disk guardrail, download, stage, backup, migrate, flip, stage-1
  * health, and the uniform terminal-publication sequence for every outcome.
@@ -838,7 +838,7 @@ describe('runUpdateTransaction — AC6 runtime jump', () => {
     // Nothing was ever materialized for the tampered runtime specifically —
     // the (valid, untampered) release artifact itself may still have been
     // extracted before the runtime step ran; "nothing switched" is the
-    // actual guarantee here (issues/043-self-update.md AC6), not that the
+    // actual guarantee here (issue #43 AC6), not that the
     // release directory never got created.
     const runtimeDir = join(fixture.home.runtimesDir, `node-v${NODE_VERSION}-linux-${ARCH}`)
     expect(existsSync(runtimeDir)).toBe(false)

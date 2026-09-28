@@ -663,7 +663,7 @@ describe('Surface engine store', () => {
   })
 
   /**
-   * `issues/007-surface-engine.md` promises a fast-path p95 under 100 ms —
+   * `issue #7` promises a fast-path p95 under 100 ms —
    * native-app latency, zero LLM. That number is a claim about the daemon on an
    * otherwise idle machine, and it holds: run this file on its own
    * (`pnpm --filter @veduta/daemon exec vitest run src/surface-engine.test.ts`)

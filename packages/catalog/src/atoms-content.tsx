@@ -13,6 +13,9 @@ import {
 import { bodyTextStyle, labelStyle } from './atom-styles.ts'
 import { tokensFor } from './design-system.ts'
 import type { AtomProps } from './types.ts'
+import { Badge } from './ui/badge.tsx'
+import { Label } from './ui/label.tsx'
+import { Progress } from './ui/progress.tsx'
 
 export function TitleAtom({ node, ctx }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
@@ -96,9 +99,9 @@ export function LabelAtom({ node, ctx }: AtomProps): ReactNode {
       </span>
     )
   return (
-    <label {...motionContent('content')} htmlFor={htmlFor} style={labelStyle(tokens)}>
+    <Label {...motionContent('content')} htmlFor={htmlFor} style={labelStyle(tokens)}>
       {content}
-    </label>
+    </Label>
   )
 }
 
@@ -129,22 +132,17 @@ export function BadgeAtom({ node, ctx }: AtomProps): ReactNode {
   )
   const content = node.props?.['text'] ?? node.props?.['status'] ?? node.props?.['label']
   return (
-    <span
+    <Badge
       {...motionContent('content')}
+      variant="outline"
       style={{
         alignSelf: 'flex-start',
-        border: `1px solid ${tone}`,
-        borderRadius: 999,
+        borderColor: tone,
         color: tone,
-        fontFamily: tokens.font.family,
-        fontSize: tokens.font.xs,
-        fontWeight: 650,
-        lineHeight: 1,
-        padding: `${tokens.space.xs}px ${tokens.space.sm}px`,
       }}
     >
       {text(content)}
-    </span>
+    </Badge>
   )
 }
 
@@ -215,14 +213,7 @@ export function ProgressAtom({ node, ctx }: AtomProps): ReactNode {
   const ratio = ratioValue(boundValue(node, ctx) ?? node.props?.['value'])
   const label = text(node.props?.['label'])
   return (
-    <div
-      role="progressbar"
-      aria-label={label}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round(ratio * 100)}
-      style={{ display: 'grid', gap: tokens.space.xs }}
-    >
+    <div style={{ display: 'grid', gap: tokens.space.xs }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: tokens.space.sm }}>
         <span {...motionContent('label')} style={labelStyle(tokens)}>
           {label}
@@ -234,24 +225,7 @@ export function ProgressAtom({ node, ctx }: AtomProps): ReactNode {
           {Math.round(ratio * 100)}%
         </span>
       </div>
-      <div
-        style={{
-          background: tokens.color.surfaceMuted,
-          borderRadius: tokens.radius.sm,
-          height: 8,
-          overflow: 'hidden',
-        }}
-      >
-        <div
-          {...motionContent('bar')}
-          style={{
-            background: tokens.color.accent,
-            borderRadius: tokens.radius.sm,
-            height: '100%',
-            width: `${ratio * 100}%`,
-          }}
-        />
-      </div>
+      <Progress {...motionContent('bar')} aria-label={label} value={Math.round(ratio * 100)} />
     </div>
   )
 }

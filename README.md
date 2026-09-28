@@ -8,15 +8,15 @@ An open source, self-hosted, **home-first** personal agent: the primary interfac
 
 ## Documentation map
 
-| File                                 | Contents                                                                     |
-| ------------------------------------ | ---------------------------------------------------------------------------- |
-| [ARCHITECTURE.md](ARCHITECTURE.md)   | The full architecture picture, with diagrams and key flows                   |
-| [PRD.md](PRD.md)                     | Product Requirements: problem, target, v1 scope, success criteria            |
-| [CONTEXT.md](CONTEXT.md)             | Domain glossary (the project's ubiquitous language)                          |
-| [docs/SECURITY.md](docs/SECURITY.md) | Security and trust model (hardened against external content)                 |
-| [docs/adr/](docs/adr/)               | The architectural decisions, one per file, with the rationale                |
-| [docs/references/](docs/references/) | Research supporting product, architecture, security, runtime, and operations |
-| [issues/](issues/)                   | The v1 work broken into implementable issues, with acceptance criteria       |
+| Source                                                    | Contents                                                                     |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| [ARCHITECTURE.md](ARCHITECTURE.md)                        | The full architecture picture, with diagrams and key flows                   |
+| [PRD.md](PRD.md)                                          | Product Requirements: problem, target, v1 scope, success criteria            |
+| [CONTEXT.md](CONTEXT.md)                                  | Domain glossary (the project's ubiquitous language)                          |
+| [docs/SECURITY.md](docs/SECURITY.md)                      | Security and trust model (hardened against external content)                 |
+| [docs/adr/](docs/adr/)                                    | The architectural decisions, one per file, with the rationale                |
+| [docs/references/](docs/references/)                      | Research supporting product, architecture, security, runtime, and operations |
+| [GitHub Issues](https://github.com/Ic3b3rg/veduta/issues) | Work items, dependency order, and acceptance criteria                        |
 
 ## Foundational decisions (details in the ADRs)
 
@@ -63,8 +63,7 @@ protocol details.
 ## Development
 
 `pnpm install && pnpm dev` starts the Loopback profile with seed data and a deterministic mock
-provider, so no VPS, domain, or API key is required. Current work and dependency order live in the
-[issue specifications](issues/README.md) and their mirrored
-[GitHub issues](https://github.com/Ic3b3rg/veduta/issues).
+provider, so no VPS, domain, or API key is required. Current work, dependency order, and acceptance
+criteria live in [GitHub Issues](https://github.com/Ic3b3rg/veduta/issues).
 
 For a production-like local rehearsal — real passkey login, egress enforcement, persistent config — instead of the lightweight loopback profile, run `pnpm local-vps`; see [deploy/local-vps.md](deploy/local-vps.md).

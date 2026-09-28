@@ -6,7 +6,7 @@ import { createGunzip } from 'node:zlib'
 
 /**
  * A structured tar-entry reader plus a containment preflight for self-update
- * artifacts (docs/adr/0013-signed-self-update.md; issues/043-self-update.md).
+ * artifacts (docs/adr/0013-signed-self-update.md; issue #43).
  *
  * The artifact tar.gz is already sha256-verified and sits alone in a private
  * 0700 staging directory by the time anything here runs, so no other
@@ -385,7 +385,7 @@ function resolveContainedPath(
 /**
  * Walks the full entry listing of a tar.gz artifact and decides, before any
  * extraction, whether it is safe to materialize (docs/adr/0013-signed-self-update.md;
- * issues/043-self-update.md). Simulates the resulting tree with a virtual map
+ * issue #43). Simulates the resulting tree with a virtual map
  * of declared directories and symlinks built up in archive order, so
  * containment is judged against the same resolution order a real extraction
  * would apply. Throws a plain, specific `Error` on the first violation found;

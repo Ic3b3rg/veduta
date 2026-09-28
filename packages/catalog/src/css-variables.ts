@@ -1,5 +1,5 @@
 // CSS-custom-properties representation of the catalog design-system themes, consumed by the PWA
-// shell so shared colors have a single source of truth (issues/024-shell-tokens-from-catalog.md).
+// shell so shared colors have a single source of truth (issue #24).
 
 import { catalogTokens, type CatalogTheme } from './design-system.ts'
 
@@ -13,6 +13,14 @@ export function cssVariablesFor(theme: CatalogTheme): Record<string, string> {
 
   for (const [key, value] of Object.entries(tokens.color)) {
     variables[`--catalog-color-${kebabCase(key)}`] = value
+  }
+
+  for (const [key, value] of Object.entries(tokens.space)) {
+    variables[`--catalog-space-${key}`] = `${value}px`
+  }
+
+  for (const [key, value] of Object.entries(tokens.radius)) {
+    variables[`--catalog-radius-${key}`] = `${value}px`
   }
 
   variables['--catalog-font-family'] = tokens.font.family

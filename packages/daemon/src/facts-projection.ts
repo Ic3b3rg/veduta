@@ -25,7 +25,7 @@ export interface FactsProjection {
  * The single projection of a `FactsDocument` that both the context injected
  * into a turn (`SpacesEngine.assembleContext`) and the taint gating that turn
  * (`SpacesEngine.contextOrigins`) must read from, so the two can never drift
- * apart (issues/021-advanced-memory.md, issues/032-facts-hygiene-context-budget.md).
+ * apart (issue #21, issue #32).
  * Before this function existed, `spaces-engine.ts` walked the document twice —
  * once to render FACTS, once to collect origins — and the two walks happened
  * to agree only because nobody had changed one without the other yet.
@@ -50,7 +50,7 @@ export interface FactsProjection {
  * Active records are never truncated here. The superseded tail separately
  * considers the 20 most recent records and injects only complete renderings
  * that fit 2,000 UTF-16 code units, including its heading, wrappers, and
- * omission marker (issues/131-bounded-superseded-facts-tail.md).
+ * omission marker (issue #131).
  */
 export function projectFacts(document: FactsDocument): FactsProjection {
   const origins: Origin[] = []

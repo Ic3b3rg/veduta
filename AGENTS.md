@@ -37,14 +37,14 @@ single source of truth for coding agents; `CLAUDE.md` just imports it.
 - **A comment may only cite something a reader of this repository can open.** Working notes
   (`tasks/`) are never committed, so a comment citing `tasks/plan.md`, a numbered "decision 7",
   or a review-round label (`A3`, `B12`, `D10`, `T5`, "this fix group's report") points at
-  nothing. Put durable rationale in an ADR, the `issues/NNN-*.md` spec, `docs/references/`, or
+  nothing. Put durable rationale in an ADR, a GitHub issue, `docs/references/`, or
   the comment itself — then cite that. Enforced by `dead-references.test.ts`.
 
 ## Execution guardrails
 
-- Before proposing or implementing a change, read the relevant issue and comments, its matching
-  specification under `issues/`, related issues, `CONTEXT.md`, `ARCHITECTURE.md`, and applicable
-  ADRs. Check for an existing general solution before proposing a duplicate vertical fix.
+- Before proposing or implementing a change, read the relevant GitHub issue body and comments,
+  related issues, `CONTEXT.md`, `ARCHITECTURE.md`, and applicable ADRs. Check for an existing general
+  solution before proposing a duplicate vertical fix.
 - If the intended product behavior or acceptance criteria are materially ambiguous, or canonical
   sources conflict, stop and ask for clarification before coding.
 - Automated checks are necessary but not sufficient for behavior changes. Verify the exact
@@ -68,7 +68,6 @@ single source of truth for coding agents; `CLAUDE.md` just imports it.
   no daemon imports.
 - `packages/pwa` — the Home + global chat (Vite + React). Talks to the daemon only via
   `/api` and `/ws` (proxied in dev).
-- `issues/` — canonical specs for v1 work, mirrored 1:1 to GitHub issues (file `001` = issue #1).
 
 ## Conventions that differ from defaults
 
@@ -77,8 +76,8 @@ single source of truth for coding agents; `CLAUDE.md` just imports it.
 - Prettier is enforced in CI (`format:check`): no semicolons, single quotes. Never hand-format.
 - One file per module with its test alongside (`server.ts` / `server.test.ts`). No monolithic files.
 - Test data with partial objects uses `fromPartial` from `@total-typescript/shoehorn`, not `as` casts.
-- Work items reference their issue file in `issues/` and satisfy its acceptance criteria; say
-  which criteria a PR satisfies.
+- Work items reference their GitHub issue and satisfy its acceptance criteria; say which criteria a
+  PR satisfies.
 
 ## Where things are documented
 
@@ -93,7 +92,7 @@ single source of truth for coding agents; `CLAUDE.md` just imports it.
 
 ### Issue tracker
 
-Work is tracked in GitHub Issues and mirrored by canonical specifications under `issues/`. See
+GitHub issue bodies are the canonical work specifications, with discussion in their comments. See
 `docs/agents/issue-tracker.md`.
 
 ### Triage labels

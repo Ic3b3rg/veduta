@@ -8,7 +8,7 @@ The Curator treats topic proximity only as a candidate lookup. It retires an act
 it establishes a contradiction or when `write_fact` explicitly names that fact through
 `supersedes`; an unknown explicit target fails. This keeps `## Superseded` equivalent to "no longer
 true" without guessing that two values on the same topic represent one claim. The full rationale is
-recorded in [issue 034](../../issues/034-curator-false-supersede.md).
+recorded in [issue 034](https://github.com/Ic3b3rg/veduta/issues/34).
 
 Status: accepted
 
@@ -48,7 +48,7 @@ record. The injected text and context origins come from the same selected record
 untrusted record does not taint a turn until retrieval returns it with its origin. The shared
 forbidden-Unicode sanitizer applies when legacy FACTS are read for projection and indexing and
 again at the common fact renderer, without rewriting the source file. The executable contract is
-specified in [issue 131](../../issues/131-bounded-superseded-facts-tail.md).
+specified in [issue 131](https://github.com/Ic3b3rg/veduta/issues/131).
 
 ## Amendment (issue 132): bounded model-visible Event and retrieval records
 

@@ -6,7 +6,7 @@ Model connections or mock LLM routing, persistent configuration, egress enforcem
 wizard) on your own machine, with explicit local substitutes for VPS-only infrastructure. The
 decision and its rationale are in [docs/adr/0009-local-vps-profile.md](../docs/adr/0009-local-vps-profile.md);
 the acceptance criteria this profile satisfies are in
-[issues/023-local-vps-profile.md](../issues/023-local-vps-profile.md).
+[issue #23](https://github.com/Ic3b3rg/veduta/issues/23).
 
 ## What this is NOT
 

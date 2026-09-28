@@ -269,7 +269,7 @@ function messageOf(cause: unknown): string {
 
 /**
  * Thrown by the cooperative test-stop knob below — simulates the process
- * being killed at an exact, named checkpoint, for `issues/043-self-update.md`
+ * being killed at an exact, named checkpoint, for `issue #43`
  * AC4 harness coverage. Deliberately distinct from every other error this
  * module throws: the orchestration below must never treat it as a real
  * failure (which would refuse or roll back) — it re-throws unchanged so the
@@ -285,7 +285,7 @@ export class UpdateTransactionStoppedError extends Error {
 }
 
 /**
- * Harness-only failure/interruption injection for `issues/043-self-update.md`
+ * Harness-only failure/interruption injection for `issue #43`
  * AC4, doubly guarded the same way `self-check.ts`'s test knob is: a stray
  * `VEDUTA_TEST_STOP_AFTER_PHASE` left set in an operator's environment must
  * never interrupt a real update, so both this AND the harness-wide
@@ -472,7 +472,7 @@ export type ResumeOutcome = TransactionOutcome | { status: 'nothing-to-resume' }
  * whose tree is deliberately kept for forensics
  * (`docs/adr/0013-signed-self-update.md`), would wedge every future retry of
  * that exact version forever — exactly the SSH-required failure mode
- * `issues/043-self-update.md`'s Goal rules out. Refuses to clear the
+ * `issue #43`'s Goal rules out. Refuses to clear the
  * directory if it is the resolved target of `releases/current`: that would
  * mean deleting the release actually running right now, which should never
  * happen given `checkMonotonic`'s guard, but is cheap to assert defensively.
@@ -607,7 +607,7 @@ async function runMigrationStep(
   if (forcedFail) {
     throw new Error(
       'migration failed: VEDUTA_TEST_FAIL_MIGRATION forced failure — harness-only failure ' +
-        'injection for issues/043-self-update.md AC3',
+        'injection for issue #43 AC3',
     )
   }
 

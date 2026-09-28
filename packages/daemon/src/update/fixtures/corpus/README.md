@@ -1,7 +1,7 @@
 # Fixture corpus: every format ever written to an append-only file
 
 This directory is the frozen record backing `fixture-corpus.test.ts`
-(issues/043-self-update.md AC5). `docs/adr/0013-signed-self-update.md`'s
+(https://github.com/Ic3b3rg/veduta/issues/43 AC5). `docs/adr/0013-signed-self-update.md`'s
 two-data-regimes rationale requires tolerant readers of append-only
 stores — the surface-event log and the Space Event log — to keep parsing
 every shape they have ever produced, forever. This corpus is how that

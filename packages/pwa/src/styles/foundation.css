@@ -85,13 +85,13 @@ body {
   overflow-x: hidden;
 }
 
-button,
-input,
-select {
+button:not([data-slot]),
+input:not([data-slot]),
+select:not([data-slot]) {
   font: inherit;
 }
 
-button {
+button:not([data-slot]) {
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: 6px;
@@ -106,32 +106,32 @@ button {
     transform var(--catalog-motion-fast);
 }
 
-button:disabled {
+button:not([data-slot]):disabled {
   cursor: not-allowed;
   opacity: 0.48;
 }
 
 @media (hover: hover) {
-  button:hover:not(:disabled) {
+  button:not([data-slot]):hover:not(:disabled) {
     border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
     transform: translateY(-1px);
   }
 }
 
-button:active:not(:disabled) {
+button:not([data-slot]):active:not(:disabled) {
   transform: translateY(0);
 }
 
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
+button:not([data-slot]):focus-visible,
+input:not([data-slot]):focus-visible,
+select:not([data-slot]):focus-visible,
+textarea:not([data-slot]):focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  button {
+  button:not([data-slot]) {
     transition: none;
   }
 }

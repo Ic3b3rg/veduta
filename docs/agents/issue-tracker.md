@@ -1,11 +1,8 @@
 # Issue tracker: GitHub
 
-Work for this repository is tracked in GitHub Issues under `Ic3b3rg/veduta`. Use the `gh` CLI for
-tracker operations.
-
-The repository also maintains canonical specifications under `issues/`, mirrored 1:1 with GitHub
-issue numbers. After GitHub assigns an issue number, create or update the matching
-`issues/<NNN>-<slug>.md` file and keep both representations aligned.
+Work for this repository is tracked in GitHub Issues under `Ic3b3rg/veduta`. The issue body is the
+canonical specification and acceptance criteria; comments carry discussion and later findings. Use
+the `gh` CLI for tracker operations. Do not create a second issue specification in the repository.
 
 ## Conventions
 
@@ -16,8 +13,7 @@ issue numbers. After GitHub assigns an issue number, create or update the matchi
 - Apply or remove labels with `gh issue edit`.
 - Close an issue with `gh issue close`.
 - Do not close or rewrite a parent issue while publishing child implementation tickets.
-- New implementation tickets should reference their parent issue and matching repository
-  specification.
+- New implementation tickets should reference their parent issue.
 - Apply `ready-for-agent` to agent-ready tickets.
 
 Infer the repository from the current Git remote.
@@ -41,13 +37,12 @@ A ticket is ready to start only when every blocking issue is closed.
 
 ## When a skill says "publish to the issue tracker"
 
-Create a GitHub issue, establish its blocking relationships, apply the configured label, and
-create its matching specification under `issues/`.
+Create a GitHub issue with its complete specification and acceptance criteria, establish its
+blocking relationships, and apply the configured label.
 
 ## When a skill says "fetch the relevant ticket"
 
-Run `gh issue view <number> --comments` and read the matching specification under `issues/` when
-present.
+Run `gh issue view <number> --comments` and read the complete issue body and discussion.
 
 ## Wayfinding operations
 

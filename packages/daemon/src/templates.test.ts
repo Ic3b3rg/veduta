@@ -667,7 +667,7 @@ describe('sanitizeImportedTemplate', () => {
   })
 })
 
-describe('templateId folds intent into the hash (issues/022-emergent-templates.md)', () => {
+describe('templateId folds intent into the hash (issue #22)', () => {
   it('gives two Templates the same name and tree but a different intent different ids', () => {
     const surface = tracker()
     const a = templateFromSurface(surface, {

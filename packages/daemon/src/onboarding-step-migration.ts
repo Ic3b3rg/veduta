@@ -166,7 +166,7 @@ function resolveMigrationSourceDir(
 
 /**
  * The wizard's one dead end for a source the daemon cannot read at all —
- * every dead end prints the exact next command (`issues/019-onboarding-wizard.md`).
+ * every dead end prints the exact next command (`issue #19`).
  * The message states why (the daemon usually cannot read the
  * admin's home under `ProtectHome=yes`) and gives the exact command to run
  * from a shell that can. Built as its own function so both

@@ -2,7 +2,7 @@ import type { ReflectionDistillation, ReflectionDistiller, ReflectionInput } fro
 
 /**
  * Deterministic, zero-network stand-in for the Reflection's distillation
- * call (issues/021-advanced-memory.md, docs/adr/0006-file-based-memory.md):
+ * call (issue #21, docs/adr/0006-file-based-memory.md):
  * the dev profile has no real Agent loop or provider key wired yet, same
  * rationale as `mockReaderComplete` (the quarantined reader's stand-in), the
  * Heartbeat's own `complete` stub in `server.ts`, and
@@ -20,7 +20,7 @@ import type { ReflectionDistillation, ReflectionDistiller, ReflectionInput } fro
  * non-empty text, carrying that same event's own `sourceRef` as its only
  * evidence. `Reflection.runReflection` drops any fact whose `sourceRefs` do
  * not all dereference to an event inside the window it was distilled from
- * (issues/021-advanced-memory.md's evidence requirement), so a stand-in
+ * (issue #21's evidence requirement), so a stand-in
  * that invented a reference would just have its fact silently discarded —
  * this one only ever cites evidence it was actually handed.
  */
@@ -42,7 +42,7 @@ export function createMockReflectionDistiller(): ReflectionDistiller {
       `${input.events.length} event(s) recorded in this window.`,
       `Most common event type: "${topType}" (${topCount} occurrence(s)).`,
     ]
-    // Two, because issues/021-advanced-memory.md asks the Reflection for 2-3
+    // Two, because issue #21 asks the Reflection for 2-3
     // higher-level insights and a stand-in that emits one would make the
     // report look like the engine under-delivers rather than the stub.
     const insights = [

@@ -17,7 +17,7 @@ import { neutralizeDelimiters, untrustedOrigin, type Origin } from './taint.ts'
 
 /**
  * Pure derive/instantiate/match/sanitize helpers for Templates
- * (issues/022-emergent-templates.md; docs/adr/0003-declarative-atoms.md:
+ * (issue #22; docs/adr/0003-declarative-atoms.md:
  * "good compositions get saved and reused"). No I/O, no SQLite, no `fs` —
  * persistence, harvesting and tool wiring live above this module.
  */
@@ -46,7 +46,7 @@ export const TEMPLATE_MATCH_THRESHOLD = 0.3
 const TEMPLATE_SIGNATURE_BONUS = 0.2
 
 /**
- * Import caps (issues/022-emergent-templates.md). `AtomNodeSchema` is
+ * Import caps (issue #22). `AtomNodeSchema` is
  * `z.lazy` recursive, so a deeply nested untrusted payload would blow the
  * call stack inside zod's own validation before any of these caps could
  * apply — `sanitizeImportedTemplate` therefore enforces them with an
@@ -218,7 +218,7 @@ function templateId(name: string, intent: string, idEntropy: string): string {
 
 /**
  * Walks `node`, keeping `id`, `type`, `binding`, `actions` and `children`
- * exactly as they were, and reducing `props` per issues/022-emergent-templates.md:
+ * exactly as they were, and reducing `props` per issue #22:
  * a string longer than `TEMPLATE_PROP_MAX_CHARS` is blanked; an array or
  * object value is dropped and its `"<nodeId>.<propKey>"` recorded into
  * `dataProps`. Together these are what makes "the tree without data" true
@@ -466,7 +466,7 @@ export interface SanitizedImportedTemplate {
 
 /**
  * The untrusted-input door for an imported Template
- * (issues/022-emergent-templates.md), in a fixed order: (1) the iterative
+ * (issue #22), in a fixed order: (1) the iterative
  * cap walk above, on the raw JSON; (2) schema parse; (3) `neutralizeDelimiters`
  * over every attacker-reachable string reachable from the parsed Template —
  * name, intent, node ids, bindings, action names, a fast action's `stateKey`
