@@ -92,6 +92,17 @@ API keys and OAuth tokens live in an **encrypted secrets vault** (key derived at
 
 One documented deviation: the ChatGPT Model connection's OAuth credentials are owned by Codex itself inside a per-connection `CODEX_HOME` directory (mode `0700`) under the data root, because managed Codex login has no supported callback into an external vault. Encryption at rest for that directory is a deployment concern.
 
+The post-v1 Hub and Veduta-owned MCP client keep service credentials in the protected PWA/provider
+setup flow and existing vault. A reviewed external process receives only its approved secret slot
+through a minimal environment, never the vault or model context. An MCP tool description or
+annotation cannot grant a credential, tool, Space, or trust level. The reviewed executable process
+boundary limits mounts and destinations where the host profile can enforce them, but neither that
+boundary nor the general execution tool proves that arbitrary code performs only its declared
+semantic effect. Public package review, limited provider credentials, per-Space grants, runtime
+effect approvals, and truthful failure states are required by
+[ADR-0032](adr/0032-reviewed-extension-hub.md) and
+[ADR-0034](adr/0034-veduta-owned-mcp-client.md).
+
 ## 5. Audit and limits
 
 - **Append-only audit log** of every typed L1+ action, approval/allowlist change, and general-execution call: who/what triggered it (including a hash of the context), the redacted command or effect, and its outcome. Visible as a Surface.

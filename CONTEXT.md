@@ -124,6 +124,18 @@ _Avoid_: Event log, Trace, activity history
 A Gateway-wide configured route that lets the Agent use a model through either a provider subscription or BYOK. It is shared by every Space and supplies inference only; the Agent loop and its tools remain inside Veduta.
 _Avoid_: provider login (only one possible setup method), agent runtime
 
+**Service connection**:
+A Gateway-wide, non-secret identity and protected authorization for one external service account. It owns no Space result or memory; each Space needs an explicit capability grant before its Agent work or Automation may use it. Gmail's Mailbox connection is the first service-specific form; the common Chat-initiated lifecycle also covers non-mail mechanisms.
+_Avoid_: Model connection, Space credential, universal Mailbox connection
+
+**Connection attempt**:
+A durable setup workflow tied to one accepted Chat request and initiating Space. It carries the reviewed access request and truthful setup state; only verified readiness may resume that same job once.
+_Avoid_: chat consent, successful connection before verification
+
+**Space capability grant**:
+The enabled set of actions, tools, and resource scope through which one Space may use a Gateway-wide Service connection. Revoking it stops that Space's future use without deleting other Spaces' results or the account identity.
+_Avoid_: shared Space result, implicit account access
+
 **Connection parity**:
 The product invariant that changing provider, model, or authorization method leaves the Agent's Veduta capabilities, workflows, and persistent outcomes unchanged. Only unavoidable connection properties such as authentication, catalog, price, latency, limits, and model quality may differ.
 _Avoid_: provider mode, text-only mode, degraded connection

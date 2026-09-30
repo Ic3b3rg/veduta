@@ -244,6 +244,15 @@ message read. Results converge on Space-owned Mailbox Surfaces rather than an in
 provider-neutral command layer ([ADR-0024](docs/adr/0024-pull-based-personal-mailbox.md),
 [ADR-0026](docs/adr/0026-skills-may-drive-general-tool-execution.md)).
 
+The later cross-service connection journey begins with a Space Chat request, moves protected
+authorization to the authenticated PWA/provider, verifies the exact capability without fetching
+unrequested content, then resumes that same request once. A Gateway-wide Service connection may
+be granted to individual Spaces, but its credentials and results do not become shared Space state.
+Gmail remains passive; a reviewed GitHub MCP server provides the first non-mail proof through a
+Veduta-owned client and AgentRunner tools
+([ADR-0033](docs/adr/0033-chat-initiated-service-connections.md),
+[ADR-0034](docs/adr/0034-veduta-owned-mcp-client.md)).
+
 ### 3.6 Workers and review
 
 Ephemeral Workers only for tasks that are (a) parallelizable and read-heavy, (b) worth 4-15x the tokens, (c) "investigate-and-report" with no implicit decisions. Detailed briefing (goal, format, tools, boundaries), iteration cap, explicit termination, schema-validated output. Adversarial review **in a separate context**, only on high-risk outputs before delivery into the Space.
@@ -257,6 +266,12 @@ tool is broader: its commands and outcomes are traced and official Skills follow
 but Veduta does not claim complete semantic mediation of arbitrary shell behavior. Details in
 [SECURITY.md](docs/SECURITY.md) ([ADR-0007](docs/adr/0007-trust-levels.md),
 [ADR-0026](docs/adr/0026-skills-may-drive-general-tool-execution.md)).
+
+The post-v1 public Hub has a separate accepted distribution boundary: exact reviewed packages,
+per-Space activation, a versioned Veduta-native tool/hook process contract, human review before
+public distribution, and live behavior proof before readiness. Foreign native modules are ports,
+not modules loaded through their original host API. See
+[ADR-0032](docs/adr/0032-reviewed-extension-hub.md).
 
 ## 4. Key flows
 
@@ -319,4 +334,6 @@ A `curl | bash` installer that emits a **JSON stage protocol** rendered by the w
 - Provider-native rich projections inside messenger Bridges in the current architecture —
   bidirectional text and Home deep links are the guaranteed baseline; a future projection requires
   separate research and an accepted architectural decision
-- Multi-tenancy, marketplace, voice (post-v1)
+- Multi-tenancy and voice (post-v1). A marketplace is excluded from v1; the first later Hub
+  release includes a reviewed public community catalog under
+  [ADR-0032](docs/adr/0032-reviewed-extension-hub.md).
