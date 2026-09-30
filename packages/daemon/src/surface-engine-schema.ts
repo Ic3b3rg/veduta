@@ -36,6 +36,29 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
       event_json text not null
     );
 
+    create table if not exists surface_commit_baseline (
+      id integer primary key check (id = 1),
+      legacy_surface_cursor integer not null,
+      recorded_at text not null
+    );
+
+    create table if not exists surface_commits (
+      sequence integer primary key autoincrement,
+      id text not null unique,
+      space_id text not null,
+      surface_event_cursor integer,
+      event_json text not null,
+      destination text not null,
+      correlation_id text,
+      state text not null check (state in ('recovery_pending', 'delivered')),
+      delivered_at text
+    );
+    create index if not exists surface_commits_pending_space
+      on surface_commits (space_id, state, sequence);
+    create unique index if not exists surface_commits_surface_cursor
+      on surface_commits (surface_event_cursor)
+      where surface_event_cursor is not null;
+
     create table if not exists idempotency_keys (
       key text primary key,
       event_cursor integer not null references surface_events(cursor)
@@ -91,6 +114,10 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
   // `create table if not exists` does not update databases created by older
   // versions, so each additive column is also migrated explicitly.
   ensureSqliteColumn(db, 'surface_events', 'kind', "text not null default 'patch'")
+  db.exec(`
+    insert or ignore into surface_commit_baseline (id, legacy_surface_cursor, recorded_at)
+    values (1, (select coalesce(max(cursor), 0) from surface_events), datetime('now'))
+  `)
   ensureSqliteColumn(db, 'surfaces', 'daemon_owned', 'integer not null default 0')
   ensureSqliteColumn(db, 'surfaces', 'pinned', 'integer not null default 0')
   ensureSqliteColumn(db, 'surfaces', 'tree_updated_at', "text not null default ''")

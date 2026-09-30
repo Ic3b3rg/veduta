@@ -62,6 +62,12 @@ import {
 } from './surface-engine-rows.ts'
 import { initializeSurfaceSchema } from './surface-engine-schema.ts'
 import {
+  SurfaceCommitJournal,
+  SurfaceCommitRecoveryPendingError,
+  type SurfaceCommitRecord,
+  type SurfaceCommitTransport,
+} from './surface-commit.ts'
+import {
   effectiveToolWriteOrigin,
   effectiveOrigin,
   isValidOrigin,
@@ -70,6 +76,7 @@ import {
 } from './taint.ts'
 
 export { surfaceEngineEventFromRow }
+export { SurfaceCommitRecoveryPendingError }
 
 type SurfaceWriteActor = Extract<Freshness['updatedBy'], 'agent' | 'user' | 'job'>
 
@@ -182,7 +189,7 @@ export interface SurfaceEngineOptions {
   timeZone?: string
   seed?: Surface[]
   hasSpace: (spaceId: string) => boolean
-  appendSpaceEvent: (spaceId: string, input: AppendSpaceEventInput) => unknown
+  surfaceCommits?: SurfaceCommitTransport
 }
 
 export class SurfaceTreeConflictError extends Error {
@@ -368,7 +375,8 @@ export class SurfaceEngine {
   private readonly now: () => Date
   private readonly timeZone: string
   private readonly hasSpace: (spaceId: string) => boolean
-  private readonly appendSpaceEvent: (spaceId: string, input: AppendSpaceEventInput) => unknown
+  private readonly surfaceCommitJournal?: SurfaceCommitJournal
+  private stagedSurfaceCommits: SurfaceCommitRecord[] | undefined
   private readonly surfaceEventObservers = new Set<(event: SurfaceEngineEvent) => void>()
   private readonly treeProposalObservers = new Set<
     (proposal: TreeProposal, initiatingTurn?: ChatTurnCorrelation) => void
@@ -380,10 +388,62 @@ export class SurfaceEngine {
     this.now = options.now
     this.timeZone = options.timeZone ?? 'UTC'
     this.hasSpace = options.hasSpace
-    this.appendSpaceEvent = options.appendSpaceEvent
     initializeSurfaceSchema(this.db)
+    if (options.surfaceCommits) {
+      this.surfaceCommitJournal = new SurfaceCommitJournal(
+        this.db,
+        options.surfaceCommits,
+        this.now,
+      )
+    }
     if (this.surfaceCount() === 0) this.seed(options.seed ?? [])
     this.initializeSurfaceOrders()
+    for (const failure of this.reconcilePendingSurfaceCommits()) {
+      console.error('Surface commit boot recovery pending', failure)
+    }
+  }
+
+  recoveryPending(spaceId?: string): SurfaceCommitRecord[] {
+    return this.surfaceCommitJournal?.pending(spaceId) ?? []
+  }
+
+  reconcilePendingSurfaceCommits(): SurfaceCommitRecoveryPendingError[] {
+    if (!this.surfaceCommitJournal) return []
+    const failures: SurfaceCommitRecoveryPendingError[] = []
+    for (const spaceId of new Set(
+      this.surfaceCommitJournal.pending().map((record) => record.spaceId),
+    )) {
+      try {
+        this.notifyRecoveredSurfaceCommits(this.surfaceCommitJournal.reconcileSpace(spaceId))
+      } catch (error) {
+        if (!(error instanceof SurfaceCommitRecoveryPendingError)) throw error
+        failures.push(error)
+      }
+    }
+    return failures
+  }
+
+  assertSpaceReadyForAgent(spaceId: string): void {
+    if (this.surfaceCommitJournal) {
+      this.notifyRecoveredSurfaceCommits(this.surfaceCommitJournal.reconcileSpace(spaceId))
+    }
+  }
+
+  private notifyRecoveredSurfaceCommits(records: readonly SurfaceCommitRecord[]): void {
+    for (const record of records) {
+      if (record.surfaceEventCursor !== undefined) {
+        const row = this.db
+          .prepare('select kind, event_json from surface_events where cursor = ?')
+          .get(record.surfaceEventCursor)
+        if (row) this.notifySurfaceEvent(surfaceEngineEventFromRow(row))
+      } else if (record.event.type === 'surface.tree_proposal') {
+        const proposalId = record.event.payload?.['proposalId']
+        if (typeof proposalId === 'number') {
+          const proposal = this.getTreeProposal(proposalId)
+          if (proposal) this.notifyTreeProposal(proposal)
+        }
+      }
+    }
   }
 
   listSurfaces(spaceId?: string): Surface[] {
@@ -509,7 +569,13 @@ export class SurfaceEngine {
 
   surfaceEventsAfter(cursor: number): SurfaceEngineEvent[] {
     return this.db
-      .prepare('select kind, event_json from surface_events where cursor > ? order by cursor')
+      .prepare(
+        `select surface_events.kind, surface_events.event_json from surface_events
+         left join surface_commits on surface_commits.surface_event_cursor = surface_events.cursor
+         where surface_events.cursor > ?
+           and (surface_commits.id is null or surface_commits.state = 'delivered')
+         order by surface_events.cursor`,
+      )
       .all(cursor)
       .map((row) => surfaceEngineEventFromRow(row))
   }
@@ -555,6 +621,7 @@ export class SurfaceEngine {
     }
     this.requireKnownSpace(surface.spaceId)
     this.assertSpaceWritableByAgent(surface.spaceId, surface.id, updatedBy)
+    this.assertSpaceReadyForAgent(surface.spaceId)
     // See `CreateSurfaceOptions.contentOrigin`: default to this call's own
     // write origin, never a flat `'trusted:user'`.
     const contentOrigin = options?.contentOrigin ?? options?.origin ?? 'trusted:user'
@@ -574,13 +641,17 @@ export class SurfaceEngine {
           : { templateSpaceId: options.templateSpaceId }),
         contentOrigin,
       })
-      this.appendSpaceEvent(surface.spaceId, {
-        at: surface.freshness.updatedAt,
-        type: 'surface.create',
-        text: `Created Surface "${surface.title}"`,
-        origin: options?.origin ?? 'trusted:system',
-        payload: { surfaceId: surface.id },
-      })
+      this.stageSpaceEvent(
+        surface.spaceId,
+        {
+          at: surface.freshness.updatedAt,
+          type: 'surface.create',
+          text: `Created Surface "${surface.title}"`,
+          origin: options?.origin ?? 'trusted:system',
+          payload: { surfaceId: surface.id },
+        },
+        this.latestSurfaceCursor() + 1,
+      )
       const cursor = this.latestSurfaceCursor() + 1
       const order = this.writeSurfaceOrder(
         surface.spaceId,
@@ -625,6 +696,8 @@ export class SurfaceEngine {
     options: { origin: Origin; updatedBy: 'user' | 'agent' | 'job' },
   ): SurfacePinMutation {
     this.assertPinnable(surfaceId)
+    const pendingTarget = this.getSurface(surfaceId)
+    if (pendingTarget) this.assertSpaceReadyForAgent(pendingTarget.spaceId)
     const result = this.runWrite<CommittedSurfacePinMutation>(() => {
       const current = this.getSurface(surfaceId)
       if (!current) throw new SurfaceNotPinnableError(surfaceId)
@@ -643,13 +716,17 @@ export class SurfaceEngine {
       const storedContentOrigin = this.surfaceProvenance(surfaceId)?.contentOrigin
       const eventOrigin = effectiveOrigin([storedContentOrigin, options.origin], options.origin)
       const title = truncate(neutralizeDelimiters(stamped.title), PIN_EVENT_TITLE_MAX_CHARS)
-      this.appendSpaceEvent(stamped.spaceId, {
-        at: stamped.freshness.updatedAt,
-        type: 'surface.pin',
-        text: `${pinned ? 'Pinned' : 'Unpinned'} Surface "${title}"`,
-        origin: eventOrigin,
-        payload: { surfaceId, pinned },
-      })
+      this.stageSpaceEvent(
+        stamped.spaceId,
+        {
+          at: stamped.freshness.updatedAt,
+          type: 'surface.pin',
+          text: `${pinned ? 'Pinned' : 'Unpinned'} Surface "${title}"`,
+          origin: eventOrigin,
+          payload: { surfaceId, pinned },
+        },
+        this.latestSurfaceCursor() + 1,
+      )
       const withoutTarget = {
         pinned: currentOrder.pinnedSurfaceIds.filter((id) => id !== surfaceId),
         regular: currentOrder.regularSurfaceIds.filter((id) => id !== surfaceId),
@@ -710,15 +787,19 @@ export class SurfaceEngine {
         PIN_EVENT_TITLE_MAX_CHARS,
       )
       const storedContentOrigin = requiredString(row, 'content_origin')
-      this.appendSpaceEvent(spaceId, {
-        at,
-        type: 'surface.move',
-        text: `Moved Surface "${title}" ${direction}`,
-        origin: isValidOrigin(storedContentOrigin)
-          ? effectiveOrigin([storedContentOrigin, 'trusted:user'], 'trusted:user')
-          : 'trusted:user',
-        payload: { surfaceId, direction },
-      })
+      this.stageSpaceEvent(
+        spaceId,
+        {
+          at,
+          type: 'surface.move',
+          text: `Moved Surface "${title}" ${direction}`,
+          origin: isValidOrigin(storedContentOrigin)
+            ? effectiveOrigin([storedContentOrigin, 'trusted:user'], 'trusted:user')
+            : 'trusted:user',
+          payload: { surfaceId, direction },
+        },
+        cursor,
+      )
       const event = this.insertMovedEvent({ cursor, at, spaceId, surfaceId, direction, order })
       return { order, event }
     })
@@ -845,6 +926,8 @@ export class SurfaceEngine {
 
   archiveSurface(surfaceId: string, updatedBy: SurfaceWriteActor, origin?: Origin): Surface {
     this.assertWritableByAgent(surfaceId, updatedBy)
+    const pendingTarget = this.getSurface(surfaceId)
+    if (pendingTarget) this.assertSpaceReadyForAgent(pendingTarget.spaceId)
     const surface = this.requireActiveSurface(surfaceId)
     const archived = this.stampSurface(surface, updatedBy)
     const event = this.runWrite(() => {
@@ -856,13 +939,17 @@ export class SurfaceEngine {
            where id = ?`,
         )
         .run(archived.freshness.updatedAt, archived.freshness.updatedBy, surfaceId)
-      this.appendSpaceEvent(surface.spaceId, {
-        at: archived.freshness.updatedAt,
-        type: 'surface.archive',
-        text: `Archived Surface "${surface.title}"`,
-        origin: origin ?? 'trusted:system',
-        payload: { surfaceId },
-      })
+      this.stageSpaceEvent(
+        surface.spaceId,
+        {
+          at: archived.freshness.updatedAt,
+          type: 'surface.archive',
+          text: `Archived Surface "${surface.title}"`,
+          origin: origin ?? 'trusted:system',
+          payload: { surfaceId },
+        },
+        this.latestSurfaceCursor() + 1,
+      )
       const cursor = this.latestSurfaceCursor() + 1
       const order = this.writeSurfaceOrder(
         surface.spaceId,
@@ -1128,7 +1215,7 @@ export class SurfaceEngine {
           JSON.stringify(surface),
           JSON.stringify(atom),
         )
-      this.appendSpaceEvent(surface.spaceId, {
+      this.stageSpaceEvent(surface.spaceId, {
         at,
         type: 'agent_path',
         text: `${surface.title}: ${invocation.name} requested from Atom "${atom.id}"`,
@@ -1349,13 +1436,17 @@ export class SurfaceEngine {
           event.cursor,
         )
       }
-      this.appendSpaceEvent(patched.spaceId, {
-        at: patched.freshness.updatedAt,
-        type: options.eventType,
-        text: options.eventText(patched),
-        origin: eventOrigin,
-        payload: options.eventPayload ?? { surfaceId, operations: operations.length },
-      })
+      this.stageSpaceEvent(
+        patched.spaceId,
+        {
+          at: patched.freshness.updatedAt,
+          type: options.eventType,
+          text: options.eventText(patched),
+          origin: eventOrigin,
+          payload: options.eventPayload ?? { surfaceId, operations: operations.length },
+        },
+        event.cursor,
+      )
       return { surface: patched, event, duplicate: false }
     })
     this.notifySurfaceEvent({ kind: 'patch', event: mutation.event })
@@ -1451,7 +1542,7 @@ export class SurfaceEngine {
           createdAt,
         )
       const id = Number(result.lastInsertRowid)
-      this.appendSpaceEvent(surface.spaceId, {
+      this.stageSpaceEvent(surface.spaceId, {
         at: createdAt,
         type: 'surface.tree_proposal',
         text: `Proposed a tree change for Surface "${title}"`,
@@ -1478,6 +1569,7 @@ export class SurfaceEngine {
     const event = this.eventByCursor(requiredNumber(row, 'event_cursor'))
     const surface = this.getSurface(event.patch.surfaceId)
     if (!surface) throw new Error(`unknown Surface: ${event.patch.surfaceId}`)
+    this.assertSpaceReadyForAgent(surface.spaceId)
     return { surface, event, duplicate: true }
   }
 
@@ -1491,6 +1583,7 @@ export class SurfaceEngine {
     const event = this.eventByCursor(requiredNumber(row, 'event_cursor'))
     const surface = this.getSurface(event.patch.surfaceId)
     if (!surface) throw new Error(`unknown Surface: ${event.patch.surfaceId}`)
+    this.assertSpaceReadyForAgent(surface.spaceId)
     return { surface, event, duplicate: true }
   }
 
@@ -1591,7 +1684,13 @@ export class SurfaceEngine {
   }
 
   private notifySurfaceEvent(event: SurfaceEngineEvent): void {
-    for (const observer of this.surfaceEventObservers) observer(event)
+    for (const observer of this.surfaceEventObservers) {
+      try {
+        observer(event)
+      } catch (error) {
+        console.error('Surface event observer failed', error)
+      }
+    }
   }
 
   /**
@@ -1794,17 +1893,21 @@ export class SurfaceEngine {
         regularSurfaceIds,
         this.latestSurfaceCursor() + 1,
       )
-      this.appendSpaceEvent(adopted.spaceId, {
-        at,
-        type: 'surface.adopt',
-        text: `Adopted canonical daemon Surface "${adopted.title}"`,
-        origin,
-        payload: {
-          surfaceId: adopted.id,
-          restored: archived,
-          unpinned: existing.pinned && !pinned,
+      this.stageSpaceEvent(
+        adopted.spaceId,
+        {
+          at,
+          type: 'surface.adopt',
+          text: `Adopted canonical daemon Surface "${adopted.title}"`,
+          origin,
+          payload: {
+            surfaceId: adopted.id,
+            restored: archived,
+            unpinned: existing.pinned && !pinned,
+          },
         },
-      })
+        this.latestSurfaceCursor() + 1,
+      )
       return this.insertCreatedEvent(adopted, order)
     })
     this.notifySurfaceEvent({ kind: 'created', event })
@@ -2087,8 +2190,33 @@ export class SurfaceEngine {
     return this.now().toISOString()
   }
 
+  private stageSpaceEvent(
+    spaceId: string,
+    input: AppendSpaceEventInput,
+    surfaceEventCursor?: number,
+  ): void {
+    if (!this.stagedSurfaceCommits || !this.surfaceCommitJournal) {
+      throw new Error('Surface commit transport is unavailable')
+    }
+    this.stagedSurfaceCommits.push(
+      this.surfaceCommitJournal.prepare(spaceId, input, surfaceEventCursor),
+    )
+  }
+
   private runWrite<T>(write: () => T): T {
-    return withImmediateTransaction(this.db, write)
+    if (this.stagedSurfaceCommits) throw new Error('nested Surface commit transaction')
+    const staged: SurfaceCommitRecord[] = []
+    this.stagedSurfaceCommits = staged
+    let result: T
+    try {
+      result = withImmediateTransaction(this.db, write)
+    } finally {
+      this.stagedSurfaceCommits = undefined
+    }
+    for (const spaceId of new Set(staged.map((record) => record.spaceId))) {
+      this.surfaceCommitJournal!.reconcileSpace(spaceId)
+    }
+    return result
   }
 }
 

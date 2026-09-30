@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AgentEventBus,
   defineTool,
@@ -14,6 +14,8 @@ import {
 } from './agent-runner.ts'
 import { ModelRouter, type RoutingConfig } from './model-routing.ts'
 import { Store } from './store.ts'
+import type { SurfaceCommitTransport } from './surface-commit.ts'
+import { SurfaceCommitRecoveryPendingError } from './surface-commit.ts'
 import { WORKER_REPORT_VERSION, type WorkerBriefing, type WorkerReport } from './worker-briefing.ts'
 import type { WorkerReviewVerdict } from './worker-review.ts'
 import {
@@ -206,6 +208,150 @@ describe('constructor', () => {
           reviewComplete: async () => ({ text: '{}' }),
         }),
     ).toThrow('worker tools must be L0 with empty egress')
+  })
+})
+
+describe('Space recovery gate', () => {
+  it('checks the Worker Space before the runner reasons', async () => {
+    const checked: string[] = []
+    router = new ModelRouter({
+      config: routingConfig,
+      now,
+      sleep: async () => {},
+      beforeSpaceReasoning: (spaceId) => {
+        checked.push(spaceId)
+        throw new Error('Space recovery pending')
+      },
+    })
+    const runner = new ScriptedAgentRunner([[{ text: validReportText() }]])
+    const { pool } = makePool({ runner })
+    const { workerId } = pool.spawn({
+      briefing: briefing(),
+      spaceId: HEALTH,
+      goalLabel: 'the ketogenic diet',
+    })
+
+    await pool.whenSettled(workerId)
+    expect(checked).toEqual([HEALTH])
+    expect(runner.promptCalls).toEqual([])
+  })
+
+  it('defers high-risk delivery when recovery becomes pending before review', async () => {
+    store.close()
+    let deliveryAllowed = true
+    store = new Store({
+      rootDir,
+      now,
+      surfaceCommitTransport: (spaces): SurfaceCommitTransport => ({
+        prepareSurfaceCommitEvent: (spaceId, input, commitId) =>
+          spaces.prepareSurfaceCommitEvent(spaceId, input, commitId),
+        deliverSurfaceCommitEvent: (prepared) => {
+          if (!deliveryAllowed) throw new Error('injected persistent delivery failure')
+          spaces.deliverSurfaceCommitEvent(prepared)
+        },
+        notifySurfaceCommitDelivered: (spaceId) => spaces.notifySurfaceCommitDelivered(spaceId),
+      }),
+    })
+    let checks = 0
+    router = new ModelRouter({
+      config: routingConfig,
+      now,
+      sleep: async () => {},
+      beforeSpaceReasoning: (spaceId) => {
+        checks += 1
+        if (checks === 2) {
+          deliveryAllowed = false
+          expect(() => store.applyFastAction('srf-groceries', 'milk', true)).toThrow(
+            SurfaceCommitRecoveryPendingError,
+          )
+        }
+        store.assertSpaceReadyForAgent(spaceId)
+      },
+    })
+    const runner = new ScriptedAgentRunner([[{ text: validReportText() }]])
+    const reviewComplete = vi.fn(async () => ({
+      text: verdictText({ verdict: 'pass', unsupportedClaims: [] }),
+    }))
+    const { pool } = makePool({ runner, reviewComplete })
+    try {
+      const { workerId } = pool.spawn({
+        briefing: briefing({ highRisk: true }),
+        spaceId: HEALTH,
+        goalLabel: 'the ketogenic diet',
+      })
+      await vi.waitFor(() => expect(checks).toBeGreaterThanOrEqual(2))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(store.recoveryPendingSurfaceCommits(HEALTH)).toHaveLength(1)
+      expect(store.eventLog(HEALTH).filter((event) => event.type === 'worker.delivered')).toEqual(
+        [],
+      )
+      expect(reviewComplete).not.toHaveBeenCalled()
+
+      deliveryAllowed = true
+      expect(store.reconcilePendingSurfaceCommits()).toEqual([])
+      await pool.whenSettled(workerId)
+      expect(reviewComplete).toHaveBeenCalledTimes(1)
+      expect(
+        store.eventLog(HEALTH).filter((event) => event.type === 'worker.delivered'),
+      ).toHaveLength(1)
+      expect(
+        store.eventLog(HEALTH).find((event) => event.type === 'worker.delivered')?.payload?.[
+          'reviewStatus'
+        ],
+      ).toBe('passed')
+      expect(store.getSurface(workerSurfaceId(workerId))?.state[WORKER_SETTLED_STATE_KEY]).toBe(
+        true,
+      )
+    } finally {
+      pool.dispose()
+    }
+  })
+
+  it('resumes a pending terminal Surface patch without duplicating worker delivery', async () => {
+    store.close()
+    let patchDeliveryAllowed = false
+    store = new Store({
+      rootDir,
+      now,
+      surfaceCommitTransport: (spaces): SurfaceCommitTransport => ({
+        prepareSurfaceCommitEvent: (spaceId, input, commitId) =>
+          spaces.prepareSurfaceCommitEvent(spaceId, input, commitId),
+        deliverSurfaceCommitEvent: (prepared) => {
+          if (!patchDeliveryAllowed && prepared.event.type === 'surface.patch_tree') {
+            throw new Error('injected Worker Surface delivery failure')
+          }
+          spaces.deliverSurfaceCommitEvent(prepared)
+        },
+        notifySurfaceCommitDelivered: (spaceId) => spaces.notifySurfaceCommitDelivered(spaceId),
+      }),
+    })
+    const runner = new ScriptedAgentRunner([[{ text: validReportText() }]])
+    const { pool } = makePool({ runner })
+    try {
+      const { workerId } = pool.spawn({
+        briefing: briefing(),
+        spaceId: HEALTH,
+        goalLabel: 'the ketogenic diet',
+      })
+      await vi.waitFor(() => {
+        expect(store.recoveryPendingSurfaceCommits(HEALTH)).toHaveLength(1)
+      })
+      expect(
+        store.eventLog(HEALTH).filter((event) => event.type === 'worker.delivered'),
+      ).toHaveLength(1)
+
+      patchDeliveryAllowed = true
+      expect(store.reconcilePendingSurfaceCommits()).toEqual([])
+      await pool.whenSettled(workerId)
+      expect(
+        store.eventLog(HEALTH).filter((event) => event.type === 'worker.delivered'),
+      ).toHaveLength(1)
+      expect(store.getSurface(workerSurfaceId(workerId))?.state[WORKER_SETTLED_STATE_KEY]).toBe(
+        true,
+      )
+    } finally {
+      pool.dispose()
+    }
   })
 })
 
@@ -525,6 +671,74 @@ describe('cancel', () => {
 })
 
 describe('recoverAtBoot', () => {
+  it('starts with a pending Space commit, recovers another Space, and retries the Worker after reconciliation', async () => {
+    store.close()
+    let deliveryAllowed = true
+    store = new Store({
+      rootDir,
+      now,
+      surfaceCommitTransport: (spaces): SurfaceCommitTransport => ({
+        prepareSurfaceCommitEvent: (spaceId, input, commitId) =>
+          spaces.prepareSurfaceCommitEvent(spaceId, input, commitId),
+        deliverSurfaceCommitEvent: (prepared) => {
+          if (!deliveryAllowed && prepared.event.spaceId === HEALTH) {
+            throw new Error('injected boot recovery failure')
+          }
+          spaces.deliverSurfaceCommitEvent(prepared)
+        },
+        notifySurfaceCommitDelivered: (spaceId) => spaces.notifySurfaceCommitDelivered(spaceId),
+      }),
+    })
+    const other = store.spacesEngine.createSpace({ name: 'Other' })
+    for (const [workerId, spaceId] of [
+      ['pending-boot', HEALTH],
+      ['other-boot', other.id],
+    ] as const) {
+      store.createSurface(
+        activeWorkerSurface({
+          workerId,
+          spaceId,
+          goalLabel: workerId,
+          etaMinutes: 5,
+          updatedAt: clock.toISOString(),
+        }),
+        'job',
+        { daemonOwned: true },
+      )
+    }
+    deliveryAllowed = false
+    expect(() => store.applyFastAction('srf-groceries', 'milk', true)).toThrow(
+      SurfaceCommitRecoveryPendingError,
+    )
+    const { pool } = makePool()
+    try {
+      expect(() => pool.recoverAtBoot()).not.toThrow()
+      expect(store.recoveryPendingSurfaceCommits(HEALTH)).toHaveLength(1)
+      expect(
+        store.getSurface(workerSurfaceId('pending-boot'))?.state[WORKER_SETTLED_STATE_KEY],
+      ).toBe(false)
+      expect(store.eventLog(HEALTH).filter((event) => event.type === 'worker.delivered')).toEqual(
+        [],
+      )
+      expect(store.getSurface(workerSurfaceId('other-boot'))?.state[WORKER_SETTLED_STATE_KEY]).toBe(
+        true,
+      )
+
+      deliveryAllowed = true
+      await vi.waitFor(() => {
+        expect(
+          store.getSurface(workerSurfaceId('pending-boot'))?.state[WORKER_SETTLED_STATE_KEY],
+        ).toBe(true)
+      })
+      expect(store.recoveryPendingSurfaceCommits(HEALTH)).toEqual([])
+      expect(
+        store.eventLog(HEALTH).filter((event) => event.type === 'worker.delivered'),
+      ).toHaveLength(1)
+    } finally {
+      pool.dispose()
+    }
+  })
+
   it('patches an orphaned active worker Surface to an interrupted, partial terminal state', () => {
     // Simulate a Surface left behind by a previous daemon process: created
     // directly (no live worker in this process at all — no run in flight).

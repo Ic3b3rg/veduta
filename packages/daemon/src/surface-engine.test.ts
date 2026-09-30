@@ -738,19 +738,20 @@ describe('Surface engine store', () => {
    * native-app latency, zero LLM. That number is a claim about the daemon on an
    * otherwise idle machine, and it holds: run this file on its own
    * (`pnpm --filter @veduta/daemon exec vitest run src/surface-engine.test.ts`)
-   * and the p95 is single-digit milliseconds.
+   * and the p95 stays below 100 ms. Set `VEDUTA_ISOLATED_BENCHMARK=1` for
+   * that strict bound and its measured result.
    *
    * Inside the full suite this file shares the CPU with every other worker,
    * several of which drive SQLite databases and spawn subprocesses, so
    * wall-clock here measures the runner's load as much as the fast path. The
-   * bound below is therefore deliberately loose: what it still catches is an
+   * bound below is therefore deliberately loose in the full suite: what it still catches is an
    * order-of-magnitude regression (an LLM call, an O(n^2) read, a lost
    * transaction batch), which is what this test is for. The convergence
    * assertions above it — every tap applied, 50 events, no duplicates — are
    * exact and load-independent, and `llmCallCount` pins the "zero LLM" half of
    * the criterion outright.
    */
-  const FAST_PATH_P95_BOUND_MS = 400
+  const FAST_PATH_P95_BOUND_MS = process.env['VEDUTA_ISOLATED_BENCHMARK'] === '1' ? 100 : 400
 
   it(
     'converges 50 concurrent fast-path taps from two devices without dropping events',
@@ -782,7 +783,11 @@ describe('Surface engine store', () => {
       expect(
         store.eventLog('spc-health').filter((event) => event.type === 'fast_path'),
       ).toHaveLength(50)
-      expect(p95(timings)).toBeLessThan(FAST_PATH_P95_BOUND_MS)
+      const measuredP95 = p95(timings)
+      if (process.env['VEDUTA_ISOLATED_BENCHMARK'] === '1') {
+        console.info(`isolated fast-path p95: ${measuredP95.toFixed(2)} ms`)
+      }
+      expect(measuredP95).toBeLessThan(FAST_PATH_P95_BOUND_MS)
       expect(store.llmCallCount()).toBe(0)
     },
   )
@@ -823,12 +828,22 @@ describe('Surface engine store', () => {
       rootDir,
       now: fixedNow,
       hasSpace: () => true,
-      appendSpaceEvent: () => undefined,
     })
 
     expect(engine.surfaceEventsAfter(0)).toMatchObject([
       { kind: 'patch', event: { cursor: 1, spaceId: 'spc-health' } },
     ])
+    const upgradedDb = new DatabaseSync(join(rootDir, 'surfaces.sqlite'))
+    try {
+      expect(
+        upgradedDb.prepare('select legacy_surface_cursor from surface_commit_baseline').get(),
+      ).toEqual({ legacy_surface_cursor: 1 })
+      expect(upgradedDb.prepare('select count(*) as count from surface_commits').get()).toEqual({
+        count: 0,
+      })
+    } finally {
+      upgradedDb.close()
+    }
   })
 
   it('notifies the Surface-event observer exactly once per committed event, after commit', async () => {
@@ -1672,7 +1687,6 @@ describe('Surface engine store', () => {
         rootDir,
         now: fixedNow,
         hasSpace: () => true,
-        appendSpaceEvent: () => undefined,
       })
 
       const migrated = engine.getSurface('srf-pre-022')

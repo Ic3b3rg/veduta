@@ -21,6 +21,11 @@ import type { RelativeTimeAuthoring } from './relative-time-surface.ts'
 import type { MemoryBudget } from './memory-config.ts'
 import type { Origin } from './taint.ts'
 import { SpacesEngine, type FactSearchHit, type SpaceEvent } from './spaces-engine.ts'
+import type {
+  SurfaceCommitRecord,
+  SurfaceCommitRecoveryPendingError,
+  SurfaceCommitTransport,
+} from './surface-commit.ts'
 import {
   SurfaceEngine,
   type AuthorableSurfaceInventory,
@@ -44,6 +49,7 @@ export interface StoreOptions {
   timeZone?: string
   /** Rendered active FACTS low/high/hard watermarks. */
   memoryBudget?: MemoryBudget
+  surfaceCommitTransport?: (spacesEngine: SpacesEngine) => SurfaceCommitTransport
 }
 
 export type SurfaceActionResult =
@@ -105,8 +111,20 @@ export class Store {
       timeZone,
       seed: persistedSurfaces.length > 0 ? persistedSurfaces : seed.surfaces,
       hasSpace: (spaceId) => Boolean(this.spacesEngine.getSpace(spaceId)),
-      appendSpaceEvent: (spaceId, input) => this.spacesEngine.appendEvent(spaceId, input),
+      surfaceCommits: options.surfaceCommitTransport?.(this.spacesEngine) ?? this.spacesEngine,
     })
+  }
+
+  recoveryPendingSurfaceCommits(spaceId?: string): SurfaceCommitRecord[] {
+    return this.surfaceEngine.recoveryPending(spaceId)
+  }
+
+  reconcilePendingSurfaceCommits(): SurfaceCommitRecoveryPendingError[] {
+    return this.surfaceEngine.reconcilePendingSurfaceCommits()
+  }
+
+  assertSpaceReadyForAgent(spaceId: string): void {
+    this.surfaceEngine.assertSpaceReadyForAgent(spaceId)
   }
 
   listSpaces(): Space[] {
@@ -222,7 +240,7 @@ export class Store {
       if (!mutation.duplicate) {
         for (const [stateKey, value] of Object.entries(values)) {
           const notice = { surfaceId, stateKey, value, mutation }
-          for (const observer of this.fastMutationObservers) observer(notice)
+          this.notifyFastMutation(notice)
         }
       }
       return { path: 'fast', mutation }
@@ -251,7 +269,7 @@ export class Store {
     )
     if (!mutation.duplicate) {
       const notice = { surfaceId, stateKey: action.stateKey, value, mutation }
-      for (const observer of this.fastMutationObservers) observer(notice)
+      this.notifyFastMutation(notice)
     }
     return { path: 'fast', mutation }
   }
@@ -260,6 +278,16 @@ export class Store {
   onFastMutation(observer: (notice: FastMutationNotice) => void): () => void {
     this.fastMutationObservers.add(observer)
     return () => this.fastMutationObservers.delete(observer)
+  }
+
+  private notifyFastMutation(notice: FastMutationNotice): void {
+    for (const observer of this.fastMutationObservers) {
+      try {
+        observer(notice)
+      } catch (error) {
+        console.error('fast mutation observer failed', error)
+      }
+    }
   }
 
   createSurface(
@@ -332,11 +360,13 @@ export class Store {
 
   /** Space-scoped read seam for the Agent's focused-Space Surface registry. */
   listAuthorableSurfaces(spaceId: string): AuthorableSurfaceInventory {
+    this.assertSpaceReadyForAgent(spaceId)
     return this.surfaceEngine.listAuthorableSurfaces(spaceId)
   }
 
   /** Space-scoped read seam for one complete Agent-authorable Surface. */
   readAuthorableSurface(spaceId: string, surfaceId: string): AuthorableSurfaceRead {
+    this.assertSpaceReadyForAgent(spaceId)
     return this.surfaceEngine.readAuthorableSurface(spaceId, surfaceId)
   }
 
@@ -468,10 +498,12 @@ export class Store {
   }
 
   assembleSpaceContext(spaceId: string): string {
+    this.assertSpaceReadyForAgent(spaceId)
     return this.spacesEngine.assembleContext(spaceId)
   }
 
   assembleSpaceContextWithOrigins(spaceId: string, options?: { includeGlobal?: boolean }) {
+    this.assertSpaceReadyForAgent(spaceId)
     return this.spacesEngine.assembleContextWithOrigins(spaceId, undefined, options)
   }
 

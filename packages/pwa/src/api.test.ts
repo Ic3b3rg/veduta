@@ -423,6 +423,17 @@ describe('errorMessageFromBody', () => {
       expected: '/api/spaces failed: 503',
     },
     {
+      name: 'a pending Surface commit names the saved mutation for recovery',
+      status: 503,
+      path: '/api/surfaces/srf-groceries/actions',
+      body: {
+        outcome: 'recovery_pending',
+        surfaceCommitId: 'scm-7',
+        spaceId: 'spc-health',
+      },
+      expected: 'Surface commit scm-7 is pending Event recovery in Space spc-health.',
+    },
+    {
       name: 'a non-object body falls back to the status message',
       status: 502,
       path: '/api/onboarding/integrations',

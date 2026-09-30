@@ -53,7 +53,7 @@ export function migrateV2RelativeTimeSurfaceValidity(rootDir: string): void {
     timeZone,
     seed: [],
     hasSpace: (spaceId) => spacesEngine.getSpace(spaceId) !== undefined,
-    appendSpaceEvent: (spaceId, input) => spacesEngine.appendEvent(spaceId, input),
+    surfaceCommits: spacesEngine,
   })
 
   try {

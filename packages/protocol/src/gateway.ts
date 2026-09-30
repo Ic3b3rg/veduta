@@ -69,6 +69,26 @@ export const FastSurfaceActionResultSchema = z.object({
   surfaceCursor: GatewayCursorSchema,
 })
 
+const SurfaceCommitIdSchema = z.string().regex(/^scm-[A-Za-z0-9-]+$/)
+
+export const SurfaceCommitRecoveryRecordSchema = z.object({
+  id: SurfaceCommitIdSchema,
+  spaceId: z.string().min(1),
+  sequence: z.number().int().positive(),
+  surfaceEventCursor: GatewayCursorSchema.optional(),
+  state: z.literal('recovery_pending'),
+})
+
+export const SurfaceCommitRecoveryStateSchema = z.object({
+  pending: z.array(SurfaceCommitRecoveryRecordSchema),
+})
+
+export const SurfaceCommitRecoveryPendingResponseSchema = z.object({
+  outcome: z.literal('recovery_pending'),
+  surfaceCommitId: SurfaceCommitIdSchema,
+  spaceId: z.string().min(1),
+})
+
 export const SpaceWithSurfacesSchema = SpaceSchema.extend({
   surfaces: z.array(SurfaceSchema),
   attention: z.number().int().min(0).default(0),
@@ -421,6 +441,11 @@ export type MoveSurfaceRequest = z.infer<typeof MoveSurfaceRequestSchema>
 export type MoveSurfaceResult = z.infer<typeof MoveSurfaceResultSchema>
 export type PinSurfaceResult = z.infer<typeof PinSurfaceResultSchema>
 export type FastSurfaceActionResult = z.infer<typeof FastSurfaceActionResultSchema>
+export type SurfaceCommitRecoveryRecord = z.infer<typeof SurfaceCommitRecoveryRecordSchema>
+export type SurfaceCommitRecoveryState = z.infer<typeof SurfaceCommitRecoveryStateSchema>
+export type SurfaceCommitRecoveryPendingResponse = z.infer<
+  typeof SurfaceCommitRecoveryPendingResponseSchema
+>
 export type SpaceWithSurfaces = z.infer<typeof SpaceWithSurfacesSchema>
 export type SurfaceSnapshot = z.infer<typeof SurfaceSnapshotSchema>
 export type SurfacePatchEvent = z.infer<typeof SurfacePatchEventSchema>

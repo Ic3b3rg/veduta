@@ -14,7 +14,6 @@ import { ApprovalPendingDecisionAdapter } from './approval-pending-decision.ts'
 import { ApprovalSurfaceManager } from './approval-surface.ts'
 import { ProgressiveAuthLockout } from './auth-rate-limit.ts'
 import { AuditSurfaceManager } from './audit-surface.ts'
-import type { NormalizedChannelEvent } from './channel-adapter.ts'
 import { chatToolRegistry as buildChatToolRegistry } from './chat-tool-registry.ts'
 import { createChatLoop } from './chat-loop.ts'
 import {
@@ -32,7 +31,7 @@ import { EventIngestion, type FetchStage } from './event-ingestion.ts'
 import type { ExternalEvent } from './external-event.ts'
 import { createFullTextFlow } from './full-text-flow.ts'
 import { registerGatewayRoute } from './gateway-route.ts'
-import { GatewayHub } from './gateway.ts'
+import { GatewayHub, type PwaChatInput } from './gateway.ts'
 import { CalendarSource, GmailSource, GoogleTokenProvider } from './google-sources.ts'
 import { loadHeartbeatConfig } from './heartbeat-config.ts'
 import { HeartbeatSurfaceManager } from './heartbeat-surface.ts'
@@ -43,8 +42,6 @@ import { loadMemoryConfig } from './memory-config.ts'
 import { MemoryIndex, type MemoryIndexOptions } from './memory-index.ts'
 import { MemoryRetrieval } from './memory-retrieval.ts'
 import { createMockChatResponder } from './mock-chat-model.ts'
-import { mockReaderComplete } from './mock-provider.ts'
-import { createMockReflectionDistiller } from './mock-reflection-distiller.ts'
 import { ModelConnectionError } from './model-connection-adapter.ts'
 import { BYOK_ADAPTERS } from './model-connection-byok.ts'
 import { claudeSubscriptionAdapter } from './model-connection-claude.ts'
@@ -80,13 +77,14 @@ import {
   isBuiltinModel,
   probeModel,
 } from './pi-provider-bridge.ts'
+import { createProactiveCompletions } from './proactive-completions.ts'
 import { registerPushRoutes } from './push-routes.ts'
 import { PushStore } from './push-store.ts'
 import { QuarantinedReader } from './quarantined-reader.ts'
 import { defaultRedactor } from './redaction.ts'
 import { Reflection } from './reflection.ts'
 import { ReflectionSurfaceManager } from './reflection-surface.ts'
-import { Scheduler } from './scheduler.ts'
+import { Scheduler, type JudgeFn } from './scheduler.ts'
 import { ConnectedDevicesSurfaceManager } from './connected-devices-surface.ts'
 import {
   compositeSecretResolver,
@@ -519,7 +517,7 @@ export function buildServer(options: ServerOptions = {}) {
   // key gets deterministic behavior through the mock routing candidate
   // (`model-routing.ts`'s `withMockFallback`), never through a second
   // handler (issue #37).
-  let chatTurnHandler: (event: NormalizedChannelEvent) => void = () => {}
+  let chatTurnHandler: (event: PwaChatInput) => void = () => {}
   const gateway = new GatewayHub(store, {
     onFullTextRequest,
     onChatTurn: (event) => chatTurnHandler(event),
@@ -593,15 +591,12 @@ export function buildServer(options: ServerOptions = {}) {
   })
 
   // The scheduler (issue #11): timers and jobs fire as visible Automations.
-  // The judgment path stays a deterministic "unknown" (fail-safe: escalate)
-  // stub because the daemon has no provider client yet — chat itself still
-  // answers via the mock provider. It lands with the real Agent loop wiring
-  // as router.execute({ purpose: 'classification', origin: 'proactive' })
-  // so the daily spending caps govern scheduler judgments too.
+  // Bind the judgment path after the provider bridge exists below.
   // Construction only: `scheduler.start()` is deferred until after the
   // Heartbeat (issue #16) has registered its handler and reconciled its
   // Automations, further down — the scheduler must never fire a job before
   // the handler it's for exists.
+  let judgeCompletion: JudgeFn = () => 'unknown'
   const scheduler = new Scheduler({
     rootDir: store.spacesEngine.rootDir,
     store,
@@ -622,7 +617,7 @@ export function buildServer(options: ServerOptions = {}) {
         ...(context?.automationId !== undefined ? { automationId: context.automationId } : {}),
       })
     },
-    judge: () => 'unknown',
+    judge: (question, spaceId) => judgeCompletion(question, spaceId),
   })
   const disposeAutomationOutcomeLifecycle = scheduler.outcomeService.onLifecycle((event) =>
     gateway.broadcastAutomationOutcomeNotification(event),
@@ -866,6 +861,7 @@ export function buildServer(options: ServerOptions = {}) {
     rootDir: store.spacesEngine.rootDir,
     config: routingState.current(),
     secrets,
+    beforeSpaceReasoning: (spaceId) => store.assertSpaceReadyForAgent(spaceId),
     onCallError: (model, error) => {
       // A migrated legacy connection's id IS its provider name, so an
       // unbound legacy `ModelRef` (no `connectionId`) still maps onto the
@@ -923,6 +919,8 @@ export function buildServer(options: ServerOptions = {}) {
     secrets,
     mockResponder: createMockChatResponder({ now, timeZone: memoryConfig.timezone }),
   })
+  const proactiveCompletions = createProactiveCompletions({ router, bridge })
+  judgeCompletion = proactiveCompletions.judge
   // Issue #47's verify-then-commit selection flow and every adapter's
   // `verify` (`ctx.probe`, `model-connection-adapter.ts`)
   // share this ONE probe implementation. It deliberately does NOT reuse the
@@ -983,11 +981,7 @@ export function buildServer(options: ServerOptions = {}) {
     router,
     config: heartbeatConfig,
     now,
-    // Dev stub, same rationale as the scheduler.judge stub and the mock
-    // quarantined reader: the real Agent-loop wiring replaces this with a
-    // live triage/reasoning completion.
-    complete:
-      options.heartbeatComplete ?? (() => Promise.resolve({ text: '{"status":"nothing"}' })),
+    complete: options.heartbeatComplete ?? proactiveCompletions.heartbeat,
     onEscalation: (spaceId, text, context) => {
       // Heartbeat escalations are never urgent. The
       // triage model's own justification is the only acceptable one — the
@@ -1034,11 +1028,7 @@ export function buildServer(options: ServerOptions = {}) {
     scheduler,
     index: memoryIndex,
     config: memoryConfig,
-    // Dev stand-in, same rationale as the Heartbeat's own `complete` stub
-    // above and the mock quarantined reader: no real Agent loop or
-    // provider key is wired yet. Replaced outright once the Agent loop
-    // lands.
-    distiller: createMockReflectionDistiller(),
+    distiller: proactiveCompletions.reflection,
     now,
     // Same shape as the Heartbeat's `onSwept` above, and the same forward
     // reference to a manager declared just below: the callback body only runs
@@ -1245,6 +1235,7 @@ export function buildServer(options: ServerOptions = {}) {
     isTrustWrapped,
     toolsFor: chatToolRegistry,
     send: (clientId, frame) => gateway.sendToClient(clientId, frame),
+    pendingDecisions,
   })
   chatTurnHandler = (event) => {
     void chatLoop.handleChatMessage(event)
@@ -1291,29 +1282,16 @@ export function buildServer(options: ServerOptions = {}) {
   const gmailSources: Record<string, GmailSource> = {}
   const registerWatches: (() => void)[] = []
   for (const [sourceName, source] of Object.entries(ingestionConfig.sources)) {
+    if (source.adapter === 'imap-idle') continue
     const { google, gmail, calendar } = source
     if (!google) continue
-    const tokens = new GoogleTokenProvider({ ...google, secrets, now })
     if (source.adapter === 'gmail-push' && gmail) {
-      const gmailSource = new GmailSource({ source: sourceName, tokens })
-      gmailSources[sourceName] = gmailSource
-      fetchStages[sourceName] = (cursor) => gmailSource.fetchNewMessages(cursor)
-      registerWatches.push(() =>
-        watchManager.register(sourceName, 'gmail', {
-          renew: async () => {
-            const renewal = await gmailSource.renewWatch(gmail.topicName)
-            // First arm only: the watch's historyId catches messages that
-            // arrive before the first push; later renewals must not move
-            // an established cursor forward past unfetched history.
-            if (ingestion.queue.cursor(sourceName) === undefined) {
-              ingestion.queue.setCursor(sourceName, renewal.historyId)
-            }
-            return { expiresAt: renewal.expiresAt }
-          },
-        }),
-      )
+      // Retain the saved source and vault refs for passive Mailbox migration.
+      // No token provider, Watch registration, or fetch stage is started.
+      continue
     }
     if (source.adapter === 'calendar-push' && calendar) {
+      const tokens = new GoogleTokenProvider({ ...google, secrets, now })
       const calendarSource = new CalendarSource({ source: sourceName, tokens, now })
       fetchStages[sourceName] = (cursor) =>
         calendarSource.fetchChangedEvents(calendar.calendarId, cursor)
@@ -1347,17 +1325,22 @@ export function buildServer(options: ServerOptions = {}) {
   }
   // The quarantined reader (issue #13, SECURITY.md §3.1): accepted events
   // become schema-validated, taint-marked structured fields — never raw
-  // text — before anything reaches the Agent's context. The deterministic
-  // mock completion stands in until the real provider client lands with
-  // the Agent loop, same as chat.
-  const fetchBody = (event: ExternalEvent) =>
-    event.fetchRef?.provider === 'gmail'
-      ? (gmailSources[event.source]?.fetchMessageBody(event.fetchRef.id) ??
-        Promise.resolve(undefined))
-      : Promise.resolve(undefined)
+  // text — before anything reaches the Agent's context.
+  const fetchBody = (event: ExternalEvent) => {
+    if (event.fetchRef?.provider !== 'gmail') return Promise.resolve(undefined)
+    const source = ingestionConfig.sources[event.source]
+    if (source?.adapter !== 'gmail-push' || !source.google) return Promise.resolve(undefined)
+    // Legacy full-text lookup is an explicit user request. Constructing the
+    // provider here keeps boot and background maintenance free of mail access.
+    const gmailSource = (gmailSources[event.source] ??= new GmailSource({
+      source: event.source,
+      tokens: new GoogleTokenProvider({ ...source.google, secrets, now }),
+    }))
+    return gmailSource.fetchMessageBody(event.fetchRef.id)
+  }
   const reader = new QuarantinedReader({
     router,
-    complete: mockReaderComplete,
+    complete: proactiveCompletions.reader,
     store,
     now,
     fetchBody,
@@ -1496,7 +1479,9 @@ export function buildServer(options: ServerOptions = {}) {
       routingState.current(),
       loadConnectionsConfig(store.spacesEngine.rootDir),
     ),
-    ...(Object.values(ingestionConfig.sources).some((source) => Boolean(source.google))
+    ...(Object.values(ingestionConfig.sources).some(
+      (source) => source.adapter !== 'imap-idle' && Boolean(source.google),
+    )
       ? { googleHosts: ['oauth2.googleapis.com', 'www.googleapis.com'] }
       : {}),
     toolDomains: outboundTools.flatMap(({ tool }) => tool.egressDomains),

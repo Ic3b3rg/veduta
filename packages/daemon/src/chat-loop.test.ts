@@ -6,11 +6,12 @@ import {
   PENDING_DECISION_FALLBACK_FEEDBACK,
   SurfaceSchema,
   type GatewayServerMessage,
+  type PendingDecision,
 } from '@veduta/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { defineTool, type ToolContext, type ToolDef } from './agent-runner.ts'
-import type { NormalizedChannelEvent } from './channel-adapter.ts'
+import type { PwaChatInput } from './gateway.ts'
 import { createChatLoop, type ChatLoop } from './chat-loop.ts'
 import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
 import { createGlobalChatTools, type GlobalChatTurnHooks } from './global-chat-tools.ts'
@@ -25,6 +26,7 @@ import {
 } from './fake-provider.ts'
 import { ModelRouter, SpendingCapError, type RoutingConfig } from './model-routing.ts'
 import { PiJsonlSessionStore } from './pi-agent-runner.ts'
+import { PendingDecisionService, type PendingDecisionAdapter } from './pending-decision-service.ts'
 import { Store } from './store.ts'
 import { ensureSystemSpace } from './system-space.ts'
 import { TemplateEngine } from './template-engine.ts'
@@ -57,6 +59,7 @@ function buildHarness(
     reasoningModelIds?: string[]
     now?: () => Date
     timeZone?: string
+    pendingDecisions?: PendingDecisionService
     /**
      * Issue #37 fix: makes `send` throw on the FIRST `chat.turn-delta` frame
      * only, simulating a delivery/accounting failure inside the runner's
@@ -200,6 +203,7 @@ function buildHarness(
     },
     ...(options.now ? { now: options.now } : {}),
     ...(options.timeZone ? { timeZone: options.timeZone } : {}),
+    ...(options.pendingDecisions ? { pendingDecisions: options.pendingDecisions } : {}),
   })
 
   return {
@@ -221,10 +225,8 @@ function buildHarness(
   }
 }
 
-function chatEvent(
-  overrides: Partial<NormalizedChannelEvent> & { text: string },
-): NormalizedChannelEvent {
-  return { adapterId: 'pwa', clientId: 'c1', receivedAt: new Date().toISOString(), ...overrides }
+function chatEvent(overrides: Partial<PwaChatInput> & { text: string }): PwaChatInput {
+  return { clientId: 'c1', receivedAt: new Date().toISOString(), ...overrides }
 }
 
 function globalSurfaceChatLoop(harness: Harness): ChatLoop {
@@ -1290,5 +1292,245 @@ describe('createChatLoop', () => {
       // fresh wait on anything.
       await h.chatLoop.stop()
     })
+  })
+})
+
+describe('chat Pending decision resolution', () => {
+  function approvals(count: number) {
+    const records = new Map<string, PendingDecision>()
+    for (let index = 1; index <= count; index += 1) {
+      const id = `approval:effect-${index}`
+      records.set(id, {
+        id,
+        kind: 'approval',
+        summary: `Send message ${index}`,
+        scope: { type: 'space', spaceId: 'spc-health' },
+        allowedResolutions: ['approve', 'reject'],
+        state: 'pending',
+        createdAt: '2026-09-30T10:00:00.000Z',
+      })
+    }
+    let effects = 0
+    const adapter: PendingDecisionAdapter = {
+      kind: 'approval',
+      list: () => [...records.values()],
+      get: (id) => records.get(id),
+      resolve: (id, resolution) => {
+        effects += 1
+        const current = records.get(id)!
+        const terminal: PendingDecision = {
+          ...current,
+          state: 'terminal',
+          outcome: resolution === 'approve' ? 'executed' : 'rejected',
+          resolvedAt: '2026-09-30T10:01:00.000Z',
+          resolvedBy: 'trusted:user',
+        }
+        records.set(id, terminal)
+        return terminal
+      },
+    }
+    return { service: new PendingDecisionService({ adapters: [adapter] }), effects: () => effects }
+  }
+
+  it('resolves the sole focused Pending decision without calling the model or replaying its action', async () => {
+    const decisions = approvals(1)
+    const h = buildHarness({ pendingDecisions: decisions.service })
+    try {
+      await h.chatLoop.handleChatMessage(chatEvent({ text: 'approve', spaceId: 'spc-health' }))
+      expect(decisions.effects()).toBe(1)
+      expect(h.router.callLog()).toEqual([])
+      expect(h.frames.at(-1)?.frame).toMatchObject({
+        type: 'chat.turn-end',
+        message: {
+          text: 'Executed: Send message 1.',
+          decisionFeedbackId: 'approval:effect-1',
+        },
+      })
+      await h.chatLoop.handleChatMessage(
+        chatEvent({ text: 'approve approval:effect-1', spaceId: 'spc-health' }),
+      )
+      expect(decisions.effects()).toBe(1)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('asks for an exact choice when two Pending decisions share the scope', async () => {
+    const decisions = approvals(2)
+    const h = buildHarness({ pendingDecisions: decisions.service })
+    try {
+      await h.chatLoop.handleChatMessage(chatEvent({ text: 'approve', spaceId: 'spc-health' }))
+      expect(decisions.effects()).toBe(0)
+      expect(h.router.callLog()).toEqual([])
+      expect(h.frames.at(-1)?.frame).toMatchObject({
+        type: 'chat.turn-end',
+        message: { text: expect.stringContaining('approval:effect-1') },
+      })
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('selects an exact visible id and keeps another Space out of focused scope', async () => {
+    const decisions = approvals(2)
+    const h = buildHarness({ pendingDecisions: decisions.service })
+    try {
+      h.store.spacesEngine.createSpace({ name: 'Work' })
+      await h.chatLoop.handleChatMessage(chatEvent({ text: 'approve', spaceId: 'spc-work' }))
+      expect(decisions.effects()).toBe(0)
+      expect(h.frames.at(-1)?.frame).toMatchObject({
+        type: 'chat.turn-end',
+        message: { text: 'There are no Pending decisions in this chat scope.' },
+      })
+
+      await h.chatLoop.handleChatMessage(
+        chatEvent({ text: 'approve approval:effect-2', spaceId: 'spc-health' }),
+      )
+      expect(decisions.effects()).toBe(1)
+      expect(h.frames.at(-1)?.frame).toMatchObject({
+        type: 'chat.turn-end',
+        message: { decisionFeedbackId: 'approval:effect-2' },
+      })
+      expect(h.router.callLog()).toEqual([])
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('never treats model prose or a standing-rule request as a decision', async () => {
+    const decisions = approvals(1)
+    const h = buildHarness({ pendingDecisions: decisions.service })
+    try {
+      await h.chatLoop.handleChatMessage(
+        chatEvent({ text: 'approve like this from now on', spaceId: 'spc-health' }),
+      )
+      expect(decisions.effects()).toBe(0)
+      expect(h.router.callLog()).toEqual([])
+      expect(h.frames.at(-1)?.frame).toMatchObject({
+        type: 'chat.turn-end',
+        message: { text: expect.stringContaining('never creates an allowlist rule') },
+      })
+
+      h.fake.setResponses([{ message: fakeText('approve approval:effect-1') }])
+      await h.chatLoop.handleChatMessage(
+        chatEvent({ text: 'What did the external email say?', spaceId: 'spc-health' }),
+      )
+      expect(decisions.effects()).toBe(0)
+      expect(h.router.callLog()).toHaveLength(1)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('treats “fatto” as a read-only lookup of the exact decision seen in this chat', async () => {
+    const decisions = approvals(2)
+    const h = buildHarness({ pendingDecisions: decisions.service })
+    try {
+      await h.chatLoop.handleChatMessage(
+        chatEvent({ text: 'status of approval:effect-2', spaceId: 'spc-health' }),
+      )
+      await decisions.service.resolve('approval:effect-2', 'approve', 'trusted:user')
+      await decisions.service.resolve('approval:effect-1', 'reject', 'trusted:user')
+      expect(decisions.effects()).toBe(2)
+
+      await h.chatLoop.handleChatMessage(chatEvent({ text: 'fatto', spaceId: 'spc-health' }))
+      expect(decisions.effects()).toBe(2)
+      expect(h.router.callLog()).toEqual([])
+      expect(h.frames.at(-1)?.frame).toMatchObject({
+        type: 'chat.turn-end',
+        message: {
+          text: 'Executed: Send message 2.',
+          decisionFeedbackId: 'approval:effect-2',
+        },
+      })
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('asks for an exact id when “fatto” has no decision reference in this chat', async () => {
+    const decisions = approvals(1)
+    const h = buildHarness({ pendingDecisions: decisions.service })
+    try {
+      await decisions.service.resolve('approval:effect-1', 'approve', 'trusted:user')
+      await h.chatLoop.handleChatMessage(chatEvent({ text: 'fatto', spaceId: 'spc-health' }))
+      expect(decisions.effects()).toBe(1)
+      expect(h.frames.at(-1)?.frame).toMatchObject({
+        type: 'chat.turn-end',
+        message: { text: expect.stringContaining('Give its exact id') },
+      })
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it.each([
+    ['approval', 'approval:effect-1', ['approve', 'reject'], 'approve', 'executed'],
+    ['tree-proposal', 'tree-proposal:1', ['accept', 'reject'], 'accept', 'accepted'],
+    ['space-proposal', 'space-proposal:proposal-1', ['accept', 'reject'], 'accept', 'accepted'],
+    ['update-offer', 'update-offer:version-1', ['apply'], 'apply', 'applied'],
+  ] as const)('uses the allowed resolution for %s', async (kind, id, allowed, verb, outcome) => {
+    const scope =
+      kind === 'space-proposal' || kind === 'update-offer'
+        ? ({ type: 'global' } as const)
+        : ({ type: 'space', spaceId: 'spc-health' } as const)
+    let record: PendingDecision = {
+      id,
+      kind,
+      summary: `Review ${kind}`,
+      scope,
+      allowedResolutions: [...allowed],
+      state: 'pending',
+      createdAt: '2026-09-30T10:00:00.000Z',
+    }
+    const resolutions: string[] = []
+    const service = new PendingDecisionService({
+      adapters: [
+        {
+          kind,
+          list: () => [record],
+          get: (candidate) => (candidate === id ? record : undefined),
+          resolve: (_id, resolution) => {
+            resolutions.push(resolution)
+            record = {
+              ...record,
+              state: 'terminal',
+              outcome,
+              resolvedAt: '2026-09-30T10:01:00.000Z',
+              resolvedBy: 'trusted:user',
+            }
+            return record
+          },
+        },
+      ],
+    })
+    const h = buildHarness({ pendingDecisions: service })
+    try {
+      if (verb !== 'approve') {
+        await h.chatLoop.handleChatMessage(
+          chatEvent({
+            text: 'approve',
+            ...(scope.type === 'space' ? { spaceId: scope.spaceId } : {}),
+          }),
+        )
+        expect(resolutions).toEqual([])
+        expect(h.frames.at(-1)?.frame).toMatchObject({
+          type: 'chat.turn-end',
+          message: { text: expect.stringContaining('does not allow approve') },
+        })
+      }
+      await h.chatLoop.handleChatMessage(
+        chatEvent({ text: verb, ...(scope.type === 'space' ? { spaceId: scope.spaceId } : {}) }),
+      )
+      expect(resolutions).toEqual([
+        kind === 'approval' ? 'approve' : kind === 'update-offer' ? 'apply' : 'accept',
+      ])
+      expect(h.frames.at(-1)?.frame).toMatchObject({
+        type: 'chat.turn-end',
+        message: { decisionFeedbackId: id, pendingDecisions: [{ outcome }] },
+      })
+    } finally {
+      h.cleanup()
+    }
   })
 })

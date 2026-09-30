@@ -2,9 +2,9 @@ import type { ModelRef } from './agent-runner.ts'
 
 /**
  * Deterministic stand-in for the quarantined reader's LLM call (issue #13):
- * the dev profile has no provider keys by design, so the reader classifies
- * every event with a minimal, schema-valid output. The real provider client
- * lands with the Agent loop wiring, same as chat.
+ * keyless dev profile classifies every event with a minimal, schema-valid
+ * output. Profiles with a selected real Model connection use the live
+ * tool-less bridge instead.
  */
 export async function mockReaderComplete(
   _model: ModelRef,

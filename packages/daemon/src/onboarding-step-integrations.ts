@@ -6,6 +6,7 @@ import {
   loadIngestionConfig,
   saveIngestionConfig,
   type IngestionSource,
+  type PushIngestionSource,
 } from './ingestion-config.ts'
 import { loadOnboardingConfig, saveOnboardingConfig } from './onboarding-config.ts'
 import { OnboardingStepError, VaultUnavailableError } from './onboarding-status.ts'
@@ -113,7 +114,7 @@ function ensureChannelToken(
   vault.set(vaultName, token)
 }
 
-function googleRefs(kind: GoogleServiceKind): NonNullable<IngestionSource['google']> {
+function googleRefs(kind: GoogleServiceKind): NonNullable<PushIngestionSource['google']> {
   const names = googleVaultNames(kind)
   return {
     clientIdRef: `secret://vault/${names.clientId}`,

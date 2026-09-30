@@ -38,7 +38,10 @@ describe('ConnectedDevicesSurfaceManager', () => {
       expect.objectContaining({
         type: 'surface.create',
         origin: 'trusted:system',
-        payload: { surfaceId: CONNECTED_DEVICES_SURFACE_ID },
+        payload: expect.objectContaining({
+          surfaceId: CONNECTED_DEVICES_SURFACE_ID,
+          surfaceCommitId: expect.stringMatching(/^scm-/),
+        }),
       }),
     )
     expect(
@@ -88,7 +91,11 @@ describe('ConnectedDevicesSurfaceManager', () => {
       expect.objectContaining({
         type: 'surface.patch_state',
         origin: 'trusted:system',
-        payload: { surfaceId: CONNECTED_DEVICES_SURFACE_ID, operations: 1 },
+        payload: expect.objectContaining({
+          surfaceId: CONNECTED_DEVICES_SURFACE_ID,
+          operations: 1,
+          surfaceCommitId: expect.stringMatching(/^scm-/),
+        }),
       }),
     ])
     expect(liveEvents).toEqual([

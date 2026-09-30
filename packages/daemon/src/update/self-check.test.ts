@@ -98,7 +98,6 @@ describe('runSelfCheck', () => {
       rootDir,
       now: () => new Date('2026-08-04T00:00:00.000Z'),
       hasSpace: () => true,
-      appendSpaceEvent: () => undefined,
     })
 
     // A second connection to the same file is how a row that no writer this

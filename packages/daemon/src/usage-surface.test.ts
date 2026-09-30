@@ -144,7 +144,11 @@ describe('UsageSurfaceManager', () => {
       expect.objectContaining({
         type: 'surface.patch_state',
         origin: 'trusted:system',
-        payload: { surfaceId: MODEL_USAGE_SURFACE_ID, operations: 1 },
+        payload: expect.objectContaining({
+          surfaceId: MODEL_USAGE_SURFACE_ID,
+          operations: 1,
+          surfaceCommitId: expect.stringMatching(/^scm-/),
+        }),
       }),
     ])
     expect(liveEvents).toEqual([

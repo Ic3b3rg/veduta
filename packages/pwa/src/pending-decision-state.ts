@@ -113,6 +113,45 @@ export function appendAuthoritativeChatEntry(
   entry: ChatMessage,
 ): ChatMessage[] {
   const incoming = authoritativePendingDecisionMessage(entry)
+  if (incoming.decisionFeedbackId !== undefined) {
+    const known = newestKnownDecision(entries, incoming.decisionFeedbackId)
+    const projected = incoming.pendingDecisions?.find(
+      (decision) => decision.id === incoming.decisionFeedbackId,
+    )
+    const decision =
+      known !== undefined &&
+      (projected === undefined ||
+        decisionStateRank(known.state) > decisionStateRank(projected.state))
+        ? known
+        : projected
+    if (decision !== undefined && decision.state !== 'pending') {
+      const hasReference = entries.some((candidate) =>
+        isFeedbackOrSingleReference(candidate, decision.id),
+      )
+      const previousFeedbackIndex = entries.findIndex(
+        (candidate) => candidate.decisionFeedbackId === decision.id,
+      )
+      const lastUserIndex = entries.reduce(
+        (last, candidate, index) => (candidate.role === 'user' ? index : last),
+        -1,
+      )
+      const updated = applyPendingDecisionFeedback(
+        hasReference ? entries : [...entries, incoming],
+        {
+          decision,
+          message: pendingDecisionFeedback(decision),
+        },
+      )
+      if (previousFeedbackIndex < 0 || previousFeedbackIndex > lastUserIndex) return updated
+      const feedbackIndex = updated.findIndex(
+        (candidate) => candidate.decisionFeedbackId === decision.id,
+      )
+      if (feedbackIndex < 0) return updated
+      const feedback = updated[feedbackIndex]
+      if (feedback === undefined) return updated
+      return [...updated.filter((_candidate, index) => index !== feedbackIndex), feedback]
+    }
+  }
   const knownById = new Map<string, PendingDecision>()
   for (const decision of incoming.pendingDecisions ?? []) {
     const known = newestKnownDecision(entries, decision.id)
@@ -299,7 +338,15 @@ function lifecycleTime(decision: PendingDecision): string {
 }
 
 function chatMessagesEqual(left: ChatMessage | undefined, right: ChatMessage): boolean {
-  return left !== undefined && JSON.stringify(left) === JSON.stringify(right)
+  if (left === undefined) return false
+  return (
+    left.role === right.role &&
+    left.text === right.text &&
+    left.decisionFeedbackId === right.decisionFeedbackId &&
+    JSON.stringify(left.targets) === JSON.stringify(right.targets) &&
+    JSON.stringify(left.pendingDecisions) === JSON.stringify(right.pendingDecisions) &&
+    JSON.stringify(left.pendingDecisionIds) === JSON.stringify(right.pendingDecisionIds)
+  )
 }
 
 function feedbackEntry(

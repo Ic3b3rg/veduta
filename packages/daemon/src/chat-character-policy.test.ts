@@ -107,7 +107,6 @@ function harness(method: ModelConnectionMethod = 'byok') {
         },
       ])
       await loop.handleChatMessage({
-        adapterId: 'pwa',
         clientId: 'character-test',
         text: 'How can you help?',
         receivedAt: NOW.toISOString(),

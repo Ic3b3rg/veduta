@@ -6,6 +6,7 @@ import { nextCronOccurrence } from './cron.ts'
 import { timeToCron, type HeartbeatConfig } from './heartbeat-config.ts'
 import { reconcileManagedJobs } from './managed-jobs.ts'
 import { HEARTBEAT_SURFACE_ID } from './heartbeat-surface.ts'
+import { SurfaceCommitRecoveryPendingError } from './surface-commit.ts'
 import { stripJsonCodeFence } from './model-output.ts'
 import { SpendingCapError, type ModelRouter } from './model-routing.ts'
 import type { Scheduler } from './scheduler.ts'
@@ -301,6 +302,7 @@ export class Heartbeat {
 
     for (const space of this.store.listSpaces()) {
       if (space.id === SYSTEM_SPACE_ID) continue
+      if (!this.spaceReadyForReasoning(space.id)) continue
 
       const automations = this.scheduler.listAutomations(space.id)
       const excludedSurfaceIds = new Set<string>([
@@ -384,8 +386,10 @@ export class Heartbeat {
       // surfaceId) pair actually appears in the checklist this sweep built
       // may proceed to the reasoning tier or to execution.
       const checklistBySpace = checklistIndex(checklist)
-      const concerns = triage.concerns.filter((concern) =>
-        isConcernInChecklist(concern, checklistBySpace),
+      const concerns = triage.concerns.filter(
+        (concern) =>
+          isConcernInChecklist(concern, checklistBySpace) &&
+          this.spaceReadyForReasoning(concern.spaceId),
       )
 
       if (concerns.length === 0) {
@@ -399,7 +403,9 @@ export class Heartbeat {
       )
       // Same fail-safe: an unparseable reasoning completion executes zero
       // decisions rather than acting on garbage.
-      const decisions = reasonCall.value?.decisions ?? []
+      const decisions = (reasonCall.value?.decisions ?? []).filter((decision) =>
+        this.spaceReadyForReasoning(decision.spaceId),
+      )
       const actionCount = this.executeDecisions(decisions, concerns, occurrence)
 
       return this.finishSweep(
@@ -413,6 +419,16 @@ export class Heartbeat {
     } catch (error) {
       if (!(error instanceof SpendingCapError)) throw error
       return this.finishSweep('skipped-capped', {}, occurrence)
+    }
+  }
+
+  private spaceReadyForReasoning(spaceId: string): boolean {
+    try {
+      this.store.assertSpaceReadyForAgent(spaceId)
+      return true
+    } catch (error) {
+      if (error instanceof SurfaceCommitRecoveryPendingError) return false
+      throw error
     }
   }
 

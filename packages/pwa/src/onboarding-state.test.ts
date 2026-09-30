@@ -225,12 +225,10 @@ describe('WIZARD_STEP_META completeness', () => {
     expect(WIZARD_STEP_META['model-connection'].description).toContain('your server')
   })
 
-  it('integrations copy states the exact Google Cloud console URL and gcloud pubsub commands', () => {
+  it('integrations copy describes active Calendar and passive Personal Mailbox access', () => {
     const { description } = WIZARD_STEP_META.integrations
-    expect(description).toContain('https://console.cloud.google.com')
-    expect(description).toContain('gcloud pubsub topics create')
-    expect(description).toContain('gcloud pubsub subscriptions create')
-    expect(description).toContain('--push-endpoint=https://<domain>/api/ingest/gmail')
-    expect(description).toContain('gmail-api-push@system.gserviceaccount.com')
+    expect(description).toContain('Calendar API')
+    expect(description).toContain('explicit request or a confirmed Automation')
+    expect(description).toContain('connecting mail never starts monitoring')
   })
 })

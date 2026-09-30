@@ -53,15 +53,11 @@ export const WIZARD_STEP_META: Record<OnboardingStepId, OnboardingStepMeta> = {
   integrations: {
     title: 'Integrations',
     description:
-      'Optionally connect Gmail and/or Calendar so the agent can react to what arrives there. ' +
-      'This is optional and can be skipped. To connect: 1) open ' +
-      'https://console.cloud.google.com and create or select a project; 2) enable the Gmail ' +
-      'API and/or Calendar API; 3) create an OAuth client (type: Web); 4) obtain a refresh ' +
-      'token for that client. Gmail push additionally needs a Pub/Sub topic and subscription: ' +
-      'gcloud pubsub topics create <topic>, then gcloud pubsub subscriptions create <sub> ' +
-      '--topic <topic> --push-endpoint=https://<domain>/api/ingest/gmail, and grant publish ' +
-      'rights on the topic to gmail-api-push@system.gserviceaccount.com. Connected sources ' +
-      'activate after the daemon restarts.',
+      'Optionally connect Google Calendar for event updates. This step can be skipped. ' +
+      'Create an OAuth client and refresh token for the Calendar API in Google Cloud. ' +
+      'Calendar watches activate after the Gateway restarts. Personal Mailbox access ' +
+      'requires an explicit request or a confirmed Automation; connecting mail never ' +
+      'starts monitoring.',
   },
   finish: {
     title: 'Finish',

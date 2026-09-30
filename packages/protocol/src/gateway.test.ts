@@ -15,6 +15,8 @@ import {
   SurfaceOrderSchema,
   SurfacePatchEventSchema,
   SurfacePinnedEventSchema,
+  SurfaceCommitRecoveryPendingResponseSchema,
+  SurfaceCommitRecoveryStateSchema,
 } from './index.ts'
 
 describe('Gateway protocol', () => {
@@ -71,6 +73,35 @@ describe('Gateway protocol', () => {
     expect(FastSurfaceActionResultSchema.safeParse({ ...result, surfaceCursor: -1 }).success).toBe(
       false,
     )
+  })
+
+  it('validates the public Surface commit recovery state and affected commit identity', () => {
+    const pending = {
+      id: 'scm-7',
+      spaceId: 'spc-health',
+      sequence: 7,
+      surfaceEventCursor: 9,
+      state: 'recovery_pending',
+    }
+    expect(SurfaceCommitRecoveryStateSchema.parse({ pending: [pending] })).toEqual({
+      pending: [pending],
+    })
+    expect(
+      SurfaceCommitRecoveryStateSchema.safeParse({
+        pending: [{ ...pending, state: 'delivered' }],
+      }).success,
+    ).toBe(false)
+    expect(
+      SurfaceCommitRecoveryPendingResponseSchema.parse({
+        outcome: 'recovery_pending',
+        surfaceCommitId: pending.id,
+        spaceId: pending.spaceId,
+      }),
+    ).toEqual({
+      outcome: 'recovery_pending',
+      surfaceCommitId: pending.id,
+      spaceId: pending.spaceId,
+    })
   })
 
   it('defaults hello replay cursors safely', () => {

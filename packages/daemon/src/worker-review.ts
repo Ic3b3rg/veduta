@@ -129,6 +129,7 @@ export interface WorkerReviewOptions {
   /** No tools by construction (same idiom as the quarantined reader): a model and a prompt in, text and cost out. */
   complete: (model: ModelRef, prompt: string) => Promise<{ text: string; costUsd?: number }>
   workerId: string
+  spaceId: string
   now?: () => Date
 }
 
@@ -148,6 +149,7 @@ export async function reviewReport(
       {
         purpose: 'worker',
         origin: 'proactive',
+        spaceId: options.spaceId,
         workerId: options.workerId,
         workerTier: 'reasoning',
       },

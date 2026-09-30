@@ -209,8 +209,12 @@ export function buildOnboardingStatus(deps: OnboardingStatusDeps): OnboardingSta
 
   const gmailClientId = deps.vault?.resolve('secret://vault/gmail-client-id')
   const calendarClientId = deps.vault?.resolve('secret://vault/calendar-client-id')
-  const gmailSource = ingestion.sources['gmail']
-  const calendarSource = ingestion.sources['calendar']
+  const gmailSource =
+    ingestion.sources['gmail']?.adapter === 'gmail-push' ? ingestion.sources['gmail'] : undefined
+  const calendarSource =
+    ingestion.sources['calendar']?.adapter === 'calendar-push'
+      ? ingestion.sources['calendar']
+      : undefined
 
   return {
     required,

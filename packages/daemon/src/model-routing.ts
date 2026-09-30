@@ -19,6 +19,7 @@ export type CallPurpose =
   | 'quarantined-reader'
   | 'heartbeat'
   | 'heartbeat-reasoning'
+  | 'reflection'
   | 'worker'
 
 export type CallOrigin = 'user' | 'proactive'
@@ -46,7 +47,8 @@ export function tierForRequest(request: RouteRequest): ModelTier {
   if (
     request.purpose === 'chat-turn' ||
     request.purpose === 'full-text' ||
-    request.purpose === 'heartbeat-reasoning'
+    request.purpose === 'heartbeat-reasoning' ||
+    request.purpose === 'reflection'
   ) {
     return 'reasoning'
   }
@@ -417,6 +419,8 @@ export interface ModelRouterOptions {
    * try/catch — a misbehaving listener must never break routing.
    */
   onCallError?: (model: ModelRef, error: unknown) => void
+  /** Blocks reasoning while a Space has an undelivered Surface commit. */
+  beforeSpaceReasoning?: (spaceId: string) => void
 }
 
 const BACKOFF_BASE_MS = 250
@@ -438,6 +442,7 @@ export class ModelRouter {
   private readonly sleep: (ms: number) => Promise<void>
   private readonly onEvent: ((event: RouterEvent) => void) | undefined
   private readonly onCallError: ((model: ModelRef, error: unknown) => void) | undefined
+  private readonly beforeSpaceReasoning: ((spaceId: string) => void) | undefined
   private readonly isRetryable: (error: unknown) => boolean
   private readonly calls: RoutedCall[] = []
   private readonly usageObservers = new Set<() => void>()
@@ -452,6 +457,7 @@ export class ModelRouter {
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
     this.onEvent = options.onEvent
     this.onCallError = options.onCallError
+    this.beforeSpaceReasoning = options.beforeSpaceReasoning
     this.isRetryable = options.isRetryable ?? defaultIsRetryable
     const today = this.today()
     try {
@@ -475,6 +481,7 @@ export class ModelRouter {
   }
 
   route(request: RouteRequest): ModelRef {
+    if (request.spaceId) this.beforeSpaceReasoning?.(request.spaceId)
     const tier = tierForRequest(request)
     this.assertSpendingAllowed(request, tier)
     const [primary] = this.candidates(tier)
@@ -491,6 +498,7 @@ export class ModelRouter {
     request: RouteRequest,
     fn: (model: ModelRef, attempt: number) => Promise<T> | T,
   ): Promise<T> {
+    if (request.spaceId) this.beforeSpaceReasoning?.(request.spaceId)
     const tier = tierForRequest(request)
     this.assertSpendingAllowed(request, tier)
     const candidates = this.candidates(tier)

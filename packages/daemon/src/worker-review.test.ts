@@ -1,7 +1,7 @@
 import { fromPartial } from '@total-typescript/shoehorn'
 import { describe, expect, it, vi } from 'vitest'
 import type { ModelRef } from './agent-runner.ts'
-import type { ModelRouter } from './model-routing.ts'
+import { ModelRouter } from './model-routing.ts'
 import { WORKER_REPORT_VERSION, type WorkerBriefing, type WorkerReport } from './worker-briefing.ts'
 import { buildReviewPrompt, reviewReport, type WorkerReviewVerdict } from './worker-review.ts'
 
@@ -47,6 +47,34 @@ function fakeRouter(): { router: ModelRouter; recordSpend: ReturnType<typeof vi.
 }
 
 describe('reviewReport', () => {
+  it('checks the Worker Space before independent review reasons', async () => {
+    const checked: string[] = []
+    const router = new ModelRouter({
+      config: {
+        tiers: { triage: [], reasoning: [{ provider: 'mock', modelId: 'reviewer' }] },
+        providerKeys: {},
+        connectionKeys: {},
+        dailyCapUsd: { triage: 5, reasoning: 20 },
+      },
+      beforeSpaceReasoning: (spaceId) => {
+        checked.push(spaceId)
+        throw new Error('Space recovery pending')
+      },
+    })
+    const complete = vi.fn(async () => ({ text: '{"verdict":"pass","unsupportedClaims":[]}' }))
+
+    await expect(
+      reviewReport(report, briefing, {
+        router,
+        complete,
+        workerId: 'wrk-1',
+        spaceId: 'spc-health',
+      }),
+    ).rejects.toThrow('Space recovery pending')
+    expect(checked).toEqual(['spc-health'])
+    expect(complete).not.toHaveBeenCalled()
+  })
+
   it('resolves a valid pass verdict and records spend once', async () => {
     const { router, recordSpend } = fakeRouter()
     const verdict: WorkerReviewVerdict = { verdict: 'pass', unsupportedClaims: [] }
@@ -56,6 +84,7 @@ describe('reviewReport', () => {
       router,
       complete,
       workerId: 'wrk-1',
+      spaceId: 'spc-health',
     })
 
     expect(result).toEqual(verdict)
@@ -77,6 +106,7 @@ describe('reviewReport', () => {
       router,
       complete,
       workerId: 'wrk-1',
+      spaceId: 'spc-health',
     })
 
     expect(result).toEqual(verdict)
@@ -96,6 +126,7 @@ describe('reviewReport', () => {
       router,
       complete,
       workerId: 'wrk-1',
+      spaceId: 'spc-health',
     })
 
     expect(result).toEqual(verdict)
@@ -111,6 +142,7 @@ describe('reviewReport', () => {
       router,
       complete,
       workerId: 'wrk-1',
+      spaceId: 'spc-health',
     })
 
     expect(complete).toHaveBeenCalledTimes(2)
@@ -126,6 +158,7 @@ describe('reviewReport', () => {
       router,
       complete,
       workerId: 'wrk-1',
+      spaceId: 'spc-health',
     })
 
     expect(result.verdict).toBe('reject')

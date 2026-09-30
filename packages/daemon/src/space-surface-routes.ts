@@ -4,6 +4,8 @@ import {
   MoveSurfaceRequestSchema,
   MoveSurfaceResultSchema,
   PinSurfaceResultSchema,
+  SurfaceCommitRecoveryPendingResponseSchema,
+  SurfaceCommitRecoveryStateSchema,
 } from '@veduta/protocol'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -11,6 +13,7 @@ import type { NotificationCenter } from './notification-center.ts'
 import type { PushStore } from './push-store.ts'
 import { SurfaceActionError, type Store } from './store.ts'
 import { SurfaceMoveError, SurfaceNotPinnableError } from './surface-engine.ts'
+import { SurfaceCommitRecoveryPendingError } from './surface-commit.ts'
 import type { TemplateEngine } from './template-engine.ts'
 
 const PinSurfaceBodySchema = z.object({ pinned: z.boolean() })
@@ -48,6 +51,25 @@ export function registerSpaceSurfaceRoutes(
     return { events: store.eventLog(spaceId) }
   })
 
+  const recoveryState = () =>
+    SurfaceCommitRecoveryStateSchema.parse({
+      pending: store.recoveryPendingSurfaceCommits().map((record) => ({
+        id: record.id,
+        spaceId: record.spaceId,
+        sequence: record.sequence,
+        ...(record.surfaceEventCursor === undefined
+          ? {}
+          : { surfaceEventCursor: record.surfaceEventCursor }),
+        state: 'recovery_pending',
+      })),
+    })
+
+  app.get('/api/surface-commits/recovery', recoveryState)
+  app.post('/api/surface-commits/recovery', () => {
+    store.reconcilePendingSurfaceCommits()
+    return recoveryState()
+  })
+
   app.post('/api/spaces/:spaceId/attention/seen', (request, reply) => {
     const { spaceId } = request.params as { spaceId: string }
     if (!store.getSpace(spaceId)) {
@@ -70,6 +92,9 @@ export function registerSpaceSurfaceRoutes(
         surfaceCursor: store.latestSurfaceCursor(),
       })
     } catch (error) {
+      if (error instanceof SurfaceCommitRecoveryPendingError) {
+        return reply.status(503).send(recoveryPendingResponse(error))
+      }
       if (error instanceof SurfaceActionError) {
         return reply.status(statusForSurfaceActionError(error)).send({ error: error.message })
       }
@@ -91,6 +116,9 @@ export function registerSpaceSurfaceRoutes(
       })
       return PinSurfaceResultSchema.parse({ surface, changed, order })
     } catch (error) {
+      if (error instanceof SurfaceCommitRecoveryPendingError) {
+        return reply.status(503).send(recoveryPendingResponse(error))
+      }
       if (error instanceof SurfaceNotPinnableError) {
         return reply.status(409).send({ error: error.message })
       }
@@ -106,11 +134,22 @@ export function registerSpaceSurfaceRoutes(
       const order = store.moveSurface(spaceId, surfaceId, parsed.data.direction)
       return MoveSurfaceResultSchema.parse({ changed: true, order })
     } catch (error) {
+      if (error instanceof SurfaceCommitRecoveryPendingError) {
+        return reply.status(503).send(recoveryPendingResponse(error))
+      }
       if (error instanceof SurfaceMoveError) {
         return reply.status(error.code === 'unavailable' ? 404 : 409).send({ error: error.message })
       }
       throw error
     }
+  })
+}
+
+function recoveryPendingResponse(error: SurfaceCommitRecoveryPendingError) {
+  return SurfaceCommitRecoveryPendingResponseSchema.parse({
+    outcome: error.outcome,
+    surfaceCommitId: error.commitId,
+    spaceId: error.spaceId,
   })
 }
 

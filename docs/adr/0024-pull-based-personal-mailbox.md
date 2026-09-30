@@ -12,6 +12,12 @@ reaction latency but made background mailbox access an implicit consequence of s
 boundary between a personal assistant and an email gateway, and left recurring query semantics to
 connector defaults.
 
+During migration, saved Gmail push configuration and recognized archived IMAP IDLE configuration
+remain inert credential and account-identity inputs. Gateway boot and push delivery do not activate
+them, drain their queued mail, or produce recurring mail-health alerts. Calendar watches and generic
+HMAC webhooks remain active. A later passive Mailbox connection flow may reuse the retained material
+without treating the old ingestion source as authorization to access messages.
+
 A **Mailbox connection** is therefore a passive, Gateway-wide authorization with a stable account
 identity. Authorization may verify identity and declared capabilities, but provider message access
 occurs only while serving either an explicit user request owned by one Space or a due occurrence of
