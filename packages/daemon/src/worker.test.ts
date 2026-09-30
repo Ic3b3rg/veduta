@@ -671,6 +671,74 @@ describe('cancel', () => {
 })
 
 describe('recoverAtBoot', () => {
+  it('starts with a pending Space commit, recovers another Space, and retries the Worker after reconciliation', async () => {
+    store.close()
+    let deliveryAllowed = true
+    store = new Store({
+      rootDir,
+      now,
+      surfaceCommitTransport: (spaces): SurfaceCommitTransport => ({
+        prepareSurfaceCommitEvent: (spaceId, input, commitId) =>
+          spaces.prepareSurfaceCommitEvent(spaceId, input, commitId),
+        deliverSurfaceCommitEvent: (prepared) => {
+          if (!deliveryAllowed && prepared.event.spaceId === HEALTH) {
+            throw new Error('injected boot recovery failure')
+          }
+          spaces.deliverSurfaceCommitEvent(prepared)
+        },
+        notifySurfaceCommitDelivered: (spaceId) => spaces.notifySurfaceCommitDelivered(spaceId),
+      }),
+    })
+    const other = store.spacesEngine.createSpace({ name: 'Other' })
+    for (const [workerId, spaceId] of [
+      ['pending-boot', HEALTH],
+      ['other-boot', other.id],
+    ] as const) {
+      store.createSurface(
+        activeWorkerSurface({
+          workerId,
+          spaceId,
+          goalLabel: workerId,
+          etaMinutes: 5,
+          updatedAt: clock.toISOString(),
+        }),
+        'job',
+        { daemonOwned: true },
+      )
+    }
+    deliveryAllowed = false
+    expect(() => store.applyFastAction('srf-groceries', 'milk', true)).toThrow(
+      SurfaceCommitRecoveryPendingError,
+    )
+    const { pool } = makePool()
+    try {
+      expect(() => pool.recoverAtBoot()).not.toThrow()
+      expect(store.recoveryPendingSurfaceCommits(HEALTH)).toHaveLength(1)
+      expect(
+        store.getSurface(workerSurfaceId('pending-boot'))?.state[WORKER_SETTLED_STATE_KEY],
+      ).toBe(false)
+      expect(store.eventLog(HEALTH).filter((event) => event.type === 'worker.delivered')).toEqual(
+        [],
+      )
+      expect(store.getSurface(workerSurfaceId('other-boot'))?.state[WORKER_SETTLED_STATE_KEY]).toBe(
+        true,
+      )
+
+      deliveryAllowed = true
+      await vi.waitFor(() => {
+        expect(
+          store.getSurface(workerSurfaceId('pending-boot'))?.state[WORKER_SETTLED_STATE_KEY],
+        ).toBe(true)
+      })
+      expect(store.recoveryPendingSurfaceCommits(HEALTH)).toEqual([])
+      expect(
+        store.eventLog(HEALTH).filter((event) => event.type === 'worker.delivered'),
+      ).toHaveLength(1)
+    } finally {
+      pool.dispose()
+    }
+  })
+
   it('patches an orphaned active worker Surface to an interrupted, partial terminal state', () => {
     // Simulate a Surface left behind by a previous daemon process: created
     // directly (no live worker in this process at all — no run in flight).

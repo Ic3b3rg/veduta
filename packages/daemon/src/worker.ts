@@ -178,6 +178,7 @@ export class WorkerPool {
   private readonly disposeFastMutationObserver: () => void
   private readonly liveWorkers = new Map<string, LiveWorker>()
   private readonly settledPromises = new Map<string, Promise<void>>()
+  private bootRecoveryRetry: ReturnType<typeof setTimeout> | undefined
   private disposed = false
 
   constructor(options: WorkerPoolOptions) {
@@ -286,19 +287,42 @@ export class WorkerPool {
    *     appending NO new event (it is already in the log).
    *   - no event: a genuine orphan — recover it as interrupted
    *     (`recoverOrphan`), same as before.
+   * A Space with a pending Surface commit is retried after reconciliation;
+   * other Spaces still recover during this boot pass.
    */
   recoverAtBoot(): void {
+    if (this.disposed) return
+    const pendingSpaces = new Set<string>()
     for (const surface of this.store.listSurfaces()) {
       if (!surface.id.startsWith(WORKER_SURFACE_PREFIX)) continue
       if (surface.state[WORKER_SETTLED_STATE_KEY] === true) continue
+      if (pendingSpaces.has(surface.spaceId)) continue
 
-      const workerId = surface.id.slice(WORKER_SURFACE_PREFIX.length)
-      const delivered = this.deliveredEventFor(surface.spaceId, workerId)
-      if (delivered) {
-        this.reconcileFromDeliveredEvent(surface, delivered)
-      } else {
-        this.recoverOrphan(surface)
+      try {
+        this.store.assertSpaceReadyForAgent(surface.spaceId)
+        const workerId = surface.id.slice(WORKER_SURFACE_PREFIX.length)
+        const delivered = this.deliveredEventFor(surface.spaceId, workerId)
+        if (delivered) {
+          this.reconcileFromDeliveredEvent(surface, delivered)
+        } else {
+          this.recoverOrphan(surface)
+        }
+      } catch (error) {
+        if (!(error instanceof SurfaceCommitRecoveryPendingError)) throw error
+        pendingSpaces.add(surface.spaceId)
       }
+    }
+    if (pendingSpaces.size > 0 && this.bootRecoveryRetry === undefined) {
+      this.bootRecoveryRetry = setTimeout(() => {
+        this.bootRecoveryRetry = undefined
+        if (this.disposed) return
+        try {
+          this.recoverAtBoot()
+        } catch (error) {
+          console.error('Worker boot recovery failed', error)
+        }
+      }, 100)
+      this.bootRecoveryRetry.unref()
     }
   }
 
@@ -311,6 +335,7 @@ export class WorkerPool {
    */
   dispose(): void {
     this.disposed = true
+    if (this.bootRecoveryRetry !== undefined) clearTimeout(this.bootRecoveryRetry)
     this.disposeFastMutationObserver()
     for (const live of this.liveWorkers.values()) {
       live.settled = true
