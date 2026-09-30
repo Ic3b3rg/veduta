@@ -4,6 +4,7 @@ import type { AgentEvent, AgentRunner, ModelRef, ToolDef, TriggerRef } from './a
 import { SpendingCapError, type ModelRouter } from './model-routing.ts'
 import type { SpaceEvent } from './spaces-engine.ts'
 import type { FastMutationNotice, Store } from './store.ts'
+import { SurfaceCommitRecoveryPendingError } from './surface-commit.ts'
 import { untrustedOrigin } from './taint.ts'
 import {
   buildWorkerPrompt,
@@ -262,9 +263,7 @@ export class WorkerPool {
     // to `lastValidReport` before the crash must still never deliver clean
     // (review-never-fails-open) — `settle()`'s own enforcement point covers
     // that uniformly, there was no chance to review it here.
-    void this.run(live, args).catch((error: unknown) => {
-      this.settle(live, { fallbackReason: `Worker run failed: ${errorText(error)}` })
-    })
+    void this.run(live, args).catch((error: unknown) => this.settleAfterRunFailure(live, error))
 
     return { workerId }
   }
@@ -342,6 +341,24 @@ export class WorkerPool {
       // reached `lastValidReport` must still never deliver clean —
       // `settle()`'s own enforcement point covers that uniformly.
       this.settle(live, { reviewStatus: 'skipped' })
+    }
+  }
+
+  private async settleAfterRunFailure(live: LiveWorker, error: unknown): Promise<void> {
+    while (!this.disposed && !live.settled) {
+      try {
+        this.settle(live, {
+          reviewStatus: 'skipped',
+          fallbackReason: `Worker run failed: ${errorText(error)}`,
+        })
+        return
+      } catch (settleError) {
+        if (!(settleError instanceof SurfaceCommitRecoveryPendingError)) {
+          console.error('Worker settlement failed', settleError)
+          return
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
     }
   }
 
@@ -448,12 +465,9 @@ export class WorkerPool {
   }
 
   /**
-   * Wraps `reviewReport` so that ANY throw (a transport/provider failure,
-   * distinct from `reviewReport`'s own internal fail-safe for an unparseable
-   * verdict) is treated exactly like a `reject` verdict with a generic
-   * caveat. Fixes review-fails-open: a high-risk report must never be
-   * delivered as reviewed/clean on the strength of a review call that never
-   * actually completed.
+   * Provider failures become a `reject` verdict with a generic caveat.
+   * Recovery pending must reach the Worker run boundary so settlement waits
+   * for the affected Space instead of publishing delivery against stale state.
    */
   private async safeReview(
     live: LiveWorker,
@@ -468,7 +482,8 @@ export class WorkerPool {
         spaceId: live.spaceId,
         now: this.now,
       })
-    } catch {
+    } catch (error) {
+      if (error instanceof SurfaceCommitRecoveryPendingError) throw error
       return { verdict: 'reject', unsupportedClaims: [], suggestedCaveat: GENERIC_CAVEAT }
     }
   }
@@ -602,9 +617,18 @@ export class WorkerPool {
    */
   private settle(live: LiveWorker, outcome: SettleOutcome): void {
     if (this.disposed || live.settled) return
-    live.settled = true
+    this.store.assertSpaceReadyForAgent(live.spaceId)
 
-    live.unsubscribeRunner?.()
+    const delivered = this.deliveredEventFor(live.spaceId, live.workerId)
+    if (delivered) {
+      const surface = this.store.getSurface(live.surfaceId)
+      if (surface && surface.state[WORKER_SETTLED_STATE_KEY] !== true) {
+        this.reconcileFromDeliveredEvent(surface, delivered)
+      }
+      this.finishSettlement(live)
+      return
+    }
+
     try {
       void live.runner?.abort()
     } catch {
@@ -657,6 +681,12 @@ export class WorkerPool {
     })
     if (patched) this.markSettled(live.surfaceId)
 
+    this.finishSettlement(live)
+  }
+
+  private finishSettlement(live: LiveWorker): void {
+    live.settled = true
+    live.unsubscribeRunner?.()
     this.liveWorkers.delete(live.workerId)
     this.settledPromises.delete(live.workerId)
     live.resolveSettled()

@@ -2105,6 +2105,62 @@ describe('trust layer wiring (issue #14)', () => {
     }
   })
 
+  it.each([
+    { provider: 'openai', connectionId: 'primary-openai' },
+    { provider: 'anthropic', connectionId: 'primary-anthropic' },
+  ])(
+    'resolves the same chat decision with $provider as the primary Model connection',
+    async (primary) => {
+      const { app, gateway, store, pendingDecisions, router } = buildServer()
+      const socket = new SchedulerFakeSocket()
+      gateway.connect(socket)
+      socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+      try {
+        socket.receive({
+          type: 'chat.send',
+          text: 'send to parity@example.invalid: parity test',
+          spaceId: 'spc-health',
+        })
+        await vi.waitFor(() => {
+          expect(socket.sent.filter((frame) => frame.type === 'approval.card')).toHaveLength(1)
+          expect(socket.sent.filter((frame) => frame.type === 'chat.turn-end')).toHaveLength(1)
+        })
+        const [decision] = (await pendingDecisions.list()).decisions
+        if (!decision) throw new Error('expected pending approval')
+
+        router.setConfig({
+          tiers: {
+            triage: [{ ...primary, modelId: 'unavailable-primary' }],
+            reasoning: [{ ...primary, modelId: 'unavailable-primary' }],
+          },
+          providerKeys: {},
+          connectionKeys: { [primary.connectionId]: 'secret://unconfigured-primary' },
+          dailyCapUsd: { triage: 5, reasoning: 20 },
+        })
+        const modelCalls = router.callLog().length
+        const before = socket.sent.filter((frame) => frame.type === 'chat.turn-end').length
+        socket.receive({ type: 'chat.send', text: 'approve', spaceId: 'spc-health' })
+        await vi.waitFor(() => {
+          expect(socket.sent.filter((frame) => frame.type === 'chat.turn-end')).toHaveLength(
+            before + 1,
+          )
+        })
+
+        const reply = socket.sent.filter((frame) => frame.type === 'chat.turn-end').at(-1)
+        expect(reply?.message).toMatchObject({
+          decisionFeedbackId: decision.id,
+          pendingDecisions: [{ state: 'terminal', outcome: 'executed' }],
+        })
+        expect(router.callLog()).toHaveLength(modelCalls)
+        expect(
+          store.eventLog('spc-health').filter((event) => event.type === 'outbound.delivery'),
+        ).toHaveLength(1)
+      } finally {
+        await app.close()
+      }
+    },
+  )
+
   it('always cards transfer_funds (L2) through the real chat loop, even after a send_message allowlist rule exists', async () => {
     const { app, gateway, store } = buildServer()
     const socket = new SchedulerFakeSocket()
