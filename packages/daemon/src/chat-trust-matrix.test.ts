@@ -6,7 +6,7 @@ import { SurfaceSchema, type ApprovalCard, type GatewayServerMessage } from '@ve
 import { afterEach, describe, expect, it } from 'vitest'
 import { computeContextHash, type ToolContext, type ToolDef } from './agent-runner.ts'
 import { ApprovalSurfaceManager } from './approval-surface.ts'
-import type { NormalizedChannelEvent } from './channel-adapter.ts'
+import type { PwaChatInput } from './gateway.ts'
 import { createChatLoop, type ChatLoop } from './chat-loop.ts'
 import { createFakeProvider, fakeText, fakeToolCall } from './fake-provider.ts'
 import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
@@ -182,10 +182,8 @@ async function seedSendMessageAllowlist(h: Harness, to: string): Promise<void> {
   await h.approvalSurfaces.flush()
 }
 
-function chatEvent(
-  overrides: Partial<NormalizedChannelEvent> & { text: string },
-): NormalizedChannelEvent {
-  return { adapterId: 'pwa', clientId: 'c1', receivedAt: new Date().toISOString(), ...overrides }
+function chatEvent(overrides: Partial<PwaChatInput> & { text: string }): PwaChatInput {
+  return { clientId: 'c1', receivedAt: new Date().toISOString(), ...overrides }
 }
 
 function deliveryCount(h: Harness): number {

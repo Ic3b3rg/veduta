@@ -3,26 +3,15 @@ import type { ReflectionDistillation, ReflectionDistiller, ReflectionInput } fro
 /**
  * Deterministic, zero-network stand-in for the Reflection's distillation
  * call (issue #21, docs/adr/0006-file-based-memory.md):
- * the dev profile has no real Agent loop or provider key wired yet, same
- * rationale as `mockReaderComplete` (the quarantined reader's stand-in), the
- * Heartbeat's own `complete` stub in `server.ts`, and
- * `createMockWorkerReviewComplete` — a deterministic completion is enough to
- * exercise the nightly sweep end-to-end under `pnpm dev`, with no API key.
- * The real provider client replaces this outright once the Agent loop
- * lands.
+ * keyless dev profiles use a deterministic completion to exercise the nightly
+ * sweep under `pnpm dev`. A selected real Model connection uses the live
+ * tool-less bridge.
  *
  * To stay genuinely useful rather than a no-op, it derives real content from
  * the window it is handed: up to two summaries (an event count, and the
- * window's most frequent event type) and one insight (how many distinct
- * event types occurred), so a fresh dev daemon's Nightly Reflection Surface
- * shows something real after its first night. It proposes at most one
- * candidate fact — the text of the first event in the window with
- * non-empty text, carrying that same event's own `sourceRef` as its only
- * evidence. `Reflection.runReflection` drops any fact whose `sourceRefs` do
- * not all dereference to an event inside the window it was distilled from
- * (issue #21's evidence requirement), so a stand-in
- * that invented a reference would just have its fact silently discarded —
- * this one only ever cites evidence it was actually handed.
+ * window's most frequent event type) and two insights, so a fresh dev
+ * daemon's Nightly Reflection Surface shows the real shape of its Event
+ * window without inventing durable facts.
  */
 export function createMockReflectionDistiller(): ReflectionDistiller {
   return async (input: ReflectionInput): Promise<ReflectionDistillation> => {
@@ -54,9 +43,7 @@ export function createMockReflectionDistiller(): ReflectionDistiller {
     // never write durable memory: a fact goes into `FACTS.md`, is injected into
     // every later turn, and — because the Reflection demotes to stay under the
     // `low` budget — displaces the user's real facts into `## Dormant` to make
-    // room for itself. The Heartbeat's stub has the same discipline: it reports,
-    // it does not persist. A real distiller replaces this outright once the
-    // Agent loop lands.
+    // room for itself. The mock Heartbeat uses the same discipline.
     return { summaries, insights, facts: [] }
   }
 }

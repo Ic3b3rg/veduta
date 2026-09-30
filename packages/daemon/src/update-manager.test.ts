@@ -221,7 +221,10 @@ describe('UpdateManager.register', () => {
     expect(store.eventLog(SYSTEM_SPACE_ID)).toContainEqual(
       expect.objectContaining({
         type: 'surface.create',
-        payload: { surfaceId: UPDATE_SURFACE_ID },
+        payload: expect.objectContaining({
+          surfaceId: UPDATE_SURFACE_ID,
+          surfaceCommitId: expect.stringMatching(/^scm-/),
+        }),
       }),
     )
     expect(store.surfaceEventsAfter(0)).toContainEqual(

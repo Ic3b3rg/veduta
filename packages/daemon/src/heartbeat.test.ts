@@ -7,8 +7,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ModelRef } from './agent-runner.ts'
 import { HeartbeatConfigSchema, type HeartbeatConfig } from './heartbeat-config.ts'
 import { Heartbeat, type HeartbeatOptions } from './heartbeat.ts'
+import { createFakeProvider, fakeText } from './fake-provider.ts'
 import { HEARTBEAT_SURFACE_ID } from './heartbeat-surface.ts'
 import { ModelRouter, type RoutingConfig } from './model-routing.ts'
+import { createProactiveCompletions } from './proactive-completions.ts'
 import { Scheduler, type Automation } from './scheduler.ts'
 import { Store } from './store.ts'
 import { ensureSystemSpace, SYSTEM_SPACE_ID } from './system-space.ts'
@@ -154,6 +156,60 @@ describe('buildChecklist', () => {
 })
 
 describe('acceptance criteria', () => {
+  it('uses the live tool-less bridge for both sides of the Heartbeat cascade', async () => {
+    router = new ModelRouter({
+      config: {
+        ...routingConfig,
+        tiers: {
+          triage: [{ provider: 'fake', modelId: 'fake-model' }],
+          reasoning: [{ provider: 'fake', modelId: 'fake-model' }],
+        },
+      },
+      now,
+    })
+    const bridge = createFakeProvider()
+    const complete = createProactiveCompletions({ router, bridge }).heartbeat
+    bridge.setResponses([{ message: fakeText('{"status":"nothing"}') }])
+    expect(await makeHeartbeat({ complete }).runSweep()).toBe('nothing')
+    expect(router.callLog().map((call) => call.purpose)).toEqual(['heartbeat'])
+
+    store.createSurface(planSurface(), 'agent')
+    bridge.setResponses([
+      {
+        message: fakeText(
+          JSON.stringify({
+            status: 'concerns',
+            concerns: [
+              { spaceId: HEALTH, surfaceId: 'srf-todays-plan', kind: 'uncovered-time-sensitive' },
+            ],
+          }),
+        ),
+      },
+      {
+        message: fakeText(
+          JSON.stringify({
+            decisions: [
+              {
+                spaceId: HEALTH,
+                surfaceId: 'srf-todays-plan',
+                action: 'escalate',
+                justification: 'The plan needs attention now.',
+              },
+            ],
+          }),
+        ),
+      },
+    ])
+    expect(await makeHeartbeat({ complete }).runSweep()).toBe('acted')
+    expect(router.callLog().map((call) => call.purpose)).toEqual([
+      'heartbeat',
+      'heartbeat',
+      'heartbeat-reasoning',
+    ])
+    expect(escalations).toHaveLength(1)
+    expect(bridge.pendingCount()).toBe(0)
+  })
+
   it('#1 makes exactly one triage call and zero reasoning calls when there is nothing to do', async () => {
     const heartbeat = makeHeartbeat({ complete: async () => ({ text: '{"status":"nothing"}' }) })
 

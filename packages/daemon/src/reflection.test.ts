@@ -4,11 +4,14 @@ import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { formatFactsMarkdown } from './facts.ts'
+import { createFakeProvider, fakeText } from './fake-provider.ts'
 import { projectFacts } from './facts-projection.ts'
 import { withDirectoryMode } from './filesystem.test-helpers.ts'
 import { MemoryConfigSchema, type MemoryConfig } from './memory-config.ts'
+import { ModelRouter, type RoutingConfig } from './model-routing.ts'
 import { formatSourceRef, MemoryIndex } from './memory-index.ts'
 import { Reflection, type ReflectionDistiller } from './reflection.ts'
+import { createProactiveCompletions } from './proactive-completions.ts'
 import { Scheduler, type Automation } from './scheduler.ts'
 import { Store } from './store.ts'
 import { ensureSystemSpace, SYSTEM_SPACE_ID } from './system-space.ts'
@@ -645,6 +648,68 @@ describe('reconcileJobs', () => {
 })
 
 describe('register', () => {
+  it('shows a failed Automation outcome for invalid live output and re-reads that window next night', async () => {
+    const config = memoryConfig()
+    const baseline = new Reflection({
+      store,
+      scheduler,
+      index,
+      config,
+      distiller: nothingDistiller,
+      now,
+    })
+    clock = new Date('2026-07-07T04:00:00.000Z')
+    await baseline.runReflection(HEALTH, 1, clock.toISOString())
+
+    clock = new Date('2026-07-08T03:00:00.000Z')
+    store.spacesEngine.appendEvent(HEALTH, { type: 'note', text: 'A fact from the failed night.' })
+    const routingConfig: RoutingConfig = {
+      tiers: {
+        triage: [{ provider: 'fake', modelId: 'fake-model' }],
+        reasoning: [{ provider: 'fake', modelId: 'fake-model' }],
+      },
+      providerKeys: {},
+      connectionKeys: {},
+      dailyCapUsd: { triage: 5, reasoning: 5 },
+    }
+    const router = new ModelRouter({ config: routingConfig, rootDir, now })
+    const bridge = createFakeProvider()
+    bridge.setResponses([{ message: fakeText('{"summaries":"invalid"}') }])
+    const reflection = new Reflection({
+      store,
+      scheduler,
+      index,
+      config,
+      distiller: createProactiveCompletions({ router, bridge }).reflection,
+      now,
+    })
+    reflection.register()
+    reflection.reconcileJobs()
+    clock = new Date('2026-07-08T04:00:01.000Z')
+    await scheduler.runDue()
+    expect(store.eventLog(HEALTH).filter((event) => event.type === 'reflection.done')).toHaveLength(
+      0,
+    )
+    expect(scheduler.outcomeService.list(SYSTEM_SPACE_ID).notifications).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'failed' })]),
+    )
+
+    bridge.setResponses([
+      {
+        message: fakeText(
+          JSON.stringify({ summaries: ['Recovered window.'], insights: [], facts: [] }),
+        ),
+      },
+    ])
+    clock = new Date('2026-07-09T04:00:01.000Z')
+    await scheduler.runDue()
+    expect(reflection.lastReport(HEALTH)?.windowFrom).toBe('2026-07-07T04:00:00.000Z')
+    expect(reflection.lastReport(HEALTH)?.summaries).toContain('Recovered window.')
+    expect(store.eventLog(HEALTH).filter((event) => event.type === 'reflection.done')).toHaveLength(
+      1,
+    )
+  })
+
   it('wires into the Scheduler: an armed Reflection job actually runs and appends a terminal marker', async () => {
     const config = memoryConfig()
     clock = new Date('2026-07-07T22:00:00.000Z')

@@ -154,7 +154,10 @@ describe('GET /api/spaces', () => {
     expect(store.eventLog('spc-health')).toContainEqual(
       expect.objectContaining({
         type: 'surface.create',
-        payload: { surfaceId: reflectionId },
+        payload: expect.objectContaining({
+          surfaceId: reflectionId,
+          surfaceCommitId: expect.stringMatching(/^scm-/),
+        }),
       }),
     )
     expect(store.surfaceEventsAfter(0)).toContainEqual(
@@ -2551,7 +2554,11 @@ describe('POST /api/surfaces/:id/pin (issue #22)', () => {
     expect(store.eventLog(SYSTEM_SPACE_ID).slice(eventsBeforePin)).toContainEqual(
       expect.objectContaining({
         type: 'surface.pin',
-        payload: { surfaceId: ALLOWLIST_SURFACE_ID, pinned: true },
+        payload: expect.objectContaining({
+          surfaceId: ALLOWLIST_SURFACE_ID,
+          pinned: true,
+          surfaceCommitId: expect.stringMatching(/^scm-/),
+        }),
       }),
     )
     expect(store.spacesEngine.listTemplates(SYSTEM_SPACE_ID)).toEqual(templatesBeforePin)
@@ -2578,7 +2585,11 @@ describe('POST /api/surfaces/:id/pin (issue #22)', () => {
     expect(store.eventLog(SYSTEM_SPACE_ID).slice(eventsBeforeMove)).toContainEqual(
       expect.objectContaining({
         type: 'surface.move',
-        payload: { surfaceId: moveTarget, direction: 'up' },
+        payload: expect.objectContaining({
+          surfaceId: moveTarget,
+          direction: 'up',
+          surfaceCommitId: expect.stringMatching(/^scm-/),
+        }),
       }),
     )
 

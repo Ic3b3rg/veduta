@@ -3,7 +3,7 @@ import { JsonObjectSchema, type JsonObject } from '@veduta/protocol'
 import { z } from 'zod'
 import { EventQueue, type QueuedEvent } from './event-queue.ts'
 import { ExternalEventSchema, type ExternalEvent, type ReaderHandoff } from './external-event.ts'
-import { decodeGmailPush, type FetchStageResult } from './google-sources.ts'
+import type { FetchStageResult } from './google-sources.ts'
 import type { IngestionConfig, IngestionSource } from './ingestion-config.ts'
 import { envSecretResolver, type SecretResolver } from './model-routing.ts'
 import { evaluatePreFilter, type SimilarityHook } from './pre-filter.ts'
@@ -99,6 +99,13 @@ export class EventIngestion {
     // of invented names must not grow state (SECURITY.md §3.5).
     if (!source) return { status: 401, body: { error: 'unknown or unverified source' } }
 
+    // A saved personal-mail source is migration material, not authorization
+    // to ingest mail. Acknowledge old push deliveries without resolving its
+    // secret or touching the queue, reader, or Space.
+    if (source.adapter === 'gmail-push' || source.adapter === 'imap-idle') {
+      return { status: 200, body: { outcome: 'inactive' } }
+    }
+
     const verified = verifyWebhook(source.verification, source.secret, this.secrets, input)
     if (!verified.ok) {
       this.queue.recordRefusal(sourceName, 'verification-rejected')
@@ -122,7 +129,6 @@ export class EventIngestion {
     }
 
     if (source.adapter === 'webhook') return this.handleGenericWebhook(sourceName, source, input)
-    if (source.adapter === 'gmail-push') return this.handleGmailPush(sourceName, source, input)
     return this.handleCalendarPush(sourceName, source, input)
   }
 
@@ -130,10 +136,12 @@ export class EventIngestion {
   async recoverAtBoot(): Promise<void> {
     for (const row of this.queue.pendingEvents()) {
       const source = this.config.sources[row.source]
-      if (!source) continue
+      if (!source || source.adapter === 'gmail-push' || source.adapter === 'imap-idle') continue
       await this.decideAndDeliver(row.id, source)
     }
     for (const row of this.queue.undeliveredAccepted()) {
+      const adapter = this.config.sources[row.source]?.adapter
+      if (adapter === 'gmail-push' || adapter === 'imap-idle') continue
       await this.deliver(row)
     }
   }
@@ -181,26 +189,6 @@ export class EventIngestion {
           ? { outcome: 'discarded', reason: decided.discardReason ?? 'unknown' }
           : { outcome: 'accepted', queueId: decided.id },
     }
-  }
-
-  private async handleGmailPush(
-    sourceName: string,
-    source: IngestionSource,
-    input: VerifyInput,
-  ): Promise<WebhookResponse> {
-    let body: unknown
-    try {
-      body = JSON.parse(input.rawBody.toString('utf8'))
-    } catch {
-      this.queue.recordMalformed(sourceName, 'push body is not JSON')
-      return { status: 400, body: { error: 'payload failed schema validation' } }
-    }
-    const decoded = decodeGmailPush(body, source.gmail?.subscription ?? '')
-    if (!decoded.ok) {
-      this.queue.recordMalformed(sourceName, decoded.reason)
-      return { status: 400, body: { error: 'payload failed schema validation' } }
-    }
-    return this.runFetchStage(sourceName, source)
   }
 
   private async handleCalendarPush(

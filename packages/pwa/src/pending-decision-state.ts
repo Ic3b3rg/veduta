@@ -113,6 +113,27 @@ export function appendAuthoritativeChatEntry(
   entry: ChatMessage,
 ): ChatMessage[] {
   const incoming = authoritativePendingDecisionMessage(entry)
+  if (incoming.decisionFeedbackId !== undefined) {
+    const known = newestKnownDecision(entries, incoming.decisionFeedbackId)
+    const projected = incoming.pendingDecisions?.find(
+      (decision) => decision.id === incoming.decisionFeedbackId,
+    )
+    const decision =
+      known !== undefined &&
+      (projected === undefined ||
+        decisionStateRank(known.state) > decisionStateRank(projected.state))
+        ? known
+        : projected
+    if (decision !== undefined && decision.state !== 'pending') {
+      const hasReference = entries.some((candidate) =>
+        isFeedbackOrSingleReference(candidate, decision.id),
+      )
+      return applyPendingDecisionFeedback(hasReference ? entries : [...entries, incoming], {
+        decision,
+        message: pendingDecisionFeedback(decision),
+      })
+    }
+  }
   const knownById = new Map<string, PendingDecision>()
   for (const decision of incoming.pendingDecisions ?? []) {
     const known = newestKnownDecision(entries, decision.id)

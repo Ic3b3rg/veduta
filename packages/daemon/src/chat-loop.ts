@@ -8,10 +8,12 @@ import {
   type Space,
 } from '@veduta/protocol'
 import type { SessionContextFilter, SessionMessage, SessionStore, ToolDef } from './agent-runner.ts'
-import type { NormalizedChannelEvent } from './channel-adapter.ts'
+import { parseChatDecisionIntent, respondToChatDecisionIntent } from './chat-decision.ts'
+import type { PwaChatInput } from './gateway.ts'
 import type { ModelRouter } from './model-routing.ts'
 import { sanitizeErrorText } from './model-routing.ts'
 import { PiAgentRunner } from './pi-agent-runner.ts'
+import type { PendingDecisionService } from './pending-decision-service.ts'
 import type { ProviderBridge } from './pi-provider-bridge.ts'
 import type { GlobalChatTurnHooks } from './global-chat-tools.ts'
 import { assembleGlobalContext } from './character-context.ts'
@@ -136,6 +138,7 @@ export interface ChatLoopOptions {
   /** Focused tools, or the stable scoped global registry with per-turn result hooks. */
   toolsFor: (spaceId: string | undefined, hooks?: GlobalChatTurnHooks) => ToolDef[]
   send: (clientId: string, frame: GatewayServerMessage) => void
+  pendingDecisions?: Pick<PendingDecisionService, 'list' | 'get' | 'resolve'>
   /** Clock and global user timezone injected into every turn's context. */
   now?: () => Date
   timeZone?: string
@@ -143,7 +146,7 @@ export interface ChatLoopOptions {
 
 export interface ChatLoop {
   /** Resolves when the turn fully completes (frames sent, events appended) — callers may void it. */
-  handleChatMessage(event: NormalizedChannelEvent): Promise<void>
+  handleChatMessage(event: PwaChatInput): Promise<void>
   /**
    * Graceful shutdown (issue #37 fix): marks the loop stopped so any new
    * `handleChatMessage` call short-circuits with a `chat.turn-error` frame
@@ -212,6 +215,18 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
   // session rather than a single global tail so Spaces don't serialize
   // against each other.
   const chains = new Map<string, Promise<unknown>>()
+  const recentDecisionIds = new Map<string, string[]>()
+  const rememberDecision = (spaceId: string | undefined, id: string) => {
+    const sessionId = sessionIdFor(spaceId)
+    const previous = recentDecisionIds.get(sessionId) ?? []
+    recentDecisionIds.set(
+      sessionId,
+      [id, ...previous.filter((candidate) => candidate !== id)].slice(
+        0,
+        MAX_CHAT_PENDING_DECISION_REFERENCES,
+      ),
+    )
+  }
   // Set once by `stop()` (issue #37 fix): checked at the top of every new
   // `handleChatMessage` call, never reset — a stopped chat loop stays
   // stopped for the rest of the process's life.
@@ -286,10 +301,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
     return { systemPrompt, contextOrigins: [] }
   }
 
-  async function runTurn(
-    event: NormalizedChannelEvent,
-    spaceId: string | undefined,
-  ): Promise<void> {
+  async function runTurn(event: PwaChatInput, spaceId: string | undefined): Promise<void> {
     const turnId = randomUUID()
     const spaceField = spaceId === undefined ? {} : { spaceId }
     const enteredSpaces = new Map<string, Space>()
@@ -340,6 +352,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
           }
         : {}),
       onPendingDecision(decision) {
+        rememberDecision(spaceId, decision.id)
         const existing = pendingDecisions.findIndex((candidate) => candidate.id === decision.id)
         if (existing >= 0) {
           pendingDecisions[existing] = decision
@@ -356,6 +369,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
         publishPendingReplacement()
       },
       onPendingDecisionObserved(decisionId) {
+        rememberDecision(spaceId, decisionId)
         if (pendingDecisions.some((decision) => decision.id === decisionId)) return
         if (pendingDecisionIds.has(decisionId)) return
         if (pendingDecisionIds.size >= MAX_CHAT_PENDING_DECISION_REFERENCES) return
@@ -591,7 +605,55 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
     }
   }
 
-  async function handleChatMessage(event: NormalizedChannelEvent): Promise<void> {
+  async function runDecisionTurn(
+    event: PwaChatInput,
+    intent: NonNullable<ReturnType<typeof parseChatDecisionIntent>>,
+  ): Promise<void> {
+    const turnId = randomUUID()
+    const spaceField = event.spaceId === undefined ? {} : { spaceId: event.spaceId }
+    options.send(event.clientId, { type: 'chat.turn-start', turnId, ...spaceField })
+    try {
+      if (event.spaceId !== undefined) {
+        options.store.spacesEngine.appendEvent(event.spaceId, {
+          type: 'turn',
+          text: event.text,
+          origin: 'trusted:user',
+          payload: { role: 'user' },
+        })
+      }
+      const message = await respondToChatDecisionIntent(
+        intent,
+        event.spaceId,
+        options.pendingDecisions!,
+        recentDecisionIds.get(sessionIdFor(event.spaceId)),
+      )
+      for (const decision of message.pendingDecisions ?? []) {
+        rememberDecision(event.spaceId, decision.id)
+      }
+      if (event.spaceId !== undefined) {
+        try {
+          options.store.spacesEngine.appendEvent(event.spaceId, {
+            type: 'turn',
+            text: message.text,
+            origin: 'trusted:system',
+            payload: { role: 'assistant', correlationId: turnId },
+          })
+        } catch (error) {
+          console.error('chat decision outcome Event observer failed', error)
+        }
+      }
+      options.send(event.clientId, { type: 'chat.turn-end', turnId, ...spaceField, message })
+    } catch (error) {
+      options.send(event.clientId, {
+        type: 'chat.turn-error',
+        turnId,
+        ...spaceField,
+        error: sanitizeErrorText(error),
+      })
+    }
+  }
+
+  async function handleChatMessage(event: PwaChatInput): Promise<void> {
     if (stopped) {
       // Same lifecycle contract as the unknown-Space path below: an error
       // frame always closes a turn its own `chat.turn-start` opened.
@@ -631,7 +693,10 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
     // failure and reports it as a `chat.turn-error` frame instead of
     // rejecting, but the `.catch(() => {})` guards the chain itself against
     // any future change to that contract.
-    const next = previous.catch(() => {}).then(() => runTurn(event, spaceId))
+    const intent = options.pendingDecisions && parseChatDecisionIntent(event.text)
+    const next = previous
+      .catch(() => {})
+      .then(() => (intent ? runDecisionTurn(event, intent) : runTurn(event, spaceId)))
     chains.set(sessionId, next)
     return next
   }

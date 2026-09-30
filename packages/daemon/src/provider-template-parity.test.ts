@@ -146,7 +146,7 @@ describe('AgentRunner Template parity across Model connection methods (issue #76
         type: 'surface.create',
         text: 'Created Surface "Weekly reading tracker"',
         origin: TEMPLATE_PARITY_UNTRUSTED_ORIGIN,
-        payload: { surfaceId: REUSED_SURFACE_ID },
+        payload: { surfaceId: REUSED_SURFACE_ID, surfaceCommitId: 'scm-<id>' },
       },
       {
         type: 'template.reused',
@@ -158,7 +158,7 @@ describe('AgentRunner Template parity across Model connection methods (issue #76
         type: 'surface.pin',
         text: 'Pinned Surface "Weekly reading tracker"',
         origin: TEMPLATE_PARITY_UNTRUSTED_ORIGIN,
-        payload: { surfaceId: REUSED_SURFACE_ID, pinned: true },
+        payload: { surfaceId: REUSED_SURFACE_ID, pinned: true, surfaceCommitId: 'scm-<id>' },
       },
       {
         type: 'template.saved',
@@ -170,7 +170,7 @@ describe('AgentRunner Template parity across Model connection methods (issue #76
         type: 'surface.create',
         text: 'Created Surface "Weekly reading tracker"',
         origin: TEMPLATE_PARITY_UNTRUSTED_ORIGIN,
-        payload: { surfaceId: DIRECT_SURFACE_ID },
+        payload: { surfaceId: DIRECT_SURFACE_ID, surfaceCommitId: 'scm-<id>' },
       },
       {
         type: 'template.regenerated',

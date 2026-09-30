@@ -9,9 +9,9 @@ import {
   type PendingDecisionLifecycleMessage,
   type PresenceEntry,
 } from '@veduta/protocol'
-import { PwaChannelAdapter, type NormalizedChannelEvent } from './channel-adapter.ts'
 import type { SurfaceEngineEvent } from './surface-engine.ts'
 import { SurfaceActionError, type Store } from './store.ts'
+import { SurfaceCommitRecoveryPendingError } from './surface-commit.ts'
 
 export interface GatewaySocket {
   send(data: string): void
@@ -23,6 +23,13 @@ export interface GatewaySocket {
 export interface GatewayAuth {
   verifySession(token: string | undefined): { device: { id: string; name: string } } | undefined
   onSessionRevoked(listener: (event: { deviceId: string }) => void): () => void
+}
+
+export interface PwaChatInput {
+  clientId: string
+  text: string
+  spaceId?: string
+  receivedAt: string
 }
 
 /**
@@ -43,7 +50,6 @@ interface GatewayClientSession {
 }
 
 export class GatewayHub {
-  private pwa = new PwaChannelAdapter()
   private clients = new Map<string, GatewayClientSession>()
   private disposeAuthListener: (() => void) | undefined
   private disposeSurfaceEventListener: () => void
@@ -60,7 +66,7 @@ export class GatewayHub {
        * requesting client (a `chat.message` frame saying so) rather than
        * silently dropped.
        */
-      onChatTurn?: (event: NormalizedChannelEvent) => void
+      onChatTurn?: (event: PwaChatInput) => void
       /**
        * Answers a recognized "show me the full text of event #N" request
        * (docs/SECURITY.md §3.3): runs the dedicated, gated turn
@@ -77,17 +83,16 @@ export class GatewayHub {
       helloTimeoutMs?: number
     } = {},
   ) {
-    this.pwa.onMessage((event) => this.handleChannelMessage(event))
     this.disposeAuthListener = options.auth?.onSessionRevoked((event) => {
       this.closeRevokedDevice(event.deviceId)
     })
     // The one and only Surface-lifecycle broadcaster: every committed
     // patch/created/archived event flows through here exactly once, however
     // it was produced (fast path, Agent tool, scheduler projection) —
-    // nothing else in this class calls `pwa.broadcast` with a surface.*
+    // nothing else in this class broadcasts a surface.*
     // frame.
     this.disposeSurfaceEventListener = this.store.onSurfaceEvent((event) => {
-      this.pwa.broadcast(surfaceEventFrame(event))
+      this.broadcast(surfaceEventFrame(event))
     })
   }
 
@@ -109,6 +114,10 @@ export class GatewayHub {
     helloDeadline.unref?.()
 
     socket.on('message', (raw) => {
+      if (clientId && this.clients.get(clientId)?.socket !== socket) {
+        socket.close?.()
+        return
+      }
       const frame = parseClientFrame(raw)
       if (!frame) {
         send({ type: 'error', error: 'invalid Gateway frame' })
@@ -183,24 +192,24 @@ export class GatewayHub {
       this.pendingSystemNotices.push(text)
       return
     }
-    this.pwa.broadcast({ type: 'chat.message', message: { role: 'assistant', text } })
+    this.broadcast({ type: 'chat.message', message: { role: 'assistant', text } })
   }
 
   /** Broadcasts a new approval card chip (issue #14) to every connected client. */
   broadcastApprovalCard(card: ApprovalCard): void {
-    this.pwa.broadcast({ type: 'approval.card', card })
+    this.broadcast({ type: 'approval.card', card })
   }
 
   /** Broadcasts daemon-authored decision progress/outcome; HTTP list recovery covers offline clients. */
   broadcastPendingDecision(lifecycle: Omit<PendingDecisionLifecycleMessage, 'type'>): void {
-    this.pwa.broadcast({ type: 'pending-decision.lifecycle', ...lifecycle })
+    this.broadcast({ type: 'pending-decision.lifecycle', ...lifecycle })
   }
 
   /** Broadcasts confirmed durable In-app notification state; HTTP snapshots recover missed frames. */
   broadcastAutomationOutcomeNotification(
     lifecycle: Omit<AutomationOutcomeNotificationLifecycleMessage, 'type'>,
   ): void {
-    this.pwa.broadcast({ type: 'automation-outcome-notification.lifecycle', ...lifecycle })
+    this.broadcast({ type: 'automation-outcome-notification.lifecycle', ...lifecycle })
   }
 
   /**
@@ -212,7 +221,7 @@ export class GatewayHub {
    * live frame is never lost, only superseded.
    */
   broadcastSpaceAttention(spaceId: string, count: number, revision: number): void {
-    this.pwa.broadcast({ type: 'space.attention', spaceId, count, revision })
+    this.broadcast({ type: 'space.attention', spaceId, count, revision })
   }
 
   /**
@@ -241,7 +250,12 @@ export class GatewayHub {
     session.presence.lastSeenAt = new Date().toISOString()
 
     if (frame.type === 'chat.send') {
-      this.pwa.receive(clientId, frame)
+      this.handleChatMessage({
+        clientId,
+        text: frame.text,
+        receivedAt: new Date().toISOString(),
+        ...(frame.spaceId === undefined ? {} : { spaceId: frame.spaceId }),
+      })
       return
     }
 
@@ -257,6 +271,13 @@ export class GatewayHub {
       // routing the request and surfacing errors to the requester.
       this.store.invokeSurfaceAction(frame.surfaceId, frame.invocation)
     } catch (error) {
+      if (error instanceof SurfaceCommitRecoveryPendingError) {
+        send({
+          type: 'error',
+          error: `Surface commit ${error.commitId} is recovery_pending in Space ${error.spaceId}.`,
+        })
+        return
+      }
       if (error instanceof SurfaceActionError) {
         send({ type: 'error', error: error.message })
         return
@@ -295,16 +316,15 @@ export class GatewayHub {
     }
     if (deviceId !== undefined) session.deviceId = deviceId
     this.clients.set(clientId, session)
-    this.pwa.connect({ clientId, send })
-    for (const text of this.pendingSystemNotices.splice(0)) this.pwa.sendShort(clientId, text)
+    if (existing && existing.socket !== socket) existing.socket.close?.()
+    for (const text of this.pendingSystemNotices.splice(0)) this.sendChatMessage(clientId, text)
   }
 
   private disconnectClient(clientId: string): void {
-    this.pwa.disconnect(clientId)
     this.clients.delete(clientId)
   }
 
-  private handleChannelMessage(event: NormalizedChannelEvent): void {
+  private handleChatMessage(event: PwaChatInput): void {
     const session = this.clients.get(event.clientId)
     if (!session) return
     session.presence.lastSeenAt = event.receivedAt
@@ -319,7 +339,7 @@ export class GatewayHub {
       // A boot-order bug surfaced honestly, not silence (AGENTS.md): the
       // Gateway exists before server.ts finishes wiring the chat loop, but
       // by the time a client can send `chat.send` the hook must be bound.
-      this.pwa.sendShort(event.clientId, 'The Agent loop is not configured on this daemon yet.')
+      this.sendChatMessage(event.clientId, 'The Agent loop is not configured on this daemon yet.')
       return
     }
     this.options.onChatTurn(event)
@@ -331,13 +351,21 @@ export class GatewayHub {
     // Both outcomes answer only the requesting client; the failure message
     // is content-free (never the underlying error detail).
     onFullTextRequest(queueId).then(
-      (reply) => this.pwa.sendShort(clientId, reply),
-      () => this.pwa.sendShort(clientId, `Full text for queue #${queueId} is not available.`),
+      (reply) => this.sendChatMessage(clientId, reply),
+      () => this.sendChatMessage(clientId, `Full text for queue #${queueId} is not available.`),
     )
   }
 
   private broadcastPresence(): void {
-    this.pwa.broadcast({ type: 'presence.update', presence: this.presence() })
+    this.broadcast({ type: 'presence.update', presence: this.presence() })
+  }
+
+  private sendChatMessage(clientId: string, text: string): void {
+    this.sendToClient(clientId, { type: 'chat.message', message: { role: 'assistant', text } })
+  }
+
+  private broadcast(frame: GatewayServerMessage): void {
+    for (const session of this.clients.values()) session.send(frame)
   }
 
   private closeRevokedDevice(deviceId: string): void {

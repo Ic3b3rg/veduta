@@ -5,6 +5,7 @@ import {
   closeSync,
   constants as fsConstants,
   existsSync,
+  fsyncSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -15,9 +16,10 @@ import {
   statSync,
   unlinkSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import {
   SYSTEM_SPACE_ID,
   SpaceSchema,
@@ -72,6 +74,7 @@ import {
   type AppendSpaceEventInput,
   type SpaceEvent,
 } from './space-events.ts'
+import type { PreparedSurfaceCommitEvent } from './surface-commit.ts'
 import {
   SpaceProposalConflictError,
   SpaceProposalStore,
@@ -454,6 +457,77 @@ export class SpacesEngine {
 
   appendEvent(spaceId: string, input: AppendSpaceEventInput): SpaceEvent {
     const space = this.requireSpace(spaceId)
+    const event = this.prepareEvent(space, input)
+    appendFileSync(this.logPath(space, event.at), `${JSON.stringify(event)}\n`)
+    this.notifyMemoryWrite(space.id, 'event')
+    return event
+  }
+
+  /** Prepares the exact redacted Event and original day-log destination before SQLite commits. */
+  prepareSurfaceCommitEvent(
+    spaceId: string,
+    input: AppendSpaceEventInput,
+    commitId: string,
+  ): PreparedSurfaceCommitEvent {
+    const space = this.requireSpace(spaceId)
+    const event = this.prepareEvent(space, {
+      ...input,
+      payload: { ...(input.payload ?? {}), surfaceCommitId: commitId },
+    })
+    return { event, destination: relative(this.rootDir, this.logPath(space, event.at)) }
+  }
+
+  /** Idempotent append plus file and directory durability, with no observers before delivery. */
+  deliverSurfaceCommitEvent(prepared: PreparedSurfaceCommitEvent): void {
+    const path = resolve(this.rootDir, prepared.destination)
+    if (!path.startsWith(`${resolve(this.rootDir)}${sep}`)) {
+      throw new Error('Surface commit Event destination escapes the data root')
+    }
+    const dir = dirname(path)
+    const directoryExisted = existsSync(dir)
+    if (!directoryExisted) mkdirSync(dir, { recursive: true })
+
+    const existing = existsSync(path) ? readFileSync(path, 'utf8') : ''
+    const commitId = prepared.event.payload?.['surfaceCommitId']
+    if (typeof commitId !== 'string') throw new Error('Surface commit Event has no identity')
+    const alreadyAppended =
+      existing.length > 0 &&
+      readEventsFile(path).some((event) => event.payload?.['surfaceCommitId'] === commitId)
+
+    const fd = openSync(path, 'a')
+    try {
+      if (!alreadyAppended) {
+        const prefix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : ''
+        const bytes = Buffer.from(`${prefix}${JSON.stringify(prepared.event)}\n`)
+        for (let offset = 0; offset < bytes.length;) {
+          offset += writeSync(fd, bytes, offset, bytes.length - offset)
+        }
+      }
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+    const dirFd = openSync(dir, 'r')
+    try {
+      fsyncSync(dirFd)
+    } finally {
+      closeSync(dirFd)
+    }
+    if (!directoryExisted) {
+      const parentFd = openSync(dirname(dir), 'r')
+      try {
+        fsyncSync(parentFd)
+      } finally {
+        closeSync(parentFd)
+      }
+    }
+  }
+
+  notifySurfaceCommitDelivered(spaceId: string): void {
+    this.notifyMemoryWrite(spaceId, 'event')
+  }
+
+  private prepareEvent(space: Space, input: AppendSpaceEventInput): SpaceEvent {
     // SECURITY.md §4: no secret ever appears in the Event log. Redaction
     // happens PRE-append (ADR-0003: the log is never rewritten). Forbidden
     // Unicode is stripped first, so a hidden-character-split credential is
@@ -471,7 +545,7 @@ export class SpacesEngine {
       ...(payload === undefined ? {} : { payload }),
     })
     const occurredAt = normalizeIsoInstant(sanitized.occurredAt)
-    const event: SpaceEvent = {
+    return {
       at: sanitized.at,
       spaceId: sanitized.spaceId,
       type: sanitized.type,
@@ -480,9 +554,6 @@ export class SpacesEngine {
       ...(occurredAt === undefined ? {} : { occurredAt }),
       ...(sanitized.payload === undefined ? {} : { payload: sanitized.payload }),
     }
-    appendFileSync(this.logPath(space, event.at), `${JSON.stringify(event)}\n`)
-    this.notifyMemoryWrite(space.id, 'event')
-    return event
   }
 
   /** Adds one global-turn correlation to every Event appended by `operation`. */

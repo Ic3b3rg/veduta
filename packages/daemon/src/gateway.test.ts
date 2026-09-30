@@ -6,8 +6,7 @@ import {
   type Surface,
 } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
-import type { NormalizedChannelEvent } from './channel-adapter.ts'
-import { GatewayHub, type GatewayAuth, type GatewaySocket } from './gateway.ts'
+import { GatewayHub, type GatewayAuth, type GatewaySocket, type PwaChatInput } from './gateway.ts'
 import { Store } from './store.ts'
 
 describe('GatewayHub Surface sync', () => {
@@ -227,9 +226,9 @@ describe('GatewayHub Surface sync', () => {
     ).toHaveLength(0)
   })
 
-  it('invokes onChatTurn with the normalized event, spaceId threaded, for an ordinary chat.send', () => {
+  it('routes a validated chat.send with its PWA client and Space scope directly', () => {
     const store = new Store({ now: fixedNow })
-    const received: NormalizedChannelEvent[] = []
+    const received: PwaChatInput[] = []
     const gateway = new GatewayHub(store, {
       onChatTurn: (event) => received.push(event),
     })
@@ -243,8 +242,13 @@ describe('GatewayHub Surface sync', () => {
 
     socket.receive({ type: 'chat.send', text: 'I ate a pizza', spaceId: 'spc-health' })
 
-    expect(received).toMatchObject([
-      { clientId: 'pwa-health', text: 'I ate a pizza', spaceId: 'spc-health' },
+    expect(received).toEqual([
+      {
+        clientId: 'pwa-health',
+        text: 'I ate a pizza',
+        spaceId: 'spc-health',
+        receivedAt: expect.any(String),
+      },
     ])
     // The Gateway itself no longer mutates Surfaces from chat (issue #37):
     // that is entirely the Agent loop's job now, once `onChatTurn` runs it.
@@ -319,7 +323,7 @@ describe('GatewayHub Surface sync', () => {
     // socket now owns it, rather than requiring the chat loop to track a
     // changing clientId mid-turn.
     const store = new Store()
-    const received: NormalizedChannelEvent[] = []
+    const received: PwaChatInput[] = []
     const gateway = new GatewayHub(store, {
       onChatTurn: (event) => received.push(event),
     })
@@ -400,6 +404,31 @@ describe('GatewayHub Surface sync', () => {
       type: 'chat.message',
       message: { text: 'still reachable' },
     })
+  })
+
+  it('closes a replaced socket and accepts actions only from the current PWA connection', () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store)
+    const first = new FakeGatewaySocket()
+    const second = new FakeGatewaySocket()
+    gateway.connect(first)
+    first.receive({ type: 'hello', clientId: 'pwa-health', surfaceCursor: 0 })
+    gateway.connect(second)
+    second.receive({ type: 'hello', clientId: 'pwa-health', surfaceCursor: 0 })
+    expect(first.closed).toBe(true)
+
+    first.receive({
+      type: 'surface.action',
+      surfaceId: 'srf-groceries',
+      invocation: { nodeId: 'item-milk', name: 'toggle', payload: { value: true } },
+    })
+    expect(store.getSurface('srf-groceries')?.state['milk']).toBe(false)
+    second.receive({
+      type: 'surface.action',
+      surfaceId: 'srf-groceries',
+      invocation: { nodeId: 'item-milk', name: 'toggle', payload: { value: true } },
+    })
+    expect(store.getSurface('srf-groceries')?.state['milk']).toBe(true)
   })
 
   it('allocates non-sequential, UUID-shaped clientIds for connections with no clientId of their own', () => {

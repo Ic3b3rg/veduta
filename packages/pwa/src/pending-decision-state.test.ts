@@ -198,6 +198,26 @@ describe('Pending-decision PWA state', () => {
     ])
   })
 
+  it('keeps one feedback entry when a chat turn and lifecycle frame report the same terminal id', () => {
+    const lifecycle = applyPendingDecisionFeedback(
+      [],
+      feedback(terminal, 'Executed: Send message to alice@example.com.'),
+    )
+    const chat = {
+      role: 'assistant' as const,
+      text: 'Executed: Send message to alice@example.com.',
+      pendingDecisions: [terminal],
+      decisionFeedbackId: terminal.id,
+    }
+    expect(appendAuthoritativeChatEntry(lifecycle, chat)).toEqual(lifecycle)
+    expect(
+      applyPendingDecisionFeedback(
+        appendAuthoritativeChatEntry([], chat),
+        feedback(terminal, chat.text),
+      ),
+    ).toHaveLength(1)
+  })
+
   it('replaces an unprojected fallback by exact id and cannot resurrect it after terminal state', () => {
     const fallback: ChatMessage = {
       role: 'assistant',

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { EventIngestion, type FetchStage } from './event-ingestion.ts'
-import type { ExternalEvent, ReaderHandoff } from './external-event.ts'
+import type { ReaderHandoff } from './external-event.ts'
 import { IngestionConfigSchema } from './ingestion-config.ts'
 import type { SecretResolver } from './model-routing.ts'
 import { Store } from './store.ts'
@@ -164,27 +164,8 @@ describe('EventIngestion', () => {
     expect(pipeline.queue.listEvents('mail')).toHaveLength(1)
   })
 
-  it('turns a gmail push into fetched, filtered events with an atomic cursor advance', async () => {
-    const fetched: ExternalEvent[] = [
-      {
-        source: 'gmail',
-        kind: 'email',
-        externalId: 'm1',
-        type: 'message.received',
-        sender: 'anna@example.com',
-        subject: 'ciao',
-        fetchRef: { provider: 'gmail', id: 'm1' },
-      },
-      {
-        source: 'gmail',
-        kind: 'email',
-        externalId: 'm2',
-        type: 'message.received',
-        sender: 'news@spam.example',
-        headers: { 'list-unsubscribe': '<mailto:u@x>' },
-        fetchRef: { provider: 'gmail', id: 'm2' },
-      },
-    ]
+  it('acknowledges a legacy Gmail push without fetching, queueing, or changing its cursor', async () => {
+    let fetchCalls = 0
     const pipeline = ingestion(
       {
         gmail: {
@@ -201,7 +182,14 @@ describe('EventIngestion', () => {
           },
         },
       },
-      { fetchStages: { gmail: async () => ({ events: fetched, nextCursor: '4242' }) } },
+      {
+        fetchStages: {
+          gmail: async () => {
+            fetchCalls += 1
+            return { events: [], nextCursor: '4242' }
+          },
+        },
+      },
     )
 
     const push = {
@@ -219,13 +207,17 @@ describe('EventIngestion', () => {
       query: { token: 'shhh' },
     })
     expect(response.status).toBe(200)
-    expect(response.body).toEqual({ outcome: 'fetched', queued: 2, accepted: 1 })
-    expect(pipeline.queue.cursor('gmail')).toBe('4242')
-    expect(handoffs.map((h) => h.event.externalId)).toEqual(['m1'])
-    expect(pipeline.queue.getEvent(2)?.discardReason).toBe('newsletter')
+    expect(response.body).toEqual({ outcome: 'inactive' })
+    expect(fetchCalls).toBe(0)
+    expect(pipeline.queue.cursor('gmail')).toBeUndefined()
+    expect(pipeline.queue.listEvents()).toEqual([])
+    expect(handoffs).toEqual([])
+    expect(store.eventLog('spc-health').some((event) => event.type.startsWith('ingestion.'))).toBe(
+      false,
+    )
   })
 
-  it('rejects a gmail push for a foreign subscription', async () => {
+  it('keeps even a malformed or foreign legacy Gmail push inert', async () => {
     const pipeline = ingestion(
       {
         gmail: {
@@ -252,8 +244,10 @@ describe('EventIngestion', () => {
       headers: {},
       query: { token: 'shhh' },
     })
-    expect(response.status).toBe(400)
-    expect(pipeline.queue.decisions('gmail').at(-1)?.reason).toContain('subscription')
+    expect(response.status).toBe(200)
+    expect(response.body).toEqual({ outcome: 'inactive' })
+    expect(pipeline.queue.decisions('gmail')).toEqual([])
+    expect(pipeline.queue.listEvents()).toEqual([])
   })
 
   it('handles calendar pushes: sync ping, channel check, fetch failure', async () => {
@@ -304,15 +298,18 @@ describe('EventIngestion', () => {
     expect(failure.status).toBe(500)
   })
 
-  it('notifies the user when a provider cursor resets', async () => {
+  it('still notifies the user when an active Calendar provider cursor resets', async () => {
     const pipeline = ingestion(
       {
-        gmail: {
-          verification: 'query-token',
+        calendar: {
+          verification: 'channel-token',
           secret: 'secret://env/INGEST',
           spaceId: 'spc-health',
-          adapter: 'gmail-push',
-          gmail: { topicName: 't', subscription: 's' },
+          adapter: 'calendar-push',
+          calendar: {
+            calendarId: 'primary',
+            address: 'https://veduta.example/api/ingest/calendar',
+          },
           google: {
             clientIdRef: 'secret://env/INGEST',
             clientSecretRef: 'secret://env/INGEST',
@@ -320,21 +317,12 @@ describe('EventIngestion', () => {
           },
         },
       },
-      { fetchStages: { gmail: async () => ({ events: [], nextCursor: '9', reset: true }) } },
+      { fetchStages: { calendar: async () => ({ events: [], nextCursor: '9', reset: true }) } },
     )
-    const push = {
-      message: {
-        data: Buffer.from(JSON.stringify({ emailAddress: 'me@x', historyId: 1 })).toString(
-          'base64',
-        ),
-        messageId: 'pm',
-      },
-      subscription: 's',
-    }
-    await pipeline.handleWebhook('gmail', {
-      rawBody: Buffer.from(JSON.stringify(push)),
-      headers: {},
-      query: { token: 'shhh' },
+    await pipeline.handleWebhook('calendar', {
+      rawBody: Buffer.alloc(0),
+      headers: { 'x-goog-channel-token': 'shhh', 'x-goog-resource-state': 'exists' },
+      query: {},
     })
     expect(notices).toHaveLength(1)
     expect(notices[0]).toContain('gap')

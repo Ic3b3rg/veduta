@@ -2,9 +2,11 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { createFakeProvider, fakeText } from './fake-provider.ts'
 import type { ExternalEvent, ReaderHandoff } from './external-event.ts'
 import { INJECTION_CORPUS } from './injection-corpus.ts'
 import { ModelRouter, type RoutingConfig } from './model-routing.ts'
+import { createProactiveCompletions } from './proactive-completions.ts'
 import {
   QuarantinedReader,
   buildReaderPrompt,
@@ -100,6 +102,35 @@ describe('QuarantinedReader', () => {
       expect(summary?.payload?.['reader']).toEqual(validOutput)
       expect(summary?.payload?.['queueId']).toBe(1)
       expect(calls).toBe(1)
+    } finally {
+      tearDown()
+    }
+  })
+
+  it('uses the live tool-less bridge and persists only validated, taint-marked fields', async () => {
+    setUp()
+    try {
+      const router = testRouter({
+        config: {
+          ...testConfig,
+          tiers: {
+            triage: [{ provider: 'fake', modelId: 'fake-model' }],
+            reasoning: [{ provider: 'fake', modelId: 'fake-model' }],
+          },
+        },
+      })
+      const bridge = createFakeProvider()
+      bridge.setResponses([{ message: fakeText(JSON.stringify(validOutput)) }])
+      const complete = createProactiveCompletions({ router, bridge }).reader
+      await new QuarantinedReader({ router, store, complete }).read(
+        handoff({ event: baseEvent({ payload: { body: 'Raw personal message text' } }) }),
+      )
+      const summary = store.eventLog('spc-health').find((event) => event.type === 'reader.summary')
+      expect(summary?.origin).toBe('untrusted:gmail-personal')
+      expect(summary?.payload?.['reader']).toEqual(validOutput)
+      expect(summary?.text).not.toContain('Raw personal message text')
+      expect(router.callLog().map((call) => call.purpose)).toEqual(['quarantined-reader'])
+      expect(bridge.pendingCount()).toBe(0)
     } finally {
       tearDown()
     }

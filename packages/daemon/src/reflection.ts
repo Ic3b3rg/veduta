@@ -60,7 +60,7 @@ const DistilledFactSchema = z
  * `ReflectionRunReport`, not a reason to throw away an otherwise-good
  * distillation — its summaries and facts are still worth keeping.
  */
-const ReflectionDistillationSchema = z
+export const ReflectionDistillationSchema = z
   .object({
     summaries: z.array(z.string().trim().min(1).max(MAX_SUMMARY_CHARS)).max(MAX_SUMMARIES),
     insights: z.array(z.string().trim().min(1).max(MAX_INSIGHT_CHARS)).min(0).max(3),

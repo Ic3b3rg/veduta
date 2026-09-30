@@ -14,7 +14,7 @@ import { SOURCE_NAME_RE } from './taint.ts'
  * by default: every ingress into the daemon is an explicit user decision
  * (every event source is a new perimeter, SECURITY.md §7).
  */
-export const IngestionSourceSchema = z.object({
+const PushIngestionSourceSchema = z.object({
   /** How inbound pushes authenticate (webhook-verify.ts). */
   verification: z.enum(['hmac', 'query-token', 'channel-token']),
   /** Shared secret as a `secret://` reference, never plaintext. */
@@ -52,7 +52,30 @@ export const IngestionSourceSchema = z.object({
     .optional(),
 })
 
+/** Archived #25 configuration is retained as inert migration input. */
+const LegacyImapSourceSchema = z.object({
+  spaceId: z.string().min(1),
+  ratePerMinute: z.number().int().positive().max(600).default(60),
+  filters: PreFilterRulesSchema.default(PreFilterRulesSchema.parse({})),
+  adapter: z.literal('imap-idle'),
+  imap: z.object({
+    host: z.string().min(1),
+    port: z.number().int().positive().max(65_535).default(993),
+    authMethod: z.enum(['LOGIN', 'AUTH=LOGIN', 'AUTH=PLAIN']).default('AUTH=PLAIN'),
+    usernameRef: SecretRefSchema,
+    passwordRef: SecretRefSchema,
+  }),
+  verification: z.undefined().optional(),
+  secret: z.undefined().optional(),
+  gmail: z.undefined().optional(),
+  calendar: z.undefined().optional(),
+  google: z.undefined().optional(),
+})
+
+export const IngestionSourceSchema = z.union([PushIngestionSourceSchema, LegacyImapSourceSchema])
+
 export type IngestionSource = z.infer<typeof IngestionSourceSchema>
+export type PushIngestionSource = z.infer<typeof PushIngestionSourceSchema>
 
 export const IngestionConfigSchema = z
   .object({

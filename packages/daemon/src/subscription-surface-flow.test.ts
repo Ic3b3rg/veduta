@@ -319,7 +319,7 @@ async function runSurfaceProvider(
     eventLog: store
       .eventLog(space.id)
       .filter((event) => event.type === 'surface.create' || event.type === 'surface.patch_state')
-      .map(({ type, text, origin, payload }) => ({ type, text, origin, payload })),
+      .map(normalizeSpaceEvent),
   }
 }
 
@@ -386,14 +386,12 @@ async function runChatEventLog(provider: ProviderBridge, model: ModelRef): Promi
 
   try {
     await chatLoop.handleChatMessage({
-      adapterId: 'pwa',
       clientId: 'parity-client',
       text: 'Create a hydration Surface',
       spaceId: SPACE_ID,
       receivedAt: FIXED_NOW.toISOString(),
     })
     await chatLoop.handleChatMessage({
-      adapterId: 'pwa',
       clientId: 'parity-client',
       text: 'Update its status',
       spaceId: SPACE_ID,
@@ -626,7 +624,6 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
 
     try {
       await chatLoop.handleChatMessage({
-        adapterId: 'pwa',
         clientId: 'global-subscription-client',
         text: 'Create Health hydration globally',
         receivedAt: FIXED_NOW.toISOString(),
@@ -727,13 +724,13 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
           type: 'surface.create',
           text: 'Created Surface "Hydration"',
           origin: 'trusted:system',
-          payload: { surfaceId: SURFACE_ID },
+          payload: { surfaceId: SURFACE_ID, surfaceCommitId: 'scm-<id>' },
         },
         {
           type: 'surface.patch_state',
           text: 'Patched state for Surface "Hydration"',
           origin: 'trusted:system',
-          payload: { surfaceId: SURFACE_ID, operations: 1 },
+          payload: { surfaceId: SURFACE_ID, operations: 1, surfaceCommitId: 'scm-<id>' },
         },
       ])
       expect(subscriptionEventLog).toEqual([
@@ -747,7 +744,7 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
           type: 'surface.create',
           text: 'Created Surface "Hydration"',
           origin: 'trusted:system',
-          payload: { surfaceId: SURFACE_ID },
+          payload: { surfaceId: SURFACE_ID, surfaceCommitId: 'scm-<id>' },
         },
         {
           type: 'turn',
@@ -765,7 +762,7 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
           type: 'surface.patch_state',
           text: 'Patched state for Surface "Hydration"',
           origin: 'trusted:system',
-          payload: { surfaceId: SURFACE_ID, operations: 1 },
+          payload: { surfaceId: SURFACE_ID, operations: 1, surfaceCommitId: 'scm-<id>' },
         },
         {
           type: 'turn',

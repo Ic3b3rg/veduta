@@ -156,7 +156,10 @@ describe('Automations Surface projection', () => {
     expect(store.eventLog(SYSTEM_SPACE_ID)).toContainEqual(
       expect.objectContaining({
         type: 'surface.create',
-        payload: { surfaceId },
+        payload: expect.objectContaining({
+          surfaceId,
+          surfaceCommitId: expect.stringMatching(/^scm-/),
+        }),
       }),
     )
     expect(store.surfaceEventsAfter(0)).toContainEqual(
