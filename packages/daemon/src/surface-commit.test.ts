@@ -182,6 +182,47 @@ describe('recoverable Surface commits (#156)', () => {
     }
   })
 
+  it('blocks Agent-authorable reads in a pending Space while preserving UI reads and other Spaces', () => {
+    const rootDir = root()
+    let deliveryAllowed = false
+    const store = new Store({
+      rootDir,
+      now,
+      surfaceCommitTransport: (spaces): SurfaceCommitTransport => ({
+        prepareSurfaceCommitEvent: (spaceId, input, commitId) =>
+          spaces.prepareSurfaceCommitEvent(spaceId, input, commitId),
+        deliverSurfaceCommitEvent: (prepared) => {
+          if (!deliveryAllowed) throw new Error('injected persistent delivery failure')
+          spaces.deliverSurfaceCommitEvent(prepared)
+        },
+        notifySurfaceCommitDelivered: (spaceId) => spaces.notifySurfaceCommitDelivered(spaceId),
+      }),
+    })
+    try {
+      const other = store.spacesEngine.createSpace({ name: 'Other' })
+      expect(() => store.applyFastAction('srf-groceries', 'milk', true)).toThrow(
+        SurfaceCommitRecoveryPendingError,
+      )
+      expect(store.getSurface('srf-groceries')?.state['milk']).toBe(true)
+      expect(() => store.listAuthorableSurfaces('spc-health')).toThrow(
+        SurfaceCommitRecoveryPendingError,
+      )
+      expect(() => store.readAuthorableSurface('spc-health', 'srf-groceries')).toThrow(
+        SurfaceCommitRecoveryPendingError,
+      )
+      expect(store.listAuthorableSurfaces(other.id).surfaces).toEqual([])
+
+      deliveryAllowed = true
+      expect(store.reconcilePendingSurfaceCommits()).toEqual([])
+      expect(store.readAuthorableSurface('spc-health', 'srf-groceries').surface.state['milk']).toBe(
+        true,
+      )
+    } finally {
+      store.close()
+      rmSync(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('records one delivered identity for every Event-requiring mutation family', () => {
     const rootDir = root()
     const store = new Store({ rootDir, now })

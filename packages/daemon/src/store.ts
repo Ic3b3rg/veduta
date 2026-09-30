@@ -360,11 +360,13 @@ export class Store {
 
   /** Space-scoped read seam for the Agent's focused-Space Surface registry. */
   listAuthorableSurfaces(spaceId: string): AuthorableSurfaceInventory {
+    this.assertSpaceReadyForAgent(spaceId)
     return this.surfaceEngine.listAuthorableSurfaces(spaceId)
   }
 
   /** Space-scoped read seam for one complete Agent-authorable Surface. */
   readAuthorableSurface(spaceId: string, surfaceId: string): AuthorableSurfaceRead {
+    this.assertSpaceReadyForAgent(spaceId)
     return this.surfaceEngine.readAuthorableSurface(spaceId, surfaceId)
   }
 

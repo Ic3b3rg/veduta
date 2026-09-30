@@ -465,6 +465,7 @@ export class WorkerPool {
         router: this.router,
         complete: this.reviewComplete,
         workerId: live.workerId,
+        spaceId: live.spaceId,
         now: this.now,
       })
     } catch {
@@ -489,6 +490,7 @@ export class WorkerPool {
       {
         purpose: 'worker',
         origin: 'proactive',
+        spaceId: args.spaceId,
         workerId: live.workerId,
         workerTier: live.briefing.tier,
       },

@@ -218,6 +218,35 @@ describe('Pending-decision PWA state', () => {
     ).toHaveLength(1)
   })
 
+  it('places an authoritative “fatto” reply after the user message when UI already showed the outcome', () => {
+    const lifecycle = applyPendingDecisionFeedback(
+      [],
+      feedback(terminal, 'Executed: Send message to alice@example.com.'),
+    )
+    const withUser = [...lifecycle, { role: 'user' as const, text: 'fatto' }]
+    const answered = appendAuthoritativeChatEntry(withUser, {
+      role: 'assistant',
+      text: 'Executed: Send message to alice@example.com.',
+      pendingDecisions: [terminal],
+      decisionFeedbackId: terminal.id,
+    })
+
+    expect(answered.map((entry) => entry.role)).toEqual(['user', 'assistant'])
+    expect(answered.at(-1)).toMatchObject({
+      decisionFeedbackId: terminal.id,
+      text: 'Executed: Send message to alice@example.com.',
+    })
+  })
+
+  it('keeps an older lifecycle notice in place when a later unrelated chat message is followed by reconnect', () => {
+    const lifecycle = applyPendingDecisionFeedback(
+      [],
+      feedback(terminal, 'Executed: Send message to alice@example.com.'),
+    )
+    const withUser = [...lifecycle, { role: 'user' as const, text: 'unrelated question' }]
+    expect(reconcilePendingDecisionSnapshot(withUser, [terminal])).toEqual(withUser)
+  })
+
   it('replaces an unprojected fallback by exact id and cannot resurrect it after terminal state', () => {
     const fallback: ChatMessage = {
       role: 'assistant',

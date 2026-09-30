@@ -209,6 +209,32 @@ describe('constructor', () => {
   })
 })
 
+describe('Space recovery gate', () => {
+  it('checks the Worker Space before the runner reasons', async () => {
+    const checked: string[] = []
+    router = new ModelRouter({
+      config: routingConfig,
+      now,
+      sleep: async () => {},
+      beforeSpaceReasoning: (spaceId) => {
+        checked.push(spaceId)
+        throw new Error('Space recovery pending')
+      },
+    })
+    const runner = new ScriptedAgentRunner([[{ text: validReportText() }]])
+    const { pool } = makePool({ runner })
+    const { workerId } = pool.spawn({
+      briefing: briefing(),
+      spaceId: HEALTH,
+      goalLabel: 'the ketogenic diet',
+    })
+
+    await pool.whenSettled(workerId)
+    expect(checked).toEqual([HEALTH])
+    expect(runner.promptCalls).toEqual([])
+  })
+})
+
 describe('acceptance A: happy path, high-risk, review passes', () => {
   it('spawns synchronously, then delivers a passed-review report', async () => {
     const runner = new ScriptedAgentRunner([[{ text: validReportText(), tokensUsed: 500 }]])

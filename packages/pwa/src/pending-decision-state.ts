@@ -128,10 +128,28 @@ export function appendAuthoritativeChatEntry(
       const hasReference = entries.some((candidate) =>
         isFeedbackOrSingleReference(candidate, decision.id),
       )
-      return applyPendingDecisionFeedback(hasReference ? entries : [...entries, incoming], {
-        decision,
-        message: pendingDecisionFeedback(decision),
-      })
+      const previousFeedbackIndex = entries.findIndex(
+        (candidate) => candidate.decisionFeedbackId === decision.id,
+      )
+      const lastUserIndex = entries.reduce(
+        (last, candidate, index) => (candidate.role === 'user' ? index : last),
+        -1,
+      )
+      const updated = applyPendingDecisionFeedback(
+        hasReference ? entries : [...entries, incoming],
+        {
+          decision,
+          message: pendingDecisionFeedback(decision),
+        },
+      )
+      if (previousFeedbackIndex < 0 || previousFeedbackIndex > lastUserIndex) return updated
+      const feedbackIndex = updated.findIndex(
+        (candidate) => candidate.decisionFeedbackId === decision.id,
+      )
+      if (feedbackIndex < 0) return updated
+      const feedback = updated[feedbackIndex]
+      if (feedback === undefined) return updated
+      return [...updated.filter((_candidate, index) => index !== feedbackIndex), feedback]
     }
   }
   const knownById = new Map<string, PendingDecision>()
@@ -320,7 +338,15 @@ function lifecycleTime(decision: PendingDecision): string {
 }
 
 function chatMessagesEqual(left: ChatMessage | undefined, right: ChatMessage): boolean {
-  return left !== undefined && JSON.stringify(left) === JSON.stringify(right)
+  if (left === undefined) return false
+  return (
+    left.role === right.role &&
+    left.text === right.text &&
+    left.decisionFeedbackId === right.decisionFeedbackId &&
+    JSON.stringify(left.targets) === JSON.stringify(right.targets) &&
+    JSON.stringify(left.pendingDecisions) === JSON.stringify(right.pendingDecisions) &&
+    JSON.stringify(left.pendingDecisionIds) === JSON.stringify(right.pendingDecisionIds)
+  )
 }
 
 function feedbackEntry(
