@@ -263,7 +263,9 @@ export class WorkerPool {
     // to `lastValidReport` before the crash must still never deliver clean
     // (review-never-fails-open) — `settle()`'s own enforcement point covers
     // that uniformly, there was no chance to review it here.
-    void this.run(live, args).catch((error: unknown) => this.settleAfterRunFailure(live, error))
+    void this.run(live, args).catch((error: unknown) =>
+      this.settleAfterRunFailure(live, args, error),
+    )
 
     return { workerId }
   }
@@ -344,20 +346,41 @@ export class WorkerPool {
     }
   }
 
-  private async settleAfterRunFailure(live: LiveWorker, error: unknown): Promise<void> {
+  private async settleAfterRunFailure(
+    live: LiveWorker,
+    args: SpawnArgs,
+    error: unknown,
+  ): Promise<void> {
+    let retryReview = error instanceof SurfaceCommitRecoveryPendingError
     while (!this.disposed && !live.settled) {
       try {
-        this.settle(live, {
-          reviewStatus: 'skipped',
-          fallbackReason: `Worker run failed: ${errorText(error)}`,
-        })
+        this.store.assertSpaceReadyForAgent(live.spaceId)
+        if (
+          retryReview &&
+          live.briefing.highRisk &&
+          live.lastValidReport &&
+          live.runner &&
+          !this.deliveredEventFor(live.spaceId, live.workerId)
+        ) {
+          await this.reviewAndDeliver(live, live.runner, args)
+        } else {
+          this.settle(live, {
+            reviewStatus: 'skipped',
+            fallbackReason: `Worker run failed: ${errorText(error)}`,
+          })
+        }
         return
       } catch (settleError) {
-        if (!(settleError instanceof SurfaceCommitRecoveryPendingError)) {
+        if (settleError instanceof SurfaceCommitRecoveryPendingError) {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          continue
+        }
+        if (!retryReview) {
           console.error('Worker settlement failed', settleError)
           return
         }
-        await new Promise((resolve) => setTimeout(resolve, 100))
+        error = settleError
+        retryReview = false
       }
     }
   }

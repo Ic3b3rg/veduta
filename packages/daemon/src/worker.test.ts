@@ -290,9 +290,15 @@ describe('Space recovery gate', () => {
       deliveryAllowed = true
       expect(store.reconcilePendingSurfaceCommits()).toEqual([])
       await pool.whenSettled(workerId)
+      expect(reviewComplete).toHaveBeenCalledTimes(1)
       expect(
         store.eventLog(HEALTH).filter((event) => event.type === 'worker.delivered'),
       ).toHaveLength(1)
+      expect(
+        store.eventLog(HEALTH).find((event) => event.type === 'worker.delivered')?.payload?.[
+          'reviewStatus'
+        ],
+      ).toBe('passed')
       expect(store.getSurface(workerSurfaceId(workerId))?.state[WORKER_SETTLED_STATE_KEY]).toBe(
         true,
       )
