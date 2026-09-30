@@ -99,21 +99,6 @@ export class SurfaceCommitJournal {
     return rows.map(recordFromRow)
   }
 
-  /** A failed Space does not prevent another Space's ordered drain. */
-  reconcileAll(): SurfaceCommitRecoveryPendingError[] {
-    const failures: SurfaceCommitRecoveryPendingError[] = []
-    const spaceIds = [...new Set(this.pending().map((record) => record.spaceId))]
-    for (const spaceId of spaceIds) {
-      try {
-        this.reconcileSpace(spaceId)
-      } catch (error) {
-        if (!(error instanceof SurfaceCommitRecoveryPendingError)) throw error
-        failures.push(error)
-      }
-    }
-    return failures
-  }
-
   reconcileSpace(spaceId: string): SurfaceCommitRecord[] {
     const delivered: SurfaceCommitRecord[] = []
     for (const record of this.pending(spaceId)) {

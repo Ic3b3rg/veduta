@@ -83,7 +83,6 @@ describe('fixture corpus — surface_events (AC5)', () => {
       rootDir,
       now: () => new Date('2026-08-04T00:00:00.000Z'),
       hasSpace: () => true,
-      appendSpaceEvent: () => undefined,
     })
 
     // A second connection to the same file (node:sqlite, WAL) is how a raw
@@ -108,7 +107,6 @@ describe('fixture corpus — surface_events (AC5)', () => {
       rootDir,
       now: () => new Date('2026-08-04T00:00:00.000Z'),
       hasSpace: () => true,
-      appendSpaceEvent: () => undefined,
     })
 
     const rawDb = new DatabaseSync(join(rootDir, 'surfaces.sqlite'))
@@ -132,7 +130,6 @@ describe('fixture corpus — surface_events (AC5)', () => {
       rootDir,
       now: () => new Date('2026-08-04T00:00:00.000Z'),
       hasSpace: () => true,
-      appendSpaceEvent: () => undefined,
     })
 
     const rawDb = new DatabaseSync(join(rootDir, 'surfaces.sqlite'))

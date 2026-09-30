@@ -58,7 +58,10 @@ function visible(decisions: readonly PendingDecision[], spaceId: string | undefi
 function choiceList(decisions: readonly PendingDecision[]): string {
   const choices = decisions
     .slice(0, MAX_CHOICES)
-    .map((decision) => `${decision.id} — ${decision.summary}`)
+    .map(
+      (decision) =>
+        `${decision.id} — ${decision.summary} (${decision.allowedResolutions.join('/')})`,
+    )
   return [
     'Choose one decision by its exact id:',
     ...choices,
@@ -72,10 +75,8 @@ function resolutionFor(
   decision: PendingDecision,
   verb: Extract<DecisionIntent, { kind: 'resolve' }>['verb'],
 ): PendingDecisionResolution | undefined {
-  if (verb === 'reject' || verb === 'decline') {
-    return decision.allowedResolutions.includes('reject') ? 'reject' : undefined
-  }
-  return decision.allowedResolutions.find((resolution) => resolution !== 'reject')
+  const resolution = verb === 'decline' ? 'reject' : verb
+  return decision.allowedResolutions.includes(resolution) ? resolution : undefined
 }
 
 function feedback(decision: PendingDecision): ChatMessage {
@@ -119,8 +120,7 @@ export async function respondToChatDecisionIntent(
     const recent = recentIds
       .map((id) => scoped.find((decision) => decision.id === id))
       .filter((decision): decision is PendingDecision => decision !== undefined)
-    const candidates =
-      recent.length > 0 ? recent : scoped.filter((decision) => decision.state !== 'pending')
+    const candidates = recent
     if (candidates.length === 1) return feedback(candidates[0]!)
     return {
       role: 'assistant',

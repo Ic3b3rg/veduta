@@ -2018,6 +2018,93 @@ describe('trust layer wiring (issue #14)', () => {
     await app.close()
   })
 
+  it('resolves scoped Pending decisions through Gateway chat frames across reconnect without rerunning a model', async () => {
+    const { app, gateway, store, pendingDecisions, router, trust } = buildServer()
+    const work = store.spacesEngine.createSpace({ name: 'Work' })
+    const firstSocket = new SchedulerFakeSocket()
+    gateway.connect(firstSocket)
+    firstSocket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+
+    const send = async (socket: SchedulerFakeSocket, text: string, spaceId?: string) => {
+      const before = socket.sent.filter((frame) => frame.type === 'chat.turn-end').length
+      socket.receive({ type: 'chat.send', text, ...(spaceId ? { spaceId } : {}) })
+      await vi.waitFor(() => {
+        expect(socket.sent.filter((frame) => frame.type === 'chat.turn-end')).toHaveLength(
+          before + 1,
+        )
+      })
+      return socket.sent.filter((frame) => frame.type === 'chat.turn-end').at(-1)
+    }
+
+    try {
+      await send(firstSocket, 'send to health@example.invalid: health test', 'spc-health')
+      await send(firstSocket, 'send to work@example.invalid: work test', work.id)
+      const decisions = (await pendingDecisions.list()).decisions
+      const health = decisions.find((decision) =>
+        decision.summary.includes('health@example.invalid'),
+      )
+      const workDecision = decisions.find((decision) =>
+        decision.summary.includes('work@example.invalid'),
+      )
+      expect(health?.state).toBe('pending')
+      expect(workDecision?.state).toBe('pending')
+      if (!health || !workDecision) throw new Error('expected two pending approvals')
+
+      const modelCalls = router.callLog().length
+      router.setConfig({
+        tiers: { triage: [], reasoning: [] },
+        providerKeys: {},
+        connectionKeys: {},
+        dailyCapUsd: { triage: 5, reasoning: 20 },
+      })
+      const ambiguous = await send(firstSocket, 'approve')
+      expect(ambiguous?.message.text).toContain(health.id)
+      expect(ambiguous?.message.text).toContain(workDecision.id)
+      expect((await pendingDecisions.get(health.id))?.state).toBe('pending')
+      expect((await pendingDecisions.get(workDecision.id))?.state).toBe('pending')
+      expect(
+        store.eventLog('spc-health').filter((event) => event.type === 'outbound.delivery'),
+      ).toHaveLength(0)
+
+      const focused = await send(firstSocket, 'approve', 'spc-health')
+      expect(focused?.message).toMatchObject({
+        decisionFeedbackId: health.id,
+        pendingDecisions: [{ state: 'terminal', outcome: 'executed' }],
+      })
+      expect(
+        store.eventLog('spc-health').filter((event) => event.type === 'outbound.delivery'),
+      ).toHaveLength(1)
+
+      const clientId = firstSocket.sent.find((frame) => frame.type === 'hello')?.clientId
+      if (!clientId) throw new Error('expected Gateway client id')
+      const reconnected = new SchedulerFakeSocket()
+      gateway.connect(reconnected)
+      reconnected.receive({ type: 'hello', clientId, surfaceCursor: store.latestSurfaceCursor() })
+      const repeated = await send(reconnected, `approve ${health.id}`)
+      expect(repeated?.message).toMatchObject({
+        decisionFeedbackId: health.id,
+        pendingDecisions: [{ state: 'terminal', outcome: 'executed' }],
+      })
+      expect(
+        store.eventLog('spc-health').filter((event) => event.type === 'outbound.delivery'),
+      ).toHaveLength(1)
+
+      const globalSole = await send(reconnected, 'approve')
+      expect(globalSole?.message).toMatchObject({
+        decisionFeedbackId: workDecision.id,
+        pendingDecisions: [{ state: 'terminal', outcome: 'executed' }],
+      })
+      expect(
+        store.eventLog(work.id).filter((event) => event.type === 'outbound.delivery'),
+      ).toHaveLength(1)
+      expect(trust.listAllowlistRules()).toEqual([])
+      expect(router.callLog()).toHaveLength(modelCalls)
+      expect(firstSocket.sent.filter((frame) => frame.type === 'approval.card')).toHaveLength(2)
+    } finally {
+      await app.close()
+    }
+  })
+
   it('always cards transfer_funds (L2) through the real chat loop, even after a send_message allowlist rule exists', async () => {
     const { app, gateway, store } = buildServer()
     const socket = new SchedulerFakeSocket()

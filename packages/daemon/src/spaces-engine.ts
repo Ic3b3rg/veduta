@@ -463,7 +463,7 @@ export class SpacesEngine {
     return event
   }
 
-  /** Prepares the exact redacted Event and original day-log destination before SQLite commits. */
+  /** Prepares the exact redacted Event and original day-log destination for the Surface commit. */
   prepareSurfaceCommitEvent(
     spaceId: string,
     input: AppendSpaceEventInput,

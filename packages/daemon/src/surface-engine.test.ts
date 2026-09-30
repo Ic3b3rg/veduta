@@ -738,7 +738,8 @@ describe('Surface engine store', () => {
    * native-app latency, zero LLM. That number is a claim about the daemon on an
    * otherwise idle machine, and it holds: run this file on its own
    * (`pnpm --filter @veduta/daemon exec vitest run src/surface-engine.test.ts`)
-   * and the p95 is single-digit milliseconds.
+   * and the p95 stays below 100 ms. Set `VEDUTA_ISOLATED_BENCHMARK=1` for
+   * that strict bound and its measured result.
    *
    * Inside the full suite this file shares the CPU with every other worker,
    * several of which drive SQLite databases and spawn subprocesses, so
@@ -827,7 +828,6 @@ describe('Surface engine store', () => {
       rootDir,
       now: fixedNow,
       hasSpace: () => true,
-      appendSpaceEvent: () => undefined,
     })
 
     expect(engine.surfaceEventsAfter(0)).toMatchObject([
@@ -1687,7 +1687,6 @@ describe('Surface engine store', () => {
         rootDir,
         now: fixedNow,
         hasSpace: () => true,
-        appendSpaceEvent: () => undefined,
       })
 
       const migrated = engine.getSurface('srf-pre-022')

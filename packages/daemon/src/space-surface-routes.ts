@@ -4,6 +4,8 @@ import {
   MoveSurfaceRequestSchema,
   MoveSurfaceResultSchema,
   PinSurfaceResultSchema,
+  SurfaceCommitRecoveryPendingResponseSchema,
+  SurfaceCommitRecoveryStateSchema,
 } from '@veduta/protocol'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -49,17 +51,18 @@ export function registerSpaceSurfaceRoutes(
     return { events: store.eventLog(spaceId) }
   })
 
-  const recoveryState = () => ({
-    pending: store.recoveryPendingSurfaceCommits().map((record) => ({
-      id: record.id,
-      spaceId: record.spaceId,
-      sequence: record.sequence,
-      ...(record.surfaceEventCursor === undefined
-        ? {}
-        : { surfaceEventCursor: record.surfaceEventCursor }),
-      state: 'recovery_pending' as const,
-    })),
-  })
+  const recoveryState = () =>
+    SurfaceCommitRecoveryStateSchema.parse({
+      pending: store.recoveryPendingSurfaceCommits().map((record) => ({
+        id: record.id,
+        spaceId: record.spaceId,
+        sequence: record.sequence,
+        ...(record.surfaceEventCursor === undefined
+          ? {}
+          : { surfaceEventCursor: record.surfaceEventCursor }),
+        state: 'recovery_pending',
+      })),
+    })
 
   app.get('/api/surface-commits/recovery', recoveryState)
   app.post('/api/surface-commits/recovery', () => {
@@ -143,11 +146,11 @@ export function registerSpaceSurfaceRoutes(
 }
 
 function recoveryPendingResponse(error: SurfaceCommitRecoveryPendingError) {
-  return {
+  return SurfaceCommitRecoveryPendingResponseSchema.parse({
     outcome: error.outcome,
     surfaceCommitId: error.commitId,
     spaceId: error.spaceId,
-  }
+  })
 }
 
 function statusForSurfaceActionError(error: SurfaceActionError): number {

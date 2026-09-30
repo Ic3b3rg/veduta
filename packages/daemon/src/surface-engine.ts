@@ -190,8 +190,6 @@ export interface SurfaceEngineOptions {
   seed?: Surface[]
   hasSpace: (spaceId: string) => boolean
   surfaceCommits?: SurfaceCommitTransport
-  /** Kept only for read-only historical fixture constructors. */
-  appendSpaceEvent?: (spaceId: string, input: AppendSpaceEventInput) => unknown
 }
 
 export class SurfaceTreeConflictError extends Error {
@@ -2206,7 +2204,7 @@ export class SurfaceEngine {
   }
 
   private runWrite<T>(write: () => T): T {
-    if (this.stagedSurfaceCommits) throw new Error('nested Surface write transaction')
+    if (this.stagedSurfaceCommits) throw new Error('nested Surface commit transaction')
     const staged: SurfaceCommitRecord[] = []
     this.stagedSurfaceCommits = staged
     let result: T

@@ -1448,9 +1448,25 @@ describe('chat Pending decision resolution', () => {
     }
   })
 
+  it('asks for an exact id when “fatto” has no decision reference in this chat', async () => {
+    const decisions = approvals(1)
+    const h = buildHarness({ pendingDecisions: decisions.service })
+    try {
+      await decisions.service.resolve('approval:effect-1', 'approve', 'trusted:user')
+      await h.chatLoop.handleChatMessage(chatEvent({ text: 'fatto', spaceId: 'spc-health' }))
+      expect(decisions.effects()).toBe(1)
+      expect(h.frames.at(-1)?.frame).toMatchObject({
+        type: 'chat.turn-end',
+        message: { text: expect.stringContaining('Give its exact id') },
+      })
+    } finally {
+      h.cleanup()
+    }
+  })
+
   it.each([
     ['approval', 'approval:effect-1', ['approve', 'reject'], 'approve', 'executed'],
-    ['tree-proposal', 'tree-proposal:1', ['accept', 'reject'], 'approve', 'accepted'],
+    ['tree-proposal', 'tree-proposal:1', ['accept', 'reject'], 'accept', 'accepted'],
     ['space-proposal', 'space-proposal:proposal-1', ['accept', 'reject'], 'accept', 'accepted'],
     ['update-offer', 'update-offer:version-1', ['apply'], 'apply', 'applied'],
   ] as const)('uses the allowed resolution for %s', async (kind, id, allowed, verb, outcome) => {
@@ -1490,6 +1506,19 @@ describe('chat Pending decision resolution', () => {
     })
     const h = buildHarness({ pendingDecisions: service })
     try {
+      if (verb !== 'approve') {
+        await h.chatLoop.handleChatMessage(
+          chatEvent({
+            text: 'approve',
+            ...(scope.type === 'space' ? { spaceId: scope.spaceId } : {}),
+          }),
+        )
+        expect(resolutions).toEqual([])
+        expect(h.frames.at(-1)?.frame).toMatchObject({
+          type: 'chat.turn-end',
+          message: { text: expect.stringContaining('does not allow approve') },
+        })
+      }
       await h.chatLoop.handleChatMessage(
         chatEvent({ text: verb, ...(scope.type === 'space' ? { spaceId: scope.spaceId } : {}) }),
       )

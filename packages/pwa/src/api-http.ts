@@ -1,3 +1,5 @@
+import { SurfaceCommitRecoveryPendingResponseSchema } from '@veduta/protocol'
+
 /** Shared authenticated JSON transport for PWA API modules. */
 export function authHeaders(token: string | undefined): HeadersInit {
   return token ? { authorization: `Bearer ${token}` } : {}
@@ -70,6 +72,12 @@ async function errorMessageFromResponse(response: Response, path: string): Promi
 
 /** Renders daemon error bodies into a compact, actionable message. */
 export function errorMessageFromBody(status: number, path: string, body: unknown): string {
+  if (status === 503) {
+    const recovery = SurfaceCommitRecoveryPendingResponseSchema.safeParse(body)
+    if (recovery.success) {
+      return `Surface commit ${recovery.data.surfaceCommitId} is pending Event recovery in Space ${recovery.data.spaceId}.`
+    }
+  }
   if (body !== null && typeof body === 'object') {
     const record = body as Record<string, unknown>
     if (typeof record['error'] === 'string' && record['error'].length > 0) {
