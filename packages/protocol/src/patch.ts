@@ -50,13 +50,17 @@ const TreeMoveOperationSchema = z
   })
   .strict()
 
-export const PatchOperationSchema = z.union([
-  StateSetOperationSchema,
-  StateRemoveOperationSchema,
-  TreeSetOperationSchema,
-  TreeRemoveOperationSchema,
-  TreeMoveOperationSchema,
-])
+export function patchOperationSchema<TAtom extends z.ZodTypeAny>(atom: TAtom) {
+  return z.union([
+    StateSetOperationSchema,
+    StateRemoveOperationSchema,
+    TreeSetOperationSchema.extend({ value: atom }),
+    TreeRemoveOperationSchema,
+    TreeMoveOperationSchema,
+  ])
+}
+
+export const PatchOperationSchema = patchOperationSchema(AtomNodeSchema)
 
 /**
  * JSON-Patch-like Surface patch. Paths are scoped to either the Surface

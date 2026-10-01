@@ -1,17 +1,18 @@
 import {
-  SurfaceSchema,
-  applySurfacePatch,
-  collectNodeBindingRefs,
-  type AtomNode,
+  RenderableSurfaceSchema,
+  isKnownRenderableAtomNode,
+  applyRenderableSurfacePatch,
+  collectRenderableNodeBindingRefs,
+  type RenderableAtomNode,
   type JsonObject,
-  type PatchOperation,
-  type Surface,
+  type RenderablePatchOperation,
+  type RenderableSurface,
 } from '@veduta/protocol'
 
 export type { SurfaceUpdateFeedback } from '@veduta/catalog'
 
 /** Resolves a fast-path state mutation to every smallest Atom region bound to that state key. */
-export function affectedAtomIdsForStateKey(root: AtomNode, stateKey: string): string[] {
+export function affectedAtomIdsForStateKey(root: RenderableAtomNode, stateKey: string): string[] {
   const affected = new Set<string>()
   collectBoundAtomIds(root, stateKey, affected)
   return smallestVisibleRegions(root, affected)
@@ -23,9 +24,9 @@ export function affectedAtomIdsForStateKey(root: AtomNode, stateKey: string): st
  * bindings; tree removals fall back to their nearest surviving ancestor.
  */
 export function affectedAtomIdsForPatch(
-  previous: Surface,
-  next: Surface,
-  operations: PatchOperation[],
+  previous: RenderableSurface,
+  next: RenderableSurface,
+  operations: RenderablePatchOperation[],
 ): string[] {
   const previousAtoms = atomLocations(previous.tree)
   const nextAtoms = atomLocations(next.tree)
@@ -39,9 +40,9 @@ export function affectedAtomIdsForPatch(
 }
 
 function affectedStateRegions(
-  previous: Surface,
-  next: Surface,
-  operations: PatchOperation[],
+  previous: RenderableSurface,
+  next: RenderableSurface,
+  operations: RenderablePatchOperation[],
 ): Set<string> {
   const affected = new Set<string>()
   for (const operation of operations) {
@@ -60,9 +61,9 @@ interface TreeRegionCandidate {
 }
 
 function treeRegionCandidates(
-  previous: Surface,
-  next: Surface,
-  operations: PatchOperation[],
+  previous: RenderableSurface,
+  next: RenderableSurface,
+  operations: RenderablePatchOperation[],
   nextAtoms: ReadonlyMap<string, AtomLocation>,
 ): ReadonlyMap<string, TreeRegionCandidate> {
   const candidates = new Map<string, TreeRegionCandidate>()
@@ -79,7 +80,7 @@ function treeRegionCandidates(
 
   for (const operation of operations) {
     if (operation.target === 'state') continue
-    const surfaceAfterOperation = applySurfacePatch(trackingSurface, {
+    const surfaceAfterOperation = applyRenderableSurfacePatch(trackingSurface, {
       surfaceId: trackingSurface.id,
       operations: [operation],
     })
@@ -161,10 +162,10 @@ function changedTreeRegions(
 
 /** Adds bindings from every replayed tree so intermediate patches remain schema-valid. */
 function surfaceWithAllBindingKeys(
-  previous: Surface,
-  next: Surface,
-  operations: PatchOperation[],
-): Surface {
+  previous: RenderableSurface,
+  next: RenderableSurface,
+  operations: RenderablePatchOperation[],
+): RenderableSurface {
   const state: JsonObject = { ...previous.state, ...next.state }
   const trees = [
     previous.tree,
@@ -177,22 +178,25 @@ function surfaceWithAllBindingKeys(
   ]
 
   for (const tree of trees) {
-    for (const ref of collectNodeBindingRefs(tree, ['tree'])) {
+    for (const ref of collectRenderableNodeBindingRefs(tree, ['tree'])) {
       if (!Object.prototype.hasOwnProperty.call(state, ref.key)) state[ref.key] = null
     }
   }
 
-  return SurfaceSchema.parse({ ...previous, state })
+  return RenderableSurfaceSchema.parse({ ...previous, state })
 }
 
-function collectBoundAtomIds(node: AtomNode, stateKey: string, ids: Set<string>): void {
-  if (node.binding === stateKey) ids.add(node.id)
+function collectBoundAtomIds(node: RenderableAtomNode, stateKey: string, ids: Set<string>): void {
+  if (isKnownRenderableAtomNode(node) && node.binding === stateKey) ids.add(node.id)
   for (const child of node.children ?? []) collectBoundAtomIds(child, stateKey, ids)
 }
 
-function nearestAtomBeforeTarget(root: AtomNode, pointer: string): AtomNode | undefined {
+function nearestAtomBeforeTarget(
+  root: RenderableAtomNode,
+  pointer: string,
+): RenderableAtomNode | undefined {
   let current: unknown = root
-  let nearest: AtomNode | undefined = root
+  let nearest: RenderableAtomNode | undefined = root
 
   for (const segment of decodePointer(pointer).slice(0, -1)) {
     current = childAt(current, segment)
@@ -202,7 +206,7 @@ function nearestAtomBeforeTarget(root: AtomNode, pointer: string): AtomNode | un
   return nearest
 }
 
-function atomAtPointer(root: AtomNode, pointer: string): AtomNode | undefined {
+function atomAtPointer(root: RenderableAtomNode, pointer: string): RenderableAtomNode | undefined {
   let current: unknown = root
   for (const segment of decodePointer(pointer)) current = childAt(current, segment)
   return isAtomNode(current) ? current : undefined
@@ -220,14 +224,14 @@ function atomOwnFieldsChangedBetweenTrees(
   )
 }
 
-function atomOwnFields(node: AtomNode): Record<string, unknown> {
+function atomOwnFields(node: RenderableAtomNode): Record<string, unknown> {
   const fields: Record<string, unknown> = { ...node }
   delete fields['children']
   return fields
 }
 
 function residualAtomSnapshot(
-  node: AtomNode,
+  node: RenderableAtomNode,
   handledAtomIds: Set<string>,
 ): Record<string, unknown> {
   const snapshot = atomOwnFields(node)
@@ -239,15 +243,15 @@ function residualAtomSnapshot(
 }
 
 interface AtomLocation {
-  node: AtomNode
+  node: RenderableAtomNode
   path: string
   depth: number
 }
 
-function atomLocations(root: AtomNode): Map<string, AtomLocation> {
+function atomLocations(root: RenderableAtomNode): Map<string, AtomLocation> {
   const locations = new Map<string, AtomLocation>()
 
-  function visit(node: AtomNode, path: string, depth: number): void {
+  function visit(node: RenderableAtomNode, path: string, depth: number): void {
     locations.set(node.id, { node, path, depth })
     for (const [index, child] of (node.children ?? []).entries()) {
       visit(child, `${path}/children/${index}`, depth + 1)
@@ -281,12 +285,12 @@ function decodePointer(pointer: string): string[] {
     .map((segment) => segment.replace(/~1/g, '/').replace(/~0/g, '~'))
 }
 
-function smallestVisibleRegions(node: AtomNode, affected: Set<string>): string[] {
+function smallestVisibleRegions(node: RenderableAtomNode, affected: Set<string>): string[] {
   if (affected.has(node.id)) return [node.id]
   return (node.children ?? []).flatMap((child) => smallestVisibleRegions(child, affected))
 }
 
-function isAtomNode(value: unknown): value is AtomNode {
+function isAtomNode(value: unknown): value is RenderableAtomNode {
   return isRecord(value) && typeof value['id'] === 'string' && typeof value['type'] === 'string'
 }
 

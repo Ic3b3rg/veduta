@@ -1,5 +1,9 @@
 import { z } from 'zod'
-import { CommittedFastActionMetadataSchema, FastActionOutcomeSchema } from './action-outcome.ts'
+import {
+  CommittedFastActionMetadataSchema,
+  FastActionOutcomeSchema,
+  type CommittedFastActionMetadata,
+} from './action-outcome.ts'
 import { AuthSessionTokenSchema } from './auth.ts'
 import { AutomationOutcomeNotificationSchema } from './automation-outcome.ts'
 import { ChatClientMessageSchema, ChatMessageSchema } from './chat.ts'
@@ -103,32 +107,40 @@ export const SurfaceSnapshotSchema = z.object({
   spaces: z.array(SpaceWithSurfacesSchema),
 })
 
-export const SurfacePatchEventSchema = z
-  .object({
-    cursor: GatewayCursorSchema,
-    at: z.string().datetime(),
-    spaceId: z.string().min(1),
-    patch: PatchSchema,
-    actionOutcome: CommittedFastActionMetadataSchema.optional(),
-    freshness: FreshnessSchema,
-    /** Present when this patch established or refreshed a relative-time projection window. */
-    validity: RelativeTimeValiditySchema.optional(),
-  })
-  .superRefine((event, ctx) => {
-    const action = event.actionOutcome
-    if (
-      action &&
-      (action.surfaceId !== event.patch.surfaceId ||
-        action.eventCursor !== event.cursor ||
-        action.surfaceCursor !== event.cursor ||
-        action.duplicate)
-    )
-      ctx.addIssue({
-        code: 'custom',
-        path: ['actionOutcome'],
-        message: 'live action outcome must identify this canonical Patch event',
-      })
-  })
+export const SurfacePatchEventObjectSchema = z.object({
+  cursor: GatewayCursorSchema,
+  at: z.string().datetime(),
+  spaceId: z.string().min(1),
+  patch: PatchSchema,
+  actionOutcome: CommittedFastActionMetadataSchema.optional(),
+  freshness: FreshnessSchema,
+  /** Present when this patch established or refreshed a relative-time projection window. */
+  validity: RelativeTimeValiditySchema.optional(),
+})
+export function refineSurfacePatchEvent(
+  event: {
+    cursor: number
+    patch: { surfaceId: string }
+    actionOutcome?: CommittedFastActionMetadata | undefined
+  },
+  ctx: z.RefinementCtx,
+): void {
+  const action = event.actionOutcome
+  if (
+    action &&
+    (action.surfaceId !== event.patch.surfaceId ||
+      action.eventCursor !== event.cursor ||
+      action.surfaceCursor !== event.cursor ||
+      action.duplicate)
+  )
+    ctx.addIssue({
+      code: 'custom',
+      path: ['actionOutcome'],
+      message: 'live action outcome must identify this canonical Patch event',
+    })
+}
+export const SurfacePatchEventSchema =
+  SurfacePatchEventObjectSchema.superRefine(refineSurfacePatchEvent)
 
 export const PresenceStatusSchema = z.enum(['online', 'away'])
 
@@ -150,15 +162,19 @@ export const ApprovalCardSchema = z.object({
   expiresAt: z.string().datetime(),
 })
 
-export const SurfaceCreatedEventSchema = z
-  .object({
-    cursor: GatewayCursorSchema,
-    at: z.string().datetime(),
-    spaceId: z.string().min(1),
-    surface: SurfaceSchema,
-    order: SurfaceOrderSchema,
-  })
-  .superRefine(refineMatchingEventOrder('creation'))
+export function surfaceCreatedEventSchema<TSurface extends z.ZodTypeAny>(surface: TSurface) {
+  return z
+    .object({
+      cursor: GatewayCursorSchema,
+      at: z.string().datetime(),
+      spaceId: z.string().min(1),
+      surface,
+      order: SurfaceOrderSchema,
+    })
+    .superRefine(refineMatchingEventOrder('creation'))
+}
+
+export const SurfaceCreatedEventSchema = surfaceCreatedEventSchema(SurfaceSchema)
 
 export const SurfaceArchivedEventSchema = z
   .object({
@@ -337,88 +353,99 @@ export const GatewayClientMessageSchema = z.discriminatedUnion('type', [
   }),
 ])
 
-const GatewayServerMessageObjectSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('hello'),
-    clientId: z.string().min(1),
-    surfaceCursor: GatewayCursorSchema,
-    replayed: z.number().int().nonnegative(),
-  }),
-  z.object({
-    type: z.literal('surface.patch'),
-    event: SurfacePatchEventSchema,
-  }),
-  z.object({
-    type: z.literal('surface.created'),
-    event: SurfaceCreatedEventSchema,
-    initiatingTurn: ChatTurnCorrelationSchema.optional(),
-  }),
-  z.object({
-    type: z.literal('surface.archived'),
-    event: SurfaceArchivedEventSchema,
-  }),
-  z.object({
-    type: z.literal('surface.pinned'),
-    event: SurfacePinnedEventSchema,
-  }),
-  z.object({
-    type: z.literal('surface.moved'),
-    event: SurfaceMovedEventSchema,
-  }),
-  z.object({
-    type: z.literal('surface.presentation'),
-    event: SurfacePresentationEventSchema,
-  }),
-  z.object({
-    type: z.literal('chat.message'),
-    message: ChatMessageSchema,
-  }),
-  ChatTurnStartMessageSchema,
-  ChatTurnDeltaMessageSchema,
-  ChatTurnReplaceMessageObjectSchema,
-  ChatTurnEndMessageSchema,
-  ChatTurnErrorMessageSchema,
-  PendingDecisionLifecycleMessageObjectSchema,
-  AutomationOutcomeNotificationLifecycleMessageObjectSchema,
-  z.object({
-    type: z.literal('approval.card'),
-    card: ApprovalCardSchema,
-  }),
-  z.object({
-    type: z.literal('presence.update'),
-    presence: z.array(PresenceEntrySchema),
-  }),
-  z.object({
-    type: z.literal('space.attention'),
-    spaceId: z.string().min(1),
-    count: z.number().int().min(0),
-    revision: z.number().int().min(0),
-  }),
-  z.object({
-    type: z.literal('error'),
-    error: z.string().min(1),
-  }),
-])
+export function gatewayServerMessageSchema<
+  TCreated extends z.ZodTypeAny,
+  TPatch extends z.ZodTypeAny,
+>(createdEvent: TCreated, patchEvent: TPatch) {
+  return z
+    .discriminatedUnion('type', [
+      z.object({
+        type: z.literal('hello'),
+        clientId: z.string().min(1),
+        surfaceCursor: GatewayCursorSchema,
+        replayed: z.number().int().nonnegative(),
+      }),
+      z.object({
+        type: z.literal('surface.patch'),
+        event: patchEvent,
+      }),
+      z.object({
+        type: z.literal('surface.created'),
+        event: createdEvent,
+        initiatingTurn: ChatTurnCorrelationSchema.optional(),
+      }),
+      z.object({
+        type: z.literal('surface.archived'),
+        event: SurfaceArchivedEventSchema,
+      }),
+      z.object({
+        type: z.literal('surface.pinned'),
+        event: SurfacePinnedEventSchema,
+      }),
+      z.object({
+        type: z.literal('surface.moved'),
+        event: SurfaceMovedEventSchema,
+      }),
+      z.object({
+        type: z.literal('surface.presentation'),
+        event: SurfacePresentationEventSchema,
+      }),
+      z.object({
+        type: z.literal('chat.message'),
+        message: ChatMessageSchema,
+      }),
+      ChatTurnStartMessageSchema,
+      ChatTurnDeltaMessageSchema,
+      ChatTurnReplaceMessageObjectSchema,
+      ChatTurnEndMessageSchema,
+      ChatTurnErrorMessageSchema,
+      PendingDecisionLifecycleMessageObjectSchema,
+      AutomationOutcomeNotificationLifecycleMessageObjectSchema,
+      z.object({
+        type: z.literal('approval.card'),
+        card: ApprovalCardSchema,
+      }),
+      z.object({
+        type: z.literal('presence.update'),
+        presence: z.array(PresenceEntrySchema),
+      }),
+      z.object({
+        type: z.literal('space.attention'),
+        spaceId: z.string().min(1),
+        count: z.number().int().min(0),
+        revision: z.number().int().min(0),
+      }),
+      z.object({
+        type: z.literal('error'),
+        error: z.string().min(1),
+      }),
+    ])
+    .superRefine((message, context) => {
+      if (message.type === 'pending-decision.lifecycle') {
+        const lifecycle = PendingDecisionLifecycleMessageObjectSchema.safeParse(message)
+        if (lifecycle.success) refinePendingDecisionLifecycleMessage(lifecycle.data, context)
+      }
+      if (message.type === 'chat.turn-replace') {
+        const replacement = ChatTurnReplaceMessageObjectSchema.safeParse(message)
+        if (replacement.success) refineChatTurnReplaceMessage(replacement.data, context)
+      }
+      if (message.type === 'automation-outcome-notification.lifecycle') {
+        const lifecycle =
+          AutomationOutcomeNotificationLifecycleMessageObjectSchema.safeParse(message)
+        if (lifecycle.success && lifecycle.data.revision !== lifecycle.data.notification.revision) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['notification', 'revision'],
+            message: 'notification revision must match the lifecycle revision',
+          })
+        }
+      }
+    })
+}
 
-export const GatewayServerMessageSchema = GatewayServerMessageObjectSchema.superRefine(
-  (message, context) => {
-    if (message.type === 'pending-decision.lifecycle') {
-      refinePendingDecisionLifecycleMessage(message, context)
-    }
-    if (message.type === 'chat.turn-replace') {
-      refineChatTurnReplaceMessage(message, context)
-    }
-    if (
-      message.type === 'automation-outcome-notification.lifecycle' &&
-      message.revision !== message.notification.revision
-    ) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['notification', 'revision'],
-        message: 'notification revision must match the lifecycle revision',
-      })
-    }
-  },
+export const GatewayServerMessageSchema = gatewayServerMessageSchema(
+  SurfaceCreatedEventSchema,
+  SurfacePatchEventSchema,
 )
 
 function refineChatTurnReplaceMessage(

@@ -3,10 +3,10 @@ import {
   AUTOMATION_OUTCOMES_STATE_KEY,
   AutomationOutcomeStatusesSchema,
   surfaceRelativeTimeStatus,
-  type AtomNode,
+  type KnownRenderableAtomNode,
   type AutomationOutcomeStatus,
   type JsonValue,
-  type Surface,
+  type RenderableSurface,
   type SurfaceRelativeTimeStatus,
 } from '@veduta/protocol'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -28,7 +28,7 @@ export function SurfaceCard({
   onTogglePin,
   onRevealFeedbackShown,
 }: {
-  surface: Surface
+  surface: RenderableSurface
   selected: boolean
   revealFeedbackKey?: string | undefined
   updateFeedback?: SurfaceUpdateFeedback | undefined
@@ -83,7 +83,7 @@ export function SurfaceCard({
     return () => window.clearTimeout(timeout)
   }, [revealHighlighted])
   const dispatch = useCallback(
-    (node: AtomNode, actionName: string, value?: JsonValue) => {
+    (node: KnownRenderableAtomNode, actionName: string, value?: JsonValue) => {
       if (!runtime) return Promise.reject(new Error('Surface actions are unavailable'))
       return runtime.dispatchSurfaceAction(surface.id, node.id, actionName, value)
     },
@@ -237,7 +237,7 @@ function scrollSurfaceCardIntoView(card: HTMLElement): void {
 const MAX_TIMEOUT_MS = 2_147_483_647
 
 /** Re-evaluates a cached Surface at its next validity boundary, even if no Gateway event arrives. */
-function useRelativeTimeStatus(surface: Surface): SurfaceRelativeTimeStatus | undefined {
+function useRelativeTimeStatus(surface: RenderableSurface): SurfaceRelativeTimeStatus | undefined {
   const startsAt = surface.validity?.startsAt
   const expiresAt = surface.validity?.expiresAt
   const [now, setNow] = useState(() => Date.now())

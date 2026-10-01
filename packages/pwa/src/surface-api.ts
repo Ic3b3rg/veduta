@@ -1,26 +1,26 @@
 import {
-  FastSurfaceActionResultSchema,
+  RenderableFastSurfaceActionResultSchema,
   MoveSurfaceResultSchema,
-  PinSurfaceResultSchema,
-  SurfaceSnapshotSchema,
-  SurfaceSchema,
-  type AtomNode,
-  type FastSurfaceActionResult,
+  RenderablePinSurfaceResultSchema,
+  RenderableSurfaceSnapshotSchema,
+  RenderableSurfaceSchema,
+  type KnownRenderableAtomNode,
+  type RenderableFastSurfaceActionResult,
   type JsonObject,
   type JsonValue,
-  type Surface,
-  type SurfaceSnapshot,
+  type RenderableSurface,
+  type RenderableSurfaceSnapshot,
   type MoveSurfaceResult,
-  type PinSurfaceResult,
+  type RenderablePinSurfaceResult,
   type SurfaceMoveDirection,
 } from '@veduta/protocol'
 import { z } from 'zod'
 import { authHeaders, errorMessageFromBody, getJson, postJson } from './api-http.ts'
 
-export type SpaceWithSurfaces = SurfaceSnapshot['spaces'][number]
+export type SpaceWithSurfaces = RenderableSurfaceSnapshot['spaces'][number]
 
 const SurfaceActionResponseSchema = z.union([
-  FastSurfaceActionResultSchema,
+  RenderableFastSurfaceActionResultSchema,
   z.object({ turn: z.object({ id: z.string().min(1) }).passthrough() }),
 ])
 
@@ -31,8 +31,8 @@ const SpaceAttentionSeenResponseSchema = z.object({
 
 export type SurfaceActionResponse = z.infer<typeof SurfaceActionResponseSchema>
 
-export async function fetchSpaces(token?: string): Promise<SurfaceSnapshot> {
-  return SurfaceSnapshotSchema.parse(await getJson('/api/spaces', token))
+export async function fetchSpaces(token?: string): Promise<RenderableSurfaceSnapshot> {
+  return RenderableSurfaceSnapshotSchema.parse(await getJson('/api/spaces', token))
 }
 
 export async function markSpaceAttentionSeen(
@@ -54,9 +54,9 @@ export async function pinSurface(
   surfaceId: string,
   pinned: boolean,
   token?: string,
-): Promise<PinSurfaceResult> {
+): Promise<RenderablePinSurfaceResult> {
   const body = await postJson(`/api/surfaces/${surfaceId}/pin`, { pinned }, token)
-  return PinSurfaceResultSchema.parse(body)
+  return RenderablePinSurfaceResultSchema.parse(body)
 }
 
 export async function moveSurface(
@@ -80,7 +80,7 @@ export async function invokeFastAction(
   value: JsonValue,
   token?: string,
   idempotencyKey?: string,
-): Promise<FastSurfaceActionResult> {
+): Promise<RenderableFastSurfaceActionResult> {
   const result = await invokeSurfaceAction(
     surfaceId,
     nodeId,
@@ -126,16 +126,16 @@ export async function invokeSurfaceAction(
 }
 
 export function optimisticFastSurface(
-  surface: Surface,
-  node: AtomNode,
+  surface: RenderableSurface,
+  node: KnownRenderableAtomNode,
   actionName: string,
   value: JsonValue,
   updatedAt = new Date().toISOString(),
-): Surface {
+): RenderableSurface {
   const action = node.actions?.find((candidate) => candidate.name === actionName)
   if (action?.path !== 'fast' || action.stateKey === undefined) return surface
 
-  return SurfaceSchema.parse({
+  return RenderableSurfaceSchema.parse({
     ...surface,
     state: { ...surface.state, [action.stateKey]: value },
     freshness: { updatedAt, updatedBy: 'user' },

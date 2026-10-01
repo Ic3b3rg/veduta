@@ -1,16 +1,16 @@
 import {
-  applySurfacePatchEvent,
+  applyRenderableSurfacePatchEvent,
   SYSTEM_SPACE_ID,
-  SurfaceSnapshotSchema,
+  RenderableSurfaceSnapshotSchema,
   type SurfaceArchivedEvent,
-  type SurfaceCreatedEvent,
+  type RenderableSurfaceCreatedEvent,
   type SurfaceMovedEvent,
   type SurfaceOrder,
-  type SurfacePatchEvent,
+  type RenderableSurfacePatchEvent,
   type SurfacePinnedEvent,
   type SurfacePresentationEvent,
-  type SurfaceSnapshot,
-  type Surface,
+  type RenderableSurfaceSnapshot,
+  type RenderableSurface,
 } from '@veduta/protocol'
 import type { SpaceWithSurfaces } from './api.ts'
 
@@ -65,24 +65,31 @@ function homeSpaceSummary(space: SpaceWithSurfaces): HomeSpaceSummary {
   }
 }
 
-export function saveSnapshot(storage: Storage, key: string, snapshot: SurfaceSnapshot): void {
+export function saveSnapshot(
+  storage: Storage,
+  key: string,
+  snapshot: RenderableSurfaceSnapshot,
+): void {
   storage.setItem(
     key,
     JSON.stringify({
-      ...SurfaceSnapshotSchema.parse(snapshot),
+      ...RenderableSurfaceSnapshotSchema.parse(snapshot),
       surfaceOrderAuthority: CANONICAL_HOME_CACHE_AUTHORITY,
     }),
   )
 }
 
-export function cachedSnapshot(storage: Storage, key: string): SurfaceSnapshot | undefined {
+export function cachedSnapshot(
+  storage: Storage,
+  key: string,
+): RenderableSurfaceSnapshot | undefined {
   const raw = storage.getItem(key)
   if (!raw) return undefined
 
   try {
     const json = JSON.parse(raw) as { surfaceOrderAuthority?: unknown }
     if (json.surfaceOrderAuthority !== CANONICAL_HOME_CACHE_AUTHORITY) return undefined
-    const parsed = SurfaceSnapshotSchema.safeParse(json)
+    const parsed = RenderableSurfaceSnapshotSchema.safeParse(json)
     return parsed.success ? parsed.data : undefined
   } catch {
     return undefined
@@ -96,8 +103,8 @@ export function cachedSnapshot(storage: Storage, key: string): SurfaceSnapshot |
 // without touching React state directly.
 
 export type SurfaceStreamEvent =
-  | { type: 'surface.patch'; event: SurfacePatchEvent }
-  | { type: 'surface.created'; event: SurfaceCreatedEvent }
+  | { type: 'surface.patch'; event: RenderableSurfacePatchEvent }
+  | { type: 'surface.created'; event: RenderableSurfaceCreatedEvent }
   | { type: 'surface.archived'; event: SurfaceArchivedEvent }
   | { type: 'surface.pinned'; event: SurfacePinnedEvent }
   | { type: 'surface.moved'; event: SurfaceMovedEvent }
@@ -120,7 +127,7 @@ export function surfaceOrderForStreamEvent(
 
 export function applySurfacePatchToSpaces(
   spaces: SpaceWithSurfaces[],
-  event: SurfacePatchEvent,
+  event: RenderableSurfacePatchEvent,
 ): SurfaceStreamApplyResult {
   let applied = false
   const next = spaces.map((space) => ({
@@ -128,7 +135,7 @@ export function applySurfacePatchToSpaces(
     surfaces: space.surfaces.map((surface) => {
       if (surface.id !== event.patch.surfaceId) return surface
       applied = true
-      return applySurfacePatchEvent(surface, event)
+      return applyRenderableSurfacePatchEvent(surface, event)
     }),
   }))
   return { spaces: next, applied }
@@ -136,7 +143,7 @@ export function applySurfacePatchToSpaces(
 
 export function applySurfaceCreatedToSpaces(
   spaces: SpaceWithSurfaces[],
-  event: SurfaceCreatedEvent,
+  event: RenderableSurfaceCreatedEvent,
 ): SurfaceStreamApplyResult {
   let foundSpace = false
   const next = spaces.map((space) => {
@@ -207,7 +214,7 @@ export function applySurfaceOrderToSpaces(
   const next = spaces.map((space) => {
     if (space.id !== order.spaceId) return space
     const byId = new Map(space.surfaces.map((surface) => [surface.id, surface]))
-    const ordered: Surface[] = []
+    const ordered: RenderableSurface[] = []
 
     for (const surfaceId of order.pinnedSurfaceIds) {
       const surface = byId.get(surfaceId)

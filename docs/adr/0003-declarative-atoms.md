@@ -95,6 +95,22 @@ tree, typed state, Pin, and canonical order. The Agent chooses presentation at c
 change it later only for an explicit current user request; models never author CSS, percentages, or
 grid instructions.
 
+## Read compatibility for Atom version skew (issue #148)
+
+Authoring and persistence keep the closed canonical Atom catalog. Client reads have an explicit
+`RenderableAtomNode` / `RenderableSurface` projection, used consistently by HTTP responses,
+Gateway frames, confirmed cache, and patch replay. A known type must satisfy its current catalog
+contract. A genuinely unknown name may retain JSON metadata and valid known descendants so
+`UnknownAtom` can show its original type and identity. Future metadata is never an executable
+local action or binding declaration.
+
+Known validation uses a separate tree value in which unknown nodes serve only as inert containers;
+the rendered and cached tree retains the original unknown nodes. This preserves Form ancestor
+context and known descendant state validation without admitting unknown types to the authoring
+schema. Both read and canonical patches use the same application algorithm and validate the complete
+result with their own schema. A renderable read value remains invalid for canonical persistence or
+Template import until the local catalog implements that Atom.
+
 ## Considered Options
 
 - Free-form generated HTML/JSX in a sandbox: rejected for v1 — not diffable, inconsistent, hallucination-prone. It returns post-v1 only as a sandboxed escape hatch for the long tail.

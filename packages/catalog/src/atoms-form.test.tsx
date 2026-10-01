@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { SurfaceSchema, type AtomNode, type JsonValue } from '@veduta/protocol'
+import { SurfaceSchema, type KnownRenderableAtomNode, type JsonValue } from '@veduta/protocol'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderNode } from './render.tsx'
@@ -65,7 +65,7 @@ describe('Form text Atoms', () => {
 
   it('retains the draft after failure and permits an explicit retry', async () => {
     const dispatch = vi
-      .fn<(node: AtomNode, actionName: string, value?: JsonValue) => Promise<void>>()
+      .fn<(node: KnownRenderableAtomNode, actionName: string, value?: JsonValue) => Promise<void>>()
       .mockRejectedValueOnce(new Error('The Gateway could not save this Form.'))
       .mockResolvedValueOnce(undefined)
     render(renderNode(formSurface.tree, { state: formSurface.state, dispatch }))

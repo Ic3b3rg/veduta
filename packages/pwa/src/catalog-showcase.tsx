@@ -1,5 +1,5 @@
 import { catalogShowcaseSurface, renderNode } from '@veduta/catalog'
-import type { AtomNode, JsonObject, JsonValue } from '@veduta/protocol'
+import type { KnownRenderableAtomNode, JsonObject, JsonValue } from '@veduta/protocol'
 import { useState } from 'react'
 import { useCatalogTheme } from './theme.ts'
 import './styles/motion-showcase.css'
@@ -8,7 +8,7 @@ export function CatalogShowcasePage() {
   const theme = useCatalogTheme()
   const [state, setState] = useState<JsonObject>(catalogShowcaseSurface.state)
 
-  function dispatch(node: AtomNode, actionName: string, value?: JsonValue): void {
+  function dispatch(node: KnownRenderableAtomNode, actionName: string, value?: JsonValue): void {
     const action = node.actions?.find((candidate) => candidate.name === actionName)
     if (action?.path !== 'fast') return
     const stateKey = action.stateKey

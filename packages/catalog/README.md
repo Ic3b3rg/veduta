@@ -94,3 +94,23 @@ Unknown types from a newer Gateway show their type and identity while retaining 
 and siblings. They remain rejected at authoring boundaries. The clean browser composition in
 `packages/e2e/tests/layout-atoms.spec.ts` checks media loading and failure, one Pending replacement,
 reload, desktop and mobile viewports, light and dark themes, and reduced motion.
+
+## Client version skew
+
+Authoring, persistence, and Template import use the closed `AtomNodeSchema` and `SurfaceSchema`.
+Client HTTP responses, Gateway frames, confirmed cache, and patch replay use the explicit
+`RenderableAtomNodeSchema` and `RenderableSurfaceSchema` read contracts. Known Atoms reuse their
+catalog validation, including ancestor-sensitive Forms and typed bindings. Only a genuinely new
+Atom type may retain future JSON metadata; that metadata does not declare executable local actions
+or bindings. Known descendants and siblings remain validated and rendered.
+
+The catalog accepts `RenderableAtomNode`. A future type reaches `UnknownAtom` with its original
+name and identity. It is never asserted to be a canonical `AtomNode`, and a read projection cannot
+be imported as a Template or persisted through the closed authoring contract. Read and canonical
+patch application share one application algorithm and each validate the complete resulting Surface.
+
+`packages/e2e/tests/atom-wire-compatibility.spec.ts` transforms actual browser HTTP responses and
+WebSocket frames to emulate a newer Gateway, then verifies live Pending replacement, reload,
+confirmed cache while offline, and recovery. For UI verification against a newer Gateway, open a
+Space containing a future Atom, check its visible type and identity beside known content, refresh,
+and refresh again while offline; the fallback and known content must survive each read.

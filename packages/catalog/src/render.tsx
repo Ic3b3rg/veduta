@@ -1,4 +1,9 @@
-import { collectNodeBindingRefs, type AtomNode, type NodeBindingRef } from '@veduta/protocol'
+import {
+  collectRenderableNodeBindingRefs,
+  isKnownRenderableAtomNode,
+  type AtomType,
+  type RenderableAtomNode,
+} from '@veduta/protocol'
 import {
   cloneElement,
   isValidElement,
@@ -48,7 +53,12 @@ import {
 import { useAtomMotion } from './atom-motion.ts'
 import { tokensFor } from './design-system.ts'
 import { renderValidationIssues } from './render-validation.ts'
-import type { AtomProps, RenderContext, SurfaceUpdateFeedback } from './types.ts'
+import type {
+  AtomProps,
+  RenderableAtomProps,
+  RenderContext,
+  SurfaceUpdateFeedback,
+} from './types.ts'
 
 type AtomRenderer = (props: AtomProps) => ReactNode
 
@@ -86,9 +96,9 @@ const renderers = {
   ListItem: ListItemAtom,
   Automation: AutomationAtom,
   Pending: PendingAtom,
-} satisfies Record<AtomNode['type'], AtomRenderer>
+} satisfies Record<AtomType, AtomRenderer>
 
-export function renderNode(node: AtomNode, ctx: RenderContext): ReactNode {
+export function renderNode(node: RenderableAtomNode, ctx: RenderContext): ReactNode {
   const issues = renderValidationIssues(node, ctx.state)
   if (issues.length > 0) {
     const tokens = tokensFor(ctx.theme)
@@ -113,7 +123,7 @@ export function renderNode(node: AtomNode, ctx: RenderContext): ReactNode {
   return <MotionTree node={node} ctx={ctx} />
 }
 
-function MotionTree({ node, ctx }: AtomProps): ReactNode {
+function MotionTree({ node, ctx }: RenderableAtomProps): ReactNode {
   const previousAtomIdsRef = useRef<ReadonlySet<string>>(new Set())
   const dispatchRef = useRef(ctx.dispatch)
   const currentAtomIds = collectAtomIds(node)
@@ -150,7 +160,6 @@ const MotionNode = memo(function MotionNodeComponent({
   shouldAnimateEntrance,
   inheritedContentUpdateKey,
 }: MotionNodeProps): ReactNode {
-  const Renderer = Object.hasOwn(renderers, node.type) ? renderers[node.type] : UnknownAtom
   const regionUpdateKey = ctx.motion?.update?.atomIds.includes(node.id)
     ? ctx.motion.update.key
     : undefined
@@ -169,7 +178,6 @@ const MotionNode = memo(function MotionNodeComponent({
     <MotionAtom
       node={node}
       ctx={ctx}
-      Renderer={Renderer}
       siblingIndex={siblingIndex}
       shouldAnimateEntrance={shouldAnimateEntrance}
       regionUpdateKey={regionUpdateKey}
@@ -180,7 +188,7 @@ const MotionNode = memo(function MotionNodeComponent({
   )
 }, motionNodePropsEqual)
 
-type MotionNodeProps = AtomProps & {
+type MotionNodeProps = RenderableAtomProps & {
   siblingIndex: number
   shouldAnimateEntrance: (atomId: string) => boolean
   inheritedContentUpdateKey?: string | undefined
@@ -204,25 +212,17 @@ function motionNodePropsEqual(previous: MotionNodeProps, next: MotionNodeProps):
 }
 
 function boundStateEqual(
-  node: AtomNode,
+  node: RenderableAtomNode,
   previous: RenderContext['state'],
   next: RenderContext['state'],
 ): boolean {
-  return renderedBindingRefs(node).every(
+  return collectRenderableNodeBindingRefs(node, []).every(
     (ref) => ref.kind !== 'binding' || valuesEqual(previous[ref.key], next[ref.key]),
   )
 }
 
-function renderedBindingRefs(node: AtomNode): NodeBindingRef[] {
-  const { children, ...ownNode } = node
-  // Unknown version-skew metadata belongs to the newer catalog; only its known
-  // descendants participate in this client's binding and update contracts.
-  const ownRefs = Object.hasOwn(renderers, node.type) ? collectNodeBindingRefs(ownNode, []) : []
-  return [...ownRefs, ...(children ?? []).flatMap(renderedBindingRefs)]
-}
-
 function motionEqual(
-  node: AtomNode,
+  node: RenderableAtomNode,
   previous: SurfaceUpdateFeedback | undefined,
   next: SurfaceUpdateFeedback | undefined,
 ): boolean {
@@ -266,14 +266,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function MotionAtom({
   node,
   ctx,
-  Renderer,
   siblingIndex,
   shouldAnimateEntrance,
   regionUpdateKey,
   contentUpdateKey,
   children,
-}: AtomProps & {
-  Renderer: AtomRenderer
+}: RenderableAtomProps & {
   siblingIndex: number
   shouldAnimateEntrance: (atomId: string) => boolean
   regionUpdateKey: string | undefined
@@ -290,7 +288,10 @@ function MotionAtom({
     contentUpdateKey,
   })
 
-  const rendered = Renderer({ node, ctx, children })
+  const rendered =
+    isKnownRenderableAtomNode(node) && Object.hasOwn(renderers, node.type)
+      ? renderers[node.type]({ node, ctx, children })
+      : UnknownAtom({ node, ctx, children })
   if (!isValidElement<MotionElementProps>(rendered)) return rendered
   return cloneElement(rendered, {
     'data-veduta-atom-id': node.id,
@@ -303,7 +304,7 @@ interface MotionElementProps {
   'data-veduta-motion-id'?: string
 }
 
-function collectAtomIds(node: AtomNode, ids = new Set<string>()): Set<string> {
+function collectAtomIds(node: RenderableAtomNode, ids = new Set<string>()): Set<string> {
   ids.add(node.id)
   for (const child of node.children ?? []) collectAtomIds(child, ids)
   return ids

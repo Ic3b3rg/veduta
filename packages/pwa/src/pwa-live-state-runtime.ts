@@ -1,17 +1,18 @@
 import {
   GatewayClientMessageSchema,
-  GatewayServerMessageSchema,
+  isKnownRenderableAtomNode,
+  RenderableGatewayServerMessageSchema,
   type AutomationOutcomeNotification,
   type AuthStatus,
-  type AtomNode,
+  type RenderableAtomNode,
   type ChatMessage,
-  type GatewayServerMessage,
+  type RenderableGatewayServerMessage,
   type JsonObject,
   type JsonValue,
-  type FastSurfaceActionResult,
+  type RenderableFastSurfaceActionResult,
   type PendingDecisionResolution,
   type PendingDecision,
-  type Surface,
+  type RenderableSurface,
   type SurfaceMoveDirection,
 } from '@veduta/protocol'
 import * as defaultApi from './api.ts'
@@ -48,10 +49,10 @@ import {
   type SurfaceUpdateFeedback,
 } from './surface-motion.ts'
 
-type Presence = Extract<GatewayServerMessage, { type: 'presence.update' }>['presence']
+type Presence = Extract<RenderableGatewayServerMessage, { type: 'presence.update' }>['presence']
 export type LivePresentationEvent = {
   sequence: number
-  frame: Extract<GatewayServerMessage, { type: 'surface.created' }> | ChatTurnFrame
+  frame: Extract<RenderableGatewayServerMessage, { type: 'surface.created' }> | ChatTurnFrame
   clientId: string | undefined
   pendingTurnIds: string[]
 }
@@ -134,7 +135,7 @@ export class PwaLiveStateRuntime {
   private surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback> = {}
   private feedbackSequence = 0
   private presentationEvents: LivePresentationEvent[] = []
-  private optimisticSurfaces = new Map<string, { key: string; surface: Surface }>()
+  private optimisticSurfaces = new Map<string, { key: string; surface: RenderableSurface }>()
   private formRetryKeys = new Map<string, string>()
 
   constructor(options: PwaLiveStateRuntimeOptions = {}) {
@@ -302,7 +303,7 @@ export class PwaLiveStateRuntime {
     const epoch = this.epoch
     const generation = ++this.connectionGeneration
     this.notifications.beginConnection()
-    const receive = (frame: GatewayServerMessage) => {
+    const receive = (frame: RenderableGatewayServerMessage) => {
       if (!this.active(epoch) || generation !== this.connectionGeneration) return
       this.receive(frame)
     }
@@ -365,8 +366,8 @@ export class PwaLiveStateRuntime {
     this.publish()
   }
 
-  private receive(input: GatewayServerMessage): void {
-    const parsed = GatewayServerMessageSchema.safeParse(input)
+  private receive(input: RenderableGatewayServerMessage): void {
+    const parsed = RenderableGatewayServerMessageSchema.safeParse(input)
     if (!parsed.success) {
       this.reportError('Malformed Gateway frame')
       void this.refreshSpaces()
@@ -636,7 +637,11 @@ export class PwaLiveStateRuntime {
     }
   }
 
-  confirmSurface = (surface: Surface, atomIds?: readonly string[], cursor?: number): void => {
+  confirmSurface = (
+    surface: RenderableSurface,
+    atomIds?: readonly string[],
+    cursor?: number,
+  ): void => {
     try {
       if (!this.surfaces.confirmSurface(surface, cursor)) return
       if (atomIds) this.feedback(surface.id, atomIds)
@@ -658,7 +663,7 @@ export class PwaLiveStateRuntime {
     }
   }
 
-  private findSurface(id: string): Surface | undefined {
+  private findSurface(id: string): RenderableSurface | undefined {
     return this.surfaces.spaces
       .flatMap((space) => space.surfaces)
       .find((surface) => surface.id === id)
@@ -672,8 +677,11 @@ export class PwaLiveStateRuntime {
   ): Promise<void> {
     const surface = this.findSurface(surfaceId)
     const node = surface && findNode(surface.tree, nodeId)
-    const action = node?.actions?.find((action) => action.name === name)
-    if (!surface || !node || !action) {
+    const action =
+      node && isKnownRenderableAtomNode(node)
+        ? node.actions?.find((action) => action.name === name)
+        : undefined
+    if (!surface || !node || !isKnownRenderableAtomNode(node) || !action) {
       this.reportError(`Surface update failed: undeclared action "${name}"`)
       return
     }
@@ -770,7 +778,7 @@ export class PwaLiveStateRuntime {
       this.optimisticSurfaces.delete(surfaceId)
   }
 
-  async togglePin(surface: Surface): Promise<void> {
+  async togglePin(surface: RenderableSurface): Promise<void> {
     const epoch = this.epoch
     try {
       const result = await this.api.pinSurface(surface.id, !surface.pinned, this.token)
@@ -857,7 +865,7 @@ export class PwaLiveStateRuntime {
     name: string,
     value: JsonValue,
     idempotencyKey?: string,
-  ): Promise<FastSurfaceActionResult> {
+  ): Promise<RenderableFastSurfaceActionResult> {
     const epoch = this.epoch
     const result = await this.api.invokeFastAction(
       surfaceId,
@@ -886,7 +894,7 @@ function freeze<T>(value: T): T {
   return value
 }
 
-function findNode(node: AtomNode, id: string): AtomNode | undefined {
+function findNode(node: RenderableAtomNode, id: string): RenderableAtomNode | undefined {
   if (node.id === id) return node
   for (const child of node.children ?? []) {
     const found = findNode(child, id)

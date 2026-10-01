@@ -1,4 +1,4 @@
-import type { Surface, SurfaceMoveDirection } from '@veduta/protocol'
+import type { RenderableSurface, SurfaceMoveDirection } from '@veduta/protocol'
 import { freshnessLabel, type SpaceWithSurfaces } from './api.ts'
 import { AttentionBadge } from './attention-badge.tsx'
 import { SurfaceCard } from './surface-card.tsx'
@@ -20,13 +20,13 @@ export function SpaceSection({
   focusedSurfaceId: string | undefined
   surfaceRevealFeedbackKeys: Record<string, string>
   surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback>
-  onFocus: (space: SpaceWithSurfaces, surface?: Surface) => void
+  onFocus: (space: SpaceWithSurfaces, surface?: RenderableSurface) => void
   onMoveSurface: (
     space: SpaceWithSurfaces,
     surfaceId: string,
     direction: SurfaceMoveDirection,
   ) => void
-  onTogglePin: (surface: Surface, pinned: boolean) => void
+  onTogglePin: (surface: RenderableSurface, pinned: boolean) => void
   onSurfaceRevealFeedbackShown: (surfaceId: string, feedbackKey: string) => void
 }) {
   const surfaces = space.surfaces
@@ -70,7 +70,7 @@ export function SpaceSection({
   )
 }
 
-function freshestLabel(surfaces: Surface[]): string {
+function freshestLabel(surfaces: RenderableSurface[]): string {
   const latest = surfaces
     .map((surface) => Date.parse(surface.freshness.updatedAt))
     .filter(Number.isFinite)

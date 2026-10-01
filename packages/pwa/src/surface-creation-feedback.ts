@@ -1,7 +1,7 @@
-import type { GatewayServerMessage } from '@veduta/protocol'
+import type { RenderableGatewayServerMessage } from '@veduta/protocol'
 import { useCallback, useRef, useState } from 'react'
 
-type SurfaceCreatedMessage = Extract<GatewayServerMessage, { type: 'surface.created' }>
+type SurfaceCreatedMessage = Extract<RenderableGatewayServerMessage, { type: 'surface.created' }>
 
 interface PendingTurns {
   has(turnId: string): boolean

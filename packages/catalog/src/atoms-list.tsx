@@ -4,7 +4,7 @@ import { actionValue, boundValue, findAction, motionContent, text } from './atom
 import { bodyTextStyle } from './atom-styles.ts'
 import { BadgeAtom } from './atoms-content.tsx'
 import { tokensFor } from './design-system.ts'
-import type { AtomProps } from './types.ts'
+import type { AtomProps, RenderableAtomProps } from './types.ts'
 import { Item } from './ui/item.tsx'
 import { Switch } from './ui/switch.tsx'
 
@@ -170,7 +170,7 @@ function automationHistoryTimeLabel(iso: string): string {
   return Number.isFinite(date.getTime()) ? date.toLocaleString() : iso
 }
 
-export function UnknownAtom({ node, ctx, children }: AtomProps): ReactNode {
+export function UnknownAtom({ node, ctx, children }: RenderableAtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
   return (
     <div

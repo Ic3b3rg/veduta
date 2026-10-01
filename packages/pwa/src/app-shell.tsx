@@ -3,7 +3,7 @@ import type {
   ChatMessage,
   PendingDecision,
   PendingDecisionResolution,
-  Surface,
+  RenderableSurface,
   SurfaceMoveDirection,
 } from '@veduta/protocol'
 import { Link } from 'react-router-dom'
@@ -59,13 +59,13 @@ interface AppShellProps {
   onOpenModelConnections: () => void
   onRetrySpaces: () => void
   onInstallDone: () => void
-  onFocusSpace: (space: SpaceWithSurfaces, surface?: Surface) => void
+  onFocusSpace: (space: SpaceWithSurfaces, surface?: RenderableSurface) => void
   onMoveSurface: (
     space: SpaceWithSurfaces,
     surfaceId: string,
     direction: SurfaceMoveDirection,
   ) => void
-  onTogglePin: (surface: Surface, pinned: boolean) => void
+  onTogglePin: (surface: RenderableSurface, pinned: boolean) => void
   onSurfaceRevealFeedbackShown: (surfaceId: string, feedbackKey: string) => void
   onResolvePendingDecision: (
     decisionId: string,

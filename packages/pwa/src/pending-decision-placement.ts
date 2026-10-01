@@ -1,10 +1,10 @@
-import type { PendingDecision, Surface } from '@veduta/protocol'
+import type { PendingDecision, RenderableSurface } from '@veduta/protocol'
 import type { SpaceWithSurfaces } from './api.ts'
 
 export interface AssignedPendingDecision {
   decision: PendingDecision
   space: SpaceWithSurfaces
-  surface: Surface
+  surface: RenderableSurface
 }
 
 export interface PendingDecisionPlacement {

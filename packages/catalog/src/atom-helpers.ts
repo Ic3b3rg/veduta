@@ -29,11 +29,14 @@ export const text = (value: unknown): string =>
 export const optionalText = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined
 
-export function boundValue(node: AtomNode, ctx: RenderContext): JsonValue | undefined {
+export function boundValue(
+  node: Pick<AtomNode, 'binding'>,
+  ctx: RenderContext,
+): JsonValue | undefined {
   return node.binding ? ctx.state[node.binding] : undefined
 }
 
-export function findAction(node: AtomNode, names: string[]): Action | undefined {
+export function findAction(node: Pick<AtomNode, 'actions'>, names: string[]): Action | undefined {
   for (const name of names) {
     const action = node.actions?.find((candidate) => candidate.name === name)
     if (action) return action

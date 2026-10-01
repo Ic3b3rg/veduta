@@ -1,4 +1,8 @@
-import { type OnboardingStatus, type Surface, type SurfaceMoveDirection } from '@veduta/protocol'
+import {
+  type OnboardingStatus,
+  type RenderableSurface,
+  type SurfaceMoveDirection,
+} from '@veduta/protocol'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BrowserRouter } from 'react-router-dom'
 import { ApiResponseError, fetchOnboardingStatus, type SpaceWithSurfaces } from './api.ts'
@@ -139,7 +143,7 @@ function RoutedApp() {
   const dismissAutomationOutcomeNotification = (
     notification: (typeof automationOutcomeNotifications)[number],
   ) => runtime.actOnNotification(notification, 'dismiss').then(() => undefined)
-  const focusSpace = (space: SpaceWithSurfaces, surface?: Surface) =>
+  const focusSpace = (space: SpaceWithSurfaces, surface?: RenderableSurface) =>
     navigate(surface ? clientPath.surface(space.slug, surface.id) : clientPath.space(space.slug))
   const moveSurface = (space: SpaceWithSurfaces, id: string, direction: SurfaceMoveDirection) => {
     void runtime.moveSurface(space.id, id, direction)

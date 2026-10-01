@@ -1,10 +1,10 @@
 import {
-  GatewayServerMessageSchema,
+  RenderableGatewayServerMessageSchema,
   GatewayClientMessageSchema,
-  type GatewayServerMessage,
+  type RenderableGatewayServerMessage,
   type SurfaceArchivedEvent,
   type SurfaceMovedEvent,
-  type SurfacePatchEvent,
+  type RenderableSurfacePatchEvent,
   type SurfacePinnedEvent,
   type SurfacePresentationEvent,
 } from '@veduta/protocol'
@@ -20,27 +20,42 @@ export interface GatewayHandlers {
   clientId?: string | undefined
   surfaceCursor: number
   onHello(cursor: number, clientId: string): void
-  onSurfacePatch(event: SurfacePatchEvent): void
-  onSurfaceCreated(message: Extract<GatewayServerMessage, { type: 'surface.created' }>): void
+  onSurfacePatch(event: RenderableSurfacePatchEvent): void
+  onSurfaceCreated(
+    message: Extract<RenderableGatewayServerMessage, { type: 'surface.created' }>,
+  ): void
   onSurfaceArchived(event: SurfaceArchivedEvent): void
   onSurfacePinned(event: SurfacePinnedEvent): void
   onSurfaceMoved(event: SurfaceMovedEvent): void
   onSurfacePresentation(event: SurfacePresentationEvent): void
-  onChatMessage(message: Extract<GatewayServerMessage, { type: 'chat.message' }>): void
-  onChatTurnStart(message: Extract<GatewayServerMessage, { type: 'chat.turn-start' }>): void
-  onChatTurnDelta(message: Extract<GatewayServerMessage, { type: 'chat.turn-delta' }>): void
-  onChatTurnReplace(message: Extract<GatewayServerMessage, { type: 'chat.turn-replace' }>): void
-  onChatTurnEnd(message: Extract<GatewayServerMessage, { type: 'chat.turn-end' }>): void
-  onChatTurnError(message: Extract<GatewayServerMessage, { type: 'chat.turn-error' }>): void
+  onChatMessage(message: Extract<RenderableGatewayServerMessage, { type: 'chat.message' }>): void
+  onChatTurnStart(
+    message: Extract<RenderableGatewayServerMessage, { type: 'chat.turn-start' }>,
+  ): void
+  onChatTurnDelta(
+    message: Extract<RenderableGatewayServerMessage, { type: 'chat.turn-delta' }>,
+  ): void
+  onChatTurnReplace(
+    message: Extract<RenderableGatewayServerMessage, { type: 'chat.turn-replace' }>,
+  ): void
+  onChatTurnEnd(message: Extract<RenderableGatewayServerMessage, { type: 'chat.turn-end' }>): void
+  onChatTurnError(
+    message: Extract<RenderableGatewayServerMessage, { type: 'chat.turn-error' }>,
+  ): void
   onPendingDecisionLifecycle(
-    message: Extract<GatewayServerMessage, { type: 'pending-decision.lifecycle' }>,
+    message: Extract<RenderableGatewayServerMessage, { type: 'pending-decision.lifecycle' }>,
   ): void
   onAutomationOutcomeNotificationLifecycle(
-    message: Extract<GatewayServerMessage, { type: 'automation-outcome-notification.lifecycle' }>,
+    message: Extract<
+      RenderableGatewayServerMessage,
+      { type: 'automation-outcome-notification.lifecycle' }
+    >,
   ): void
-  onApprovalCard(message: Extract<GatewayServerMessage, { type: 'approval.card' }>): void
-  onPresence(message: Extract<GatewayServerMessage, { type: 'presence.update' }>): void
-  onSpaceAttention(message: Extract<GatewayServerMessage, { type: 'space.attention' }>): void
+  onApprovalCard(message: Extract<RenderableGatewayServerMessage, { type: 'approval.card' }>): void
+  onPresence(message: Extract<RenderableGatewayServerMessage, { type: 'presence.update' }>): void
+  onSpaceAttention(
+    message: Extract<RenderableGatewayServerMessage, { type: 'space.attention' }>,
+  ): void
   onError(message: string): void
   onClose(): void
 }
@@ -87,18 +102,21 @@ export function connectGateway(handlers: GatewayHandlers): GatewayConnection {
   }
 }
 
-function parseGatewayMessage(input: unknown): GatewayServerMessage | undefined {
+function parseGatewayMessage(input: unknown): RenderableGatewayServerMessage | undefined {
   let json: unknown
   try {
     json = JSON.parse(String(input))
   } catch {
     return undefined
   }
-  const parsed = GatewayServerMessageSchema.safeParse(json)
+  const parsed = RenderableGatewayServerMessageSchema.safeParse(json)
   return parsed.success ? parsed.data : undefined
 }
 
-function dispatchGatewayMessage(handlers: GatewayHandlers, message: GatewayServerMessage): void {
+function dispatchGatewayMessage(
+  handlers: GatewayHandlers,
+  message: RenderableGatewayServerMessage,
+): void {
   switch (message.type) {
     case 'hello':
       handlers.onHello(message.surfaceCursor, message.clientId)

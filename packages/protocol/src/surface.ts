@@ -68,7 +68,7 @@ export const RelativeTimeValiditySchema = z
     })
   })
 
-const SurfaceObjectSchema = z.object({
+export const SurfaceObjectSchema = z.object({
   id: z.string().min(1),
   spaceId: z.string().min(1),
   title: z.string().min(1),
@@ -147,7 +147,7 @@ export interface SurfaceRelativeTimeStatus {
 }
 
 export function surfaceRelativeTimeStatus(
-  surface: Surface,
+  surface: Pick<Surface, 'state' | 'validity'>,
   now = new Date(),
 ): SurfaceRelativeTimeStatus | undefined {
   const validity = surface.validity

@@ -1,9 +1,9 @@
 import {
-  SurfaceSchema,
-  SurfaceSnapshotSchema,
-  type Surface,
+  RenderableSurfaceSchema,
+  RenderableSurfaceSnapshotSchema,
+  type RenderableSurface,
   type SurfaceOrder,
-  type SurfaceSnapshot,
+  type RenderableSurfaceSnapshot,
 } from '@veduta/protocol'
 import {
   applySpaceAttention,
@@ -25,7 +25,7 @@ export class LiveSurfaceProjection {
   private orderCursors = new Map<string, number>()
   private rebasing = false
 
-  constructor(snapshot?: SurfaceSnapshot) {
+  constructor(snapshot?: RenderableSurfaceSnapshot) {
     if (snapshot) this.replace(snapshot)
   }
 
@@ -38,8 +38,8 @@ export class LiveSurfaceProjection {
     this.rebasing = true
   }
 
-  replace(input: SurfaceSnapshot): void {
-    const snapshot = SurfaceSnapshotSchema.parse(input)
+  replace(input: RenderableSurfaceSnapshot): void {
+    const snapshot = RenderableSurfaceSnapshotSchema.parse(input)
     if (this.rebasing) {
       this.spaces = []
       this.rebasing = false
@@ -162,8 +162,8 @@ export class LiveSurfaceProjection {
     return true
   }
 
-  confirmSurface(input: Surface, cursor?: number): boolean {
-    const surface = SurfaceSchema.parse(input)
+  confirmSurface(input: RenderableSurface, cursor?: number): boolean {
+    const surface = RenderableSurfaceSchema.parse(input)
     if (
       cursor !== undefined &&
       cursor <= (this.patchCursors.get(surface.id) ?? -1) &&
@@ -191,7 +191,7 @@ export class LiveSurfaceProjection {
     return found
   }
 
-  confirmOrder(order: SurfaceOrder, surface?: Surface): boolean {
+  confirmOrder(order: SurfaceOrder, surface?: RenderableSurface): boolean {
     if (order.cursor < (this.orderCursors.get(order.spaceId) ?? -1)) return true
     if (surface) this.confirmSurface(surface, order.cursor)
     const result = applySurfaceOrderToSpaces(this.spaces, order)
@@ -205,7 +205,11 @@ export class LiveSurfaceProjection {
     this.spaces = applySpaceAttention(this.spaces, frame)
   }
 
-  private mergeConfirmed(surface: Surface, cursor: number, previous?: Surface): Surface {
+  private mergeConfirmed(
+    surface: RenderableSurface,
+    cursor: number,
+    previous?: RenderableSurface,
+  ): RenderableSurface {
     if (!previous) return surface
     const contentIsNewer = (this.patchCursors.get(surface.id) ?? -1) > cursor
     const presentationIsNewer = (this.presentationCursors.get(surface.id) ?? -1) > cursor
