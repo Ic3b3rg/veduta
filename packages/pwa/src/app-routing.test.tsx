@@ -407,6 +407,10 @@ describe('App routing', () => {
     const checkbox = await screen.findByRole('checkbox', {
       name: 'Drank water',
     })
+    await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+    await act(async () =>
+      vi.mocked(connectGateway).mock.calls[0]![0].onHello(0, 'route-action-client'),
+    )
     fireEvent.click(checkbox)
 
     await waitFor(() => expect(checkbox.getAttribute('aria-checked')).toBe('true'))

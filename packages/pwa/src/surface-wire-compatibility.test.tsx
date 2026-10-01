@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 import { renderNode } from '@veduta/catalog'
+import {
+  RenderableSurfaceSchema,
+  literalSetPlan,
+  type FastActionInvocation,
+} from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +12,7 @@ import { fetchSpaces, pinSurface, invokeSurfaceAction } from './surface-api.ts'
 import { connectGateway, type GatewayHandlers } from './gateway-client.ts'
 import { applySurfacePatchToSpaces, cachedSnapshot, saveSnapshot } from './home-state.ts'
 import { createPwaLiveStateRuntime } from './pwa-live-state-runtime.ts'
+import { committedActionOutcome } from './action-test-support.ts'
 
 const at = '2026-10-01T08:00:00Z'
 
@@ -37,9 +43,22 @@ function futureSnapshot() {
                   children: [{ id: 'known-child', type: 'Text', binding: 'detail' }],
                 },
                 { id: 'known-sibling', type: 'Stat', props: { label: 'Recorded', value: 74 } },
+                {
+                  id: 'known-action',
+                  type: 'Button',
+                  props: { label: 'Record' },
+                  actions: [
+                    {
+                      name: 'record',
+                      path: 'fast',
+                      revision: 'acr-record',
+                      plan: literalSetPlan('recorded', true),
+                    },
+                  ],
+                },
               ],
             },
-            state: { detail: 'Known descendant remains visible' },
+            state: { detail: 'Known descendant remains visible', recorded: false },
           },
         ],
       },
@@ -226,7 +245,9 @@ describe('Surface wire compatibility', () => {
       expect(screen.getByTestId('unknown-atom').textContent).toContain('FutureGauge')
       expect(screen.getByText('Known descendant remains visible')).toBeTruthy()
       expect(runtime.getSnapshot().error).toBeNull()
-      await runtime.dispatchSurfaceAction(surface.id, 'future-gauge', 'record', 80)
+      await expect(
+        runtime.dispatchSurfaceAction(surface.id, 'future-gauge', 'record', 80),
+      ).rejects.toThrow('undeclared action')
       expect(runtime.getSnapshot().error).toContain('undeclared action')
       expect(fetch).toHaveBeenCalledTimes(2)
       expect(values.get('veduta.homeSnapshot')).toContain('FutureGauge')
@@ -237,6 +258,19 @@ describe('Surface wire compatibility', () => {
 
   it('reads future compositions from HTTP action and Pin confirmations', async () => {
     const surface = futureSnapshot().spaces[0]?.surfaces[0]
+    if (!surface) throw new Error('expected the future composition fixture')
+    const invocation: FastActionInvocation = {
+      nodeId: 'known-action',
+      name: 'record',
+      actionRevision: 'acr-record',
+      intentId: '00000000-0000-4000-8000-000000000001',
+      inputs: {},
+    }
+    const recorded = RenderableSurfaceSchema.parse({
+      ...surface,
+      state: { ...surface.state, recorded: true },
+      freshness: { updatedAt: at, updatedBy: 'user' },
+    })
     vi.stubGlobal(
       'fetch',
       vi.fn(
@@ -254,7 +288,17 @@ describe('Surface wire compatibility', () => {
                       regularSurfaceIds: [],
                     },
                   }
-                : { surface, surfaceCursor: 2 },
+                : committedActionOutcome(
+                    invocation,
+                    recorded,
+                    {
+                      surfaceId: surface.id,
+                      operations: [
+                        { target: 'state', op: 'replace', path: '/recorded', value: true },
+                      ],
+                    },
+                    2,
+                  ),
             ),
           ),
       ),
@@ -262,8 +306,9 @@ describe('Surface wire compatibility', () => {
     expect((await pinSurface('srf-future', true)).surface.tree.children?.[0]?.type).toBe(
       'FutureGauge',
     )
-    const action = await invokeSurfaceAction('srf-future', 'known-child', 'record')
+    const action = await invokeSurfaceAction('srf-future', invocation)
     expect('surface' in action && action.surface.tree.children?.[0]?.type).toBe('FutureGauge')
+    expect('surface' in action && action.surface.state['recorded']).toBe(true)
   })
 
   it('replays buffered serialized tree and state patches, then restores the confirmed cache offline', async () => {

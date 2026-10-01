@@ -12,7 +12,7 @@ import {
   SurfaceSchema,
   inputSetPlan,
   literalSetPlan,
-  type FastActionOutcome,
+  type RenderableFastActionOutcome,
   type ModelConnectionsSnapshot,
   type OnboardingStatus,
   type PendingDecision,
@@ -624,6 +624,8 @@ describe('App', () => {
 
     render(<App />)
     const checkbox = await screen.findByRole('checkbox', { name: 'Milk' })
+    await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+    await act(async () => vi.mocked(connectGateway).mock.calls[0]![0].onHello(0, 'action-client'))
     atomAnimations.length = 0
 
     fireEvent.click(checkbox)
@@ -650,7 +652,7 @@ describe('App', () => {
     async ({ realtimeFirst }) => {
       window.history.replaceState({}, '', '/app/space/system')
       const initial = oneShotActionSurface()
-      const response = deferred<FastActionOutcome>()
+      const response = deferred<RenderableFastActionOutcome>()
       const reset = {
         ...initial,
         state: { 'check.requested': false },
@@ -700,6 +702,7 @@ describe('App', () => {
       await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
       const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
       if (!handlers) throw new Error('Gateway handlers were not registered')
+      await act(async () => handlers.onHello(0, 'action-client'))
 
       fireEvent.click(checkNow)
       await waitFor(() => expect(invokeSurfaceAction).toHaveBeenCalledTimes(1))
@@ -776,7 +779,7 @@ describe('App', () => {
   it('keeps the highest per-Surface cursor after replaying an out-of-order refetch buffer', async () => {
     window.history.replaceState({}, '', '/app/space/system')
     const initial = oneShotActionSurface()
-    const actionResponse = deferred<FastActionOutcome>()
+    const actionResponse = deferred<RenderableFastActionOutcome>()
     const refetchSnapshot = deferred<Awaited<ReturnType<typeof fetchSpaces>>>()
     const discoveredSurface: Surface = {
       id: 'srf-discovered-during-refetch',
@@ -818,6 +821,7 @@ describe('App', () => {
     await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
     const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
     if (!handlers) throw new Error('Gateway handlers were not registered')
+    act(() => handlers.onHello(0, 'action-client'))
 
     fireEvent.click(checkNow)
     await waitFor(() => expect(invokeSurfaceAction).toHaveBeenCalledOnce())

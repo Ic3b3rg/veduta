@@ -485,6 +485,7 @@ function surfaceCardProps(
 }
 
 async function cardRuntime(surface: ReturnType<typeof formSurface>): Promise<PwaLiveStateRuntime> {
+  let handlers: api.GatewayHandlers | undefined
   const runtime = createPwaLiveStateRuntime({
     api: {
       ...api,
@@ -508,11 +509,18 @@ async function cardRuntime(surface: ReturnType<typeof formSurface>): Promise<Pwa
         ],
       }),
       fetchPendingDecisions: async () => ({ revision: 0, decisions: [] }),
-      connectGateway: () => ({ close: () => {}, sendChat: () => false }),
+      fetchAutomationOutcomeNotifications: async () => ({ revision: 0, notifications: [] }),
+      connectGateway: (nextHandlers) => {
+        handlers = nextHandlers
+        return { close: () => {}, sendChat: () => false }
+      },
     },
   })
   runtimes.push(runtime)
   await runtime.start()
+  if (!handlers) throw new Error('Expected a registered Gateway connection')
+  handlers.onHello(0, 'surface-card-client')
+  await vi.waitFor(() => expect(runtime.getSnapshot().gatewayOnline).toBe(true))
   return runtime
 }
 

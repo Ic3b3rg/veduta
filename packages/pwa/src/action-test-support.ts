@@ -1,21 +1,21 @@
 import {
-  CommittedFastActionOutcomeSchema,
+  RenderableCommittedFastActionOutcomeSchema,
   FastActionInvocationSchema,
   type ActionInvocation,
-  type CommittedFastActionOutcome,
-  type Patch,
-  type Surface,
+  type RenderableCommittedFastActionOutcome,
+  type RenderablePatch,
+  type RenderableSurface,
 } from '@veduta/protocol'
 
 /** Fake Gateway responses keep request identity and independently declared canonical effects. */
 export function committedActionOutcome(
   invocation: ActionInvocation,
-  surface: Surface,
-  patch: Patch,
+  surface: RenderableSurface,
+  patch: RenderablePatch,
   cursor: number,
-): CommittedFastActionOutcome {
+): RenderableCommittedFastActionOutcome {
   const action = FastActionInvocationSchema.parse(invocation)
-  return CommittedFastActionOutcomeSchema.parse({
+  return RenderableCommittedFastActionOutcomeSchema.parse({
     outcome: 'committed',
     surfaceId: surface.id,
     nodeId: action.nodeId,
