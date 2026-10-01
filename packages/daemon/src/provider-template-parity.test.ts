@@ -60,7 +60,16 @@ describe('AgentRunner Template parity across Model connection methods (issue #76
       'create schema properties',
     )
     expect(Object.keys(directCreateProperties).sort()).toEqual(
-      ['id', 'title', 'tree', 'state', 'relativeTime', 'intent', 'justification'].sort(),
+      [
+        'id',
+        'title',
+        'tree',
+        'state',
+        'presentation',
+        'relativeTime',
+        'intent',
+        'justification',
+      ].sort(),
     )
 
     expect(outcome.toolResults.map((result) => result.toolName)).toEqual(EXPECTED_TOOL_CHAIN)
