@@ -23,6 +23,7 @@ import {
   relativeTimeSourceRecords,
 } from './relative-time-surface.ts'
 import { respondToMockAutomation } from './mock-automation-fixture.ts'
+import { respondToMockAgentAction } from './mock-agent-action-fixture.ts'
 import {
   mockWeightTrackerInput,
   respondToMockWeightMeasurement,
@@ -154,6 +155,8 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
     if (text === PROGRESSIVE_SURFACE_REQUEST) {
       return respondToProgressiveSurfaceFixture(toolResultsAfter, now(), progressiveDelayMs)
     }
+    const agentActionResponse = respondToMockAgentAction(text, toolResultsAfter)
+    if (agentActionResponse) return agentActionResponse
     const automationResponse = respondToMockAutomation(text, toolResultsAfter)
     if (automationResponse) return automationResponse
     const presentationResponse = respondToMockSurfacePresentation(text, toolResultsAfter)
