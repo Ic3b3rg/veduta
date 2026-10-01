@@ -29,6 +29,7 @@ interface SubmittedDraft {
 interface FormDraftState {
   editGeneration: number
   submissions: Map<string, SubmittedDraft>
+  acknowledgedIntentId?: string
   current?: SubmittedDraft
   pending?: SubmittedDraft
 }
@@ -188,32 +189,25 @@ function reconcileFormConfirmation(
   ctx: RenderContext,
 ): void {
   if (!form) return
-  const state = formDrafts.get(form)
   const confirmation = ctx.actionConfirmations?.[nodeId]?.[actionName]
-  const submitted = confirmation
-    ? state?.submissions.get(canonicalJson(confirmation.inputs))
-    : undefined
-  if (
-    !state ||
-    !submitted ||
-    !confirmation ||
-    submitted.actionName !== actionName ||
-    submitted.actionRevision !== actionRevision ||
-    submitted.actionRevision !== confirmation.actionRevision ||
-    submitted.fingerprint !== canonicalJson(confirmation.inputs)
-  ) {
-    return
-  }
+  if (!confirmation || confirmation.actionRevision !== actionRevision) return
+  const state = formDraftState(form)
+  if (state.acknowledgedIntentId === confirmation.intentId) return
+  const submitted = state.submissions.get(canonicalJson(confirmation.inputs))
 
-  state.submissions.delete(submitted.fingerprint)
-  const current = state.current === submitted
-  if (current) delete state.current
-  submitted.confirmed = true
-  if (current && state.editGeneration === submitted.editGeneration) resetFormDraft(form)
-  if (state.pending === submitted) {
-    delete state.pending
-    setFormPending(form, false)
+  state.acknowledgedIntentId = confirmation.intentId
+  if (submitted?.actionName === actionName && submitted.actionRevision === actionRevision) {
+    state.submissions.delete(submitted.fingerprint)
+    const current = state.current === submitted
+    if (current) delete state.current
+    submitted.confirmed = true
+    if (current && state.editGeneration === submitted.editGeneration) resetFormDraft(form)
+    if (state.pending === submitted) {
+      delete state.pending
+      setFormPending(form, false)
+    }
   }
+  // A discarded local draft leaves an orphaned receipt; retire it without changing the Form.
   ctx.acknowledgeAction?.(nodeId, actionName, confirmation.intentId)
 }
 

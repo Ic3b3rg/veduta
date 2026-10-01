@@ -103,7 +103,10 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('clears a matching failed Form after automatic confirmation and lets a new identical draft create a new intent', async () => {
+it.each([
+  { form: 'mounted', discardDraft: false },
+  { form: 'remounted', discardDraft: true },
+])('creates a fresh identical intent after recovery ($form Form)', async ({ discardDraft }) => {
   const values = new Map<string, string>()
   const connections: GatewayHandlers[] = []
   const storage = fromPartial<Storage>({
@@ -174,7 +177,10 @@ it('clears a matching failed Form after automatic confirmation and lets a new id
       })),
       fetchSpaces: vi.fn(async () => snapshot),
       fetchPendingDecisions: vi.fn(async () => ({ revision: 0, decisions: [] })),
-      fetchAutomationOutcomeNotifications: vi.fn(async () => ({ revision: 0, notifications: [] })),
+      fetchAutomationOutcomeNotifications: vi.fn(async () => ({
+        revision: 0,
+        notifications: [],
+      })),
       connectGateway: (handlers) => {
         connections.push(handlers)
         return { sendChat: () => true, close: () => {} }
@@ -184,20 +190,23 @@ it('clears a matching failed Form after automatic confirmation and lets a new id
   try {
     await runtime.start()
     connections[0]!.onHello(0, 'client-form')
-    render(<RecoveryCard runtime={runtime} />)
+    const view = render(<RecoveryCard runtime={runtime} />)
     const input = screen.getByRole('textbox', { name: 'Item' })
     fireEvent.change(input, { target: { value: 'A' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     expect((await screen.findByRole('alert')).textContent).toBe('The response was lost.')
     expect(input).toHaveProperty('value', 'A')
+    if (discardDraft) view.unmount()
     await act(async () => runtime.retry())
     await waitFor(() => expect(connections).toHaveLength(2))
     await act(async () => connections[1]!.onHello(0, 'client-form'))
     await waitFor(() => expect(runtime.getSnapshot().queuedFastActions).toHaveLength(0))
+    if (discardDraft) render(<RecoveryCard runtime={runtime} />)
+    const currentInput = screen.getByRole('textbox', { name: 'Item' })
     expect(screen.queryByRole('alert')).toBeNull()
-    expect(input).toHaveProperty('value', '')
+    expect(currentInput).toHaveProperty('value', '')
     expect(invokeSurfaceAction.mock.calls[0]![1]).toEqual(invokeSurfaceAction.mock.calls[1]![1])
-    fireEvent.change(input, { target: { value: 'A' } })
+    fireEvent.change(currentInput, { target: { value: 'A' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     await waitFor(() => expect(invokeSurfaceAction).toHaveBeenCalledTimes(3))
     const original = invokeSurfaceAction.mock.calls[0]![1]

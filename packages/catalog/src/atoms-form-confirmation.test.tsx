@@ -158,7 +158,7 @@ describe('Form action confirmations', () => {
     },
   )
 
-  it.each<{ label: string; confirmations: ActionConfirmations }>([
+  it.each<{ label: string; confirmations: ActionConfirmations; acknowledge?: boolean }>([
     {
       label: 'a different Action revision',
       confirmations: {
@@ -167,6 +167,7 @@ describe('Form action confirmations', () => {
     },
     {
       label: 'different typed inputs',
+      acknowledge: true,
       confirmations: { 'record-form': { submit: { ...confirmation, inputs: { draft: 'B' } } } },
     },
     {
@@ -177,7 +178,7 @@ describe('Form action confirmations', () => {
       label: 'a different action',
       confirmations: { 'record-form': { other: confirmation } },
     },
-  ])('ignores completion for $label', async ({ confirmations }) => {
+  ])('preserves the draft and error for $label', async ({ confirmations, acknowledge }) => {
     const dispatch = vi.fn().mockRejectedValue(new Error('HTTP failed'))
     const acknowledgeAction = vi.fn()
     const ctx = { state: surface.state, dispatch, acknowledgeAction }
@@ -191,7 +192,13 @@ describe('Form action confirmations', () => {
 
     expect(input.value).toBe('A')
     expect(screen.getByRole('alert').textContent).toBe('HTTP failed')
-    expect(acknowledgeAction).not.toHaveBeenCalled()
+    if (acknowledge) {
+      expect(acknowledgeAction).toHaveBeenCalledExactlyOnceWith(
+        'record-form',
+        'submit',
+        confirmation.intentId,
+      )
+    } else expect(acknowledgeAction).not.toHaveBeenCalled()
   })
 
   it('retains pending and recovery-pending drafts without changing canonical state', async () => {
@@ -520,6 +527,65 @@ describe('Form action confirmations', () => {
     expect(acknowledgeAction.mock.calls).toEqual([
       ['record-form', 'submit', confirmation.intentId],
       ['record-form', 'submit', secondConfirmation.intentId],
+    ])
+  })
+
+  it('acknowledges an orphaned receipt without changing a newer pending draft or error', async () => {
+    const submission = deferred()
+    const dispatch = vi.fn(() => submission.promise)
+    const acknowledgeAction = vi.fn()
+    const ctx = { state: surface.state, dispatch, acknowledgeAction }
+    const view = render(renderNode(surface.tree, ctx))
+    const input = recordInput()
+    fireEvent.change(input, { target: { value: 'B' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Record' }))
+    const orphanedCtx = {
+      ...ctx,
+      state: { draft: '', records: [{ id: 'record-1', text: 'A' }] },
+      actionConfirmations: { 'record-form': { submit: confirmation } },
+    }
+
+    view.rerender(renderNode(surface.tree, orphanedCtx))
+
+    expect(input.value).toBe('B')
+    expect(input.disabled).toBe(true)
+    expect(screen.getByRole('form', { name: 'New record' }).getAttribute('aria-busy')).toBe('true')
+    expect(acknowledgeAction).toHaveBeenCalledExactlyOnceWith(
+      'record-form',
+      'submit',
+      confirmation.intentId,
+    )
+
+    await act(async () => submission.reject(new Error('Request B failed')))
+    view.rerender(renderNode(surface.tree, { ...orphanedCtx, theme: 'dark' }))
+    expect(input.value).toBe('B')
+    expect(input.disabled).toBe(false)
+    expect(screen.getByRole('alert').textContent).toBe('Request B failed')
+    expect(acknowledgeAction).toHaveBeenCalledOnce()
+
+    const completedB: ActionConfirmation = {
+      ...confirmation,
+      intentId: 'b2a563b2-c05f-4a9b-a4a5-4665c7c96fc8',
+      inputs: { draft: 'B' },
+    }
+    view.rerender(
+      renderNode(surface.tree, {
+        ...ctx,
+        state: {
+          draft: '',
+          records: [
+            { id: 'record-1', text: 'A' },
+            { id: 'record-2', text: 'B' },
+          ],
+        },
+        actionConfirmations: { 'record-form': { submit: completedB } },
+      }),
+    )
+    expect(input.value).toBe('')
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(acknowledgeAction.mock.calls).toEqual([
+      ['record-form', 'submit', confirmation.intentId],
+      ['record-form', 'submit', completedB.intentId],
     ])
   })
 })
