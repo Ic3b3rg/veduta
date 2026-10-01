@@ -205,7 +205,7 @@ function motionNodePropsEqual(previous: MotionNodeProps, next: MotionNodeProps):
   if (previous.ctx.theme !== next.ctx.theme) return false
   if (!valuesEqual(previous.node, next.node)) return false
   if (!boundStateEqual(previous.node, previous.ctx.state, next.ctx.state)) return false
-  if (!actionConfirmationsEqual(previous.node, previous.ctx, next.ctx)) return false
+  if (!actionFeedbackEqual(previous.node, previous.ctx, next.ctx)) return false
   if (!motionEqual(previous.node, previous.ctx.motion?.update, next.ctx.motion?.update))
     return false
   if (previous.ctx.dispatch !== next.ctx.dispatch) return false
@@ -222,7 +222,7 @@ function boundStateEqual(
   )
 }
 
-function actionConfirmationsEqual(
+function actionFeedbackEqual(
   node: RenderableAtomNode,
   previous: RenderContext,
   next: RenderContext,
@@ -230,12 +230,13 @@ function actionConfirmationsEqual(
   if (isKnownRenderableAtomNode(node) && (node.actions?.length ?? 0) > 0) {
     if (previous.acknowledgeAction !== next.acknowledgeAction) return false
     if (
-      !valuesEqual(previous.actionConfirmations?.[node.id], next.actionConfirmations?.[node.id])
+      !valuesEqual(previous.actionConfirmations?.[node.id], next.actionConfirmations?.[node.id]) ||
+      !valuesEqual(previous.actionStatuses?.[node.id], next.actionStatuses?.[node.id])
     ) {
       return false
     }
   }
-  return (node.children ?? []).every((child) => actionConfirmationsEqual(child, previous, next))
+  return (node.children ?? []).every((child) => actionFeedbackEqual(child, previous, next))
 }
 
 function motionEqual(

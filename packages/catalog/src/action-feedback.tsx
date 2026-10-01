@@ -24,13 +24,18 @@ export interface AtomMotionAttributes {
 export function useActionFeedback({ node, ctx }: AtomProps) {
   const errorId = useId()
   const [pending, setPending] = useState(false)
-  const [error, setError] = useState<string>()
+  const [localError, setError] = useState<string>()
   const pendingRef = useRef(false)
   const currentAttempt = useRef<ControlAttempt | undefined>(undefined)
   const acknowledged = useRef<string | undefined>(undefined)
   const action = node.actions?.[0]
   const { acknowledgeAction } = ctx
   const confirmation = action ? ctx.actionConfirmations?.[node.id]?.[action.name] : undefined
+  const runtimeStatus =
+    action?.path === 'agent' ? ctx.actionStatuses?.[node.id]?.[action.name] : undefined
+  const waiting = pending || runtimeStatus?.status === 'pending'
+  const queued = !waiting && runtimeStatus?.status === 'queued'
+  const error = waiting ? undefined : runtimeStatus ? runtimeStatus.message : localError
   const value = boundValue(node, ctx)
   const ownsValue = Object.hasOwn(owningActionInputs(node), 'value')
 
@@ -63,7 +68,7 @@ export function useActionFeedback({ node, ctx }: AtomProps) {
   }, [action, confirmation, acknowledgeAction, node.id])
 
   const dispatch = async (next?: JsonValue) => {
-    if (!action || node.props?.['disabled'] === true || pendingRef.current) return
+    if (!action || node.props?.['disabled'] === true || pendingRef.current || waiting) return
     if (ownsValue && next === value) return
     const inputs: JsonObject = ownsValue ? { value: next ?? null } : {}
     if (action.path === 'fast' && !fastActionInputsSchema(node, action).safeParse(inputs).success) {
@@ -112,12 +117,13 @@ export function useActionFeedback({ node, ctx }: AtomProps) {
 
   return {
     dispatch,
-    pending,
+    pending: waiting,
+    queued,
     error,
     errorId,
-    disabled: node.props?.['disabled'] === true || pending,
+    disabled: node.props?.['disabled'] === true || waiting,
     attributes: {
-      'aria-busy': pending || undefined,
+      'aria-busy': waiting || undefined,
       'aria-invalid': error ? true : undefined,
       'aria-describedby': error ? errorId : undefined,
     } as const,
@@ -131,7 +137,7 @@ export function ActionFeedback({
   'data-veduta-atom-id': atomId,
   'data-veduta-motion-id': motionId,
 }: AtomMotionAttributes & {
-  feedback: Pick<ReturnType<typeof useActionFeedback>, 'pending' | 'error' | 'errorId'>
+  feedback: Pick<ReturnType<typeof useActionFeedback>, 'pending' | 'queued' | 'error' | 'errorId'>
   ctx: RenderContext
   children: ReactNode
 }): ReactNode {
@@ -146,6 +152,11 @@ export function ActionFeedback({
       {feedback.pending && (
         <span role="status" aria-live="polite">
           Working…
+        </span>
+      )}
+      {feedback.queued && (
+        <span role="status" aria-live="polite">
+          Queued. Awaiting confirmation.
         </span>
       )}
       {feedback.error && (
