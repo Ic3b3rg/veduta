@@ -1,6 +1,7 @@
 import { AutomationAtomPropsSchema, AutomationRunHistorySchema } from '@veduta/protocol'
 import type { CSSProperties, ReactNode } from 'react'
-import { actionValue, boundValue, findAction, motionContent, text } from './atom-helpers.ts'
+import { ActionFeedback, useActionFeedback, type AtomMotionAttributes } from './action-feedback.tsx'
+import { boundValue, findAction, motionContent, text } from './atom-helpers.ts'
 import { bodyTextStyle } from './atom-styles.ts'
 import { BadgeAtom } from './atoms-content.tsx'
 import { tokensFor } from './design-system.ts'
@@ -8,9 +9,10 @@ import type { AtomProps, RenderableAtomProps } from './types.ts'
 import { Item } from './ui/item.tsx'
 import { Switch } from './ui/switch.tsx'
 
-export function ListItemAtom({ node, ctx }: AtomProps): ReactNode {
+function ListItemControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttributes): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const action = node.actions?.[0]
+  const feedback = useActionFeedback({ node, ctx })
   const content = (
     <>
       <div style={{ minWidth: 0 }}>
@@ -44,23 +46,31 @@ export function ListItemAtom({ node, ctx }: AtomProps): ReactNode {
 
   if (!action) {
     return (
-      <Item variant="outline" size="sm">
+      <Item {...motion} variant="outline" size="sm">
         {content}
       </Item>
     )
   }
 
   return (
-    <Item asChild variant="outline" size="sm">
-      <button
-        type="button"
-        onClick={() => ctx.dispatch(node, action.name, actionValue(action))}
-        className="w-full cursor-pointer text-left"
-      >
-        {content}
-      </button>
-    </Item>
+    <ActionFeedback {...motion} feedback={feedback} ctx={ctx}>
+      <Item asChild variant="outline" size="sm">
+        <button
+          {...feedback.attributes}
+          type="button"
+          disabled={feedback.disabled}
+          onClick={() => void feedback.dispatch()}
+          className="w-full cursor-pointer text-left"
+        >
+          {content}
+        </button>
+      </Item>
+    </ActionFeedback>
   )
+}
+
+export function ListItemAtom(props: AtomProps): ReactNode {
+  return <ListItemControl {...props} />
 }
 
 export function AutomationAtom({ node, ctx }: AtomProps): ReactNode {

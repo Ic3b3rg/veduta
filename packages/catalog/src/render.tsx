@@ -227,10 +227,7 @@ function actionConfirmationsEqual(
   previous: RenderContext,
   next: RenderContext,
 ): boolean {
-  if (
-    isKnownRenderableAtomNode(node) &&
-    ['Form', 'Button', 'Checkbox', 'Select', 'RadioGroup', 'DatePicker'].includes(node.type)
-  ) {
+  if (isKnownRenderableAtomNode(node) && (node.actions?.length ?? 0) > 0) {
     if (previous.acknowledgeAction !== next.acknowledgeAction) return false
     if (
       !valuesEqual(previous.actionConfirmations?.[node.id], next.actionConfirmations?.[node.id])
