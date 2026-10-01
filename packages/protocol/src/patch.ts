@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { AgentActionIdempotencyKeySchema } from './agent-action-turn.ts'
 import { AtomNodeSchema } from './atom.ts'
 import { JsonObjectSchema, JsonValueSchema } from './json.ts'
 import { ActionIntentIdSchema, ActionRevisionSchema } from './action-plan.ts'
@@ -92,7 +93,7 @@ export const AgentActionInvocationSchema = z
     nodeId: z.string().min(1),
     name: z.string().min(1),
     payload: JsonObjectSchema.optional(),
-    idempotencyKey: z.string().min(1).max(128).optional(),
+    idempotencyKey: AgentActionIdempotencyKeySchema.optional(),
   })
   .strict()
 export const ActionInvocationSchema = z.union([

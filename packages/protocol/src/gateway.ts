@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { AgentActionTurnSchema } from './agent-action-turn.ts'
 import {
   CommittedFastActionMetadataSchema,
   FastActionOutcomeSchema,
@@ -369,6 +370,12 @@ export function gatewayServerMessageSchema<
         type: z.literal('surface.patch'),
         event: patchEvent,
       }),
+      z
+        .object({
+          type: z.literal('surface.action-turn'),
+          turn: AgentActionTurnSchema,
+        })
+        .strict(),
       z.object({
         type: z.literal('surface.created'),
         event: createdEvent,
