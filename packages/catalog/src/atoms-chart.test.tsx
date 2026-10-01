@@ -95,7 +95,9 @@ describe('Chart rendering', () => {
 
   it('exposes corrupt client input visibly instead of hiding invalid records', () => {
     render(renderNode(surface.tree, { state: { records: [{ day: 'Monday' }] }, dispatch: vi.fn() }))
-    expect(screen.getByTestId('unknown-atom').textContent).toBe('unsupported Atom: Chart')
+    expect(screen.getByRole('alert').textContent).toContain('state.records.0.distance')
+    expect(screen.getByRole('alert').textContent).toContain('Chart y-values must be finite numbers')
+    expect(screen.queryByRole('img')).toBeNull()
   })
 
   it('keeps accepted finite numbers visible even when their range would overflow', () => {
