@@ -1,3 +1,4 @@
+import { fastInvocation } from './surface-action-test-fixtures.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -169,16 +170,14 @@ async function seedSendMessageAllowlist(h: Harness, to: string): Promise<void> {
   expect(seedResult.content).toMatch(/needs your approval/)
   const surfaceId = h.approvalCards.at(-1)?.surfaceId
   if (!surfaceId) throw new Error('expected a seed card surface to have been created')
-  h.store.invokeSurfaceAction(surfaceId, {
-    nodeId: 'decision-allowlist',
-    name: 'toggle',
-    payload: { value: true },
-  })
-  h.store.invokeSurfaceAction(surfaceId, {
-    nodeId: 'decision-approve',
-    name: 'press',
-    payload: { value: true },
-  })
+  h.store.invokeSurfaceAction(
+    surfaceId,
+    fastInvocation(h.store, surfaceId, 'decision-allowlist', 'toggle', { value: true }),
+  )
+  h.store.invokeSurfaceAction(
+    surfaceId,
+    fastInvocation(h.store, surfaceId, 'decision-approve', 'press'),
+  )
   await h.approvalSurfaces.flush()
 }
 

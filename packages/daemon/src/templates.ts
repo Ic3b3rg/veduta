@@ -10,6 +10,7 @@ import {
   emptyAtomDataProp,
   isAtomCompositionProp,
   isActionEmptyValue,
+  actionValueMatches,
   type ActionValueSpec,
   type ActionRecordSpec,
   type ActionValueSource,
@@ -325,9 +326,9 @@ export interface SurfaceFromTemplateOptions {
 
 /**
  * Instantiates a Surface from a Template: the tree verbatim, state seeded
- * with the supplied values plus an empty string for missing Form text fields
- * and `null` for every other declared `stateKey` the caller did not provide
- * (so `SurfaceSchema`'s binding validation passes).
+ * with supplied values plus defaults from its Atom binding contracts and fast
+ * Action target schemas. Local Form draft bindings remain strings, including
+ * numeric owning inputs; collections start empty.
  * Rejects a supplied state key absent from the Template's `stateKeys` — an
  * instantiation must not smuggle unbound data in. Clock-free: the caller
  * supplies `updatedAt`/`updatedBy`.
@@ -344,23 +345,28 @@ export function surfaceFromTemplate(
       defaultState.set(node.binding, defaultAtomBindingValue(node.type))
     const history = node.type === 'Automation' ? node.props?.['historyBinding'] : undefined
     if (typeof history === 'string') defaultState.set(history, [])
+  })
+  walkAtomTree(template.tree, (node) => {
     for (const action of node.actions ?? []) {
       if (action.path !== 'fast') continue
       for (const [key, spec] of Object.entries(action.plan.targets)) {
         // Owning text drafts retain their string contract, including numeric Form inputs.
-        if (defaultState.has(key)) continue
+        const existing = defaultState.get(key)
+        if (existing !== undefined && actionValueMatches(spec, existing)) continue
         defaultState.set(
           key,
           spec.type === 'array'
             ? []
             : (spec.enum?.[0] ??
-                (spec.type === 'string'
-                  ? ''
-                  : spec.type === 'number'
-                    ? 0
-                    : spec.type === 'boolean'
-                      ? false
-                      : null)),
+                (spec.nullable === true
+                  ? null
+                  : spec.type === 'string'
+                    ? ''
+                    : spec.type === 'number'
+                      ? 0
+                      : spec.type === 'boolean'
+                        ? false
+                        : null)),
         )
       }
     }
@@ -546,19 +552,13 @@ export interface SanitizedImportedTemplate {
  * (issue #22), in a fixed order: (1) the iterative
  * cap walk above, on the raw JSON; (2) schema parse; (3) `neutralizeDelimiters`
  * over every attacker-reachable string reachable from the parsed Template —
- * name, intent, node ids, bindings, action names, a fast action's `stateKey`
- * or `stateKeys`,
- * every prop value *and* prop object key (`sanitizeProps`, applied
- * recursively so a nested object's keys are covered too), every string
- * inside an action `payload` (values and keys, same `sanitizeProps`),
- * `stateKeys`, `dataProps`, and the provenance source ids — `binding`
- * included, because `SurfaceTemplateSchema` cross-checks every binding (and
- * every fast action's `stateKey` or `stateKeys`) against the (also
- * neutralized) Template `stateKeys`,
- * so leaving either un-neutralized would make a `<<<`-carrying one fail that
- * check with an opaque schema error instead of coming out clean; (4) every
- * `path: 'agent'` action stripped from the tree — an imported bundle
- * contributes layout, never behaviour — counted as it is stripped, in the
+ * name, intent, node ids, bindings, Action names and portable fast plans,
+ * every prop value and object key (`sanitizeProps` recursively), Template
+ * `stateKeys`, `dataProps`, and provenance source ids. Bindings and plan
+ * dependencies are neutralized together with Template `stateKeys` so their
+ * schema references remain consistent; (4) every `path: 'agent'` Action
+ * stripped from the tree — an imported bundle contributes composition and
+ * deterministic local plans without Agent-path authority — counted in the
  * same walk, rather than by a second pass over the tree afterwards; (5)
  * `provenance.origin` rewritten to `untrustedOrigin(source)`; (6) re-parse.
  *
@@ -607,10 +607,12 @@ function sanitizeAndFilterNode(node: AtomNode): SanitizedNode {
     })
     .map((action) => {
       if (action.path !== 'fast') return action
+      const portable = portableAction(action)
+      if (portable.path !== 'fast') throw new Error('portable fast Action required')
       return {
         name: neutralizeDelimiters(action.name),
         path: 'fast' as const,
-        plan: FastActionPlanSchema.parse(sanitizeProps(JsonObjectSchema.parse(action.plan))),
+        plan: FastActionPlanSchema.parse(sanitizeProps(JsonObjectSchema.parse(portable.plan))),
       }
     })
   const props = node.props === undefined ? undefined : sanitizeProps(node.props)
@@ -642,7 +644,7 @@ function sanitizeAndFilterNode(node: AtomNode): SanitizedNode {
  * Neutralizes every string reachable from a JSON object one level down —
  * both its own keys and, recursively, every string nested inside its
  * values (`sanitizeJsonValue`). Shared by a node's `props` and a fast
- * action's `payload`: both are attacker-controlled `JsonObject`s an
+ * Action's plan: both are attacker-controlled `JsonObject`s an
  * imported Template can shape freely, and a key is exactly as forgeable as
  * a value (a `<<<`-carrying prop *name* renders inside the same untrusted
  * data block a `<<<`-carrying prop *value* would, docs/SECURITY.md §3.2).

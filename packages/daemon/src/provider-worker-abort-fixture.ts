@@ -1,3 +1,4 @@
+import { fastInvocation } from './surface-action-test-fixtures.ts'
 import type { Surface } from '@veduta/protocol'
 import {
   createFakeCodexTransport,
@@ -125,11 +126,10 @@ export async function runSubscriptionWorkerAbortScenario(): Promise<WorkerAbortO
       harness.store
         .eventLog(WORKER_PARITY_SPACE_ID)
         .every((event) => event.type !== 'worker.cancelled')
-    harness.store.invokeSurfaceAction(workerSurfaceId(workerId), {
-      nodeId: 'worker-cancel',
-      name: 'cancel',
-      payload: { value: true },
-    })
+    harness.store.invokeSurfaceAction(
+      workerSurfaceId(workerId),
+      fastInvocation(harness.store, workerSurfaceId(workerId), 'worker-cancel', 'cancel'),
+    )
     await pool.whenSettled(workerId)
 
     const chatSession = await harness.sessionStore.load('provider-worker-abort-chat')

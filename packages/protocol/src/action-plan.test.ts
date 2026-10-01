@@ -137,10 +137,14 @@ describe('closed fast Action plans', () => {
     expect(FastActionInvocationSchema.safeParse({ ...invocation, target: 'items' }).success).toBe(
       false,
     )
+    const snapshot = SurfaceSchema.parse(collectionSurface())
+    snapshot.tree.actions = (snapshot.tree.actions ?? []).map((action) =>
+      action.path === 'fast' ? { ...action, revision: identity.actionRevision } : action,
+    )
     const outcome = {
       ...identity,
       outcome: 'committed',
-      surface: collectionSurface(),
+      surface: snapshot,
       patch: {
         surfaceId: 'collection',
         operations: [{ target: 'state', op: 'replace', path: '/draft', value: '' }],
@@ -157,5 +161,9 @@ describe('closed fast Action plans', () => {
       false,
     )
     expect(FastActionOutcomeSchema.safeParse({ ...outcome, surfaceCursor: 2 }).success).toBe(false)
+    expect(
+      FastActionOutcomeSchema.safeParse({ ...outcome, actionRevision: 'acr-other' }).success,
+    ).toBe(false)
+    expect(FastActionOutcomeSchema.safeParse({ ...outcome, nodeId: 'other' }).success).toBe(false)
   })
 })

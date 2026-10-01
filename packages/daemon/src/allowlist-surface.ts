@@ -32,7 +32,7 @@ export function ruleIdFromRevokeStateKey(stateKey: string): number | undefined {
 
 /**
  * The Surface's state object: one entry per rule's Revoke fast action
- * (protocol requires every fast action's `stateKey` to exist in `state`).
+ * (protocol requires every fast Action plan target to exist in `state`).
  * The value itself carries no meaning — the click is a one-shot trigger,
  * not a persisted toggle — so it always starts `false`.
  */
@@ -246,7 +246,7 @@ export class AllowlistSurfaceManager {
     }
 
     // Ordered so every intermediate Surface validates (state must contain a
-    // fast action's stateKey before the tree can declare it; scheduler.ts's
+    // fast Action target before the tree can declare it; scheduler.ts's
     // `refreshSurface` follows the same add-state -> replace-tree ->
     // remove-stale-state order): add keys, replace the list node, drop stale keys.
     const targetState = allowlistState(rules)

@@ -203,14 +203,11 @@ export interface ApprovalSurfaceManagerOptions {
  * this manager must exist first; wiring constructs both then connects
  * them.
  *
- * Resolution is funneled through a single serialized promise chain (the
- * `fullTextChain` pattern in `server.ts`): `onFastActionOutcome` is a synchronous
- * void callback, so nothing else awaits or observes the async
- * `trust.resolve()` work directly — every link in the chain ends in its own
- * `catch`, so a resolution failure is logged and never surfaces as an
- * unhandled rejection, and two notices for the same card (e.g. a doubled
- * click before the first claim commits) queue rather than race: the trust
- * layer's own exactly-once claim makes the second a harmless no-op.
+ * Resolution uses a serialized promise chain. The returned promise lets
+ * `onFastActionOutcome` record its named receipt only after `trust.resolve()`
+ * completes. Failures remain diagnostics and leave the projection retryable.
+ * Two outcomes for the same card queue rather than race; the trust layer's
+ * own exactly-once claim makes a second resolution harmless.
  *
  * There is deliberately no in-memory `surfaceId -> approvalId` map
  * (boot-rehydration race): the trust store's persisted `pending_approvals`

@@ -10,6 +10,8 @@ import {
   applyRenderableSurfacePatch,
   formSetPlan,
   collectRenderableNodeBindingRefs,
+  RenderableFastActionOutcomeSchema,
+  FastActionOutcomeSchema,
   type JsonObject,
 } from './index.ts'
 
@@ -37,6 +39,47 @@ function futureTree(children: unknown[] = [{ id: 'known', type: 'Text', binding:
 }
 
 describe('read-only Surface version compatibility', () => {
+  it('correlates a committed known Action through future layout metadata without treating that metadata as executable', () => {
+    const form = {
+      id: 'form',
+      type: 'Form',
+      props: { label: 'Record', submitLabel: 'Save' },
+      actions: [
+        { name: 'submit', path: 'fast', revision: 'acr-example', plan: formSetPlan(['note']) },
+      ],
+      children: [
+        futureTree([{ id: 'note', type: 'Input', binding: 'note', props: { label: 'Note' } }]),
+      ],
+    }
+    const outcome = {
+      outcome: 'committed',
+      surfaceId: 'srf-future',
+      nodeId: 'form',
+      actionName: 'submit',
+      actionRevision: 'acr-example',
+      intentId: '106c313d-9948-44fa-a3fe-01919ba47d75',
+      surface: surface(form, { note: 'Recorded' }),
+      patch: {
+        surfaceId: 'srf-future',
+        operations: [{ target: 'state', op: 'replace', path: '/note', value: 'Recorded' }],
+      },
+      surfaceVersion: 2,
+      treeVersion: 1,
+      surfaceCommitId: 'scm-example',
+      eventCursor: 1,
+      surfaceCursor: 1,
+      duplicate: false,
+    }
+    expect(RenderableFastActionOutcomeSchema.safeParse(outcome).success).toBe(true)
+    expect(FastActionOutcomeSchema.safeParse(outcome).success).toBe(false)
+    expect(
+      RenderableFastActionOutcomeSchema.safeParse({ ...outcome, actionRevision: 'acr-other' })
+        .success,
+    ).toBe(false)
+    expect(
+      RenderableFastActionOutcomeSchema.safeParse({ ...outcome, nodeId: 'future' }).success,
+    ).toBe(false)
+  })
   it('retains future JSON metadata while validating and tracking known descendants', () => {
     const parsed = RenderableSurfaceSchema.parse(JSON.parse(JSON.stringify(surface(futureTree()))))
     expect(parsed.tree).toEqual(futureTree())

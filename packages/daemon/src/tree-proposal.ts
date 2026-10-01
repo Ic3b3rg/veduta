@@ -236,13 +236,10 @@ export interface TreeProposalResolutionResult {
  * needs a two-phase `setTrust` handshake only because `TrustLayer`'s own
  * constructor requires a port. Nothing here has that circularity.
  *
- * Resolution is funneled through a single serialized promise chain, exactly
- * as `ApprovalSurfaceManager` does: `onFastActionOutcome` is a synchronous void
- * callback, so nothing else awaits the async resolution work directly, and
- * every link in the chain ends in its own `catch` — a resolution failure is
- * logged (`onError`) and never surfaces as an unhandled rejection. Two
- * notices for the same card (a doubled click before the first resolution
- * commits) queue rather than race: each `resolve()` call re-fetches the
+ * Resolution uses the same serialized promise chain as `ApprovalSurfaceManager`.
+ * Its returned promise lets `onFastActionOutcome` record its named receipt after
+ * the async projection completes. Failures remain diagnostic and retryable. Two
+ * outcomes for the same card queue rather than race: each `resolve()` re-fetches the
  * proposal's current status from the store at its own start, and
  * `Store.resolveTreeProposal`'s guarded `update ... where status =
  * 'pending'` is the true exactly-once gate underneath that check.
@@ -407,8 +404,8 @@ export class TreeProposalSurfaceManager {
    * — never an alias a looser grammar could once parse — and (b) land on a
    * Surface this manager itself created (`isSurfaceDaemonOwned`). Without
    * both, the Agent could `create_surface` an innocuous-looking card at (or
-   * near) the canonical id with a `Button` declaring
-   * `{ path: 'fast', stateKey: 'decision.accept', payload: { value: true } }`
+   * near) the canonical id with a `Button` whose fast plan sets `decision.accept`
+   * to a literal `true`
    * and have a single user tap apply the proposal's operations to the
    * pinned Surface with `bypassPin: true` — no preview, no consent.
    */

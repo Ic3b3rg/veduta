@@ -1,3 +1,4 @@
+import { fastInvocation } from './surface-action-test-fixtures.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { mkdtemp, writeFile } from 'node:fs/promises'
@@ -161,12 +162,14 @@ describe('AC1 — direct request + active allowlist executes without a card; the
     await app.inject({
       method: 'POST',
       url: `/api/surfaces/${firstCard.surfaceId}/actions`,
-      payload: { nodeId: 'decision-allowlist', name: 'toggle', payload: { value: true } },
+      payload: fastInvocation(store, firstCard.surfaceId, 'decision-allowlist', 'toggle', {
+        value: true,
+      }),
     })
     await app.inject({
       method: 'POST',
       url: `/api/surfaces/${firstCard.surfaceId}/actions`,
-      payload: { nodeId: 'decision-approve', name: 'press', payload: { value: true } },
+      payload: fastInvocation(store, firstCard.surfaceId, 'decision-approve', 'press'),
     })
     await vi.waitFor(() => {
       expect(trust.auditEntries().some((e) => e.kind === 'action.outcome')).toBe(true)
@@ -378,16 +381,14 @@ describe('AC1(c) — mid-turn taint: a turn that starts trusted still cards once
       expect(firstResult.content).toMatch(/needs your approval/)
       const surfaceId = harness.approvalCards.at(-1)?.surfaceId
       if (!surfaceId) throw new Error('expected a card surface to have been created')
-      harness.store.invokeSurfaceAction(surfaceId, {
-        nodeId: 'decision-allowlist',
-        name: 'toggle',
-        payload: { value: true },
-      })
-      harness.store.invokeSurfaceAction(surfaceId, {
-        nodeId: 'decision-approve',
-        name: 'press',
-        payload: { value: true },
-      })
+      harness.store.invokeSurfaceAction(
+        surfaceId,
+        fastInvocation(harness.store, surfaceId, 'decision-allowlist', 'toggle', { value: true }),
+      )
+      harness.store.invokeSurfaceAction(
+        surfaceId,
+        fastInvocation(harness.store, surfaceId, 'decision-approve', 'press'),
+      )
       await harness.approvalSurfaces.flush()
       expect(harness.trust.listAllowlistRules()).toHaveLength(1)
       expect(
@@ -477,7 +478,7 @@ describe('AC2 — an L2 action (bank transfer) stays behind a card even with a m
     const approve = await app.inject({
       method: 'POST',
       url: `/api/surfaces/${card.surfaceId}/actions`,
-      payload: { nodeId: 'decision-approve', name: 'press', payload: { value: true } },
+      payload: fastInvocation(store, card.surfaceId, 'decision-approve', 'press'),
     })
     expect(approve.statusCode).toBe(200)
     await vi.waitFor(() => {
@@ -513,12 +514,14 @@ describe('AC2 — an L2 action (bank transfer) stays behind a card even with a m
     await app.inject({
       method: 'POST',
       url: `/api/surfaces/${sendCard.surfaceId}/actions`,
-      payload: { nodeId: 'decision-allowlist', name: 'toggle', payload: { value: true } },
+      payload: fastInvocation(store, sendCard.surfaceId, 'decision-allowlist', 'toggle', {
+        value: true,
+      }),
     })
     await app.inject({
       method: 'POST',
       url: `/api/surfaces/${sendCard.surfaceId}/actions`,
-      payload: { nodeId: 'decision-approve', name: 'press', payload: { value: true } },
+      payload: fastInvocation(store, sendCard.surfaceId, 'decision-approve', 'press'),
     })
     await vi.waitFor(() => expect(trust.listAllowlistRules()).toHaveLength(1))
 
@@ -634,16 +637,16 @@ describe('injection corpus × trust layer (issue #14, seeds issue #015 CI suite)
         expect(seedResult.content).toMatch(/needs your approval/)
         const seedSurfaceId = harness.approvalCards.at(-1)?.surfaceId
         if (!seedSurfaceId) throw new Error('expected a seed card surface')
-        harness.store.invokeSurfaceAction(seedSurfaceId, {
-          nodeId: 'decision-allowlist',
-          name: 'toggle',
-          payload: { value: true },
-        })
-        harness.store.invokeSurfaceAction(seedSurfaceId, {
-          nodeId: 'decision-approve',
-          name: 'press',
-          payload: { value: true },
-        })
+        harness.store.invokeSurfaceAction(
+          seedSurfaceId,
+          fastInvocation(harness.store, seedSurfaceId, 'decision-allowlist', 'toggle', {
+            value: true,
+          }),
+        )
+        harness.store.invokeSurfaceAction(
+          seedSurfaceId,
+          fastInvocation(harness.store, seedSurfaceId, 'decision-approve', 'press'),
+        )
         await harness.approvalSurfaces.flush()
         expect(harness.trust.listAllowlistRules()).toHaveLength(1)
 

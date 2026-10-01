@@ -72,7 +72,7 @@ describe('SurfaceTemplateSchema', () => {
     }
   })
 
-  it('rejects a fast action stateKey absent from stateKeys', () => {
+  it('rejects a fast Action target absent from Template stateKeys', () => {
     const bad = JSON.parse(JSON.stringify(validTemplate))
     // Break only the fast action's target, leaving the binding itself valid,
     // so this exercises the fast-action branch specifically.

@@ -1409,11 +1409,14 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
   })
 
   it('rejects an action the node does not declare as fast (403)', async () => {
-    const { app } = buildServer()
+    const { app, store } = buildServer()
     const res = await app.inject({
       method: 'POST',
       url: '/api/surfaces/srf-groceries/actions',
-      payload: { nodeId: 'item-milk', name: 'delete-everything', payload: { value: true } },
+      payload: {
+        ...fastInvocation(store, 'srf-groceries', 'item-milk', 'toggle', { value: true }),
+        name: 'delete-everything',
+      },
     })
     expect(res.statusCode).toBe(403)
   })
@@ -1424,7 +1427,10 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/surfaces/srf-goal/actions',
-      payload: { nodeId: 'current', name: 'toggle', payload: { value: 0 } },
+      payload: {
+        ...fastInvocation(store, 'srf-groceries', 'item-milk', 'toggle', { value: true }),
+        nodeId: 'current',
+      },
     })
     expect(res.statusCode).toBe(403)
     expect(store.getSurface('srf-goal')!.state).toEqual(before)
@@ -1440,12 +1446,27 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
     expect(res.statusCode).toBe(400)
   })
 
+  it('rejects a legacy scalar invocation on a declared fast Action without committing', async () => {
+    const { app, store } = buildServer()
+    const before = store.getSurface('srf-groceries')
+    const cursor = store.latestSurfaceCursor()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/surfaces/srf-groceries/actions',
+      payload: { nodeId: 'item-milk', name: 'toggle', payload: { value: true } },
+    })
+    expect(res.statusCode).toBe(400)
+    expect(store.getSurface('srf-groceries')).toEqual(before)
+    expect(store.latestSurfaceCursor()).toBe(cursor)
+    await app.close()
+  })
+
   it('returns 404 for an unknown surface', async () => {
-    const { app } = buildServer()
+    const { app, store } = buildServer()
     const res = await app.inject({
       method: 'POST',
       url: '/api/surfaces/srf-nope/actions',
-      payload: { nodeId: 'x', name: 'toggle', payload: { value: 1 } },
+      payload: fastInvocation(store, 'srf-groceries', 'item-milk', 'toggle', { value: true }),
     })
     expect(res.statusCode).toBe(404)
   })

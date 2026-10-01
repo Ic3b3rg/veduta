@@ -10,9 +10,9 @@ import {
   type CommittedFastActionOutcome,
 } from '@veduta/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Store, type StoreOptions } from './store.ts'
+import { Store, SurfaceActionError, type StoreOptions } from './store.ts'
 import { fastInvocation } from './surface-action-test-fixtures.ts'
-import { templateFromSurface, surfaceFromTemplate } from './templates.ts'
+import { templateFromSurface, surfaceFromTemplate, sanitizeImportedTemplate } from './templates.ts'
 const roots: string[] = []
 const stores: Store[] = []
 afterEach(() => {
@@ -123,6 +123,114 @@ function operationSurface(store: Store, spaceId: string, steps: ActionStep[], st
   )
 }
 describe('authoritative fast Action execution', () => {
+  it.each<ActionStep>([
+    {
+      op: 'remove',
+      target: 'items',
+      selector: { source: 'literal', value: 'personal-id' },
+      missing: 'reject',
+    },
+    {
+      op: 'append',
+      target: 'items',
+      value: {
+        source: 'object',
+        fields: {
+          id: { source: 'metadata', name: 'recordId' },
+          label: { source: 'literal', value: 'Personal record' },
+        },
+      },
+    },
+  ])('rejects nonportable $op declarations during both Template extraction and import', (step) => {
+    const { store, surface } = setup()
+    const target = operationSurface(store, surface.spaceId, [step], {
+      items: [{ id: 'personal-id', label: 'Personal record' }],
+    })
+    const provenance = {
+      savedBy: 'pin' as const,
+      savedAt: '2026-10-01T10:00:00.000Z',
+      origin: 'trusted:user' as const,
+    }
+    expect(() => templateFromSurface(target, provenance)).toThrow('instance')
+    expect(() =>
+      sanitizeImportedTemplate(
+        {
+          formatVersion: 1,
+          id: 'tpl-personal',
+          name: 'Collection',
+          intent: 'collection',
+          tree: target.tree,
+          stateKeys: ['items'],
+          dataProps: [],
+          provenance: { ...provenance, sourceSurfaceId: target.id, sourceSpaceId: target.spaceId },
+        },
+        'import',
+      ),
+    ).toThrow('instance')
+  })
+  it('rejects an intermediate duplicate identity before any earlier batch write persists', () => {
+    const { store, surface } = setup()
+    const target = operationSurface(
+      store,
+      surface.spaceId,
+      [
+        { op: 'set', target: 'flag', value: { source: 'literal', value: true } },
+        {
+          op: 'append',
+          target: 'items',
+          value: {
+            source: 'object',
+            fields: {
+              id: { source: 'literal', value: 'a' },
+              label: { source: 'literal', value: 'Duplicate' },
+            },
+          },
+        },
+      ],
+      { flag: false, items: [{ id: 'a', label: 'A' }] },
+    )
+    const cursor = store.latestSurfaceCursor()
+    expect(() =>
+      store.invokeSurfaceAction(target.id, fastInvocation(store, target.id, 'execute', 'press')),
+    ).toThrow(SurfaceActionError)
+    expect(store.getSurface(target.id)).toEqual(target)
+    expect(store.latestSurfaceCursor()).toBe(cursor)
+  })
+  it('retains an unchanged revision, ignores an authored replacement revision, and changes it for a new plan', () => {
+    const { store, surface, invocation } = setup()
+    const original = surface.tree.actions?.[0]
+    if (original?.path !== 'fast') throw new Error('fast Action required')
+    store.patchTree(
+      surface.id,
+      [
+        {
+          target: 'tree',
+          op: 'replace',
+          path: '',
+          value: { ...surface.tree, actions: [{ ...original, revision: 'acr-authored' }] },
+        },
+      ],
+      { expectedTreeVersion: store.getSurfaceVersion(surface.id)!.treeVersion, updatedBy: 'agent' },
+    )
+    expect(store.getSurface(surface.id)?.tree.actions?.[0]).toHaveProperty(
+      'revision',
+      invocation.actionRevision,
+    )
+    const changed = {
+      ...original,
+      plan: { ...original.plan, steps: [...original.plan.steps].reverse() },
+    }
+    store.patchTree(
+      surface.id,
+      [{ target: 'tree', op: 'replace', path: '', value: { ...surface.tree, actions: [changed] } }],
+      { expectedTreeVersion: store.getSurfaceVersion(surface.id)!.treeVersion, updatedBy: 'agent' },
+    )
+    expect(store.getSurface(surface.id)?.tree.actions?.[0]).not.toHaveProperty(
+      'revision',
+      invocation.actionRevision,
+    )
+    expect(() => store.invokeSurfaceAction(surface.id, invocation)).toThrow('Action changed')
+  })
   it('rejects a precondition veto and an attempted precondition mutation before persistence', () => {
     const { store, surface, invocation } = setup()
     const cursor = store.latestSurfaceCursor()
@@ -518,6 +626,19 @@ describe('authoritative fast Action execution', () => {
     expect(
       store.eventLog(weight.spaceId).filter((event) => event.type === 'fast_path'),
     ).toHaveLength(1)
+    const template = templateFromSurface(store.getSurface(weight.id)!, {
+      savedBy: 'pin',
+      savedAt: '2026-10-01T10:00:00.000Z',
+      origin: 'trusted:user',
+    })
+    expect(
+      surfaceFromTemplate(template, {
+        surfaceId: 'weight-reused',
+        spaceId: weight.spaceId,
+        updatedAt: '2026-10-01T10:00:00.000Z',
+        updatedBy: 'agent',
+      }).state,
+    ).toEqual({ draft: '', currentKg: 0, measurements: [] })
     store.close()
     stores.splice(stores.indexOf(store), 1)
     const restored = new Store({ rootDir })

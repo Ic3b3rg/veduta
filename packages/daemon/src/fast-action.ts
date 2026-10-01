@@ -162,14 +162,19 @@ export function reduceFastAction(
       }
     }
     const state = { ...current.state, [step.target]: next }
-    current = SurfaceSchema.parse({ ...current, state })
-    if (canonicalJson(before) !== canonicalJson(next))
-      operations.push({
-        target: 'state',
-        op: 'replace',
-        path: `/${step.target.replace(/~/g, '~0').replace(/\//g, '~1')}`,
-        value: next,
-      })
+    const validated = SurfaceSchema.safeParse({ ...current, state })
+    if (!validated.success)
+      throw new SurfaceActionError(
+        'invalid_payload',
+        validated.error.issues.map((issue) => issue.message).join('; '),
+      )
+    current = validated.data
+    operations.push({
+      target: 'state',
+      op: 'replace',
+      path: `/${step.target.replace(/~/g, '~0').replace(/\//g, '~1')}`,
+      value: next,
+    })
   }
   return {
     surface: current,

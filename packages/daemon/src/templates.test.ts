@@ -532,7 +532,7 @@ describe('sanitizeImportedTemplate', () => {
     expect(template.stateKeys).toEqual([template.tree.binding])
   })
 
-  it("neutralizes <<< in a fast action's stateKey, keeping it consistent with the matching neutralized stateKeys entry", () => {
+  it('neutralizes <<< in a fast Action target and the matching Template stateKeys entry', () => {
     // Before this fix, `sanitizeAndFilterNode` neutralized an action's
     // `name` but not its `stateKey` — the same cross-check gap the binding
     // case above closes, but for the other half of `collectNodeBindingRefs`.
@@ -558,7 +558,7 @@ describe('sanitizeImportedTemplate', () => {
     expect(template.stateKeys).toEqual([stateKey])
   })
 
-  it("neutralizes <<< in a Form action's stateKeys with its fields and Template stateKeys", () => {
+  it('neutralizes <<< in a Form plan with its fields and Template stateKeys', () => {
     const raw = validRawTemplate({
       tree: {
         id: 'profile-form',

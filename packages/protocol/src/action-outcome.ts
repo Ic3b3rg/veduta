@@ -10,6 +10,36 @@ const Identity = {
   actionRevision: ActionRevisionSchema,
   intentId: ActionIntentIdSchema,
 }
+const OutcomeActionSchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  revision: z.string().optional(),
+})
+type OutcomeAction = z.infer<typeof OutcomeActionSchema>
+interface OutcomeNode {
+  id: string
+  actions?: unknown
+  children?: readonly OutcomeNode[] | undefined
+}
+function outcomeAction(
+  node: OutcomeNode,
+  nodeId: string,
+  actionName: string,
+): OutcomeAction | undefined {
+  if (node.id === nodeId) {
+    if (!Array.isArray(node.actions)) return undefined
+    for (const candidate of node.actions) {
+      const action = OutcomeActionSchema.safeParse(candidate)
+      if (action.success && action.data.name === actionName) return action.data
+    }
+    return undefined
+  }
+  for (const child of node.children ?? []) {
+    const action = outcomeAction(child, nodeId, actionName)
+    if (action) return action
+  }
+  return undefined
+}
 /** eventCursor identifies this Surface event; the matching Space Event carries surfaceCommitId. */
 export const CommittedFastActionMetadataSchema = z
   .object({
@@ -30,7 +60,10 @@ export const CommittedFastActionOutcomeObjectSchema = CommittedFastActionMetadat
 export function refineCommittedFastActionOutcome(
   value: {
     surfaceId: string
-    surface: { id: string }
+    nodeId: string
+    actionName: string
+    actionRevision: string
+    surface: { id: string; tree: OutcomeNode }
     patch: { surfaceId: string }
     eventCursor: number
     surfaceCursor: number
@@ -46,6 +79,12 @@ export function refineCommittedFastActionOutcome(
     ctx.addIssue({
       code: 'custom',
       message: 'committed snapshot cursor must match its canonical Patch event cursor',
+    })
+  const action = outcomeAction(value.surface.tree, value.nodeId, value.actionName)
+  if (action?.path !== 'fast' || action.revision !== value.actionRevision)
+    ctx.addIssue({
+      code: 'custom',
+      message: 'committed snapshot must contain the resolved owning Action revision',
     })
 }
 export const CommittedFastActionOutcomeSchema = CommittedFastActionOutcomeObjectSchema.superRefine(

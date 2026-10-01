@@ -204,7 +204,7 @@ export function formatSurfaceIssues(issues: ZodIssue[]): string[] {
 
 /**
  * A key an Atom node reaches into typed state for: either its own `binding`,
- * or a `path: 'fast'` action's `stateKey`/`stateKeys`. Shared by `SurfaceSchema` (checked
+ * or a `path: 'fast'` Action plan's declared targets. Shared by `SurfaceSchema` (checked
  * against `state`'s own keys) and `SurfaceTemplateSchema` in `template.ts`
  * (checked against the Template's `stateKeys` names) so both validate the
  * same tree shape without duplicating the traversal.

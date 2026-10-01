@@ -1,3 +1,4 @@
+import { normalizeStableValue } from './provider-parity-test-support.ts'
 import { SurfaceSchema } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import {
@@ -29,7 +30,7 @@ describe('AgentRunner Automation parity across Model connection methods (issues 
   it('offers and executes the same focused-Space Automation contract for BYOK and Codex', async () => {
     const { byok, subscription } = await runAutomationParityPair()
 
-    expect(subscription.outcome).toEqual(byok.outcome)
+    expect(normalizeStableValue(subscription.outcome)).toEqual(normalizeStableValue(byok.outcome))
 
     const outcome = subscription.outcome
     expect(outcome.offeredDefinitions.map((definition) => definition.name)).toEqual(

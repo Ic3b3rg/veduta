@@ -1,4 +1,5 @@
-import { SurfaceSchema } from '@veduta/protocol'
+import { normalizeStableValue } from './provider-parity-test-support.ts'
+import { SurfaceSchema, type AtomNode } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import {
   DESTINATION_SPACE_ID,
@@ -37,7 +38,7 @@ describe('AgentRunner Template parity across Model connection methods (issue #76
   it('reuses, pins, and gates Templates with equivalent persisted outcomes', async () => {
     const { byok, subscription } = await runTemplateParityPair()
 
-    expect(subscription.outcome).toEqual(byok.outcome)
+    expect(normalizeStableValue(subscription.outcome)).toEqual(normalizeStableValue(byok.outcome))
 
     const outcome = subscription.outcome
     expect(outcome.offeredDefinitions.map((definition) => definition.name)).toEqual(
@@ -99,7 +100,7 @@ describe('AgentRunner Template parity across Model connection methods (issue #76
       pinned: true,
       state: { progress: 60, finished: false },
     })
-    expect(outcome.reusedSurface.tree).toEqual(outcome.sourceTemplate.tree)
+    expect(withoutActionRevisions(outcome.reusedSurface.tree)).toEqual(outcome.sourceTemplate.tree)
     expect(outcome.reusedProvenance).toEqual({
       templateId: outcome.sourceTemplate.id,
       templateSpaceId: SOURCE_SPACE_ID,
@@ -205,6 +206,23 @@ describe('AgentRunner Template parity across Model connection methods (issue #76
     expect(subscription.transport.toolResultTexts).toEqual(byok.toolResultTexts)
   })
 })
+
+/** Templates retain complete declarations while canonical instances receive Gateway revisions. */
+function withoutActionRevisions(node: AtomNode): AtomNode {
+  return {
+    ...node,
+    ...(node.actions === undefined
+      ? {}
+      : {
+          actions: node.actions.map((action) => {
+            if (action.path !== 'fast') return action
+            expect(action.revision).toMatch(/^acr-[0-9a-f-]+$/)
+            return { name: action.name, path: action.path, plan: action.plan }
+          }),
+        }),
+    ...(node.children === undefined ? {} : { children: node.children.map(withoutActionRevisions) }),
+  }
+}
 
 function requireDefinition(
   outcome: TemplateParityOutcome,

@@ -1,3 +1,4 @@
+import { fastInvocation } from './surface-action-test-fixtures.ts'
 import { rmSync } from 'node:fs'
 import { SurfaceSchema, type ApprovalCard, type Surface } from '@veduta/protocol'
 import { computeContextHash, type ToolContext, type ToolDef } from './agent-runner.ts'
@@ -184,16 +185,14 @@ async function seedSendMessageAllowlist(harness: TrustHarness): Promise<void> {
   }
   const card = harness.approvalCards.at(-1)
   if (!card) throw new Error('allowlist seed created no Approval card')
-  harness.store.invokeSurfaceAction(card.surfaceId, {
-    nodeId: 'decision-allowlist',
-    name: 'toggle',
-    payload: { value: true },
-  })
-  harness.store.invokeSurfaceAction(card.surfaceId, {
-    nodeId: 'decision-approve',
-    name: 'press',
-    payload: { value: true },
-  })
+  harness.store.invokeSurfaceAction(
+    card.surfaceId,
+    fastInvocation(harness.store, card.surfaceId, 'decision-allowlist', 'toggle', { value: true }),
+  )
+  harness.store.invokeSurfaceAction(
+    card.surfaceId,
+    fastInvocation(harness.store, card.surfaceId, 'decision-approve', 'press'),
+  )
   await harness.approvalSurfaces.flush()
   if (harness.trust.listAllowlistRules().length !== 1) {
     throw new Error('allowlist seed created the wrong number of rules')
@@ -377,11 +376,15 @@ async function resolveCardForScenario(
     return
   }
   if (!card) throw new Error(`${scenario} created no Approval card`)
-  harness.store.invokeSurfaceAction(card.surfaceId, {
-    nodeId: scenario === 'l2' ? 'decision-reject' : 'decision-approve',
-    name: 'press',
-    payload: { value: true },
-  })
+  harness.store.invokeSurfaceAction(
+    card.surfaceId,
+    fastInvocation(
+      harness.store,
+      card.surfaceId,
+      scenario === 'l2' ? 'decision-reject' : 'decision-approve',
+      'press',
+    ),
+  )
   await harness.approvalSurfaces.flush()
 }
 

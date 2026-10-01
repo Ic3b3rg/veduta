@@ -1,3 +1,4 @@
+import { normalizeStableValue } from './provider-parity-test-support.ts'
 import { SurfaceSchema } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import { runSubscriptionWorkerAbortScenario } from './provider-worker-abort-fixture.ts'
@@ -9,7 +10,7 @@ describe('AgentRunner Worker parity across Model connection methods (issue #78)'
   it('spawns once, returns before delivery, and preserves the isolated reviewed report outcome', async () => {
     const { byok, subscription } = await runWorkerParityPair()
 
-    expect(subscription.outcome).toEqual(byok.outcome)
+    expect(normalizeStableValue(subscription.outcome)).toEqual(normalizeStableValue(byok.outcome))
 
     const outcome = subscription.outcome
     expect(outcome.definitions.chat.map((definition) => definition.name)).toEqual(['spawn_worker'])
