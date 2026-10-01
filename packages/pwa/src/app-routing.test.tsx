@@ -4,11 +4,13 @@
 import {
   AutomationOutcomeNotificationSchema,
   SurfacePatchEventSchema,
+  inputSetPlan,
   type AutomationOutcomeNotificationActionResult,
   type ModelConnectionsSnapshot,
   type OnboardingStatus,
 } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
+import { committedActionOutcome } from './action-test-support.ts'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ApiModule from './api.ts'
@@ -29,7 +31,7 @@ import {
   fetchOnboardingStatus,
   fetchSpaces,
   finishOnboarding,
-  invokeFastAction,
+  invokeSurfaceAction,
   openAutomationOutcomeNotification,
   type SpaceWithSurfaces,
 } from './api.ts'
@@ -134,7 +136,14 @@ function interactiveHealthSpaces(): SpaceWithSurfaces[] {
                 type: 'Checkbox',
                 binding: 'water',
                 props: { label: 'Drank water' },
-                actions: [{ name: 'toggle', path: 'fast', stateKey: 'water', payload: {} }],
+                actions: [
+                  {
+                    name: 'toggle',
+                    path: 'fast',
+                    revision: 'acr-water',
+                    plan: inputSetPlan('water', { type: 'boolean' }),
+                  },
+                ],
               },
             ],
           },
@@ -376,14 +385,21 @@ describe('App routing', () => {
     window.history.replaceState({}, '', '/app/space/health')
     const spaces = interactiveHealthSpaces()
     const hydration = spaces[0]!.surfaces[0]!
-    vi.mocked(invokeFastAction).mockResolvedValue({
-      surface: {
-        ...hydration,
-        state: { status: 'Needs water', water: true },
-        freshness: { updatedAt: '2026-08-16T10:01:00.000Z', updatedBy: 'user' },
-      },
-      surfaceCursor: 1,
-    })
+    vi.mocked(invokeSurfaceAction).mockImplementation(async (_surfaceId, invocation) =>
+      committedActionOutcome(
+        invocation,
+        {
+          ...hydration,
+          state: { status: 'Needs water', water: true },
+          freshness: { updatedAt: '2026-08-16T10:01:00.000Z', updatedBy: 'user' },
+        },
+        {
+          surfaceId: hydration.id,
+          operations: [{ target: 'state', op: 'replace', path: '/water', value: true }],
+        },
+        1,
+      ),
+    )
     mockReadyApp(spaces)
 
     render(<App />)
@@ -394,13 +410,16 @@ describe('App routing', () => {
     fireEvent.click(checkbox)
 
     await waitFor(() => expect(checkbox.getAttribute('aria-checked')).toBe('true'))
-    expect(invokeFastAction).toHaveBeenCalledWith(
+    expect(invokeSurfaceAction).toHaveBeenCalledWith(
       'srf-hydration',
-      'water',
-      'toggle',
-      true,
+      {
+        nodeId: 'water',
+        name: 'toggle',
+        actionRevision: 'acr-water',
+        intentId: expect.any(String),
+        inputs: { value: true },
+      },
       undefined,
-      expect.any(String),
     )
   })
 

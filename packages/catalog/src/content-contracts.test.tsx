@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { SurfaceSchema } from '@veduta/protocol'
+import { SurfaceSchema, inputSetPlan } from '@veduta/protocol'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderNode } from './render.tsx'
@@ -145,7 +145,14 @@ describe('accepted content Atoms', () => {
         type: 'Automation',
         binding: 'enabled',
         props: { label: 'Review', schedule: 'Weekly', historyBinding: 'history' },
-        actions: [{ name: 'toggle', path: 'fast', stateKey: 'enabled' }],
+        actions: [
+          {
+            name: 'toggle',
+            path: 'fast',
+            revision: 'acr-review',
+            plan: inputSetPlan('enabled', { type: 'boolean' }),
+          },
+        ],
       },
       state: { enabled: true, history: [] },
     })

@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { AtomNodeSchema, atomTypes, type AtomNode } from '@veduta/protocol'
+import {
+  AtomNodeSchema,
+  atomTypes,
+  formSetPlan,
+  inputSetPlan,
+  type AtomNode,
+} from '@veduta/protocol'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as AtomRenderers from './atoms.tsx'
@@ -50,7 +56,14 @@ const tree: AtomNode = AtomNodeSchema.parse({
       type: 'Checkbox',
       binding: 'milk',
       props: { label: 'Milk' },
-      actions: [{ name: 'toggle', path: 'fast', stateKey: 'milk' }],
+      actions: [
+        {
+          name: 'toggle',
+          path: 'fast',
+          revision: 'acr-milk',
+          plan: inputSetPlan('milk', { type: 'boolean' }),
+        },
+      ],
     },
     {
       id: 'weird',
@@ -88,7 +101,14 @@ describe('renderNode', () => {
         schedule: 'Every hour',
         historyBinding: 'calendar-history',
       },
-      actions: [{ name: 'toggle', path: 'fast', stateKey: 'enabled' }],
+      actions: [
+        {
+          name: 'toggle',
+          path: 'fast',
+          revision: 'acr-calendar-sync',
+          plan: inputSetPlan('enabled', { type: 'boolean' }),
+        },
+      ],
     })
     const history = [
       {
@@ -316,7 +336,14 @@ describe('renderNode', () => {
           type: 'Checkbox',
           binding: 'selected',
           props: { label: 'Keep me' },
-          actions: [{ name: 'toggle', path: 'fast', stateKey: 'selected' }],
+          actions: [
+            {
+              name: 'toggle',
+              path: 'fast',
+              revision: 'acr-persistent-checkbox',
+              plan: inputSetPlan('selected', { type: 'boolean' }),
+            },
+          ],
         },
         { id: 'changing-region', type: 'Text', props: { text: 'Before' } },
       ],
@@ -590,7 +617,14 @@ describe('renderNode', () => {
           id: 'text-form',
           type: 'Form',
           props: { label: 'Details', submitLabel: 'Save' },
-          actions: [{ name: 'submit', path: 'fast', stateKeys: ['title', 'notes'] }],
+          actions: [
+            {
+              name: 'submit',
+              path: 'fast',
+              revision: 'acr-details-form',
+              plan: formSetPlan(['title', 'notes']),
+            },
+          ],
           children: [
             { id: 'input', type: 'Input', binding: 'title', props: { label: 'Title' } },
             { id: 'textarea', type: 'Textarea', binding: 'notes', props: { label: 'Notes' } },
@@ -601,7 +635,14 @@ describe('renderNode', () => {
           type: 'Automation',
           binding: 'enabled',
           props: { label: 'Reminder', schedule: 'Daily' },
-          actions: [{ name: 'toggle', path: 'fast', stateKey: 'enabled' }],
+          actions: [
+            {
+              name: 'toggle',
+              path: 'fast',
+              revision: 'acr-reminder',
+              plan: inputSetPlan('enabled', { type: 'boolean' }),
+            },
+          ],
         },
       ],
     })

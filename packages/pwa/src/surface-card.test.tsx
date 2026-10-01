@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
-import { AUTOMATION_OUTCOMES_STATE_KEY, SurfaceSchema } from '@veduta/protocol'
+import {
+  AUTOMATION_OUTCOMES_STATE_KEY,
+  FastActionInvocationSchema,
+  SurfaceSchema,
+  formSetPlan,
+} from '@veduta/protocol'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useSyncExternalStore, type ComponentProps } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +12,7 @@ import { SurfaceCard } from './surface-card.tsx'
 import * as api from './api.ts'
 import { createPwaLiveStateRuntime, type PwaLiveStateRuntime } from './pwa-live-state-runtime.ts'
 import { PwaRuntimeContext } from './use-live-state.ts'
+import { committedActionOutcome } from './action-test-support.ts'
 
 const runtimes: PwaLiveStateRuntime[] = []
 
@@ -180,10 +186,25 @@ describe('SurfaceCard Form submission', () => {
       state: { displayName: 'Grace', bio: 'Compiler pioneer' },
       freshness: { updatedAt: '2026-09-01T08:01:00.000Z', updatedBy: 'user' },
     })
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _request?: RequestInit) =>
-      Promise.resolve(
-        new Response(JSON.stringify({ surface: updated, surfaceCursor: 7 }), { status: 200 }),
-      ),
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, request?: RequestInit) =>
+        new Response(
+          JSON.stringify(
+            committedActionOutcome(
+              FastActionInvocationSchema.parse(JSON.parse(String(request?.body))),
+              updated,
+              {
+                surfaceId: initial.id,
+                operations: [
+                  { target: 'state', op: 'replace', path: '/displayName', value: 'Grace' },
+                  { target: 'state', op: 'replace', path: '/bio', value: 'Compiler pioneer' },
+                ],
+              },
+              7,
+            ),
+          ),
+          { status: 200 },
+        ),
     )
     vi.stubGlobal('fetch', fetchMock)
     const runtime = await cardRuntime(initial)
@@ -208,14 +229,15 @@ describe('SurfaceCard Form submission', () => {
     expect(body).toMatchObject({
       nodeId: 'profile-form',
       name: 'submit',
-      payload: { value: { displayName: 'Grace', bio: 'Compiler pioneer' } },
+      inputs: { displayName: 'Grace', bio: 'Compiler pioneer' },
+      actionRevision: 'acr-profile',
     })
-    expect(body.idempotencyKey).toMatch(/^fast-/)
+    expect(FastActionInvocationSchema.parse(body).intentId).toEqual(expect.any(String))
     await waitFor(() => expect(runtime.getSnapshot().spaces[0]?.surfaces[0]).toEqual(updated))
     expect(runtime.getSnapshot().queuedFastActions).toHaveLength(0)
   })
 
-  it('keeps the draft visible and retries with the same idempotency key after failure', async () => {
+  it('keeps the draft and retries a retryable failure with the same stable intent', async () => {
     vi.useRealTimers()
     const initial = formSurface()
     const updated = SurfaceSchema.parse({
@@ -228,8 +250,24 @@ describe('SurfaceCard Form submission', () => {
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ error: 'The Form could not be saved.' }), { status: 503 }),
       )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ surface: updated, surfaceCursor: 8 }), { status: 200 }),
+      .mockImplementationOnce(
+        async (_input, request) =>
+          new Response(
+            JSON.stringify(
+              committedActionOutcome(
+                FastActionInvocationSchema.parse(JSON.parse(String(request?.body))),
+                updated,
+                {
+                  surfaceId: initial.id,
+                  operations: [
+                    { target: 'state', op: 'replace', path: '/displayName', value: 'Grace' },
+                  ],
+                },
+                8,
+              ),
+            ),
+            { status: 200 },
+          ),
       )
     vi.stubGlobal('fetch', fetchMock)
     const runtime = await cardRuntime(initial)
@@ -241,7 +279,8 @@ describe('SurfaceCard Form submission', () => {
 
     expect((await screen.findByRole('alert')).textContent).toBe('The Form could not be saved.')
     expect(name.value).toBe('Grace')
-    expect(runtime.getSnapshot().queuedFastActions).toHaveLength(0)
+    expect(runtime.getSnapshot().queuedFastActions).toHaveLength(1)
+    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]).toEqual(initial)
 
     view.rerender(
       <RuntimeCard
@@ -262,13 +301,15 @@ describe('SurfaceCard Form submission', () => {
     const requestBodies = fetchMock.mock.calls.map(([, request]) =>
       JSON.parse(String(request?.body)),
     )
-    expect(requestBodies[0]?.idempotencyKey).toBe(requestBodies[1]?.idempotencyKey)
-    expect(requestBodies[1]?.payload).toEqual({
-      value: { displayName: 'Grace', bio: 'First programmer' },
+    expect(requestBodies[0]?.intentId).toBe(requestBodies[1]?.intentId)
+    expect(requestBodies[1]?.inputs).toEqual({
+      displayName: 'Grace',
+      bio: 'First programmer',
     })
+    expect(runtime.getSnapshot().queuedFastActions).toHaveLength(0)
   })
 
-  it('starts a new idempotency cycle after a different draft succeeds', async () => {
+  it('keeps a rejected draft visible and gives later submissions distinct intents', async () => {
     vi.useRealTimers()
     const initial = formSurface()
     const surfaceFor = (displayName: string, minute: number) =>
@@ -282,13 +323,49 @@ describe('SurfaceCard Form submission', () => {
       })
     const katherine = surfaceFor('Katherine', 2)
     const grace = surfaceFor('Grace', 3)
-    const responseFor = (surface: ReturnType<typeof surfaceFor>, surfaceCursor: number) =>
-      new Response(JSON.stringify({ surface, surfaceCursor }), { status: 200 })
     const fetchMock = vi
       .fn<(input: RequestInfo | URL, request?: RequestInit) => Promise<Response>>()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Try again.' }), { status: 503 }))
-      .mockResolvedValueOnce(responseFor(katherine, 2))
-      .mockResolvedValueOnce(responseFor(grace, 3))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'This submission was rejected.' }), { status: 422 }),
+      )
+      .mockImplementationOnce(
+        async (_input, request) =>
+          new Response(
+            JSON.stringify(
+              committedActionOutcome(
+                FastActionInvocationSchema.parse(JSON.parse(String(request?.body))),
+                katherine,
+                {
+                  surfaceId: initial.id,
+                  operations: [
+                    { target: 'state', op: 'replace', path: '/displayName', value: 'Katherine' },
+                  ],
+                },
+                2,
+              ),
+            ),
+            { status: 200 },
+          ),
+      )
+      .mockImplementationOnce(
+        async (_input, request) =>
+          new Response(
+            JSON.stringify(
+              committedActionOutcome(
+                FastActionInvocationSchema.parse(JSON.parse(String(request?.body))),
+                grace,
+                {
+                  surfaceId: initial.id,
+                  operations: [
+                    { target: 'state', op: 'replace', path: '/displayName', value: 'Grace' },
+                  ],
+                },
+                3,
+              ),
+            ),
+            { status: 200 },
+          ),
+      )
     vi.stubGlobal('fetch', fetchMock)
     const runtime = await cardRuntime(initial)
     const view = render(<RuntimeCard runtime={runtime} {...surfaceCardProps(initial)} />)
@@ -297,7 +374,10 @@ describe('SurfaceCard Form submission', () => {
 
     fireEvent.change(name, { target: { value: 'Grace' } })
     fireEvent.click(save)
-    expect((await screen.findByRole('alert')).textContent).toBe('Try again.')
+    expect((await screen.findByRole('alert')).textContent).toBe('This submission was rejected.')
+    expect(name).toHaveProperty('value', 'Grace')
+    expect(runtime.getSnapshot().queuedFastActions).toHaveLength(0)
+    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]).toEqual(initial)
 
     fireEvent.change(name, { target: { value: 'Katherine' } })
     fireEvent.click(save)
@@ -312,7 +392,8 @@ describe('SurfaceCard Form submission', () => {
     const requestBodies = fetchMock.mock.calls.map(([, request]) =>
       JSON.parse(String(request?.body)),
     )
-    expect(requestBodies[0]?.idempotencyKey).not.toBe(requestBodies[2]?.idempotencyKey)
+    expect(requestBodies[0]?.intentId).not.toBe(requestBodies[1]?.intentId)
+    expect(requestBodies[1]?.intentId).not.toBe(requestBodies[2]?.intentId)
   })
 })
 
@@ -362,7 +443,14 @@ function formSurface() {
       id: 'profile-form',
       type: 'Form',
       props: { label: 'Profile details', submitLabel: 'Save profile' },
-      actions: [{ name: 'submit', path: 'fast', stateKeys: ['displayName', 'bio'] }],
+      actions: [
+        {
+          name: 'submit',
+          path: 'fast',
+          revision: 'acr-profile',
+          plan: formSetPlan(['displayName', 'bio']),
+        },
+      ],
       children: [
         {
           id: 'display-name',

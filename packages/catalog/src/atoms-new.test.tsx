@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { AtomNodeSchema } from '@veduta/protocol'
+import { AtomNodeSchema, inputSetPlan } from '@veduta/protocol'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderNode } from './render.tsx'
@@ -64,7 +64,14 @@ describe('new Surface Atoms', () => {
       type: 'Switch',
       binding: 'quietHours',
       props: { label: 'Quiet hours' },
-      actions: [{ name: 'toggle', path: 'fast', stateKey: 'quietHours' }],
+      actions: [
+        {
+          name: 'toggle',
+          path: 'fast',
+          revision: 'acr-quiet-hours',
+          plan: inputSetPlan('quietHours', { type: 'boolean' }),
+        },
+      ],
     })
     const view = render(renderNode(node, { state: { quietHours: false }, dispatch }))
     const control = screen.getByRole('switch', { name: 'Quiet hours' })
@@ -90,7 +97,14 @@ describe('new Surface Atoms', () => {
           { label: 'Turin', value: 'to' },
         ],
       },
-      actions: [{ name: 'change', path: 'fast', stateKey: 'city' }],
+      actions: [
+        {
+          name: 'change',
+          path: 'fast',
+          revision: 'acr-city',
+          plan: inputSetPlan('city', { type: 'string', enum: ['rm', 'mi', 'to'] }),
+        },
+      ],
     })
     const view = render(renderNode(node, { state: { city: 'rm' }, dispatch }))
     const input = screen.getByRole('combobox', { name: 'City' }) as HTMLInputElement

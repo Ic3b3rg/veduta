@@ -9,7 +9,10 @@ import {
   SurfaceCreatedEventSchema,
   SurfaceMovedEventSchema,
   SurfacePatchEventSchema,
-  type FastSurfaceActionResult,
+  SurfaceSchema,
+  inputSetPlan,
+  literalSetPlan,
+  type FastActionOutcome,
   type ModelConnectionsSnapshot,
   type OnboardingStatus,
   type PendingDecision,
@@ -28,6 +31,7 @@ import {
   resetAppTestBrowser,
 } from './app-test-support.ts'
 import type { MotionAnimationCall } from './motion-test-browser.ts'
+import { committedActionOutcome } from './action-test-support.ts'
 import { AUTH_TOKEN_KEY, HOME_CACHE_KEY, SURFACE_ORDER_KEY } from './pwa-storage.ts'
 
 let scrollIntoView: ReturnType<typeof vi.fn>
@@ -47,7 +51,7 @@ import {
   fetchOnboardingStatus,
   fetchPendingDecisions,
   fetchSpaces,
-  invokeFastAction,
+  invokeSurfaceAction,
   moveSurface,
   resolvePendingDecision,
 } from './api.ts'
@@ -551,9 +555,9 @@ describe('App', () => {
     ).toBe(false)
   })
 
-  it('fades an interactive Atom value on its optimistic fast-path update', async () => {
+  it('fades an interactive Atom value when its canonical fast-path outcome commits', async () => {
     window.history.replaceState({}, '', '/app/space/health')
-    const groceries = {
+    const groceries = SurfaceSchema.parse({
       id: 'srf-groceries',
       spaceId: 'spc-health',
       title: 'Groceries',
@@ -566,7 +570,14 @@ describe('App', () => {
             type: 'Checkbox' as const,
             binding: 'milk',
             props: { label: 'Milk' },
-            actions: [{ name: 'toggle', path: 'fast' as const, stateKey: 'milk', payload: {} }],
+            actions: [
+              {
+                name: 'toggle',
+                path: 'fast' as const,
+                revision: 'acr-milk',
+                plan: inputSetPlan('milk', { type: 'boolean' }),
+              },
+            ],
           },
         ],
       },
@@ -575,7 +586,7 @@ describe('App', () => {
       pinned: false,
       pinnable: true,
       presentation: 'standard' as const,
-    }
+    })
     vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
     vi.mocked(fetchSpaces).mockResolvedValue({
       surfaceCursor: 0,
@@ -595,14 +606,21 @@ describe('App', () => {
       fromPartial<OnboardingStatus>({ required: false, completed: true }),
     )
     vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
-    vi.mocked(invokeFastAction).mockResolvedValue({
-      surface: {
-        ...groceries,
-        state: { milk: true },
-        freshness: { updatedAt: '2026-08-20T10:00:01.000Z', updatedBy: 'user' },
-      },
-      surfaceCursor: 1,
-    })
+    vi.mocked(invokeSurfaceAction).mockImplementation(async (_surfaceId, invocation) =>
+      committedActionOutcome(
+        invocation,
+        {
+          ...groceries,
+          state: { milk: true },
+          freshness: { updatedAt: '2026-08-20T10:00:01.000Z', updatedBy: 'user' },
+        },
+        {
+          surfaceId: groceries.id,
+          operations: [{ target: 'state', op: 'replace', path: '/milk', value: true }],
+        },
+        1,
+      ),
+    )
 
     render(<App />)
     const checkbox = await screen.findByRole('checkbox', { name: 'Milk' })
@@ -632,7 +650,7 @@ describe('App', () => {
     async ({ realtimeFirst }) => {
       window.history.replaceState({}, '', '/app/space/system')
       const initial = oneShotActionSurface()
-      const response = deferred<FastSurfaceActionResult>()
+      const response = deferred<FastActionOutcome>()
       const reset = {
         ...initial,
         state: { 'check.requested': false },
@@ -657,9 +675,25 @@ describe('App', () => {
         fromPartial<OnboardingStatus>({ required: false, completed: true }),
       )
       vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
-      vi.mocked(invokeFastAction)
+      vi.mocked(invokeSurfaceAction)
         .mockImplementationOnce(() => response.promise)
-        .mockResolvedValueOnce({ surface: reset, surfaceCursor: 3 })
+        .mockImplementationOnce(async (_surfaceId, invocation) =>
+          committedActionOutcome(
+            invocation,
+            {
+              ...initial,
+              state: { 'check.requested': true },
+              freshness: { updatedAt: '2026-08-20T10:00:03.000Z', updatedBy: 'user' },
+            },
+            {
+              surfaceId: initial.id,
+              operations: [
+                { target: 'state', op: 'replace', path: '/check.requested', value: true },
+              ],
+            },
+            3,
+          ),
+        )
 
       render(<App />)
       const checkNow = await screen.findByRole('button', { name: 'Check now' })
@@ -668,10 +702,10 @@ describe('App', () => {
       if (!handlers) throw new Error('Gateway handlers were not registered')
 
       fireEvent.click(checkNow)
-      await waitFor(() => expect(invokeFastAction).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(invokeSurfaceAction).toHaveBeenCalledTimes(1))
       expect(
         screen.getByRole('checkbox', { name: 'Check request state' }).getAttribute('aria-checked'),
-      ).toBe('true')
+      ).toBe('false')
 
       const resetEvent = SurfacePatchEventSchema.parse({
         cursor: 2,
@@ -683,14 +717,21 @@ describe('App', () => {
         },
         freshness: reset.freshness,
       })
-      const httpResult = {
-        surface: {
+      const invocation = vi.mocked(invokeSurfaceAction).mock.calls[0]?.[1]
+      if (!invocation) throw new Error('Expected the typed Check now invocation')
+      const httpResult = committedActionOutcome(
+        invocation,
+        {
           ...initial,
           state: { 'check.requested': true },
-          freshness: { updatedAt: '2026-08-20T10:00:01.000Z', updatedBy: 'user' as const },
+          freshness: { updatedAt: '2026-08-20T10:00:01.000Z', updatedBy: 'user' },
         },
-        surfaceCursor: 1,
-      }
+        {
+          surfaceId: initial.id,
+          operations: [{ target: 'state', op: 'replace', path: '/check.requested', value: true }],
+        },
+        1,
+      )
 
       if (realtimeFirst) {
         act(() => handlers.onSurfacePatch(resetEvent))
@@ -716,19 +757,26 @@ describe('App', () => {
       })
 
       fireEvent.click(checkNow)
-      await waitFor(() => expect(invokeFastAction).toHaveBeenCalledTimes(2))
-      const firstKey = vi.mocked(invokeFastAction).mock.calls[0]?.[5]
-      const secondKey = vi.mocked(invokeFastAction).mock.calls[1]?.[5]
-      expect(firstKey).toEqual(expect.any(String))
-      expect(secondKey).toEqual(expect.any(String))
-      expect(secondKey).not.toBe(firstKey)
+      await waitFor(() => expect(invokeSurfaceAction).toHaveBeenCalledTimes(2))
+      const firstInvocation = vi.mocked(invokeSurfaceAction).mock.calls[0]?.[1]
+      const secondInvocation = vi.mocked(invokeSurfaceAction).mock.calls[1]?.[1]
+      expect(firstInvocation).toMatchObject({ inputs: {}, actionRevision: 'acr-check-now' })
+      expect(secondInvocation).toMatchObject({ inputs: {}, actionRevision: 'acr-check-now' })
+      if (
+        !firstInvocation ||
+        !('intentId' in firstInvocation) ||
+        !secondInvocation ||
+        !('intentId' in secondInvocation)
+      )
+        throw new Error('Expected two typed fast Action invocations')
+      expect(secondInvocation.intentId).not.toBe(firstInvocation.intentId)
     },
   )
 
   it('keeps the highest per-Surface cursor after replaying an out-of-order refetch buffer', async () => {
     window.history.replaceState({}, '', '/app/space/system')
     const initial = oneShotActionSurface()
-    const actionResponse = deferred<FastSurfaceActionResult>()
+    const actionResponse = deferred<FastActionOutcome>()
     const refetchSnapshot = deferred<Awaited<ReturnType<typeof fetchSpaces>>>()
     const discoveredSurface: Surface = {
       id: 'srf-discovered-during-refetch',
@@ -763,7 +811,7 @@ describe('App', () => {
       fromPartial<OnboardingStatus>({ required: false, completed: true }),
     )
     vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
-    vi.mocked(invokeFastAction).mockImplementationOnce(() => actionResponse.promise)
+    vi.mocked(invokeSurfaceAction).mockImplementationOnce(() => actionResponse.promise)
 
     render(<App />)
     const checkNow = await screen.findByRole('button', { name: 'Check now' })
@@ -772,7 +820,7 @@ describe('App', () => {
     if (!handlers) throw new Error('Gateway handlers were not registered')
 
     fireEvent.click(checkNow)
-    await waitFor(() => expect(invokeFastAction).toHaveBeenCalledOnce())
+    await waitFor(() => expect(invokeSurfaceAction).toHaveBeenCalledOnce())
 
     act(() => {
       handlers.onSurfacePatch(
@@ -830,14 +878,23 @@ describe('App', () => {
     })
 
     await act(async () => {
-      actionResponse.resolve({
-        surface: {
-          ...initial,
-          state: { 'check.requested': true },
-          freshness: { updatedAt: '2026-08-20T10:00:02.000Z', updatedBy: 'user' },
-        },
-        surfaceCursor: 2,
-      })
+      const invocation = vi.mocked(invokeSurfaceAction).mock.calls[0]?.[1]
+      if (!invocation) throw new Error('Expected the typed Check now invocation')
+      actionResponse.resolve(
+        committedActionOutcome(
+          invocation,
+          {
+            ...initial,
+            state: { 'check.requested': true },
+            freshness: { updatedAt: '2026-08-20T10:00:02.000Z', updatedBy: 'user' },
+          },
+          {
+            surfaceId: initial.id,
+            operations: [{ target: 'state', op: 'replace', path: '/check.requested', value: true }],
+          },
+          2,
+        ),
+      )
       await actionResponse.promise
     })
 
@@ -1806,8 +1863,8 @@ function oneShotActionSurface(): Surface {
             {
               name: 'check',
               path: 'fast',
-              stateKey: 'check.requested',
-              payload: { value: true },
+              revision: 'acr-check-now',
+              plan: literalSetPlan('check.requested', true),
             },
           ],
         },

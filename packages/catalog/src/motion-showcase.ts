@@ -1,4 +1,4 @@
-import { SurfaceSchema, type Surface } from '@veduta/protocol'
+import { SurfaceSchema, inputSetPlan, type Surface } from '@veduta/protocol'
 
 export const catalogMotionShowcaseSurface: Surface = SurfaceSchema.parse({
   id: 'srf-motion-showcase',
@@ -50,7 +50,14 @@ export const catalogMotionShowcaseSurface: Surface = SurfaceSchema.parse({
         type: 'Checkbox',
         binding: 'acknowledged',
         props: { label: 'Acknowledge update' },
-        actions: [{ name: 'toggle', path: 'fast', stateKey: 'acknowledged' }],
+        actions: [
+          {
+            name: 'toggle',
+            path: 'fast',
+            revision: 'acr-motion-acknowledged',
+            plan: inputSetPlan('acknowledged', { type: 'boolean' }),
+          },
+        ],
       },
       {
         id: 'motion-transition',

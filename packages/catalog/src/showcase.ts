@@ -1,4 +1,4 @@
-import { SurfaceSchema, type Surface } from '@veduta/protocol'
+import { SurfaceSchema, formSetPlan, inputSetPlan, type Surface } from '@veduta/protocol'
 
 export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
   id: 'srf-catalog-showcase',
@@ -74,7 +74,14 @@ export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
         id: 'edit-form',
         type: 'Form',
         props: { label: 'Plan details', submitLabel: 'Save plan' },
-        actions: [{ name: 'submit', path: 'fast', stateKeys: ['title', 'notes'] }],
+        actions: [
+          {
+            name: 'submit',
+            path: 'fast',
+            revision: 'acr-showcase-plan',
+            plan: formSetPlan(['title', 'notes']),
+          },
+        ],
         children: [
           { id: 'title-label', type: 'Label', props: { text: 'Title input' } },
           {
@@ -107,7 +114,14 @@ export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
             type: 'DatePicker',
             binding: 'date',
             props: { label: 'Date' },
-            actions: [{ name: 'change', path: 'fast', stateKey: 'date' }],
+            actions: [
+              {
+                name: 'change',
+                path: 'fast',
+                revision: 'acr-showcase-date',
+                plan: inputSetPlan('date', { type: 'string' }),
+              },
+            ],
           },
           {
             id: 'priority-select',
@@ -121,7 +135,14 @@ export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
                 { label: 'High', value: 'high' },
               ],
             },
-            actions: [{ name: 'change', path: 'fast', stateKey: 'priority' }],
+            actions: [
+              {
+                name: 'change',
+                path: 'fast',
+                revision: 'acr-showcase-priority',
+                plan: inputSetPlan('priority', { type: 'string', enum: ['low', 'medium', 'high'] }),
+              },
+            ],
           },
         ],
       },
@@ -137,21 +158,42 @@ export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
             { label: 'Monthly', value: 'monthly' },
           ],
         },
-        actions: [{ name: 'change', path: 'fast', stateKey: 'cadence' }],
+        actions: [
+          {
+            name: 'change',
+            path: 'fast',
+            revision: 'acr-showcase-cadence',
+            plan: inputSetPlan('cadence', { type: 'string', enum: ['daily', 'weekly', 'monthly'] }),
+          },
+        ],
       },
       {
         id: 'checkbox-milk',
         type: 'Checkbox',
         binding: 'milk',
         props: { label: 'Milk' },
-        actions: [{ name: 'toggle', path: 'fast', stateKey: 'milk' }],
+        actions: [
+          {
+            name: 'toggle',
+            path: 'fast',
+            revision: 'acr-showcase-milk',
+            plan: inputSetPlan('milk', { type: 'boolean' }),
+          },
+        ],
       },
       {
         id: 'quiet-hours-switch',
         type: 'Switch',
         binding: 'quietHours',
         props: { label: 'Quiet hours' },
-        actions: [{ name: 'toggle', path: 'fast', stateKey: 'quietHours' }],
+        actions: [
+          {
+            name: 'toggle',
+            path: 'fast',
+            revision: 'acr-showcase-quiet-hours',
+            plan: inputSetPlan('quietHours', { type: 'boolean' }),
+          },
+        ],
       },
       {
         id: 'location-combobox',
@@ -166,7 +208,14 @@ export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
             { label: 'Turin', value: 'turin' },
           ],
         },
-        actions: [{ name: 'change', path: 'fast', stateKey: 'location' }],
+        actions: [
+          {
+            name: 'change',
+            path: 'fast',
+            revision: 'acr-showcase-location',
+            plan: inputSetPlan('location', { type: 'string', enum: ['rome', 'milan', 'turin'] }),
+          },
+        ],
       },
       {
         id: 'plan-details',
@@ -245,7 +294,14 @@ export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
         type: 'Automation',
         binding: 'waterReminder',
         props: { label: 'Water reminder', schedule: 'Every day at 08:00' },
-        actions: [{ name: 'toggle', path: 'fast', stateKey: 'waterReminder' }],
+        actions: [
+          {
+            name: 'toggle',
+            path: 'fast',
+            revision: 'acr-showcase-water',
+            plan: inputSetPlan('waterReminder', { type: 'boolean' }),
+          },
+        ],
       },
     ],
   },

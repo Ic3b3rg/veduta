@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { AtomNodeSchema, type AtomNode } from '@veduta/protocol'
+import { AtomNodeSchema, formSetPlan, type AtomNode } from '@veduta/protocol'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderNode } from './render.tsx'
@@ -80,7 +80,9 @@ describe('layout, media and fallback contracts', () => {
       id: 'details',
       type: 'Form',
       props: { label: 'Details', submitLabel: 'Save' },
-      actions: [{ name: 'submit', path: 'fast', stateKeys: ['name'] }],
+      actions: [
+        { name: 'submit', path: 'fast', revision: 'acr-name-form', plan: formSetPlan(['name']) },
+      ],
       children: [{ id: 'name-input', type: 'Input', props: { label: 'Name' }, binding: 'name' }],
     })
     const view = render(renderNode(form, { state: { name: 'Ada' }, dispatch: vi.fn() }))

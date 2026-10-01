@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { SurfaceSchema, type KnownRenderableAtomNode, type JsonValue } from '@veduta/protocol'
+import { SurfaceSchema, formSetPlan, type KnownRenderableAtomNode, type JsonValue } from '@veduta/protocol'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderNode } from './render.tsx'
@@ -12,7 +12,14 @@ const formSurface = SurfaceSchema.parse({
     id: 'profile-form',
     type: 'Form',
     props: { label: 'Profile details', submitLabel: 'Save profile' },
-    actions: [{ name: 'submit', path: 'fast', stateKeys: ['displayName', 'bio'] }],
+    actions: [
+      {
+        name: 'submit',
+        path: 'fast',
+        revision: 'acr-profile',
+        plan: formSetPlan(['displayName', 'bio']),
+      },
+    ],
     children: [
       {
         id: 'display-name',

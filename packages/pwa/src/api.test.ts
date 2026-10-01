@@ -1,17 +1,22 @@
-import type { ImportPlan, ImportResult, OnboardingStatus, Surface } from '@veduta/protocol'
+import type {
+  FastActionInvocation,
+  ImportPlan,
+  ImportResult,
+  OnboardingStatus,
+  Surface,
+} from '@veduta/protocol'
 import { SurfaceSchema } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { committedActionOutcome } from './action-test-support.ts'
 import {
   connectGateway,
   errorMessageFromBody,
   expiresInLabel,
-  fastActionIdempotencyKey,
   fetchOnboardingStatus,
   fetchSpaces,
   freshnessLabel,
-  invokeFastAction,
-  optimisticFastSurface,
+  invokeSurfaceAction,
   moveSurface,
   pinSurface,
   previewLegacyImport,
@@ -179,35 +184,126 @@ function buildSurface(overrides: Partial<Surface> = {}): Surface {
   })
 }
 
-describe('invokeFastAction', () => {
-  it('returns the Surface together with its authoritative Surface cursor', async () => {
+describe('invokeSurfaceAction', () => {
+  const invocation: FastActionInvocation = {
+    nodeId: 'check-now',
+    name: 'check',
+    actionRevision: 'acr-check-now',
+    intentId: '00000000-0000-4000-8000-000000000001',
+    inputs: {},
+  }
+
+  it('posts only the typed invocation and returns the canonical committed outcome', async () => {
     const surface = buildSurface({ state: { requested: true } })
+    const outcome = committedActionOutcome(
+      invocation,
+      surface,
+      {
+        surfaceId: surface.id,
+        operations: [{ target: 'state', op: 'replace', path: '/requested', value: true }],
+      },
+      9,
+    )
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
-      return new Response(JSON.stringify({ surface, surfaceCursor: 9 }), { status: 200 })
+      return new Response(JSON.stringify(outcome), { status: 200 })
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const result = await invokeFastAction(
-      'srf-meals',
-      'check-now',
-      'check',
-      true,
-      'test-token',
-      'fast-check-1',
-    )
+    const result = await invokeSurfaceAction('srf-meals', invocation, 'test-token')
 
-    expect(result).toEqual({ surface, surfaceCursor: 9 })
+    expect(result).toEqual(outcome)
+    expect(fetchMock).toHaveBeenCalledOnce()
     const call = fetchMock.mock.calls[0]
     if (call === undefined) throw new Error('fetch was not called')
     const [path, init] = call
     expect(path).toBe('/api/surfaces/srf-meals/actions')
     expect(init?.method).toBe('POST')
     expect(init?.headers).toMatchObject({ authorization: 'Bearer test-token' })
-    expect(JSON.parse(init?.body as string)).toEqual({
-      nodeId: 'check-now',
-      name: 'check',
-      payload: { value: true },
-      idempotencyKey: 'fast-check-1',
+    expect(JSON.parse(String(init?.body))).toEqual(invocation)
+  })
+
+  it('keeps a declared no-op distinct from a committed mutation', async () => {
+    const outcome = {
+      outcome: 'noop',
+      surfaceId: 'srf-meals',
+      nodeId: invocation.nodeId,
+      actionName: invocation.name,
+      actionRevision: invocation.actionRevision,
+      intentId: invocation.intentId,
+      reason: 'unchanged',
+      duplicate: false,
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(outcome))),
+    )
+
+    await expect(invokeSurfaceAction('srf-meals', invocation)).resolves.toEqual(outcome)
+  })
+
+  it('returns an identifiable recovery-pending outcome without reporting success', async () => {
+    const outcome = {
+      outcome: 'recovery_pending',
+      surfaceId: 'srf-meals',
+      nodeId: invocation.nodeId,
+      actionName: invocation.name,
+      actionRevision: invocation.actionRevision,
+      intentId: invocation.intentId,
+      surfaceCommitId: 'scm-pending',
+      spaceId: 'spc-health',
+      duplicate: false,
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(outcome), { status: 202 })),
+    )
+
+    await expect(invokeSurfaceAction('srf-meals', invocation)).resolves.toEqual(outcome)
+  })
+
+  it('rejects an invalid committed snapshot instead of rendering unvalidated state', async () => {
+    const outcome = committedActionOutcome(
+      invocation,
+      buildSurface({ state: { requested: true } }),
+      {
+        surfaceId: 'srf-meals',
+        operations: [{ target: 'state', op: 'replace', path: '/requested', value: true }],
+      },
+      9,
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ...outcome,
+              surface: { ...outcome.surface, presentation: 'arbitrary' },
+            }),
+          ),
+      ),
+    )
+
+    await expect(invokeSurfaceAction('srf-meals', invocation)).rejects.toThrow()
+  })
+
+  it('preserves terminal rejection status for visible failure handling', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              error: 'This Action is stale. Refresh the Surface before trying again.',
+            }),
+            { status: 409 },
+          ),
+      ),
+    )
+
+    await expect(invokeSurfaceAction('srf-meals', invocation)).rejects.toMatchObject({
+      status: 409,
+      message: 'This Action is stale. Refresh the Surface before trying again.',
     })
   })
 })
@@ -307,27 +403,6 @@ describe('expiresInLabel', () => {
   it('reports "expired" once the deadline has passed', () => {
     expect(expiresInLabel('2026-07-03T11:59:00.000Z', now)).toBe('expired')
     expect(expiresInLabel('2026-07-03T12:00:00.000Z', now)).toBe('expired')
-  })
-})
-
-describe('fastActionIdempotencyKey', () => {
-  it('is stable for the same Surface version and changes after freshness advances', () => {
-    const input = {
-      surfaceId: 'srf-groceries',
-      surfaceUpdatedAt: '2026-07-03T10:00:00.000Z',
-      nodeId: 'milk',
-      actionName: 'toggle',
-      value: true,
-    }
-
-    expect(fastActionIdempotencyKey(input)).toBe(fastActionIdempotencyKey(input))
-    expect(
-      fastActionIdempotencyKey({
-        ...input,
-        surfaceUpdatedAt: '2026-07-03T10:01:00.000Z',
-      }),
-    ).not.toBe(fastActionIdempotencyKey(input))
-    expect(fastActionIdempotencyKey(input).length).toBeLessThan(128)
   })
 })
 
@@ -449,48 +524,6 @@ describe('errorMessageFromBody', () => {
   }
 })
 
-describe('optimisticFastSurface', () => {
-  it('updates the declared fast-action state key before the Gateway round trip completes', () => {
-    const surface = SurfaceSchema.parse({
-      id: 'srf-groceries',
-      spaceId: 'spc-home',
-      title: 'Groceries',
-      tree: {
-        id: 'root',
-        type: 'Box',
-        children: [
-          {
-            id: 'milk',
-            type: 'Checkbox',
-            binding: 'milk',
-            props: { label: 'Milk' },
-            actions: [{ name: 'toggle', path: 'fast', stateKey: 'milk' }],
-          },
-        ],
-      },
-      state: { milk: false },
-      freshness: { updatedAt: '2026-07-03T10:00:00.000Z', updatedBy: 'seed' },
-    })
-
-    const milkNode = surface.tree.children?.[0]
-    if (!milkNode) throw new Error('expected milk node in test Surface')
-
-    const optimistic = optimisticFastSurface(
-      surface,
-      milkNode,
-      'toggle',
-      true,
-      '2026-07-03T10:00:01.000Z',
-    )
-
-    expect(optimistic.state['milk']).toBe(true)
-    expect(optimistic.freshness).toEqual({
-      updatedAt: '2026-07-03T10:00:01.000Z',
-      updatedBy: 'user',
-    })
-  })
-})
-
 // connectGateway's onmessage dispatch (issue 037: PWA-side streaming): a minimal fake socket
 // stands in for the browser WebSocket so `ws.onmessage` can be triggered by
 // hand with a raw Gateway frame, the same way a real server push would land.
@@ -546,6 +579,80 @@ function deliver(socket: ReturnType<typeof fakeWebSocket>, frame: unknown): void
 }
 
 describe('connectGateway chat.turn-* dispatch', () => {
+  it('retains the committed Action identity on one canonical Surface patch', () => {
+    const onSurfacePatch = vi.fn()
+    const { socket } = connectWithFakeSocket({ onSurfacePatch })
+    const frame = {
+      type: 'surface.patch',
+      event: {
+        cursor: 9,
+        at: '2026-10-01T10:00:00.000Z',
+        spaceId: 'spc-health',
+        patch: {
+          surfaceId: 'srf-meals',
+          operations: [{ target: 'state', op: 'replace', path: '/requested', value: true }],
+        },
+        freshness: { updatedAt: '2026-10-01T10:00:00.000Z', updatedBy: 'user' },
+        actionOutcome: {
+          outcome: 'committed',
+          surfaceId: 'srf-meals',
+          nodeId: 'check-now',
+          actionName: 'check',
+          actionRevision: 'acr-check-now',
+          intentId: '00000000-0000-4000-8000-000000000001',
+          surfaceVersion: 2,
+          treeVersion: 1,
+          surfaceCommitId: 'scm-check-now',
+          eventCursor: 9,
+          surfaceCursor: 9,
+          duplicate: false,
+        },
+      },
+    }
+
+    deliver(socket, frame)
+
+    expect(onSurfacePatch).toHaveBeenCalledExactlyOnceWith(frame.event)
+  })
+
+  it('rejects a live Action outcome that does not identify its Patch event', () => {
+    const onSurfacePatch = vi.fn()
+    const onError = vi.fn()
+    const { socket } = connectWithFakeSocket({ onSurfacePatch, onError })
+    deliver(socket, {
+      type: 'surface.patch',
+      event: {
+        cursor: 9,
+        at: '2026-10-01T10:00:00.000Z',
+        spaceId: 'spc-health',
+        patch: {
+          surfaceId: 'srf-meals',
+          operations: [{ target: 'state', op: 'replace', path: '/requested', value: true }],
+        },
+        freshness: { updatedAt: '2026-10-01T10:00:00.000Z', updatedBy: 'user' },
+        actionOutcome: {
+          outcome: 'committed',
+          surfaceId: 'srf-meals',
+          nodeId: 'check-now',
+          actionName: 'check',
+          actionRevision: 'acr-check-now',
+          intentId: '00000000-0000-4000-8000-000000000001',
+          surfaceVersion: 2,
+          treeVersion: 1,
+          surfaceCommitId: 'scm-check-now',
+          eventCursor: 8,
+          surfaceCursor: 8,
+          duplicate: false,
+        },
+      },
+    })
+
+    expect(onSurfacePatch).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledExactlyOnceWith(
+      'Malformed Gateway frame; refreshing confirmed state.',
+    )
+  })
+
   it('dispatches the complete surface.created frame so live correlation is not discarded', () => {
     const onSurfaceCreated = vi.fn()
     const { socket } = connectWithFakeSocket({ onSurfaceCreated })

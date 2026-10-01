@@ -7,6 +7,7 @@ import {
   CHAT_QUEUE_KEY,
   FAST_ACTION_QUEUE_KEY,
   persistChatHistory,
+  persistQueuedFastActions,
   readChatHistory,
   readQueuedChat,
   readQueuedFastActions,
@@ -38,9 +39,35 @@ describe('persisted PWA state', () => {
         { id: 'chat-2', at: '2026-08-11T00:00:00.000Z' },
       ]),
     )
+    const invocation = {
+      nodeId: 'node-1',
+      name: 'toggle',
+      actionRevision: 'acr-toggle',
+      intentId: '00000000-0000-4000-8000-000000000001',
+      inputs: { value: true },
+    }
+    const queued = {
+      id: invocation.intentId,
+      surfaceId: 'srf-1',
+      invocation,
+      at: '2026-08-11T00:00:00.000Z',
+      status: 'queued' as const,
+    }
+    const recoveryPending = {
+      ...queued,
+      id: '00000000-0000-4000-8000-000000000002',
+      invocation: { ...invocation, intentId: '00000000-0000-4000-8000-000000000002' },
+      status: 'recovery_pending' as const,
+    }
     localStorage.setItem(
       FAST_ACTION_QUEUE_KEY,
       JSON.stringify([
+        queued,
+        recoveryPending,
+        { ...queued, invocation: { ...invocation, intentId: 'not-a-uuid' } },
+        { ...queued, id: recoveryPending.id },
+        { ...queued, status: 'committed' },
+        { ...queued, invocation: { ...invocation, path: '/private-target' } },
         {
           id: 'action-1',
           surfaceId: 'srf-1',
@@ -55,7 +82,10 @@ describe('persisted PWA state', () => {
     )
 
     expect(readQueuedChat()).toHaveLength(1)
-    expect(readQueuedFastActions()).toHaveLength(1)
+    expect(readQueuedFastActions()).toEqual([queued, recoveryPending])
+
+    persistQueuedFastActions([queued, recoveryPending])
+    expect(readQueuedFastActions()).toEqual([queued, recoveryPending])
   })
 
   it('fails closed on corrupt JSON', () => {

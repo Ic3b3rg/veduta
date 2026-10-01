@@ -27,7 +27,7 @@ export function createAppApiMock(actual: typeof ApiModule) {
     openAutomationOutcomeNotification: vi.fn(),
     dismissAutomationOutcomeNotification: vi.fn(),
     connectGateway: vi.fn(() => ({ close: vi.fn(), sendChat: vi.fn(() => false) })),
-    invokeFastAction: vi.fn(),
+    invokeSurfaceAction: vi.fn(),
     moveSurface: vi.fn(),
     fetchModelConnections: vi.fn(),
     finishOnboarding: vi.fn(),
