@@ -103,12 +103,13 @@ records an unavailable outcome instead of borrowing a different Space's grant.
   a new Space cannot use the connection until explicitly granted. A separately approved issue
   creation proves the L1 path without making write access an implicit consequence of a read task.
 
-The implementation owners are #181 for Gmail and #182 for reuse of this journey after #180's MCP
-path. #121–#123 remain Mailbox-specific. #98 owns Chat resolution of true Pending decisions; #155
-supplies the PWA live-state runtime, while #141 and its implementation tickets own the durable
-Chat timeline and turn lifecycle. Reusing a Model-connection form was rejected because Model
-connections provide inference only, while service connections authorize external actions. A
-per-Space credential was rejected because it would duplicate account identity and make revocation
-inconsistent across Spaces.
+Issue #181 owns the shared Chat-initiated journey and must prove it with both Gmail and the reviewed
+GitHub MCP service after #180 supplies that service's execution path. The former #182 proving case
+is included in #181 rather than becoming a second setup workflow. #121–#123 remain Mailbox-specific.
+#98 owns Chat resolution of true Pending decisions; #155 supplies the PWA live-state runtime, while
+#141 and its implementation tickets own the durable Chat timeline and turn lifecycle. Reusing a
+Model-connection form was rejected because Model connections provide inference only, while service
+connections authorize external actions. A per-Space credential was rejected because it would
+duplicate account identity and make revocation inconsistent across Spaces.
 
 Status: accepted
