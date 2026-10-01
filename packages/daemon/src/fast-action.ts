@@ -17,6 +17,7 @@ import {
 export type SurfaceActionErrorCode =
   | 'unknown_surface'
   | 'undeclared_action'
+  | 'disabled_control'
   | 'invalid_payload'
   | 'stale_action'
   | 'missing_target'

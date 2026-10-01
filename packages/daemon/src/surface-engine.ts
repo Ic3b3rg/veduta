@@ -1469,6 +1469,20 @@ export class SurfaceEngine {
       )
     }
 
+    if (atom.type === 'Button' && atom.props?.['disabled'] === true) {
+      throw new SurfaceActionError('disabled_control', 'this Button is disabled')
+    }
+    if (
+      atom.type === 'Button' &&
+      invocation.payload !== undefined &&
+      canonicalJson(invocation.payload) !== canonicalJson(action.payload ?? {})
+    ) {
+      throw new SurfaceActionError(
+        'invalid_payload',
+        'Button payload must exactly match its declared Action payload',
+      )
+    }
+
     const payload = JsonObjectSchema.parse({
       ...(action.payload ?? {}),
       ...(invocation.payload ?? {}),

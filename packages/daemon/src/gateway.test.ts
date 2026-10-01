@@ -855,7 +855,7 @@ function agentActionSurface(): Surface {
           id: 'regenerate',
           type: 'Button',
           props: { label: 'Regenerate' },
-          actions: [{ name: 'regenerate_plan', path: 'agent' }],
+          actions: [{ name: 'regenerate_plan', path: 'agent', payload: { reason: 'stale' } }],
         },
       ],
     },
