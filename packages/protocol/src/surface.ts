@@ -8,6 +8,7 @@ import {
   validateSelectionControlState,
   validateSelectionControlPlanValues,
 } from './control-atoms.ts'
+import { semanticValidationIssues, type SemanticValidationIssue } from './semantic-validation.ts'
 
 /**
  * A Surface is living state, not a response (CONTEXT.md): a declarative
@@ -112,10 +113,19 @@ export function validateAtomTreeState(
   validateActionPlansState(tree, state, ctx)
   validateNodeBindings(tree, state, ['tree'], ctx)
   validateTextFormTree(tree, false, ['tree'], ctx)
+  validateSelectionControlPlanValues(tree, ctx)
+  validateAtomBoundValues(tree, state, ctx)
+}
+
+/** Bound-value rules reused for statically provable Action outcomes without recursive plan checks. */
+export function validateAtomBoundValues(
+  tree: AtomNode,
+  state: JsonObject,
+  ctx: z.RefinementCtx,
+): void {
   validateTextFormState(tree, state, ctx)
   validateNewControlState(tree, state, ctx)
   validateSelectionControlState(tree, state, ctx)
-  validateSelectionControlPlanValues(tree, ctx)
   validateChartState(tree, state, ctx)
   validateContentState(tree, state, ctx)
 }
@@ -189,19 +199,25 @@ export function surfaceRelativeTimeStatus(
 }
 
 export class SurfaceValidationError extends Error {
+  readonly code = 'invalid_surface'
   readonly issues: string[]
+  readonly validationIssues: SemanticValidationIssue[]
 
-  constructor(issues: string[]) {
+  constructor(issues: string[], validationIssues: SemanticValidationIssue[] = []) {
     super(`invalid Surface: ${issues.join('; ')}`)
     this.name = 'SurfaceValidationError'
     this.issues = issues
+    this.validationIssues = validationIssues
   }
 }
 
 export function parseSurface(input: unknown): Surface {
   const result = SurfaceSchema.safeParse(input)
   if (result.success) return result.data
-  throw new SurfaceValidationError(formatSurfaceIssues(result.error.issues))
+  throw new SurfaceValidationError(
+    formatSurfaceIssues(result.error.issues),
+    semanticValidationIssues(result.error),
+  )
 }
 
 export function formatSurfaceIssues(issues: ZodIssue[]): string[] {

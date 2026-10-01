@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { AgentActionTurnSchema } from './agent-action-turn.ts'
+import { SemanticValidationIssueSchema } from './semantic-validation.ts'
 import {
   CommittedFastActionMetadataSchema,
   FastActionOutcomeSchema,
@@ -425,6 +426,8 @@ export function gatewayServerMessageSchema<
       z.object({
         type: z.literal('error'),
         error: z.string().min(1),
+        code: z.string().min(1).optional(),
+        issues: z.array(SemanticValidationIssueSchema).optional(),
       }),
     ])
     .superRefine((message, context) => {

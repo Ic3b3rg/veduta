@@ -97,6 +97,7 @@ export {
   SurfaceSchema,
   AtomTreeStateSchema,
   validateAtomTreeState,
+  validateAtomBoundValues,
   FreshnessSchema,
   SurfacePresentationSchema,
   RelativeTimeValiditySchema,
@@ -399,3 +400,4 @@ export * from './action-inputs.ts'
 export * from './action-builders.ts'
 export * from './control-atoms.ts'
 export * from './agent-action-turn.ts'
+export * from './semantic-validation.ts'
