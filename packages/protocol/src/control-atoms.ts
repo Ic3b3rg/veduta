@@ -79,14 +79,11 @@ export function validateSelectionControl(node: ActionOwningNode, ctx: z.Refineme
     issue(['actions'], `${node.type} requires exactly one ${name} fast Action`)
     return
   }
+  const finalBindingStep = action.plan.steps.filter((step) => step.target === node.binding).at(-1)
   if (
-    !action.plan.steps.some(
-      (step) =>
-        step.op === 'set' &&
-        step.target === node.binding &&
-        step.value.source === 'input' &&
-        step.value.name === 'value',
-    )
+    finalBindingStep?.op !== 'set' ||
+    finalBindingStep.value.source !== 'input' ||
+    finalBindingStep.value.name !== 'value'
   )
     issue(
       ['actions', 0, 'plan', 'steps'],

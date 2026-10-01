@@ -191,4 +191,15 @@ describe('selection and action control acceptance', () => {
       ).toBe(false)
     }
   })
+
+  it('rejects a selection plan that overwrites its submitted value later in the batch', () => {
+    const node = selection('Select')
+    const plan = inputSetPlan('value', { type: 'string', enum: ['first', 'second'] })
+    plan.steps.push({ op: 'set', target: 'value', value: { source: 'literal', value: 'first' } })
+    expect(
+      SurfaceSchema.safeParse(
+        surface({ ...node, actions: [{ name: 'change', path: 'fast', plan }] }, 'first'),
+      ).success,
+    ).toBe(false)
+  })
 })

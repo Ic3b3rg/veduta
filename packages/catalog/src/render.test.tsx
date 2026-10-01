@@ -599,19 +599,55 @@ describe('renderNode', () => {
       id: 'controls-root',
       type: 'Box',
       children: [
-        { id: 'check', type: 'Checkbox', binding: 'checked', props: { label: 'Done' } },
-        { id: 'date', type: 'DatePicker', binding: 'date', props: { label: 'Date' } },
+        {
+          id: 'check',
+          type: 'Checkbox',
+          binding: 'checked',
+          props: { label: 'Done' },
+          actions: [
+            { name: 'toggle', path: 'fast', plan: inputSetPlan('checked', { type: 'boolean' }) },
+          ],
+        },
+        {
+          id: 'date',
+          type: 'DatePicker',
+          binding: 'date',
+          props: { label: 'Date' },
+          actions: [
+            { name: 'change', path: 'fast', plan: inputSetPlan('date', { type: 'string' }) },
+          ],
+        },
         {
           id: 'select',
           type: 'Select',
           binding: 'priority',
-          props: { label: 'Priority', options: ['low', 'high'] },
+          props: {
+            label: 'Priority',
+            options: ['low', 'high'].map((value) => ({ label: value, value })),
+          },
+          actions: [
+            {
+              name: 'change',
+              path: 'fast',
+              plan: inputSetPlan('priority', { type: 'string', enum: ['low', 'high'] }),
+            },
+          ],
         },
         {
           id: 'radio',
           type: 'RadioGroup',
           binding: 'cadence',
-          props: { label: 'Cadence', options: ['daily', 'weekly'] },
+          props: {
+            label: 'Cadence',
+            options: ['daily', 'weekly'].map((value) => ({ label: value, value })),
+          },
+          actions: [
+            {
+              name: 'change',
+              path: 'fast',
+              plan: inputSetPlan('cadence', { type: 'string', enum: ['daily', 'weekly'] }),
+            },
+          ],
         },
         {
           id: 'text-form',
@@ -691,11 +727,31 @@ describe('renderNode', () => {
       id: 'priority',
       type: 'Select',
       binding: 'priority',
-      props: { label: 'Priority', options: ['low', 'high'] },
+      props: {
+        label: 'Priority',
+        options: ['low', 'high'].map((value) => ({ label: value, value })),
+      },
+      actions: [
+        {
+          name: 'change',
+          path: 'fast',
+          plan: inputSetPlan('priority', { type: 'string', enum: ['low', 'high'] }),
+        },
+      ],
     })
     const after = AtomNodeSchema.parse({
       ...before,
-      props: { label: 'Priority', options: ['low', 'high', 'urgent'] },
+      props: {
+        label: 'Priority',
+        options: ['low', 'high', 'urgent'].map((value) => ({ label: value, value })),
+      },
+      actions: [
+        {
+          name: 'change',
+          path: 'fast',
+          plan: inputSetPlan('priority', { type: 'string', enum: ['low', 'high', 'urgent'] }),
+        },
+      ],
     })
     const state = { priority: 'low' }
     const view = render(renderNode(before, { state, dispatch: vi.fn() }))
@@ -780,7 +836,12 @@ describe('renderNode', () => {
         { id: 'text-content', type: 'Text', props: { text: 'Before text' } },
         { id: 'caption-content', type: 'Caption', props: { text: 'Before caption' } },
         { id: 'label-content', type: 'Label', props: { text: 'Before label' } },
-        { id: 'button-content', type: 'Button', props: { label: 'Before button' } },
+        {
+          id: 'button-content',
+          type: 'Button',
+          props: { label: 'Before button' },
+          actions: [{ name: 'review', path: 'agent' }],
+        },
         { id: 'badge-content', type: 'Badge', props: { text: 'Before badge' } },
         { id: 'icon-content', type: 'Icon', props: { name: 'clock', label: 'Before icon' } },
         { id: 'image-content', type: 'Image', props: { alt: 'Before image' } },
@@ -793,7 +854,12 @@ describe('renderNode', () => {
         { id: 'text-content', type: 'Text', props: { text: 'After text' } },
         { id: 'caption-content', type: 'Caption', props: { text: 'After caption' } },
         { id: 'label-content', type: 'Label', props: { text: 'After label' } },
-        { id: 'button-content', type: 'Button', props: { label: 'After button' } },
+        {
+          id: 'button-content',
+          type: 'Button',
+          props: { label: 'After button' },
+          actions: [{ name: 'review', path: 'agent' }],
+        },
         { id: 'badge-content', type: 'Badge', props: { text: 'After badge' } },
         { id: 'icon-content', type: 'Icon', props: { name: 'check', label: 'After icon' } },
         {

@@ -23,7 +23,15 @@ interface ControlAttempt {
 }
 
 /** Local feedback observes the host's canonical confirmation; the host owns execution and retry. */
-function ActionControl({ node, ctx }: AtomProps): ReactNode {
+function ActionControl({
+  node,
+  ctx,
+  'data-veduta-atom-id': atomId,
+  'data-veduta-motion-id': motionId,
+}: AtomProps & {
+  'data-veduta-atom-id'?: string
+  'data-veduta-motion-id'?: string
+}): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const errorId = useId()
   const [pending, setPending] = useState(false)
@@ -208,7 +216,11 @@ function ActionControl({ node, ctx }: AtomProps): ReactNode {
     )
   }
   return (
-    <div style={{ display: 'grid', gap: tokens.space.xs }}>
+    <div
+      data-veduta-atom-id={atomId}
+      data-veduta-motion-id={motionId}
+      style={{ display: 'grid', gap: tokens.space.xs }}
+    >
       {control}
       {pending && (
         <span role="status" aria-live="polite">
