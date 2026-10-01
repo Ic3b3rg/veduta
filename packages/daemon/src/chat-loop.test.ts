@@ -259,12 +259,19 @@ function queueTestAgentAction(store: Store, origin: Origin = 'trusted:user') {
       spaceId: 'spc-health',
       title: 'Agent action',
       tree: {
-        id: 'run',
-        type: 'Button',
-        props: { label: 'Run' },
-        actions: [{ name: 'run', path: 'agent', payload: { request: 'Explain this Surface' } }],
+        id: 'root',
+        type: 'Col',
+        children: [
+          { id: 'result', type: 'Stat', binding: 'result', props: { label: 'Result' } },
+          {
+            id: 'run',
+            type: 'Button',
+            props: { label: 'Run' },
+            actions: [{ name: 'run', path: 'agent', payload: { request: 'Explain this Surface' } }],
+          },
+        ],
       },
-      state: {},
+      state: { result: 'Before' },
       pinned: false,
       pinnable: true,
       presentation: 'standard',
@@ -314,6 +321,8 @@ describe('createChatLoop', () => {
       origin: 'untrusted:template',
       trigger: { kind: 'agent-turn', id: turn.id },
     })
+    expect(h.toolContexts[0]?.currentUserRequest).toBeUndefined()
+    expect(h.toolContexts[0]?.initiatingTurn).toBeUndefined()
     expect(
       h.store.eventLog('spc-health').filter((event) => event.type === 'agent_path'),
     ).toHaveLength(1)
@@ -344,6 +353,83 @@ describe('createChatLoop', () => {
       type: 'turn',
       payload: { role: 'assistant', outcome: 'failed', agentTurnId: turn.id },
     })
+  })
+
+  it.each(['read_surface', 'patch_state'])(
+    'completes an Agent action after correcting a failed %s call in the same turn',
+    async (failedTool) => {
+      const h = harness()
+      const turn = queueTestAgentAction(h.store)
+      const loop = globalSurfaceChatLoop(h)
+      h.fake.setResponses([
+        {
+          message:
+            failedTool === 'read_surface'
+              ? fakeToolCall('read_surface', { surfaceId: 'srf-typo' })
+              : fakeToolCall('patch_state', {
+                  surfaceId: turn.surfaceId,
+                  operations: [
+                    { target: 'state', op: 'replace', path: '/result', value: { invalid: true } },
+                  ],
+                }),
+        },
+        { message: fakeToolCall('read_surface', { surfaceId: turn.surfaceId }) },
+        {
+          message: fakeToolCall('patch_state', {
+            surfaceId: turn.surfaceId,
+            operations: [{ target: 'state', op: 'replace', path: '/result', value: 'After' }],
+          }),
+        },
+        { message: fakeText('All requested work completed.') },
+      ])
+
+      const result = await loop.handleAgentAction(turn)
+
+      expect(result).toMatchObject({
+        message: { role: 'assistant', text: expect.stringContaining('Result: After') },
+      })
+      expect(result).not.toHaveProperty('error')
+      expect(h.store.getSurface(turn.surfaceId)?.state['result']).toBe('After')
+      expect(
+        h.store
+          .eventLog(turn.spaceId)
+          .filter(
+            (event) =>
+              event.type === 'surface.patch_state' &&
+              event.payload?.['surfaceId'] === turn.surfaceId,
+          ),
+      ).toHaveLength(1)
+      await loop.stop()
+    },
+  )
+
+  it('does not treat an unrelated successful read as recovery from a rejected Agent write', async () => {
+    const h = harness()
+    const turn = queueTestAgentAction(h.store)
+    const loop = globalSurfaceChatLoop(h)
+    h.fake.setResponses([
+      {
+        message: fakeToolCall('patch_state', {
+          surfaceId: turn.surfaceId,
+          operations: [
+            { target: 'state', op: 'replace', path: '/result', value: { invalid: true } },
+          ],
+        }),
+      },
+      { message: fakeToolCall('read_surface', { surfaceId: turn.surfaceId }) },
+      { message: fakeText('All requested work completed.') },
+    ])
+
+    const result = await loop.handleAgentAction(turn)
+
+    expect(result).toMatchObject({
+      error: expect.stringContaining('A Surface change was not saved:'),
+    })
+    expect(h.store.getSurface(turn.surfaceId)?.state['result']).toBe('Before')
+    expect(h.store.eventLog(turn.spaceId).at(-1)?.text).not.toContain(
+      'All requested work completed.',
+    )
+    await loop.stop()
   })
 
   it.each(['focused', 'global'])(

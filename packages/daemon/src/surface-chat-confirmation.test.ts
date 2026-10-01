@@ -147,4 +147,47 @@ describe('SurfaceChatConfirmation', () => {
     })
     expect(confirmation.feedback()).toBe('A Surface change is proposed and awaits your decision.')
   })
+
+  it.each([true, false])(
+    'only a canonical retry of the same target resolves a failed Surface write (same target: %s)',
+    (sameTarget) => {
+      const canonical = surface()
+      const confirmation = new SurfaceChatConfirmation(() => canonical)
+      confirmation.observe({
+        type: 'tool-start',
+        toolCallId: 'failed-write',
+        toolName: 'patch_state',
+        input: { surfaceId: canonical.id },
+      })
+      confirmation.observe({
+        type: 'tool-result',
+        toolCallId: 'failed-write',
+        toolName: 'patch_state',
+        content: 'Invalid bound value',
+        details: undefined,
+        isError: true,
+      })
+      confirmation.observe({
+        type: 'tool-start',
+        toolCallId: 'corrected-write',
+        toolName: 'patch_state',
+        input: { surfaceId: sameTarget ? canonical.id : 'srf-unrelated' },
+      })
+      confirmation.observe({
+        type: 'tool-result',
+        toolCallId: 'corrected-write',
+        toolName: 'patch_state',
+        content: 'Saved',
+        details: { surface: canonical },
+        isError: false,
+      })
+      if (sameTarget) {
+        expect(confirmation.failure()).toBeUndefined()
+        expect(confirmation.feedback()).not.toContain('Invalid bound value')
+      } else {
+        expect(confirmation.failure()).toContain('Invalid bound value')
+        expect(confirmation.feedback()).toContain('Invalid bound value')
+      }
+    },
+  )
 })

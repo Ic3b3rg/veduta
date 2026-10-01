@@ -457,7 +457,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
       let pendingSeparator = false
       let toolCalls: { toolCallId: string; toolName: string }[] = []
       let lastTurnEnd: { text: string; origins: Origin[] } | undefined
-      let toolFailure: string | undefined
+      const toolFailures = new Map<string, string>()
 
       function resetPerAttemptAccumulation(): void {
         segments = []
@@ -465,7 +465,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
         pendingSeparator = false
         toolCalls = []
         lastTurnEnd = undefined
-        toolFailure = undefined
+        toolFailures.clear()
       }
 
       // A delivery/accounting failure (a dead `send`, a `recordSpend` throw)
@@ -487,9 +487,12 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
         }
       }
       const unsubscribe = runner.on((agentEvent) => {
-        surfaceConfirmation.observe(agentEvent)
-        if (agentEvent.type === 'tool-result' && agentEvent.isError)
-          toolFailure = sanitizeErrorText(new Error(agentEvent.content))
+        const surfaceWrite = surfaceConfirmation.observe(agentEvent)
+        if (agentEvent.type === 'tool-result' && !surfaceWrite) {
+          if (agentEvent.isError)
+            toolFailures.set(agentEvent.toolName, sanitizeErrorText(new Error(agentEvent.content)))
+          else toolFailures.delete(agentEvent.toolName)
+        }
         if (agentEvent.type === 'text-delta') {
           const emitSeparator = pendingSeparator
           pendingSeparator = false
@@ -566,11 +569,17 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
       }
 
       const finalText = finalTextOf(segments, lastTurnEnd?.text)
+      const surfaceFailure = surfaceConfirmation.failure()
+      const toolFailure = surfaceFailure ?? [...toolFailures.values()].at(0)
+      const surfaceFeedback = surfaceConfirmation.feedback()
+      const failureFeedback = surfaceFailure
+        ? (surfaceFeedback ?? surfaceFailure)
+        : [surfaceFeedback, toolFailure].filter(Boolean).join('\n\n')
       const finalMessage =
         pendingDecisionIds.size === 0
           ? {
               role: 'assistant' as const,
-              text: surfaceConfirmation.feedback() ?? finalText,
+              text: agentAction && toolFailure ? failureFeedback : (surfaceFeedback ?? finalText),
               ...(resultTargets.length === 0 ? {} : { targets: resultTargets }),
             }
           : {
@@ -609,9 +618,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
         ...spaceField,
         message: finalMessage,
       })
-      return agentAction && toolFailure
-        ? { error: surfaceConfirmation.feedback() ?? toolFailure }
-        : { message: finalMessage }
+      return agentAction && toolFailure ? { error: finalMessage.text } : { message: finalMessage }
     } catch (error) {
       const providerError = sanitizeErrorText(error)
       const errorText = agentAction

@@ -12,11 +12,12 @@ const SURFACE_WRITE_TOOLS = new Set([
   'pin_surface',
 ])
 
-type Confirmation =
-  | { status: 'pending' | 'unconfirmed' | 'proposed'; toolName: string }
-  | { status: 'saved'; toolName: string; surfaceId: string }
-  | { status: 'archived'; toolName: string; title: string }
-  | { status: 'failed'; toolName: string; error: string }
+type Confirmation = { toolName: string; target: string | undefined } & (
+  | { status: 'pending' | 'unconfirmed' | 'proposed' }
+  | { status: 'saved'; surfaceId: string }
+  | { status: 'archived'; title: string }
+  | { status: 'failed'; error: string }
+)
 
 /** Chat confirmations are derived from Gateway writes, never model descriptions of a write. */
 export class SurfaceChatConfirmation {
@@ -34,7 +35,13 @@ export class SurfaceChatConfirmation {
   observe(event: AgentEvent): boolean {
     if (event.type === 'tool-start' && SURFACE_WRITE_TOOLS.has(event.toolName)) {
       if (!this.calls.has(event.toolCallId)) {
-        this.calls.set(event.toolCallId, { status: 'pending', toolName: event.toolName })
+        const input = isRecord(event.input) ? event.input : undefined
+        const target = input?.['surfaceId'] ?? input?.['id']
+        this.calls.set(event.toolCallId, {
+          status: 'pending',
+          toolName: event.toolName,
+          target: typeof target === 'string' ? target : undefined,
+        })
       }
       return true
     }
@@ -46,6 +53,7 @@ export class SurfaceChatConfirmation {
       this.calls.set(event.toolCallId, {
         status: 'failed',
         toolName: call.toolName,
+        target: call.target,
         error: sanitizeErrorText(new Error(event.content)).slice(0, 240),
       })
       return true
@@ -54,13 +62,22 @@ export class SurfaceChatConfirmation {
     const details = isRecord(event.details) ? event.details : undefined
     const parsed = SurfaceSchema.safeParse(details?.['surface'])
     const canonical = parsed.success ? this.readSurface(parsed.data.id) : undefined
-    if (parsed.success && call.toolName === 'archive_surface' && this.isArchived(parsed.data)) {
+    const sameTarget =
+      parsed.success && (call.target === undefined || call.target === parsed.data.id)
+    if (
+      sameTarget &&
+      parsed.success &&
+      call.toolName === 'archive_surface' &&
+      this.isArchived(parsed.data)
+    ) {
       this.calls.set(event.toolCallId, {
         status: 'archived',
         toolName: call.toolName,
+        target: call.target,
         title: parsed.data.title,
       })
     } else if (
+      sameTarget &&
       parsed.success &&
       canonical &&
       canonicalJson(canonical) === canonicalJson(parsed.data)
@@ -68,15 +85,38 @@ export class SurfaceChatConfirmation {
       this.calls.set(event.toolCallId, {
         status: 'saved',
         toolName: call.toolName,
+        target: call.target,
         surfaceId: canonical.id,
       })
     } else {
       this.calls.set(event.toolCallId, {
         status: typeof details?.['proposalId'] === 'string' ? 'proposed' : 'unconfirmed',
         toolName: call.toolName,
+        target: call.target,
       })
     }
+    const result = this.calls.get(event.toolCallId)
+    if (
+      call.target !== undefined &&
+      (result?.status === 'saved' || result?.status === 'archived')
+    ) {
+      for (const [id, earlier] of this.calls) {
+        if (
+          earlier.status === 'failed' &&
+          earlier.toolName === call.toolName &&
+          earlier.target === call.target
+        )
+          this.calls.delete(id)
+      }
+    }
     return true
+  }
+
+  failure(): string | undefined {
+    const errors = [...this.calls.values()].flatMap((call) =>
+      call.status === 'failed' ? [surfaceFailureText(call.error)] : [],
+    )
+    return errors.length === 0 ? undefined : [...new Set(errors)].join('\n\n')
   }
 
   feedback(): string | undefined {
@@ -95,7 +135,7 @@ export class SurfaceChatConfirmation {
       } else if (call.status === 'archived') {
         archives.add(`Archived Surface “${call.title}”.`)
       } else if (call.status === 'failed') {
-        failures.add(`A Surface change was not saved: ${call.error}`)
+        failures.add(surfaceFailureText(call.error))
       } else if (call.status === 'pending') pending = true
       else if (call.status === 'proposed') proposed = true
       else unconfirmed = true
@@ -111,6 +151,10 @@ export class SurfaceChatConfirmation {
     if (unconfirmed) text.push('No Surface change is confirmed.')
     return text.join('\n\n')
   }
+}
+
+function surfaceFailureText(error: string): string {
+  return `A Surface change was not saved: ${error}`
 }
 
 /** A bounded excerpt of visible text and metrics, excluding unused state and control claims. */
