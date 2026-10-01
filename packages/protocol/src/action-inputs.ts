@@ -9,6 +9,7 @@ import {
   type ActionValueSource,
 } from './action-plan.ts'
 import { canonicalJson, JsonObjectSchema, type JsonObject } from './json.ts'
+import { isControlDate } from './control-atoms.ts'
 
 export interface ActionOwningNode {
   type: string
@@ -116,11 +117,14 @@ export function fastActionInputsSchema(node: ActionOwningNode, action: FastActio
     }
     if (node.props?.['disabled'] === true)
       ctx.addIssue({ code: 'custom', message: 'this control is disabled' })
-    if (node.type === 'DatePicker' && inputs['value'] !== '' && !isCalendarDate(inputs['value'])) {
+    if (
+      node.type === 'DatePicker' &&
+      !isControlDate(inputs['value'], node.props?.['allowEmpty'] === true)
+    ) {
       ctx.addIssue({
         code: 'custom',
         path: ['value'],
-        message: 'date must be a real YYYY-MM-DD date or an empty string',
+        message: 'date must be a real YYYY-MM-DD date; empty requires allowEmpty: true',
       })
     }
     for (const [key, spec] of Object.entries(action.plan.inputs)) {
@@ -128,12 +132,6 @@ export function fastActionInputsSchema(node: ActionOwningNode, action: FastActio
         ctx.addIssue({ code: 'custom', path: [key], message: 'invalid declared typed input' })
     }
   })
-}
-
-function isCalendarDate(value: unknown): boolean {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
-  const date = new Date(`${value}T00:00:00.000Z`)
-  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
 }
 
 /** One shared validation hook for canonical writes, Template reuse, and catalog rendering. */

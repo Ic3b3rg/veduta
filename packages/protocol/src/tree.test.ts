@@ -11,12 +11,11 @@ const tree = AtomNodeSchema.parse({
     {
       id: 'milk',
       type: 'Checkbox',
+      props: { label: 'Milk' },
       binding: 'milk',
-      actions: [
-        { name: 'toggle', path: 'fast', plan: inputSetPlan('milk', { type: 'boolean' }) },
-        { name: 'explain' },
-      ],
+      actions: [{ name: 'toggle', path: 'fast', plan: inputSetPlan('milk', { type: 'boolean' }) }],
     },
+    { id: 'explain', type: 'Button', props: { label: 'Explain' }, actions: [{ name: 'explain' }] },
   ],
 })
 
@@ -49,7 +48,7 @@ describe('findDeclaredFastAction', () => {
   })
 
   it('does not resolve agent-path actions as fast', () => {
-    expect(findDeclaredFastAction(tree, 'milk', 'explain')).toBeUndefined()
+    expect(findDeclaredFastAction(tree, 'explain', 'explain')).toBeUndefined()
   })
 
   it('does not resolve undeclared actions or unknown nodes', () => {

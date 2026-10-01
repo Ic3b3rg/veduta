@@ -3,6 +3,7 @@ import { validateOwningActionDeclarations } from './action-inputs.ts'
 import { ActionSchema, FormSubmitActionSchema, type Action } from './action.ts'
 import { ChartAtomPropsSchema } from './chart.ts'
 import { validateContentAtom } from './content-atoms.ts'
+import { validateSelectionControl } from './control-atoms.ts'
 import { validateLayoutAtom } from './layout-atoms.ts'
 export { AutomationAtomPropsSchema, type AutomationAtomProps } from './content-atoms.ts'
 import { JsonObjectSchema, type JsonObject } from './json.ts'
@@ -226,6 +227,7 @@ function validateAtomNode(node: PendingAtomCandidate, ctx: z.RefinementCtx): voi
   validateTextareaAtom(node, ctx)
   validateFormAtom(node, ctx)
   validateContentAtom(node, ctx)
+  validateSelectionControl(node, ctx)
   validateLayoutAtom(node, ctx)
   validateDisclosureAtom(node, ctx)
   validateNewControlAtom(node, ctx)
