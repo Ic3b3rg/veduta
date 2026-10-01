@@ -110,21 +110,66 @@ export function validateSelectionControlState(
 ): void {
   const binding = node.binding
   if (binding && Object.hasOwn(state, binding)) {
-    const value = state[binding]
-    let valid = true
-    let message = ''
-    if (node.type === 'Checkbox') {
-      valid = typeof value === 'boolean'
-      message = 'Checkbox state must be a boolean'
-    } else if (node.type === 'Select' || node.type === 'RadioGroup') {
-      const props = SelectAtomPropsSchema.safeParse(node.props)
-      valid = props.success && props.data.options.some((option) => option.value === value)
-      message = `${node.type} state must match an offered option value`
-    } else if (node.type === 'DatePicker') {
-      valid = isControlDate(value, node.props?.['allowEmpty'] === true)
-      message = 'DatePicker state must be a real YYYY-MM-DD date; empty requires allowEmpty: true'
-    }
-    if (!valid) ctx.addIssue({ code: 'custom', path: ['state', binding], message })
+    const message = controlValueIssue(node, state[binding])
+    if (message) ctx.addIssue({ code: 'custom', path: ['state', binding], message })
   }
   node.children?.forEach((child) => validateSelectionControlState(child, state, ctx))
+}
+
+function controlValueIssue(node: ActionOwningNode, value: unknown): string | undefined {
+  if (node.type === 'Checkbox' && typeof value !== 'boolean')
+    return 'Checkbox state must be a boolean'
+  if (node.type === 'Select' || node.type === 'RadioGroup') {
+    const props = SelectAtomPropsSchema.safeParse(node.props)
+    if (!props.success || !props.data.options.some((option) => option.value === value))
+      return `${node.type} state must match an offered option value`
+  }
+  if (node.type === 'DatePicker' && !isControlDate(value, node.props?.['allowEmpty'] === true))
+    return 'DatePicker state must be a real YYYY-MM-DD date; empty requires allowEmpty: true'
+  return undefined
+}
+
+/** Known constants must satisfy the same control semantics as each intermediate canonical write. */
+export function validateSelectionControlPlanValues(
+  tree: ActionOwningNode,
+  ctx: z.RefinementCtx,
+): void {
+  const bindings = new Map<string, ActionOwningNode[]>()
+  function collect(node: ActionOwningNode): void {
+    if (node.binding && Object.hasOwn(controlSchemas, node.type))
+      bindings.set(node.binding, [...(bindings.get(node.binding) ?? []), node])
+    node.children?.forEach(collect)
+  }
+  function walk(node: ActionOwningNode, path: (string | number)[]): void {
+    node.actions?.forEach((action, actionIndex) => {
+      if (action.path !== 'fast') return
+      action.plan.steps.forEach((step, stepIndex) => {
+        const value =
+          step.op === 'clear'
+            ? step.value
+            : step.op === 'set' && step.value.source === 'literal'
+              ? step.value.value
+              : undefined
+        for (const control of bindings.get(step.target) ?? []) {
+          const message =
+            value !== undefined
+              ? controlValueIssue(control, value)
+              : step.op === 'set' &&
+                  step.value.source === 'metadata' &&
+                  control.type === 'DatePicker'
+                ? 'Gateway metadata is not a calendar-only date'
+                : undefined
+          if (message)
+            ctx.addIssue({
+              code: 'custom',
+              path: [...path, 'actions', actionIndex, 'plan', 'steps', stepIndex, 'value'],
+              message,
+            })
+        }
+      })
+    })
+    node.children?.forEach((child, index) => walk(child, [...path, 'children', index]))
+  }
+  collect(tree)
+  walk(tree, ['tree'])
 }

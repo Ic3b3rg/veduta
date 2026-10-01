@@ -4,7 +4,10 @@ import { ChartAtomPropsSchema, chartSeriesSchema } from './chart.ts'
 import { JsonObjectSchema, type JsonObject } from './json.ts'
 import { validateContentState } from './content-atoms.ts'
 import { validateActionPlansState } from './action-inputs.ts'
-import { validateSelectionControlState } from './control-atoms.ts'
+import {
+  validateSelectionControlState,
+  validateSelectionControlPlanValues,
+} from './control-atoms.ts'
 
 /**
  * A Surface is living state, not a response (CONTEXT.md): a declarative
@@ -112,6 +115,7 @@ export function validateAtomTreeState(
   validateTextFormState(tree, state, ctx)
   validateNewControlState(tree, state, ctx)
   validateSelectionControlState(tree, state, ctx)
+  validateSelectionControlPlanValues(tree, ctx)
   validateChartState(tree, state, ctx)
   validateContentState(tree, state, ctx)
 }

@@ -202,4 +202,68 @@ describe('selection and action control acceptance', () => {
       ).success,
     ).toBe(false)
   })
+
+  it('rejects Buttons with a statically invalid literal or clear value for a bound control', () => {
+    for (const [type, value, canonical] of [
+      ['DatePicker', '2025-02-29', '2026-10-01'],
+      ['DatePicker', '', '2026-10-01'],
+      ['Select', 'third', 'first'],
+      ['RadioGroup', 'third', 'first'],
+      ['Checkbox', 'true', false],
+    ] as const) {
+      const plan = literalSetPlan('value', value)
+      const tree = {
+        id: 'root',
+        type: 'Col',
+        children: [
+          selection(type),
+          {
+            id: 'button',
+            type: 'Button',
+            props: { label: 'Apply' },
+            actions: [{ name: 'apply', path: 'fast', plan }],
+          },
+        ],
+      }
+      expect(SurfaceSchema.safeParse(surface(tree, canonical)).success).toBe(false)
+      if (value === '') {
+        plan.steps = [{ op: 'clear', target: 'value', value: '' }]
+        expect(SurfaceSchema.safeParse(surface(tree, canonical)).success).toBe(false)
+      }
+    }
+  })
+
+  it('validates every known intermediate control value and rejects timestamp metadata as a calendar date', () => {
+    const plan = literalSetPlan('value', '2025-02-29')
+    plan.steps.push({
+      op: 'set',
+      target: 'value',
+      value: { source: 'literal', value: '2026-10-01' },
+    })
+    const button = {
+      id: 'button',
+      type: 'Button',
+      props: { label: 'Apply' },
+      actions: [{ name: 'apply', path: 'fast', plan }],
+    }
+    const tree = { id: 'root', type: 'Col', children: [selection('DatePicker'), button] }
+    expect(SurfaceSchema.safeParse(surface(tree, '2026-10-01')).success).toBe(false)
+    plan.steps[0] = { op: 'set', target: 'value', value: { source: 'metadata', name: 'now' } }
+    expect(SurfaceSchema.safeParse(surface(tree, '2026-10-01')).success).toBe(false)
+    plan.steps[0] = {
+      op: 'set',
+      target: 'value',
+      value: { source: 'literal', value: '2024-02-29' },
+    }
+    expect(SurfaceSchema.safeParse(surface(tree, '2026-10-01')).success).toBe(true)
+    const optionalTree = {
+      ...tree,
+      children: [
+        { ...selection('DatePicker'), props: { label: 'Choice', allowEmpty: true } },
+        button,
+      ],
+    }
+    plan.steps = [{ op: 'clear', target: 'value', value: '' }]
+    expect(SurfaceSchema.safeParse(surface(optionalTree, '2026-10-01')).success).toBe(true)
+  })
 })
