@@ -100,7 +100,7 @@ describe('automationsSurface', () => {
       },
     ])
 
-    expect(node.children?.[0]?.props?.['historyBinding']).toBe('history-3')
+    expect(node.children?.[0]).toHaveProperty('props.historyBinding', 'history-3')
     expect(
       automationsSurface(space, [{ ...reminder, history }], freshness).state['history-3'],
     ).toEqual(history)

@@ -9,7 +9,7 @@ import type { AtomProps } from './types.ts'
 import { Card } from './ui/card.tsx'
 import { ChartContainer } from './ui/chart.tsx'
 
-export function ChartAtom({ node, ctx }: AtomProps): ReactNode {
+export function ChartAtom({ node, ctx }: AtomProps<'Chart'>): ReactNode {
   const props = ChartAtomPropsSchema.safeParse(node.props)
   if (!props.success) return <UnknownAtom node={node} ctx={ctx} />
   const series = chartSeriesSchema(props.data).safeParse(boundValue(node, ctx))

@@ -20,7 +20,7 @@ const defaultLabels: Record<PendingSlotVariant, string> = {
   chart: 'Chart',
 }
 
-export function PendingAtom({ node, ctx }: AtomProps): ReactNode {
+export function PendingAtom({ node, ctx }: AtomProps<'Pending'>): ReactNode {
   const parsed = PendingAtomPropsSchema.safeParse(node.props)
   const tokens = tokensFor(ctx.theme)
   if (!parsed.success) {

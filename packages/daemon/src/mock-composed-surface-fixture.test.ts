@@ -50,14 +50,14 @@ it('creates a composed Surface then replaces one canonical Pending node through 
           .readAuthorableSurface(space.id, 'srf-composed-demo')
           .surface.tree.children?.find((node) => node.id === 'composed-preview')
         expect(pending?.type).toBe('Pending')
-        expect(pending?.props?.['startedAt']).toEqual(expect.any(String))
+        expect(pending).toHaveProperty('props.startedAt', expect.any(String))
       }
     }
     const surface = store.readAuthorableSurface(space.id, 'srf-composed-demo').surface
     const replaced = surface.tree.children?.filter((node) => node.id === 'composed-preview')
     expect(replaced).toHaveLength(1)
     expect(replaced?.[0]?.type).toBe('Text')
-    expect(replaced?.[0]?.props?.['text']).toBe('Comparison preview ready')
+    expect(replaced?.[0]).toHaveProperty('props.text', 'Comparison preview ready')
     expect(textIn(await responder(context, { callCount: results.length }))).toBe(
       'Saved Composed Surface: Comparison preview ready.',
     )

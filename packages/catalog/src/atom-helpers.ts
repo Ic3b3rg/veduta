@@ -67,7 +67,7 @@ export function boundedNumber(value: unknown, fallback: number, min: number, max
 }
 
 export function propBoolean(
-  props: JsonObject | undefined,
+  props: Record<string, unknown> | undefined,
   key: string,
   fallback: boolean,
 ): boolean {

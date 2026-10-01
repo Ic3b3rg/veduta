@@ -9,6 +9,7 @@ import {
   validateSelectionControlPlanValues,
 } from './control-atoms.ts'
 import { semanticValidationIssues, type SemanticValidationIssue } from './semantic-validation.ts'
+import { validateActionOperability } from './action-operability.ts'
 
 /**
  * A Surface is living state, not a response (CONTEXT.md): a declarative
@@ -110,11 +111,47 @@ export function validateAtomTreeState(
   state: JsonObject,
   ctx: z.RefinementCtx,
 ): void {
+  if (!hasVisibleContent(tree, state))
+    ctx.addIssue({
+      code: 'custom',
+      path: ['tree'],
+      params: { semanticCode: 'empty_surface_content' },
+      message:
+        'A Surface requires visible content or an explicit empty/pending state; layout and decoration alone are not content',
+    })
   validateActionPlansState(tree, state, ctx)
   validateNodeBindings(tree, state, ['tree'], ctx)
   validateTextFormTree(tree, false, ['tree'], ctx)
   validateSelectionControlPlanValues(tree, ctx)
   validateAtomBoundValues(tree, state, ctx)
+  validateActionOperability(tree, state, ctx, validateAtomBoundValues)
+}
+
+function hasVisibleContent(node: AtomNode, state: JsonObject): boolean {
+  switch (node.type) {
+    case 'Box':
+    case 'Row':
+    case 'Col':
+    case 'Transition':
+      return node.children?.some((child) => hasVisibleContent(child, state)) ?? false
+    case 'Spacer':
+    case 'Divider':
+      return false
+    case 'Icon':
+      return node.props.decorative !== true
+    case 'Text':
+    case 'Title':
+    case 'Caption':
+    case 'Label':
+    case 'Markdown': {
+      const content = node.binding === undefined ? node.props?.text : state[node.binding]
+      return (
+        (typeof content === 'string' && content.trim().length > 0) || Boolean(node.props?.emptyText)
+      )
+    }
+    default:
+      return true
+  }
 }
 
 /** Bound-value rules reused for statically provable Action outcomes without recursive plan checks. */
@@ -209,15 +246,19 @@ export class SurfaceValidationError extends Error {
     this.issues = issues
     this.validationIssues = validationIssues
   }
+
+  static fromZod(error: z.ZodError): SurfaceValidationError {
+    return new SurfaceValidationError(
+      formatSurfaceIssues(error.issues),
+      semanticValidationIssues(error),
+    )
+  }
 }
 
 export function parseSurface(input: unknown): Surface {
   const result = SurfaceSchema.safeParse(input)
   if (result.success) return result.data
-  throw new SurfaceValidationError(
-    formatSurfaceIssues(result.error.issues),
-    semanticValidationIssues(result.error),
-  )
+  throw SurfaceValidationError.fromZod(result.error)
 }
 
 export function formatSurfaceIssues(issues: ZodIssue[]): string[] {

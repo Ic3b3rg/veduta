@@ -80,7 +80,10 @@ describe('updateSurface', () => {
     const migratingSurface = updateSurface(migrating, FRESHNESS)
     const notMigratingSurface = updateSurface(notMigrating, FRESHNESS)
     const caption = findNode(migratingSurface.tree, 'update-migrates-caption')
-    expect(caption?.props?.['text']).toBe('Migrates your data — a backup is taken automatically')
+    expect(caption).toHaveProperty(
+      'props.text',
+      'Migrates your data — a backup is taken automatically',
+    )
     expect(findNode(notMigratingSurface.tree, 'update-migrates-caption')).toBeUndefined()
   })
 
@@ -114,9 +117,9 @@ describe('updateSurface', () => {
       { currentVersion: '1.0.0', status: 'refused', outcomeDetail: 'bad signature' },
       FRESHNESS,
     )
-    expect(findNode(applied.tree, 'update-outcome-badge')?.props?.['tone']).toBe('success')
-    expect(findNode(rolledBack.tree, 'update-outcome-badge')?.props?.['tone']).toBe('danger')
-    expect(findNode(refused.tree, 'update-outcome-badge')?.props?.['tone']).toBe('danger')
+    expect(findNode(applied.tree, 'update-outcome-badge')).toHaveProperty('props.tone', 'success')
+    expect(findNode(rolledBack.tree, 'update-outcome-badge')).toHaveProperty('props.tone', 'danger')
+    expect(findNode(refused.tree, 'update-outcome-badge')).toHaveProperty('props.tone', 'danger')
   })
 
   it('shows a failed check without hiding an available update or a terminal apply outcome', () => {
@@ -139,13 +142,19 @@ describe('updateSurface', () => {
       FRESHNESS,
     )
 
-    expect(findNode(updateAvailable.tree, 'update-available-stat')?.props?.['value']).toBe('1.1.0')
+    expect(findNode(updateAvailable.tree, 'update-available-stat')).toHaveProperty(
+      'props.value',
+      '1.1.0',
+    )
     expect(findNode(updateAvailable.tree, 'update-apply-button')).toBeDefined()
     expect(findNode(updateAvailable.tree, 'update-check-error-badge')?.props).toMatchObject({
       text: 'Update check failed: signature verification failed',
       tone: 'danger',
     })
-    expect(findNode(applied.tree, 'update-outcome-badge')?.props?.['text']).toBe('Updated to 1.1.0')
+    expect(findNode(applied.tree, 'update-outcome-badge')).toHaveProperty(
+      'props.text',
+      'Updated to 1.1.0',
+    )
     expect(findNode(applied.tree, 'update-check-error-badge')?.props).toMatchObject({
       text: 'Update check failed: feed unavailable',
       tone: 'danger',

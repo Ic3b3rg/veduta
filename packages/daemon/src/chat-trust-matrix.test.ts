@@ -377,7 +377,11 @@ describe('chat loop x trust layer — the live-turn trust matrix (issue #37 AC2)
         id: 'srf-trusted-read',
         spaceId: h.spaceId,
         title: 'Trusted tracker',
-        tree: { id: 'root', type: 'Box', children: [] },
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+        },
         state: { status: 'ready' },
         freshness: { updatedAt: new Date().toISOString(), updatedBy: 'agent' },
       }),

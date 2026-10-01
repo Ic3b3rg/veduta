@@ -155,6 +155,8 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
       and content_origin = 'untrusted:legacy-action';
     create unique index if not exists agent_turns_idempotency
       on agent_turns (idempotency_key) where idempotency_key is not null;
+    create index if not exists agent_turns_active_space
+      on agent_turns (space_id) where status in ('queued', 'running');
   `)
   db.exec(`
     insert or ignore into surface_commit_baseline (id, legacy_surface_cursor, recorded_at)

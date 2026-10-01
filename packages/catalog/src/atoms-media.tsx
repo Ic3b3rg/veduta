@@ -6,7 +6,7 @@ import { tokensFor, type CatalogTokens } from './design-system.ts'
 import type { AtomProps } from './types.ts'
 import { Card } from './ui/card.tsx'
 
-export function ImageAtom({ node, ctx }: AtomProps): ReactNode {
+export function ImageAtom({ node, ctx }: AtomProps<'Image'>): ReactNode {
   const props = ImageAtomPropsSchema.parse(node.props)
   return (
     <div
@@ -62,7 +62,7 @@ function ImageContent({
   )
 }
 
-export function IconAtom({ node, ctx }: AtomProps): ReactNode {
+export function IconAtom({ node, ctx }: AtomProps<'Icon'>): ReactNode {
   const props = IconAtomPropsSchema.parse(node.props)
   const tokens = tokensFor(ctx.theme)
   return (

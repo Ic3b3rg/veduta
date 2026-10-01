@@ -27,6 +27,18 @@ function findNode(tree: AtomNode, id: string): AtomNode | undefined {
   return undefined
 }
 
+function nodeText(tree: AtomNode, id: string): string {
+  const node = findNode(tree, id)
+  if (
+    node?.type === 'Title' ||
+    node?.type === 'Text' ||
+    node?.type === 'Caption' ||
+    node?.type === 'Markdown'
+  )
+    return node.props?.text ?? ''
+  throw new Error(`expected text Atom ${id}`)
+}
+
 function targetSurface(id: string, count: number, title = 'Stress checklist'): Surface {
   return SurfaceSchema.parse({
     id,
@@ -121,14 +133,14 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     expect(card?.spaceId).toBe('spc-health')
     expect(store.isSurfaceDaemonOwned(cardSurfaceId)).toBe(true)
 
-    const preview = findNode(card!.tree, 'preview')?.props?.['text']
+    const preview = nodeText(card!.tree, 'preview')
     expect(typeof preview).toBe('string')
-    expect(preview as string).toContain('add')
-    expect(preview as string).toContain('/children/2')
-    expect(preview as string).toContain('Caption')
+    expect(preview).toContain('add')
+    expect(preview).toContain('/children/2')
+    expect(preview).toContain('Caption')
 
-    const meta = findNode(card!.tree, 'meta')?.props?.['text']
-    expect(meta as string).toContain('srf-target-preview')
+    const meta = nodeText(card!.tree, 'meta')
+    expect(meta).toContain('srf-target-preview')
 
     expect(card?.state[DECISION_ACCEPT_KEY]).toBe(false)
     expect(card?.state[DECISION_REJECT_KEY]).toBe(false)
@@ -204,7 +216,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     if (!('proposed' in result)) throw new Error('expected a Tree proposal')
 
     const card = store.getSurface(treeProposalSurfaceId(result.proposalId))
-    const preview = findNode(card!.tree, 'preview')?.props?.['text'] as string
+    const preview = nodeText(card!.tree, 'preview')
     expect(preview).toContain('label="Submit order"')
     expect(preview).toContain('action=submit@fast(item0)')
   })
@@ -234,7 +246,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     if (!('proposed' in result)) throw new Error('expected a Tree proposal')
 
     const card = store.getSurface(treeProposalSurfaceId(result.proposalId))
-    const preview = findNode(card!.tree, 'preview')?.props?.['text'] as string
+    const preview = nodeText(card!.tree, 'preview')
     expect(preview).toContain('Second half of the plan')
     expect(preview).not.toContain('<<<evil>>>')
   })
@@ -266,7 +278,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     if (!('proposed' in result)) throw new Error('expected a Tree proposal')
 
     const card = store.getSurface(treeProposalSurfaceId(result.proposalId))
-    const preview = findNode(card!.tree, 'preview')?.props?.['text'] as string
+    const preview = nodeText(card!.tree, 'preview')
     expect(preview.length).toBeLessThanOrEqual(4001) // OPERATIONS_PREVIEW_MAX_CHARS plus the truncation ellipsis
   })
 
@@ -402,7 +414,10 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     expect(store.getTreeProposal(proposalId)?.status).toBe('pending')
     const target = store.getSurface('srf-target-stale')
     expect(target?.tree.children?.map((node) => node.id)).toEqual(['node-0', 'node-1', 'note'])
-    expect(findNode(target!.tree, 'note')?.props?.['text']).toBe('someone else got here first')
+    expect(findNode(target!.tree, 'note')).toHaveProperty(
+      'props.text',
+      'someone else got here first',
+    )
     expect(store.getSurfaceVersion('srf-target-stale')?.treeVersion).toBe(expectedTreeVersion + 1)
     expect(store.getSurface(cardSurfaceId)?.state[DECISION_ACCEPT_KEY]).toBe(false)
   })
@@ -482,7 +497,11 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
           id: canonicalSurfaceId,
           spaceId: 'spc-health',
           title: 'Impostor',
-          tree: { id: 'root', type: 'Box', children: [] },
+          tree: {
+            id: 'root',
+            type: 'Box',
+            children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+          },
           state: {},
           freshness: { updatedAt: now().toISOString(), updatedBy: 'agent' },
         }),
@@ -594,8 +613,8 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     const card = store.getSurface(cardSurfaceId)
     expect(card).toBeDefined()
     expect(card?.title).not.toContain('<<<evil>>>')
-    const title = findNode(card!.tree, 'title')?.props?.['text']
-    expect(title as string).not.toContain('<<<evil>>>')
+    const title = nodeText(card!.tree, 'title')
+    expect(title).not.toContain('<<<evil>>>')
   })
 
   describe('security: only the persisted daemon-owned card is clickable', () => {
@@ -778,7 +797,11 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
         id: collidingCardId,
         spaceId: 'spc-health',
         title: 'Already occupied',
-        tree: { id: 'root', type: 'Box', children: [] },
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+        },
         state: {},
         freshness: { updatedAt: now().toISOString(), updatedBy: 'agent' },
       }),

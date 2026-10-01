@@ -9,7 +9,11 @@ function systemSurface(id: string): Surface {
     id,
     spaceId: SYSTEM_SPACE_ID,
     title: id,
-    tree: { id: 'root', type: 'Box', children: [] },
+    tree: {
+      id: 'root',
+      type: 'Box',
+      children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+    },
     state: {},
     freshness: { updatedAt: '2026-07-08T10:00:00.000Z', updatedBy: 'system' },
   })

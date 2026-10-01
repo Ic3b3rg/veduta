@@ -42,7 +42,7 @@ describe('AgentRunner Worker parity across Model connection methods (issue #78)'
     expect(outcome.activeSurface.state['settled']).toBe(false)
     expect(SurfaceSchema.parse(outcome.terminalSurface)).toEqual(outcome.terminalSurface)
     expect(outcome.terminalSurface.state['settled']).toBe(true)
-    expect(outcome.terminalSurface.tree.children?.[1]?.props?.['text']).toBe('Delivered')
+    expect(outcome.terminalSurface.tree.children?.[1]).toHaveProperty('props.text', 'Delivered')
 
     const spawned = outcome.eventLog.filter((event) => event.type === 'worker.spawned')
     const delivered = outcome.eventLog.filter((event) => event.type === 'worker.delivered')
@@ -161,7 +161,7 @@ describe('AgentRunner Worker parity across Model connection methods (issue #78)'
       'c0ffee00-0000-4000-8000-000000000078',
     ])
     expect(SurfaceSchema.parse(outcome.terminalSurface)).toEqual(outcome.terminalSurface)
-    expect(outcome.terminalSurface.tree.children?.[1]?.props?.['text']).toBe('Partial')
+    expect(outcome.terminalSurface.tree.children?.[1]).toHaveProperty('props.text', 'Partial')
 
     expect(outcome.workerEvents.filter((event) => event.type === 'worker.spawned')).toHaveLength(1)
     const delivered = outcome.workerEvents.filter((event) => event.type === 'worker.delivered')
@@ -190,7 +190,7 @@ describe('AgentRunner Worker parity across Model connection methods (issue #78)'
     expect(outcome.interruptCalls).toBe(1)
     expect(outcome.dynamicToolSuccess).toEqual([true])
     expect(SurfaceSchema.parse(outcome.terminalSurface)).toEqual(outcome.terminalSurface)
-    expect(outcome.terminalSurface.tree.children?.[1]?.props?.['text']).toBe('Cancelled')
+    expect(outcome.terminalSurface.tree.children?.[1]).toHaveProperty('props.text', 'Cancelled')
 
     expect(outcome.workerEvents.filter((event) => event.type === 'worker.spawned')).toHaveLength(1)
     expect(outcome.workerEvents.filter((event) => event.type === 'worker.cancelled')).toHaveLength(

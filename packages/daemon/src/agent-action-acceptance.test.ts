@@ -83,6 +83,101 @@ class RecordingSocket implements GatewaySocket {
 }
 
 describe('accepted Agent action execution through the Gateway', () => {
+  it('refuses a full Space atomically, preserves retries and recovers capacity independently per Space', async () => {
+    const built = server()
+    await built.app.ready()
+    const surface = createActionSurface(built)
+    const capacity = 32
+    const queued = Array.from({ length: capacity }, () => {
+      const invocation = { nodeId: 'run', name: 'complete_demo', idempotencyKey: randomUUID() }
+      const result = built.store.invokeSurfaceAction(surface.id, invocation)
+      if (result.path !== 'agent') throw new Error('Agent turn required')
+      return { invocation, turn: result.turn }
+    })
+    const first = queued[0]!
+    built.store.claimAgentTurn(first.turn.id)
+    const before = built.store.eventLog(surface.spaceId)
+    const cursor = built.store.latestSurfaceCursor()
+    const state = built.store.getSurface(surface.id)
+    expect(built.store.invokeSurfaceAction(surface.id, first.invocation)).toMatchObject({
+      turn: { id: first.turn.id, status: 'running' },
+    })
+    const invocation = { nodeId: 'run', name: 'complete_demo', idempotencyKey: randomUUID() }
+    const request = {
+      method: 'POST' as const,
+      url: `/api/surfaces/${surface.id}/actions`,
+      payload: invocation,
+    }
+    const refused = await Promise.all([built.app.inject(request), built.app.inject(request)])
+    for (const response of refused) {
+      expect(response.statusCode).toBe(429)
+      expect(response.json()).toEqual({
+        code: 'agent_queue_full',
+        error:
+          'This Space already has 32 waiting or running Agent actions. Wait for an action to finish, then try again.',
+      })
+    }
+    const socket = new RecordingSocket()
+    built.gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: cursor })
+    socket.receive({ type: 'surface.action', surfaceId: surface.id, invocation })
+    expect(socket.frames.at(-1)).toMatchObject({ type: 'error', code: 'agent_queue_full' })
+    expect(built.store.queuedAgentTurns()).toHaveLength(capacity - 1)
+    expect(built.store.eventLog(surface.spaceId)).toEqual(before)
+    expect(built.store.latestSurfaceCursor()).toBe(cursor)
+    expect(built.store.getSurface(surface.id)).toEqual(state)
+
+    const otherSpace = built.store.spacesEngine.createSpace({ name: 'Independent capacity' })
+    const otherSurface = built.store.createSurface(
+      { ...surface, id: 'srf-other-queue', spaceId: otherSpace.id },
+      'agent',
+    )
+    const other = await built.app.inject({
+      ...request,
+      url: `/api/surfaces/${otherSurface.id}/actions`,
+      payload: { ...invocation, idempotencyKey: randomUUID() },
+    })
+    expect(other.statusCode).toBe(200)
+    expect(AgentActionResultSchema.parse(other.json()).turn.status).toBe('completed')
+
+    built.store.finishAgentTurn(first.turn.id, { error: 'Disposable interrupted turn' })
+    const retried = await Promise.all([built.app.inject(request), built.app.inject(request)])
+    expect(retried.map((response) => response.statusCode)).toEqual([200, 200])
+    const completed = AgentActionResultSchema.parse(retried[0]!.json())
+    expect(AgentActionResultSchema.parse(retried[1]!.json())).toEqual(completed)
+    expect(completed.turn.status).toBe('completed')
+    expect(built.store.getSurface(surface.id)?.state['records']).toHaveLength(1)
+    expect(
+      built.store.eventLog(surface.spaceId).filter((event) => event.type === 'agent_path'),
+    ).toHaveLength(capacity + 1)
+  })
+
+  it('serializes simultaneous new requests competing for the last Space slot', async () => {
+    const built = server()
+    await built.app.ready()
+    const surface = createActionSurface(built)
+    for (let i = 0; i < 31; i++)
+      built.store.invokeSurfaceAction(surface.id, {
+        nodeId: 'run',
+        name: 'complete_demo',
+        idempotencyKey: randomUUID(),
+      })
+    const responses = await Promise.all(
+      Array.from({ length: 2 }, () =>
+        built.app.inject({
+          method: 'POST',
+          url: `/api/surfaces/${surface.id}/actions`,
+          payload: { nodeId: 'run', name: 'complete_demo', idempotencyKey: randomUUID() },
+        }),
+      ),
+    )
+    expect(responses.map((response) => response.statusCode).sort()).toEqual([200, 429])
+    expect(built.store.getSurface(surface.id)?.state['records']).toHaveLength(1)
+    expect(
+      built.store.eventLog(surface.spaceId).filter((event) => event.type === 'agent_path'),
+    ).toHaveLength(32)
+  })
+
   it('executes one canonical effect for concurrent retries, fans it out, and replays it after restart', async () => {
     const first = server()
     const surface = createActionSurface(first)

@@ -254,8 +254,11 @@ describe('UpdateManager.runCheck', () => {
     expect(outcome).toBe('update-available:1.1.0')
 
     const surface = store.getSurface(UPDATE_SURFACE_ID)
-    expect(findNode(surface!.tree, 'update-available-stat')?.props?.['value']).toBe('1.1.0')
-    expect(findNode(surface!.tree, 'update-available-notes')?.props?.['text']).toBe('Bug fixes')
+    expect(findNode(surface!.tree, 'update-available-stat')).toHaveProperty('props.value', '1.1.0')
+    expect(findNode(surface!.tree, 'update-available-notes')).toHaveProperty(
+      'props.text',
+      'Bug fixes',
+    )
     // dataVersion 1 > installed (no data-version.json in dataRootDir => 0)
     expect(findNode(surface!.tree, 'update-migrates-caption')).toBeDefined()
     expect(findNode(surface!.tree, 'update-apply-button')).toBeDefined()
@@ -317,7 +320,10 @@ describe('UpdateManager.runCheck', () => {
 
     const surface = store.getSurface(UPDATE_SURFACE_ID)
     expect(findNode(surface!.tree, 'update-apply-button')).toBeUndefined()
-    expect(findNode(surface!.tree, 'update-check-error-badge')?.props?.['tone']).toBe('danger')
+    expect(findNode(surface!.tree, 'update-check-error-badge')).toHaveProperty(
+      'props.tone',
+      'danger',
+    )
     expect(notifications).toHaveLength(0)
   })
 
@@ -364,10 +370,16 @@ describe('UpdateManager.runCheck', () => {
 
     expect(outcome).toMatch(/^check-failed:/)
     const surface = store.getSurface(UPDATE_SURFACE_ID)
-    expect(findNode(surface!.tree, 'update-available-stat')?.props?.['value']).toBe('1.1.0')
-    expect(findNode(surface!.tree, 'update-available-notes')?.props?.['text']).toBe('Still valid')
+    expect(findNode(surface!.tree, 'update-available-stat')).toHaveProperty('props.value', '1.1.0')
+    expect(findNode(surface!.tree, 'update-available-notes')).toHaveProperty(
+      'props.text',
+      'Still valid',
+    )
     expect(findNode(surface!.tree, 'update-apply-button')).toBeDefined()
-    expect(findNode(surface!.tree, 'update-check-error-badge')?.props?.['tone']).toBe('danger')
+    expect(findNode(surface!.tree, 'update-check-error-badge')).toHaveProperty(
+      'props.tone',
+      'danger',
+    )
     expect(findNode(surface!.tree, 'update-last-successful-check')?.binding).toBe(
       UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY,
     )
@@ -481,7 +493,8 @@ describe('UpdateManager.runCheck', () => {
     manager.start()
     await vi.waitFor(() => {
       const surface = store.getSurface(UPDATE_SURFACE_ID)
-      expect(findNode(surface!.tree, 'update-outcome-badge')?.props?.['text']).toBe(
+      expect(findNode(surface!.tree, 'update-outcome-badge')).toHaveProperty(
+        'props.text',
         'Updated to 1.0.0',
       )
     })
@@ -492,8 +505,8 @@ describe('UpdateManager.runCheck', () => {
 
     const surface = store.getSurface(UPDATE_SURFACE_ID)
     const badge = findNode(surface!.tree, 'update-outcome-badge')
-    expect(badge?.props?.['text']).toBe('Updated to 1.0.0')
-    expect(badge?.props?.['tone']).toBe('success')
+    expect(badge).toHaveProperty('props.text', 'Updated to 1.0.0')
+    expect(badge).toHaveProperty('props.tone', 'success')
   })
 
   // The pinning file's `rootPublicKey` never has to be *this* fixture's own
@@ -681,7 +694,8 @@ describe('UpdateManager.applyUpdate', () => {
 
     const surface = store.getSurface(UPDATE_SURFACE_ID)
     expect(findNode(surface!.tree, 'update-apply-button')).toBeUndefined()
-    expect(findNode(surface!.tree, 'update-outcome-caption')?.props?.['text']).toBe(
+    expect(findNode(surface!.tree, 'update-outcome-caption')).toHaveProperty(
+      'props.text',
       'Applying update…',
     )
 
@@ -720,8 +734,8 @@ describe('UpdateManager.applyUpdate', () => {
 
     const surface = store.getSurface(UPDATE_SURFACE_ID)
     const badge = findNode(surface!.tree, 'update-outcome-badge')
-    expect(badge?.props?.['text']).toBe('an update is already in progress')
-    expect(badge?.props?.['tone']).toBe('danger')
+    expect(badge).toHaveProperty('props.text', 'an update is already in progress')
+    expect(badge).toHaveProperty('props.tone', 'danger')
   })
 
   it('refuses outright, honestly, while a result is unswept — never writing a second marker on top of it', async () => {
@@ -747,8 +761,8 @@ describe('UpdateManager.applyUpdate', () => {
 
     const surface = store.getSurface(UPDATE_SURFACE_ID)
     const badge = findNode(surface!.tree, 'update-outcome-badge')
-    expect(badge?.props?.['text']).toBe('an update is already in progress')
-    expect(badge?.props?.['tone']).toBe('danger')
+    expect(badge).toHaveProperty('props.text', 'an update is already in progress')
+    expect(badge).toHaveProperty('props.tone', 'danger')
   })
 
   it('sweeps a fully-acked previous result before applying, so a second update is never permanently blocked', async () => {
@@ -851,7 +865,7 @@ describe('UpdateManager boot-time result ingestion', () => {
     expect(existsSync(join(home.stateDir, 'result-acked-result-1'))).toBe(true)
 
     const surface = store.getSurface(UPDATE_SURFACE_ID)
-    expect(findNode(surface!.tree, 'update-outcome-badge')?.props?.['tone']).toBe('success')
+    expect(findNode(surface!.tree, 'update-outcome-badge')).toHaveProperty('props.tone', 'success')
     expect(notifications.some((notification) => notification.level === 'badge')).toBe(true)
 
     // result.json is never deleted/moved by the daemon.
@@ -908,7 +922,7 @@ describe('UpdateManager boot-time result ingestion', () => {
     )
 
     const surface = store.getSurface(UPDATE_SURFACE_ID)
-    expect(findNode(surface!.tree, 'update-outcome-badge')?.props?.['tone']).toBe('danger')
+    expect(findNode(surface!.tree, 'update-outcome-badge')).toHaveProperty('props.tone', 'danger')
 
     booted.dispose()
   })
@@ -1006,7 +1020,7 @@ describe('UpdateManager boot-time result ingestion', () => {
     expect(notifications.filter((notification) => notification.level === 'badge')).toHaveLength(1)
 
     const surface = store.getSurface(UPDATE_SURFACE_ID)
-    expect(findNode(surface!.tree, 'update-outcome-badge')?.props?.['tone']).toBe('success')
+    expect(findNode(surface!.tree, 'update-outcome-badge')).toHaveProperty('props.tone', 'success')
 
     errorSpy.mockRestore()
     booted.dispose()

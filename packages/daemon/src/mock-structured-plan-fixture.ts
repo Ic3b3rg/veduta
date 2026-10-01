@@ -46,9 +46,8 @@ export function respondToStructuredPlan(results: ToolResult[]): PiAssistantMessa
       ?.filter((node) => node.type === 'Col')
       .flatMap(
         (node) =>
-          node.children
-            ?.filter((child) => child.type === 'Title')
-            .map((child) => child.props?.['text']) ?? [],
+          node.children?.flatMap((child) => (child.type === 'Title' ? [child.props?.text] : [])) ??
+          [],
       )
       .filter((value): value is string => typeof value === 'string') ?? []
   return piFauxAssistantMessage(`Saved ${surface.data.title}: ${sessions.join('; ')}.`)

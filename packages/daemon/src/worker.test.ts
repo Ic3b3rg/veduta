@@ -382,9 +382,13 @@ describe('acceptance A: happy path, high-risk, review passes', () => {
     await pool.whenSettled(workerId)
 
     const terminal = store.getSurface(surfaceId)
-    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]?.props?.['text']).toBe('Delivered')
+    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]).toHaveProperty('props.text', 'Delivered')
     const contentChildren = terminal?.tree.children?.[WORKER_CONTENT_INDEX]?.children ?? []
-    expect(contentChildren.some((node) => node.props?.['text'] === 'Ketogenic diet')).toBe(true)
+    expect(
+      contentChildren.some(
+        (node) => node.props && 'text' in node.props && node.props.text === 'Ketogenic diet',
+      ),
+    ).toBe(true)
     const footerChildren = terminal?.tree.children?.[WORKER_FOOTER_INDEX]?.children ?? []
     expect(footerChildren.some((node) => node.id === 'badge-review-passed')).toBe(true)
     expect(footerChildren.some((node) => node.id === 'badge-partial')).toBe(false)
@@ -422,7 +426,7 @@ describe('acceptance B: budget exceeded', () => {
 
     const surfaceId = workerSurfaceId(workerId)
     const terminal = store.getSurface(surfaceId)
-    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]?.props?.['text']).toBe('Partial')
+    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]).toHaveProperty('props.text', 'Partial')
     const footerChildren = terminal?.tree.children?.[WORKER_FOOTER_INDEX]?.children ?? []
     expect(footerChildren.some((node) => node.id === 'badge-partial')).toBe(true)
 
@@ -452,7 +456,7 @@ describe('acceptance B: budget exceeded', () => {
     // Exactly 5 turn-ends processed (the 6th must never have been emitted:
     // abort() was called synchronously once turnCount hit maxIterations).
     const terminal = store.getSurface(workerSurfaceId(workerId))
-    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]?.props?.['text']).toBe('Partial')
+    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]).toHaveProperty('props.text', 'Partial')
     const delivered = store.eventLog(HEALTH).find((event) => event.type === 'worker.delivered')
     expect(delivered?.payload?.['partial']).toBe(true)
   })
@@ -494,7 +498,11 @@ describe('acceptance C: review rejects', () => {
     const footerChildren = terminal?.tree.children?.[WORKER_FOOTER_INDEX]?.children ?? []
     expect(footerChildren.some((node) => node.id === 'badge-review-passed')).toBe(true)
     const contentChildren = terminal?.tree.children?.[WORKER_CONTENT_INDEX]?.children ?? []
-    expect(contentChildren.some((node) => node.props?.['text'] === 'Corrected')).toBe(true)
+    expect(
+      contentChildren.some(
+        (node) => node.props && 'text' in node.props && node.props.text === 'Corrected',
+      ),
+    ).toBe(true)
 
     const delivered = store.eventLog(HEALTH).find((event) => event.type === 'worker.delivered')
     expect(delivered?.payload?.['reviewStatus']).toBe('passed')
@@ -591,7 +599,11 @@ describe('acceptance C: review rejects', () => {
     const contentChildren = terminal?.tree.children?.[WORKER_CONTENT_INDEX]?.children ?? []
     // Still the ORIGINAL (rejected) draft — never delivers the unparseable
     // corrective attempt's (nonexistent) content as if it were reviewed.
-    expect(contentChildren.some((node) => node.props?.['text'] === 'Draft')).toBe(true)
+    expect(
+      contentChildren.some(
+        (node) => node.props && 'text' in node.props && node.props.text === 'Draft',
+      ),
+    ).toBe(true)
 
     const delivered = store.eventLog(HEALTH).find((event) => event.type === 'worker.delivered')
     expect(delivered?.payload?.['reviewStatus']).toBe('skipped')
@@ -660,7 +672,7 @@ describe('cancel', () => {
     await pool.whenSettled(workerId)
 
     const terminal = store.getSurface(surfaceId)
-    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]?.props?.['text']).toBe('Cancelled')
+    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]).toHaveProperty('props.text', 'Cancelled')
     const footerChildren = terminal?.tree.children?.[WORKER_FOOTER_INDEX]?.children ?? []
     expect(footerChildren.some((node) => node.id === 'badge-cancelled')).toBe(true)
 
@@ -761,7 +773,7 @@ describe('recoverAtBoot', () => {
     pool.recoverAtBoot()
 
     const terminal = store.getSurface(surfaceId)
-    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]?.props?.['text']).toBe('Partial')
+    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]).toHaveProperty('props.text', 'Partial')
     const footerChildren = terminal?.tree.children?.[WORKER_FOOTER_INDEX]?.children ?? []
     expect(footerChildren.some((node) => node.id === 'badge-partial')).toBe(true)
     // A genuine orphan was never independently reviewed: caveated
@@ -820,9 +832,13 @@ describe('recoverAtBoot', () => {
     pool.recoverAtBoot()
 
     const terminal = store.getSurface(surfaceId)
-    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]?.props?.['text']).toBe('Delivered')
+    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]).toHaveProperty('props.text', 'Delivered')
     const contentChildren = terminal?.tree.children?.[WORKER_CONTENT_INDEX]?.children ?? []
-    expect(contentChildren.some((node) => node.props?.['text'] === 'Real report')).toBe(true)
+    expect(
+      contentChildren.some(
+        (node) => node.props && 'text' in node.props && node.props.text === 'Real report',
+      ),
+    ).toBe(true)
     const footerChildren = terminal?.tree.children?.[WORKER_FOOTER_INDEX]?.children ?? []
     expect(footerChildren.some((node) => node.id === 'badge-review-passed')).toBe(true)
     expect(footerChildren.some((node) => node.id === 'badge-partial')).toBe(false)
@@ -956,7 +972,7 @@ describe('high-risk safety invariant (review never fails open)', () => {
     // corrective retry (which needs more budget) was skipped.
     expect(runner.promptCalls).toHaveLength(1)
     const terminal = store.getSurface(workerSurfaceId(workerId))
-    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]?.props?.['text']).toBe('Partial')
+    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]).toHaveProperty('props.text', 'Partial')
     const delivered = store.eventLog(HEALTH).find((event) => event.type === 'worker.delivered')
     expect(delivered?.payload?.['reviewStatus']).not.toBe('passed')
     const report = delivered?.payload?.['report'] as { caveat?: string }
@@ -985,7 +1001,7 @@ describe('high-risk safety invariant (review never fails open)', () => {
     await pool.whenSettled(workerId)
 
     const terminal = store.getSurface(workerSurfaceId(workerId))
-    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]?.props?.['text']).toBe('Cancelled')
+    expect(terminal?.tree.children?.[WORKER_STATUS_INDEX]).toHaveProperty('props.text', 'Cancelled')
     const delivered = store.eventLog(HEALTH).find((event) => event.type === 'worker.delivered')
     expect(delivered?.payload?.['cancelled']).toBe(true)
     expect(delivered?.payload?.['reviewStatus']).toBe('passed')
@@ -1086,6 +1102,9 @@ describe('dispose', () => {
     expect(store.eventLog(HEALTH)).toHaveLength(beforeEventCount)
     const surface = store.getSurface(surfaceId)
     // The active Surface is untouched: still showing the researching state.
-    expect(surface?.tree.children?.[WORKER_STATUS_INDEX]?.props?.['text']).toContain('researching')
+    expect(surface?.tree.children?.[WORKER_STATUS_INDEX]).toHaveProperty(
+      'props.text',
+      expect.stringContaining('researching'),
+    )
   })
 })

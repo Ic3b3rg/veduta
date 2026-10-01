@@ -9,7 +9,8 @@ import {
   SurfacePatchEventSchema,
   SurfacePinnedEventSchema,
   SurfacePresentationEventSchema,
-  SurfaceSchema,
+  SurfaceValidationError,
+  parseSurface,
   findAtom,
   findDeclaredAgentAction,
   canonicalJson,
@@ -25,7 +26,7 @@ export function surfaceFromRow(row: Record<string, unknown>): Surface {
   const validity = optionalString(row, 'validity_json')
   const spaceId = requiredString(row, 'space_id')
   const daemonOwned = requiredNumber(row, 'daemon_owned') === 1
-  return SurfaceSchema.parse({
+  return parseSurface({
     id: requiredString(row, 'id'),
     spaceId,
     title: requiredString(row, 'title'),
@@ -55,22 +56,41 @@ export function surfaceEngineEventFromRow(row: Record<string, unknown>): Surface
     kind === 'created' || kind === 'archived' || kind === 'pinned'
       ? withOrderFallback(rawJson)
       : rawJson
-  if (kind === 'created') return { kind: 'created', event: SurfaceCreatedEventSchema.parse(json) }
+  if (kind === 'created')
+    return { kind: 'created', event: parseStoredSurfaceEvent(SurfaceCreatedEventSchema, json) }
   if (kind === 'archived') {
-    return { kind: 'archived', event: SurfaceArchivedEventSchema.parse(json) }
+    return { kind: 'archived', event: parseStoredSurfaceEvent(SurfaceArchivedEventSchema, json) }
   }
   if (kind === 'patch') {
-    return { kind: 'patch', event: SurfacePatchEventSchema.parse(withFreshnessFallback(json)) }
+    return {
+      kind: 'patch',
+      event: parseStoredSurfaceEvent(SurfacePatchEventSchema, withFreshnessFallback(json)),
+    }
   }
   if (kind === 'pinned') {
-    return { kind: 'pinned', event: SurfacePinnedEventSchema.parse(withFreshnessFallback(json)) }
+    return {
+      kind: 'pinned',
+      event: parseStoredSurfaceEvent(SurfacePinnedEventSchema, withFreshnessFallback(json)),
+    }
   }
   if (kind === 'moved') {
-    return { kind: 'moved', event: SurfaceMovedEventSchema.parse(json) }
+    return { kind: 'moved', event: parseStoredSurfaceEvent(SurfaceMovedEventSchema, json) }
   }
   if (kind === 'presentation')
-    return { kind: 'presentation', event: SurfacePresentationEventSchema.parse(json) }
+    return {
+      kind: 'presentation',
+      event: parseStoredSurfaceEvent(SurfacePresentationEventSchema, json),
+    }
   throw new Error(`unknown surface_events kind: ${kind}`)
+}
+
+function parseStoredSurfaceEvent<Output, Input>(
+  schema: z.ZodType<Output, z.ZodTypeDef, Input>,
+  value: unknown,
+): Output {
+  const result = schema.safeParse(value)
+  if (!result.success) throw SurfaceValidationError.fromZod(result.error)
+  return result.data
 }
 
 /**
@@ -164,7 +184,7 @@ export function agentTurnFromRow(row: Record<string, unknown>): QueuedAgentTurn 
     ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
     ...outcome,
   })
-  const surface = SurfaceSchema.parse(JSON.parse(requiredString(row, 'surface_json')))
+  const surface = parseSurface(JSON.parse(requiredString(row, 'surface_json')))
   const atom = AtomNodeSchema.parse(JSON.parse(requiredString(row, 'atom_json')))
   if (
     surface.id !== summary.surfaceId ||

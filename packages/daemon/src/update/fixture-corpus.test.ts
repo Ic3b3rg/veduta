@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
-import { GatewayServerMessageSchema, type GatewayServerMessage } from '@veduta/protocol'
+import {
+  GatewayServerMessageSchema,
+  SurfaceValidationError,
+  type GatewayServerMessage,
+} from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import { parseSpaceEventLine } from '../spaces-engine.ts'
 import { SurfaceEngine, type SurfaceEngineEvent } from '../surface-engine.ts'
@@ -44,6 +48,11 @@ const SURFACE_EVENT_CORPUS_FILES = [
   'surface-event-archived-order-v1.json',
 ] as const
 
+// #140 explicitly requires clean-data contraction of unreleased Surface
+// semantics. Keep these historical bytes frozen and prove rejection instead
+// of admitting an empty card (ADR-0003's semantic-conformance amendment).
+const INVALID_PRE_RELEASE_SURFACE_FILE = 'surface-event-created-order-v1.json'
+
 function readCorpusJson(name: string): SurfaceEventCorpusRow {
   return JSON.parse(readFileSync(join(corpusDir, name), 'utf8')) as SurfaceEventCorpusRow
 }
@@ -78,7 +87,7 @@ function insertCorpusRow(db: DatabaseSync, row: SurfaceEventCorpusRow): void {
 }
 
 describe('fixture corpus — surface_events (AC5)', () => {
-  it('replays every corpus row from cursor zero and round-trips it through the Gateway frame schema', async () => {
+  it('replays every semantically valid corpus row from cursor zero through the Gateway frame schema', async () => {
     const rootDir = await tempRoot()
     const engine = new SurfaceEngine({
       rootDir,
@@ -91,15 +100,33 @@ describe('fixture corpus — surface_events (AC5)', () => {
     // this engine version knows about — exactly the position a row written
     // by an old daemon binary is in.
     const rawDb = new DatabaseSync(join(rootDir, 'surfaces.sqlite'))
-    for (const file of SURFACE_EVENT_CORPUS_FILES) insertCorpusRow(rawDb, readCorpusJson(file))
+    const validFiles = SURFACE_EVENT_CORPUS_FILES.filter(
+      (file) => file !== INVALID_PRE_RELEASE_SURFACE_FILE,
+    )
+    for (const file of validFiles) insertCorpusRow(rawDb, readCorpusJson(file))
     rawDb.close()
 
     const replayed = engine.surfaceEventsAfter(0)
-    expect(replayed).toHaveLength(SURFACE_EVENT_CORPUS_FILES.length)
+    expect(replayed).toHaveLength(validFiles.length)
 
     for (const event of replayed) {
       expect(() => GatewayServerMessageSchema.parse(frameFor(event))).not.toThrow()
     }
+  })
+
+  it('rejects the frozen pre-release empty card without relaxing canonical replay validation', async () => {
+    const rootDir = await tempRoot()
+    const engine = new SurfaceEngine({
+      rootDir,
+      hasSpace: () => true,
+      now: () => new Date('2026-10-01T00:00:00.000Z'),
+    })
+    const db = new DatabaseSync(join(rootDir, 'surfaces.sqlite'))
+    insertCorpusRow(db, readCorpusJson(INVALID_PRE_RELEASE_SURFACE_FILE))
+    db.close()
+    expect(() => engine.surfaceEventsAfter(0)).toThrow(SurfaceValidationError)
+    expect(() => engine.surfaceEventsAfter(0)).toThrow('requires visible content')
+    engine.close()
   })
 
   it('synthesizes freshness for the pre-freshness patch row with updatedBy "system"', async () => {

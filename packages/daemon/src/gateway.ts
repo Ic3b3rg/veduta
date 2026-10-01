@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import {
   GatewayClientMessageSchema,
   GatewayServerMessageSchema,
+  SurfaceValidationError,
   type ApprovalCard,
   type AgentActionTurn,
   type AutomationOutcomeNotificationLifecycleMessage,
@@ -289,7 +290,16 @@ export class GatewayHub {
         return
       }
       if (error instanceof SurfaceActionError) {
-        send({ type: 'error', error: error.message })
+        send({ type: 'error', error: error.message, code: error.code })
+        return
+      }
+      if (error instanceof SurfaceValidationError) {
+        send({
+          type: 'error',
+          error: error.message,
+          code: error.code,
+          issues: error.validationIssues,
+        })
         return
       }
       throw error

@@ -97,7 +97,7 @@ describe('affectedAtomIdsForPatch', () => {
 
   it('does not replay feedback when tree operations restore the original tree', () => {
     const originalProgress = surface.tree.children?.[1]
-    if (!originalProgress) throw new Error('expected the progress Atom')
+    if (originalProgress?.type !== 'Progress') throw new Error('expected the progress Atom')
     const patch = operations([
       {
         target: 'tree',
@@ -122,7 +122,8 @@ describe('affectedAtomIdsForPatch', () => {
   it('filters a restored Atom from a mixed tree patch that changes another Atom', () => {
     const originalProgress = surface.tree.children?.[1]
     const originalNext = surface.tree.children?.[0]?.children?.[1]
-    if (!originalProgress || !originalNext) throw new Error('expected test Atoms')
+    if (originalProgress?.type !== 'Progress' || originalNext?.type !== 'Stat')
+      throw new Error('expected test Atoms')
     const patch = operations([
       {
         target: 'tree',
@@ -156,7 +157,8 @@ describe('affectedAtomIdsForPatch', () => {
   it('does not let a restored ancestor mask its genuinely changed descendant', () => {
     const originalRow = surface.tree.children?.[0]
     const originalNext = originalRow?.children?.[1]
-    if (!originalRow || !originalNext) throw new Error('expected nested test Atoms')
+    if (originalRow?.type !== 'Row' || originalNext?.type !== 'Stat')
+      throw new Error('expected nested test Atoms')
     const patch = operations([
       {
         target: 'tree',
@@ -189,7 +191,7 @@ describe('affectedAtomIdsForPatch', () => {
 
   it('keeps a removal fallback when another descendant also changes', () => {
     const originalNext = surface.tree.children?.[0]?.children?.[1]
-    if (!originalNext) throw new Error('expected the nested test Atom')
+    if (originalNext?.type !== 'Stat') throw new Error('expected the nested test Atom')
     const patch = operations([
       { target: 'tree', op: 'remove', path: '/children/0/children/0' },
       {
@@ -211,7 +213,8 @@ describe('affectedAtomIdsForPatch', () => {
   it('keeps a subtree replacement region when a separate descendant also changes', () => {
     const originalRow = surface.tree.children?.[0]
     const originalNext = originalRow?.children?.[1]
-    if (!originalRow || !originalNext) throw new Error('expected nested test Atoms')
+    if (originalRow?.type !== 'Row' || originalNext?.type !== 'Stat')
+      throw new Error('expected nested test Atoms')
     const patch = operations([
       {
         target: 'tree',
@@ -257,7 +260,7 @@ describe('affectedAtomIdsForPatch', () => {
       },
     })
     const nestedRow = nestedSurface.tree.children?.[0]
-    if (!nestedRow) throw new Error('expected the nested row')
+    if (nestedRow?.type !== 'Row') throw new Error('expected the nested row')
     const patch = operations([
       {
         target: 'tree',
@@ -277,7 +280,8 @@ describe('affectedAtomIdsForPatch', () => {
   it('pairs both sides of a new-id replacement below a restored ancestor', () => {
     const originalRow = surface.tree.children?.[0]
     const originalNext = originalRow?.children?.[1]
-    if (!originalRow || !originalNext) throw new Error('expected nested test Atoms')
+    if (originalRow?.type !== 'Row' || originalNext?.type !== 'Stat')
+      throw new Error('expected nested test Atoms')
     const patch = operations([
       {
         target: 'tree',

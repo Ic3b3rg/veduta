@@ -36,7 +36,7 @@ interface FormDraftState {
 
 const formDrafts = new WeakMap<HTMLFormElement, FormDraftState>()
 
-export function InputAtom({ node, ctx }: AtomProps): ReactNode {
+export function InputAtom({ node, ctx }: AtomProps<'Input'>): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const value = text(boundValue(node, ctx))
   const label = text(node.props?.['label'])
@@ -64,7 +64,7 @@ export function InputAtom({ node, ctx }: AtomProps): ReactNode {
   )
 }
 
-export function TextareaAtom({ node, ctx }: AtomProps): ReactNode {
+export function TextareaAtom({ node, ctx }: AtomProps<'Textarea'>): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const value = text(boundValue(node, ctx))
   const label = text(node.props?.['label'])
@@ -88,7 +88,7 @@ export function TextareaAtom({ node, ctx }: AtomProps): ReactNode {
   )
 }
 
-export function FormAtom({ node, ctx, children }: AtomProps): ReactNode {
+export function FormAtom({ node, ctx, children }: AtomProps<'Form'>): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const declaredAction = node.actions?.find(
     (candidate) => candidate.name === 'submit' && candidate.path === 'fast',

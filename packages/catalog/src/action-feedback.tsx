@@ -29,6 +29,7 @@ export function useActionFeedback({ node, ctx }: AtomProps) {
   const currentAttempt = useRef<ControlAttempt | undefined>(undefined)
   const acknowledged = useRef<string | undefined>(undefined)
   const action = node.actions?.[0]
+  const declaredDisabled = node.props && 'disabled' in node.props && node.props.disabled === true
   const { acknowledgeAction } = ctx
   const confirmation = action ? ctx.actionConfirmations?.[node.id]?.[action.name] : undefined
   const runtimeStatus =
@@ -68,7 +69,7 @@ export function useActionFeedback({ node, ctx }: AtomProps) {
   }, [action, confirmation, acknowledgeAction, node.id])
 
   const dispatch = async (next?: JsonValue) => {
-    if (!action || node.props?.['disabled'] === true || pendingRef.current || waiting) return
+    if (!action || declaredDisabled || pendingRef.current || waiting) return
     if (ownsValue && next === value) return
     const inputs: JsonObject = ownsValue ? { value: next ?? null } : {}
     if (action.path === 'fast' && !fastActionInputsSchema(node, action).safeParse(inputs).success) {
@@ -121,7 +122,7 @@ export function useActionFeedback({ node, ctx }: AtomProps) {
     queued,
     error,
     errorId,
-    disabled: node.props?.['disabled'] === true || waiting,
+    disabled: declaredDisabled === true || waiting,
     attributes: {
       'aria-busy': waiting || undefined,
       'aria-invalid': error ? true : undefined,

@@ -1,4 +1,5 @@
 import { ChevronDownIcon } from 'lucide-react'
+import { isKnownRenderableAtomNode } from '@veduta/protocol'
 import { createContext, useContext, type ReactNode } from 'react'
 import { motionContent, propBoolean, text } from './atom-helpers.ts'
 import type { AtomProps } from './types.ts'
@@ -8,9 +9,14 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collap
 
 const AccordionScope = createContext(false)
 
-export function AccordionAtom({ node, children }: AtomProps): ReactNode {
+export function AccordionAtom({ node, children }: AtomProps<'Accordion'>): ReactNode {
   const openIds = (node.children ?? [])
-    .filter((child) => child.props?.['defaultOpen'] === true)
+    .filter(
+      (child) =>
+        isKnownRenderableAtomNode(child) &&
+        child.type === 'Collapsible' &&
+        child.props.defaultOpen === true,
+    )
     .map((child) => child.id)
 
   return node.props?.['mode'] === 'multiple' ? (
@@ -33,7 +39,7 @@ export function AccordionAtom({ node, children }: AtomProps): ReactNode {
   )
 }
 
-export function CollapsibleAtom({ node, children }: AtomProps): ReactNode {
+export function CollapsibleAtom({ node, children }: AtomProps<'Collapsible'>): ReactNode {
   const label = text(node.props?.['label'])
   if (useContext(AccordionScope)) {
     return (

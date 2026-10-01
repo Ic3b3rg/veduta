@@ -59,12 +59,35 @@ interface AtomValidationNode extends ActionOwningNode {
 
 /** A validation input, never an assertion that an unknown wire Atom is canonical authoring. */
 export function atomValidationTree(node: RenderableAtomNode): AtomValidationNode {
-  const children = node.children?.map(atomValidationTree)
-  if (!isKnownRenderableAtomNode(node)) {
-    return { id: node.id, type: 'Box', ...(children === undefined ? {} : { children }) }
+  const ids = new Set<string>()
+  function collectIds(current: RenderableAtomNode): void {
+    ids.add(current.id)
+    current.children?.forEach(collectIds)
   }
-  const { children: _children, ...own } = node
-  return { ...own, ...(children === undefined ? {} : { children }) }
+  collectIds(node)
+  let sequence = 0
+  function project(current: RenderableAtomNode): AtomValidationNode {
+    const children = current.children?.map(project)
+    if (!isKnownRenderableAtomNode(current)) {
+      let placeholderId: string
+      do placeholderId = `read-placeholder-${++sequence}`
+      while (ids.has(placeholderId))
+      ids.add(placeholderId)
+      // UnknownAtom itself is visible. Represent that fact only in the
+      // validation projection; the wire tree and its metadata stay intact.
+      return {
+        id: current.id,
+        type: 'Box',
+        children: [
+          { id: placeholderId, type: 'Text', props: { text: `Unsupported Atom: ${current.type}` } },
+          ...(children ?? []),
+        ],
+      }
+    }
+    const { children: _children, ...own } = current
+    return { ...own, ...(children === undefined ? {} : { children }) }
+  }
+  return project(node)
 }
 
 /** Read compatibility does not participate in authoring, Templates, or daemon persistence. */

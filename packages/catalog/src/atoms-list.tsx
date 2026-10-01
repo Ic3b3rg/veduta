@@ -9,7 +9,11 @@ import type { AtomProps, RenderableAtomProps } from './types.ts'
 import { Item } from './ui/item.tsx'
 import { Switch } from './ui/switch.tsx'
 
-function ListItemControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttributes): ReactNode {
+function ListItemControl({
+  node,
+  ctx,
+  ...motion
+}: AtomProps<'ListItem'> & AtomMotionAttributes): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const action = node.actions?.[0]
   const feedback = useActionFeedback({ node, ctx })
@@ -35,7 +39,8 @@ function ListItemControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttribu
       {node.props?.['status'] ? (
         <BadgeAtom
           node={{
-            ...node,
+            id: `${node.id}-status`,
+            type: 'Badge',
             props: { text: node.props['status'], tone: node.props['tone'] ?? 'neutral' },
           }}
           ctx={ctx}
@@ -69,16 +74,20 @@ function ListItemControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttribu
   )
 }
 
-export function ListItemAtom(props: AtomProps): ReactNode {
+export function ListItemAtom(props: AtomProps<'ListItem'>): ReactNode {
   return <ListItemControl {...props} />
 }
 
-function AutomationControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttributes): ReactNode {
+function AutomationControl({
+  node,
+  ctx,
+  ...motion
+}: AtomProps<'Automation'> & AtomMotionAttributes): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const feedback = useActionFeedback({ node, ctx })
   const enabled = Boolean(boundValue(node, ctx) ?? node.props?.['enabled'])
   const action = node.actions?.[0]
-  const label = text(node.props?.['label'] ?? node.props?.['title'])
+  const label = node.props.label
   const props = AutomationAtomPropsSchema.safeParse(node.props ?? {})
   const boundHistory = props.success
     ? AutomationRunHistorySchema.safeParse(
@@ -104,7 +113,7 @@ function AutomationControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttri
             fontSize: tokens.font.sm,
           }}
         >
-          {text(node.props?.['schedule'] ?? node.props?.['detail'])}
+          {node.props.schedule}
         </div>
         {history.length > 0 && (
           <details style={{ marginTop: tokens.space.sm }}>
@@ -162,7 +171,7 @@ function AutomationControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttri
   )
 }
 
-export function AutomationAtom(props: AtomProps): ReactNode {
+export function AutomationAtom(props: AtomProps<'Automation'>): ReactNode {
   return <AutomationControl {...props} />
 }
 

@@ -141,6 +141,26 @@ client-version skew or corrupt input, not a successful authoring path. Every com
 revalidated after creation, state mutation, recomposition, Template reuse, or Tree-proposal
 application, and the Agent may report success only from the authoritative committed outcome.
 
+### Semantic conformance amendment (issue #150)
+
+The complete Surface requires visible content or an explicit empty/Pending state. Layout,
+spacing, dividers, decorative icons, and blank text alone do not satisfy that invariant. Atom
+declarations are a strict recursive discriminated union; typed catalog consumers derive their
+contracts from that union. Common validation checks declared props, children, bindings, current
+bound values, owning inputs, and statically provable Action assignments before any durable write.
+Runtime validation still checks each complete intermediate result of the existing fast reducer.
+Rejected writes return machine-readable issue paths/codes and leave canonical state, versions,
+proposals, cursors, Events, and realtime projection unchanged. The exhaustive acceptance evidence
+is the [Atom conformance matrix](../references/29-atom-conformance-matrix.md).
+
+Issue #140 explicitly requires clean pre-release data roots rather than a legacy Surface migration.
+Semantically invalid pre-release Surfaces therefore remain rejected on canonical reads and replay;
+format tolerance under [ADR-0013](0013-signed-self-update.md) cannot invent visible content or
+silently make invalid authoring acceptable. The frozen empty-card record in the update fixture
+corpus is retained byte for byte, with an explicit rejection regression. Other historical format
+fixtures keep their existing tolerant read coverage. This is a deliberate pre-release semantic
+boundary, not permission to drop supported append-only formats after release.
+
 Input and Textarea use a local draft owned by their nearest Form and dispatch the complete draft
 only on submit; keystrokes are not durable mutations. Chart v1 is one explicitly keyed series in
 `line` or `bar` form. A Surface also owns `presentation: standard | full`, separate from its Atom
@@ -189,6 +209,13 @@ can be acknowledged only after the PWA's canonical Surface cursor reaches its co
 Model text cannot turn a rejected write into successful control feedback. New gestures after a
 terminal outcome receive new identities.
 
+Issue #40 bounds each Space to 32 outstanding Agent Actions, counting both queued and running
+requests. Admission and capture happen in one transaction. A full queue rejects a new interaction
+with HTTP 429 / `agent_queue_full` before reserving its retry identity or appending an Event.
+Identical accepted retries still replay their existing turn even at capacity; other Spaces retain
+their own capacity. The PWA shows the readable refusal and retains the failed gesture for retry.
+A terminal completion or failure releases its slot, and a retry after release can be admitted once.
+
 On restart, queued requests enter the existing loop once. An interrupted running request is
 reported as failed and is never automatically executed again: effects may already have occurred.
 Historical requests without execution tracking are also visibly failed instead of replayed or
@@ -230,7 +257,8 @@ contract. A genuinely unknown name may retain JSON metadata and valid known desc
 `UnknownAtom` can show its original type and identity. Future metadata is never an executable
 local action or binding declaration.
 
-Known validation uses a separate tree value in which unknown nodes serve only as inert containers;
+Known validation uses a separate tree value in which unknown nodes serve only as inert containers
+with a visible validation placeholder corresponding to the `UnknownAtom` fallback;
 the rendered and cached tree retains the original unknown nodes. This preserves Form ancestor
 context and known descendant state validation without admitting unknown types to the authoring
 schema. Both read and canonical patches use the same application algorithm and validate the complete

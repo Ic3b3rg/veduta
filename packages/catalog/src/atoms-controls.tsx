@@ -15,7 +15,11 @@ import {
 import { Label } from './ui/label.tsx'
 import { Switch } from './ui/switch.tsx'
 
-function SwitchControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttributes): ReactNode {
+function SwitchControl({
+  node,
+  ctx,
+  ...motion
+}: AtomProps<'Switch'> & AtomMotionAttributes): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const feedback = useActionFeedback({ node, ctx })
   return (
@@ -34,11 +38,15 @@ function SwitchControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttribute
   )
 }
 
-export function SwitchAtom(props: AtomProps): ReactNode {
+export function SwitchAtom(props: AtomProps<'Switch'>): ReactNode {
   return <SwitchControl {...props} />
 }
 
-function ComboboxControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttributes): ReactNode {
+function ComboboxControl({
+  node,
+  ctx,
+  ...motion
+}: AtomProps<'Combobox'> & AtomMotionAttributes): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const feedback = useActionFeedback({ node, ctx })
   const options = choicesFrom(node.props?.['options'])
@@ -83,7 +91,7 @@ function ComboboxControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttribu
   )
 }
 
-export function ComboboxAtom(props: AtomProps): ReactNode {
+export function ComboboxAtom(props: AtomProps<'Combobox'>): ReactNode {
   return <ComboboxControl {...props} />
 }
 

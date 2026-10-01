@@ -39,6 +39,13 @@ function futureTree(children: unknown[] = [{ id: 'known', type: 'Text', binding:
 }
 
 describe('read-only Surface version compatibility', () => {
+  it('renders a future leaf visibly while rejecting an empty known Surface', () => {
+    expect(RenderableSurfaceSchema.safeParse(surface(futureTree([]))).success).toBe(true)
+    expect(
+      RenderableSurfaceSchema.safeParse(surface({ id: 'root', type: 'Box', children: [] })).success,
+    ).toBe(false)
+  })
+
   it('correlates a committed known Action through future layout metadata without treating that metadata as executable', () => {
     const form = {
       id: 'form',

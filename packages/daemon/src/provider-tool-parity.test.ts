@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'n
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
+import { AtomNodeSchema } from '@veduta/protocol'
 import { z } from 'zod'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defineTool, type AgentEvent, type ModelRef } from './agent-runner.ts'
@@ -48,7 +49,7 @@ interface ProviderOutcome {
 async function runProvider(
   model: ModelRef,
   provider: ProviderBridge,
-  options: { handlerError?: Error } = {},
+  options: { handlerError?: Error; schema?: z.ZodTypeAny } = {},
 ): Promise<ProviderOutcome> {
   const sessionStore = new PiJsonlSessionStore({
     cwd: tempDir('veduta-provider-parity-cwd-'),
@@ -59,7 +60,7 @@ async function runProvider(
   const tool = defineTool({
     name: 'echo_value',
     description: 'Echo a value.',
-    schema: z.object({ value: z.string() }),
+    schema: options.schema ?? z.object({ value: z.string() }),
     level: 'L0',
     egressDomains: [],
     handler: ({ value }) => {
@@ -179,6 +180,65 @@ function createSequentialCodexProvider(): {
 }
 
 describe('AgentRunner dynamic-tool provider parity', () => {
+  it('rejects malformed Atom arguments with precise shared diagnostics before either provider can execute', async () => {
+    const input = { value: { id: 'text', type: 'Text', props: { text: 'Visible', fontSize: 20 } } }
+    const error = JSON.stringify({
+      code: 'invalid_tool_input',
+      tool: 'echo_value',
+      validationIssues: [
+        {
+          path: ['value', 'props', 'fontSize'],
+          code: 'unrecognized_keys',
+          message: 'Unrecognized key "fontSize"',
+        },
+      ],
+    })
+    const native = createFakeProvider()
+    native.setResponses([
+      { message: fakeToolCall('echo_value', input) },
+      { message: fakeText('Invalid Atom was not saved') },
+    ])
+    const options = { schema: z.object({ value: AtomNodeSchema }) }
+    const nativeOutcome = await runProvider(
+      { provider: 'fake', modelId: 'fake-model', tier: 'reasoning' },
+      native,
+      options,
+    )
+    expect(nativeOutcome.events).toContainEqual(
+      expect.objectContaining({ type: 'tool-result', isError: true, content: error }),
+    )
+    const { bridge, transport } = createCodexProvider({
+      input,
+      success: false,
+      resultText: error,
+      finalText: 'Invalid Atom was not saved',
+    })
+    const codexOutcome = await runProvider(
+      { provider: 'openai', modelId: 'gpt-5-codex', tier: 'reasoning', connectionId: 'codex-conn' },
+      bridge,
+      options,
+    )
+    expect(nativeOutcome).toEqual(codexOutcome)
+    expect(codexOutcome.handlerCalls).toBe(0)
+    expect(codexOutcome.persistedEffect).toBe('')
+    expect(codexOutcome.events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool-result',
+        isError: true,
+        content: error,
+      }),
+    )
+    expect(transport.serverResponses).toEqual([
+      {
+        id: 0,
+        result: {
+          success: false,
+          contentItems: [{ type: 'inputText', text: error }],
+        },
+      },
+    ])
+  })
+
   it('gives the native fake and Codex fake the same lifecycle, session, and tool effect', async () => {
     const native = createFakeProvider()
     native.setResponses([

@@ -338,7 +338,7 @@ function expectConnectedDevicesIdentityCollisionRejected(options: {
     id: CONNECTED_DEVICES_SURFACE_ID,
     spaceId: options.spaceId,
     title: 'Connected devices impostor',
-    tree: { id: 'root', type: 'Box' },
+    tree: { id: 'root', type: 'Text', props: { text: 'Fixture content' } },
     state: {},
     freshness: { updatedAt, updatedBy: 'system' },
   })

@@ -92,6 +92,37 @@ const shoppingChecklistWithChart = {
 }
 
 describe('SurfaceSchema', () => {
+  it.each([
+    { id: 'root', type: 'Box', children: [] },
+    {
+      id: 'root',
+      type: 'Col',
+      children: [
+        { id: 'spacer', type: 'Spacer' },
+        { id: 'divider', type: 'Divider' },
+      ],
+    },
+    { id: 'root', type: 'Text', props: { text: '   ' } },
+    { id: 'root', type: 'Icon', props: { name: 'dot', decorative: true } },
+  ])('rejects a complete Surface without visible content: $type', (tree) => {
+    expect(SurfaceSchema.safeParse({ ...textFormSurface, tree }).success).toBe(false)
+  })
+
+  it('accepts explicit empty-state text and pending composition as visible content', () => {
+    expect(
+      SurfaceSchema.safeParse({
+        ...textFormSurface,
+        tree: { id: 'root', type: 'Text', props: { text: '', emptyText: 'Nothing recorded' } },
+      }).success,
+    ).toBe(true)
+    expect(
+      SurfaceSchema.safeParse({
+        ...textFormSurface,
+        tree: { id: 'root', type: 'Pending', props: { variant: 'text' } },
+      }).success,
+    ).toBe(true)
+  })
+
   it('defaults Surface presentation to standard and accepts full independently of Pin', () => {
     expect(SurfaceSchema.parse(textFormSurface).presentation).toBe('standard')
     expect(

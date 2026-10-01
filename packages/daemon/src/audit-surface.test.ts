@@ -76,7 +76,7 @@ describe('auditSurface', () => {
     const node = surface.tree.children?.[2]?.children?.[0]
     // `detail` is what ListItemAtom (@veduta/catalog atoms.tsx) actually
     // renders — asserting `subtitle` here would pass while the row is blank.
-    const detail = (node?.props?.['detail'] as string) ?? ''
+    const detail = node?.type === 'ListItem' ? (node.props.detail ?? '') : ''
     expect(detail).toContain('level L1')
     expect(detail).toContain('card → —')
     expect(detail).toContain('trusted:user')
@@ -91,7 +91,7 @@ describe('auditSurface', () => {
     const node = surface.tree.children?.[2]?.children?.[0]
     // `detail` is what ListItemAtom (@veduta/catalog atoms.tsx) actually
     // renders — asserting `subtitle` here would pass while the row is blank.
-    const detail = (node?.props?.['detail'] as string) ?? ''
+    const detail = node?.type === 'ListItem' ? (node.props.detail ?? '') : ''
     expect(detail).not.toContain('<<<attempt')
     expect(detail).toContain('<< <attempt')
     const contentPart = detail.split(' · ').find((part) => part.startsWith('content: '))

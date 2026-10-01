@@ -87,7 +87,11 @@ describe('Automations Surface projection', () => {
         id: rewrittenId,
         spaceId: rewrittenSpace.id,
         title: 'Rewritten by an old Agent',
-        tree: { id: 'other-root', type: 'Box', children: [] },
+        tree: {
+          id: 'other-root',
+          type: 'Box',
+          children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+        },
         state: { rogue: true },
         freshness: { updatedAt: clock.toISOString(), updatedBy: 'agent' },
       }),
@@ -102,7 +106,11 @@ describe('Automations Surface projection', () => {
         id: archivedId,
         spaceId: archivedSpace.id,
         title: 'Old Automations',
-        tree: { id: 'root', type: 'Box', children: [] },
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+        },
         state: {},
         freshness: { updatedAt: clock.toISOString(), updatedBy: 'agent' },
       }),
@@ -178,7 +186,10 @@ describe('Automations Surface projection', () => {
     createScheduler()
     const surface = store.getSurface(SURFACE)
     expect(surface).toBeDefined()
-    expect(surface?.tree.children?.[1]?.children?.[0]?.props?.['text']).toBe('No automations yet.')
+    expect(surface?.tree.children?.[1]?.children?.[0]).toHaveProperty(
+      'props.text',
+      'No automations yet.',
+    )
     expect(store.isSurfaceDaemonOwned(SURFACE)).toBe(true)
     expect(() => store.archiveSurface(SURFACE, 'agent')).toThrow(/daemon-owned/)
   })
@@ -208,7 +219,7 @@ describe('Automations Surface projection', () => {
     expect(surface?.state).toEqual({ 'job-1': true, 'history-1': [] })
     const atom = surface?.tree.children?.[1]?.children?.[0]
     expect(atom).toMatchObject({ type: 'Automation', binding: 'job-1' })
-    expect(atom?.props?.['label']).toBe('Log my weight')
+    expect(atom).toHaveProperty('props.label', 'Log my weight')
   })
 
   it('removes a cancelled automation from the Surface, state key included', () => {
@@ -744,9 +755,10 @@ describe('generic job-handler registry (issue #16)', () => {
     expect(store.getSurface(SURFACE)?.state['history-1']).toEqual([
       expect.objectContaining({ kind: 'changed', summary: 'Plan changed' }),
     ])
-    expect(
-      store.getSurface(SURFACE)?.tree.children?.[1]?.children?.[0]?.props?.['historyBinding'],
-    ).toBe('history-1')
+    expect(store.getSurface(SURFACE)?.tree.children?.[1]?.children?.[0]).toHaveProperty(
+      'props.historyBinding',
+      'history-1',
+    )
   })
 
   it('repairs stale Atom history at boot after a completed run missed its projection refresh', async () => {
@@ -870,7 +882,11 @@ describe('generic job-handler registry (issue #16)', () => {
         id: targetSurfaceId,
         spaceId: HEALTH,
         title: 'Pending plan',
-        tree: { id: 'root', type: 'Box', children: [] },
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+        },
         state: {},
         freshness: { updatedAt: clock.toISOString(), updatedBy: 'agent' },
       }),
@@ -964,7 +980,11 @@ describe('generic job-handler registry (issue #16)', () => {
         id: targetSurfaceId,
         spaceId: HEALTH,
         title: 'Restored plan',
-        tree: { id: 'root', type: 'Box', children: [] },
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+        },
         state: {},
         freshness: { updatedAt: clock.toISOString(), updatedBy: 'agent' },
       }),
@@ -1034,7 +1054,11 @@ describe('generic job-handler registry (issue #16)', () => {
         id: nextTarget,
         spaceId: HEALTH,
         title: 'Retargeted Surface',
-        tree: { id: 'root', type: 'Box', children: [] },
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+        },
         state: {},
         freshness: { updatedAt: clock.toISOString(), updatedBy: 'agent' },
       }),
@@ -1078,7 +1102,11 @@ describe('generic job-handler registry (issue #16)', () => {
           id: surfaceId,
           spaceId: HEALTH,
           title: surfaceId,
-          tree: { id: 'root', type: 'Box', children: [] },
+          tree: {
+            id: 'root',
+            type: 'Box',
+            children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+          },
           state: { value: 'original' },
           freshness: { updatedAt: clock.toISOString(), updatedBy: 'agent' },
         }),
@@ -1145,7 +1173,11 @@ describe('generic job-handler registry (issue #16)', () => {
           id: surfaceId,
           spaceId: HEALTH,
           title: surfaceId,
-          tree: { id: 'root', type: 'Box', children: [] },
+          tree: {
+            id: 'root',
+            type: 'Box',
+            children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+          },
           state: { value: 'user value' },
           freshness: { updatedAt: clock.toISOString(), updatedBy: 'agent' },
         }),
@@ -1188,7 +1220,11 @@ describe('generic job-handler registry (issue #16)', () => {
         id: target,
         spaceId: HEALTH,
         title: target,
-        tree: { id: 'root', type: 'Box', children: [] },
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+        },
         state: { value: 'user value' },
         freshness: { updatedAt: clock.toISOString(), updatedBy: 'agent' },
       }),
@@ -1232,7 +1268,11 @@ describe('generic job-handler registry (issue #16)', () => {
         id: target,
         spaceId: HEALTH,
         title: target,
-        tree: { id: 'root', type: 'Box', children: [] },
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+        },
         state: { value: 'initial' },
         freshness: { updatedAt: clock.toISOString(), updatedBy: 'agent' },
       }),
@@ -1790,8 +1830,9 @@ describe('zoned managed jobs (issue #21)', () => {
     const children = store.getSurface(SURFACE)?.tree.children?.[1]?.children
     const unzoned = children?.find((child) => child.binding === 'job-1')
     const zoned = children?.find((child) => child.binding === `job-${job.id}`)
-    expect(unzoned?.props?.['schedule']).toBe('cron 0 8 * * * — next 2026-07-09 08:00 UTC')
-    expect(zoned?.props?.['schedule']).toBe(
+    expect(unzoned).toHaveProperty('props.schedule', 'cron 0 8 * * * — next 2026-07-09 08:00 UTC')
+    expect(zoned).toHaveProperty(
+      'props.schedule',
       'cron 0 4 * * * (Europe/Rome) — next 2026-07-09 02:00 UTC',
     )
   })

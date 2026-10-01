@@ -70,7 +70,7 @@ function validRawTemplate(overrides: Record<string, unknown> = {}): Record<strin
     id: 'tpl-imported',
     name: 'Imported',
     intent: 'imported composition',
-    tree: { id: 'root', type: 'Box' },
+    tree: { id: 'root', type: 'Text', props: { text: 'Fixture content' } },
     stateKeys: [],
     dataProps: [],
     provenance: {
@@ -186,7 +186,10 @@ describe('planTemplateImport / applyTemplateImport', () => {
     })
     if (!template) throw new Error('expected a Template to be saved on pin')
     // Composition survives; instance rows become an explicitly empty collection.
-    expect(template.tree.children?.find((node) => node.id === 'log')?.props?.rows).toEqual([])
+    expect(template.tree.children?.find((node) => node.id === 'log')).toHaveProperty(
+      'props.rows',
+      [],
+    )
     expect(template.dataProps).toEqual(['log.rows'])
 
     const bundle = exportTemplates(storeA.spacesEngine, spaceA.id)
@@ -225,8 +228,8 @@ describe('planTemplateImport / applyTemplateImport', () => {
     expect(storeB.surfaceProvenance(instantiated.id)?.templateId).toBe(template.id)
     // Restoring personal rows requires an explicit content write in the destination.
     const log = instantiated.tree.children?.find((node) => node.id === 'log')
-    expect(log?.props?.rows).toEqual([])
-    expect(log?.props?.columns).toEqual(['day', 'reps'])
+    expect(log).toHaveProperty('props.rows', [])
+    expect(log).toHaveProperty('props.columns', ['day', 'reps'])
   })
 
   it('refuses on a colliding id, writes nothing, and names the exact rm command', async () => {

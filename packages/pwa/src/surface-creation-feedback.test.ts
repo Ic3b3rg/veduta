@@ -20,7 +20,7 @@ function createdMessage(
         id,
         spaceId: 'spc-health',
         title: id,
-        tree: { id: 'root', type: 'Box' },
+        tree: { id: 'root', type: 'Text', props: { text: 'Fixture content' } },
         state: {},
         freshness: { updatedAt: '2026-08-16T10:00:00.000Z', updatedBy: 'agent' },
       },

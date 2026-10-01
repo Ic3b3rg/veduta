@@ -7,7 +7,8 @@ stores — the surface-event log and the Space Event log — to keep parsing
 every shape they have ever produced, forever. This corpus is how that
 promise stays checked instead of assumed: each file is a real (or
 reconstructed) raw record from one of those stores, and the test asserts
-every one of them still parses.
+every supported format still parses. The explicit pre-release semantic exception below retains
+its frozen bytes and tests rejection rather than weakening the current Surface contract.
 
 ## Contract
 
@@ -23,6 +24,17 @@ every one of them still parses.
   read path. That is the whole point: the corpus is what makes "stop
   supporting an old format" a change someone has to notice and justify,
   not something that happens by accident.
+
+## Pre-release semantic exception: empty card
+
+`surface-event-created-order-v1.json` contains a complete Surface whose tree is an empty `Box`.
+Issues [#140](https://github.com/Ic3b3rg/veduta/issues/140) and
+[#150](https://github.com/Ic3b3rg/veduta/issues/150) require visibly renderable complete Surfaces
+and clean pre-release roots rather than a legacy migration. The
+[ADR-0003 semantic-conformance amendment](../../../../../../docs/adr/0003-declarative-atoms.md#semantic-conformance-amendment-issue-150)
+records this boundary. This one record remains frozen and has a separate public replay test
+requiring `empty_surface_content`; it is never rewritten, skipped by the runtime, or padded with
+invented content. All other historical format fixtures retain their tolerant replay tests.
 
 ## Contents
 

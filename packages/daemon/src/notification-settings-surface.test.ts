@@ -138,7 +138,8 @@ describe('NotificationSettingsSurfaceManager', () => {
     expect(select?.type).toBe('Select')
     expect(select?.binding).toBe(`notif-budget:${errands.id}`)
     expect(surface.state[`notif-budget:${errands.id}`]).toBe('3') // defaultDailyPushBudget
-    expect(select?.props?.['options']).toEqual(
+    expect(select).toHaveProperty(
+      'props.options',
       ['0', '1', '3', '5', '10'].map((value) => ({ label: value, value })),
     )
 
@@ -180,7 +181,8 @@ describe('NotificationSettingsSurfaceManager', () => {
     const surface = store.getSurface(NOTIFICATION_SETTINGS_SURFACE_ID)!
     expect(surface.state[`notif-budget:${errands.id}`]).toBe('7')
     const select = findNode(surface.tree, `notif-budget-${errands.id}`)
-    expect(select?.props?.['options']).toEqual(
+    expect(select).toHaveProperty(
+      'props.options',
       ['0', '1', '3', '5', '10', '7'].map((value) => ({ label: value, value })),
     )
   })
@@ -208,7 +210,8 @@ describe('NotificationSettingsSurfaceManager', () => {
     const surface = store.getSurface(NOTIFICATION_SETTINGS_SURFACE_ID)!
     expect(surface.state[`notif-budget:${errands.id}`]).toBe('5')
     const select = findNode(surface.tree, `notif-budget-${errands.id}`)
-    expect(select?.props?.['options']).toEqual(
+    expect(select).toHaveProperty(
+      'props.options',
       ['0', '1', '3', '5', '10'].map((value) => ({ label: value, value })),
     )
   })
@@ -330,7 +333,8 @@ describe('NotificationSettingsSurfaceManager', () => {
     const surface = store.getSurface(NOTIFICATION_SETTINGS_SURFACE_ID)!
     expect(surface.state[`notif-budget:${errands.id}`]).toBe('9')
     const select = findNode(surface.tree, `notif-budget-${errands.id}`)
-    expect(select?.props?.['options']).toEqual(
+    expect(select).toHaveProperty(
+      'props.options',
       ['0', '1', '3', '5', '10', '9'].map((value) => ({ label: value, value })),
     )
   })

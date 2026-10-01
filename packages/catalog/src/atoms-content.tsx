@@ -15,12 +15,15 @@ import { Badge } from './ui/badge.tsx'
 import { Progress } from './ui/progress.tsx'
 import { structuredMarkdown } from './structured-markdown.tsx'
 
-function contentText(node: AtomProps['node'], ctx: AtomProps['ctx']): string {
+function contentText(
+  node: AtomProps<'Title' | 'Text' | 'Caption' | 'Label' | 'Markdown'>['node'],
+  ctx: AtomProps['ctx'],
+): string {
   const value = text(node.binding ? boundValue(node, ctx) : node.props?.['text'])
   return value.trim() ? value : text(node.props?.['emptyText'] ?? 'No content yet')
 }
 
-export function TitleAtom({ node, ctx }: AtomProps): ReactNode {
+export function TitleAtom({ node, ctx }: AtomProps<'Title'>): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const level = boundedNumber(node.props?.['level'], 2, 1, 6)
   const content = contentText(node, ctx)
@@ -71,7 +74,7 @@ export function TitleAtom({ node, ctx }: AtomProps): ReactNode {
   )
 }
 
-export function TextAtom({ node, ctx }: AtomProps): ReactNode {
+export function TextAtom({ node, ctx }: AtomProps<'Text'>): ReactNode {
   return (
     <p {...motionContent('content')} style={bodyTextStyle(tokensFor(ctx.theme))}>
       {contentText(node, ctx)}
@@ -79,7 +82,7 @@ export function TextAtom({ node, ctx }: AtomProps): ReactNode {
   )
 }
 
-export function CaptionAtom({ node, ctx }: AtomProps): ReactNode {
+export function CaptionAtom({ node, ctx }: AtomProps<'Caption'>): ReactNode {
   const tokens = tokensFor(ctx.theme)
   return (
     <small
@@ -91,7 +94,7 @@ export function CaptionAtom({ node, ctx }: AtomProps): ReactNode {
   )
 }
 
-export function LabelAtom({ node, ctx }: AtomProps): ReactNode {
+export function LabelAtom({ node, ctx }: AtomProps<'Label'>): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const content = contentText(node, ctx)
   return (
@@ -101,7 +104,7 @@ export function LabelAtom({ node, ctx }: AtomProps): ReactNode {
   )
 }
 
-export function MarkdownAtom({ node, ctx }: AtomProps): ReactNode {
+export function MarkdownAtom({ node, ctx }: AtomProps<'Markdown'>): ReactNode {
   const tokens = tokensFor(ctx.theme)
   return (
     <div style={{ display: 'grid', gap: tokens.space.xs }}>
@@ -110,7 +113,7 @@ export function MarkdownAtom({ node, ctx }: AtomProps): ReactNode {
   )
 }
 
-export function BadgeAtom({ node, ctx }: AtomProps): ReactNode {
+export function BadgeAtom({ node, ctx }: AtomProps<'Badge'>): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const tone = toneColor(tokens, optionalText(node.props?.['tone']))
   const content = node.props?.['text']
@@ -129,7 +132,7 @@ export function BadgeAtom({ node, ctx }: AtomProps): ReactNode {
   )
 }
 
-export function StatAtom({ node, ctx }: AtomProps): ReactNode {
+export function StatAtom({ node, ctx }: AtomProps<'Stat'>): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const value = node.binding ? boundValue(node, ctx) : node.props?.['value']
   const hasValue =
@@ -177,7 +180,7 @@ export function StatAtom({ node, ctx }: AtomProps): ReactNode {
   )
 }
 
-export function ProgressAtom({ node, ctx }: AtomProps): ReactNode {
+export function ProgressAtom({ node, ctx }: AtomProps<'Progress'>): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const value = node.binding ? boundValue(node, ctx) : node.props?.['value']
   const ratio = ratioValue(value)

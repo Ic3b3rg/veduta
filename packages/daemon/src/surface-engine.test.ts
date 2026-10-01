@@ -138,7 +138,11 @@ describe('Surface engine store', () => {
           id,
           spaceId: space.id,
           title,
-          tree: { id: 'root', type: 'Box', children: [] },
+          tree: {
+            id: 'root',
+            type: 'Box',
+            children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+          },
           state: { count: 0 },
           freshness: { updatedAt: fixedNow().toISOString(), updatedBy: 'agent' },
         }),
@@ -245,7 +249,11 @@ describe('Surface engine store', () => {
         id: 'srf-system-agent-create',
         spaceId: SYSTEM_SPACE_ID,
         title: 'Personal notes',
-        tree: { id: 'root', type: 'Box', children: [] },
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+        },
         state: {},
       }),
     ).rejects.toBeInstanceOf(SurfaceOwnershipError)
@@ -483,7 +491,8 @@ describe('Surface engine store', () => {
       state: {},
     })
 
-    expect(store.getSurface('srf-pending-clock')?.tree.children?.[0]?.props?.['startedAt']).toBe(
+    expect(store.getSurface('srf-pending-clock')?.tree.children?.[0]).toHaveProperty(
+      'props.startedAt',
       now.toISOString(),
     )
 
@@ -505,7 +514,8 @@ describe('Surface engine store', () => {
       ],
     })
 
-    expect(store.getSurface('srf-pending-clock')?.tree.children?.[0]?.props?.['startedAt']).toBe(
+    expect(store.getSurface('srf-pending-clock')?.tree.children?.[0]).toHaveProperty(
+      'props.startedAt',
       now.toISOString(),
     )
   })
@@ -522,7 +532,11 @@ describe('Surface engine store', () => {
         id: 'srf-correlated-create',
         spaceId: 'spc-health',
         title: 'Correlated create',
-        tree: { id: 'root', type: 'Box', children: [] },
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+        },
         state: {},
       }),
       fromPartial<ToolContext>({
@@ -559,7 +573,11 @@ describe('Surface engine store', () => {
         id: 'srf-tainted',
         spaceId: 'spc-health',
         title: 'Tainted',
-        tree: { id: 'root', type: 'Box', children: [] },
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+        },
         state: { count: 0 },
       },
       'untrusted:gmail',
@@ -1082,7 +1100,11 @@ describe('Surface engine store', () => {
           id: 'srf-pin-tainted',
           spaceId: 'spc-health',
           title: taintedTitle,
-          tree: { id: 'root', type: 'Box', children: [] },
+          tree: {
+            id: 'root',
+            type: 'Box',
+            children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+          },
           state: {},
           freshness: { updatedAt: fixedNow().toISOString(), updatedBy: 'agent' },
         }),
@@ -1613,7 +1635,11 @@ describe('Surface engine store', () => {
           id: 'srf-tainted-create',
           spaceId: 'spc-health',
           title: 'Tainted create',
-          tree: { id: 'root', type: 'Box', children: [] },
+          tree: {
+            id: 'root',
+            type: 'Box',
+            children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+          },
           state: {},
         },
         'untrusted:gmail',
@@ -1892,7 +1918,11 @@ function emptySurface(id: string, spaceId: string): Surface {
     id,
     spaceId,
     title: id,
-    tree: { id: 'root', type: 'Box', children: [] },
+    tree: {
+      id: 'root',
+      type: 'Box',
+      children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+    },
     state: {},
     freshness: { updatedAt: fixedNow().toISOString(), updatedBy: 'agent' },
   })

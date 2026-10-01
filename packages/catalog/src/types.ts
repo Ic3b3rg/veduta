@@ -1,5 +1,6 @@
 import type {
   KnownRenderableAtomNode,
+  AtomType,
   RenderableAtomNode,
   JsonObject,
   JsonValue,
@@ -60,8 +61,8 @@ export interface RenderContext {
   }
 }
 
-export interface AtomProps {
-  node: KnownRenderableAtomNode
+export interface AtomProps<Type extends AtomType = AtomType> {
+  node: Extract<KnownRenderableAtomNode, { type: Type }>
   ctx: RenderContext
   /** The node's children, already rendered by the tree walker. */
   children?: ReactNode

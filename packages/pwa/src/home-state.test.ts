@@ -28,7 +28,11 @@ function testSurface(id: string, spaceId: string, updatedAt: string): Surface {
     id,
     spaceId,
     title: id,
-    tree: { id: 'root', type: 'Box', children: [] },
+    tree: {
+      id: 'root',
+      type: 'Box',
+      children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+    },
     state: {},
     freshness: { updatedAt, updatedBy: 'agent' },
   })
@@ -129,7 +133,13 @@ describe('cachedSnapshot', () => {
               id: 'srf-meals',
               spaceId: 'spc-health',
               title: 'Meals',
-              tree: { id: 'root', type: 'Box', children: [] },
+              tree: {
+                id: 'root',
+                type: 'Box',
+                children: [
+                  { id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } },
+                ],
+              },
               state: {},
               freshness: { updatedAt: '2026-07-03T12:00:00.000Z', updatedBy: 'agent' },
             },

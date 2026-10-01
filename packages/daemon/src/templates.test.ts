@@ -70,17 +70,17 @@ describe('treeSignature', () => {
       type: 'Box',
       children: [
         { id: 'a', type: 'Title' },
-        { id: 'b', type: 'Stat' },
-        { id: 'c', type: 'Stat' },
+        { id: 'b', type: 'Stat', props: { label: 'Value', value: 0 } },
+        { id: 'c', type: 'Stat', props: { label: 'Value', value: 0 } },
       ],
     }
     const b: AtomNode = {
       id: 'root',
       type: 'Box',
       children: [
-        { id: 'c', type: 'Stat' },
+        { id: 'c', type: 'Stat', props: { label: 'Value', value: 0 } },
         { id: 'a', type: 'Title' },
-        { id: 'b', type: 'Stat' },
+        { id: 'b', type: 'Stat', props: { label: 'Value', value: 0 } },
       ],
     }
 
@@ -95,6 +95,7 @@ describe('treeSignature', () => {
     const children: AtomNode[] = Array.from({ length: 200_000 }, (_, i) => ({
       id: `child-${i}`,
       type: 'Stat',
+      props: { label: 'Value', value: 0 },
     }))
     const wide: AtomNode = { id: 'root', type: 'Box', children }
 
@@ -109,8 +110,12 @@ describe('walkAtomTree', () => {
       id: 'root',
       type: 'Box',
       children: [
-        { id: 'a', type: 'Title', children: [{ id: 'a1', type: 'Stat' }] },
-        { id: 'b', type: 'Stat' },
+        {
+          id: 'a',
+          type: 'Col',
+          children: [{ id: 'a1', type: 'Stat', props: { label: 'Value', value: 0 } }],
+        },
+        { id: 'b', type: 'Stat', props: { label: 'Value', value: 0 } },
       ],
     }
 
@@ -123,8 +128,8 @@ describe('walkAtomTree', () => {
 
 describe('treeHash', () => {
   it('is stable regardless of key order in the serialized tree', () => {
-    const a: AtomNode = { id: 'n', type: 'Title', props: { text: 'hi', variant: 'lg' } }
-    const b: AtomNode = { id: 'n', type: 'Title', props: { variant: 'lg', text: 'hi' } }
+    const a: AtomNode = { id: 'n', type: 'Title', props: { text: 'hi', level: 3 } }
+    const b: AtomNode = { id: 'n', type: 'Title', props: { level: 3, text: 'hi' } }
     expect(treeHash(a)).toBe(treeHash(b))
   })
 
@@ -255,31 +260,31 @@ describe('prop reduction', () => {
 
   it('blanks a prop string over TEMPLATE_PROP_MAX_CHARS', () => {
     const notes = template.tree.children?.find((n) => n.id === 'notes')
-    expect(notes?.props?.text).toBe('')
+    expect(notes).toHaveProperty('props.text', '')
   })
 
   it('drops an array-valued prop and records it in dataProps', () => {
     const log = template.tree.children?.find((n) => n.id === 'log')
-    expect(log?.props?.rows).toEqual([])
+    expect(log).toHaveProperty('props.rows', [])
     expect(template.dataProps).toContain('log.rows')
   })
 
   it('drops nested collection data while preserving declared composition metadata', () => {
     const chart = template.tree.children?.find((n) => n.id === 'chart')
-    expect(chart?.props?.rows).toEqual([])
-    expect(chart?.props?.columns).toEqual(['day'])
+    expect(chart).toHaveProperty('props.rows', [])
+    expect(chart).toHaveProperty('props.columns', ['day'])
     expect(template.dataProps).toContain('chart.rows')
   })
 
   it('leaves a short label untouched', () => {
     const title = template.tree.children?.find((n) => n.id === 'title')
-    expect(title?.props?.text).toBe('Workout tracker')
+    expect(title).toHaveProperty('props.text', 'Workout tracker')
   })
 })
 
 describe('matchTemplates', () => {
   const BOX_TREE: AtomNode = { id: 'root', type: 'Box' }
-  const STAT_TREE: AtomNode = { id: 'root', type: 'Stat' }
+  const STAT_TREE: AtomNode = { id: 'root', type: 'Stat', props: { label: 'Value', value: 0 } }
 
   function withId(
     id: string,
@@ -448,7 +453,7 @@ function validRawTemplate(overrides: Record<string, unknown> = {}): Record<strin
     id: 'tpl-imported',
     name: 'Imported',
     intent: 'imported composition',
-    tree: { id: 'root', type: 'Box' },
+    tree: { id: 'root', type: 'Text', props: { text: 'Fixture content' } },
     stateKeys: [],
     dataProps: [],
     provenance: {
@@ -514,7 +519,7 @@ describe('sanitizeImportedTemplate', () => {
 
     const { template } = sanitizeImportedTemplate(raw, 'import')
     expect(template.tree.id).not.toContain('<<<')
-    expect(template.tree.props?.text).not.toContain('<<<')
+    expect(template.tree).toHaveProperty('props.text', expect.not.stringContaining('<<<'))
   })
 
   it('neutralizes <<< in a binding, keeping it consistent with the matching neutralized stateKeys entry', () => {
@@ -657,9 +662,7 @@ describe('sanitizeImportedTemplate', () => {
       stateKeys: ['done'],
     })
 
-    expect(() => sanitizeImportedTemplate(raw, 'import')).toThrow(
-      /Checkbox requires exactly one toggle fast Action/,
-    )
+    expect(() => sanitizeImportedTemplate(raw, 'import')).toThrow(/expected.*toggle/)
   })
 
   it('rejects an import when stripping nested Agent Buttons makes the composition inert', () => {

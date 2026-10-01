@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { AtomNodeSchema, formSetPlan, type AtomNode } from '@veduta/protocol'
+import { fromPartial } from '@total-typescript/shoehorn'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderNode } from './render.tsx'
@@ -47,10 +48,10 @@ describe('layout, media and fallback contracts', () => {
     }
   })
   it('rejects invalid known props and state before rendering interactive descendants', () => {
-    const invalid: AtomNode = {
+    const invalid = fromPartial<AtomNode>({
       id: 'invalid-root',
       type: 'Box',
-      props: { padding: '120px' },
+      props: { padding: 'md' },
       children: [
         {
           id: 'action',
@@ -59,7 +60,8 @@ describe('layout, media and fallback contracts', () => {
           actions: [{ name: 'click', path: 'agent', payload: {} }],
         },
       ],
-    }
+    })
+    Object.assign(invalid.props!, { padding: '120px' })
     const first = render(renderNode(invalid, { state: {}, dispatch: vi.fn() }))
     expect(screen.getByRole('alert').textContent).toContain('Surface content unavailable')
     expect(screen.queryByRole('button')).toBeNull()

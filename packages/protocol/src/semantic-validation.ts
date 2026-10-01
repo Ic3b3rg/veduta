@@ -23,7 +23,20 @@ export function semanticValidationIssues(error: z.ZodError): SemanticValidationI
   function collect(problems: readonly z.ZodIssue[]): void {
     for (const issue of problems) {
       if (issue.code === 'invalid_union') {
-        issue.unionErrors.forEach((branch) => collect(branch.issues))
+        // Prefer branches whose direct discriminators matched. A malformed
+        // tree replacement should explain its value, not state/remove shapes.
+        const branches = issue.unionErrors.map((branch) => ({
+          branch,
+          mismatches: branch.issues.filter(
+            (problem) =>
+              problem.path.length === issue.path.length + 1 &&
+              (problem.code === 'invalid_literal' || problem.code === 'invalid_enum_value'),
+          ).length,
+        }))
+        const minimum = Math.min(...branches.map(({ mismatches }) => mismatches))
+        branches
+          .filter(({ mismatches }) => mismatches === minimum)
+          .forEach(({ branch }) => collect(branch.issues))
       } else if (issue.code === 'unrecognized_keys') {
         issue.keys.forEach((key) =>
           add({

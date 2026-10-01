@@ -12,7 +12,7 @@ function sampleTemplate(id: string): SurfaceTemplate {
     id,
     name: 'Tracker',
     intent: 'daily tracker',
-    tree: { id: 'root', type: 'Box' },
+    tree: { id: 'root', type: 'Text', props: { text: 'Fixture content' } },
     stateKeys: [],
     dataProps: [],
     provenance: {

@@ -5,7 +5,7 @@ import type { AtomProps } from './types.ts'
 import { Card } from './ui/card.tsx'
 import { Separator } from './ui/separator.tsx'
 
-export function BoxAtom({ node, ctx, children }: AtomProps): ReactNode {
+export function BoxAtom({ node, ctx, children }: AtomProps<'Box'>): ReactNode {
   const tokens = tokensFor(ctx.theme)
   return (
     <Card
@@ -20,7 +20,7 @@ export function BoxAtom({ node, ctx, children }: AtomProps): ReactNode {
   )
 }
 
-export function RowAtom({ node, ctx, children }: AtomProps): ReactNode {
+export function RowAtom({ node, ctx, children }: AtomProps<'Row'>): ReactNode {
   const tokens = tokensFor(ctx.theme)
   return (
     <div
@@ -36,7 +36,7 @@ export function RowAtom({ node, ctx, children }: AtomProps): ReactNode {
   )
 }
 
-export function ColAtom({ node, ctx, children }: AtomProps): ReactNode {
+export function ColAtom({ node, ctx, children }: AtomProps<'Col'>): ReactNode {
   const tokens = tokensFor(ctx.theme)
   return (
     <div
@@ -53,7 +53,7 @@ export function ColAtom({ node, ctx, children }: AtomProps): ReactNode {
   )
 }
 
-export function SpacerAtom({ node, ctx }: AtomProps): ReactNode {
+export function SpacerAtom({ node, ctx }: AtomProps<'Spacer'>): ReactNode {
   const tokens = tokensFor(ctx.theme)
   return (
     <div aria-hidden="true" style={{ minHeight: spacing(tokens, node.props?.['size'], 'md') }} />
@@ -64,7 +64,7 @@ export function DividerAtom(): ReactNode {
   return <Separator decorative={false} className="my-1" />
 }
 
-export function TransitionAtom({ node, children }: AtomProps): ReactNode {
+export function TransitionAtom({ node, children }: AtomProps<'Transition'>): ReactNode {
   const visible = propBoolean(node.props, 'visible', true)
   return (
     <div

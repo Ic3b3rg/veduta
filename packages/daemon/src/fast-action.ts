@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import {
   SurfaceSchema,
+  AtomNodeSchema,
   canonicalJson,
   findAtom,
   fastActionInputsSchema,
@@ -24,6 +25,7 @@ export type SurfaceActionErrorCode =
   | 'preflight_rejected'
   | 'intent_conflict'
   | 'idempotency_conflict'
+  | 'agent_queue_full'
 export class SurfaceActionError extends Error {
   constructor(
     readonly code: SurfaceActionErrorCode,
@@ -64,7 +66,7 @@ function signature(node: AtomNode, action: FastAction): string {
 
 /** Author-supplied revisions never authorize a write; the Gateway seals semantic declarations. */
 export function stampFastActionRevisions(tree: AtomNode, previous?: AtomNode): AtomNode {
-  function walk(node: AtomNode): AtomNode {
+  function walk(node: AtomNode): unknown {
     const oldNode = previous ? findAtom(previous, node.id) : undefined
     return {
       ...node,
@@ -86,7 +88,7 @@ export function stampFastActionRevisions(tree: AtomNode, previous?: AtomNode): A
       ...(node.children === undefined ? {} : { children: node.children.map(walk) }),
     }
   }
-  return walk(tree)
+  return AtomNodeSchema.parse(walk(tree))
 }
 
 export function reduceFastAction(

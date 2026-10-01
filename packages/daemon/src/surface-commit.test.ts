@@ -243,7 +243,11 @@ function surface(id: string, spaceId = 'spc-health'): Surface {
     id,
     spaceId,
     title: id,
-    tree: { id: 'root', type: 'Box', children: [] },
+    tree: {
+      id: 'root',
+      type: 'Box',
+      children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+    },
     state: { count: 0 },
     freshness: { updatedAt: now().toISOString(), updatedBy: 'user' },
   })

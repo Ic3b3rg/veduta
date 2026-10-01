@@ -6,9 +6,38 @@ import {
   SurfaceValidationError,
   parseSurface,
   semanticValidationIssues,
+  PatchSchema,
 } from './index.ts'
 
 describe('machine-readable semantic validation issues', () => {
+  it('reports the selected patch branch without unrelated state or remove errors', () => {
+    const parsed = PatchSchema.safeParse({
+      surfaceId: 'srf-test',
+      operations: [
+        {
+          target: 'tree',
+          op: 'replace',
+          path: '',
+          value: {
+            id: 'table',
+            type: 'Table',
+            binding: 'rows',
+            props: { columns: [{ key: 'item', label: 'Item' }] },
+          },
+        },
+      ],
+    })
+    expect(parsed.success).toBe(false)
+    if (parsed.success) return
+    expect(semanticValidationIssues(parsed.error)).toEqual([
+      {
+        path: ['operations', 0, 'value', 'props', 'columns', 0],
+        code: 'invalid_type',
+        message: 'Expected string, received object',
+      },
+    ])
+  })
+
   it('retains exact paths and stable codes for unsupported fields and semantic failures', () => {
     const schema = z
       .object({ props: z.object({ label: z.string() }).strict() })

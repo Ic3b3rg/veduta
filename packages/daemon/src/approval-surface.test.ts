@@ -77,16 +77,19 @@ describe('buildApprovalCardSurface', () => {
     expect(surface.title).toContain('Send message to a@b.com')
 
     const title = findNode(surface.tree, 'title')
-    expect(title?.props?.['text']).toBe('Approval required: Send message to a@b.com')
+    expect(title).toHaveProperty('props.text', 'Approval required: Send message to a@b.com')
 
     const meta = findNode(surface.tree, 'meta')
-    expect(meta?.props?.['text']).toContain('Level L1')
-    expect(meta?.props?.['text']).toContain('origin trusted:user')
-    expect(meta?.props?.['text']).toContain('expires 2026-07-10T12:30:00.000Z')
+    expect(meta).toHaveProperty('props.text', expect.stringContaining('Level L1'))
+    expect(meta).toHaveProperty('props.text', expect.stringContaining('origin trusted:user'))
+    expect(meta).toHaveProperty(
+      'props.text',
+      expect.stringContaining('expires 2026-07-10T12:30:00.000Z'),
+    )
 
     const summary = findNode(surface.tree, 'summary')
     expect(summary?.type).toBe('Markdown')
-    expect(summary?.props?.['text']).toBe('hello')
+    expect(summary).toHaveProperty('props.text', 'hello')
 
     const field = findNode(surface.tree, 'field-body')
     expect(field?.type).toBe('Input')
@@ -136,17 +139,18 @@ describe('buildApprovalCardSurface', () => {
       cardModel({ title: 'Send <<<evil>>> message', summary: longBody }),
     )
     const title = findNode(surface.tree, 'title')
-    expect(title?.props?.['text']).not.toContain('<<<evil>>>')
+    expect(title).toHaveProperty('props.text', expect.not.stringContaining('<<<evil>>>'))
     // `Surface.title` must be neutralized exactly like the Title
     // atom's own text — both are derived from the same (possibly
     // untrusted-influenced) `card.title`.
     expect(surface.title).not.toContain('<<<evil>>>')
 
-    const summaryText = findNode(surface.tree, 'summary')?.props?.['text']
-    expect(typeof summaryText).toBe('string')
-    expect(summaryText as string).not.toContain('<<<INJECTED>>>')
-    expect((summaryText as string).length).toBeLessThanOrEqual(501)
-    expect((summaryText as string).endsWith('…')).toBe(true)
+    const summary = findNode(surface.tree, 'summary')
+    if (summary?.type !== 'Markdown') throw new Error('Markdown summary required')
+    const summaryText = summary.props?.text ?? ''
+    expect(summaryText).not.toContain('<<<INJECTED>>>')
+    expect(summaryText.length).toBeLessThanOrEqual(501)
+    expect(summaryText.endsWith('…')).toBe(true)
   })
 
   it('renders a Textarea, not an Input, for a long or multi-line editable value', () => {
@@ -169,7 +173,7 @@ describe('buildApprovalCardSurface', () => {
   it('starts the validation-error Caption empty at the fixed index patchValidationError relies on', () => {
     const surface = buildApprovalCardSurface(pendingApproval(), cardModel())
     expect(surface.tree.children?.[3]?.id).toBe('error')
-    expect(surface.tree.children?.[3]?.props?.['text']).toBe('')
+    expect(surface.tree.children?.[3]).toHaveProperty('props.text', '')
   })
 })
 

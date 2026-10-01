@@ -72,7 +72,7 @@ describe('progressive Surface Loopback fixture', () => {
         'progressive-route',
       ].map((atomId) => {
         const atom = findAtom(initialTree, atomId)
-        return [atomId, atom?.type, atom?.props?.['variant']]
+        return [atomId, atom?.type, atom?.type === 'Pending' ? atom.props.variant : undefined]
       }),
     ).toEqual([
       ['progressive-summary', 'Pending', 'text'],
@@ -81,7 +81,7 @@ describe('progressive Surface Loopback fixture', () => {
       ['progressive-stops', 'Pending', 'list'],
       ['progressive-route', 'Pending', 'image'],
     ])
-    expect(findAtom(initialTree, 'progressive-route')?.props?.['timeoutMs']).toBe(8_000)
+    expect(findAtom(initialTree, 'progressive-route')).toHaveProperty('props.timeoutMs', 8_000)
 
     expect(calls.slice(1).map((call) => call.arguments)).toMatchObject([
       {

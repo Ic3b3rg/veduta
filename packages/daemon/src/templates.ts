@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import {
-  SurfaceSchema,
+  parseSurface,
+  AtomNodeSchema,
   JsonObjectSchema,
   SurfaceTemplateSchema,
   FastActionPlanSchema,
@@ -235,17 +236,21 @@ function templateId(name: string, intent: string, idEntropy: string): string {
  * for props, not just for state.
  */
 function reduceTreeProps(node: AtomNode, dataProps: string[]): AtomNode {
-  const props = node.props === undefined ? undefined : reduceNodeProps(node, node.props, dataProps)
-  const children = node.children?.map((child) => reduceTreeProps(child, dataProps))
-
-  return {
-    id: node.id,
-    type: node.type,
-    ...(node.binding !== undefined ? { binding: node.binding } : {}),
-    ...(node.actions !== undefined ? { actions: node.actions.map(portableAction) } : {}),
-    ...(props !== undefined ? { props } : {}),
-    ...(children !== undefined ? { children } : {}),
+  function reduce(current: AtomNode): unknown {
+    const props =
+      current.props === undefined
+        ? undefined
+        : reduceNodeProps(current, JsonObjectSchema.parse(current.props), dataProps)
+    return {
+      id: current.id,
+      type: current.type,
+      ...(current.binding !== undefined ? { binding: current.binding } : {}),
+      ...(current.actions !== undefined ? { actions: current.actions.map(portableAction) } : {}),
+      ...(props !== undefined ? { props } : {}),
+      ...(current.children !== undefined ? { children: current.children.map(reduce) } : {}),
+    }
   }
+  return AtomNodeSchema.parse(reduce(node))
 }
 
 function portableAction(action: Action): Action {
@@ -399,7 +404,7 @@ export function surfaceFromTemplate(
     ...(options.pinned !== undefined ? { pinned: options.pinned } : {}),
   }
 
-  return SurfaceSchema.parse(candidate)
+  return parseSurface(candidate)
 }
 
 export interface TemplateMatchCandidate {
@@ -593,7 +598,7 @@ export function sanitizeImportedTemplate(raw: unknown, source: string): Sanitize
 }
 
 interface SanitizedNode {
-  node: AtomNode
+  node: unknown
   strippedAgentActions: number
 }
 
@@ -615,9 +620,10 @@ function sanitizeAndFilterNode(node: AtomNode): SanitizedNode {
         plan: FastActionPlanSchema.parse(sanitizeProps(JsonObjectSchema.parse(portable.plan))),
       }
     })
-  const props = node.props === undefined ? undefined : sanitizeProps(node.props)
+  const props =
+    node.props === undefined ? undefined : sanitizeProps(JsonObjectSchema.parse(node.props))
 
-  let children: AtomNode[] | undefined
+  let children: unknown[] | undefined
   if (node.children) {
     children = []
     for (const child of node.children) {

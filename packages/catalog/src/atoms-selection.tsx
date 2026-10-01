@@ -11,7 +11,12 @@ import { Label } from './ui/label.tsx'
 import { NativeSelect } from './ui/native-select.tsx'
 import { RadioGroup, RadioGroupItem } from './ui/radio-group.tsx'
 
-function ActionControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttributes): ReactNode {
+function ActionControl({
+  node,
+  ctx,
+  ...motion
+}: AtomProps<'Button' | 'Checkbox' | 'Select' | 'RadioGroup' | 'DatePicker'> &
+  AtomMotionAttributes): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const feedback = useActionFeedback({ node, ctx })
   const { dispatch, disabled, attributes } = feedback
@@ -125,18 +130,18 @@ function ActionControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttribute
   )
 }
 
-export function ButtonAtom(props: AtomProps): ReactNode {
+export function ButtonAtom(props: AtomProps<'Button'>): ReactNode {
   return <ActionControl {...props} />
 }
-export function CheckboxAtom(props: AtomProps): ReactNode {
+export function CheckboxAtom(props: AtomProps<'Checkbox'>): ReactNode {
   return <ActionControl {...props} />
 }
-export function SelectAtom(props: AtomProps): ReactNode {
+export function SelectAtom(props: AtomProps<'Select'>): ReactNode {
   return <ActionControl {...props} />
 }
-export function RadioGroupAtom(props: AtomProps): ReactNode {
+export function RadioGroupAtom(props: AtomProps<'RadioGroup'>): ReactNode {
   return <ActionControl {...props} />
 }
-export function DatePickerAtom(props: AtomProps): ReactNode {
+export function DatePickerAtom(props: AtomProps<'DatePicker'>): ReactNode {
   return <ActionControl {...props} />
 }

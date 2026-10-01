@@ -122,7 +122,11 @@ describe('createFocusedSurfaceTools', () => {
           id,
           spaceId: space.id,
           title,
-          tree: { id: 'root', type: 'Box', children: [] },
+          tree: {
+            id: 'root',
+            type: 'Box',
+            children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+          },
           state: { hiddenFromInventory: true },
           freshness: { updatedAt: '2026-08-11T10:00:00.000Z', updatedBy: 'agent' },
         }),
@@ -215,7 +219,11 @@ describe('createFocusedSurfaceTools', () => {
       id: 'srf-bound-create',
       spaceId: otherSpace.id,
       title: 'Bound create',
-      tree: { id: 'root', type: 'Box', children: [] },
+      tree: {
+        id: 'root',
+        type: 'Box',
+        children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+      },
       state: { ready: true },
     })
     expect(input).not.toHaveProperty('spaceId')

@@ -147,6 +147,7 @@ export {
 } from './pending-decision.ts'
 export {
   PatchSchema,
+  parseSurfacePatch,
   PatchOperationSchema,
   ActionInvocationSchema,
   FastActionInvocationSchema,

@@ -3,6 +3,7 @@ import { AgentActionIdempotencyKeySchema } from './agent-action-turn.ts'
 import { AtomNodeSchema } from './atom.ts'
 import { JsonObjectSchema, JsonValueSchema } from './json.ts'
 import { ActionIntentIdSchema, ActionRevisionSchema } from './action-plan.ts'
+import { SurfaceValidationError } from './surface.ts'
 
 const JsonPointerSchema = z.string().regex(/^\/.*$/, {
   message: 'JSON pointer paths must start with "/"',
@@ -77,6 +78,13 @@ export const PatchSchema = z
 
 export type PatchOperation = z.infer<typeof PatchOperationSchema>
 export type Patch = z.infer<typeof PatchSchema>
+
+/** Normalize malformed subtree diagnostics before a patch reaches canonical state. */
+export function parseSurfacePatch(input: unknown): Patch {
+  const result = PatchSchema.safeParse(input)
+  if (result.success) return result.data
+  throw SurfaceValidationError.fromZod(result.error)
+}
 
 /** Clients identify one persisted declaration and submit only its typed owning inputs. */
 export const FastActionInvocationSchema = z

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import {
   AtomNodeSchema,
+  SurfaceSchema,
   atomTypes,
   formSetPlan,
   inputSetPlan,
@@ -74,6 +75,23 @@ const tree: AtomNode = AtomNodeSchema.parse({
 })
 
 describe('renderNode', () => {
+  it('rejects unsupported props for every accepted Atom type in the complete catalog', () => {
+    const nodes = new Map<AtomNode['type'], AtomNode>()
+    function collect(node: AtomNode) {
+      nodes.set(node.type, node)
+      node.children?.forEach(collect)
+    }
+    collect(catalogShowcaseSurface.tree)
+    expect([...nodes.keys()].sort()).toEqual([...atomTypes].sort())
+    expect(SurfaceSchema.safeParse(catalogShowcaseSurface).success).toBe(true)
+    for (const node of nodes.values()) {
+      expect(AtomNodeSchema.safeParse(node).success, node.type).toBe(true)
+      expect(
+        AtomNodeSchema.safeParse({ ...node, props: { ...node.props, unsupported: true } }).success,
+        node.type,
+      ).toBe(false)
+    }
+  })
   it('renders a validated tree with state bindings', () => {
     render(renderNode(tree, { state: { milk: true }, dispatch: vi.fn() }))
     expect(screen.getByText('Groceries')).toBeDefined()

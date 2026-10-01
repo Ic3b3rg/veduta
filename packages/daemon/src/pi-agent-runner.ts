@@ -33,6 +33,7 @@ import {
   type ToolResult,
   type TriggerRef,
 } from './agent-runner.ts'
+import { semanticValidationIssues } from '@veduta/protocol'
 import { isMarkedNonRetryable, NonRetryableModelError } from './model-routing.ts'
 import {
   effectiveOrigin,
@@ -867,11 +868,17 @@ export function toPiAgentTool(
     label: tool.name,
     description: tool.description,
     parameters,
+    // pi prepares arguments before its JSON-Schema validator. Validate the
+    // unchanged input here so coercion and union diagnostics cannot replace
+    // the authoritative ToolDef contract (ADR-0016).
+    prepareArguments: (params) => {
+      parseToolArguments(tool, params)
+      return params
+    },
     execute: async (toolCallId, params, signal) => {
-      const parsed = tool.schema.safeParse(params)
-      if (!parsed.success) throw new Error(parsed.error.message)
+      const parsed = parseToolArguments(tool, params)
       const context = buildContext(toolCallId, signal)
-      const result = await tool.handler(parsed.data, context)
+      const result = await tool.handler(parsed, context)
       if (result.origins && result.origins.length > 0) {
         for (const origin of result.origins) context.taint.add(origin)
         recordToolOrigins(toolCallId, result.origins)
@@ -879,6 +886,20 @@ export function toPiAgentTool(
       return toPiToolResult(result)
     },
   }
+}
+
+function parseToolArguments(tool: ToolDef, params: unknown): unknown {
+  const parsed = tool.schema.safeParse(params)
+  if (!parsed.success) {
+    throw new Error(
+      JSON.stringify({
+        code: 'invalid_tool_input',
+        tool: tool.name,
+        validationIssues: semanticValidationIssues(parsed.error),
+      }),
+    )
+  }
+  return parsed.data
 }
 
 function toPiToolResult(result: ToolResult): {

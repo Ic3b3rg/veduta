@@ -96,7 +96,7 @@ const renderers = {
   ListItem: ListItemAtom,
   Automation: AutomationAtom,
   Pending: PendingAtom,
-} satisfies Record<AtomType, AtomRenderer>
+} satisfies { [Type in AtomType]: (props: AtomProps<Type>) => ReactNode }
 
 export function renderNode(node: RenderableAtomNode, ctx: RenderContext): ReactNode {
   const issues = renderValidationIssues(node, ctx.state)
@@ -308,7 +308,7 @@ function MotionAtom({
 
   const rendered =
     isKnownRenderableAtomNode(node) && Object.hasOwn(renderers, node.type)
-      ? renderers[node.type]({ node, ctx, children })
+      ? (renderers[node.type] as AtomRenderer)({ node, ctx, children })
       : UnknownAtom({ node, ctx, children })
   if (!isValidElement<MotionElementProps>(rendered)) return rendered
   return cloneElement(rendered, {

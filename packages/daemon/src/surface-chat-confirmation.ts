@@ -197,7 +197,13 @@ function confirmedContent(surface: Surface): string {
   function visit(node: AtomNode): void {
     if (excerpts.length >= 8) return
     let text: unknown
-    if (['Title', 'Text', 'Caption', 'Label', 'Markdown'].includes(node.type)) {
+    if (
+      node.type === 'Title' ||
+      node.type === 'Text' ||
+      node.type === 'Caption' ||
+      node.type === 'Label' ||
+      node.type === 'Markdown'
+    ) {
       text = node.binding === undefined ? node.props?.['text'] : surface.state[node.binding]
       if (text === '') text = node.props?.['emptyText']
     } else if (node.type === 'Stat') {

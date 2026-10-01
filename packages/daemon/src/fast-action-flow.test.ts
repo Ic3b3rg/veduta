@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
   SurfaceSchema,
+  AtomNodeSchema,
   type ActionStep,
   type FastActionInvocation,
   type JsonObject,
@@ -207,7 +208,10 @@ describe('authoritative fast Action execution', () => {
           target: 'tree',
           op: 'replace',
           path: '',
-          value: { ...surface.tree, actions: [{ ...original, revision: 'acr-authored' }] },
+          value: AtomNodeSchema.parse({
+            ...surface.tree,
+            actions: [{ ...original, revision: 'acr-authored' }],
+          }),
         },
       ],
       { expectedTreeVersion: store.getSurfaceVersion(surface.id)!.treeVersion, updatedBy: 'agent' },
@@ -222,7 +226,14 @@ describe('authoritative fast Action execution', () => {
     }
     store.patchTree(
       surface.id,
-      [{ target: 'tree', op: 'replace', path: '', value: { ...surface.tree, actions: [changed] } }],
+      [
+        {
+          target: 'tree',
+          op: 'replace',
+          path: '',
+          value: AtomNodeSchema.parse({ ...surface.tree, actions: [changed] }),
+        },
+      ],
       { expectedTreeVersion: store.getSurfaceVersion(surface.id)!.treeVersion, updatedBy: 'agent' },
     )
     expect(store.getSurface(surface.id)?.tree.actions?.[0]).not.toHaveProperty(

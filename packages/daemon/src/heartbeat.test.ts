@@ -264,7 +264,11 @@ describe('acceptance criteria', () => {
         id: HEARTBEAT_SURFACE_ID,
         spaceId: SYSTEM_SPACE_ID,
         title: 'Heartbeat',
-        tree: { id: 'root', type: 'Box', children: [] },
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+        },
         state: {},
         freshness: { updatedAt: clock.toISOString(), updatedBy: 'job' },
       }),
@@ -532,7 +536,11 @@ describe('acceptance criteria', () => {
       id: 'srf-grocery-list',
       spaceId: HEALTH,
       title: 'Grocery list',
-      tree: { id: 'root', type: 'Box', children: [] },
+      tree: {
+        id: 'root',
+        type: 'Box',
+        children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+      },
       state: {},
       freshness: { updatedAt: clock.toISOString(), updatedBy: 'agent' },
     })

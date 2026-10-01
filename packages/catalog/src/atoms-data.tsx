@@ -12,7 +12,7 @@ import {
 import type { AtomProps } from './types.ts'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table.tsx'
 
-export function TableAtom({ node, ctx }: AtomProps): ReactNode {
+export function TableAtom({ node, ctx }: AtomProps<'Table'>): ReactNode {
   const rows = tableRows(boundValue(node, ctx) ?? node.props?.['rows'])
   const rowKeys = motionItemKeys(rows)
   const columns = tableColumns(node.props?.['columns'], rows)

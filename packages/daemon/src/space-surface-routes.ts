@@ -8,6 +8,7 @@ import {
   PinSurfaceResultSchema,
   SurfaceCommitRecoveryPendingResponseSchema,
   SurfaceCommitRecoveryStateSchema,
+  SurfaceValidationError,
 } from '@veduta/protocol'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -107,6 +108,11 @@ export function registerSpaceSurfaceRoutes(
           .status(statusForSurfaceActionError(error))
           .send({ error: error.message, code: error.code })
       }
+      if (error instanceof SurfaceValidationError) {
+        return reply
+          .status(400)
+          .send({ error: error.message, code: error.code, issues: error.validationIssues })
+      }
       throw error
     }
   })
@@ -163,6 +169,7 @@ function recoveryPendingResponse(error: SurfaceCommitRecoveryPendingError) {
 }
 
 function statusForSurfaceActionError(error: SurfaceActionError): number {
+  if (error.code === 'agent_queue_full') return 429
   if (error.code === 'unknown_surface') return 404
   if (
     error.code === 'stale_action' ||

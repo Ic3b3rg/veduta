@@ -74,8 +74,9 @@ describe('allowlistSurface', () => {
     const surface = allowlistSurface([rule()], freshness)
     const summary = surface.tree.children?.[2]?.children?.[0]?.children?.[0]
     expect(summary?.type).toBe('ListItem')
-    expect(summary?.props?.['label']).toBe('send_message')
-    expect(summary?.props?.['detail']).toBe(
+    expect(summary).toHaveProperty('props.label', 'send_message')
+    expect(summary).toHaveProperty(
+      'props.detail',
       'to=alice@example.com — allowed since 2026-07-09T10:00:00.000Z',
     )
   })

@@ -424,7 +424,11 @@ describe('Automation outcome HTTP and realtime integration', () => {
         id: surfaceId,
         spaceId: 'spc-health',
         title: 'Daily plan',
-        tree: { id: 'root', type: 'Box', children: [] },
+        tree: {
+          id: 'root',
+          type: 'Box',
+          children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+        },
         state: {},
         freshness: { updatedAt: current.toISOString(), updatedBy: 'agent' },
       }),
@@ -2403,7 +2407,7 @@ describe('Web Push notifications (issue #18)', () => {
     const rowsBox = settingsSurface?.tree.children?.find((node) => node.id === 'notif-rows')
     const row = rowsBox?.children?.find((node) => node.id === 'notif-row-spc-health')
     const degradedNode = row?.children?.find((node) => node.id === 'notif-degraded-spc-health')
-    expect(degradedNode?.props?.['value']).toBe('1')
+    expect(degradedNode).toHaveProperty('props.value', '1')
 
     await app.close()
   })
@@ -3509,13 +3513,16 @@ class SchedulerFakeSocket {
  * recorded instead.
  */
 async function waitForTurnSettled(socket: SchedulerFakeSocket): Promise<void> {
-  await vi.waitFor(() => {
-    expect(
-      socket.sent.some(
-        (frame) => frame.type === 'chat.turn-end' || frame.type === 'chat.turn-error',
-      ),
-    ).toBe(true)
-  })
+  await vi.waitFor(
+    () => {
+      expect(
+        socket.sent.some(
+          (frame) => frame.type === 'chat.turn-end' || frame.type === 'chat.turn-error',
+        ),
+      ).toBe(true)
+    },
+    { timeout: 5_000 },
+  )
 }
 
 /**

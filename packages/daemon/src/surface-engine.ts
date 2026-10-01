@@ -11,13 +11,14 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   AUTOMATION_OUTCOMES_STATE_KEY,
+  AGENT_ACTION_QUEUE_CAPACITY,
   AgentActionTurnSchema,
   AutomationOutcomeStatusesSchema,
   type AutomationOutcomeKind,
   AtomNodeSchema,
   JsonObjectSchema,
   PatchOperationSchema,
-  PatchSchema,
+  type PatchSchema,
   SYSTEM_SPACE_ID,
   SurfaceArchivedEventSchema,
   SurfaceCreatedEventSchema,
@@ -25,7 +26,8 @@ import {
   SurfacePatchEventSchema,
   SurfacePinnedEventSchema,
   SurfaceOrderSchema,
-  SurfaceSchema,
+  parseSurface,
+  parseSurfacePatch,
   SurfacePresentationSchema,
   SurfacePresentationEventSchema,
   applySurfacePatch,
@@ -1396,7 +1398,7 @@ export class SurfaceEngine {
         assertAutomationOutcomeStateNotPatched(reduced.operations)
         const currentVersion = this.requireVersion(surfaceId)
         const patched = this.stampSurface(reduced.surface, 'user')
-        const patch = PatchSchema.parse({ surfaceId, operations: reduced.operations })
+        const patch = parseSurfacePatch({ surfaceId, operations: reduced.operations })
         const cursor = this.latestSurfaceCursor() + 1
         const origin = this.surfaceProvenance(surfaceId)?.contentOrigin ?? 'trusted:user'
         this.updateSurface(
@@ -1486,7 +1488,7 @@ export class SurfaceEngine {
       )
     }
 
-    if (atom.props?.['disabled'] === true) {
+    if (atom.props && 'disabled' in atom.props && atom.props.disabled === true) {
       throw new SurfaceActionError('disabled_control', `this ${atom.type} is disabled`)
     }
     if (
@@ -1543,6 +1545,17 @@ export class SurfaceEngine {
     const id = this.runWrite(() => {
       const replay = this.findAgentActionRequest(surface.id, invocation)
       if (replay) return agentTurnRowId(replay.id)!
+      const active = this.db
+        .prepare(
+          "select count(*) as count from agent_turns where space_id = ? and status in ('queued', 'running')",
+        )
+        .get(surface.spaceId)!
+      if (requiredNumber(active, 'count') >= AGENT_ACTION_QUEUE_CAPACITY) {
+        throw new SurfaceActionError(
+          'agent_queue_full',
+          `This Space already has ${AGENT_ACTION_QUEUE_CAPACITY} waiting or running Agent actions. Wait for an action to finish, then try again.`,
+        )
+      }
       const result = this.db
         .prepare(
           `insert into agent_turns
@@ -1943,14 +1956,15 @@ export class SurfaceEngine {
     authoredRelativeTime?: RelativeTimeAuthoring,
   ): { patch: z.infer<typeof PatchSchema>; patched: Surface } {
     const updatedAt = this.nowIso()
-    let patch = PatchSchema.parse({
+    const validatedPatch = parseSurfacePatch({ surfaceId, operations })
+    let patch = parseSurfacePatch({
       surfaceId,
-      operations: stampPendingPatchOperations(operations, updatedAt),
+      operations: stampPendingPatchOperations(validatedPatch.operations, updatedAt),
     })
     const applied = applySurfacePatch(current, patch)
     const tree = stampFastActionRevisions(applied.tree, current.tree)
     if (canonicalJson(tree) !== canonicalJson(applied.tree)) {
-      patch = PatchSchema.parse({
+      patch = parseSurfacePatch({
         ...patch,
         operations: patch.operations.map((operation) =>
           operation.target === 'tree' && (operation.op === 'add' || operation.op === 'replace')
@@ -1960,7 +1974,7 @@ export class SurfaceEngine {
       })
       const projected = applySurfacePatch(current, patch)
       if (canonicalJson(projected.tree) !== canonicalJson(tree))
-        patch = PatchSchema.parse({
+        patch = parseSurfacePatch({
           ...patch,
           operations: [
             ...patch.operations,
@@ -2236,9 +2250,8 @@ export class SurfaceEngine {
           ? input.validity
           : undefined
         : buildRelativeTimeValidity(relativeTime, this.timeZone, new Date(updatedAt))
-    return SurfaceSchema.parse({
+    const validated = parseSurface({
       ...input,
-      tree: stampFastActionRevisions(stampPendingAtoms(input.tree, updatedAt)),
       freshness: {
         updatedAt,
         updatedBy,
@@ -2250,6 +2263,10 @@ export class SurfaceEngine {
       pinned: false,
       pinnable: isSurfacePinnable(daemonOwned, input.spaceId),
     })
+    return parseSurface({
+      ...validated,
+      tree: stampFastActionRevisions(stampPendingAtoms(validated.tree, updatedAt)),
+    })
   }
 
   private stampSurface(
@@ -2257,7 +2274,7 @@ export class SurfaceEngine {
     updatedBy: SurfaceWriteActor,
     updatedAt = this.nowIso(),
   ): Surface {
-    return SurfaceSchema.parse({
+    return parseSurface({
       ...surface,
       freshness: {
         updatedAt,
@@ -2329,8 +2346,8 @@ export class SurfaceEngine {
     )
     const pinned = input.spaceId === SYSTEM_SPACE_ID && existing.pinned
     const at = this.nowIso()
-    const adopted = SurfaceSchema.parse({
-      ...input,
+    const adopted = parseSurface({
+      ...parseSurface(input),
       tree: stampFastActionRevisions(input.tree, existing.tree),
       state: {
         ...input.state,
@@ -2671,7 +2688,7 @@ export class SurfaceEngine {
     if (surfaces.length === 0) return
     this.runWrite(() => {
       for (const surface of surfaces) {
-        const parsed = SurfaceSchema.parse({
+        const parsed = parseSurface({
           ...surface,
           tree: stampFastActionRevisions(surface.tree),
         })
@@ -2768,11 +2785,14 @@ function stampPendingPatchOperations(
 }
 
 function stampPendingAtoms(node: AtomNode, startedAt: string): AtomNode {
-  if (node.type === 'Pending') {
-    return { ...node, props: { ...node.props, startedAt } }
+  function stamp(current: AtomNode): unknown {
+    if (current.type === 'Pending') {
+      return { ...current, props: { ...current.props, startedAt } }
+    }
+    if (current.children === undefined) return current
+    return { ...current, children: current.children.map(stamp) }
   }
-  if (node.children === undefined) return node
-  return { ...node, children: node.children.map((child) => stampPendingAtoms(child, startedAt)) }
+  return AtomNodeSchema.parse(stamp(node))
 }
 
 function truncate(value: string, max: number): string {

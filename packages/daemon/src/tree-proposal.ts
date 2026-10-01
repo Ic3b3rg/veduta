@@ -194,7 +194,8 @@ function summarizeNode(node: AtomNode): string {
     parts.push(`binding=${neutralizeDelimiters(node.binding)}`)
   }
   for (const key of SUMMARY_PROP_KEYS) {
-    const value = node.props?.[key]
+    const props: Record<string, unknown> | undefined = node.props
+    const value = props?.[key]
     if (typeof value !== 'string') continue
     parts.push(`${key}="${truncate(neutralizeDelimiters(value), NODE_SUMMARY_PROP_MAX_CHARS)}"`)
   }

@@ -1397,7 +1397,11 @@ function surface(id: string, spaceId: string) {
     id,
     spaceId,
     title: 'Weekly plan',
-    tree: { id: 'root', type: 'Box', children: [] },
+    tree: {
+      id: 'root',
+      type: 'Box',
+      children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
+    },
     state: { entries: 1 },
     freshness: { updatedAt: '2026-09-01T08:00:00.000Z', updatedBy: 'agent' },
   })

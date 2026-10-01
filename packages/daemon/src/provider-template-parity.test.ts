@@ -1,5 +1,5 @@
 import { normalizeStableValue } from './provider-parity-test-support.ts'
-import { SurfaceSchema, type AtomNode } from '@veduta/protocol'
+import { AtomNodeSchema, SurfaceSchema, type AtomNode } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import {
   DESTINATION_SPACE_ID,
@@ -209,7 +209,7 @@ describe('AgentRunner Template parity across Model connection methods (issue #76
 
 /** Templates retain complete declarations while canonical instances receive Gateway revisions. */
 function withoutActionRevisions(node: AtomNode): AtomNode {
-  return {
+  return AtomNodeSchema.parse({
     ...node,
     ...(node.actions === undefined
       ? {}
@@ -221,7 +221,7 @@ function withoutActionRevisions(node: AtomNode): AtomNode {
           }),
         }),
     ...(node.children === undefined ? {} : { children: node.children.map(withoutActionRevisions) }),
-  }
+  })
 }
 
 function requireDefinition(

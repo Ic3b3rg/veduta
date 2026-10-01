@@ -201,7 +201,13 @@ describe('createMockChatResponder', () => {
             id: 'meals-live',
             spaceId: 'spc-health',
             title: 'Meals',
-            tree: { id: 'root', type: 'Box', children: [] },
+            tree: {
+              id: 'root',
+              type: 'Box',
+              children: [
+                { id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } },
+              ],
+            },
             state: {},
             freshness: { updatedAt: '2026-08-22T11:00:00.000Z', updatedBy: 'user' },
           },
@@ -282,7 +288,13 @@ describe('createMockChatResponder', () => {
             id: 'surface-discovered-from-tool',
             spaceId: 'spc-health',
             title: 'Meals',
-            tree: { id: 'root', type: 'Box', children: [] },
+            tree: {
+              id: 'root',
+              type: 'Box',
+              children: [
+                { id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } },
+              ],
+            },
             state: {
               mealRecords: [
                 {

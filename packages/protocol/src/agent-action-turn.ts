@@ -1,6 +1,15 @@
 import { z } from 'zod'
 import { ChatMessageSchema, type ChatMessage } from './chat.ts'
 
+/** Waiting and running requests share this per-Space bound; terminal results release capacity. */
+export const AGENT_ACTION_QUEUE_CAPACITY = 32
+export const AgentActionQueueFullResponseSchema = z
+  .object({
+    code: z.literal('agent_queue_full'),
+    error: z.string().min(1),
+  })
+  .strict()
+
 /** Stable client retry identity; optional legacy invocations retain their existing contract. */
 export const AgentActionIdempotencyKeySchema = z.string().min(1).max(128)
 

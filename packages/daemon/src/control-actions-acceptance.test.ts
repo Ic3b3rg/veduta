@@ -6,6 +6,7 @@ import {
   CommittedFastActionOutcomeSchema,
   GatewayServerMessageSchema,
   SurfaceSnapshotSchema,
+  SurfaceSchema,
   type ActionScalarSpec,
   type GatewayClientMessage,
   type GatewayServerMessage,
@@ -13,6 +14,7 @@ import {
   type JsonValue,
   type Surface,
 } from '@veduta/protocol'
+import { fromPartial } from '@total-typescript/shoehorn'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createChatLoop, type ChatLoop } from './chat-loop.ts'
 import { createFakeProvider, fakeText, fakeTextAndToolCall } from './fake-provider.ts'
@@ -120,7 +122,7 @@ function controlCase(type: ControlFamily): ControlCase {
 }
 
 function controlSurface(spaceId: string, control: ControlCase): Surface {
-  return {
+  return SurfaceSchema.parse({
     id: 'srf-control-acceptance',
     spaceId,
     title: 'Choices',
@@ -155,7 +157,7 @@ function controlSurface(spaceId: string, control: ControlCase): Surface {
         },
       ],
     },
-  }
+  })
 }
 
 function agentButtonSurface(spaceId: string): Surface {
@@ -219,7 +221,7 @@ async function events(app: ReturnType<typeof buildServer>['app'], spaceId: strin
 }
 
 function selectionSurface(spaceId: string): Surface {
-  return {
+  return fromPartial<Surface>({
     id: 'srf-control-acceptance',
     spaceId,
     title: 'Review state',
@@ -245,7 +247,7 @@ function selectionSurface(spaceId: string): Surface {
         },
       ],
     },
-  }
+  })
 }
 
 describe('strict control acceptance through the Gateway (issue #146)', () => {
@@ -746,7 +748,11 @@ describe('strict control acceptance through the Gateway (issue #146)', () => {
     })
 
     expect(socket.sent.filter((frame) => frame.type === 'error')).toEqual([
-      { type: 'error', error: 'Button payload must exactly match its declared Action payload' },
+      {
+        type: 'error',
+        code: 'invalid_payload',
+        error: 'Button payload must exactly match its declared Action payload',
+      },
     ])
     expect(store.agentTurns()).toEqual([])
     expect(await snapshot(app)).toEqual(before)
