@@ -5,7 +5,7 @@ import type {
   OnboardingStatus,
   Surface,
 } from '@veduta/protocol'
-import { SurfaceSchema } from '@veduta/protocol'
+import { literalSetPlan, SurfaceSchema } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { committedActionOutcome } from './action-test-support.ts'
@@ -192,9 +192,25 @@ describe('invokeSurfaceAction', () => {
     intentId: '00000000-0000-4000-8000-000000000001',
     inputs: {},
   }
+  const requestedSurface = buildSurface({
+    tree: {
+      id: invocation.nodeId,
+      type: 'Button',
+      props: { label: 'Check now' },
+      actions: [
+        {
+          name: invocation.name,
+          path: 'fast',
+          revision: invocation.actionRevision,
+          plan: literalSetPlan('requested', true),
+        },
+      ],
+    },
+    state: { requested: true },
+  })
 
   it('posts only the typed invocation and returns the canonical committed outcome', async () => {
-    const surface = buildSurface({ state: { requested: true } })
+    const surface = requestedSurface
     const outcome = committedActionOutcome(
       invocation,
       surface,
@@ -264,7 +280,7 @@ describe('invokeSurfaceAction', () => {
   it('rejects an invalid committed snapshot instead of rendering unvalidated state', async () => {
     const outcome = committedActionOutcome(
       invocation,
-      buildSurface({ state: { requested: true } }),
+      requestedSurface,
       {
         surfaceId: 'srf-meals',
         operations: [{ target: 'state', op: 'replace', path: '/requested', value: true }],
