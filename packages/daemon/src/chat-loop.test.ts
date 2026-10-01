@@ -31,6 +31,7 @@ import { Store } from './store.ts'
 import { ensureSystemSpace } from './system-space.ts'
 import { TemplateEngine } from './template-engine.ts'
 import { textBetweenMarkers } from './text-section.test-helpers.ts'
+import type { Origin } from './taint.ts'
 
 /**
  * Integration harness for the chat loop (issue #37): a real `Store`,
@@ -251,6 +252,31 @@ function globalSurfaceChatLoop(harness: Harness): ChatLoop {
   })
 }
 
+function queueTestAgentAction(store: Store, origin: Origin = 'trusted:user') {
+  const surface = store.createSurface(
+    {
+      id: 'srf-agent-loop',
+      spaceId: 'spc-health',
+      title: 'Agent action',
+      tree: {
+        id: 'run',
+        type: 'Button',
+        props: { label: 'Run' },
+        actions: [{ name: 'run', path: 'agent', payload: { request: 'Explain this Surface' } }],
+      },
+      state: {},
+      pinned: false,
+      pinnable: true,
+      presentation: 'standard',
+      freshness: { updatedAt: '2026-10-01T08:00:00Z', updatedBy: 'agent' },
+    },
+    'agent',
+    { origin },
+  )
+  const result = store.invokeSurfaceAction(surface.id, { nodeId: 'run', name: 'run' })
+  if (result.path !== 'agent') throw new Error('expected a declared Agent action')
+  return result.turn
+}
 describe('createChatLoop', () => {
   const harnesses: Harness[] = []
   function harness(options?: {
@@ -271,34 +297,13 @@ describe('createChatLoop', () => {
 
   it('runs a declared Surface Agent action through the Space session with its stored origin', async () => {
     const h = harness()
-    const surface = h.store.createSurface(
-      {
-        id: 'srf-agent-loop',
-        spaceId: 'spc-health',
-        title: 'Agent action',
-        tree: {
-          id: 'run',
-          type: 'Button',
-          props: { label: 'Run' },
-          actions: [{ name: 'run', path: 'agent', payload: { request: 'Explain this Surface' } }],
-        },
-        state: {},
-        pinned: false,
-        pinnable: true,
-        presentation: 'standard',
-        freshness: { updatedAt: '2026-10-01T08:00:00Z', updatedBy: 'agent' },
-      },
-      'agent',
-      { origin: 'untrusted:template' },
-    )
-    const result = h.store.invokeSurfaceAction(surface.id, { nodeId: 'run', name: 'run' })
-    if (result.path !== 'agent') throw new Error('expected a declared Agent action')
+    const turn = queueTestAgentAction(h.store, 'untrusted:template')
     h.fake.setResponses([
       { message: fakeToolCall('test_tool', { value: 'action executed' }) },
       { message: fakeText('The declared action completed.') },
     ])
 
-    const outcome = await h.chatLoop.handleAgentAction(result.turn)
+    const outcome = await h.chatLoop.handleAgentAction(turn)
 
     expect(outcome).toEqual({
       message: { role: 'assistant', text: 'The declared action completed.' },
@@ -307,7 +312,7 @@ describe('createChatLoop', () => {
     expect(h.toolContexts[0]).toMatchObject({
       spaceId: 'spc-health',
       origin: 'untrusted:template',
-      trigger: { kind: 'agent-turn', id: result.turn.id },
+      trigger: { kind: 'agent-turn', id: turn.id },
     })
     expect(
       h.store.eventLog('spc-health').filter((event) => event.type === 'agent_path'),
@@ -317,6 +322,28 @@ describe('createChatLoop', () => {
         .eventLog('spc-health')
         .filter((event) => event.type === 'turn' && event.payload?.['role'] === 'user'),
     ).toHaveLength(0)
+  })
+
+  it('reports an interrupted Agent action honestly after a tool has executed, without executing it again', async () => {
+    const h = harness({ reasoningCandidates: 2 })
+    const turn = queueTestAgentAction(h.store)
+    h.fake.setResponses([
+      { message: fakeToolCall('test_tool', { value: 'already executed' }) },
+      { message: fakeFailure(500) },
+      { message: fakeText('This must never run.') },
+    ])
+
+    const result = await h.chatLoop.handleAgentAction(turn)
+
+    expect(result).toMatchObject({
+      error: expect.stringContaining('Inspect its canonical outcome'),
+    })
+    expect(h.toolExecutions).toHaveLength(1)
+    expect(h.router.callLog()).toHaveLength(1)
+    expect(h.store.eventLog('spc-health').at(-1)).toMatchObject({
+      type: 'turn',
+      payload: { role: 'assistant', outcome: 'failed', agentTurnId: turn.id },
+    })
   })
 
   it.each(['focused', 'global'])(

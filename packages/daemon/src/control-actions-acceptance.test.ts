@@ -682,7 +682,7 @@ describe('strict control acceptance through the Gateway (issue #146)', () => {
       label: 'an exactly matching payload in another key order',
       payload: { limit: 3, mode: 'summary' },
     },
-  ])('queues only the declared Agent Button payload with $label', async ({ payload }) => {
+  ])('executes only the declared Agent Button payload with $label', async ({ payload }) => {
     const { app, store, gateway, spaceId } = setup()
     const surface = store.createSurface(agentButtonSurface(spaceId), 'agent')
     const before = await snapshot(app)
@@ -700,8 +700,15 @@ describe('strict control acceptance through the Gateway (issue #146)', () => {
       },
     })
 
-    expect(response.statusCode).toBe(202)
-    expect(response.json()).toMatchObject({ turn: { payload: { mode: 'summary', limit: 3 } } })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      turn: {
+        status: 'completed',
+        surfaceCursor: store.latestSurfaceCursor(),
+        message: { role: 'assistant', text: expect.any(String) },
+      },
+    })
+    expect(response.json().turn).not.toHaveProperty('payload')
     expect(store.agentTurns()).toHaveLength(1)
     expect(store.agentTurns()[0]).toMatchObject({
       surfaceId: surface.id,

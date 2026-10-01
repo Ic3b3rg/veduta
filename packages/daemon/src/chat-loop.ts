@@ -589,7 +589,11 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
           type: 'turn',
           text: authoritativeText,
           origin: assistantOrigin,
-          payload: { role: 'assistant', toolCalls },
+          payload: {
+            role: 'assistant',
+            toolCalls,
+            ...(agentAction ? { agentTurnId: agentAction.id } : {}),
+          },
         })
       } else {
         appendGlobalTerminalEvents(enteredSpaces, {
@@ -609,7 +613,26 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
         ? { error: surfaceConfirmation.feedback() ?? toolFailure }
         : { message: finalMessage }
     } catch (error) {
-      const errorText = sanitizeErrorText(error)
+      const providerError = sanitizeErrorText(error)
+      const errorText = agentAction
+        ? [
+            surfaceConfirmation.feedback(),
+            `The Agent action did not finish: ${providerError}. Inspect its canonical outcome before starting a new action.`,
+          ]
+            .filter(Boolean)
+            .join('\n\n')
+        : providerError
+      if (agentAction && spaceId !== undefined) {
+        options.store.spacesEngine.appendEvent(spaceId, {
+          type: 'turn',
+          text: errorText,
+          origin: effectiveOrigin(
+            [agentAction.contentOrigin, ...options.store.spacesEngine.contextOrigins(spaceId)],
+            'trusted:system',
+          ),
+          payload: { role: 'assistant', outcome: 'failed', agentTurnId: agentAction.id },
+        })
+      }
       if (spaceId === undefined) {
         const enteredOrigins = [...enteredSpaces.keys()].flatMap((enteredSpaceId) =>
           options.store.spacesEngine.contextOrigins(enteredSpaceId),
