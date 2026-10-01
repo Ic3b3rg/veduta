@@ -105,7 +105,8 @@ records an unavailable outcome instead of borrowing a different Space's grant.
 
 The implementation owners are #181 for Gmail and #182 for reuse of this journey after #180's MCP
 path. #121–#123 remain Mailbox-specific. #98 owns Chat resolution of true Pending decisions; #155
-owns durable Chat continuation. Reusing a Model-connection form was rejected because Model
+supplies the PWA live-state runtime, while #141 and its implementation tickets own the durable
+Chat timeline and turn lifecycle. Reusing a Model-connection form was rejected because Model
 connections provide inference only, while service connections authorize external actions. A
 per-Space credential was rejected because it would duplicate account identity and make revocation
 inconsistent across Spaces.
