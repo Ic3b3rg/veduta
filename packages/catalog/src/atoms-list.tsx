@@ -1,7 +1,7 @@
 import { AutomationAtomPropsSchema, AutomationRunHistorySchema } from '@veduta/protocol'
 import type { CSSProperties, ReactNode } from 'react'
 import { ActionFeedback, useActionFeedback, type AtomMotionAttributes } from './action-feedback.tsx'
-import { boundValue, findAction, motionContent, text } from './atom-helpers.ts'
+import { boundValue, motionContent, text } from './atom-helpers.ts'
 import { bodyTextStyle } from './atom-styles.ts'
 import { BadgeAtom } from './atoms-content.tsx'
 import { tokensFor } from './design-system.ts'
@@ -73,10 +73,11 @@ export function ListItemAtom(props: AtomProps): ReactNode {
   return <ListItemControl {...props} />
 }
 
-export function AutomationAtom({ node, ctx }: AtomProps): ReactNode {
+function AutomationControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttributes): ReactNode {
   const tokens = tokensFor(ctx.theme)
+  const feedback = useActionFeedback({ node, ctx })
   const enabled = Boolean(boundValue(node, ctx) ?? node.props?.['enabled'])
-  const action = findAction(node, ['toggle', 'change'])
+  const action = node.actions?.[0]
   const label = text(node.props?.['label'] ?? node.props?.['title'])
   const props = AutomationAtomPropsSchema.safeParse(node.props ?? {})
   const boundHistory = props.success
@@ -89,8 +90,8 @@ export function AutomationAtom({ node, ctx }: AtomProps): ReactNode {
     : props.success
       ? (props.data.history ?? [])
       : []
-  return (
-    <Item variant="outline" size="sm">
+  const content = (
+    <Item {...(action ? {} : motion)} variant="outline" size="sm">
       <div style={{ flex: 1, minWidth: 0 }}>
         <div {...motionContent('label')} style={{ ...bodyTextStyle(tokens), fontWeight: 650 }}>
           {label}
@@ -141,15 +142,28 @@ export function AutomationAtom({ node, ctx }: AtomProps): ReactNode {
       {action ? (
         <Switch
           {...motionContent('value')}
+          {...feedback.attributes}
           checked={enabled}
+          disabled={feedback.disabled}
           aria-label={label}
-          onCheckedChange={(next) => action && ctx.dispatch(node, action.name, next)}
+          onCheckedChange={(next) => void feedback.dispatch(next)}
         />
       ) : (
         <span {...motionContent('value')}>{enabled ? 'Enabled' : 'Disabled'}</span>
       )}
     </Item>
   )
+  return action ? (
+    <ActionFeedback {...motion} feedback={feedback} ctx={ctx}>
+      {content}
+    </ActionFeedback>
+  ) : (
+    content
+  )
+}
+
+export function AutomationAtom(props: AtomProps): ReactNode {
+  return <AutomationControl {...props} />
 }
 
 function automationHistoryKindLabel(kind: 'changed' | 'failed' | 'recovered'): string {
