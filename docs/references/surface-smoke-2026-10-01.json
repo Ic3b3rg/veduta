@@ -1,0 +1,108 @@
+{
+  "date": "2026-10-01",
+  "provider": "openai",
+  "connectionMethod": "chatgpt-codex",
+  "model": "gpt-5.6-luna",
+  "codexVersion": "0.146.1",
+  "connectionStateAfterRestart": "connected",
+  "mockEnabled": false,
+  "isolatedData": true,
+  "authFixtureDeviceCount": 2,
+  "surfaceCursorAfterRestart": 63,
+  "form": {
+    "surfaceId": "add-item",
+    "state": {
+      "itemDraft": "",
+      "notesDraft": "",
+      "items": [
+        {
+          "id": "7a4bd7df-f09a-4916-aa44-6c04e5ac79c2",
+          "item": "Surface smoke item",
+          "notes": "Disposable notes 140"
+        },
+        {
+          "id": "40397ac9-7796-42d4-891d-4e6e578175f3",
+          "item": "Second smoke item",
+          "notes": "Button submission"
+        }
+      ]
+    },
+    "fastEventCount": 2,
+    "intentIds": ["1441eaba-311c-4799-99c8-48009cb3e5cf", "8725e926-745f-45b3-864e-71f3ee86947f"],
+    "commitIds": [
+      "scm-d8c75dc7-b737-4d36-b36e-0293886f79d5",
+      "scm-6409c6d1-e5a2-409a-ad22-987a9310edb1"
+    ]
+  },
+  "gym": {
+    "surfaceId": "scheda-forza-3-giorni",
+    "title": "Scheda forza e benessere — 3 giorni",
+    "treeSha256": "250d54ca4c06539f2c67a23153c1793d8a7f1cdc60f504dbe66ddfd7ceac623d",
+    "presentation": "full",
+    "pinned": false,
+    "presentationEventCount": 1,
+    "presentationCommitId": "scm-0d059242-2b9a-4d13-8010-a845f28a5978",
+    "treeStatePinUnchangedByPresentation": true
+  },
+  "weight": {
+    "surfaceId": "weight-tracker",
+    "state": {
+      "weightDraft": "",
+      "measurementDate": "",
+      "currentWeightKg": 74,
+      "currentMeasurementDate": "2026-10-01",
+      "measurements": [
+        {
+          "id": "record-2026-10-01-1",
+          "date": "2026-10-01",
+          "weightKg": 74
+        }
+      ]
+    },
+    "tableBinding": "measurements",
+    "chartBinding": "measurements",
+    "chartProps": {
+      "type": "line",
+      "xKey": "date",
+      "yKey": "weightKg",
+      "label": "Weight over time",
+      "xLabel": "Date",
+      "yLabel": "Weight (kg)",
+      "emptyText": "Record a measurement to see the chart."
+    }
+  },
+  "allThreeUnchangedAfterGatewayRestart": true,
+  "browser": {
+    "firstClient": {
+      "chartLabel": "Weight over time. Date; Weight (kg). 2026-10-01: 74",
+      "columns": "465px 465px",
+      "completePlan": true,
+      "drafts": ["", ""],
+      "formRecords": true,
+      "gridColumn": "1 / -1",
+      "gridWidth": 946,
+      "gymPresentation": "full",
+      "gymWidth": 946,
+      "viewport": 1280,
+      "weightHistory": true,
+      "weightSummary": true
+    },
+    "secondClient": {
+      "chartLabel": "Weight over time. Date; Weight (kg). 2026-10-01: 74",
+      "columns": "465px 465px",
+      "completePlan": true,
+      "drafts": ["", ""],
+      "formRecords": true,
+      "gridColumn": "1 / -1",
+      "gridWidth": 946,
+      "gymPresentation": "full",
+      "gymWidth": 946,
+      "viewport": 1280,
+      "weightHistory": true,
+      "weightSummary": true
+    },
+    "checkedAfterReload": true,
+    "checkedAfterReopen": true,
+    "secondClientReconnectedAcrossRestart": true
+  }
+}

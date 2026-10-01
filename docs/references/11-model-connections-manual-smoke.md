@@ -103,6 +103,18 @@ or mismatch. These instructions require no data reset, legacy migration, provide
 or prompt configuration. The execution record dated 2026-08-11 above covers its original two-tool
 smoke; a completed four-scenario run should be recorded separately before closing parent issue #140.
 
+### Complete Surface execution record
+
+- **2026-10-01 — passed:** actual ChatGPT subscription, `gpt-5.6-luna`, Codex 0.146.1,
+  isolated Local VPS profile with mock disabled. Editable two-field Form, complete three-day plan,
+  the exact Italian 74 kg update, and explicit full-row presentation passed live, after reload,
+  on two authenticated clients, and after Gateway restart/PWA reopen. Invented diet/profile context
+  answered the model's initial clarification. Common contract defects found during the first
+  attempt were fixed before acceptance; malformed model calls still failed visibly and corrected
+  calls used the same shared tools. See the
+  [full audit and observed errors](31-surface-contract-completion.md) and
+  [sanitized canonical/browser evidence](surface-smoke-2026-10-01.json).
+
 ## Deterministic contract for Connection parity
 
 The provider-parity suite drives the same public `AgentRunner.prompt()` scenarios through
