@@ -393,6 +393,76 @@ test('generic fast Action batches converge across retries, concurrent devices, r
       )
     })
 
+    await test.step('confirmation while the failed Form is absent cannot swallow an identical new draft after remount', async () => {
+      const itemCard = surfaceCard(page, 'Item collection')
+      const form = itemCard.getByRole('form', { name: 'Add item' })
+      const draft = form.getByRole('textbox', { name: 'Item label' })
+      const before = await readSurface(page, surfaceStack.origin, ITEM_SURFACE_ID)
+      primaryWire.interceptNext(async (route) => {
+        await route.fulfill({ status: 503, json: { error: 'Temporary orphaned Form failure' } })
+      })
+      await draft.fill('Orphaned item')
+      await form.getByRole('button', { name: 'Add item' }).click()
+      await expect(form.getByRole('alert')).toContainText('Temporary orphaned Form failure')
+      await expect(draft).toHaveValue('Orphaned item')
+      const failed = latest(primaryWire.requests).invocation
+      expect(await readSurface(page, surfaceStack.origin, ITEM_SURFACE_ID)).toEqual(before)
+
+      await page
+        .getByRole('navigation', { name: 'Breadcrumb' })
+        .getByRole('link', { name: /^Home/ })
+        .click({ timeout: 15_000 })
+      const home = page.getByRole('main', { name: 'Home' })
+      await expect(home).toBeVisible()
+      await expect(itemCard).toHaveCount(0)
+      await primaryWire.disconnect()
+      await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'false')
+      primaryWire.disconnected = false
+      await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'true', {
+        timeout: 30_000,
+      })
+      const recovered = committedOutcome(await primaryWire.outcomeFor(failed.intentId))
+      expect(latest(primaryWire.requests).invocation).toEqual(failed)
+      await expect(home).toBeVisible()
+      await expect(itemCard).toHaveCount(0)
+      await expect(
+        surfaceCard(observer.page, 'Item collection').getByRole('cell', {
+          name: 'Orphaned item',
+          exact: true,
+        }),
+      ).toHaveCount(1)
+      expect(records(recovered.surface, 'items').slice(0, -1)).toEqual(records(before, 'items'))
+      await expectCommittedEvent(page, surfaceStack.origin, recovered)
+
+      await home.getByRole('link', { name: /Health/ }).click({ timeout: 15_000 })
+      await expect(form).toBeVisible()
+      await expect(draft).toHaveValue('')
+      await expect(form.getByRole('alert')).toBeHidden()
+      const requests = primaryWire.requests.length
+      await draft.fill('Orphaned item')
+      await draft.press('Enter')
+      await expect.poll(() => primaryWire.requests.length).toBe(requests + 1)
+      const fresh = latest(primaryWire.requests).invocation
+      expect(fresh.intentId).not.toBe(failed.intentId)
+      const next = committedOutcome(await primaryWire.outcomeFor(fresh.intentId))
+      expect(records(next.surface, 'items').slice(0, -1)).toEqual(
+        records(recovered.surface, 'items'),
+      )
+      expect(latest(records(next.surface, 'items'))['id']).not.toBe(
+        latest(records(recovered.surface, 'items'))['id'],
+      )
+      await expect(draft).toHaveValue('')
+      for (const client of [page, observer.page]) {
+        await expect(
+          surfaceCard(client, 'Item collection').getByRole('cell', {
+            name: 'Orphaned item',
+            exact: true,
+          }),
+        ).toHaveCount(2)
+      }
+      await expectCommittedEvent(page, surfaceStack.origin, next)
+    })
+
     await test.step('a disconnected hung request retries the same intent after same-root restart and clears the failed Form', async () => {
       const measurement = surfaceCard(page, 'Measurement log')
       const form = measurement.getByRole('form', { name: 'Record measurement' })
@@ -550,8 +620,8 @@ test('generic fast Action batches converge across retries, concurrent devices, r
           event.type === 'fast_path' &&
           [ITEM_SURFACE_ID, MEASUREMENT_SURFACE_ID].includes(String(event.payload?.['surfaceId'])),
       )
-      expect(events).toHaveLength(10)
-      expect(new Set(events.map((event) => event.payload?.['intentId'])).size).toBe(10)
+      expect(events).toHaveLength(12)
+      expect(new Set(events.map((event) => event.payload?.['intentId'])).size).toBe(12)
       expect(await readEvents(observer.page, surfaceStack.origin)).toEqual(
         await readEvents(page, surfaceStack.origin),
       )
