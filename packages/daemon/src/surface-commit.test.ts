@@ -50,10 +50,13 @@ function prepareMutationFamily(store: Store, family: MutationFamily): void {
             id: 'trigger',
             type: 'Button',
             props: { label: 'Go' },
-            actions: [
-              { name: 'go', path: 'agent' },
-              { name: 'increment', path: 'fast', plan: literalSetPlan('count', 1) },
-            ],
+            actions: [{ name: 'go', path: 'agent' }],
+          },
+          {
+            id: 'increment',
+            type: 'Button',
+            props: { label: 'Increment' },
+            actions: [{ name: 'increment', path: 'fast', plan: literalSetPlan('count', 1) }],
           },
         ],
       },
@@ -164,7 +167,7 @@ function expectMutationFamilyOutcome(store: Store, family: MutationFamily): void
       expect(store.listTreeProposals({ surfaceId: 'srf-target', status: 'pending' })).toHaveLength(
         1,
       )
-      expect(store.getSurface('srf-target')?.tree.children).toHaveLength(1)
+      expect(store.getSurface('srf-target')?.tree.children).toHaveLength(2)
       break
   }
 }
@@ -477,10 +480,7 @@ describe('recoverable Surface commits (#156)', () => {
                 id: 'trigger',
                 type: 'Button',
                 props: { label: 'Go' },
-                actions: [
-                  { name: 'go', path: 'agent' },
-                  { name: 'increment', path: 'fast', plan: literalSetPlan('count', 1) },
-                ],
+                actions: [{ name: 'go', path: 'agent' }],
               },
             ],
           },

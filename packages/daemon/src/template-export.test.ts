@@ -396,7 +396,7 @@ describe('planTemplateImport / applyTemplateImport', () => {
     expect(() => planTemplateImport(engine, space.id, raw, 'installation-a')).toThrow()
   })
 
-  it('strips an agent-path action from a Template tree instead of refusing the whole bundle', async () => {
+  it('refuses an imported Button made inert by removing its Agent Action', async () => {
     const rootDir = await tempRoot()
     const engine = new SpacesEngine({ rootDir, now: fixedNow })
     const space = engine.createSpace({ name: 'Health' })
@@ -405,23 +405,18 @@ describe('planTemplateImport / applyTemplateImport', () => {
       validRawTemplate({
         tree: {
           id: 'root',
-          type: 'Checkbox',
-          binding: 'done',
-          actions: [
-            { name: 'speak-to-agent', path: 'agent' },
-            { name: 'toggle', path: 'fast', plan: inputSetPlan('done', { type: 'boolean' }) },
-          ],
+          type: 'Button',
+          props: { label: 'Review' },
+          actions: [{ name: 'speak-to-agent', path: 'agent' }],
         },
         stateKeys: ['done'],
       }),
     ])
 
-    const plan = planTemplateImport(engine, space.id, raw, 'installation-a')
-
-    expect(plan.strippedAgentActions).toBe(1)
-    expect(plan.templates[0]?.tree.actions).toEqual([
-      { name: 'toggle', path: 'fast', plan: inputSetPlan('done', { type: 'boolean' }) },
-    ])
+    expect(() => planTemplateImport(engine, space.id, raw, 'installation-a')).toThrow(
+      /Button requires exactly one declared Action/,
+    )
+    expect(engine.getTemplate(space.id, 'tpl-imported')).toBeUndefined()
   })
 
   it('appends a template.imported event carrying the untrusted origin of the import source', async () => {
@@ -474,7 +469,19 @@ describe('planTemplateImport / applyTemplateImport', () => {
 
     const raw = bundleOf([
       validRawTemplate({
-        tree: { id: 'root', type: 'Checkbox', binding: 'done<<<injected' },
+        tree: {
+          id: 'root',
+          type: 'Checkbox',
+          binding: 'done<<<injected',
+          props: { label: 'Done' },
+          actions: [
+            {
+              name: 'toggle',
+              path: 'fast',
+              plan: inputSetPlan('done<<<injected', { type: 'boolean' }),
+            },
+          ],
+        },
         stateKeys: ['done<<<injected'],
       }),
     ])

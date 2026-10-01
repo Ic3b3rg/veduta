@@ -1262,7 +1262,19 @@ describe('Surface engine store', () => {
               target: 'tree',
               op: 'add',
               path: '/children/1',
-              value: { id: 'broken', type: 'Checkbox', binding: 'does-not-exist' },
+              value: {
+                id: 'broken',
+                type: 'Checkbox',
+                binding: 'does-not-exist',
+                props: { label: 'Broken' },
+                actions: [
+                  {
+                    name: 'toggle',
+                    path: 'fast',
+                    plan: inputSetPlan('does-not-exist', { type: 'boolean' }),
+                  },
+                ],
+              },
             },
           ],
           { expectedTreeVersion: version.treeVersion, updatedBy: 'agent' },
@@ -1405,7 +1417,19 @@ describe('Surface engine store', () => {
             id: 'root',
             type: 'Box',
             children: [
-              { id: 'node-0', type: 'Checkbox', binding: 'item0', props: { label: 'Item 0' } },
+              {
+                id: 'node-0',
+                type: 'Checkbox',
+                binding: 'item0',
+                props: { label: 'Item 0' },
+                actions: [
+                  {
+                    name: 'toggle',
+                    path: 'fast',
+                    plan: inputSetPlan('item0', { type: 'boolean' }),
+                  },
+                ],
+              },
             ],
           },
           state: { item0: false },

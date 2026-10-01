@@ -523,7 +523,19 @@ describe('sanitizeImportedTemplate', () => {
     // this exact bundle failed the schema's own cross-check with an opaque
     // internal error instead of coming out sanitized.
     const raw = validRawTemplate({
-      tree: { id: 'root', type: 'Checkbox', binding: 'done<<<injected' },
+      tree: {
+        id: 'root',
+        type: 'Checkbox',
+        binding: 'done<<<injected',
+        props: { label: 'Done' },
+        actions: [
+          {
+            name: 'toggle',
+            path: 'fast',
+            plan: inputSetPlan('done<<<injected', { type: 'boolean' }),
+          },
+        ],
+      },
       stateKeys: ['done<<<injected'],
     })
 
@@ -540,6 +552,8 @@ describe('sanitizeImportedTemplate', () => {
       tree: {
         id: 'root',
         type: 'Checkbox',
+        binding: 'done<<<injected',
+        props: { label: 'Done' },
         actions: [
           {
             name: 'toggle',
@@ -628,12 +642,13 @@ describe('sanitizeImportedTemplate', () => {
     expect(() => sanitizeImportedTemplate(raw, 'import')).toThrow(/Unrecognized key/)
   })
 
-  it('removes agent-path actions while fast actions survive, and reports exactly how many were stripped', () => {
+  it('rejects a selection Template with an unrelated Agent Action', () => {
     const raw = validRawTemplate({
       tree: {
         id: 'root',
         type: 'Checkbox',
         binding: 'done',
+        props: { label: 'Done' },
         actions: [
           { name: 'speak-to-agent', path: 'agent' },
           { name: 'toggle', path: 'fast', plan: inputSetPlan('done', { type: 'boolean' }) },
@@ -642,14 +657,12 @@ describe('sanitizeImportedTemplate', () => {
       stateKeys: ['done'],
     })
 
-    const { template, strippedAgentActions } = sanitizeImportedTemplate(raw, 'import')
-    expect(template.tree.actions).toEqual([
-      { name: 'toggle', path: 'fast', plan: inputSetPlan('done', { type: 'boolean' }) },
-    ])
-    expect(strippedAgentActions).toBe(1)
+    expect(() => sanitizeImportedTemplate(raw, 'import')).toThrow(
+      /Checkbox requires exactly one toggle fast Action/,
+    )
   })
 
-  it('counts stripped agent actions across the whole tree, not just the root node', () => {
+  it('rejects an import when stripping nested Agent Buttons makes the composition inert', () => {
     const raw = validRawTemplate({
       tree: {
         id: 'root',
@@ -687,13 +700,123 @@ describe('sanitizeImportedTemplate', () => {
       stateKeys: ['x'],
     })
 
-    const { strippedAgentActions } = sanitizeImportedTemplate(raw, 'import')
-    expect(strippedAgentActions).toBe(2)
+    expect(() => sanitizeImportedTemplate(raw, 'import')).toThrow(
+      /Button requires exactly one declared Action/,
+    )
   })
 
   it('rewrites provenance.origin to untrusted:<source>', () => {
     const { template } = sanitizeImportedTemplate(validRawTemplate(), 'gmail')
     expect(template.provenance.origin).toBe('untrusted:gmail')
+  })
+
+  it('rejects an imported Button made inert by stripping its only Agent Action', () => {
+    const raw = validRawTemplate({
+      tree: {
+        id: 'button',
+        type: 'Button',
+        props: { label: 'Review' },
+        actions: [{ name: 'review', path: 'agent' }],
+      },
+    })
+    expect(() => sanitizeImportedTemplate(raw, 'import')).toThrow(
+      /Button requires exactly one declared Action/,
+    )
+  })
+})
+
+describe('required control state in reusable Templates', () => {
+  it.each(['Select', 'RadioGroup', 'DatePicker'] as const)(
+    'requires supplied valid state for %s without inventing a selection or date',
+    (type) => {
+      const offered = type !== 'DatePicker'
+      const value = offered ? 'first' : '2026-10-01'
+      const source = SurfaceSchema.parse({
+        id: 'srf-control',
+        spaceId: 'spc-health',
+        title: 'Choice',
+        tree: {
+          id: 'choice',
+          type,
+          binding: 'choice',
+          props: {
+            label: 'Choice',
+            ...(offered
+              ? {
+                  options: [
+                    { label: 'First', value: 'first' },
+                    { label: 'Second', value: 'second' },
+                  ],
+                }
+              : {}),
+          },
+          actions: [
+            {
+              name: 'change',
+              path: 'fast',
+              plan: inputSetPlan('choice', {
+                type: 'string',
+                ...(offered ? { enum: ['first', 'second'] } : {}),
+              }),
+            },
+          ],
+        },
+        state: { choice: value },
+        freshness: { updatedAt: '2026-10-01T08:00:00.000Z', updatedBy: 'agent' },
+      })
+      const template = templateFromSurface(source, {
+        name: 'Choice',
+        intent: 'Choose a value',
+        savedBy: 'pin',
+        savedAt: '2026-10-01T08:00:00.000Z',
+        origin: 'trusted:user',
+      })
+      const options = {
+        surfaceId: 'srf-reused',
+        spaceId: 'spc-other',
+        updatedAt: '2026-10-01T08:00:00.000Z',
+        updatedBy: 'agent' as const,
+      }
+      expect(() => surfaceFromTemplate(template, options)).toThrow()
+      expect(surfaceFromTemplate(template, { ...options, state: { choice: value } }).state).toEqual(
+        { choice: value },
+      )
+      expect(() =>
+        surfaceFromTemplate(template, { ...options, state: { choice: 'invalid' } }),
+      ).toThrow()
+    },
+  )
+
+  it('preserves the explicit allowEmpty policy when a DatePicker Template is reused', () => {
+    const source = SurfaceSchema.parse({
+      id: 'srf-date',
+      spaceId: 'spc-health',
+      title: 'Date',
+      tree: {
+        id: 'date',
+        type: 'DatePicker',
+        binding: 'date',
+        props: { label: 'Date', allowEmpty: true },
+        actions: [{ name: 'change', path: 'fast', plan: inputSetPlan('date', { type: 'string' }) }],
+      },
+      state: { date: '2026-10-01' },
+      freshness: { updatedAt: '2026-10-01T08:00:00.000Z', updatedBy: 'agent' },
+    })
+    const template = templateFromSurface(source, {
+      name: 'Date',
+      intent: 'Choose a date',
+      savedBy: 'pin',
+      savedAt: '2026-10-01T08:00:00.000Z',
+      origin: 'trusted:user',
+    })
+    expect(
+      surfaceFromTemplate(template, {
+        surfaceId: 'srf-reused',
+        spaceId: 'spc-other',
+        updatedAt: '2026-10-01T08:00:00.000Z',
+        updatedBy: 'agent',
+      }).state,
+    ).toEqual({ date: '' })
   })
 })
 

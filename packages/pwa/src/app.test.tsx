@@ -639,7 +639,7 @@ describe('App', () => {
         duration: options.duration,
       })),
     ).toEqual([
-      { nodeId: 'milk', contentKey: null, targetTag: 'LABEL', duration: 720 },
+      { nodeId: 'milk', contentKey: null, targetTag: 'DIV', duration: 720 },
       { nodeId: 'milk', contentKey: 'value', targetTag: 'BUTTON', duration: 240 },
     ])
   })
@@ -1877,6 +1877,14 @@ function oneShotActionSurface(): Surface {
           type: 'Checkbox',
           binding: 'check.requested',
           props: { label: 'Check request state' },
+          actions: [
+            {
+              name: 'toggle',
+              path: 'fast',
+              revision: 'acr-check-request-state',
+              plan: inputSetPlan('check.requested', { type: 'boolean' }),
+            },
+          ],
         },
       ],
     },

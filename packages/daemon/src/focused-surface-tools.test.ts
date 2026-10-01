@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
-import { SurfaceSchema } from '@veduta/protocol'
+import { SurfaceSchema, inputSetPlan } from '@veduta/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ToolContext, ToolDef } from './agent-runner.ts'
 import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
@@ -292,7 +292,17 @@ describe('createFocusedSurfaceTools', () => {
         tree: {
           id: 'root',
           type: 'Box',
-          children: [{ id: 'done', type: 'Checkbox', binding: 'done', props: { label: 'Done' } }],
+          children: [
+            {
+              id: 'done',
+              type: 'Checkbox',
+              binding: 'done',
+              props: { label: 'Done' },
+              actions: [
+                { name: 'toggle', path: 'fast', plan: inputSetPlan('done', { type: 'boolean' }) },
+              ],
+            },
+          ],
         },
         state: { done: false },
         freshness: { updatedAt: '2026-08-11T10:00:00.000Z', updatedBy: 'agent' },
@@ -324,7 +334,17 @@ describe('createFocusedSurfaceTools', () => {
       tree: {
         id: 'root',
         type: 'Box',
-        children: [{ id: 'done', type: 'Checkbox', binding: 'done', props: { label: 'Done' } }],
+        children: [
+          {
+            id: 'done',
+            type: 'Checkbox',
+            binding: 'done',
+            props: { label: 'Done' },
+            actions: [
+              { name: 'toggle', path: 'fast', plan: inputSetPlan('done', { type: 'boolean' }) },
+            ],
+          },
+        ],
       },
       state: { done: false },
     }
