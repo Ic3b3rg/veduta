@@ -67,6 +67,7 @@ export class MockAgentRunner implements AgentRunner {
   private currentSpaceId: string | undefined = undefined
   private currentTrigger: TriggerRef | undefined = undefined
   private currentInitiatingTurn: ChatTurnCorrelation | undefined = undefined
+  private currentUserRequest: ToolContext['currentUserRequest'] = undefined
 
   /** The tools admitted to the most recent `prompt()` call, after the taint gate. */
   lastGatedTools: ToolDef[] = []
@@ -116,6 +117,12 @@ export class MockAgentRunner implements AgentRunner {
     this.currentSpaceId = options.spaceId
     this.currentTrigger = options.trigger
     this.currentInitiatingTurn = options.initiatingTurn
+    this.currentUserRequest =
+      promptOrigin === 'trusted:user' &&
+      options.trigger?.kind === 'chat' &&
+      options.initiatingTurn !== undefined
+        ? { text: input, origin: 'trusted:user' }
+        : undefined
     this.lastGatedTools = gateToolsForOrigins(
       options.tools ?? [],
       candidateOrigins,
@@ -181,6 +188,9 @@ export class MockAgentRunner implements AgentRunner {
       ...(this.currentInitiatingTurn === undefined
         ? {}
         : { initiatingTurn: this.currentInitiatingTurn }),
+      ...(this.currentUserRequest === undefined
+        ? {}
+        : { currentUserRequest: this.currentUserRequest }),
     }
     const result = await tool.handler(parsed, context)
     if (result.origins && result.origins.length > 0) {

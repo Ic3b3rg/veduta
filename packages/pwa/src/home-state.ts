@@ -8,6 +8,7 @@ import {
   type SurfaceOrder,
   type SurfacePatchEvent,
   type SurfacePinnedEvent,
+  type SurfacePresentationEvent,
   type SurfaceSnapshot,
   type Surface,
 } from '@veduta/protocol'
@@ -100,6 +101,7 @@ export type SurfaceStreamEvent =
   | { type: 'surface.archived'; event: SurfaceArchivedEvent }
   | { type: 'surface.pinned'; event: SurfacePinnedEvent }
   | { type: 'surface.moved'; event: SurfaceMovedEvent }
+  | { type: 'surface.presentation'; event: SurfacePresentationEvent }
 
 export interface SurfaceStreamApplyResult {
   spaces: SpaceWithSurfaces[]
@@ -113,7 +115,7 @@ export function surfaceStreamEventCursor(streamEvent: SurfaceStreamEvent): numbe
 export function surfaceOrderForStreamEvent(
   streamEvent: SurfaceStreamEvent,
 ): SurfaceOrder | undefined {
-  return streamEvent.type === 'surface.patch' ? undefined : streamEvent.event.order
+  return 'order' in streamEvent.event ? streamEvent.event.order : undefined
 }
 
 export function applySurfacePatchToSpaces(
@@ -246,7 +248,28 @@ export function applySurfaceStreamEvent(
       return applySurfacePinnedToSpaces(spaces, streamEvent.event)
     case 'surface.moved':
       return applySurfaceOrderToSpaces(spaces, streamEvent.event.order)
+    case 'surface.presentation':
+      return applySurfacePresentationToSpaces(spaces, streamEvent.event)
   }
+}
+
+export function applySurfacePresentationToSpaces(
+  spaces: SpaceWithSurfaces[],
+  event: SurfacePresentationEvent,
+): SurfaceStreamApplyResult {
+  let applied = false
+  const next = spaces.map((space) => {
+    if (space.id !== event.spaceId) return space
+    return {
+      ...space,
+      surfaces: space.surfaces.map((surface) => {
+        if (surface.id !== event.surfaceId) return surface
+        applied = true
+        return { ...surface, presentation: event.presentation, freshness: event.freshness }
+      }),
+    }
+  })
+  return { spaces: applied ? next : spaces, applied }
 }
 
 // The daemon's `space.attention` frame and the `/api/spaces` snapshot can

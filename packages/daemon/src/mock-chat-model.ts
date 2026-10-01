@@ -29,6 +29,7 @@ import {
   WEIGHT_MEASUREMENT_REQUEST,
 } from './mock-chart-fixture.ts'
 import { respondToStructuredPlan, STRUCTURED_PLAN_REQUEST } from './mock-structured-plan-fixture.ts'
+import { respondToMockSurfacePresentation } from './mock-surface-presentation-fixture.ts'
 import { isRecord, parseJson, toolCallMessage, toolResultText } from './mock-fixture-support.ts'
 import { mockWorkerReportForPrompt, mockWorkerReviewText } from './mock-worker-runner.ts'
 import { zonedParts } from './timezone.ts'
@@ -144,6 +145,8 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
     }
     const automationResponse = respondToMockAutomation(text, toolResultsAfter)
     if (automationResponse) return automationResponse
+    const presentationResponse = respondToMockSurfacePresentation(text, toolResultsAfter)
+    if (presentationResponse) return presentationResponse
 
     const lastToolResult = toolResultsAfter.at(-1)
     if (lastToolResult) return closingMessage(lastToolResult)

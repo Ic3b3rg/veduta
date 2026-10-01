@@ -1,6 +1,7 @@
 import { expect, test, type BrowserContext, type Page, type Route } from '@playwright/test'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import type { Surface } from '../../protocol/src/index.ts'
 import {
   AutomationOutcomeService,
   type AutomationOutcomeOccurrence,
@@ -28,6 +29,7 @@ import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stac
  *   Issue #67 - a pinned patch_tree Pending decision is revealed only in the initiating tab.
  *   Issue #142 - Form text stays local until one atomic, retryable submit and survives reload.
  *   Issue #145 - Chat records 74 kg into the live current value, history, and Chart across restart.
+ *   Issue #143 - explicit Chat presentation updates both tabs and survives reload and restart.
  *
  * Also covers the Space Event log (ADR-0003: every fast-path mutation
  * appends to it) via `GET /api/spaces/spc-health/events` -- both right
@@ -708,6 +710,53 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       }
     })
 
+    await test.step('explicit Chat selects full presentation in both tabs and preserves Pin and content (issue #143)', async () => {
+      observerContext = await browser.newContext({
+        storageState: await context.storageState(),
+        viewport: { width: 1600, height: 900 },
+      })
+      const observerPage = await observerContext.newPage()
+      await observerPage.goto(`${stack!.origin}/app/space/health`)
+      await expect(observerPage.locator('.app-shell')).toHaveAttribute(
+        'data-gateway-online',
+        'true',
+      )
+      await page.setViewportSize({ width: 1600, height: 900 })
+      await observerPage.setViewportSize({ width: 1600, height: 900 })
+      const groceries = surfaceCard(page, 'Groceries')
+      await expect(groceries).toHaveAttribute('data-presentation', 'standard')
+      const before = await fetchSurface(page, stack!.origin, 'srf-groceries')
+      await page
+        .getByRole('textbox', { name: 'Message Veduta in Health' })
+        .fill('Make Groceries full-row')
+      await page.getByRole('button', { name: 'Send message' }).click()
+      await expect(groceries).toHaveAttribute('data-presentation', 'full')
+      await expect(surfaceCard(observerPage, 'Groceries')).toHaveAttribute(
+        'data-presentation',
+        'full',
+      )
+      const geometry = await groceries.evaluate((card) => ({
+        width: card.getBoundingClientRect().width,
+        rowWidth: card.parentElement!.getBoundingClientRect().width,
+        span: getComputedStyle(card).gridColumn,
+      }))
+      expect(geometry.span).toBe('1 / -1')
+      expect(geometry.width).toBeCloseTo(geometry.rowWidth, 0)
+      const after = await fetchSurface(page, stack!.origin, 'srf-groceries')
+      expect(after).toMatchObject({
+        presentation: 'full',
+        pinned: before.pinned,
+        state: before.state,
+        tree: before.tree,
+      })
+      await page.reload()
+      await expect(surfaceCard(page, 'Groceries')).toHaveAttribute('data-presentation', 'full')
+      const events = await fetchSpaceEvents(page, stack!.origin)
+      expect(events.filter((event) => event.type === 'surface.presentation')).toMatchObject([
+        { payload: { surfaceId: 'srf-groceries', presentation: 'full' } },
+      ])
+    })
+
     await test.step('create a recurring Automation for the outcome delivery journey (issue 091)', async () => {
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
       await chatInput.fill('Create a daily automation to review my plan at 9am')
@@ -741,6 +790,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(
         surfaceCard(page, 'Groceries').getByRole('checkbox', { name: 'Milk' }),
       ).toBeChecked()
+      await expect(surfaceCard(page, 'Groceries')).toHaveAttribute('data-presentation', 'full')
 
       // AC1, restated: still production auth after a full stop/restart on
       // the same base dir, not just right after registration.
@@ -928,19 +978,7 @@ async function fetchSpaceEvents(page: Page, origin: string): Promise<SpaceEventE
   return body.events
 }
 
-interface SnapshotSurface {
-  id: string
-  title: string
-  state: Record<string, unknown>
-  validity?: {
-    kind: string
-    window: string
-    startsAt: string
-    expiresAt: string
-    source: { stateKey: string; occurredAtKey: string }
-    projectionStateKeys: string[]
-  }
-}
+type SnapshotSurface = Surface
 
 /** Reads a Surface through the same authenticated Home snapshot endpoint used by the PWA. */
 async function fetchSurface(

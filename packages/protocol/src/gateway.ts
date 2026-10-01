@@ -9,7 +9,12 @@ import {
   PendingDecisionSchema,
 } from './pending-decision.ts'
 import { SpaceSchema } from './space.ts'
-import { FreshnessSchema, RelativeTimeValiditySchema, SurfaceSchema } from './surface.ts'
+import {
+  FreshnessSchema,
+  RelativeTimeValiditySchema,
+  SurfaceSchema,
+  SurfacePresentationSchema,
+} from './surface.ts'
 
 export const GatewayCursorSchema = z.number().int().nonnegative()
 
@@ -188,6 +193,17 @@ export const SurfaceMovedEventSchema = z
   })
   .superRefine(refineMatchingEventOrder('Move'))
 
+export const SurfacePresentationEventSchema = z
+  .object({
+    cursor: GatewayCursorSchema,
+    at: z.string().datetime(),
+    spaceId: z.string().min(1),
+    surfaceId: SurfaceIdSchema,
+    presentation: SurfacePresentationSchema,
+    freshness: FreshnessSchema,
+  })
+  .strict()
+
 function refineMatchingEventOrder(label: string) {
   return (
     event: { cursor: number; spaceId: string; order: SurfaceOrder },
@@ -335,6 +351,10 @@ const GatewayServerMessageObjectSchema = z.discriminatedUnion('type', [
     event: SurfaceMovedEventSchema,
   }),
   z.object({
+    type: z.literal('surface.presentation'),
+    event: SurfacePresentationEventSchema,
+  }),
+  z.object({
     type: z.literal('chat.message'),
     message: ChatMessageSchema,
   }),
@@ -453,6 +473,7 @@ export type SurfaceCreatedEvent = z.infer<typeof SurfaceCreatedEventSchema>
 export type SurfaceArchivedEvent = z.infer<typeof SurfaceArchivedEventSchema>
 export type SurfacePinnedEvent = z.infer<typeof SurfacePinnedEventSchema>
 export type SurfaceMovedEvent = z.infer<typeof SurfaceMovedEventSchema>
+export type SurfacePresentationEvent = z.infer<typeof SurfacePresentationEventSchema>
 export type ChatTurnCorrelation = z.infer<typeof ChatTurnCorrelationSchema>
 export type ChatTurnStartMessage = z.infer<typeof ChatTurnStartMessageSchema>
 export type ChatTurnDeltaMessage = z.infer<typeof ChatTurnDeltaMessageSchema>

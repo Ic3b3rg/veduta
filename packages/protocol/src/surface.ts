@@ -14,6 +14,8 @@ export const FreshnessSchema = z.object({
   updatedBy: z.enum(['agent', 'user', 'job', 'seed', 'system']),
 })
 
+export const SurfacePresentationSchema = z.enum(['standard', 'full'])
+
 export const RelativeTimeWindowSchema = z.enum(['day', 'week', 'month'])
 const OccurrenceInstantSchema = z.string().datetime({ offset: true })
 
@@ -72,6 +74,8 @@ const SurfaceObjectSchema = z.object({
   tree: AtomNodeSchema,
   state: JsonObjectSchema,
   freshness: FreshnessSchema,
+  /** Responsive Surface host placement, independent of content, Pin, and order. */
+  presentation: SurfacePresentationSchema.default('standard'),
   /** The user locked this Surface's tree; the Agent may still patch state. */
   pinned: z.boolean().default(false),
   /**
@@ -100,6 +104,7 @@ export const SurfaceSchema = SurfaceObjectSchema.superRefine((surface, ctx) => {
 
 export type Surface = z.infer<typeof SurfaceSchema>
 export type Freshness = z.infer<typeof FreshnessSchema>
+export type SurfacePresentation = z.infer<typeof SurfacePresentationSchema>
 export type RelativeTimeWindow = z.infer<typeof RelativeTimeWindowSchema>
 export type RelativeTimeValidity = z.infer<typeof RelativeTimeValiditySchema>
 

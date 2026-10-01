@@ -57,6 +57,22 @@ describe('SurfaceCard relative-time validity', () => {
 })
 
 describe('SurfaceCard material hierarchy', () => {
+  it('renders full presentation independently of Pin and Atom content', () => {
+    const props = surfaceCardProps(formSurface())
+    const { container, rerender } = render(<SurfaceCard {...props} />)
+    expect(
+      container.querySelector('article')?.classList.contains('surface-presentation-full'),
+    ).toBe(false)
+    rerender(<SurfaceCard {...props} surface={{ ...props.surface, presentation: 'full' }} />)
+    expect(
+      container.querySelector('article')?.classList.contains('surface-presentation-full'),
+    ).toBe(true)
+    expect(screen.getByRole('button', { name: 'Pin Profile' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    )
+    expect(screen.getByRole('textbox', { name: 'Display name' })).toHaveProperty('value', 'Ada')
+  })
+
   it('embeds Atom content inside one pinnable Surface shell', () => {
     const surface = SurfaceSchema.parse({
       ...relativeSurface(),

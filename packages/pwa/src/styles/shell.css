@@ -591,6 +591,10 @@
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
 }
 
+.surface-card.surface-presentation-full {
+  grid-column: 1 / -1;
+}
+
 .surface-card.pinned {
   grid-column: 1 / -1;
 }

@@ -243,6 +243,7 @@ export class PiAgentRunner implements AgentRunner {
   private currentSpaceId: string | undefined = undefined
   private currentTrigger: TriggerRef | undefined = undefined
   private currentInitiatingTurn: ChatTurnCorrelation | undefined = undefined
+  private currentUserRequest: ToolContext['currentUserRequest'] = undefined
   /**
    * Hash of the model-visible context for the immediately preceding
    * inference, recomputed by the always-installed
@@ -346,6 +347,12 @@ export class PiAgentRunner implements AgentRunner {
     this.currentSpaceId = options.spaceId
     this.currentTrigger = options.trigger
     this.currentInitiatingTurn = options.initiatingTurn
+    this.currentUserRequest =
+      promptOrigin === 'trusted:user' &&
+      options.trigger?.kind === 'chat' &&
+      options.initiatingTurn !== undefined
+        ? { text: input, origin: 'trusted:user' }
+        : undefined
     const tools = this.toPiTools(
       gateToolsForOrigins(options.tools ?? [], candidateOrigins, this.isToolTrustWrapped),
     )
@@ -512,6 +519,9 @@ export class PiAgentRunner implements AgentRunner {
       ...(this.currentInitiatingTurn === undefined
         ? {}
         : { initiatingTurn: this.currentInitiatingTurn }),
+      ...(this.currentUserRequest === undefined
+        ? {}
+        : { currentUserRequest: this.currentUserRequest }),
     }
   }
 

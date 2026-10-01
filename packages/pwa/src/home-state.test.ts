@@ -51,6 +51,40 @@ function testSpace(
 }
 
 describe('Surface order', () => {
+  it('applies presentation events without changing Pin, order, or content and caches the result', () => {
+    const first = testSurface('srf-first', 'spc-health', '2026-07-10T12:00:00.000Z')
+    const pinned = {
+      ...testSurface('srf-pinned', 'spc-health', '2026-07-10T12:00:00.000Z'),
+      pinned: true,
+    }
+    const spaces = [testSpace('spc-health', [pinned, first])]
+    const result = applySurfaceStreamEvent(spaces, {
+      type: 'surface.presentation',
+      event: {
+        cursor: 7,
+        at: '2026-07-10T13:00:00.000Z',
+        spaceId: 'spc-health',
+        surfaceId: pinned.id,
+        presentation: 'full',
+        freshness: { updatedAt: '2026-07-10T13:00:00.000Z', updatedBy: 'agent' },
+      },
+    })
+    expect(result.applied).toBe(true)
+    expect(result.spaces[0]?.surfaces).toEqual([
+      {
+        ...pinned,
+        presentation: 'full',
+        freshness: { updatedAt: '2026-07-10T13:00:00.000Z', updatedBy: 'agent' },
+      },
+      first,
+    ])
+    const storage = new MemoryStorage()
+    saveSnapshot(storage, 'presentation', { surfaceCursor: 7, spaces: result.spaces })
+    expect(cachedSnapshot(storage, 'presentation')?.spaces[0]?.surfaces[0]?.presentation).toBe(
+      'full',
+    )
+  })
+
   it('applies the Gateway order exactly and retains snapshot-only projected Surfaces afterward', () => {
     const pinned = SurfaceSchema.parse({
       ...testSurface('srf-pinned', 'spc-health', '2026-07-10T12:00:00.000Z'),

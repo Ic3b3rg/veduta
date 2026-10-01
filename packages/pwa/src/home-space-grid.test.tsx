@@ -194,5 +194,6 @@ function surface(id: string, spaceId: string, updatedAt: string, hiddenText = id
     freshness: { updatedAt, updatedBy: 'agent' },
     pinned: false,
     pinnable: true,
+    presentation: 'standard' as const,
   }
 }

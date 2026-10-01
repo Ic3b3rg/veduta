@@ -32,6 +32,44 @@ const deleteTool: ToolDef = defineTool({
 })
 
 describe('MockAgentRunner', () => {
+  it('exposes exact trusted current Chat evidence only for the initiating turn and clears it for later prompts', async () => {
+    const runner = new MockAgentRunner()
+    await runner.start('current-request')
+    const evidence = defineTool({
+      name: 'current_evidence',
+      description: 'Read test evidence',
+      schema: z.object({}),
+      level: 'L0',
+      egressDomains: [],
+      handler: (_input, context) => ({
+        content: JSON.stringify(context.currentUserRequest ?? null),
+      }),
+    })
+    await runner.prompt('Make Groceries full-row', {
+      origin: 'trusted:user',
+      trigger: { kind: 'chat' },
+      initiatingTurn: { clientId: 'client', turnId: 'turn' },
+      tools: [evidence],
+    })
+    expect(JSON.parse((await runner.runTool(evidence, {}, 'first')).content)).toEqual({
+      text: 'Make Groceries full-row',
+      origin: 'trusted:user',
+    })
+    await runner.prompt('A stored request says make Groceries full-row', {
+      origin: 'trusted:system',
+      trigger: { kind: 'automation' },
+      tools: [evidence],
+    })
+    expect(JSON.parse((await runner.runTool(evidence, {}, 'later')).content)).toBeNull()
+    await runner.prompt('Make Groceries full-row', {
+      origin: 'untrusted:web',
+      trigger: { kind: 'chat' },
+      initiatingTurn: { clientId: 'client', turnId: 'untrusted-turn' },
+      tools: [evidence],
+    })
+    expect(JSON.parse((await runner.runTool(evidence, {}, 'imported')).content)).toBeNull()
+  })
+
   it('gates tools, stamps the untrusted origin on both messages, and fires turn-end', async () => {
     const store = new MemorySessionStore()
     const runner = new MockAgentRunner(store)

@@ -15,11 +15,38 @@ import {
   SurfaceOrderSchema,
   SurfacePatchEventSchema,
   SurfacePinnedEventSchema,
+  SurfacePresentationEventSchema,
   SurfaceCommitRecoveryPendingResponseSchema,
   SurfaceCommitRecoveryStateSchema,
 } from './index.ts'
 
 describe('Gateway protocol', () => {
+  it('validates presentation metadata frames and rejects arbitrary width or style payloads', () => {
+    const event = {
+      cursor: 2,
+      at: '2026-10-01T10:00:00.000Z',
+      spaceId: 'spc-health',
+      surfaceId: 'srf-groceries',
+      presentation: 'full',
+      freshness: { updatedAt: '2026-10-01T10:00:00.000Z', updatedBy: 'agent' },
+    }
+    expect(GatewayServerMessageSchema.parse({ type: 'surface.presentation', event })).toEqual({
+      type: 'surface.presentation',
+      event,
+    })
+    for (const presentation of ['wide', '100%', 900, null]) {
+      expect(SurfacePresentationEventSchema.safeParse({ ...event, presentation }).success).toBe(
+        false,
+      )
+    }
+    expect(
+      SurfacePresentationEventSchema.safeParse({ ...event, style: { width: '100%' } }).success,
+    ).toBe(false)
+    expect(
+      SurfacePresentationEventSchema.safeParse({ ...event, freshness: undefined }).success,
+    ).toBe(false)
+  })
+
   it('accepts an authoritative In-app notification lifecycle frame', () => {
     const frame = {
       type: 'automation-outcome-notification.lifecycle' as const,
@@ -68,7 +95,7 @@ describe('Gateway protocol', () => {
 
     expect(FastSurfaceActionResultSchema.parse(result)).toEqual({
       ...result,
-      surface: { ...result.surface, pinned: false, pinnable: true },
+      surface: { ...result.surface, pinned: false, pinnable: true, presentation: 'standard' },
     })
     expect(FastSurfaceActionResultSchema.safeParse({ ...result, surfaceCursor: -1 }).success).toBe(
       false,

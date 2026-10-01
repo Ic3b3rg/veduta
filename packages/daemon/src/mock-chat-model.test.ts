@@ -35,6 +35,34 @@ const TEMPLATE_SURFACE_REQUEST = 'create Weekly groceries from the Groceries Tem
 const GLOBAL_WEIGHT_TRACKER_REQUEST = 'create a weight tracker in Health'
 
 describe('createMockChatResponder', () => {
+  it('discovers the requested Surface and uses the typed presentation tool with the exact current request', async () => {
+    const responder = createMockChatResponder({})
+    const request = 'Make Groceries full-row'
+    expect(toolCallIn(await responder(userContext(request), { callCount: 0 })).name).toBe(
+      'list_surfaces',
+    )
+    const inventory = {
+      toolName: 'list_surfaces',
+      content: JSON.stringify([{ id: 'groceries-discovered', title: 'Groceries' }]),
+    }
+    const call = toolCallIn(
+      await responder(toolResultContext(request, [inventory]), { callCount: 1 }),
+    )
+    expect(call).toMatchObject({
+      name: 'set_surface_presentation',
+      arguments: { surfaceId: 'groceries-discovered', presentation: 'full', userRequest: request },
+    })
+    const failed = await responder(
+      toolResultContext(request, [
+        inventory,
+        { toolName: 'set_surface_presentation', content: 'invalid presentation', isError: true },
+      ]),
+      { callCount: 2 },
+    )
+    expect(textIn(failed)).toContain('could not be changed')
+    expect(textIn(failed)).toContain('invalid presentation')
+  })
+
   it('enters Health and creates a scoped protocol-valid weight tracker from global chat', async () => {
     const responder = createMockChatResponder({})
 

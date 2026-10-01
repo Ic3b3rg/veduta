@@ -17,6 +17,8 @@ import {
   SurfacePinnedEventSchema,
   SurfaceOrderSchema,
   SurfaceSchema,
+  SurfacePresentationSchema,
+  SurfacePresentationEventSchema,
   applySurfacePatch,
   findAtom,
   findDeclaredAgentAction,
@@ -36,6 +38,8 @@ import {
   type SurfacePatchEvent,
   type SurfacePinnedEvent,
   type SurfaceOrder,
+  type SurfacePresentation,
+  type SurfacePresentationEvent,
   type SurfaceRelativeTimeStatus,
 } from '@veduta/protocol'
 import { z } from 'zod'
@@ -99,6 +103,20 @@ export interface SurfacePinMutation {
   order: SurfaceOrder
 }
 
+export interface SurfacePresentationOptions {
+  updatedBy: 'agent' | 'user'
+  origin: Origin
+  userRequest: { text: string; origin: 'trusted:user' }
+  idempotencyKey?: string
+}
+
+export interface SurfacePresentationMutation {
+  surface: Surface
+  changed: boolean
+  duplicate: boolean
+  event?: SurfacePresentationEvent
+}
+
 type CommittedSurfacePinMutation =
   | { surface: Surface; changed: false; order: SurfaceOrder }
   | { surface: Surface; changed: true; order: SurfaceOrder; event: SurfacePinnedEvent }
@@ -143,6 +161,7 @@ export interface AuthorableSurfaceSummary {
   title: string
   freshness: Freshness
   pinned: boolean
+  presentation: Surface['presentation']
   relativeTime?: SurfaceRelativeTimeStatus
 }
 
@@ -170,6 +189,7 @@ export type SurfaceEngineEvent =
   | { kind: 'archived'; event: SurfaceArchivedEvent }
   | { kind: 'pinned'; event: SurfacePinnedEvent }
   | { kind: 'moved'; event: SurfaceMovedEvent }
+  | { kind: 'presentation'; event: SurfacePresentationEvent }
 
 export interface QueuedAgentTurn {
   id: string
@@ -300,6 +320,7 @@ export const CreateSurfaceToolInputSchema = z.object({
   title: z.string().min(1),
   tree: AtomNodeSchema,
   state: JsonObjectSchema,
+  presentation: SurfacePresentationSchema.optional(),
   relativeTime: RelativeTimeAuthoringSchema.optional(),
 })
 
@@ -318,6 +339,12 @@ const PatchTreeToolInputSchema = SurfacePatchToolInputSchema.extend({
 
 const ArchiveSurfaceToolInputSchema = z.object({
   surfaceId: z.string().min(1),
+})
+
+const SetSurfacePresentationToolInputSchema = z.object({
+  surfaceId: z.string().min(1),
+  presentation: SurfacePresentationSchema,
+  userRequest: z.string().min(1),
 })
 
 type CreateSurfaceInput = z.infer<typeof CreateSurfaceToolInputSchema>
@@ -529,6 +556,7 @@ export class SurfaceEngine {
         title: surface.title,
         freshness: surface.freshness,
         pinned: surface.pinned ?? false,
+        presentation: surface.presentation,
         ...relativeTimeSummary(surface, this.now()),
       }
     })
@@ -743,6 +771,78 @@ export class SurfaceEngine {
     })
     if (result.changed) this.notifySurfaceEvent({ kind: 'pinned', event: result.event })
     return { surface: result.surface, changed: result.changed, order: result.order }
+  }
+
+  setPresentation(
+    surfaceId: string,
+    presentation: SurfacePresentation,
+    options: SurfacePresentationOptions,
+  ): SurfacePresentationMutation {
+    const validated = SurfacePresentationSchema.parse(presentation)
+    if (options.userRequest?.origin !== 'trusted:user' || !options.userRequest.text.trim()) {
+      throw new Error('Surface presentation changes require an explicit current user request')
+    }
+    this.assertWritableByAgent(surfaceId, options.updatedBy)
+    const target = this.requireActiveSurface(surfaceId)
+    this.assertSpaceReadyForAgent(target.spaceId)
+    const result = this.runWrite<SurfacePresentationMutation>(() => {
+      const current = this.requireActiveSurface(surfaceId)
+      const previous =
+        options.idempotencyKey === undefined
+          ? undefined
+          : this.db
+              .prepare(
+                'select surface_id, presentation from surface_presentation_idempotency_keys where key = ?',
+              )
+              .get(options.idempotencyKey)
+      if (previous) {
+        if (previous['surface_id'] !== surfaceId || previous['presentation'] !== validated) {
+          throw new Error('Surface presentation retry does not match the original request')
+        }
+        return { surface: current, changed: false, duplicate: true }
+      }
+      if (options.idempotencyKey !== undefined) {
+        this.db
+          .prepare(
+            'insert into surface_presentation_idempotency_keys (key, surface_id, presentation) values (?, ?, ?)',
+          )
+          .run(options.idempotencyKey, surfaceId, validated)
+      }
+      if (current.presentation === validated)
+        return { surface: current, changed: false, duplicate: false }
+      const stamped = this.stampSurface({ ...current, presentation: validated }, options.updatedBy)
+      this.db
+        .prepare(
+          'update surfaces set presentation = ?, version = version + 1, updated_at = ?, updated_by = ? where id = ? and archived = 0',
+        )
+        .run(validated, stamped.freshness.updatedAt, stamped.freshness.updatedBy, surfaceId)
+      const cursor = this.latestSurfaceCursor() + 1
+      const event = SurfacePresentationEventSchema.parse({
+        cursor,
+        at: stamped.freshness.updatedAt,
+        spaceId: stamped.spaceId,
+        surfaceId,
+        presentation: validated,
+        freshness: stamped.freshness,
+      })
+      const contentOrigin = this.surfaceProvenance(surfaceId)?.contentOrigin
+      const title = truncate(neutralizeDelimiters(stamped.title), PIN_EVENT_TITLE_MAX_CHARS)
+      this.stageSpaceEvent(
+        stamped.spaceId,
+        {
+          at: event.at,
+          type: 'surface.presentation',
+          text: `Changed Surface "${title}" presentation to ${validated}`,
+          origin: effectiveOrigin([contentOrigin, options.origin], options.origin),
+          payload: { surfaceId, presentation: validated },
+        },
+        cursor,
+      )
+      this.insertEventRow(cursor, event.at, event.spaceId, surfaceId, 'presentation', event)
+      return { surface: stamped, changed: true, duplicate: false, event }
+    })
+    if (result.event) this.notifySurfaceEvent({ kind: 'presentation', event: result.event })
+    return result
   }
 
   moveSurface(spaceId: string, surfaceId: string, direction: SurfaceMoveDirection): SurfaceOrder {
@@ -1250,7 +1350,8 @@ export class SurfaceEngine {
           'Create a protocol-valid Surface inside a Space. For progressive composition, include ' +
           "typed Pending leaves in the complete initial layout; the new Surface's tree version " +
           'starts at 1. For today/this-week/this-month projections, declare relativeTime with a ' +
-          'separate durable source state key and every projected state key.',
+          'separate durable source state key and every projected state key. ' +
+          'Choose standard presentation by default, or full when the initial content needs the whole Space row.',
         schema: CreateSurfaceToolInputSchema,
         level: 'L0',
         egressDomains: [],
@@ -1262,6 +1363,38 @@ export class SurfaceEngine {
               : { initiatingTurn: context.initiatingTurn }),
           })
           return { content: `created Surface ${surface.id}`, details: { surface } }
+        },
+      }),
+      defineTool({
+        name: 'set_surface_presentation',
+        description:
+          'Set standard or full Surface presentation only when the current user explicitly asks ' +
+          'to change it. Quote that exact current request in userRequest. Never call this for ' +
+          'ordinary content updates, Template reuse, Automations, or proactive work. Presentation ' +
+          'is independent of the Atom tree, state, Pin, and order; never supply styling or dimensions.',
+        schema: SetSurfacePresentationToolInputSchema,
+        level: 'L0',
+        egressDomains: [],
+        handler: (input, context) => {
+          const request = context.currentUserRequest
+          if (
+            context.trigger?.kind !== 'chat' ||
+            context.initiatingTurn === undefined ||
+            request?.origin !== 'trusted:user' ||
+            request.text.trim() !== input.userRequest.trim()
+          ) {
+            throw new Error('Surface presentation changes require an explicit current user request')
+          }
+          const mutation = this.setPresentation(input.surfaceId, input.presentation, {
+            updatedBy: 'agent',
+            origin: effectiveToolWriteOrigin(context.taint.origins(), context.origin),
+            userRequest: request,
+            idempotencyKey: `surface-presentation:${context.initiatingTurn.turnId}:${input.surfaceId}`,
+          })
+          return {
+            content: `Surface ${mutation.surface.id} presentation is ${mutation.surface.presentation}${mutation.changed ? ' (committed)' : ' (unchanged)'}`,
+            details: { ...mutation, ...this.getSurfaceVersion(input.surfaceId) },
+          }
         },
       }),
       defineTool({
@@ -1672,7 +1805,7 @@ export class SurfaceEngine {
     at: string,
     spaceId: string,
     surfaceId: string,
-    kind: 'patch' | 'created' | 'archived' | 'pinned' | 'moved',
+    kind: 'patch' | 'created' | 'archived' | 'pinned' | 'moved' | 'presentation',
     event: unknown,
   ): void {
     this.db
@@ -1962,8 +2095,8 @@ export class SurfaceEngine {
         `insert into surfaces
            (id, space_id, title, tree_json, state_json, version, tree_version,
             updated_at, updated_by, archived, daemon_owned, pinned, tree_updated_at,
-            template_id, template_space_id, content_origin, validity_json)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            template_id, template_space_id, content_origin, validity_json, presentation)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         surface.id,
@@ -1986,6 +2119,7 @@ export class SurfaceEngine {
         options.templateSpaceId ?? null,
         contentOrigin,
         surface.validity === undefined ? null : JSON.stringify(surface.validity),
+        surface.presentation,
       )
   }
 

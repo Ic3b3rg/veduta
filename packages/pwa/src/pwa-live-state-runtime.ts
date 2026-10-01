@@ -324,6 +324,7 @@ export class PwaLiveStateRuntime {
       onSurfaceArchived: (event) => receive({ type: 'surface.archived', event }),
       onSurfacePinned: (event) => receive({ type: 'surface.pinned', event }),
       onSurfaceMoved: (event) => receive({ type: 'surface.moved', event }),
+      onSurfacePresentation: (event) => receive({ type: 'surface.presentation', event }),
       onChatMessage: receive,
       onChatTurnStart: receive,
       onChatTurnDelta: receive,
@@ -387,6 +388,7 @@ export class PwaLiveStateRuntime {
       case 'surface.archived':
       case 'surface.pinned':
       case 'surface.moved':
+      case 'surface.presentation':
         this.applySurfaceEvent(frame)
         break
       case 'chat.message':

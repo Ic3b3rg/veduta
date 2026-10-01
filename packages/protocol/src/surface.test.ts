@@ -93,6 +93,23 @@ const shoppingChecklistWithChart = {
 }
 
 describe('SurfaceSchema', () => {
+  it('defaults Surface presentation to standard and accepts full independently of Pin', () => {
+    expect(SurfaceSchema.parse(textFormSurface).presentation).toBe('standard')
+    expect(
+      SurfaceSchema.parse({ ...textFormSurface, presentation: 'full', pinned: true }),
+    ).toMatchObject({
+      presentation: 'full',
+      pinned: true,
+    })
+  })
+
+  it.each(['wide', '100%', 600, null])(
+    'rejects unsupported Surface presentation %s',
+    (presentation) => {
+      expect(SurfaceSchema.safeParse({ ...textFormSurface, presentation }).success).toBe(false)
+    },
+  )
+
   it('accepts one submit-only Form with multiple text fields', () => {
     const parsed = SurfaceSchema.parse(textFormSurface)
 

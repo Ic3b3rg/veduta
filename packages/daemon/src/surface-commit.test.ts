@@ -24,6 +24,7 @@ type Fault =
 const mutationFamilies = [
   'creation',
   'Pin',
+  'presentation',
   'Move',
   'archival',
   'state patch',
@@ -66,6 +67,14 @@ function mutateFamily(store: Store, family: MutationFamily): void {
       break
     case 'Pin':
       store.setPinned('srf-target', true, { origin: 'trusted:user', updatedBy: 'user' })
+      break
+    case 'presentation':
+      store.setSurfacePresentation('srf-target', 'full', {
+        origin: 'trusted:user',
+        updatedBy: 'agent',
+        userRequest: { text: 'Make this Surface full-row', origin: 'trusted:user' },
+        idempotencyKey: 'family-presentation',
+      })
       break
     case 'Move':
       store.moveSurface('spc-health', 'srf-target', 'up')
@@ -121,6 +130,9 @@ function expectMutationFamilyOutcome(store: Store, family: MutationFamily): void
       break
     case 'Pin':
       expect(store.getSurface('srf-target')?.pinned).toBe(true)
+      break
+    case 'presentation':
+      expect(store.getSurface('srf-target')?.presentation).toBe('full')
       break
     case 'Move':
       expect(store.surfaceOrder('spc-health').regularSurfaceIds[0]).toBe('srf-target')

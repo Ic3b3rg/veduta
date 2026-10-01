@@ -10,6 +10,56 @@ import { GatewayHub, type GatewayAuth, type GatewaySocket, type PwaChatInput } f
 import { Store } from './store.ts'
 
 describe('GatewayHub Surface sync', () => {
+  it('fans out presentation metadata and replays a missed change without a snapshot reload', () => {
+    const store = new Store({ now: fixedNow })
+    const gateway = new GatewayHub(store)
+    try {
+      const first = new FakeGatewaySocket()
+      const second = new FakeGatewaySocket()
+      gateway.connect(first)
+      gateway.connect(second)
+      const cursor = store.latestSurfaceCursor()
+      first.receive({ type: 'hello', surfaceCursor: cursor })
+      second.receive({ type: 'hello', surfaceCursor: cursor })
+      store.setSurfacePresentation('srf-groceries', 'full', {
+        updatedBy: 'agent',
+        origin: 'trusted:user',
+        userRequest: { text: 'Make Groceries full-row', origin: 'trusted:user' },
+        idempotencyKey: 'gateway-full',
+      })
+      const expected = {
+        type: 'surface.presentation',
+        event: { cursor: cursor + 1, surfaceId: 'srf-groceries', presentation: 'full' },
+      }
+      expect(first.sent.at(-1)).toMatchObject(expected)
+      expect(second.sent.at(-1)).toEqual(first.sent.at(-1))
+      second.close()
+      store.setSurfacePresentation('srf-groceries', 'standard', {
+        updatedBy: 'agent',
+        origin: 'trusted:user',
+        userRequest: { text: 'Make Groceries standard', origin: 'trusted:user' },
+        idempotencyKey: 'gateway-standard',
+      })
+      const reconnected = new FakeGatewaySocket()
+      gateway.connect(reconnected)
+      reconnected.receive({ type: 'hello', surfaceCursor: cursor + 1 })
+      expect(
+        reconnected.sent.filter((message) => message.type === 'surface.presentation'),
+      ).toMatchObject([
+        {
+          type: 'surface.presentation',
+          event: { cursor: cursor + 2, surfaceId: 'srf-groceries', presentation: 'standard' },
+        },
+      ])
+      expect(reconnected.sent.find((message) => message.type === 'hello')).toMatchObject({
+        replayed: 1,
+      })
+    } finally {
+      gateway.dispose()
+      store.close()
+    }
+  })
+
   it('broadcasts one Surface patch to two connected clients within 200ms', () => {
     const store = new Store()
     const gateway = new GatewayHub(store)

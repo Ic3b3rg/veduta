@@ -163,5 +163,6 @@ function targetSurface(id: string): Surface {
     freshness: { updatedAt: '2026-08-16T08:00:00.000Z', updatedBy: 'agent' },
     pinned: false,
     pinnable: true,
+    presentation: 'standard',
   }
 }

@@ -177,6 +177,8 @@ export interface ToolContext {
   trigger?: TriggerRef
   /** Live PWA chat correlation, absent for Agent-driven and background turns. */
   initiatingTurn?: ChatTurnCorrelation
+  /** Exact current PWA Chat input, supplied by AgentRunner only for a trusted user turn. */
+  currentUserRequest?: { text: string; origin: 'trusted:user' }
   /**
    * sha256 of the canonical model-visible context envelope for the
    * immediately preceding model inference: proof of

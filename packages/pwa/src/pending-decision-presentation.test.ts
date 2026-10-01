@@ -90,5 +90,6 @@ function surface(id: string, spaceId: string): Surface {
     freshness: { updatedAt: '2026-08-28T10:00:00.000Z', updatedBy: 'agent' },
     pinned: false,
     pinnable: true,
+    presentation: 'standard' as const,
   }
 }

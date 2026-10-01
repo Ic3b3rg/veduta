@@ -100,5 +100,6 @@ export function appTestSurface(id: string, title: string): Surface {
     freshness: { updatedAt: '2026-08-16T10:00:00.000Z', updatedBy: 'agent' },
     pinned: false,
     pinnable: true,
+    presentation: 'standard' as const,
   }
 }

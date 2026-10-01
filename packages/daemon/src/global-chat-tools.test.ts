@@ -90,6 +90,36 @@ function toolNamed(tools: ToolDef[], name: string): ToolDef {
 }
 
 describe('createGlobalChatTools', () => {
+  it('routes an explicit global presentation request to one entered Space', async () => {
+    const h = harness()
+    try {
+      const userRequest = 'Make Groceries full-row in Health'
+      const requestContext = {
+        ...context(),
+        trigger: { kind: 'chat' as const },
+        currentUserRequest: { text: userRequest, origin: 'trusted:user' as const },
+      }
+      const tool = toolNamed(h.tools, 'set_surface_presentation')
+      const input = tool.schema.parse({
+        spaceId: h.health.id,
+        surfaceId: 'srf-groceries',
+        presentation: 'full',
+        userRequest,
+      })
+      await expect(tool.handler(input, requestContext)).rejects.toThrow('enter_space first')
+      const enter = toolNamed(h.tools, 'enter_space')
+      await enter.handler(enter.schema.parse({ spaceId: h.health.id }), requestContext)
+      await expect(tool.handler(input, requestContext)).resolves.toMatchObject({
+        details: { surface: { id: 'srf-groceries', presentation: 'full' } },
+      })
+      expect(
+        h.store.eventLog(h.health.id).find((event) => event.type === 'surface.presentation'),
+      ).toMatchObject({ payload: { correlationId: 'turn-test', surfaceId: 'srf-groceries' } })
+    } finally {
+      h.store.close()
+    }
+  })
+
   it('requires entry, reports origins, and correlates delegated writes', async () => {
     const h = harness()
     h.store.spacesEngine.appendEvent(h.health.id, {

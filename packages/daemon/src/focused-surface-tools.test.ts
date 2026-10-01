@@ -52,6 +52,64 @@ const trustedContext = fromPartial<ToolContext>({
 })
 
 describe('createFocusedSurfaceTools', () => {
+  it('changes presentation only with exact evidence from the current trusted Chat request', async () => {
+    const { store, tools, space } = harness()
+    try {
+      store.createSurface(
+        SurfaceSchema.parse({
+          id: 'srf-requested',
+          spaceId: space.id,
+          title: 'Requested',
+          tree: {
+            id: 'root',
+            type: 'Box',
+            children: [{ id: 'title', type: 'Title', props: { text: 'Requested' } }],
+          },
+          state: {},
+          freshness: { updatedAt: '2026-08-11T10:00:00.000Z', updatedBy: 'agent' },
+        }),
+        'agent',
+      )
+      const tool = toolNamed(tools, 'set_surface_presentation')
+      const userRequest = 'Make Requested full-row'
+      const input = tool.schema.parse({
+        surfaceId: 'srf-requested',
+        presentation: 'full',
+        userRequest,
+      })
+      const beforeInvalid = store.snapshot()
+      for (const presentation of ['wide', '100%', 900, null]) {
+        expect(() =>
+          tool.schema.parse({ surfaceId: 'srf-requested', presentation, userRequest }),
+        ).toThrow()
+      }
+      expect(store.snapshot()).toEqual(beforeInvalid)
+      expect(() => tool.handler(input, trustedContext)).toThrow('explicit current user request')
+      const currentContext = {
+        ...trustedContext,
+        trigger: { kind: 'chat' as const },
+        initiatingTurn: { clientId: 'pwa-1', turnId: 'turn-1' },
+        currentUserRequest: { text: userRequest, origin: 'trusted:user' as const },
+      }
+      expect(() =>
+        tool.handler({ ...input, userRequest: 'Make it full-row' }, currentContext),
+      ).toThrow('explicit current user request')
+      expect(() =>
+        tool.handler(input, { ...currentContext, trigger: { kind: 'automation' } }),
+      ).toThrow('explicit current user request')
+      const result = await tool.handler(input, currentContext)
+      expect(result).toMatchObject({
+        details: { changed: true, surface: { presentation: 'full' } },
+      })
+      expect(store.getSurface('srf-requested')?.presentation).toBe('full')
+      expect(await tool.handler(input, currentContext)).toMatchObject({
+        details: { duplicate: true, changed: false },
+      })
+    } finally {
+      store.close()
+    }
+  })
+
   it('lists only compact authorable Surface summaries in stable order with deduplicated origins', async () => {
     const { store, space, tools } = harness()
     for (const [id, title] of [
@@ -86,7 +144,8 @@ describe('createFocusedSurfaceTools', () => {
     ])
     expect(
       summaries.every(
-        (surface) => Object.keys(surface).sort().join(',') === 'freshness,id,pinned,title',
+        (surface) =>
+          Object.keys(surface).sort().join(',') === 'freshness,id,pinned,presentation,title',
       ),
     ).toBe(true)
     expect(result.origins).toEqual(['trusted:user'])
@@ -140,7 +199,16 @@ describe('createFocusedSurfaceTools', () => {
       properties: Record<string, unknown>
     }
     expect(Object.keys(parameters.properties).sort()).toEqual(
-      ['id', 'title', 'tree', 'state', 'relativeTime', 'intent', 'justification'].sort(),
+      [
+        'id',
+        'title',
+        'tree',
+        'state',
+        'presentation',
+        'relativeTime',
+        'intent',
+        'justification',
+      ].sort(),
     )
 
     const input = createSurface.schema.parse({

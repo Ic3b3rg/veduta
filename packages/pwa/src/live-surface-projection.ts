@@ -20,6 +20,7 @@ export class LiveSurfaceProjection {
   spaces: SpaceWithSurfaces[] = []
   cursor = 0
   private patchCursors = new Map<string, number>()
+  private presentationCursors = new Map<string, number>()
   private orderCursors = new Map<string, number>()
   private rebasing = false
 
@@ -30,6 +31,7 @@ export class LiveSurfaceProjection {
   rebase(): void {
     this.cursor = 0
     this.patchCursors.clear()
+    this.presentationCursors.clear()
     this.orderCursors.clear()
     this.rebasing = true
   }
@@ -48,9 +50,7 @@ export class LiveSurfaceProjection {
     let spaces = mergeSpaceAttention(snapshot.spaces, this.spaces).map((space) => ({
       ...space,
       surfaces: space.surfaces.map((surface) =>
-        (this.patchCursors.get(surface.id) ?? -1) > snapshot.surfaceCursor
-          ? (previous.get(surface.id) ?? surface)
-          : surface,
+        this.mergeConfirmed(surface, snapshot.surfaceCursor, previous.get(surface.id)),
       ),
     }))
     for (const space of this.spaces) {
@@ -84,21 +84,35 @@ export class LiveSurfaceProjection {
         space.id,
         Math.max(snapshot.surfaceCursor, this.orderCursors.get(space.id) ?? -1),
       )
-      for (const surface of space.surfaces)
+      for (const surface of space.surfaces) {
         this.patchCursors.set(
           surface.id,
           Math.max(snapshot.surfaceCursor, this.patchCursors.get(surface.id) ?? -1),
         )
+        this.presentationCursors.set(
+          surface.id,
+          Math.max(snapshot.surfaceCursor, this.presentationCursors.get(surface.id) ?? -1),
+        )
+      }
     }
   }
 
   apply(event: SurfaceStreamEvent): boolean {
     const cursor = event.event.cursor
     const order = surfaceOrderForStreamEvent(event)
-    const surfaceId = event.type === 'surface.patch' ? event.event.patch.surfaceId : undefined
+    const surfaceId =
+      event.type === 'surface.patch'
+        ? event.event.patch.surfaceId
+        : event.type === 'surface.presentation'
+          ? event.event.surfaceId
+          : undefined
     const duplicate =
       surfaceId !== undefined
-        ? cursor <= (this.patchCursors.get(surfaceId) ?? -1)
+        ? cursor <=
+          ((event.type === 'surface.presentation'
+            ? this.presentationCursors
+            : this.patchCursors
+          ).get(surfaceId) ?? -1)
         : order !== undefined && cursor <= (this.orderCursors.get(order.spaceId) ?? -1)
     if (duplicate) {
       this.cursor = Math.max(this.cursor, cursor)
@@ -106,9 +120,28 @@ export class LiveSurfaceProjection {
     }
     const result = applySurfaceStreamEvent(this.spaces, event)
     if (!result.applied) return false
-    this.spaces = result.spaces
+    const previous =
+      surfaceId &&
+      this.spaces.flatMap((space) => space.surfaces).find((surface) => surface.id === surfaceId)
+    this.spaces = result.spaces.map((space) => ({
+      ...space,
+      surfaces: space.surfaces.map((surface) =>
+        previous &&
+        surface.id === surfaceId &&
+        Math.max(
+          this.patchCursors.get(surfaceId) ?? -1,
+          this.presentationCursors.get(surfaceId) ?? -1,
+        ) > cursor
+          ? { ...surface, freshness: previous.freshness }
+          : surface,
+      ),
+    }))
     this.cursor = Math.max(this.cursor, cursor)
-    if (surfaceId !== undefined) this.patchCursors.set(surfaceId, cursor)
+    if (surfaceId !== undefined)
+      (event.type === 'surface.presentation' ? this.presentationCursors : this.patchCursors).set(
+        surfaceId,
+        cursor,
+      )
     if (order !== undefined) this.orderCursors.set(order.spaceId, cursor)
     if (event.type === 'surface.created') this.patchCursors.set(event.event.surface.id, cursor)
     return true
@@ -116,23 +149,34 @@ export class LiveSurfaceProjection {
 
   confirmSurface(input: Surface, cursor?: number): boolean {
     const surface = SurfaceSchema.parse(input)
-    if (cursor !== undefined && cursor <= (this.patchCursors.get(surface.id) ?? -1)) return false
+    if (
+      cursor !== undefined &&
+      cursor <= (this.patchCursors.get(surface.id) ?? -1) &&
+      cursor <= (this.presentationCursors.get(surface.id) ?? -1)
+    )
+      return false
     let found = false
     this.spaces = this.spaces.map((space) => ({
       ...space,
       surfaces: space.surfaces.map((current) => {
         if (current.id !== surface.id) return current
         found = true
-        return surface
+        return cursor === undefined ? surface : this.mergeConfirmed(surface, cursor, current)
       }),
     }))
-    if (found && cursor !== undefined) this.patchCursors.set(surface.id, cursor)
+    if (found && cursor !== undefined) {
+      this.patchCursors.set(surface.id, Math.max(cursor, this.patchCursors.get(surface.id) ?? -1))
+      this.presentationCursors.set(
+        surface.id,
+        Math.max(cursor, this.presentationCursors.get(surface.id) ?? -1),
+      )
+    }
     return found
   }
 
   confirmOrder(order: SurfaceOrder, surface?: Surface): boolean {
     if (order.cursor < (this.orderCursors.get(order.spaceId) ?? -1)) return true
-    if (surface) this.confirmSurface(surface)
+    if (surface) this.confirmSurface(surface, order.cursor)
     const result = applySurfaceOrderToSpaces(this.spaces, order)
     if (!result.applied) return false
     this.spaces = result.spaces
@@ -142,5 +186,17 @@ export class LiveSurfaceProjection {
 
   attention(frame: { spaceId: string; count: number; revision: number }): void {
     this.spaces = applySpaceAttention(this.spaces, frame)
+  }
+
+  private mergeConfirmed(surface: Surface, cursor: number, previous?: Surface): Surface {
+    if (!previous) return surface
+    const contentIsNewer = (this.patchCursors.get(surface.id) ?? -1) > cursor
+    const presentationIsNewer = (this.presentationCursors.get(surface.id) ?? -1) > cursor
+    return {
+      ...surface,
+      ...(contentIsNewer ? { tree: previous.tree, state: previous.state } : {}),
+      ...(presentationIsNewer ? { presentation: previous.presentation } : {}),
+      ...(contentIsNewer || presentationIsNewer ? { freshness: previous.freshness } : {}),
+    }
   }
 }

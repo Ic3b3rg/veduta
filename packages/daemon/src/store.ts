@@ -11,6 +11,7 @@ import {
   type Space,
   type Surface,
   type SurfaceMoveDirection,
+  type SurfacePresentation,
   type SurfaceSnapshot,
   type ActionInvocation,
 } from '@veduta/protocol'
@@ -35,6 +36,7 @@ import {
   type SurfaceEngineEvent,
   type SurfaceMutation,
   type SurfacePinMutation,
+  type SurfacePresentationOptions,
   type SurfaceProvenance,
   type SurfaceVersion,
   type TreeProposal,
@@ -356,6 +358,14 @@ export class Store {
 
   getSurfaceVersion(surfaceId: string): SurfaceVersion | undefined {
     return this.surfaceEngine.getSurfaceVersion(surfaceId)
+  }
+
+  setSurfacePresentation(
+    surfaceId: string,
+    presentation: SurfacePresentation,
+    options: SurfacePresentationOptions,
+  ) {
+    return this.surfaceEngine.setPresentation(surfaceId, presentation, options)
   }
 
   /** Space-scoped read seam for the Agent's focused-Space Surface registry. */

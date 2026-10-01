@@ -173,6 +173,7 @@ describe('App', () => {
               freshness: { updatedAt: '2026-08-16T10:00:00.000Z', updatedBy: 'agent' },
               pinned: true,
               pinnable: true,
+              presentation: 'standard' as const,
             },
             {
               id: 'srf-second',
@@ -183,6 +184,7 @@ describe('App', () => {
               freshness: { updatedAt: '2026-08-16T10:00:00.000Z', updatedBy: 'agent' },
               pinned: false,
               pinnable: true,
+              presentation: 'standard' as const,
             },
           ],
         },
@@ -331,6 +333,7 @@ describe('App', () => {
         freshness: { updatedAt: '2026-08-11T10:00:00.000Z', updatedBy: 'agent' },
         pinned: false,
         pinnable: true,
+        presentation: 'standard' as const,
       },
       order: createdOrder(1, 'srf-hydration'),
     })
@@ -453,6 +456,7 @@ describe('App', () => {
               freshness: { updatedAt: '2026-08-11T10:00:00.000Z', updatedBy: 'seed' },
               pinned: false,
               pinnable: true,
+              presentation: 'standard' as const,
             },
           ],
         },
@@ -570,6 +574,7 @@ describe('App', () => {
       freshness: { updatedAt: '2026-08-20T10:00:00.000Z', updatedBy: 'seed' as const },
       pinned: false,
       pinnable: true,
+      presentation: 'standard' as const,
     }
     vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
     vi.mocked(fetchSpaces).mockResolvedValue({
@@ -734,6 +739,7 @@ describe('App', () => {
       freshness: { updatedAt: '2026-08-20T10:00:00.000Z', updatedBy: 'agent' },
       pinned: false,
       pinnable: true,
+      presentation: 'standard' as const,
     }
     const initialSnapshot = {
       surfaceCursor: 0,
@@ -1817,6 +1823,7 @@ function oneShotActionSurface(): Surface {
     freshness: { updatedAt: '2026-08-20T10:00:00.000Z', updatedBy: 'job' },
     pinned: false,
     pinnable: true,
+    presentation: 'standard' as const,
   }
 }
 

@@ -195,6 +195,7 @@ export function SurfaceCard({
       ref={cardRef}
       className={[
         'surface-card',
+        surface.presentation === 'full' ? 'surface-presentation-full' : '',
         selected ? 'selected' : '',
         surface.pinned ? 'pinned' : '',
         revealHighlighted ? 'surface-reveal-highlight' : '',
@@ -202,6 +203,7 @@ export function SurfaceCard({
       ]
         .filter(Boolean)
         .join(' ')}
+      data-presentation={surface.presentation}
     >
       <div className="surface-toolbar">
         <button

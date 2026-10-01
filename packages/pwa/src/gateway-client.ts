@@ -6,6 +6,7 @@ import {
   type SurfaceMovedEvent,
   type SurfacePatchEvent,
   type SurfacePinnedEvent,
+  type SurfacePresentationEvent,
 } from '@veduta/protocol'
 
 export interface GatewayConnection {
@@ -24,6 +25,7 @@ export interface GatewayHandlers {
   onSurfaceArchived(event: SurfaceArchivedEvent): void
   onSurfacePinned(event: SurfacePinnedEvent): void
   onSurfaceMoved(event: SurfaceMovedEvent): void
+  onSurfacePresentation(event: SurfacePresentationEvent): void
   onChatMessage(message: Extract<GatewayServerMessage, { type: 'chat.message' }>): void
   onChatTurnStart(message: Extract<GatewayServerMessage, { type: 'chat.turn-start' }>): void
   onChatTurnDelta(message: Extract<GatewayServerMessage, { type: 'chat.turn-delta' }>): void
@@ -115,6 +117,9 @@ function dispatchGatewayMessage(handlers: GatewayHandlers, message: GatewayServe
       break
     case 'surface.moved':
       handlers.onSurfaceMoved(message.event)
+      break
+    case 'surface.presentation':
+      handlers.onSurfacePresentation(message.event)
       break
     case 'chat.message':
       handlers.onChatMessage(message)

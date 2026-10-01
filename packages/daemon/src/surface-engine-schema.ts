@@ -22,6 +22,7 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
       template_id text,
       template_space_id text,
       content_origin text not null default 'trusted:user',
+      presentation text not null default 'standard' check (presentation in ('standard', 'full')),
       validity_json text
     );
     create index if not exists surfaces_space_active
@@ -62,6 +63,12 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
     create table if not exists idempotency_keys (
       key text primary key,
       event_cursor integer not null references surface_events(cursor)
+    );
+
+    create table if not exists surface_presentation_idempotency_keys (
+      key text primary key,
+      surface_id text not null references surfaces(id),
+      presentation text not null check (presentation in ('standard', 'full'))
     );
 
     create table if not exists automation_outcome_idempotency_keys (
@@ -127,6 +134,12 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
   ensureSqliteColumn(db, 'surfaces', 'template_id', 'text')
   ensureSqliteColumn(db, 'surfaces', 'template_space_id', 'text')
   ensureSqliteColumn(db, 'surfaces', 'content_origin', "text not null default 'trusted:user'")
+  ensureSqliteColumn(
+    db,
+    'surfaces',
+    'presentation',
+    "text not null default 'standard' check (presentation in ('standard', 'full'))",
+  )
   ensureSqliteColumn(db, 'tree_proposals', 'resolved_by', 'text')
   db.exec(`
     update tree_proposals

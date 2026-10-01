@@ -164,6 +164,7 @@ const MUTATING_TOOL_NAMES = new Set([
   'send_message',
   'transfer_funds',
   'create_surface',
+  'set_surface_presentation',
   'patch_state',
   'patch_tree',
   'archive_surface',

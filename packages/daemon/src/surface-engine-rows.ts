@@ -7,6 +7,7 @@ import {
   SurfaceMovedEventSchema,
   SurfacePatchEventSchema,
   SurfacePinnedEventSchema,
+  SurfacePresentationEventSchema,
   SurfaceSchema,
   type Surface,
 } from '@veduta/protocol'
@@ -24,6 +25,7 @@ export function surfaceFromRow(row: Record<string, unknown>): Surface {
     id: requiredString(row, 'id'),
     spaceId,
     title: requiredString(row, 'title'),
+    presentation: requiredString(row, 'presentation'),
     tree: JSON.parse(requiredString(row, 'tree_json')),
     state: JSON.parse(requiredString(row, 'state_json')),
     freshness: {
@@ -62,6 +64,8 @@ export function surfaceEngineEventFromRow(row: Record<string, unknown>): Surface
   if (kind === 'moved') {
     return { kind: 'moved', event: SurfaceMovedEventSchema.parse(json) }
   }
+  if (kind === 'presentation')
+    return { kind: 'presentation', event: SurfacePresentationEventSchema.parse(json) }
   throw new Error(`unknown surface_events kind: ${kind}`)
 }
 

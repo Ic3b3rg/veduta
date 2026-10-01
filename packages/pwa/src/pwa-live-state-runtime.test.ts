@@ -14,6 +14,7 @@ function surface(value = 0): Surface {
     state: { value },
     pinned: false,
     pinnable: true,
+    presentation: 'standard',
     freshness: { updatedAt: '2026-10-01T08:00:00Z', updatedBy: 'user' },
   }
 }
@@ -162,6 +163,28 @@ describe('PWA live-state runtime', () => {
     expect(runtime.getSnapshot().surfaceCursor).toBe(2)
     connections[0]!.onSurfacePatch(patch(2, 2))
     expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['value']).toBe(3)
+    runtime.stop()
+  })
+
+  it('reconciles presentation and content independently when their frames arrive out of order', async () => {
+    const { runtime, connections } = setup()
+    await runtime.start()
+    connections[0]!.onSurfacePresentation({
+      cursor: 2,
+      at: '2026-10-01T08:00:02Z',
+      spaceId: 'spc-test',
+      surfaceId: 'srf-test',
+      presentation: 'full',
+      freshness: { updatedAt: '2026-10-01T08:00:02Z', updatedBy: 'user' },
+    })
+    connections[0]!.onSurfacePatch(patch(1, 1))
+    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]).toMatchObject({
+      presentation: 'full',
+      state: { value: 1 },
+      freshness: { updatedAt: '2026-10-01T08:00:02Z' },
+    })
+    runtime.confirmSurface(surface(1), undefined, 1)
+    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.presentation).toBe('full')
     runtime.stop()
   })
 

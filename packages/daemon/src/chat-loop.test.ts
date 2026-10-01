@@ -269,6 +269,100 @@ describe('createChatLoop', () => {
     for (const built of harnesses.splice(0)) built.cleanup()
   })
 
+  it.each(['focused', 'global'])(
+    'changes presentation through the real %s Agent registry with current Chat evidence',
+    async (scope) => {
+      const h = harness()
+      const loop = globalSurfaceChatLoop(h)
+      const request = 'Make Groceries full-row'
+      h.fake.setResponses([
+        ...(scope === 'global'
+          ? [{ message: fakeToolCall('enter_space', { spaceId: 'health' }) }]
+          : []),
+        {
+          message: fakeToolCall('set_surface_presentation', {
+            ...(scope === 'global' ? { spaceId: 'health' } : {}),
+            surfaceId: 'srf-groceries',
+            presentation: 'full',
+            userRequest: request,
+          }),
+        },
+        {
+          factory: (context) => {
+            const result = context.messages
+              .filter((message) => message.role === 'toolResult')
+              .at(-1)
+            expect(result).toMatchObject({
+              role: 'toolResult',
+              toolName: 'set_surface_presentation',
+              isError: false,
+            })
+            return fakeText('Groceries now uses full presentation.')
+          },
+        },
+      ])
+      try {
+        await loop.handleChatMessage(
+          chatEvent({ text: request, ...(scope === 'focused' ? { spaceId: 'spc-health' } : {}) }),
+        )
+        expect(h.store.getSurface('srf-groceries')?.presentation).toBe('full')
+        expect(
+          h.store.eventLog('spc-health').filter((event) => event.type === 'surface.presentation'),
+        ).toHaveLength(1)
+        expect(h.frames.at(-1)?.frame).toMatchObject({
+          type: 'chat.turn-end',
+          message: { text: 'Groceries now uses full presentation.' },
+        })
+      } finally {
+        await loop.stop()
+      }
+    },
+  )
+
+  it('returns an invalid presentation tool error to the Agent without persisting or claiming success', async () => {
+    const h = harness()
+    const loop = globalSurfaceChatLoop(h)
+    const before = h.store.getSurface('srf-groceries')
+    const request = 'Make Groceries 900 pixels wide'
+    h.fake.setResponses([
+      {
+        message: fakeToolCall('set_surface_presentation', {
+          surfaceId: 'srf-groceries',
+          presentation: '900px',
+          userRequest: request,
+        }),
+      },
+      {
+        factory: (context) => {
+          const result = context.messages.filter((message) => message.role === 'toolResult').at(-1)
+          expect(result).toMatchObject({
+            role: 'toolResult',
+            toolName: 'set_surface_presentation',
+            isError: true,
+          })
+          return fakeText(
+            'Only standard or full presentation is supported. Groceries was unchanged.',
+          )
+        },
+      },
+    ])
+    try {
+      await loop.handleChatMessage(chatEvent({ text: request, spaceId: 'spc-health' }))
+      expect(h.store.getSurface('srf-groceries')).toEqual(before)
+      expect(
+        h.store.eventLog('spc-health').filter((event) => event.type === 'surface.presentation'),
+      ).toEqual([])
+      expect(h.frames.at(-1)?.frame).toMatchObject({
+        type: 'chat.turn-end',
+        message: {
+          text: 'Only standard or full presentation is supported. Groceries was unchanged.',
+        },
+      })
+    } finally {
+      await loop.stop()
+    }
+  })
+
   it('streams a scripted text reply and logs the turn with spend attributed', async () => {
     const h = harness()
     const spaceId = h.store.listSpaces()[0]!.id
@@ -532,6 +626,10 @@ describe('createChatLoop', () => {
     expect(h.toolContexts[0]?.initiatingTurn).toEqual({
       clientId: 'pwa-initiator',
       turnId: start.turnId,
+    })
+    expect(h.toolContexts[0]?.currentUserRequest).toEqual({
+      text: 'create it',
+      origin: 'trusted:user',
     })
   })
 
