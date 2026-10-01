@@ -27,6 +27,8 @@ export const AgentActionTurnSchema = z.discriminatedUnion('status', [
   AgentActionTurnIdentitySchema.extend({
     status: z.literal('completed'),
     message: AgentActionCompletionMessageSchema,
+    /** The client must observe this canonical Surface cut before acknowledging completion. */
+    surfaceCursor: z.number().int().nonnegative(),
   }).strict(),
   AgentActionTurnIdentitySchema.extend({
     status: z.literal('failed'),
