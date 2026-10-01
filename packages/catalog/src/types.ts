@@ -32,6 +32,10 @@ export type ActionConfirmation = FastActionConfirmation | AgentActionConfirmatio
 
 export type ActionConfirmations = Record<string, Record<string, ActionConfirmation>>
 
+export type ActionStatus = { status: 'pending' } | { status: 'queued' | 'failed'; message: string }
+
+export type ActionStatuses = Record<string, Record<string, ActionStatus>>
+
 /** What the renderer hands to every Atom. */
 export interface RenderContext {
   /** The Surface's typed state (Atoms read via `binding`). */
@@ -46,6 +50,8 @@ export interface RenderContext {
   ) => void | Promise<void>
   /** Completed runtime intents, scoped by Atom id and action name; never Surface state. */
   actionConfirmations?: ActionConfirmations | undefined
+  /** Current runtime waits and recoverable failures, scoped by Atom id and action name. */
+  actionStatuses?: ActionStatuses | undefined
   /** Consume the matching completion after reconciling a submitted local draft. */
   acknowledgeAction?: ((nodeId: string, actionName: string, intentId: string) => void) | undefined
   /** Transient visual feedback supplied by the Surface host; never persisted in the Surface. */

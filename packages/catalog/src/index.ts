@@ -11,4 +11,6 @@ export type {
   AgentActionConfirmation,
   FastActionConfirmation,
   ActionConfirmations,
+  ActionStatus,
+  ActionStatuses,
 } from './types.ts'
