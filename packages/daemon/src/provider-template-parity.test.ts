@@ -16,6 +16,7 @@ const EXPECTED_DEFINITIONS = [
   'list_surfaces',
   'read_surface',
   'create_surface',
+  'set_surface_presentation',
   'patch_state',
   'patch_tree',
   'archive_surface',

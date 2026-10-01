@@ -546,7 +546,7 @@ describe('Surface engine store', () => {
   it('declares every Surface tool L0 (daemon-internal, no outbound effect)', async () => {
     const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
     const tools = store.surfaceTools()
-    expect(tools.map((tool) => tool.level)).toEqual(['L0', 'L0', 'L0', 'L0'])
+    expect(tools.map((tool) => tool.level)).toEqual(['L0', 'L0', 'L0', 'L0', 'L0'])
   })
 
   it('stamps a tainted turn origin onto the surface.patch_state event, re-tainting future context', async () => {
