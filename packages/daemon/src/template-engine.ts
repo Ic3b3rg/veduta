@@ -2,11 +2,13 @@ import { z } from 'zod'
 import {
   JsonObjectSchema,
   SYSTEM_SPACE_ID,
+  SurfacePresentationSchema,
   SurfaceTemplateIdSchema,
   type ChatTurnCorrelation,
   type JsonObject,
   type SurfaceOrder,
   type Surface,
+  type SurfacePresentation,
   type SurfaceTemplate,
 } from '@veduta/protocol'
 import { defineTool, type ToolDef } from './agent-runner.ts'
@@ -98,6 +100,7 @@ export interface InstantiateTemplateInput {
   surfaceId: string
   title?: string
   state?: JsonObject
+  presentation?: SurfacePresentation
   /** The turn's origin, so an imported Template's untrusted mark cannot be laundered clean. */
   origin: Origin
   /** Live PWA chat correlation, omitted for every background creation path. */
@@ -289,6 +292,7 @@ export class TemplateEngine {
       updatedBy: 'agent',
       ...(input.title === undefined ? {} : { title: input.title }),
       ...(input.state === undefined ? {} : { state: input.state }),
+      ...(input.presentation === undefined ? {} : { presentation: input.presentation }),
     })
 
     const contentOrigin = effectiveOrigin(
@@ -403,7 +407,8 @@ const CreateSurfaceFromTemplateSchema = SpaceScopedSchema.extend({
   surfaceId: z.string().min(1),
   title: z.string().min(1).optional(),
   state: JsonObjectSchema.optional(),
-})
+  presentation: SurfacePresentationSchema.optional(),
+}).strict()
 
 /**
  * `pinned` is `z.literal(true)`, not `z.boolean()`: the Agent may capture a
@@ -482,7 +487,9 @@ export function templateTools(
     }),
     defineTool({
       name: 'create_surface_from_template',
-      description: "Instantiate a Template into a new Surface, patching in this Space's own data.",
+      description:
+        "Instantiate a Template into a new Surface, patching in this Space's own data. " +
+        'Choose standard presentation by default, or full when the initial content needs the whole Space row.',
       schema: CreateSurfaceFromTemplateSchema,
       level: 'L0',
       egressDomains: [],
@@ -497,6 +504,7 @@ export function templateTools(
           surfaceId: input.surfaceId,
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.state === undefined ? {} : { state: input.state }),
+          ...(input.presentation === undefined ? {} : { presentation: input.presentation }),
           origin,
           ...(context.initiatingTurn === undefined
             ? {}

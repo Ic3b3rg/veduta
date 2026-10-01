@@ -90,6 +90,26 @@ function toolNamed(tools: ToolDef[], name: string): ToolDef {
 }
 
 describe('createGlobalChatTools', () => {
+  it('keeps Template presentation strict when adding the global Space target', () => {
+    const h = harness()
+    try {
+      const tool = toolNamed(h.tools, 'create_surface_from_template')
+      const input = {
+        spaceId: h.health.id,
+        templateId: 'tpl-example',
+        surfaceId: 'srf-global-template',
+      }
+      expect(tool.schema.safeParse({ ...input, width: '100%' }).success).toBe(false)
+      expect(tool.schema.safeParse({ ...input, presentation: 'wide' }).success).toBe(false)
+      expect(tool.schema.parse({ ...input, presentation: 'full' })).toMatchObject({
+        ...input,
+        presentation: 'full',
+      })
+    } finally {
+      h.store.close()
+    }
+  })
+
   it('routes an explicit global presentation request to one entered Space', async () => {
     const h = harness()
     try {

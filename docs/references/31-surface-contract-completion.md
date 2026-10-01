@@ -62,19 +62,24 @@ mixed writes, preserved Form drafts/errors, retry and pinned Tree proposals.
 | Honest Chat and Connection parity                                      | Public `AgentRunner` provider-tool/parity suites, canonical Chat-confirmation suites, invalid-authoring browser step; actual subscription tool calls and confirmed content                     |
 | Realtime convergence, cache, reload, reconnect, restart                | Clean two-session `controls`, `action-controls`, `agent-actions`, `fast-actions`, `agent-queue`, `atom-wire-compatibility` browser suites; actual two-client/restart results                   |
 
-The final review also reproduced two previously hidden authoring gaps. An unsupported root
+The final review also reproduced three previously hidden authoring gaps. An unsupported root
 placement field could be stripped by the create tool; strict focused/global tool inputs and the
 canonical Surface parser now reject it with a precise path. A pinned `patch_tree` returned a
 numeric proposal id that Chat treated as unconfirmed; a test using the actual tool result now proves
 that Chat says the change awaits the user's decision. Neither failure is counted as a committed
 Surface change.
 
+Template reuse had the same placement gap: its tool discarded `width` and `presentation` and
+instantiated a standard Surface. The focused and global schemas now reject unsupported placement,
+and an explicit initial `full` presentation persists through Template reuse and Store reopen. The
+Template remains a portable composition without a stored placement preference.
+
 The final nine authored browser journeys passed from isolated Local VPS roots. They include the
 combined four-scenario mock regression, malformed authoring refusal, all remaining Action owners,
 the genuine UnknownAtom fallback, queue-capacity refusal/retry, and restart/reconnect. Mock journeys
 are deterministic regressions; the real-account evidence above is their separate non-CI complement.
 
-Final `pnpm check` passed lint, formatting, every package typecheck, all **3,696 tests in 292 files**,
+Final `pnpm check` passed lint, formatting, every package typecheck, all **3,699 tests in 292 files**,
 and production build. A full-suite failure exposed a one-second terminal-frame polling deadline;
 the isolated public-loop reproduction passed in 889 ms, and the bounded wait now allows five seconds
 without changing its terminal-frame or outcome assertions. The complete suite then passed.

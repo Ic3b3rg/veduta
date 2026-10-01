@@ -3,6 +3,7 @@ import {
   parseSurface,
   AtomNodeSchema,
   JsonObjectSchema,
+  type SurfacePresentation,
   SurfaceTemplateSchema,
   FastActionPlanSchema,
   canonicalJson,
@@ -325,6 +326,7 @@ export interface SurfaceFromTemplateOptions {
   title?: string
   state?: JsonObject
   pinned?: boolean
+  presentation?: SurfacePresentation
   updatedAt: string
   updatedBy: 'agent' | 'user' | 'job'
 }
@@ -402,6 +404,7 @@ export function surfaceFromTemplate(
     state,
     freshness: { updatedAt: options.updatedAt, updatedBy: options.updatedBy },
     ...(options.pinned !== undefined ? { pinned: options.pinned } : {}),
+    ...(options.presentation === undefined ? {} : { presentation: options.presentation }),
   }
 
   return parseSurface(candidate)

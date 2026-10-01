@@ -221,6 +221,43 @@ describe('TemplateEngine', () => {
       })
     })
 
+    it('rejects unsupported placement before reuse and creates a Template Surface with full presentation', async () => {
+      const rootDir = await tempRoot()
+      const store = new Store({ rootDir, now: fixedNow })
+      const space = store.spacesEngine.createSpace({ name: 'Template presentation' })
+      const engine = new TemplateEngine({ store, now: fixedNow })
+      store.createSurface(trackerSurface('srf-presentation-source', space.id), 'agent')
+      const { template } = engine.pin('srf-presentation-source', true, {
+        origin: 'trusted:user',
+        updatedBy: 'user',
+      })
+      if (!template) throw new Error('expected a Template')
+      const createFromTemplate = findTool(
+        templateTools(engine, { activeSpaceId: space.id }),
+        'create_surface_from_template',
+      )
+      const input = { templateId: template.id, surfaceId: 'srf-full-template' }
+      const eventsBefore = store.spacesEngine.readRecent(space.id, 20).length
+
+      expect(createFromTemplate.schema.safeParse({ ...input, width: '100%' }).success).toBe(false)
+      expect(createFromTemplate.schema.safeParse({ ...input, presentation: 'wide' }).success).toBe(
+        false,
+      )
+      expect(store.getSurface(input.surfaceId)).toBeUndefined()
+      expect(store.spacesEngine.readRecent(space.id, 20)).toHaveLength(eventsBefore)
+
+      await createFromTemplate.handler(
+        createFromTemplate.schema.parse({ ...input, presentation: 'full' }),
+        toolContext('full-template', 'trusted:user'),
+      )
+      expect(store.getSurface(input.surfaceId)?.presentation).toBe('full')
+      store.close()
+
+      const reopened = new Store({ rootDir, now: fixedNow })
+      expect(reopened.getSurface(input.surfaceId)?.presentation).toBe('full')
+      reopened.close()
+    })
+
     it('lets create_surface proceed with a justification and appends template.regenerated', async () => {
       const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
       const spaceA = store.spacesEngine.createSpace({ name: 'Space A' })

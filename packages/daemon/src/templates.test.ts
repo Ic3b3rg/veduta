@@ -195,6 +195,19 @@ describe('templateFromSurface / surfaceFromTemplate round trip', () => {
     expect(instantiated.title).toBe(template.name)
   })
 
+  it('sets presentation at instantiation without carrying the source placement into the Template', () => {
+    const instantiated = surfaceFromTemplate(template, {
+      surfaceId: 'srf-full-copy',
+      spaceId: 'spc-other',
+      presentation: 'full',
+      updatedAt: '2026-07-11T00:00:00.000Z',
+      updatedBy: 'agent',
+    })
+
+    expect(instantiated.presentation).toBe('full')
+    expect(template).not.toHaveProperty('presentation')
+  })
+
   it('rejects a supplied state key absent from the Template stateKeys', () => {
     expect(() =>
       surfaceFromTemplate(template, {
