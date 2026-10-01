@@ -10,6 +10,9 @@ import {
   SurfacePinnedEventSchema,
   SurfacePresentationEventSchema,
   SurfaceSchema,
+  findAtom,
+  findDeclaredAgentAction,
+  canonicalJson,
   type Surface,
 } from '@veduta/protocol'
 import { z } from 'zod'
@@ -142,6 +145,13 @@ export function agentTurnFromRow(row: Record<string, unknown>): QueuedAgentTurn 
   const id = requiredNumber(row, 'id')
   const idempotencyKey = optionalString(row, 'idempotency_key')
   const result = optionalString(row, 'result_json')
+  const status = requiredString(row, 'status')
+  const outcome = result === undefined ? {} : JsonObjectSchema.parse(JSON.parse(result))
+  const resultKeys =
+    status === 'completed' ? ['message', 'surfaceCursor'] : status === 'failed' ? ['error'] : []
+  if (Object.keys(outcome).some((key) => !resultKeys.includes(key))) {
+    throw new Error('Agent Action receipt cannot override its stored execution status or identity')
+  }
   const contentOrigin = requiredString(row, 'content_origin')
   if (!isValidOrigin(contentOrigin)) throw new Error('invalid Agent Action content origin')
   const summary = AgentActionTurnSchema.parse({
@@ -150,16 +160,27 @@ export function agentTurnFromRow(row: Record<string, unknown>): QueuedAgentTurn 
     surfaceId: requiredString(row, 'surface_id'),
     atomId: requiredString(row, 'atom_id'),
     actionName: requiredString(row, 'action_name'),
-    status: requiredString(row, 'status'),
+    status,
     ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
-    ...(result === undefined ? {} : JSON.parse(result)),
+    ...outcome,
   })
+  const surface = SurfaceSchema.parse(JSON.parse(requiredString(row, 'surface_json')))
+  const atom = AtomNodeSchema.parse(JSON.parse(requiredString(row, 'atom_json')))
+  if (
+    surface.id !== summary.surfaceId ||
+    surface.spaceId !== summary.spaceId ||
+    atom.id !== summary.atomId ||
+    canonicalJson(findAtom(surface.tree, summary.atomId)) !== canonicalJson(atom) ||
+    !findDeclaredAgentAction(surface.tree, summary.atomId, summary.actionName)
+  ) {
+    throw new Error('Agent Action snapshot does not match its stored request identity')
+  }
   return {
     ...summary,
     at: requiredString(row, 'at'),
     contentOrigin,
     payload: JsonObjectSchema.parse(JSON.parse(requiredString(row, 'payload_json'))),
-    surface: SurfaceSchema.parse(JSON.parse(requiredString(row, 'surface_json'))),
-    atom: AtomNodeSchema.parse(JSON.parse(requiredString(row, 'atom_json'))),
+    surface,
+    atom,
   }
 }

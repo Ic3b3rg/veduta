@@ -1,9 +1,10 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { SurfaceSchema } from '@veduta/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
-import { Store } from './store.ts'
+import { Store, type StoreOptions } from './store.ts'
 
 const roots: string[] = []
 const stores: Store[] = []
@@ -39,8 +40,8 @@ function setup() {
   return { rootDir, store, surface }
 }
 
-function open(rootDir: string) {
-  const store = new Store({ rootDir, now })
+function open(rootDir: string, options: Pick<StoreOptions, 'surfaceCommitTransport'> = {}) {
+  const store = new Store({ rootDir, now, ...options })
   stores.push(store)
   return store
 }
@@ -216,4 +217,152 @@ describe('durable Agent Action execution lifecycle (issue #146)', () => {
       expect(store.eventLog(surface.spaceId)).toEqual(eventsBefore)
     },
   )
+
+  it('keeps an undelivered request queued until its Space Event can be made durable', () => {
+    const { rootDir, store, surface } = setup()
+    const before = store.snapshot()
+    store.close()
+    stores.splice(stores.indexOf(store), 1)
+    let deliver = false
+    const withFault = open(rootDir, {
+      surfaceCommitTransport: (spaces) => ({
+        prepareSurfaceCommitEvent: (...args) => spaces.prepareSurfaceCommitEvent(...args),
+        deliverSurfaceCommitEvent: (prepared) => {
+          if (!deliver) throw new Error('injected Event delivery failure')
+          spaces.deliverSurfaceCommitEvent(prepared)
+        },
+        notifySurfaceCommitDelivered: (spaceId) => spaces.notifySurfaceCommitDelivered(spaceId),
+      }),
+    })
+    const invocation = {
+      nodeId: 'review',
+      name: 'review_choices',
+      idempotencyKey: 'pending-review',
+    }
+    expect(() => withFault.invokeSurfaceAction(surface.id, invocation)).toThrowError(
+      expect.objectContaining({ outcome: 'recovery_pending' }),
+    )
+    const queued = withFault.queuedAgentTurns()[0]
+    if (!queued) throw new Error('expected a durable queued request')
+    expect(() => withFault.claimAgentTurn(queued.id)).toThrowError(
+      expect.objectContaining({ outcome: 'recovery_pending' }),
+    )
+    expect(withFault.agentTurn(queued.id)?.status).toBe('queued')
+    expect(
+      withFault.eventLog(surface.spaceId).filter((event) => event.type === 'agent_path'),
+    ).toEqual([])
+    expect(withFault.snapshot()).toEqual(before)
+
+    deliver = true
+    expect(withFault.claimAgentTurn(queued.id)?.status).toBe('running')
+    const requested = withFault
+      .eventLog(surface.spaceId)
+      .filter((event) => event.type === 'agent_path')
+    expect(requested).toHaveLength(1)
+    expect(withFault.invokeSurfaceAction(surface.id, invocation)).toMatchObject({
+      path: 'agent',
+      turn: { id: queued.id, status: 'running' },
+    })
+    expect(withFault.agentTurns()).toHaveLength(1)
+    expect(
+      withFault.eventLog(surface.spaceId).filter((event) => event.type === 'agent_path'),
+    ).toEqual(requested)
+  })
+
+  it('exposes a historical queue row as failed without treating its missing provenance as trusted', () => {
+    const { rootDir, store, surface } = setup()
+    const before = store.snapshot()
+    const eventsBefore = store.eventLog(surface.spaceId)
+    store.close()
+    stores.splice(stores.indexOf(store), 1)
+    // Prepare the pre-lifecycle persisted format; assertions remain through the public Store.
+    const legacy = new DatabaseSync(join(rootDir, 'surfaces.sqlite'))
+    legacy.exec(`
+      drop table agent_turns;
+      create table agent_turns (
+        id integer primary key autoincrement, at text not null, space_id text not null,
+        surface_id text not null, atom_id text not null, action_name text not null,
+        payload_json text not null, surface_json text not null, atom_json text not null
+      );
+    `)
+    legacy
+      .prepare(
+        `insert into agent_turns
+      (at, space_id, surface_id, atom_id, action_name, payload_json, surface_json, atom_json)
+      values (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        now().toISOString(),
+        surface.spaceId,
+        surface.id,
+        'review',
+        'review_choices',
+        JSON.stringify({ mode: 'summary' }),
+        JSON.stringify(surface),
+        JSON.stringify(surface.tree),
+      )
+    legacy.close()
+
+    const restored = open(rootDir)
+    expect(restored.agentTurns()).toHaveLength(1)
+    expect(restored.agentTurns()[0]).toMatchObject({
+      status: 'failed',
+      contentOrigin: 'untrusted:legacy-action',
+      error:
+        'Recorded before durable execution tracking; inspect canonical outcome before retrying',
+    })
+    expect(restored.queuedAgentTurns()).toEqual([])
+    expect(restored.claimAgentTurn('agent-turn-1')).toBeUndefined()
+    expect(restored.snapshot()).toEqual(before)
+    expect(restored.eventLog(surface.spaceId)).toEqual(eventsBefore)
+  })
+
+  it('rejects a stored Atom snapshot that belongs to another request before it can be claimed', () => {
+    const { rootDir, store, surface } = setup()
+    const requested = store.invokeSurfaceAction(surface.id, {
+      nodeId: 'review',
+      name: 'review_choices',
+    })
+    if (requested.path !== 'agent') throw new Error('expected an Agent Action')
+    store.close()
+    stores.splice(stores.indexOf(store), 1)
+    const fixture = new DatabaseSync(join(rootDir, 'surfaces.sqlite'))
+    fixture
+      .prepare('update agent_turns set atom_json = ?')
+      .run(JSON.stringify({ ...surface.tree, id: 'unrelated' }))
+    fixture.close()
+
+    const restored = open(rootDir)
+    expect(() => restored.claimAgentTurn(requested.turn.id)).toThrowError(
+      'Agent Action snapshot does not match its stored request identity',
+    )
+    expect(
+      restored.eventLog(surface.spaceId).filter((event) => event.type === 'agent_path'),
+    ).toHaveLength(1)
+  })
+
+  it('does not allow a stored receipt to override a queued execution status', () => {
+    const { rootDir, store, surface } = setup()
+    const requested = store.invokeSurfaceAction(surface.id, {
+      nodeId: 'review',
+      name: 'review_choices',
+    })
+    if (requested.path !== 'agent') throw new Error('expected an Agent Action')
+    const surfaceCursor = store.latestSurfaceCursor()
+    store.close()
+    stores.splice(stores.indexOf(store), 1)
+    const fixture = new DatabaseSync(join(rootDir, 'surfaces.sqlite'))
+    fixture.prepare('update agent_turns set result_json = ?').run(
+      JSON.stringify({
+        status: 'completed',
+        message: { role: 'assistant', text: 'False completion' },
+        surfaceCursor,
+      }),
+    )
+    fixture.close()
+    const restored = open(rootDir)
+    expect(() => restored.agentTurn(requested.turn.id)).toThrowError(
+      'Agent Action receipt cannot override its stored execution status or identity',
+    )
+  })
 })

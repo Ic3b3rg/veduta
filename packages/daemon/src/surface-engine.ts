@@ -35,6 +35,8 @@ import {
   FastActionInvocationSchema,
   CommittedFastActionOutcomeSchema,
   canonicalJson,
+  owningActionInputs,
+  actionValueMatches,
   type FastActionInvocation,
   type FastAction,
   type FastActionOutcome,
@@ -1484,18 +1486,43 @@ export class SurfaceEngine {
       )
     }
 
-    if (atom.type === 'Button' && atom.props?.['disabled'] === true) {
-      throw new SurfaceActionError('disabled_control', 'this Button is disabled')
+    if (atom.props?.['disabled'] === true) {
+      throw new SurfaceActionError('disabled_control', `this ${atom.type} is disabled`)
     }
     if (
-      atom.type === 'Button' &&
+      (atom.type === 'Button' || atom.type === 'ListItem') &&
       invocation.payload !== undefined &&
       canonicalJson(invocation.payload) !== canonicalJson(action.payload ?? {})
     ) {
       throw new SurfaceActionError(
         'invalid_payload',
-        'Button payload must exactly match its declared Action payload',
+        `${atom.type} payload must exactly match its declared Action payload`,
       )
+    }
+
+    const owningInputs = owningActionInputs(atom)
+    for (const [key, spec] of Object.entries(owningInputs)) {
+      const supplied = invocation.payload
+      if (!supplied || !Object.hasOwn(supplied, key) || !actionValueMatches(spec, supplied[key]!)) {
+        throw new SurfaceActionError(
+          'invalid_payload',
+          `Agent interaction requires its typed owning input "${key}"`,
+        )
+      }
+    }
+    if (Object.keys(owningInputs).length > 0) {
+      for (const [key, supplied] of Object.entries(invocation.payload ?? {})) {
+        if (Object.hasOwn(owningInputs, key)) continue
+        if (
+          !Object.hasOwn(action.payload ?? {}, key) ||
+          canonicalJson(supplied) !== canonicalJson(action.payload![key]!)
+        ) {
+          throw new SurfaceActionError(
+            'invalid_payload',
+            'Agent interaction payload may contain only typed owning inputs and its declared fixed values',
+          )
+        }
+      }
     }
 
     const payload = JsonObjectSchema.parse({
