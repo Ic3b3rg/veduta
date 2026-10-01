@@ -1,7 +1,6 @@
 import {
   appendFileSync,
   closeSync,
-  cpSync,
   fsyncSync,
   mkdtempSync,
   openSync,
@@ -13,6 +12,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { SurfaceSchema, type Surface } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
+import { createBackup, restoreBackup } from './backup.ts'
 import type { SurfaceCommitTransport } from './surface-commit.ts'
 import { SurfaceCommitRecoveryPendingError } from './surface-commit.ts'
 import { buildServer } from './server.ts'
@@ -21,6 +21,135 @@ import { Store } from './store.ts'
 const now = () => new Date('2026-09-30T10:00:00.000Z')
 type Fault =
   'before_prepare' | 'before_append' | 'after_append' | 'after_file_flush' | 'after_delivery'
+const mutationFamilies = [
+  'creation',
+  'Pin',
+  'Move',
+  'archival',
+  'state patch',
+  'tree patch',
+  'fast action',
+  'Agent-path enqueue',
+  'Tree proposal',
+] as const
+type MutationFamily = (typeof mutationFamilies)[number]
+
+function prepareMutationFamily(store: Store, family: MutationFamily): void {
+  store.createSurface(
+    SurfaceSchema.parse({
+      ...surface('srf-target'),
+      tree: {
+        id: 'root',
+        type: 'Box',
+        children: [
+          {
+            id: 'trigger',
+            type: 'Button',
+            props: { label: 'Go' },
+            actions: [{ name: 'go', path: 'agent' }],
+          },
+        ],
+      },
+    }),
+    'user',
+  )
+  store.createSurface(surface('srf-neighbor'), 'user')
+  if (family === 'Tree proposal') {
+    store.setPinned('srf-target', true, { origin: 'trusted:user', updatedBy: 'user' })
+  }
+}
+
+function mutateFamily(store: Store, family: MutationFamily): void {
+  switch (family) {
+    case 'creation':
+      store.createSurface(surface('srf-created'), 'user')
+      break
+    case 'Pin':
+      store.setPinned('srf-target', true, { origin: 'trusted:user', updatedBy: 'user' })
+      break
+    case 'Move':
+      store.moveSurface('spc-health', 'srf-target', 'up')
+      break
+    case 'archival':
+      store.archiveSurface('srf-target', 'user')
+      break
+    case 'state patch':
+      store.patchState(
+        'srf-target',
+        [{ target: 'state', op: 'replace', path: '/count', value: 1 }],
+        {
+          updatedBy: 'user',
+        },
+      )
+      break
+    case 'tree patch':
+    case 'Tree proposal':
+      store.patchTree(
+        'srf-target',
+        [
+          {
+            target: 'tree',
+            op: 'add',
+            path: '/children/1',
+            value: { id: 'caption', type: 'Caption', props: { text: 'Updated' } },
+          },
+        ],
+        { expectedTreeVersion: 1, updatedBy: 'agent' },
+      )
+      break
+    case 'fast action':
+      store.applyFastAction('srf-target', 'count', 1, 'family-tap')
+      break
+    case 'Agent-path enqueue':
+      store.invokeSurfaceAction('srf-target', { nodeId: 'trigger', name: 'go' })
+      break
+  }
+}
+
+function publicMutationState(store: Store) {
+  return {
+    snapshot: store.snapshot(),
+    agentTurns: store.agentTurns(),
+    proposals: store.listTreeProposals(),
+  }
+}
+
+function expectMutationFamilyOutcome(store: Store, family: MutationFamily): void {
+  switch (family) {
+    case 'creation':
+      expect(store.getSurface('srf-created')?.title).toBe('srf-created')
+      break
+    case 'Pin':
+      expect(store.getSurface('srf-target')?.pinned).toBe(true)
+      break
+    case 'Move':
+      expect(store.surfaceOrder('spc-health').regularSurfaceIds[0]).toBe('srf-target')
+      break
+    case 'archival':
+      expect(store.getSurface('srf-target')).toBeUndefined()
+      break
+    case 'state patch':
+    case 'fast action':
+      expect(store.getSurface('srf-target')?.state['count']).toBe(1)
+      break
+    case 'tree patch':
+      expect(store.getSurface('srf-target')?.tree.children?.[1]).toMatchObject({
+        id: 'caption',
+        type: 'Caption',
+        props: { text: 'Updated' },
+      })
+      break
+    case 'Agent-path enqueue':
+      expect(store.agentTurns().filter((turn) => turn.surfaceId === 'srf-target')).toHaveLength(1)
+      break
+    case 'Tree proposal':
+      expect(store.listTreeProposals({ surfaceId: 'srf-target', status: 'pending' })).toHaveLength(
+        1,
+      )
+      expect(store.getSurface('srf-target')?.tree.children).toHaveLength(1)
+      break
+  }
+}
 
 function root(): string {
   return mkdtempSync(join(tmpdir(), 'veduta-surface-commit-'))
@@ -100,6 +229,65 @@ function surface(id: string, spaceId = 'spc-health'): Surface {
 }
 
 describe('recoverable Surface commits (#156)', () => {
+  describe.each(mutationFamilies)('%s recovery', (family) => {
+    it.each([
+      'before_prepare',
+      'before_append',
+      'after_append',
+      'after_file_flush',
+      'after_delivery',
+    ] as const)('preserves one public mutation outcome across %s', (fault) => {
+      const rootDir = root()
+      let store = new Store({ rootDir, now })
+      try {
+        prepareMutationFamily(store, family)
+        const before = publicMutationState(store)
+        const eventCount = store.eventLog('spc-health').length
+        store.close()
+        store = storeWithFault(rootDir, fault)
+        let observerCalls = 0
+        store.onSurfaceEvent(() => {
+          observerCalls += 1
+        })
+
+        expect(() => mutateFamily(store, family)).toThrow()
+        expect(observerCalls).toBe(0)
+        if (fault === 'before_prepare') {
+          expect(publicMutationState(store)).toEqual(before)
+          expect(store.eventLog('spc-health')).toHaveLength(eventCount)
+          expect(store.recoveryPendingSurfaceCommits()).toEqual([])
+          return
+        }
+
+        const pending = store.recoveryPendingSurfaceCommits('spc-health')
+        expect(pending).toHaveLength(1)
+        const commitId = pending[0]!.id
+        const committedState = publicMutationState(store)
+        expect(committedState).not.toEqual(before)
+        expectMutationFamilyOutcome(store, family)
+        store.close()
+        store = new Store({ rootDir, now: () => new Date('2026-10-01T10:00:00.000Z') })
+
+        expect(publicMutationState(store)).toEqual(committedState)
+        expectMutationFamilyOutcome(store, family)
+        expect(store.recoveryPendingSurfaceCommits()).toEqual([])
+        expect(store.eventLog('spc-health')).toHaveLength(eventCount + 1)
+        expect(
+          store
+            .eventLog('spc-health')
+            .filter((event) => event.payload?.['surfaceCommitId'] === commitId),
+        ).toHaveLength(1)
+        expect(store.reconcilePendingSurfaceCommits()).toEqual([])
+        expect(store.reconcilePendingSurfaceCommits()).toEqual([])
+        expect(publicMutationState(store)).toEqual(committedState)
+        expect(store.eventLog('spc-health')).toHaveLength(eventCount + 1)
+      } finally {
+        store.close()
+        rmSync(rootDir, { recursive: true, force: true })
+      }
+    })
+  })
+
   it('rolls back the mutation and prepared Event if preparation fails inside SQLite', () => {
     const rootDir = root()
     const store = storeWithFault(rootDir, 'before_prepare')
@@ -432,7 +620,7 @@ describe('recoverable Surface commits (#156)', () => {
     }
   })
 
-  it('restores snapshots from all four commit boundaries to one mutation and one Event', () => {
+  it('restores encrypted live backups from all four commit boundaries to one mutation and one Event', async () => {
     for (const boundary of [
       'before_prepare',
       'before_append',
@@ -441,6 +629,8 @@ describe('recoverable Surface commits (#156)', () => {
     ] as const) {
       const rootDir = root()
       const backupDir = root()
+      const restoredRoot = root()
+      const keyMaterial = Buffer.alloc(32, 7)
       const original =
         boundary === 'delivered' ? new Store({ rootDir, now }) : storeWithFault(rootDir, boundary)
       try {
@@ -449,9 +639,9 @@ describe('recoverable Surface commits (#156)', () => {
         } else {
           expect(() => original.applyFastAction('srf-groceries', 'milk', true)).toThrow()
         }
-        original.close()
-        cpSync(rootDir, backupDir, { recursive: true })
-        const restored = new Store({ rootDir: backupDir, now })
+        const file = await createBackup({ rootDir, outDir: backupDir, keyMaterial, now })
+        await restoreBackup({ file, targetRootDir: restoredRoot, keyMaterial })
+        const restored = new Store({ rootDir: restoredRoot, now })
         try {
           const expected = boundary === 'before_prepare' ? 0 : 1
           expect(restored.getSurface('srf-groceries')?.state['milk']).toBe(expected === 1)
@@ -463,8 +653,10 @@ describe('recoverable Surface commits (#156)', () => {
           restored.close()
         }
       } finally {
+        original.close()
         rmSync(rootDir, { recursive: true, force: true })
         rmSync(backupDir, { recursive: true, force: true })
+        rmSync(restoredRoot, { recursive: true, force: true })
       }
     }
   })
