@@ -17,8 +17,10 @@ private disposable profile. The user's existing Local VPS root and credentials w
 
 Home Chat created **Surface smoke** through its Pending decision. At the start of the accepted run
 this Space had no Agent-authored Surfaces. All business input, notes, diet and measurements were
-invented test data. Two disposable authenticated device/session identities supported the browser
-checks; physical passkey enrollment is covered separately by the clean Local VPS E2E suite.
+invented test data. Two disposable authenticated device/session identities on separate
+`localhost` and `127.0.0.1` browser origins both passed public authentication and displayed the
+same complete results. Physical passkey enrollment is covered separately by the clean Local VPS
+E2E suite.
 
 | Scenario             | Real request and observed result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -65,7 +67,7 @@ combined four-scenario mock regression, malformed authoring refusal, all remaini
 the genuine UnknownAtom fallback, queue-capacity refusal/retry, and restart/reconnect. Mock journeys
 are deterministic regressions; the real-account evidence above is their separate non-CI complement.
 
-Final `pnpm check` passed lint, formatting, every package typecheck, all **3,691 tests in 292 files**,
+Final `pnpm check` passed lint, formatting, every package typecheck, all **3,693 tests in 292 files**,
 and production build. A full-suite failure exposed a one-second terminal-frame polling deadline;
 the isolated public-loop reproduction passed in 889 ms, and the bounded wait now allows five seconds
 without changing its terminal-frame or outcome assertions. The complete suite then passed.

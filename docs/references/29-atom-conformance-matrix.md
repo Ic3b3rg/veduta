@@ -58,6 +58,10 @@ branch. Contract-specific protocol suites cover invalid declarations and bound s
 Complete writes share `parseSurface` and `parseSurfacePatch`, before durable mutation.
 The complete tree must contain visible content or an explicit empty/Pending state. An empty
 layout, spacing/dividers, decoration, or blank text alone is rejected as `empty_surface_content`.
+Static Action checks cover every offered finite selection, both boolean outcomes and the optional
+empty DatePicker choice against all Atoms bound to the written state key. A Surface with conflicting
+shared-control choices is rejected before persistence, while the existing reducer remains the sole
+executor.
 [`semantic-write-acceptance`](../../packages/daemon/src/semantic-write-acceptance.test.ts)
 checks machine-readable paths and unchanged Surface, versions, cursor, Space Events, realtime
 replay, and proposals after mixed invalid writes. Templates materialize through the same parser;

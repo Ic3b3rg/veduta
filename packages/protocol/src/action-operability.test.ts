@@ -9,6 +9,102 @@ const base = {
 }
 
 describe('complete Surface Action operability', () => {
+  it('rejects a shared selection when any offered choice makes another bound control invalid', () => {
+    function selection(id: string, values: string[]) {
+      return {
+        id,
+        type: 'Select',
+        binding: 'selection',
+        props: { label: id, options: values.map((value) => ({ label: value, value })) },
+        actions: [
+          {
+            name: 'change',
+            path: 'fast',
+            plan: {
+              inputs: { value: { type: 'string', enum: values } },
+              targets: { selection: { type: 'string' } },
+              steps: [
+                {
+                  op: 'set',
+                  target: 'selection',
+                  value: { source: 'input', name: 'value' },
+                },
+              ],
+            },
+          },
+        ],
+      }
+    }
+
+    const surface = {
+      ...base,
+      state: { selection: 'a' },
+      tree: {
+        id: 'root',
+        type: 'Box',
+        children: [selection('first', ['a', 'b']), selection('second', ['a', 'c'])],
+      },
+    }
+    const invalid = SurfaceSchema.safeParse(surface)
+    expect(invalid.success).toBe(false)
+    if (invalid.success) return
+    expect(semanticValidationIssues(invalid.error)).toContainEqual(
+      expect.objectContaining({
+        path: ['tree', 'children', 0, 'actions', 0, 'plan', 'steps', 0, 'value'],
+        code: 'invalid_atom_action_value',
+      }),
+    )
+
+    expect(
+      SurfaceSchema.safeParse({
+        ...surface,
+        tree: {
+          ...surface.tree,
+          children: [selection('first', ['a', 'b']), selection('second', ['a', 'b'])],
+        },
+      }).success,
+    ).toBe(true)
+  })
+
+  it('rejects an optional DatePicker whose empty choice breaks a required peer', () => {
+    function picker(id: string, allowEmpty: boolean) {
+      return {
+        id,
+        type: 'DatePicker',
+        binding: 'date',
+        props: { label: id, allowEmpty },
+        actions: [
+          {
+            name: 'change',
+            path: 'fast',
+            plan: {
+              inputs: { value: { type: 'string' } },
+              targets: { date: { type: 'string' } },
+              steps: [{ op: 'set', target: 'date', value: { source: 'input', name: 'value' } }],
+            },
+          },
+        ],
+      }
+    }
+    const parsed = SurfaceSchema.safeParse({
+      ...base,
+      state: { date: '2026-10-01' },
+      tree: {
+        id: 'root',
+        type: 'Box',
+        children: [picker('optional', true), picker('required', false)],
+      },
+    })
+    expect(parsed.success).toBe(false)
+    if (parsed.success) return
+    expect(semanticValidationIssues(parsed.error)).toContainEqual(
+      expect.objectContaining({
+        path: ['tree', 'children', 0, 'actions', 0, 'plan', 'steps', 0, 'value'],
+        code: 'invalid_atom_action_value',
+      }),
+    )
+  })
+
   it('rejects an append whose declared record can never supply the Chart series', () => {
     const parsed = SurfaceSchema.safeParse({
       ...base,

@@ -8,7 +8,7 @@
   "mockEnabled": false,
   "isolatedData": true,
   "authFixtureDeviceCount": 2,
-  "surfaceCursorAfterRestart": 63,
+  "surfaceCursorAfterRestart": 67,
   "form": {
     "surfaceId": "add-item",
     "state": {
@@ -103,6 +103,12 @@
     },
     "checkedAfterReload": true,
     "checkedAfterReopen": true,
-    "secondClientReconnectedAcrossRestart": true
+    "secondClientReconnectedAcrossRestart": true,
+    "independentClients": {
+      "origins": ["http://localhost:62810", "http://127.0.0.1:62810"],
+      "differentSessionTokens": true,
+      "bothAuthenticatedOverPublicApi": true,
+      "bothDisplayedCompletePlanWeightAndFormRecords": true
+    }
   }
 }
