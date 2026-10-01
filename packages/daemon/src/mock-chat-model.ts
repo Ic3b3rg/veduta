@@ -28,6 +28,7 @@ import {
   respondToMockWeightMeasurement,
   WEIGHT_MEASUREMENT_REQUEST,
 } from './mock-chart-fixture.ts'
+import { respondToStructuredPlan, STRUCTURED_PLAN_REQUEST } from './mock-structured-plan-fixture.ts'
 import { isRecord, parseJson, toolCallMessage, toolResultText } from './mock-fixture-support.ts'
 import { mockWorkerReportForPrompt, mockWorkerReviewText } from './mock-worker-runner.ts'
 import { zonedParts } from './timezone.ts'
@@ -113,6 +114,7 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
       return piFauxAssistantMessage(JSON.stringify(mockWorkerReportForPrompt(text)))
     }
     if (isFullTextPrompt(text)) return piFauxAssistantMessage(FULL_TEXT_REPLY)
+    if (text === STRUCTURED_PLAN_REQUEST) return respondToStructuredPlan(toolResultsAfter)
     if (text === MEAL_REQUEST) {
       return respondToMealFixture(toolResultsAfter, now(), timeZone, MEAL_LABEL)
     }

@@ -22,6 +22,7 @@ import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { effectiveOrigin, type Origin } from './taint.ts'
 import { zonedParts } from './timezone.ts'
 import { piToolParameters } from './tool-parameters.ts'
+import { SURFACE_ATOM_AUTHORING_GUIDE } from './surface-authoring-guide.ts'
 
 /**
  * Chat inside a Space: the Agent has the Space's assembled context and its
@@ -62,7 +63,8 @@ const SPACE_CHAT_PREAMBLE =
   'relativeTime status and caveat are authoritative; never present an expired projection as ' +
   'current. append_event does not change a ' +
   'Surface or its visible state and is never a substitute for a Surface mutation. Only claim a ' +
-  'Surface changed after a successful mutation tool result.'
+  'Surface changed after a successful mutation tool result.' +
+  SURFACE_ATOM_AUTHORING_GUIDE
 
 const GLOBAL_SPACE_ROSTER_LIMIT = 50
 
@@ -79,7 +81,8 @@ const GLOBAL_CHAT_PREAMBLE =
   'Spaces: enter each relevant Space separately, coordinate them here in this one Agent, and keep ' +
   'every scoped call assigned to its own Space. Never infer a target merely because it appears ' +
   'first in the roster. Workers remain optional, asynchronous, investigate-and-report executions ' +
-  'scoped to exactly one entered Space; you retain the final decision.'
+  'scoped to exactly one entered Space; you retain the final decision.' +
+  SURFACE_ATOM_AUTHORING_GUIDE
 
 const SYSTEM_CHAT_PREAMBLE =
   'Answer conversationally inside the canonical Gateway-owned System Space. ' +

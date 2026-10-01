@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { ActionSchema, FormSubmitActionSchema, type Action } from './action.ts'
-import { AutomationRunHistorySchema } from './automation-outcome.ts'
 import { ChartAtomPropsSchema } from './chart.ts'
+import { validateContentAtom } from './content-atoms.ts'
+export { AutomationAtomPropsSchema, type AutomationAtomProps } from './content-atoms.ts'
 import { JsonObjectSchema, type JsonObject } from './json.ts'
 
 /**
@@ -177,15 +178,6 @@ export type AccordionAtomProps = z.infer<typeof AccordionAtomPropsSchema>
 export type SwitchAtomProps = z.infer<typeof SwitchAtomPropsSchema>
 export type ComboboxAtomProps = z.infer<typeof ComboboxAtomPropsSchema>
 
-export const AutomationAtomPropsSchema = z
-  .object({
-    history: AutomationRunHistorySchema.optional(),
-    historyBinding: z.string().min(1).max(160).optional(),
-  })
-  .passthrough()
-
-export type AutomationAtomProps = z.infer<typeof AutomationAtomPropsSchema>
-
 /**
  * The parsed shape of a node: `actions[].path` is always materialized
  * (the schema defaults it to "agent" at parse time). Inputs may omit
@@ -216,6 +208,7 @@ export const AtomNodeSchema: z.ZodType<AtomNode> = z.lazy(() =>
 ) as z.ZodType<AtomNode>
 
 interface PendingAtomCandidate {
+  id: string
   type: AtomType
   props?: JsonObject | undefined
   binding?: string | undefined
@@ -228,7 +221,7 @@ function validateAtomNode(node: PendingAtomCandidate, ctx: z.RefinementCtx): voi
   validateInputAtom(node, ctx)
   validateTextareaAtom(node, ctx)
   validateFormAtom(node, ctx)
-  validateAutomationAtom(node, ctx)
+  validateContentAtom(node, ctx)
   validateDisclosureAtom(node, ctx)
   validateNewControlAtom(node, ctx)
   validateChartAtom(node, ctx)
@@ -353,17 +346,6 @@ function validateNewControlAtom(node: PendingAtomCandidate, ctx: z.RefinementCtx
       path: ['actions', 0, 'stateKey'],
       message: `${node.type} agent action cannot target state directly`,
     })
-  }
-}
-
-function validateAutomationAtom(node: PendingAtomCandidate, ctx: z.RefinementCtx): void {
-  if (node.type !== 'Automation') return
-
-  const props = AutomationAtomPropsSchema.safeParse(node.props ?? {})
-  if (!props.success) {
-    for (const issue of props.error.issues) {
-      ctx.addIssue({ ...issue, path: ['props', ...issue.path] })
-    }
   }
 }
 

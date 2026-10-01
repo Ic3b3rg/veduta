@@ -30,7 +30,15 @@ export function ListItemAtom({ node, ctx }: AtomProps): ReactNode {
           </div>
         ) : null}
       </div>
-      {node.props?.['status'] ? <BadgeAtom node={node} ctx={ctx} /> : null}
+      {node.props?.['status'] ? (
+        <BadgeAtom
+          node={{
+            ...node,
+            props: { text: node.props['status'], tone: node.props['tone'] ?? 'neutral' },
+          }}
+          ctx={ctx}
+        />
+      ) : null}
     </>
   )
 
@@ -120,12 +128,16 @@ export function AutomationAtom({ node, ctx }: AtomProps): ReactNode {
           </details>
         )}
       </div>
-      <Switch
-        {...motionContent('value')}
-        checked={enabled}
-        aria-label={label}
-        onCheckedChange={(next) => action && ctx.dispatch(node, action.name, next)}
-      />
+      {action ? (
+        <Switch
+          {...motionContent('value')}
+          checked={enabled}
+          aria-label={label}
+          onCheckedChange={(next) => action && ctx.dispatch(node, action.name, next)}
+        />
+      ) : (
+        <span {...motionContent('value')}>{enabled ? 'Enabled' : 'Disabled'}</span>
+      )}
     </Item>
   )
 }

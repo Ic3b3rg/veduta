@@ -9,6 +9,8 @@ export {
 } from './action.ts'
 export { applySurfacePatch, applySurfacePatchEvent } from './apply-patch.ts'
 export { ChartAtomPropsSchema, chartSeriesSchema, type ChartAtomProps } from './chart.ts'
+export * from './content-atoms.ts'
+export * from './atom-template.ts'
 export {
   AuthDeviceSchema,
   AuthModeSchema,

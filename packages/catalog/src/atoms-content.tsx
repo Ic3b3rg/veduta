@@ -4,7 +4,6 @@ import {
   boundedNumber,
   iconGlyph,
   motionContent,
-  motionItemKeys,
   optionalText,
   ratioValue,
   text,
@@ -14,13 +13,18 @@ import { bodyTextStyle, labelStyle } from './atom-styles.ts'
 import { tokensFor } from './design-system.ts'
 import type { AtomProps } from './types.ts'
 import { Badge } from './ui/badge.tsx'
-import { Label } from './ui/label.tsx'
 import { Progress } from './ui/progress.tsx'
+import { structuredMarkdown } from './structured-markdown.tsx'
+
+function contentText(node: AtomProps['node'], ctx: AtomProps['ctx']): string {
+  const value = text(node.binding ? boundValue(node, ctx) : node.props?.['text'])
+  return value.trim() ? value : text(node.props?.['emptyText'] ?? 'No content yet')
+}
 
 export function TitleAtom({ node, ctx }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const level = boundedNumber(node.props?.['level'], 2, 1, 6)
-  const content = text(node.props?.['text'])
+  const content = contentText(node, ctx)
   const contentMotion = motionContent('content')
   const style: CSSProperties = {
     margin: 0,
@@ -71,7 +75,7 @@ export function TitleAtom({ node, ctx }: AtomProps): ReactNode {
 export function TextAtom({ node, ctx }: AtomProps): ReactNode {
   return (
     <p {...motionContent('content')} style={bodyTextStyle(tokensFor(ctx.theme))}>
-      {text(node.props?.['text'])}
+      {contentText(node, ctx)}
     </p>
   )
 }
@@ -83,54 +87,34 @@ export function CaptionAtom({ node, ctx }: AtomProps): ReactNode {
       {...motionContent('content')}
       style={{ ...bodyTextStyle(tokens), color: tokens.color.textMuted, fontSize: tokens.font.xs }}
     >
-      {text(node.props?.['text'])}
+      {contentText(node, ctx)}
     </small>
   )
 }
 
 export function LabelAtom({ node, ctx }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
-  const htmlFor = optionalText(node.props?.['for']) ?? optionalText(node.props?.['htmlFor'])
-  const content = text(node.props?.['text'] ?? node.props?.['label'])
-  if (!htmlFor)
-    return (
-      <span {...motionContent('content')} style={labelStyle(tokens)}>
-        {content}
-      </span>
-    )
+  const content = contentText(node, ctx)
   return (
-    <Label {...motionContent('content')} htmlFor={htmlFor} style={labelStyle(tokens)}>
+    <span {...motionContent('content')} style={labelStyle(tokens)}>
       {content}
-    </Label>
+    </span>
   )
 }
 
 export function MarkdownAtom({ node, ctx }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
-  const paragraphs = text(node.props?.['text']).split(/\n{2,}/)
-  const paragraphKeys = motionItemKeys(paragraphs)
   return (
     <div style={{ display: 'grid', gap: tokens.space.xs }}>
-      {paragraphs.map((paragraph, index) => (
-        <p
-          key={paragraphKeys[index]}
-          {...motionContent(`paragraph:${paragraphKeys[index] ?? index}`)}
-          style={bodyTextStyle(tokens)}
-        >
-          {paragraph}
-        </p>
-      ))}
+      {structuredMarkdown(contentText(node, ctx), tokens)}
     </div>
   )
 }
 
 export function BadgeAtom({ node, ctx }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
-  const tone = toneColor(
-    tokens,
-    optionalText(node.props?.['tone']) ?? optionalText(node.props?.['status']),
-  )
-  const content = node.props?.['text'] ?? node.props?.['status'] ?? node.props?.['label']
+  const tone = toneColor(tokens, optionalText(node.props?.['tone']))
+  const content = node.props?.['text']
   return (
     <Badge
       {...motionContent('content')}
@@ -169,7 +153,9 @@ export function IconAtom({ node, ctx }: AtomProps): ReactNode {
 
 export function StatAtom({ node, ctx }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
-  const value = boundValue(node, ctx) ?? node.props?.['value']
+  const value = node.binding ? boundValue(node, ctx) : node.props?.['value']
+  const hasValue =
+    value !== null && value !== undefined && (typeof value !== 'string' || value.trim() !== '')
   return (
     <div style={{ minWidth: 96 }}>
       <div {...motionContent('label')} style={labelStyle(tokens)}>
@@ -185,8 +171,8 @@ export function StatAtom({ node, ctx }: AtomProps): ReactNode {
           lineHeight: 1.1,
         }}
       >
-        {text(value)}
-        {node.props?.['unit'] ? (
+        {hasValue ? text(value) : text(node.props?.['emptyText'] ?? 'Not recorded')}
+        {hasValue && node.props?.['unit'] ? (
           <span style={{ color: tokens.color.textMuted, fontSize: tokens.font.sm, marginLeft: 4 }}>
             {text(node.props['unit'])}
           </span>
@@ -204,13 +190,20 @@ export function StatAtom({ node, ctx }: AtomProps): ReactNode {
           {text(node.props['trend'])}
         </div>
       ) : null}
+      {node.props?.['detail'] ? (
+        <p {...motionContent('detail')} style={bodyTextStyle(tokens)}>
+          {text(node.props['detail'])}
+        </p>
+      ) : null}
     </div>
   )
 }
 
 export function ProgressAtom({ node, ctx }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
-  const ratio = ratioValue(boundValue(node, ctx) ?? node.props?.['value'])
+  const value = node.binding ? boundValue(node, ctx) : node.props?.['value']
+  const ratio = ratioValue(value)
+  const hasValue = value !== null && value !== undefined
   const label = text(node.props?.['label'])
   return (
     <div style={{ display: 'grid', gap: tokens.space.xs }}>
@@ -222,10 +215,14 @@ export function ProgressAtom({ node, ctx }: AtomProps): ReactNode {
           {...motionContent('value')}
           style={{ ...labelStyle(tokens), color: tokens.color.text }}
         >
-          {Math.round(ratio * 100)}%
+          {hasValue
+            ? `${Math.round(ratio * 100)}%`
+            : text(node.props?.['emptyText'] ?? 'Not recorded')}
         </span>
       </div>
-      <Progress {...motionContent('bar')} aria-label={label} value={Math.round(ratio * 100)} />
+      {hasValue ? (
+        <Progress {...motionContent('bar')} aria-label={label} value={Math.round(ratio * 100)} />
+      ) : null}
     </div>
   )
 }

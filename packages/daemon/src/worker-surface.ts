@@ -42,7 +42,13 @@ export function workerActiveContentNode(): AtomNode {
   return {
     id: 'worker-content',
     type: 'Box',
-    children: [{ id: 'worker-progress', type: 'Progress', props: { label: 'Researching…' } }],
+    children: [
+      {
+        id: 'worker-progress',
+        type: 'Progress',
+        props: { label: 'Researching…', value: null, emptyText: 'In progress' },
+      },
+    ],
   }
 }
 

@@ -34,6 +34,19 @@ path, not only at export.
 
 ## Matching is deterministic
 
+### Strict Atom contracts (issue #140)
+
+The type-specific protocol now distinguishes composition metadata from instance collections.
+Table columns and selection options remain in a Template because they define the accepted
+composition. Static Table rows and Automation run history become empty arrays and are recorded
+in `dataProps`; their instance content is never copied. Long content strings still become empty,
+while required composition labels receive an explicit `Content required` placeholder.
+Instantiation seeds bindings with their protocol-defined empty shape: arrays for Table and Chart,
+strings for text and selection, booleans for enabled-state controls, and null for unknown metrics
+and progress. Automation history bindings start as empty arrays. The complete instantiated Surface
+is validated again before it can persist. These rules replace the earlier untyped-props rationale
+and blanket array removal above now that structural metadata has an authoritative protocol contract.
+
 Reuse must not depend on a model call: the match combines token overlap over the Template's `intent`
 and `name` with equality of the Atom-type signature — the issue's "match on intent/type", literally.
 The Space's own Templates are considered first, then those of the other active Spaces (recreating a

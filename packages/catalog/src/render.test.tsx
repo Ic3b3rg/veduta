@@ -591,6 +591,7 @@ describe('renderNode', () => {
           type: 'Automation',
           binding: 'enabled',
           props: { label: 'Reminder', schedule: 'Daily' },
+          actions: [{ name: 'toggle', path: 'fast', stateKey: 'enabled' }],
         },
       ],
     })

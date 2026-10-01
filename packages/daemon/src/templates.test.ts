@@ -33,12 +33,12 @@ function tracker(): Surface {
         {
           id: 'log',
           type: 'Table',
-          props: { rows: [{ day: 'Mon', reps: 10 }] },
+          props: { columns: ['day', 'reps'], rows: [{ day: 'Mon', reps: 10 }] },
         },
         {
           id: 'chart',
-          type: 'Chart',
-          props: { series: { pushups: [1, 2, 3] } },
+          type: 'Table',
+          props: { columns: ['day'], rows: [{ day: 'Monday' }] },
         },
         {
           id: 'done',
@@ -166,7 +166,7 @@ describe('templateFromSurface / surfaceFromTemplate round trip', () => {
 
     expect(SurfaceIsValid(instantiated)).toBe(true)
     expect(Object.keys(instantiated.state).sort()).toEqual(['done', 'reps'])
-    expect(instantiated.state.done).toBeNull()
+    expect(instantiated.state.done).toBe(false)
     expect(instantiated.state.reps).toBeNull()
     // The Template never carried the unrelated, unbound state key at all.
     expect(instantiated.state.unrelated).toBeUndefined()
@@ -253,14 +253,15 @@ describe('prop reduction', () => {
 
   it('drops an array-valued prop and records it in dataProps', () => {
     const log = template.tree.children?.find((n) => n.id === 'log')
-    expect(log?.props?.rows).toBeUndefined()
+    expect(log?.props?.rows).toEqual([])
     expect(template.dataProps).toContain('log.rows')
   })
 
-  it('drops an object-valued prop and records it in dataProps', () => {
+  it('drops nested collection data while preserving declared composition metadata', () => {
     const chart = template.tree.children?.find((n) => n.id === 'chart')
-    expect(chart?.props?.series).toBeUndefined()
-    expect(template.dataProps).toContain('chart.series')
+    expect(chart?.props?.rows).toEqual([])
+    expect(chart?.props?.columns).toEqual(['day'])
+    expect(template.dataProps).toContain('chart.rows')
   })
 
   it('leaves a short label untouched', () => {
@@ -593,7 +594,7 @@ describe('sanitizeImportedTemplate', () => {
     expect(Object.values(payload).some((value) => String(value).includes('<<<'))).toBe(false)
   })
 
-  it('neutralizes <<< in a prop object key, at the top level and nested inside an object-valued prop', () => {
+  it('rejects unsupported prop object keys before imported content can reach a reader', () => {
     const raw = validRawTemplate({
       tree: {
         id: 'root',
@@ -605,15 +606,7 @@ describe('sanitizeImportedTemplate', () => {
       },
     })
 
-    const { template } = sanitizeImportedTemplate(raw, 'import')
-    const props = template.tree.props ?? {}
-    expect(Object.keys(props).some((key) => key.includes('<<<'))).toBe(false)
-    const nested = props['nested']
-    expect(
-      nested !== null && typeof nested === 'object' && !Array.isArray(nested)
-        ? Object.keys(nested as Record<string, unknown>).some((key) => key.includes('<<<'))
-        : true,
-    ).toBe(false)
+    expect(() => sanitizeImportedTemplate(raw, 'import')).toThrow(/Unrecognized key/)
   })
 
   it('removes agent-path actions while fast actions survive, and reports exactly how many were stripped', () => {

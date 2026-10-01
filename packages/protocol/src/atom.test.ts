@@ -233,16 +233,16 @@ describe('Disclosure and selection Atom contracts', () => {
 })
 
 describe('Automation Atom protocol', () => {
-  it('keeps legacy Automation nodes without props valid', () => {
+  it('rejects Automation nodes without their required summary', () => {
     expect(
       AtomNodeSchema.safeParse({
         id: 'legacy-automation-without-props',
         type: 'Automation',
       }).success,
-    ).toBe(true)
+    ).toBe(false)
   })
 
-  it('keeps pre-history Automation props backward compatible', () => {
+  it('rejects unsupported legacy aliases rather than losing their content', () => {
     expect(
       AtomNodeSchema.safeParse({
         id: 'legacy-automation',
@@ -253,7 +253,7 @@ describe('Automation Atom protocol', () => {
           enabled: true,
         },
       }).success,
-    ).toBe(true)
+    ).toBe(false)
   })
 
   it('accepts bounded, meaningful run history', () => {
@@ -264,6 +264,7 @@ describe('Automation Atom protocol', () => {
         props: {
           label: 'Weekly review',
           schedule: 'Every Monday',
+          enabled: true,
           history: [
             {
               id: 'run-1',

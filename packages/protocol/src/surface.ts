@@ -2,6 +2,7 @@ import { z, type ZodIssue } from 'zod'
 import { AtomNodeSchema, ComboboxAtomPropsSchema, type AtomNode } from './atom.ts'
 import { ChartAtomPropsSchema, chartSeriesSchema } from './chart.ts'
 import { JsonObjectSchema, type JsonObject } from './json.ts'
+import { validateContentState } from './content-atoms.ts'
 
 /**
  * A Surface is living state, not a response (CONTEXT.md): a declarative
@@ -93,6 +94,7 @@ export const SurfaceSchema = SurfaceObjectSchema.superRefine((surface, ctx) => {
   validateTextFormState(surface.tree, surface.state, ctx)
   validateNewControlState(surface.tree, surface.state, ctx)
   validateChartState(surface.tree, surface.state, ctx)
+  validateContentState(surface.tree, surface.state, ctx)
   validateRelativeTimeContract(surface, ctx)
 }).transform(normalizeRelativeTimeOccurrences)
 
@@ -197,6 +199,11 @@ export function collectNodeBindingRefs(
 
   if (node.binding) {
     refs.push({ kind: 'binding', key: node.binding, path: [...path, 'binding'] })
+  }
+
+  const historyBinding = node.type === 'Automation' ? node.props?.['historyBinding'] : undefined
+  if (typeof historyBinding === 'string') {
+    refs.push({ kind: 'binding', key: historyBinding, path: [...path, 'props', 'historyBinding'] })
   }
 
   node.actions?.forEach((action, index) => {

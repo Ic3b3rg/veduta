@@ -4,6 +4,9 @@ import {
   SurfaceTemplateSchema,
   canonicalJson,
   collectNodeBindingRefs,
+  defaultAtomBindingValue,
+  emptyAtomDataProp,
+  isAtomCompositionProp,
   type Action,
   type AtomNode,
   type JsonObject,
@@ -225,8 +228,7 @@ function templateId(name: string, intent: string, idEntropy: string): string {
  * for props, not just for state.
  */
 function reduceTreeProps(node: AtomNode, dataProps: string[]): AtomNode {
-  const props =
-    node.props === undefined ? undefined : reduceNodeProps(node.id, node.props, dataProps)
+  const props = node.props === undefined ? undefined : reduceNodeProps(node, node.props, dataProps)
   const children = node.children?.map((child) => reduceTreeProps(child, dataProps))
 
   return {
@@ -239,16 +241,22 @@ function reduceTreeProps(node: AtomNode, dataProps: string[]): AtomNode {
   }
 }
 
-function reduceNodeProps(nodeId: string, props: JsonObject, dataProps: string[]): JsonObject {
+function reduceNodeProps(node: AtomNode, props: JsonObject, dataProps: string[]): JsonObject {
   const reduced: JsonObject = {}
 
   for (const [key, value] of Object.entries(props)) {
     if (Array.isArray(value) || (value !== null && typeof value === 'object')) {
-      dataProps.push(`${nodeId}.${key}`)
+      if (isAtomCompositionProp(node.type, key)) {
+        reduced[key] = value
+        continue
+      }
+      dataProps.push(`${node.id}.${key}`)
+      const empty = emptyAtomDataProp(node.type, key)
+      if (empty !== undefined) reduced[key] = empty
       continue
     }
     if (typeof value === 'string' && value.length > TEMPLATE_PROP_MAX_CHARS) {
-      reduced[key] = ''
+      reduced[key] = ['text', 'detail', 'trend', 'value'].includes(key) ? '' : 'Content required'
       continue
     }
     reduced[key] = value
@@ -282,11 +290,12 @@ export function surfaceFromTemplate(
 ): Surface {
   const providedState = options.state ?? {}
   const stateKeySet = new Set(template.stateKeys)
-  const textStateKeys = new Set<string>()
+  const defaultState = new Map<string, JsonValue>()
   walkAtomTree(template.tree, (node) => {
-    if ((node.type === 'Input' || node.type === 'Textarea') && node.binding !== undefined) {
-      textStateKeys.add(node.binding)
-    }
+    if (node.binding !== undefined)
+      defaultState.set(node.binding, defaultAtomBindingValue(node.type))
+    const history = node.type === 'Automation' ? node.props?.['historyBinding'] : undefined
+    if (typeof history === 'string') defaultState.set(history, [])
   })
 
   for (const key of Object.keys(providedState)) {
@@ -302,7 +311,7 @@ export function surfaceFromTemplate(
       if (value === undefined) throw new Error(`state key "${key}" has no JSON value`)
       state[key] = value
     } else {
-      state[key] = textStateKeys.has(key) ? '' : null
+      state[key] = defaultState.get(key) ?? null
     }
   }
 

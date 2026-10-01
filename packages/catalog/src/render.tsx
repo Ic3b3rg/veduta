@@ -1,4 +1,4 @@
-import type { AtomNode } from '@veduta/protocol'
+import { collectNodeBindingRefs, type AtomNode } from '@veduta/protocol'
 import {
   cloneElement,
   isValidElement,
@@ -186,8 +186,9 @@ function boundStateEqual(
   previous: RenderContext['state'],
   next: RenderContext['state'],
 ): boolean {
-  if (node.binding && !valuesEqual(previous[node.binding], next[node.binding])) return false
-  return (node.children ?? []).every((child) => boundStateEqual(child, previous, next))
+  return collectNodeBindingRefs(node, []).every(
+    (ref) => ref.kind !== 'binding' || valuesEqual(previous[ref.key], next[ref.key]),
+  )
 }
 
 function motionEqual(

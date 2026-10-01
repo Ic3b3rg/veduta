@@ -238,7 +238,7 @@ export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
           detail: 'Before adding new groceries',
           status: 'pending',
         },
-        actions: [{ name: 'open', path: 'agent', payload: { target: 'pantry' } }],
+        actions: [{ name: 'click', path: 'agent', payload: { target: 'pantry' } }],
       },
       {
         id: 'water-automation',

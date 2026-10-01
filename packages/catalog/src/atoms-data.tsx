@@ -23,6 +23,9 @@ export function TableAtom({ node, ctx }: AtomProps): ReactNode {
   return (
     <div style={{ overflowX: 'auto' }}>
       <Table className="min-w-80">
+        {node.props?.['caption'] ? (
+          <caption {...motionContent('caption')}>{text(node.props['caption'])}</caption>
+        ) : null}
         <TableHeader>
           <TableRow>
             {columns.map((column) => (
@@ -33,6 +36,13 @@ export function TableAtom({ node, ctx }: AtomProps): ReactNode {
           </TableRow>
         </TableHeader>
         <TableBody>
+          {rows.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={columns.length}>
+                {text(node.props?.['emptyText'] ?? 'No records yet')}
+              </TableCell>
+            </TableRow>
+          ) : null}
           {rows.map((row, rowIndex) => (
             <TableRow
               key={rowKeys[rowIndex]}
@@ -43,7 +53,10 @@ export function TableAtom({ node, ctx }: AtomProps): ReactNode {
                   key={column}
                   {...motionContent(`cell:${rowKeys[rowIndex] ?? rowIndex}:${column}`)}
                 >
-                  {text(row[column])}
+                  {row[column] === null ||
+                  (typeof row[column] === 'string' && row[column].trim() === '')
+                    ? '—'
+                    : text(row[column])}
                 </TableCell>
               ))}
             </TableRow>
