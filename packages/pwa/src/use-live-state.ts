@@ -26,3 +26,10 @@ export function useActionConfirmations(surfaceId: string) {
   const read = () => runtime?.getSnapshot().actionConfirmations[surfaceId]
   return useSyncExternalStore(runtime?.subscribe ?? noSubscription, read, read)
 }
+
+/** A remounted control observes the same runtime wait and retry status as its original instance. */
+export function useActionStatuses(surfaceId: string) {
+  const runtime = usePwaRuntime()
+  const read = () => runtime?.getSnapshot().actionStatuses[surfaceId]
+  return useSyncExternalStore(runtime?.subscribe ?? noSubscription, read, read)
+}

@@ -79,6 +79,123 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+it('an unfinished Agent control remains busy after Card remount and runtime reload until its canonical effect completes', async () => {
+  const values = new Map<string, string>()
+  const storage = fromPartial<Storage>({
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => void values.set(key, value),
+    removeItem: (key: string) => void values.delete(key),
+  })
+  const snapshot = fromPartial<SurfaceSnapshot>({
+    surfaceCursor: 0,
+    spaces: [{ id: initial.spaceId, name: 'Test', slug: 'test', surfaces: [initial] }],
+  })
+  const connections: GatewayHandlers[] = []
+  const invokeSurfaceAction = vi
+    .fn<typeof api.invokeSurfaceAction>()
+    .mockReturnValue(new Promise<api.SurfaceActionResponse>(() => {}))
+  const createRuntime = () =>
+    createPwaLiveStateRuntime({
+      storage,
+      api: {
+        ...api,
+        invokeSurfaceAction,
+        fetchSpaces: vi.fn(async () => snapshot),
+        fetchAuthStatus: vi.fn(async () => ({
+          mode: 'dev' as const,
+          bootstrapRequired: false,
+          passkeyRegistered: false,
+        })),
+        fetchPendingDecisions: vi.fn(async () => ({ revision: 0, decisions: [] })),
+        fetchAutomationOutcomeNotifications: vi.fn(async () => ({
+          revision: 0,
+          notifications: [],
+        })),
+        connectGateway: (handlers) => {
+          connections.push(handlers)
+          return { sendChat: () => true, close: () => {} }
+        },
+      },
+    })
+  const first = createRuntime()
+  let reloaded: PwaLiveStateRuntime | undefined
+  try {
+    await first.start()
+    await act(async () => connections[0]?.onHello(0, 'agent-control-client'))
+    const mounted = render(<AgentCard runtime={first} />)
+    const control = () => screen.getByRole('button', { name: 'Complete demo' })
+    fireEvent.click(control())
+    expect(control()).toHaveProperty('disabled', true)
+    const original = AgentActionInvocationSchema.parse(invokeSurfaceAction.mock.calls[0]?.[1])
+    mounted.unmount()
+    const remounted = render(<AgentCard runtime={first} />)
+    expect(control()).toHaveProperty('disabled', true)
+    expect(control().getAttribute('aria-busy')).toBe('true')
+    expect(screen.getByRole('status').textContent).toBe('Working…')
+    fireEvent.click(control())
+    expect(invokeSurfaceAction).toHaveBeenCalledTimes(1)
+    remounted.unmount()
+    first.stop()
+
+    reloaded = createRuntime()
+    await reloaded.start()
+    await act(async () => connections[1]?.onHello(0, 'agent-control-client'))
+    render(<AgentCard runtime={reloaded} />)
+    expect(invokeSurfaceAction).toHaveBeenCalledTimes(2)
+    expect(invokeSurfaceAction.mock.calls[1]?.[1]).toEqual(original)
+    expect(control()).toHaveProperty('disabled', true)
+    expect(control().getAttribute('aria-busy')).toBe('true')
+    expect(screen.getByRole('status').textContent).toBe('Working…')
+    expect(screen.getByText('Waiting')).toBeDefined()
+    const gateway = connections[1]
+    if (!gateway?.onSurfaceActionTurn) throw new Error('Agent lifecycle connection unavailable')
+    await act(async () =>
+      gateway.onSurfacePatch({
+        cursor: 1,
+        at: '2026-10-01T12:00:01.000Z',
+        spaceId: initial.spaceId,
+        freshness: { updatedAt: '2026-10-01T12:00:01.000Z', updatedBy: 'agent' },
+        patch: {
+          surfaceId: initial.id,
+          operations: [
+            { target: 'state', op: 'replace', path: '/result', value: 'Completed' },
+            {
+              target: 'state',
+              op: 'replace',
+              path: '/records',
+              value: [{ id: 'agent-demo-1', label: 'Completed' }],
+            },
+          ],
+        },
+      }),
+    )
+    expect(control()).toHaveProperty('disabled', true)
+    await act(async () =>
+      gateway.onSurfaceActionTurn?.({
+        type: 'surface.action-turn',
+        turn: AgentActionTurnSchema.parse({
+          id: 'agent-turn-remount',
+          spaceId: initial.spaceId,
+          surfaceId: initial.id,
+          atomId: original.nodeId,
+          actionName: original.name,
+          idempotencyKey: original.idempotencyKey,
+          status: 'completed',
+          surfaceCursor: 1,
+          message: { role: 'assistant', text: 'The declared Agent action completed.' },
+        }),
+      }),
+    )
+    await waitFor(() => expect(control()).toHaveProperty('disabled', false))
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getAllByRole('cell', { name: 'Completed' })).toHaveLength(1)
+  } finally {
+    first.stop()
+    reloaded?.stop()
+  }
+})
+
 it.each([
   { label: 'declared payload', payload: { request: 'Complete the Agent action demo' } },
   { label: 'omitted payload', payload: undefined },

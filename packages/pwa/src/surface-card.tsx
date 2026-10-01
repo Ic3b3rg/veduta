@@ -13,7 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { freshnessLabel } from './api.ts'
 import type { SurfaceUpdateFeedback } from './surface-motion.ts'
 import { useCatalogTheme } from './theme.ts'
-import { useActionConfirmations, usePwaRuntime } from './use-live-state.ts'
+import { useActionConfirmations, useActionStatuses, usePwaRuntime } from './use-live-state.ts'
 
 export function SurfaceCard({
   surface,
@@ -43,6 +43,7 @@ export function SurfaceCard({
   const theme = useCatalogTheme()
   const runtime = usePwaRuntime()
   const actionConfirmations = useActionConfirmations(surface.id)
+  const actionStatuses = useActionStatuses(surface.id)
   const cardRef = useRef<HTMLElement>(null)
   const handledRevealFeedbackRef = useRef<string | undefined>(undefined)
   const revealedWhileSelectedRef = useRef(false)
@@ -172,6 +173,7 @@ export function SurfaceCard({
           state: surface.state,
           dispatch,
           actionConfirmations,
+          actionStatuses,
           acknowledgeAction,
           theme,
           ...(updateFeedback ? { motion: { update: updateFeedback } } : {}),
