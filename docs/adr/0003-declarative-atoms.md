@@ -174,6 +174,27 @@ A Button may retain its declared Agent Action. A supplied Agent payload must exa
 declared payload, and a disabled Button is rejected before enqueue or Event creation. Fast Button
 inputs remain empty; fixed payload values belong in the persisted plan.
 
+Agent Actions now execute through the same serialized Space session, AgentRunner, ModelRouter,
+and gated tools as Chat. The durable request retains its captured Surface, Atom, payload, and
+content origin; captured content remains data and cannot grant tool or presentation authority.
+The matching `agent_path` Event must be delivered before execution. Its turn identity and optional
+client retry key correlate the request with its durable outcome. The HTTP and realtime status
+projection exposes only `queued`, `running`, `completed`, or `failed`, never private snapshots.
+
+The PWA supplies one persisted UUID per unsettled Agent interaction. Identical retries return the
+original turn, including after its declaration changes or the Gateway restarts; conflicting use
+of that identity is rejected. A queue acknowledgment is not completion. Controls retain visible
+waiting or failure feedback until the exact terminal outcome is received, and a completed outcome
+can be acknowledged only after the PWA's canonical Surface cursor reaches its completion cursor.
+Model text cannot turn a rejected write into successful control feedback. New gestures after a
+terminal outcome receive new identities.
+
+On restart, queued requests enter the existing loop once. An interrupted running request is
+reported as failed and is never automatically executed again: effects may already have occurred.
+Historical requests without execution tracking are also visibly failed instead of replayed or
+assigned an invented trusted origin. Surface writes still use their existing recoverable commit
+and Event paths; Agent status changes do not fabricate another Surface mutation.
+
 The catalog uses labelled native controls and the RadioGroup keyboard interaction. Displayed values
 come from canonical state. An outstanding invocation disables its control, exposes `aria-busy` and
 a visible status, and a failure exposes an associated accessible alert while permitting retry.
@@ -193,6 +214,8 @@ Conformance evidence is maintained at public boundaries:
 - [Gateway persistence, invocation, Event, and Chat acceptance](../../packages/daemon/src/control-actions-acceptance.test.ts)
 - [Actual SurfaceCard and runtime late Button recovery](../../packages/pwa/src/surface-control-recovery.test.tsx)
 - [Authenticated two-session pointer and keyboard journey, retry, reload, and reconnect](../../packages/e2e/tests/controls.spec.ts)
+- [Agent execution, concurrent retry, atomic failure, and restart through the Gateway](../../packages/daemon/src/agent-action-acceptance.test.ts)
+- [Actual SurfaceCard Agent wait and late confirmation](../../packages/pwa/src/surface-agent-control-recovery.test.tsx)
 
 ## Read compatibility for Atom version skew (issue #148)
 

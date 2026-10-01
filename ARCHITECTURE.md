@@ -171,7 +171,10 @@ unrecognized prose; the persistent migration and importer transition remain sepa
 A Surface = **a declarative tree of Atoms + typed state + bindings**. Veduta owns its closed catalog and canonical protocol, informed by **Google's A2UI** ([ADR-0003](docs/adr/0003-declarative-atoms.md)). Every Atom action declares its path:
 
 - **Fast path**: one closed typed Action plan reduces the latest canonical state and appends its matching redacted Event — zero LLM, native-app latency. Plans use only `set`, `append`, `update`, `remove`, and `clear`, with exact existing targets and stable record identities. The client supplies typed owning inputs plus the Gateway-sealed Action revision and stable intent UUID. _Memory contract_: the Agent always reads the events before reasoning about a Space.
-- **Agent path**: the action goes to the Agent with an honest wait.
+- **Agent path**: a durable, identity-stable request enters the same serialized Space session and
+  gated Agent tools as Chat. The client waits for a terminal turn outcome and its canonical Surface
+  cursor; queue acknowledgment is not completion. Interrupted running requests are reported for
+  inspection and never automatically executed again ([ADR-0003](docs/adr/0003-declarative-atoms.md)).
 
 Every validated Surface mutation that requires a matching Space Event completes through one
 recoverable **Surface commit**. The SQLite mutation and prepared Event intent share a stable commit
