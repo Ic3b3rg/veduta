@@ -1,3 +1,4 @@
+import { inputSetPlan } from './action-builders.ts'
 import { describe, expect, it } from 'vitest'
 import { AtomNodeSchema, SurfaceSchema } from './index.ts'
 
@@ -72,7 +73,9 @@ describe('content and data Atom acceptance', () => {
             type: 'Automation',
             binding: 'enabled',
             props: { label: 'Review', schedule: 'Weekly', historyBinding: 'history' },
-            actions: [{ name: 'toggle', path: 'fast', stateKey: 'enabled' }],
+            actions: [
+              { name: 'toggle', path: 'fast', plan: inputSetPlan('enabled', { type: 'boolean' }) },
+            ],
           },
         ],
       },

@@ -1,3 +1,4 @@
+import { inputSetPlan, formSetPlan } from './action-builders.ts'
 import { describe, expect, it } from 'vitest'
 import {
   AtomNodeSchema,
@@ -105,7 +106,13 @@ describe('Disclosure and selection Atom contracts', () => {
         type: 'Switch',
         binding: 'notifications',
         props: { label: 'Notifications' },
-        actions: [{ name: 'toggle', path: 'fast', stateKey: 'notifications' }],
+        actions: [
+          {
+            name: 'toggle',
+            path: 'fast',
+            plan: inputSetPlan('notifications', { type: 'boolean' }),
+          },
+        ],
       }).success,
     ).toBe(true)
     expect(
@@ -120,7 +127,7 @@ describe('Disclosure and selection Atom contracts', () => {
             { label: 'Milan', value: 'milan' },
           ],
         },
-        actions: [{ name: 'change', path: 'fast', stateKey: 'city' }],
+        actions: [{ name: 'change', path: 'fast', plan: inputSetPlan('city', { type: 'string' }) }],
       }).success,
     ).toBe(true)
   })
@@ -157,19 +164,21 @@ describe('Disclosure and selection Atom contracts', () => {
       type: 'Switch',
       props: { label: 'Enabled' },
       binding: 'enabled',
-      actions: [{ name: 'change', path: 'fast', stateKey: 'enabled' }],
+      actions: [
+        { name: 'change', path: 'fast', plan: inputSetPlan('enabled', { type: 'boolean' }) },
+      ],
     },
     {
       type: 'Switch',
       props: { label: 'Enabled' },
       binding: 'enabled',
-      actions: [{ name: 'toggle', path: 'fast', stateKey: 'other' }],
+      actions: [{ name: 'toggle', path: 'fast', plan: inputSetPlan('other', { type: 'boolean' }) }],
     },
     {
       type: 'Combobox',
       props: { label: 'City', options: [] },
       binding: 'city',
-      actions: [{ name: 'change', path: 'fast', stateKey: 'city' }],
+      actions: [{ name: 'change', path: 'fast', plan: inputSetPlan('city', { type: 'string' }) }],
     },
     {
       type: 'Combobox',
@@ -181,13 +190,13 @@ describe('Disclosure and selection Atom contracts', () => {
         ],
       },
       binding: 'city',
-      actions: [{ name: 'change', path: 'fast', stateKey: 'city' }],
+      actions: [{ name: 'change', path: 'fast', plan: inputSetPlan('city', { type: 'string' }) }],
     },
     {
       type: 'Combobox',
       props: { label: 'City', options: ['Rome'] },
       binding: 'city',
-      actions: [{ name: 'change', path: 'fast', stateKey: 'city' }],
+      actions: [{ name: 'change', path: 'fast', plan: inputSetPlan('city', { type: 'string' }) }],
     },
   ])('rejects an unusable new Atom %#', (candidate) => {
     expect(AtomNodeSchema.safeParse({ id: 'invalid', ...candidate }).success).toBe(false)
@@ -203,14 +212,18 @@ describe('Disclosure and selection Atom contracts', () => {
           type: 'Switch',
           binding: 'enabled',
           props: { label: 'Enabled' },
-          actions: [{ name: 'toggle', path: 'fast', stateKey: 'enabled' }],
+          actions: [
+            { name: 'toggle', path: 'fast', plan: inputSetPlan('enabled', { type: 'boolean' }) },
+          ],
         },
         {
           id: 'city',
           type: 'Combobox',
           binding: 'city',
           props: { label: 'City', options: [{ label: 'Rome', value: 'rome' }] },
-          actions: [{ name: 'change', path: 'fast', stateKey: 'city' }],
+          actions: [
+            { name: 'change', path: 'fast', plan: inputSetPlan('city', { type: 'string' }) },
+          ],
         },
       ],
     }
@@ -353,7 +366,9 @@ describe('Form text Atom protocol', () => {
   })
 
   it.each([
-    { actions: [{ name: 'change', path: 'fast', stateKey: 'title' }] },
+    {
+      actions: [{ name: 'change', path: 'fast', plan: inputSetPlan('title', { type: 'string' }) }],
+    },
     { children: [{ id: 'nested', type: 'Text', props: { text: 'Not a leaf' } }] },
   ])('keeps Input a submit-only leaf %#', (extra) => {
     const result = AtomNodeSchema.safeParse({
@@ -385,7 +400,10 @@ describe('Form text Atom protocol', () => {
 
   it.each([
     { binding: undefined },
-    { binding: 'notes', actions: [{ name: 'change', path: 'fast', stateKey: 'notes' }] },
+    {
+      binding: 'notes',
+      actions: [{ name: 'change', path: 'fast', plan: inputSetPlan('notes', { type: 'string' }) }],
+    },
     {
       binding: 'notes',
       children: [{ id: 'nested', type: 'Text', props: { text: 'Not a leaf' } }],
@@ -406,7 +424,7 @@ describe('Form text Atom protocol', () => {
       id: 'profile-form',
       type: 'Form',
       props: { label: 'Profile', submitLabel: 'Save', autosave: true },
-      actions: [{ name: 'submit', path: 'fast', stateKeys: ['name'] }],
+      actions: [{ name: 'submit', path: 'fast', plan: formSetPlan(['name']) }],
       children: [{ id: 'name', type: 'Input', binding: 'name', props: { label: 'Name' } }],
     })
 
@@ -418,7 +436,7 @@ describe('Form text Atom protocol', () => {
       id: 'profile-form',
       type: 'Form',
       props: { label: 'Profile', submitLabel: 'Save' },
-      actions: [{ name: 'submit', path: 'fast', stateKeys: ['name'], unexpected: true }],
+      actions: [{ name: 'submit', path: 'fast', unexpected: true, plan: formSetPlan(['name']) }],
       children: [{ id: 'name', type: 'Input', binding: 'name', props: { label: 'Name' } }],
     })
 
@@ -429,18 +447,16 @@ describe('Form text Atom protocol', () => {
     { binding: 'name' },
     { children: undefined },
     { actions: undefined },
-    { actions: [{ name: 'save', path: 'fast', stateKeys: ['name'] }] },
+    { actions: [{ name: 'save', path: 'fast', plan: formSetPlan(['name']) }] },
     { actions: [{ name: 'submit', path: 'agent' }] },
-    { actions: [{ name: 'submit', path: 'fast', stateKey: 'name' }] },
+    { actions: [{ name: 'submit', path: 'fast', plan: inputSetPlan('name', { type: 'string' }) }] },
     {
-      actions: [
-        { name: 'submit', path: 'fast', payload: { source: 'profile' }, stateKeys: ['name'] },
-      ],
+      actions: [{ name: 'submit', path: 'fast', plan: formSetPlan(['other']) }],
     },
     {
       actions: [
-        { name: 'submit', path: 'fast', stateKeys: ['name'] },
-        { name: 'also-submit', path: 'fast', stateKeys: ['name'] },
+        { name: 'submit', path: 'fast', plan: formSetPlan(['name']) },
+        { name: 'also-submit', path: 'fast', plan: formSetPlan(['name']) },
       ],
     },
   ])('requires one unbound Form with one atomic submit action %#', (override) => {
@@ -448,7 +464,7 @@ describe('Form text Atom protocol', () => {
       id: 'profile-form',
       type: 'Form',
       props: { label: 'Profile', submitLabel: 'Save' },
-      actions: [{ name: 'submit', path: 'fast', stateKeys: ['name'] }],
+      actions: [{ name: 'submit', path: 'fast', plan: formSetPlan(['name']) }],
       children: [{ id: 'name', type: 'Input', binding: 'name', props: { label: 'Name' } }],
       ...override,
     })
@@ -456,20 +472,20 @@ describe('Form text Atom protocol', () => {
     expect(result.success).toBe(false)
   })
 
-  it('reserves multi-key actions for Form submission', () => {
+  it('rejects Button inputs not owned by its interaction', () => {
     const result = AtomNodeSchema.safeParse({
       id: 'save-button',
       type: 'Button',
       props: { label: 'Save' },
-      actions: [{ name: 'submit', path: 'fast', stateKeys: ['name'] }],
+      actions: [{ name: 'submit', path: 'fast', plan: formSetPlan(['name']) }],
     })
 
     expect(result.success).toBe(false)
     if (!result.success) {
       expect(result.error.issues).toContainEqual(
         expect.objectContaining({
-          path: ['actions', 0, 'stateKeys'],
-          message: 'stateKeys actions are reserved for Form submission',
+          path: ['actions', 0, 'plan', 'inputs'],
+          message: 'inputs must exactly match the owning Atom interaction fields and types',
         }),
       )
     }

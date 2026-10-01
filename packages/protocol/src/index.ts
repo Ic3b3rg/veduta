@@ -1,11 +1,12 @@
 export {
   ActionSchema,
+  FastActionSchema,
+  AgentActionSchema,
+  type FastAction,
   FormSubmitActionSchema,
-  FormSubmitPayloadSchema,
   type Action,
   type ActionInput,
   type FormSubmitAction,
-  type FormSubmitPayload,
 } from './action.ts'
 export { applySurfacePatch, applySurfacePatchEvent } from './apply-patch.ts'
 export { ChartAtomPropsSchema, chartSeriesSchema, type ChartAtomProps } from './chart.ts'
@@ -141,6 +142,10 @@ export {
   PatchSchema,
   PatchOperationSchema,
   ActionInvocationSchema,
+  FastActionInvocationSchema,
+  AgentActionInvocationSchema,
+  type FastActionInvocation,
+  type AgentActionInvocation,
   type Patch,
   type PatchOperation,
   type ActionInvocation,
@@ -229,7 +234,6 @@ export {
   findAtom,
   findDeclaredAction,
   findDeclaredFastAction,
-  findDeclaredFastFormAction,
   findDeclaredAgentAction,
 } from './tree.ts'
 export {
@@ -384,3 +388,8 @@ export {
   type UpdateProgress,
 } from './update.ts'
 export { canonicalJson, isJsonValue } from './json.ts'
+
+export * from './action-plan.ts'
+export * from './action-outcome.ts'
+export * from './action-inputs.ts'
+export * from './action-builders.ts'

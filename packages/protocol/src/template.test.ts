@@ -1,3 +1,4 @@
+import { inputSetPlan, formSetPlan } from './action-builders.ts'
 import { describe, expect, it } from 'vitest'
 import { SurfaceTemplateIdSchema, SurfaceTemplateSchema, TemplateBundleSchema } from './index.ts'
 
@@ -16,14 +17,18 @@ const validTemplate = {
         type: 'Checkbox',
         binding: 'milk',
         props: { label: 'Milk' },
-        actions: [{ name: 'toggle', path: 'fast', stateKey: 'milk' }],
+        actions: [
+          { name: 'toggle', path: 'fast', plan: inputSetPlan('milk', { type: 'boolean' }) },
+        ],
       },
       {
         id: 'eggs',
         type: 'Checkbox',
         binding: 'eggs',
         props: { label: 'Eggs' },
-        actions: [{ name: 'toggle', path: 'fast', stateKey: 'eggs' }],
+        actions: [
+          { name: 'toggle', path: 'fast', plan: inputSetPlan('eggs', { type: 'boolean' }) },
+        ],
       },
     ],
   },
@@ -71,7 +76,7 @@ describe('SurfaceTemplateSchema', () => {
     const bad = JSON.parse(JSON.stringify(validTemplate))
     // Break only the fast action's target, leaving the binding itself valid,
     // so this exercises the fast-action branch specifically.
-    bad.tree.children[2].actions[0].stateKey = 'ghost'
+    bad.tree.children[2].actions[0].plan = inputSetPlan('ghost', { type: 'boolean' })
 
     const result = SurfaceTemplateSchema.safeParse(bad)
     expect(result.success).toBe(false)
@@ -89,7 +94,7 @@ describe('SurfaceTemplateSchema', () => {
         id: 'profile-form',
         type: 'Form',
         props: { label: 'Profile', submitLabel: 'Save' },
-        actions: [{ name: 'submit', path: 'fast', stateKeys: ['name', 'bio'] }],
+        actions: [{ name: 'submit', path: 'fast', plan: formSetPlan(['name', 'bio']) }],
         children: [
           { id: 'name', type: 'Input', binding: 'name', props: { label: 'Name' } },
           { id: 'bio', type: 'Textarea', binding: 'bio', props: { label: 'Biography' } },
@@ -116,13 +121,13 @@ describe('SurfaceTemplateSchema', () => {
         id: 'profile-form',
         type: 'Form',
         props: { label: 'Profile', submitLabel: 'Save' },
-        actions: [{ name: 'submit', path: 'fast', stateKeys: ['name'] }],
+        actions: [{ name: 'submit', path: 'fast', plan: formSetPlan(['name']) }],
         children: [
           { id: 'name', type: 'Input', binding: 'name', props: { label: 'Name' } },
           { id: 'bio', type: 'Textarea', binding: 'bio', props: { label: 'Biography' } },
         ],
       },
-      message: 'Form submit targets must match its text fields (missing: "bio")',
+      message: 'inputs must exactly match the owning Atom interaction fields and types',
     },
   ])('rejects a structurally incomplete Form Template', ({ tree, message }) => {
     const result = SurfaceTemplateSchema.safeParse({

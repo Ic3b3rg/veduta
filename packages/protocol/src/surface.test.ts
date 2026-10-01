@@ -1,7 +1,8 @@
+import { formSetPlan, inputSetPlan } from './action-builders.ts'
 import { describe, expect, it } from 'vitest'
 import {
   ActionSchema,
-  FormSubmitPayloadSchema,
+  AgentActionSchema,
   SurfaceSchema,
   SurfaceValidationError,
   parseSurface,
@@ -16,13 +17,7 @@ const textFormSurface = {
     id: 'profile-form',
     type: 'Form',
     props: { label: 'Profile details', submitLabel: 'Save profile' },
-    actions: [
-      {
-        name: 'submit',
-        path: 'fast',
-        stateKeys: ['displayName', 'bio'],
-      },
-    ],
+    actions: [{ name: 'submit', path: 'fast', plan: formSetPlan(['displayName', 'bio']) }],
     children: [
       {
         id: 'display-name',
@@ -56,14 +51,18 @@ const shoppingChecklistWithChart = {
         type: 'Checkbox',
         binding: 'milk',
         props: { label: 'Milk' },
-        actions: [{ name: 'toggle', path: 'fast', stateKey: 'milk' }],
+        actions: [
+          { name: 'toggle', path: 'fast', plan: inputSetPlan('milk', { type: 'boolean' }) },
+        ],
       },
       {
         id: 'eggs',
         type: 'Checkbox',
         binding: 'eggs',
         props: { label: 'Eggs' },
-        actions: [{ name: 'toggle', path: 'fast', stateKey: 'eggs' }],
+        actions: [
+          { name: 'toggle', path: 'fast', plan: inputSetPlan('eggs', { type: 'boolean' }) },
+        ],
       },
       {
         id: 'spend',
@@ -114,12 +113,7 @@ describe('SurfaceSchema', () => {
     const parsed = SurfaceSchema.parse(textFormSurface)
 
     expect(parsed.tree.actions).toEqual([
-      {
-        name: 'submit',
-        path: 'fast',
-        payload: {},
-        stateKeys: ['displayName', 'bio'],
-      },
+      { name: 'submit', path: 'fast', plan: formSetPlan(['displayName', 'bio']) },
     ])
   })
 
@@ -155,7 +149,7 @@ describe('SurfaceSchema', () => {
         id: 'profile-form',
         type: 'Form',
         props: { label: 'Profile details', submitLabel: 'Save profile' },
-        actions: [{ name: 'submit', path: 'fast', stateKeys: ['bio'] }],
+        actions: [{ name: 'submit', path: 'fast', plan: formSetPlan(['bio']) }],
         children: [
           {
             id: 'bio',
@@ -189,9 +183,9 @@ describe('SurfaceSchema', () => {
       stateKeys: ['displayName', 'bio', 'nickname'],
       message: 'Form submit targets must match its text fields (extra: "nickname")',
     },
-  ])('rejects incomplete Form submit targets: $message', ({ stateKeys, message }) => {
+  ])('rejects incomplete Form submit targets: $message', ({ stateKeys }) => {
     const candidate = JSON.parse(JSON.stringify(textFormSurface))
-    candidate.tree.actions[0].stateKeys = stateKeys
+    candidate.tree.actions[0].plan = formSetPlan(stateKeys)
     candidate.state.nickname = 'Countess of Lovelace'
 
     const result = SurfaceSchema.safeParse(candidate)
@@ -200,8 +194,8 @@ describe('SurfaceSchema', () => {
     if (!result.success) {
       expect(result.error.issues).toContainEqual(
         expect.objectContaining({
-          path: ['tree', 'actions', 0, 'stateKeys'],
-          message,
+          path: ['tree', 'actions', 0, 'plan', 'inputs'],
+          message: 'inputs must exactly match the owning Atom interaction fields and types',
         }),
       )
     }
@@ -232,7 +226,7 @@ describe('SurfaceSchema', () => {
         id: 'nested-form',
         type: 'Form',
         props: { label: 'Nested', submitLabel: 'Save nested' },
-        actions: [{ name: 'submit', path: 'fast', stateKeys: ['bio'] }],
+        actions: [{ name: 'submit', path: 'fast', plan: formSetPlan(['bio']) }],
         children: [
           { id: 'nested-bio', type: 'Textarea', binding: 'bio', props: { label: 'Biography' } },
         ],
@@ -284,11 +278,9 @@ describe('SurfaceSchema', () => {
 
   it('rejects a fast action that targets a missing state key', () => {
     const bad = JSON.parse(JSON.stringify(shoppingChecklistWithChart))
-    bad.tree.children[1].actions[0].stateKey = 'missing'
+    bad.tree.children[1].actions[0].plan = inputSetPlan('missing', { type: 'boolean' })
 
-    expect(() => parseSurface(bad)).toThrow(
-      'tree.children.1.actions.0.stateKey: fast action "toggle" targets missing state key "missing"',
-    )
+    expect(() => parseSurface(bad)).toThrow('missing')
   })
 
   it('rejects a surface without freshness metadata', () => {
@@ -413,7 +405,13 @@ describe('SurfaceSchema', () => {
             type: 'Checkbox',
             binding: 'todayDone',
             props: { label: 'Done today' },
-            actions: [{ name: 'toggle', path: 'fast', stateKey: 'todayDone' }],
+            actions: [
+              {
+                name: 'toggle',
+                path: 'fast',
+                plan: inputSetPlan('todayDone', { type: 'boolean' }),
+              },
+            ],
           },
         ],
       },
@@ -433,7 +431,7 @@ describe('SurfaceSchema', () => {
     if (!result.success) {
       expect(result.error.issues).toContainEqual(
         expect.objectContaining({
-          path: ['tree', 'children', 0, 'actions', 0, 'stateKey'],
+          path: ['tree', 'children', 0, 'actions', 0, 'plan', 'targets', 'todayDone'],
           message: 'fast actions cannot target relative-time source or projection state',
         }),
       )
@@ -479,8 +477,8 @@ describe('ActionSchema', () => {
   })
 
   it('creates a fresh default payload for every parsed action', () => {
-    const first = ActionSchema.parse({ name: 'regenerate' })
-    const second = ActionSchema.parse({ name: 'regenerate' })
+    const first = AgentActionSchema.parse({ name: 'regenerate' })
+    const second = AgentActionSchema.parse({ name: 'regenerate' })
     expect(first.payload).not.toBe(second.payload)
   })
 
@@ -489,46 +487,22 @@ describe('ActionSchema', () => {
     expect(result.success).toBe(false)
   })
 
-  it('rejects duplicate atomic state targets', () => {
-    const result = ActionSchema.safeParse({
-      name: 'submit',
-      path: 'fast',
-      stateKeys: ['name', 'name'],
-    })
-
-    expect(result.success).toBe(false)
-    if (!result.success) {
-      expect(result.error.issues).toContainEqual(
-        expect.objectContaining({
-          path: ['stateKeys', 1],
-          message: 'duplicate state key "name"',
-        }),
-      )
-    }
+  it('rejects retired scalar and Form target declarations', () => {
+    expect(
+      ActionSchema.safeParse({ name: 'toggle', path: 'fast', stateKey: 'value' }).success,
+    ).toBe(false)
+    expect(
+      ActionSchema.safeParse({ name: 'submit', path: 'fast', stateKeys: ['value'] }).success,
+    ).toBe(false)
   })
 
   it('accepts a declared action payload', () => {
     expect(
-      ActionSchema.parse({
+      AgentActionSchema.parse({
         name: 'regenerate',
         path: 'agent',
         payload: { reason: 'stale-surface' },
       }).payload,
     ).toEqual({ reason: 'stale-surface' })
   })
-})
-
-describe('FormSubmitPayloadSchema', () => {
-  it('accepts a complete string field map', () => {
-    expect(FormSubmitPayloadSchema.parse({ value: { displayName: 'Ada', bio: '' } })).toEqual({
-      value: { displayName: 'Ada', bio: '' },
-    })
-  })
-
-  it.each([{ value: { displayName: 42 } }, { value: { displayName: 'Ada' }, unexpected: true }])(
-    'rejects a malformed submitted payload',
-    (payload) => {
-      expect(FormSubmitPayloadSchema.safeParse(payload).success).toBe(false)
-    },
-  )
 })

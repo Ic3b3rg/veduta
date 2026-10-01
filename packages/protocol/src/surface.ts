@@ -3,6 +3,7 @@ import { AtomNodeSchema, ComboboxAtomPropsSchema, type AtomNode } from './atom.t
 import { ChartAtomPropsSchema, chartSeriesSchema } from './chart.ts'
 import { JsonObjectSchema, type JsonObject } from './json.ts'
 import { validateContentState } from './content-atoms.ts'
+import { validateActionPlansState } from './action-inputs.ts'
 
 /**
  * A Surface is living state, not a response (CONTEXT.md): a declarative
@@ -104,6 +105,7 @@ export function validateAtomTreeState(
   state: JsonObject,
   ctx: z.RefinementCtx,
 ): void {
+  validateActionPlansState(tree, state, ctx)
   validateNodeBindings(tree, state, ['tree'], ctx)
   validateTextFormTree(tree, false, ['tree'], ctx)
   validateTextFormState(tree, state, ctx)
@@ -229,21 +231,12 @@ export function collectNodeBindingRefs(
   node.actions?.forEach((action, index) => {
     if (action.path !== 'fast') return
 
-    if (action.stateKey !== undefined) {
-      refs.push({
-        kind: 'fastAction',
-        key: action.stateKey,
-        actionName: action.name,
-        path: [...path, 'actions', index, 'stateKey'],
-      })
-    }
-
-    action.stateKeys?.forEach((stateKey, stateKeyIndex) => {
+    Object.keys(action.plan.targets).forEach((stateKey) => {
       refs.push({
         kind: 'fastAction',
         key: stateKey,
         actionName: action.name,
-        path: [...path, 'actions', index, 'stateKeys', stateKeyIndex],
+        path: [...path, 'actions', index, 'plan', 'targets', stateKey],
       })
     })
   })
@@ -377,24 +370,6 @@ function validateFormFields(form: AtomNode, path: (string | number)[], ctx: z.Re
     }
     fieldBindings.add(field.binding)
   }
-
-  const stateKeys = form.actions?.[0]?.stateKeys
-  if (stateKeys === undefined) return
-
-  const targetBindings = new Set(stateKeys)
-  const missing = [...fieldBindings].filter((binding) => !targetBindings.has(binding))
-  const extra = [...targetBindings].filter((binding) => !fieldBindings.has(binding))
-  if (missing.length === 0 && extra.length === 0) return
-
-  const differences = [
-    ...(missing.length === 0 ? [] : [`missing: ${formatQuotedList(missing)}`]),
-    ...(extra.length === 0 ? [] : [`extra: ${formatQuotedList(extra)}`]),
-  ]
-  ctx.addIssue({
-    code: z.ZodIssueCode.custom,
-    path: [...path, 'actions', 0, 'stateKeys'],
-    message: `Form submit targets must match its text fields (${differences.join('; ')})`,
-  })
 }
 
 function collectOwnedFormFields(form: AtomNode, path: (string | number)[]): FormTextFieldRef[] {
@@ -410,10 +385,6 @@ function collectOwnedFormFields(form: AtomNode, path: (string | number)[]): Form
   })
 
   return fields
-}
-
-function formatQuotedList(values: string[]): string {
-  return values.map((value) => `"${value}"`).join(', ')
 }
 
 function validateRelativeTimeContract(

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CommittedFastActionMetadataSchema, FastActionOutcomeSchema } from './action-outcome.ts'
 import { AuthSessionTokenSchema } from './auth.ts'
 import { AutomationOutcomeNotificationSchema } from './automation-outcome.ts'
 import { ChatClientMessageSchema, ChatMessageSchema } from './chat.ts'
@@ -69,10 +70,7 @@ export const PinSurfaceResultSchema = z.object({
  * Gateway's authoritative Surface event stream. The PWA compares this cursor
  * with realtime delivery before accepting the full Surface value.
  */
-export const FastSurfaceActionResultSchema = z.object({
-  surface: SurfaceSchema,
-  surfaceCursor: GatewayCursorSchema,
-})
+export const FastSurfaceActionResultSchema = FastActionOutcomeSchema
 
 const SurfaceCommitIdSchema = z.string().regex(/^scm-[A-Za-z0-9-]+$/)
 
@@ -105,15 +103,32 @@ export const SurfaceSnapshotSchema = z.object({
   spaces: z.array(SpaceWithSurfacesSchema),
 })
 
-export const SurfacePatchEventSchema = z.object({
-  cursor: GatewayCursorSchema,
-  at: z.string().datetime(),
-  spaceId: z.string().min(1),
-  patch: PatchSchema,
-  freshness: FreshnessSchema,
-  /** Present when this patch established or refreshed a relative-time projection window. */
-  validity: RelativeTimeValiditySchema.optional(),
-})
+export const SurfacePatchEventSchema = z
+  .object({
+    cursor: GatewayCursorSchema,
+    at: z.string().datetime(),
+    spaceId: z.string().min(1),
+    patch: PatchSchema,
+    actionOutcome: CommittedFastActionMetadataSchema.optional(),
+    freshness: FreshnessSchema,
+    /** Present when this patch established or refreshed a relative-time projection window. */
+    validity: RelativeTimeValiditySchema.optional(),
+  })
+  .superRefine((event, ctx) => {
+    const action = event.actionOutcome
+    if (
+      action &&
+      (action.surfaceId !== event.patch.surfaceId ||
+        action.eventCursor !== event.cursor ||
+        action.surfaceCursor !== event.cursor ||
+        action.duplicate)
+    )
+      ctx.addIssue({
+        code: 'custom',
+        path: ['actionOutcome'],
+        message: 'live action outcome must identify this canonical Patch event',
+      })
+  })
 
 export const PresenceStatusSchema = z.enum(['online', 'away'])
 

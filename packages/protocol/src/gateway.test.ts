@@ -91,6 +91,21 @@ describe('Gateway protocol', () => {
         freshness: { updatedAt: '2026-07-03T10:00:00.000Z', updatedBy: 'user' as const },
       },
       surfaceCursor: 7,
+      eventCursor: 7,
+      surfaceVersion: 2,
+      treeVersion: 1,
+      outcome: 'committed',
+      duplicate: false,
+      surfaceId: 'srf-groceries',
+      nodeId: 'button',
+      actionName: 'press',
+      actionRevision: 'acr-example',
+      intentId: '106c313d-9948-44fa-a3fe-01919ba47d75',
+      surfaceCommitId: 'scm-example',
+      patch: {
+        surfaceId: 'srf-groceries',
+        operations: [{ target: 'state', op: 'replace', path: '/milk', value: true }],
+      },
     }
 
     expect(FastSurfaceActionResultSchema.parse(result)).toEqual({

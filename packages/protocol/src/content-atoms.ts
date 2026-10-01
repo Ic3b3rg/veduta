@@ -139,19 +139,6 @@ export function validateContentAtom(node: ContentAtomCandidate, ctx: z.Refinemen
   ) {
     issue(ctx, ['actions'], 'ListItem accepts exactly one click action')
   }
-  if (node.type === 'ListItem') {
-    const action = node.actions?.[0]
-    if (action?.path === 'fast' && action.payload['value'] === undefined) {
-      issue(
-        ctx,
-        ['actions', 0, 'payload'],
-        'ListItem fast click requires its declared replacement value',
-      )
-    }
-    if (action?.path === 'agent' && action.stateKey !== undefined) {
-      issue(ctx, ['actions', 0, 'stateKey'], 'ListItem Agent click cannot target state directly')
-    }
-  }
   if (node.type === 'Automation') {
     const action = node.actions?.[0]
     if (node.binding !== undefined && (node.actions?.length !== 1 || action?.name !== 'toggle')) {
@@ -159,11 +146,17 @@ export function validateContentAtom(node: ContentAtomCandidate, ctx: z.Refinemen
     } else if (node.binding === undefined && node.actions !== undefined) {
       issue(ctx, ['actions'], 'Display-only Automation does not accept actions')
     }
-    if (action?.path === 'fast' && action.stateKey !== node.binding) {
+    if (
+      action?.path === 'fast' &&
+      !action.plan.steps.some(
+        (step) =>
+          step.op === 'set' &&
+          step.target === node.binding &&
+          step.value.source === 'input' &&
+          step.value.name === 'value',
+      )
+    ) {
       issue(ctx, ['actions', 0, 'stateKey'], 'Automation toggle must target its enabled binding')
-    }
-    if (action?.path === 'agent' && action.stateKey !== undefined) {
-      issue(ctx, ['actions', 0, 'stateKey'], 'Automation Agent toggle cannot target state directly')
     }
   }
   if (node.type === 'Table' && parsed.success && node.props?.['rows'] !== undefined) {

@@ -1,4 +1,4 @@
-import type { Action } from './action.ts'
+import type { Action, FastAction } from './action.ts'
 import type { AtomNode } from './atom.ts'
 
 /** Depth-first lookup of a node in a Surface tree. */
@@ -31,25 +31,9 @@ export function findDeclaredFastAction(
   root: AtomNode,
   nodeId: string,
   actionName: string,
-): (Action & { path: 'fast'; stateKey: string }) | undefined {
+): FastAction | undefined {
   const action = findDeclaredAction(root, nodeId, actionName)
-  if (!action || action.stateKey === undefined) return undefined
-  if (action.path !== 'fast') return undefined
-  return { ...action, path: 'fast', stateKey: action.stateKey }
-}
-
-/** Resolve the atomic fast submit declared by a Form. */
-export function findDeclaredFastFormAction(
-  root: AtomNode,
-  nodeId: string,
-  actionName: string,
-): (Action & { path: 'fast'; stateKeys: string[] }) | undefined {
-  const node = findAtom(root, nodeId)
-  if (node?.type !== 'Form') return undefined
-
-  const action = node.actions?.find((candidate) => candidate.name === actionName)
-  if (!action || action.path !== 'fast' || action.stateKeys === undefined) return undefined
-  return { ...action, path: 'fast', stateKeys: action.stateKeys }
+  return action?.path === 'fast' ? action : undefined
 }
 
 /** Resolve an Agent-path action declared by a node. */

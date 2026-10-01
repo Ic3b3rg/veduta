@@ -1,3 +1,4 @@
+import { inputSetPlan } from './action-builders.ts'
 import { describe, expect, it } from 'vitest'
 import {
   PatchSchema,
@@ -99,7 +100,9 @@ describe('applySurfacePatch', () => {
           type: 'Checkbox',
           binding: 'milk',
           props: { label: 'Milk' },
-          actions: [{ name: 'toggle', path: 'fast', payload: {}, stateKey: 'milk' }],
+          actions: [
+            { name: 'toggle', path: 'fast', plan: inputSetPlan('milk', { type: 'boolean' }) },
+          ],
         },
       ],
     },

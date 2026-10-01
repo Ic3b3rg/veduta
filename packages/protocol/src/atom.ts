@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { validateOwningActionDeclarations } from './action-inputs.ts'
 import { ActionSchema, FormSubmitActionSchema, type Action } from './action.ts'
 import { ChartAtomPropsSchema } from './chart.ts'
 import { validateContentAtom } from './content-atoms.ts'
@@ -103,6 +104,7 @@ export const InputAtomPropsSchema = z
     label: z.string().trim().min(1).max(120),
     placeholder: z.string().max(240).optional(),
     inputType: z.enum(['text', 'email', 'search', 'tel', 'url']).optional(),
+    valueType: z.literal('number').optional(),
   })
   .strict()
 
@@ -218,6 +220,7 @@ interface PendingAtomCandidate {
 }
 
 function validateAtomNode(node: PendingAtomCandidate, ctx: z.RefinementCtx): void {
+  validateOwningActionDeclarations(node, ctx)
   validatePendingAtom(node, ctx)
   validateInputAtom(node, ctx)
   validateTextareaAtom(node, ctx)
@@ -227,7 +230,6 @@ function validateAtomNode(node: PendingAtomCandidate, ctx: z.RefinementCtx): voi
   validateDisclosureAtom(node, ctx)
   validateNewControlAtom(node, ctx)
   validateChartAtom(node, ctx)
-  validateAtomicActions(node, ctx)
 }
 
 function validateChartAtom(node: PendingAtomCandidate, ctx: z.RefinementCtx): void {
@@ -335,33 +337,29 @@ function validateNewControlAtom(node: PendingAtomCandidate, ctx: z.RefinementCtx
     return
   }
   const action = node.actions[0]
-  if (action.path === 'fast' && action.stateKey !== node.binding) {
+  if (
+    action.path === 'fast' &&
+    !action.plan.steps.some(
+      (step) =>
+        step.op === 'set' &&
+        step.target === node.binding &&
+        step.value.source === 'input' &&
+        step.value.name === 'value',
+    )
+  ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['actions', 0, 'stateKey'],
       message: `${node.type} fast action must target its binding`,
     })
   }
-  if (action.path === 'agent' && action.stateKey !== undefined) {
+  if (action.path === 'agent' && 'plan' in action) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['actions', 0, 'stateKey'],
       message: `${node.type} agent action cannot target state directly`,
     })
   }
-}
-
-function validateAtomicActions(node: PendingAtomCandidate, ctx: z.RefinementCtx): void {
-  if (node.type === 'Form') return
-
-  node.actions?.forEach((action, index) => {
-    if (action.stateKeys === undefined) return
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['actions', index, 'stateKeys'],
-      message: 'stateKeys actions are reserved for Form submission',
-    })
-  })
 }
 
 function validatePendingAtom(node: PendingAtomCandidate, ctx: z.RefinementCtx): void {
