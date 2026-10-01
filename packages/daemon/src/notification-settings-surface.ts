@@ -120,6 +120,7 @@ function spaceRowNode(
 ): AtomNode {
   const stateKey = budgetStateKey(space.id)
   const current = budgetFor(config, space.id)
+  const options = budgetOptionsFor(current)
   const spaceStats = statsFor(stats, space.id)
   return {
     id: `notif-row-${space.id}`,
@@ -130,9 +131,16 @@ function spaceRowNode(
         id: `notif-budget-${space.id}`,
         type: 'Select',
         binding: stateKey,
-        props: { label: 'Daily push budget', options: budgetOptionsFor(current) },
+        props: {
+          label: 'Daily push budget',
+          options: options.map((value) => ({ label: value, value })),
+        },
         actions: [
-          { name: 'change', path: 'fast', plan: inputSetPlan(stateKey, { type: 'string' }) },
+          {
+            name: 'change',
+            path: 'fast',
+            plan: inputSetPlan(stateKey, { type: 'string', enum: options }),
+          },
         ],
       },
       {
@@ -361,21 +369,10 @@ export class NotificationSettingsSurfaceManager {
 
     const nextState = notificationsState(spaces, config)
 
-    // Ordering matters: a newly-created Space's row carries a brand-new
-    // `notif-budget:<id>` binding, and `SurfaceSchema` (packages/protocol
-    // /src/surface.ts) rejects any Surface where a tree node's `binding`
-    // doesn't already exist in Surface state. So new/changed keys must be
-    // committed to state *before* the tree patch that references them —
-    // stale-key removal, by contrast, must wait until *after* the rows Box
-    // has stopped binding to them.
-    const upsertOps = upsertStateOps(existing.state, nextState)
-    if (upsertOps.length > 0) {
-      this.store.patchState(NOTIFICATION_SETTINGS_SURFACE_ID, upsertOps, { updatedBy: 'job' })
-    }
-
     const version = this.store.getSurfaceVersion(NOTIFICATION_SETTINGS_SURFACE_ID)
     if (version) {
-      this.store.patchTree(
+      // Offered values, their typed Actions, and their bindings change together.
+      this.store.patchDaemonSurface(
         NOTIFICATION_SETTINGS_SURFACE_ID,
         [
           { target: 'tree', op: 'replace', path: '/children/1', value: captionNode(config) },
@@ -386,14 +383,11 @@ export class NotificationSettingsSurfaceManager {
             path: '/children/3',
             value: rowsBoxNode(spaces, config, stats),
           },
+          ...upsertStateOps(existing.state, nextState),
+          ...staleStateOps(existing.state, nextState),
         ],
-        { expectedTreeVersion: version.treeVersion, updatedBy: 'job' },
+        { expectedTreeVersion: version.treeVersion },
       )
-    }
-
-    const removeOps = staleStateOps(existing.state, nextState)
-    if (removeOps.length > 0) {
-      this.store.patchState(NOTIFICATION_SETTINGS_SURFACE_ID, removeOps, { updatedBy: 'job' })
     }
   }
 

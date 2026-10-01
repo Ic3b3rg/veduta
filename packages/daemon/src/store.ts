@@ -272,6 +272,14 @@ export class Store {
     return this.surfaceEngine.patchTree(surfaceId, operations, options)
   }
 
+  patchDaemonSurface(
+    surfaceId: string,
+    operations: PatchOperation[],
+    options: { expectedTreeVersion: number; origin?: Origin },
+  ): SurfaceMutation {
+    return this.surfaceEngine.patchDaemonSurface(surfaceId, operations, options)
+  }
+
   archiveSurface(surfaceId: string, updatedBy: 'agent' | 'user' | 'job'): Surface {
     return this.surfaceEngine.archiveSurface(surfaceId, updatedBy)
   }

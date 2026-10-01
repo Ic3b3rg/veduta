@@ -1249,6 +1249,31 @@ export class SurfaceEngine {
     })
   }
 
+  /** One complete validated projection update through the existing recoverable commit. */
+  patchDaemonSurface(
+    surfaceId: string,
+    operations: PatchOperation[],
+    options: { expectedTreeVersion: number; origin?: Origin },
+  ): SurfaceMutation {
+    if (!this.isDaemonOwned(surfaceId))
+      throw new Error('projection refresh requires a daemon-owned Surface')
+    const version = this.requireVersion(surfaceId)
+    if (version.treeVersion !== options.expectedTreeVersion)
+      throw new SurfaceTreeConflictError(
+        surfaceId,
+        options.expectedTreeVersion,
+        version.treeVersion,
+      )
+    return this.patchSurface(surfaceId, operations, {
+      updatedBy: 'job',
+      expectedVersion: version.version,
+      eventType: 'surface.refresh',
+      eventText: (surface) => `Refreshed Surface "${surface.title}"`,
+      updateTreeVersion: operations.some((operation) => operation.target === 'tree'),
+      ...(options.origin === undefined ? {} : { origin: options.origin }),
+    })
+  }
+
   invokeFastAction(surfaceId: string, input: FastActionInvocation): FastActionOutcome {
     const invocation = FastActionInvocationSchema.parse(input)
     const original = this.fastActionLedger.get(invocation.intentId)

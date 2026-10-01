@@ -2,7 +2,7 @@ import { fastInvocation } from './surface-action-test-fixtures.ts'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AtomNode } from '@veduta/protocol'
+import { SurfaceSchema, type AtomNode } from '@veduta/protocol'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   NOTIFICATION_SETTINGS_SURFACE_ID,
@@ -138,7 +138,9 @@ describe('NotificationSettingsSurfaceManager', () => {
     expect(select?.type).toBe('Select')
     expect(select?.binding).toBe(`notif-budget:${errands.id}`)
     expect(surface.state[`notif-budget:${errands.id}`]).toBe('3') // defaultDailyPushBudget
-    expect(select?.props?.['options']).toEqual(['0', '1', '3', '5', '10'])
+    expect(select?.props?.['options']).toEqual(
+      ['0', '1', '3', '5', '10'].map((value) => ({ label: value, value })),
+    )
 
     // No row for the System Space itself.
     expect(findNode(surface.tree, `notif-row-${SYSTEM_SPACE_ID}`)).toBeUndefined()
@@ -178,7 +180,9 @@ describe('NotificationSettingsSurfaceManager', () => {
     const surface = store.getSurface(NOTIFICATION_SETTINGS_SURFACE_ID)!
     expect(surface.state[`notif-budget:${errands.id}`]).toBe('7')
     const select = findNode(surface.tree, `notif-budget-${errands.id}`)
-    expect(select?.props?.['options']).toEqual(['0', '1', '3', '5', '10', '7'])
+    expect(select?.props?.['options']).toEqual(
+      ['0', '1', '3', '5', '10', '7'].map((value) => ({ label: value, value })),
+    )
   })
 
   it('budget fast action persists the override, calls onConfigChanged, and refreshes the Select', () => {
@@ -204,7 +208,9 @@ describe('NotificationSettingsSurfaceManager', () => {
     const surface = store.getSurface(NOTIFICATION_SETTINGS_SURFACE_ID)!
     expect(surface.state[`notif-budget:${errands.id}`]).toBe('5')
     const select = findNode(surface.tree, `notif-budget-${errands.id}`)
-    expect(select?.props?.['options']).toEqual(['0', '1', '3', '5', '10'])
+    expect(select?.props?.['options']).toEqual(
+      ['0', '1', '3', '5', '10'].map((value) => ({ label: value, value })),
+    )
   })
 
   it('rejects a non-offered Select value before any durable change', () => {
@@ -315,12 +321,18 @@ describe('NotificationSettingsSurfaceManager', () => {
       rootDir,
       now: () => new Date('2026-07-20T13:00:00.000Z'),
     })
+    const cursor = store.latestSurfaceCursor()
     second.start()
+    const updates = store.surfaceEventsAfter(cursor)
+    expect(updates).toHaveLength(1)
+    expect(updates[0]?.kind).toBe('patch')
 
     const surface = store.getSurface(NOTIFICATION_SETTINGS_SURFACE_ID)!
     expect(surface.state[`notif-budget:${errands.id}`]).toBe('9')
     const select = findNode(surface.tree, `notif-budget-${errands.id}`)
-    expect(select?.props?.['options']).toEqual(['0', '1', '3', '5', '10', '9'])
+    expect(select?.props?.['options']).toEqual(
+      ['0', '1', '3', '5', '10', '9'].map((value) => ({ label: value, value })),
+    )
   })
 
   it('refresh() after a Space is archived removes its row and its now-stale state key', () => {
@@ -335,6 +347,57 @@ describe('NotificationSettingsSurfaceManager', () => {
     expect(Object.prototype.hasOwnProperty.call(surface.state, `notif-budget:${errands.id}`)).toBe(
       false,
     )
+  })
+
+  it('restricts atomic projection refresh to daemon ownership and preserves Pin and tree versions', () => {
+    const { store, errands, manager } = setup()
+    manager.start()
+    const ordinary = store.createSurface(
+      SurfaceSchema.parse({
+        id: 'srf-ordinary',
+        spaceId: errands.id,
+        title: 'Ordinary',
+        tree: { id: 'copy', type: 'Text', props: { text: 'User content' } },
+        state: {},
+        freshness: { updatedAt: '2026-10-01T08:00:00.000Z', updatedBy: 'agent' },
+      }),
+      'agent',
+    )
+    expect(() =>
+      store.patchDaemonSurface(
+        ordinary.id,
+        [{ target: 'state', op: 'add', path: '/hidden', value: true }],
+        { expectedTreeVersion: 1 },
+      ),
+    ).toThrow(/daemon-owned/)
+    expect(store.getSurface(ordinary.id)?.state).toEqual({})
+
+    store.setPinned(NOTIFICATION_SETTINGS_SURFACE_ID, true, {
+      origin: 'trusted:user',
+      updatedBy: 'user',
+    })
+    const version = store.getSurfaceVersion(NOTIFICATION_SETTINGS_SURFACE_ID)!
+    const operations = [
+      {
+        target: 'state' as const,
+        op: 'replace' as const,
+        path: `/notif-budget:${errands.id}`,
+        value: '5',
+      },
+    ]
+    expect(() =>
+      store.patchDaemonSurface(NOTIFICATION_SETTINGS_SURFACE_ID, operations, {
+        expectedTreeVersion: version.treeVersion + 1,
+      }),
+    ).toThrow(/tree version/i)
+    store.patchDaemonSurface(NOTIFICATION_SETTINGS_SURFACE_ID, operations, {
+      expectedTreeVersion: version.treeVersion,
+    })
+    expect(store.getSurface(NOTIFICATION_SETTINGS_SURFACE_ID)?.pinned).toBe(true)
+    expect(store.getSurfaceVersion(NOTIFICATION_SETTINGS_SURFACE_ID)).toMatchObject({
+      version: version.version + 1,
+      treeVersion: version.treeVersion,
+    })
   })
 })
 
