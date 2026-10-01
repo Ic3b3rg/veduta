@@ -157,7 +157,10 @@ describe('SurfaceChatConfirmation', () => {
         type: 'tool-start',
         toolCallId: 'failed-write',
         toolName: 'patch_state',
-        input: { surfaceId: canonical.id },
+        input: {
+          surfaceId: canonical.id,
+          operations: [{ target: 'state', op: 'replace', path: '/result', value: 42 }],
+        },
       })
       confirmation.observe({
         type: 'tool-result',
@@ -171,7 +174,10 @@ describe('SurfaceChatConfirmation', () => {
         type: 'tool-start',
         toolCallId: 'corrected-write',
         toolName: 'patch_state',
-        input: { surfaceId: sameTarget ? canonical.id : 'srf-unrelated' },
+        input: {
+          surfaceId: sameTarget ? canonical.id : 'srf-unrelated',
+          operations: [{ target: 'state', op: 'replace', path: '/result', value: 'After' }],
+        },
       })
       confirmation.observe({
         type: 'tool-result',
@@ -190,4 +196,45 @@ describe('SurfaceChatConfirmation', () => {
       }
     },
   )
+
+  it('an unrelated accepted write on the same Surface does not correct a failed mutation', () => {
+    const canonical = surface()
+    const confirmation = new SurfaceChatConfirmation(() => canonical)
+    confirmation.observe({
+      type: 'tool-start',
+      toolCallId: 'failed-records',
+      toolName: 'patch_state',
+      input: {
+        surfaceId: canonical.id,
+        operations: [{ target: 'state', op: 'replace', path: '/records', value: 42 }],
+      },
+    })
+    confirmation.observe({
+      type: 'tool-result',
+      toolCallId: 'failed-records',
+      toolName: 'patch_state',
+      content: 'Invalid records',
+      details: undefined,
+      isError: true,
+    })
+    confirmation.observe({
+      type: 'tool-start',
+      toolCallId: 'saved-result',
+      toolName: 'patch_state',
+      input: {
+        surfaceId: canonical.id,
+        operations: [{ target: 'state', op: 'replace', path: '/result', value: 'After' }],
+      },
+    })
+    confirmation.observe({
+      type: 'tool-result',
+      toolCallId: 'saved-result',
+      toolName: 'patch_state',
+      content: 'Saved',
+      details: { surface: canonical },
+      isError: false,
+    })
+    expect(confirmation.failure()).toContain('Invalid records')
+    expect(confirmation.feedback()).toContain('Invalid records')
+  })
 })

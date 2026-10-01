@@ -12,7 +12,11 @@ const SURFACE_WRITE_TOOLS = new Set([
   'pin_surface',
 ])
 
-type Confirmation = { toolName: string; target: string | undefined } & (
+type Confirmation = {
+  toolName: string
+  target: string | undefined
+  effects: readonly string[] | undefined
+} & (
   | { status: 'pending' | 'unconfirmed' | 'proposed' }
   | { status: 'saved'; surfaceId: string }
   | { status: 'archived'; title: string }
@@ -41,6 +45,7 @@ export class SurfaceChatConfirmation {
           status: 'pending',
           toolName: event.toolName,
           target: typeof target === 'string' ? target : undefined,
+          effects: mutationEffects(event.toolName, input),
         })
       }
       return true
@@ -54,6 +59,7 @@ export class SurfaceChatConfirmation {
         status: 'failed',
         toolName: call.toolName,
         target: call.target,
+        effects: call.effects,
         error: sanitizeErrorText(new Error(event.content)).slice(0, 240),
       })
       return true
@@ -74,6 +80,7 @@ export class SurfaceChatConfirmation {
         status: 'archived',
         toolName: call.toolName,
         target: call.target,
+        effects: call.effects,
         title: parsed.data.title,
       })
     } else if (
@@ -86,6 +93,7 @@ export class SurfaceChatConfirmation {
         status: 'saved',
         toolName: call.toolName,
         target: call.target,
+        effects: call.effects,
         surfaceId: canonical.id,
       })
     } else {
@@ -93,20 +101,26 @@ export class SurfaceChatConfirmation {
         status: typeof details?.['proposalId'] === 'string' ? 'proposed' : 'unconfirmed',
         toolName: call.toolName,
         target: call.target,
+        effects: call.effects,
       })
     }
     const result = this.calls.get(event.toolCallId)
     if (
       call.target !== undefined &&
+      call.effects !== undefined &&
       (result?.status === 'saved' || result?.status === 'archived')
     ) {
       for (const [id, earlier] of this.calls) {
         if (
           earlier.status === 'failed' &&
           earlier.toolName === call.toolName &&
-          earlier.target === call.target
-        )
-          this.calls.delete(id)
+          earlier.target === call.target &&
+          earlier.effects !== undefined
+        ) {
+          const remaining = earlier.effects.filter((effect) => !call.effects?.includes(effect))
+          if (remaining.length === 0) this.calls.delete(id)
+          else this.calls.set(id, { ...earlier, effects: remaining })
+        }
       }
     }
     return true
@@ -155,6 +169,26 @@ export class SurfaceChatConfirmation {
 
 function surfaceFailureText(error: string): string {
   return `A Surface change was not saved: ${error}`
+}
+
+function mutationEffects(
+  toolName: string,
+  input: Record<string, unknown> | undefined,
+): readonly string[] | undefined {
+  if (toolName !== 'patch_state' && toolName !== 'patch_tree') return [toolName]
+  const operations = input?.['operations']
+  if (!Array.isArray(operations) || operations.length === 0) return undefined
+  const effects: string[] = []
+  for (const operation of operations) {
+    if (
+      !isRecord(operation) ||
+      typeof operation['target'] !== 'string' ||
+      typeof operation['path'] !== 'string'
+    )
+      return undefined
+    effects.push(canonicalJson({ target: operation['target'], path: operation['path'] }))
+  }
+  return [...new Set(effects)]
 }
 
 /** A bounded excerpt of visible text and metrics, excluding unused state and control claims. */

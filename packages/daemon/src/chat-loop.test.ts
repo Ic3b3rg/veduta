@@ -263,6 +263,7 @@ function queueTestAgentAction(store: Store, origin: Origin = 'trusted:user') {
         type: 'Col',
         children: [
           { id: 'result', type: 'Stat', binding: 'result', props: { label: 'Result' } },
+          { id: 'detail', type: 'Stat', binding: 'detail', props: { label: 'Detail' } },
           {
             id: 'run',
             type: 'Button',
@@ -271,7 +272,7 @@ function queueTestAgentAction(store: Store, origin: Origin = 'trusted:user') {
           },
         ],
       },
-      state: { result: 'Before' },
+      state: { result: 'Before', detail: 'Before' },
       pinned: false,
       pinnable: true,
       presentation: 'standard',
@@ -426,6 +427,40 @@ describe('createChatLoop', () => {
       error: expect.stringContaining('A Surface change was not saved:'),
     })
     expect(h.store.getSurface(turn.surfaceId)?.state['result']).toBe('Before')
+    expect(h.store.eventLog(turn.spaceId).at(-1)?.text).not.toContain(
+      'All requested work completed.',
+    )
+    await loop.stop()
+  })
+
+  it('does not treat another accepted field write as recovery from a rejected Agent mutation', async () => {
+    const h = harness()
+    const turn = queueTestAgentAction(h.store)
+    const loop = globalSurfaceChatLoop(h)
+    h.fake.setResponses([
+      {
+        message: fakeToolCall('patch_state', {
+          surfaceId: turn.surfaceId,
+          operations: [
+            { target: 'state', op: 'replace', path: '/detail', value: { invalid: true } },
+          ],
+        }),
+      },
+      {
+        message: fakeToolCall('patch_state', {
+          surfaceId: turn.surfaceId,
+          operations: [{ target: 'state', op: 'replace', path: '/result', value: 'After' }],
+        }),
+      },
+      { message: fakeText('All requested work completed.') },
+    ])
+
+    const result = await loop.handleAgentAction(turn)
+
+    expect(result).toMatchObject({
+      error: expect.stringContaining('A Surface change was not saved:'),
+    })
+    expect(h.store.getSurface(turn.surfaceId)?.state).toEqual({ result: 'After', detail: 'Before' })
     expect(h.store.eventLog(turn.spaceId).at(-1)?.text).not.toContain(
       'All requested work completed.',
     )
