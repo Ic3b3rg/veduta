@@ -30,6 +30,10 @@ import {
 } from './mock-chart-fixture.ts'
 import { respondToStructuredPlan, STRUCTURED_PLAN_REQUEST } from './mock-structured-plan-fixture.ts'
 import { respondToMockSurfacePresentation } from './mock-surface-presentation-fixture.ts'
+import {
+  respondToComposedSurface,
+  COMPOSED_SURFACE_REQUEST,
+} from './mock-composed-surface-fixture.ts'
 import { isRecord, parseJson, toolCallMessage, toolResultText } from './mock-fixture-support.ts'
 import { mockWorkerReportForPrompt, mockWorkerReviewText } from './mock-worker-runner.ts'
 import { zonedParts } from './timezone.ts'
@@ -116,6 +120,8 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
     }
     if (isFullTextPrompt(text)) return piFauxAssistantMessage(FULL_TEXT_REPLY)
     if (text === STRUCTURED_PLAN_REQUEST) return respondToStructuredPlan(toolResultsAfter)
+    if (text === COMPOSED_SURFACE_REQUEST)
+      return respondToComposedSurface(toolResultsAfter, progressiveDelayMs)
     if (text === MEAL_REQUEST) {
       return respondToMealFixture(toolResultsAfter, now(), timeZone, MEAL_LABEL)
     }

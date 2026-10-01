@@ -7,35 +7,35 @@ variables come from `catalogTokens` through `catalogCssText()`, so the shell and
 theme source. The copied Chart container omits registry style injection; Agent authored Surfaces
 cannot supply CSS or HTML.
 
-| Atom                           | Foundation                                                        |
-| ------------------------------ | ----------------------------------------------------------------- |
-| Button                         | Button                                                            |
-| DatePicker                     | Input with native `date` behavior                                 |
-| Select                         | NativeSelect                                                      |
-| Checkbox                       | Checkbox                                                          |
-| Switch                         | Switch                                                            |
-| RadioGroup                     | RadioGroup                                                        |
-| Combobox                       | Combobox with searchable labeled options                          |
-| Input, Textarea                | Input, Textarea                                                   |
-| Form                           | Button and Label with a catalog spacing recipe                    |
-| Box                            | Card                                                              |
-| Row, Col, Spacer, Transition   | Catalog spacing, radius, and motion recipes                       |
-| Divider                        | Separator                                                         |
-| Collapsible                    | Collapsible                                                       |
-| Accordion                      | Accordion with Collapsible child Atoms                            |
-| Table                          | Table primitives                                                  |
-| Title, Text, Caption, Markdown | Catalog typography recipes                                        |
-| Label                          | Label when associated with a control; typography recipe otherwise |
-| Image                          | Card placeholder or native image with catalog radius              |
-| Icon                           | Catalog icon and semantic color recipe                            |
-| Chart                          | ChartContainer and one explicit Recharts LineChart or BarChart    |
-| Badge                          | Badge                                                             |
-| Stat                           | Catalog metric typography recipe                                  |
-| Progress                       | Progress                                                          |
-| ListItem                       | Item                                                              |
-| Automation                     | Item and Switch                                                   |
-| Pending                        | Card and Skeleton                                                 |
-| UnknownAtom                    | Visible catalog error typography recipe                           |
+| Atom                           | Foundation                                                     |
+| ------------------------------ | -------------------------------------------------------------- |
+| Button                         | Button                                                         |
+| DatePicker                     | Input with native `date` behavior                              |
+| Select                         | NativeSelect                                                   |
+| Checkbox                       | Checkbox                                                       |
+| Switch                         | Switch                                                         |
+| RadioGroup                     | RadioGroup                                                     |
+| Combobox                       | Combobox with searchable labeled options                       |
+| Input, Textarea                | Input, Textarea                                                |
+| Form                           | Button and Label with a catalog spacing recipe                 |
+| Box                            | Card                                                           |
+| Row, Col, Spacer, Transition   | Catalog spacing, radius, and motion recipes                    |
+| Divider                        | Separator                                                      |
+| Collapsible                    | Collapsible                                                    |
+| Accordion                      | Accordion with Collapsible child Atoms                         |
+| Table                          | Table primitives                                               |
+| Title, Text, Caption, Markdown | Catalog typography recipes                                     |
+| Label                          | Catalog label typography recipe                                |
+| Image                          | Native image with visible loading and unavailable states       |
+| Icon                           | Catalog icon and semantic color recipe                         |
+| Chart                          | ChartContainer and one explicit Recharts LineChart or BarChart |
+| Badge                          | Badge                                                          |
+| Stat                           | Catalog metric typography recipe                               |
+| Progress                       | Progress                                                       |
+| ListItem                       | Item                                                           |
+| Automation                     | Item and Switch                                                |
+| Pending                        | Card and Skeleton                                              |
+| UnknownAtom                    | Visible catalog error typography recipe                        |
 
 The shadcn components are rendering details of the closed Atom catalog. Surface schemas, actions,
 state bindings, and the Gateway transport stay in `@veduta/protocol` and the existing runtime.
@@ -67,3 +67,30 @@ must carry the full structured answer; a Surface title alone cannot represent it
 The clean Local VPS browser journey in `packages/e2e/tests/content-atoms.spec.ts` submits the
 reported Italian three-day-plan request and checks all sessions, repetitions, rest, progression,
 and safety guidance live and after reload, including a mobile dark viewport.
+
+## Layout, media, and motion contracts
+
+Box accepts `gap` and `padding`; Row accepts `gap`, `align` (`start`, `end`, `center`, `stretch`),
+and boolean `wrap`; Col accepts `gap`; Spacer accepts `size`. Spacing uses only `none`, `xs`, `sm`,
+`md`, `lg`, and `xl`. Divider accepts no props. Containers may reserve an empty canonical slot;
+Spacer and Divider are leaves. These Atoms cannot bind state or declare actions.
+
+Image requires nonempty `alt`, optional `src`, and `loading` (`lazy` by default or `eager`). Sources
+are HTTP(S) without embedded credentials or same-origin absolute paths. Raw markup, data URLs,
+protocol-relative URLs, and scripts are rejected. Loading is visible; absent or failed media shows
+the alternative text followed by `unavailable`, preserving surrounding content. Icon requires a
+closed name (`dot`, `check`, `clock`, `alert`, `bolt`) and either a label or `decorative: true`.
+Decorative icons cannot discard a supplied label. Optional `tone` uses the catalog colors.
+
+Transition accepts boolean `visible` and requires canonical children. Its opacity treatment never
+removes their content; reduced motion disables its transition. Pending uses a strict text, list,
+image, stat, or chart footprint and a visible accessible loading label. The Gateway stamps the
+composition window; a timeout or unstamped slot visibly becomes unavailable. Reduced motion
+disables skeleton animation. Resolved content replaces Pending using its existing node identity.
+
+The renderer validates the complete tree and typed state before rendering, preserving Form ancestor
+context. Invalid known content produces a readable diagnostic without interactive descendants.
+Unknown types from a newer Gateway show their type and identity while retaining valid known children
+and siblings. They remain rejected at authoring boundaries. The clean browser composition in
+`packages/e2e/tests/layout-atoms.spec.ts` checks media loading and failure, one Pending replacement,
+reload, desktop and mobile viewports, light and dark themes, and reduced motion.

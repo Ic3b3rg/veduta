@@ -177,6 +177,9 @@ function SkeletonFrame({
         ...style,
       }}
     >
+      <span style={{ color: tokens.color.textMuted, fontSize: tokens.font.sm }}>
+        {label} loading
+      </span>
       {children}
     </Card>
   )
@@ -194,6 +197,7 @@ function SkeletonShape({
   return (
     <Skeleton
       aria-hidden="true"
+      className="motion-reduce:animate-none"
       data-pending-skeleton-shape=""
       style={{
         background: tokens.color.surfaceMuted,

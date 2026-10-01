@@ -1,4 +1,4 @@
-import { collectNodeBindingRefs, type AtomNode } from '@veduta/protocol'
+import { collectNodeBindingRefs, type AtomNode, type NodeBindingRef } from '@veduta/protocol'
 import {
   cloneElement,
   isValidElement,
@@ -47,6 +47,7 @@ import {
 } from './atoms.tsx'
 import { useAtomMotion } from './atom-motion.ts'
 import { tokensFor } from './design-system.ts'
+import { renderValidationIssues } from './render-validation.ts'
 import type { AtomProps, RenderContext, SurfaceUpdateFeedback } from './types.ts'
 
 type AtomRenderer = (props: AtomProps) => ReactNode
@@ -88,6 +89,27 @@ const renderers = {
 } satisfies Record<AtomNode['type'], AtomRenderer>
 
 export function renderNode(node: AtomNode, ctx: RenderContext): ReactNode {
+  const issues = renderValidationIssues(node, ctx.state)
+  if (issues.length > 0) {
+    const tokens = tokensFor(ctx.theme)
+    return (
+      <div
+        role="alert"
+        style={{
+          color: tokens.color.text,
+          background: tokens.color.surfaceMuted,
+          padding: tokens.space.md,
+        }}
+      >
+        <strong>Surface content unavailable</strong>
+        <ul>
+          {issues.map((issue, index) => (
+            <li key={index}>{issue}</li>
+          ))}
+        </ul>
+      </div>
+    )
+  }
   return <MotionTree node={node} ctx={ctx} />
 }
 
@@ -128,7 +150,7 @@ const MotionNode = memo(function MotionNodeComponent({
   shouldAnimateEntrance,
   inheritedContentUpdateKey,
 }: MotionNodeProps): ReactNode {
-  const Renderer = renderers[node.type] ?? UnknownAtom
+  const Renderer = Object.hasOwn(renderers, node.type) ? renderers[node.type] : UnknownAtom
   const regionUpdateKey = ctx.motion?.update?.atomIds.includes(node.id)
     ? ctx.motion.update.key
     : undefined
@@ -186,9 +208,17 @@ function boundStateEqual(
   previous: RenderContext['state'],
   next: RenderContext['state'],
 ): boolean {
-  return collectNodeBindingRefs(node, []).every(
+  return renderedBindingRefs(node).every(
     (ref) => ref.kind !== 'binding' || valuesEqual(previous[ref.key], next[ref.key]),
   )
+}
+
+function renderedBindingRefs(node: AtomNode): NodeBindingRef[] {
+  const { children, ...ownNode } = node
+  // Unknown version-skew metadata belongs to the newer catalog; only its known
+  // descendants participate in this client's binding and update contracts.
+  const ownRefs = Object.hasOwn(renderers, node.type) ? collectNodeBindingRefs(ownNode, []) : []
+  return [...ownRefs, ...(children ?? []).flatMap(renderedBindingRefs)]
 }
 
 function motionEqual(

@@ -45,7 +45,7 @@ export function ColAtom({ node, ctx, children }: AtomProps): ReactNode {
         flexDirection: 'column',
         gap: spacing(tokens, node.props?.['gap'], 'sm'),
         flex: 1,
-        minWidth: 0,
+        minWidth: `min(100%, ${tokens.space.xl * 10}px)`,
       }}
     >
       {children}

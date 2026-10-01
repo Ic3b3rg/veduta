@@ -52,7 +52,11 @@ const tree: AtomNode = AtomNodeSchema.parse({
       props: { label: 'Milk' },
       actions: [{ name: 'toggle', path: 'fast', stateKey: 'milk' }],
     },
-    { id: 'weird', type: 'Transition' },
+    {
+      id: 'weird',
+      type: 'Transition',
+      children: [{ id: 'transition-copy', type: 'Text', props: { text: 'Ready' } }],
+    },
   ],
 })
 
@@ -344,15 +348,21 @@ describe('renderNode', () => {
     const view = render(renderNode(tree, { state: { milk: true }, dispatch: vi.fn() }))
     const initialCalls = motionCalls(motionBrowser)
 
-    expect(initialCalls.map(({ nodeId }) => nodeId)).toEqual(['title', 'milk', 'weird', 'root'])
-    expect(initialCalls.map(({ delay }) => delay)).toEqual([0, 45, 90, 0])
+    expect(initialCalls.map(({ nodeId }) => nodeId)).toEqual([
+      'title',
+      'milk',
+      'transition-copy',
+      'weird',
+      'root',
+    ])
+    expect(initialCalls.map(({ delay }) => delay)).toEqual([0, 45, 0, 90, 0])
     expect(initialCalls.every(({ duration }) => duration === 240)).toBe(true)
     expect(
       initialCalls.every(({ easing }) => easing === catalogTokens.light.motion.entranceEasing),
     ).toBe(true)
 
     view.rerender(renderNode(tree, { state: { milk: false }, dispatch: vi.fn() }))
-    expect(motionBrowser.animate).toHaveBeenCalledTimes(4)
+    expect(motionBrowser.animate).toHaveBeenCalledTimes(5)
 
     const withNewSibling = AtomNodeSchema.parse({
       ...tree,
@@ -391,7 +401,7 @@ describe('renderNode', () => {
       }),
     )
 
-    expect(motionCalls(motionBrowser)).toHaveLength(6)
+    expect(motionCalls(motionBrowser)).toHaveLength(7)
     const firstPatchCalls = motionBrowser.calls.slice(-2)
     expect(firstPatchCalls.map(({ contentKey }) => contentKey)).toEqual([null, 'value'])
     expect(firstPatchCalls[0]).toMatchObject({
@@ -417,7 +427,7 @@ describe('renderNode', () => {
         motion: { update: { key: 'patch-1', atomIds: ['milk'] } },
       }),
     )
-    expect(motionBrowser.animate).toHaveBeenCalledTimes(6)
+    expect(motionBrowser.animate).toHaveBeenCalledTimes(7)
 
     view.rerender(
       renderNode(tree, {
@@ -427,7 +437,7 @@ describe('renderNode', () => {
       }),
     )
     expect(motionCalls(motionBrowser).at(-1)?.nodeId).toBe('milk')
-    expect(motionBrowser.animate).toHaveBeenCalledTimes(8)
+    expect(motionBrowser.animate).toHaveBeenCalledTimes(9)
   })
 
   it('fades only a newly inserted Table row while existing rows stay visible', () => {
@@ -748,7 +758,7 @@ describe('renderNode', () => {
         {
           id: 'image-content',
           type: 'Image',
-          props: { alt: 'After image', src: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=' },
+          props: { alt: 'After image', src: '/icons/icon-192.svg' },
         },
       ],
     })

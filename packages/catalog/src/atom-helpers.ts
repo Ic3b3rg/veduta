@@ -50,6 +50,7 @@ export function spacing(
   value: unknown,
   fallback: keyof CatalogTokens['space'],
 ): number {
+  if (value === 'none') return 0
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string' && value in tokens.space) {
     return tokens.space[value as keyof CatalogTokens['space']]

@@ -132,7 +132,7 @@ describe('PendingAtom', () => {
     )
 
     const malformedView = render(renderNode(malformed, { state: {}, dispatch: vi.fn() }))
-    expect(screen.getByRole('alert').textContent).toBe('Content unavailable')
+    expect(screen.getByRole('alert').textContent).toContain('Surface content unavailable')
     expect(screen.queryByTestId('unknown-atom')).toBeNull()
 
     malformedView.unmount()

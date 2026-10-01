@@ -5,15 +5,11 @@ import {
   motionCollectionItem,
   motionContent,
   motionItemKeys,
-  optionalText,
   tableColumns,
   tableRows,
   text,
 } from './atom-helpers.ts'
-import { surfaceStyle } from './atom-styles.ts'
-import { tokensFor } from './design-system.ts'
 import type { AtomProps } from './types.ts'
-import { Card } from './ui/card.tsx'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table.tsx'
 
 export function TableAtom({ node, ctx }: AtomProps): ReactNode {
@@ -64,43 +60,5 @@ export function TableAtom({ node, ctx }: AtomProps): ReactNode {
         </TableBody>
       </Table>
     </div>
-  )
-}
-
-export function ImageAtom({ node, ctx }: AtomProps): ReactNode {
-  const tokens = tokensFor(ctx.theme)
-  const src = optionalText(node.props?.['src'])
-  const alt = optionalText(node.props?.['alt']) ?? optionalText(node.props?.['label']) ?? ''
-  if (!src) {
-    return (
-      <Card
-        {...motionContent('content')}
-        role="img"
-        aria-label={alt || 'Image placeholder'}
-        style={{
-          ...surfaceStyle(tokens),
-          alignItems: 'center',
-          aspectRatio: '16 / 9',
-          color: tokens.color.textMuted,
-          display: 'flex',
-          justifyContent: 'center',
-        }}
-      >
-        {alt || 'Image'}
-      </Card>
-    )
-  }
-  return (
-    <img
-      {...motionContent('content')}
-      alt={alt}
-      src={src}
-      style={{
-        borderRadius: tokens.radius.md,
-        display: 'block',
-        maxWidth: '100%',
-        objectFit: 'cover',
-      }}
-    />
   )
 }

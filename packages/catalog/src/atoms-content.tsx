@@ -2,7 +2,6 @@ import type { CSSProperties, ReactNode } from 'react'
 import {
   boundValue,
   boundedNumber,
-  iconGlyph,
   motionContent,
   optionalText,
   ratioValue,
@@ -127,27 +126,6 @@ export function BadgeAtom({ node, ctx }: AtomProps): ReactNode {
     >
       {text(content)}
     </Badge>
-  )
-}
-
-export function IconAtom({ node, ctx }: AtomProps): ReactNode {
-  const tokens = tokensFor(ctx.theme)
-  const label = optionalText(node.props?.['label'])
-  return (
-    <span
-      {...motionContent('content')}
-      aria-label={label}
-      aria-hidden={label ? undefined : true}
-      role={label ? 'img' : undefined}
-      style={{
-        color: toneColor(tokens, optionalText(node.props?.['tone'])),
-        display: 'inline-flex',
-        fontSize: tokens.font.lg,
-        lineHeight: 1,
-      }}
-    >
-      {iconGlyph(optionalText(node.props?.['name']))}
-    </span>
   )
 }
 

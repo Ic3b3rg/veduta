@@ -11,6 +11,7 @@ export { applySurfacePatch, applySurfacePatchEvent } from './apply-patch.ts'
 export { ChartAtomPropsSchema, chartSeriesSchema, type ChartAtomProps } from './chart.ts'
 export * from './content-atoms.ts'
 export * from './atom-template.ts'
+export * from './layout-atoms.ts'
 export {
   AuthDeviceSchema,
   AuthModeSchema,
@@ -89,6 +90,8 @@ export {
 export { surfacePath, surfaceIdFromRoute } from './surface-route.ts'
 export {
   SurfaceSchema,
+  AtomTreeStateSchema,
+  validateAtomTreeState,
   FreshnessSchema,
   SurfacePresentationSchema,
   RelativeTimeValiditySchema,

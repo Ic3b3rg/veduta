@@ -92,13 +92,28 @@ const SurfaceObjectSchema = z.object({
   validity: RelativeTimeValiditySchema.optional(),
 })
 
+/** Complete-tree validation keeps ancestor-sensitive contracts intact at rendering boundaries. */
+export const AtomTreeStateSchema = z
+  .object({ tree: AtomNodeSchema, state: JsonObjectSchema })
+  .superRefine((value, ctx) => {
+    validateAtomTreeState(value.tree, value.state, ctx)
+  })
+
+export function validateAtomTreeState(
+  tree: AtomNode,
+  state: JsonObject,
+  ctx: z.RefinementCtx,
+): void {
+  validateNodeBindings(tree, state, ['tree'], ctx)
+  validateTextFormTree(tree, false, ['tree'], ctx)
+  validateTextFormState(tree, state, ctx)
+  validateNewControlState(tree, state, ctx)
+  validateChartState(tree, state, ctx)
+  validateContentState(tree, state, ctx)
+}
+
 export const SurfaceSchema = SurfaceObjectSchema.superRefine((surface, ctx) => {
-  validateNodeBindings(surface.tree, surface.state, ['tree'], ctx)
-  validateTextFormTree(surface.tree, false, ['tree'], ctx)
-  validateTextFormState(surface.tree, surface.state, ctx)
-  validateNewControlState(surface.tree, surface.state, ctx)
-  validateChartState(surface.tree, surface.state, ctx)
-  validateContentState(surface.tree, surface.state, ctx)
+  validateAtomTreeState(surface.tree, surface.state, ctx)
   validateRelativeTimeContract(surface, ctx)
 }).transform(normalizeRelativeTimeOccurrences)
 

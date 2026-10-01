@@ -635,14 +635,30 @@ describe('sanitizeImportedTemplate', () => {
       tree: {
         id: 'root',
         type: 'Box',
-        actions: [{ name: 'a', path: 'agent' }],
         children: [
+          {
+            id: 'root-action',
+            type: 'Button',
+            props: { label: 'First action' },
+            actions: [{ name: 'click', path: 'agent' }],
+          },
           {
             id: 'child',
             type: 'Box',
-            actions: [
-              { name: 'b', path: 'agent' },
-              { name: 'c', path: 'fast', stateKey: 'x' },
+            children: [
+              {
+                id: 'child-action',
+                type: 'Button',
+                props: { label: 'Second action' },
+                actions: [{ name: 'click', path: 'agent' }],
+              },
+              {
+                id: 'child-fast',
+                type: 'Checkbox',
+                binding: 'x',
+                props: { label: 'Done' },
+                actions: [{ name: 'toggle', path: 'fast', stateKey: 'x' }],
+              },
             ],
           },
         ],

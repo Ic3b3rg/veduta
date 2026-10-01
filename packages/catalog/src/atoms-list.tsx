@@ -170,10 +170,10 @@ function automationHistoryTimeLabel(iso: string): string {
   return Number.isFinite(date.getTime()) ? date.toLocaleString() : iso
 }
 
-export function UnknownAtom({ node, ctx }: AtomProps): ReactNode {
+export function UnknownAtom({ node, ctx, children }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
   return (
-    <em
+    <div
       {...motionContent('content')}
       data-testid="unknown-atom"
       style={{
@@ -182,7 +182,10 @@ export function UnknownAtom({ node, ctx }: AtomProps): ReactNode {
         fontSize: tokens.font.sm,
       }}
     >
-      unsupported Atom: {node.type}
-    </em>
+      <em>
+        unsupported Atom: {node.type} ({node.id})
+      </em>
+      {children}
+    </div>
   )
 }

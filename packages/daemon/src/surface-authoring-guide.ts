@@ -18,6 +18,18 @@ export const SURFACE_ATOM_AUTHORING_GUIDE =
   'one toggle action. Optional history or historyBinding carries validated run history. These ' +
   'Atoms are leaves. Chart requires a binding to an ordered record array and exactly one line or ' +
   'bar series, with props type, xKey, yKey, label, xLabel, yLabel, and emptyText. x is nonempty text ' +
-  'or a finite number; y is a finite number. Never author static chart data, inferred keys, raw CSS, ' +
+  'or a finite number; y is a finite number. Box supports gap and padding; Row supports gap, ' +
+  'align (start, end, center, stretch), and boolean wrap; Col supports gap; Spacer supports size. ' +
+  'Spacing is always one of none, xs, sm, md, lg, xl. Divider accepts no props. Box, Row, and Col ' +
+  'are containers; Spacer and Divider are leaves. These Atoms accept no bindings or actions. ' +
+  'Image is a leaf with required nonempty alt, optional src (HTTP(S) without credentials or a ' +
+  'same-origin absolute path), and optional loading (lazy or eager). A missing or failed source ' +
+  'shows alt plus unavailable. Icon is a leaf with name dot, check, clock, alert, or bolt, optional ' +
+  'tone, and either a nonempty label or decorative: true (never both). Media has no actions or ' +
+  'bindings. Transition accepts only boolean visible and requires canonical children; it never ' +
+  'removes their content. Pending is a leaf with variant text, list, image, stat, or chart, optional ' +
+  'label and bounded timeoutMs 1000–120000; text may set lines 1–6 and list rows 1–8. The Gateway ' +
+  'owns startedAt. Replace Pending in place with resolved content and preserve the node id. ' +
+  'Never author static chart data, inferred keys, raw CSS, ' +
   'or unsupported props. A rejected mutation changed no Surface; report only the content in the ' +
   'authoritative committed result or a verified read_surface result.'
