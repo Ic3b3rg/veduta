@@ -164,7 +164,7 @@ describe('affectedAtomIdsForPatch', () => {
         path: '/children/0',
         value: {
           ...originalRow,
-          props: { feedback: 'temporary' },
+          props: { gap: 'xl' },
         },
       },
       {
@@ -263,7 +263,7 @@ describe('affectedAtomIdsForPatch', () => {
         target: 'tree',
         op: 'replace',
         path: '/children/0',
-        value: { ...nestedRow, props: { feedback: 'temporary' } },
+        value: { ...nestedRow, props: { gap: 'xl' } },
       },
       { target: 'tree', op: 'replace', path: '/children/0', value: nestedRow },
       { target: 'tree', op: 'remove', path: '/children/0/children/0/children/0' },
@@ -283,7 +283,7 @@ describe('affectedAtomIdsForPatch', () => {
         target: 'tree',
         op: 'replace',
         path: '/children/0',
-        value: { ...originalRow, props: { feedback: 'temporary' } },
+        value: { ...originalRow, props: { gap: 'xl' } },
       },
       { target: 'tree', op: 'replace', path: '/children/0', value: originalRow },
       {
