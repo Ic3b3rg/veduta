@@ -18,6 +18,7 @@ import {
   SurfacePresentationEventSchema,
   SurfaceCommitRecoveryPendingResponseSchema,
   SurfaceCommitRecoveryStateSchema,
+  literalSetPlan,
 } from './index.ts'
 
 describe('Gateway protocol', () => {
@@ -86,7 +87,25 @@ describe('Gateway protocol', () => {
         id: 'srf-groceries',
         spaceId: 'spc-health',
         title: 'Groceries',
-        tree: { id: 'root', type: 'Box' as const, children: [] },
+        tree: {
+          id: 'root',
+          type: 'Box' as const,
+          children: [
+            {
+              id: 'button',
+              type: 'Button' as const,
+              props: { label: 'Mark milk' },
+              actions: [
+                {
+                  name: 'press',
+                  path: 'fast' as const,
+                  revision: 'acr-example',
+                  plan: literalSetPlan('milk', true),
+                },
+              ],
+            },
+          ],
+        },
         state: { milk: true },
         freshness: { updatedAt: '2026-07-03T10:00:00.000Z', updatedBy: 'user' as const },
       },
