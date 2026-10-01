@@ -1,6 +1,12 @@
 import { z } from 'zod'
-import { ActionSchema } from './action.ts'
-import { AtomNodeSchema, AtomTypeSchema, atomTypes, type AtomNode } from './atom.ts'
+import {
+  AtomNodeSchema,
+  AtomNodeBranches,
+  atomTypes,
+  type AtomNode,
+  type AtomType,
+} from './atom.ts'
+import type { ActionOwningNode } from './action-inputs.ts'
 import { JsonObjectSchema, JsonValueSchema } from './json.ts'
 
 const knownTypes = new Set<string>(atomTypes)
@@ -11,9 +17,22 @@ const UnknownAtomTypeSchema = z
   .refine((type) => !knownTypes.has(type), 'Known Atoms must use their catalog contract')
   .brand<'UnknownAtomType'>()
 
-export interface KnownRenderableAtomNode extends Omit<AtomNode, 'children'> {
+interface OptionalRenderableChildren {
   children?: RenderableAtomNode[] | undefined
 }
+interface RequiredRenderableChildren {
+  children: RenderableAtomNode[]
+}
+type RenderableKnownNode<Node> = Node extends { type: AtomType }
+  ? Omit<Node, 'children'> &
+      (Node['type'] extends 'Box' | 'Row' | 'Col'
+        ? OptionalRenderableChildren
+        : Node['type'] extends 'Form' | 'Collapsible' | 'Transition' | 'Accordion'
+          ? RequiredRenderableChildren
+          : { children?: undefined })
+  : never
+
+export type KnownRenderableAtomNode = RenderableKnownNode<AtomNode>
 
 export interface UnknownRenderableAtomNode {
   id: string
@@ -32,8 +51,14 @@ export function isKnownRenderableAtomNode(
   return knownTypes.has(node.type)
 }
 
-/** A separate validation value preserves known descendant and ancestor contracts. */
-export function atomValidationTree(node: RenderableAtomNode): AtomNode {
+interface AtomValidationNode extends ActionOwningNode {
+  id: string
+  type: AtomType
+  children?: AtomValidationNode[] | undefined
+}
+
+/** A validation input, never an assertion that an unknown wire Atom is canonical authoring. */
+export function atomValidationTree(node: RenderableAtomNode): AtomValidationNode {
   const children = node.children?.map(atomValidationTree)
   if (!isKnownRenderableAtomNode(node)) {
     return { id: node.id, type: 'Box', ...(children === undefined ? {} : { children }) }
@@ -60,27 +85,58 @@ export const RenderableAtomNodeSchema: z.ZodType<RenderableAtomNode, z.ZodTypeDe
     }),
   )
 
+const readChildren = z.array(RenderableAtomNodeSchema)
+const readBranches = {
+  ...AtomNodeBranches,
+  Box: AtomNodeBranches.Box.extend({ children: readChildren.optional() }),
+  Row: AtomNodeBranches.Row.extend({ children: readChildren.optional() }),
+  Col: AtomNodeBranches.Col.extend({ children: readChildren.optional() }),
+  Form: AtomNodeBranches.Form.extend({ children: readChildren.min(1) }),
+  Collapsible: AtomNodeBranches.Collapsible.extend({ children: readChildren.min(1) }),
+  Transition: AtomNodeBranches.Transition.extend({ children: readChildren.min(1) }),
+  Accordion: AtomNodeBranches.Accordion.extend({ children: readChildren.min(1) }),
+}
+
+/** Reuse strict known branches; only recursive reads gain explicit unknown-node compatibility. */
 const KnownRenderableAtomNodeSchema = z
-  .object({
-    id: z.string().min(1),
-    type: AtomTypeSchema,
-    props: JsonObjectSchema.optional(),
-    binding: z.string().min(1).optional(),
-    actions: z.array(ActionSchema).optional(),
-    children: z.array(RenderableAtomNodeSchema).optional(),
-  })
-  .strict()
-  .transform((node, ctx): KnownRenderableAtomNode => {
-    const parsed = AtomNodeSchema.safeParse({
-      ...node,
-      ...(node.children === undefined ? {} : { children: node.children.map(atomValidationTree) }),
-    })
-    if (!parsed.success) {
-      for (const issue of parsed.error.issues) ctx.addIssue(issue)
-      return z.NEVER
-    }
-    const { children: _children, ...own } = parsed.data
-    return { ...own, ...(node.children === undefined ? {} : { children: node.children }) }
+  .discriminatedUnion('type', [
+    readBranches.Button,
+    readBranches.DatePicker,
+    readBranches.Select,
+    readBranches.Checkbox,
+    readBranches.Switch,
+    readBranches.RadioGroup,
+    readBranches.Combobox,
+    readBranches.Input,
+    readBranches.Textarea,
+    readBranches.Form,
+    readBranches.Box,
+    readBranches.Row,
+    readBranches.Col,
+    readBranches.Spacer,
+    readBranches.Divider,
+    readBranches.Collapsible,
+    readBranches.Accordion,
+    readBranches.Table,
+    readBranches.Text,
+    readBranches.Title,
+    readBranches.Caption,
+    readBranches.Label,
+    readBranches.Markdown,
+    readBranches.Image,
+    readBranches.Icon,
+    readBranches.Chart,
+    readBranches.Badge,
+    readBranches.Transition,
+    readBranches.Progress,
+    readBranches.Stat,
+    readBranches.ListItem,
+    readBranches.Automation,
+    readBranches.Pending,
+  ])
+  .superRefine((node, ctx) => {
+    const parsed = AtomNodeSchema.safeParse(atomValidationTree(node))
+    if (!parsed.success) for (const issue of parsed.error.issues) ctx.addIssue(issue)
   })
 
 const UnknownRenderableAtomNodeSchema = z

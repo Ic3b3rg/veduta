@@ -37,6 +37,8 @@ export {
   atomTypes,
   AtomTypeSchema,
   AtomNodeSchema,
+  AtomNodeUnionSchema,
+  AtomNodeBranches,
   pendingSlotVariants,
   PendingSlotVariantSchema,
   PendingAtomPropsSchema,

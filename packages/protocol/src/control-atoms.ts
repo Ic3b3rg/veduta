@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { ActionOwningNode } from './action-inputs.ts'
+import type { FastAction } from './action.ts'
 import { canonicalJson, type JsonObject } from './json.ts'
 
 const sharedProps = {
@@ -79,16 +80,7 @@ export function validateSelectionControl(node: ActionOwningNode, ctx: z.Refineme
     issue(['actions'], `${node.type} requires exactly one ${name} fast Action`)
     return
   }
-  const finalBindingStep = action.plan.steps.filter((step) => step.target === node.binding).at(-1)
-  if (
-    finalBindingStep?.op !== 'set' ||
-    finalBindingStep.value.source !== 'input' ||
-    finalBindingStep.value.name !== 'value'
-  )
-    issue(
-      ['actions', 0, 'plan', 'steps'],
-      `${node.type} must set its binding from the typed value input`,
-    )
+  validateTypedControlBindingWrite(node, action, ctx)
   if (node.type === 'Select' || node.type === 'RadioGroup') {
     const offered = SelectAtomPropsSchema.safeParse(node.props)
     if (
@@ -101,6 +93,26 @@ export function validateSelectionControl(node: ActionOwningNode, ctx: z.Refineme
         'value must declare exactly the offered option values',
       )
   }
+}
+
+/** A bound fast control must commit its owning gesture after all writes to that binding. */
+export function validateTypedControlBindingWrite(
+  node: ActionOwningNode,
+  action: FastAction,
+  ctx: z.RefinementCtx,
+): void {
+  const finalBindingStep = action.plan.steps.filter((step) => step.target === node.binding).at(-1)
+  if (
+    finalBindingStep?.op !== 'set' ||
+    finalBindingStep.value.source !== 'input' ||
+    finalBindingStep.value.name !== 'value'
+  )
+    ctx.addIssue({
+      code: 'custom',
+      path: ['actions', 0, 'plan', 'steps'],
+      params: { semanticCode: 'invalid_bound_control_write' },
+      message: `${node.type} must set its binding from the typed value input`,
+    })
 }
 
 export function validateSelectionControlState(

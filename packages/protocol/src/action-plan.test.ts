@@ -71,6 +71,7 @@ describe('closed fast Action plans', () => {
   })
   it('applies a canonical root-tree replacement that carries a resealed owning Action', () => {
     const surface = SurfaceSchema.parse(collectionSurface())
+    if (surface.tree.type !== 'Form') throw new Error('Form required')
     const tree = { ...surface.tree, props: { label: 'New form', submitLabel: 'Add' } }
     expect(
       applySurfacePatch(surface, {

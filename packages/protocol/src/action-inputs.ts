@@ -13,7 +13,7 @@ import { isControlDate } from './control-atoms.ts'
 
 export interface ActionOwningNode {
   type: string
-  props?: JsonObject | undefined
+  props?: Readonly<Record<string, unknown>> | undefined
   binding?: string | undefined
   children?: readonly ActionOwningNode[] | undefined
   actions?: Action[] | undefined

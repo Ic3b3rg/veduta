@@ -37,12 +37,14 @@ describe('Chart Surface semantics', () => {
     })
 
     expect(surface.state['records']).toEqual(records)
+    if (surface.tree.type !== 'Chart') throw new Error('Chart required')
     expect(surface.tree.props?.['type']).toBe(type)
   })
 
   it('accepts an explicit empty series with its authored empty state', () => {
     const surface = SurfaceSchema.parse({ ...chartSurface, state: { records: [] } })
     expect(surface.state['records']).toEqual([])
+    if (surface.tree.type !== 'Chart') throw new Error('Chart required')
     expect(surface.tree.props?.['emptyText']).toBe('No distance recorded yet.')
   })
 

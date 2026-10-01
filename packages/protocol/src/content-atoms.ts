@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { AtomNode } from './atom.ts'
 import { AutomationRunHistorySchema } from './automation-outcome.ts'
 import type { JsonObject } from './json.ts'
+import { validateTypedControlBindingWrite } from './control-atoms.ts'
 
 const ShortText = z.string().trim().min(1).max(240)
 const ContentText = z.string().max(64_000)
@@ -108,7 +109,7 @@ const textTypes = new Set(['Title', 'Text', 'Caption', 'Label', 'Markdown'])
 
 interface ContentAtomCandidate {
   type: AtomNode['type']
-  props?: JsonObject | undefined
+  props?: Readonly<Record<string, unknown>> | undefined
   binding?: string | undefined
   actions?: AtomNode['actions'] | undefined
   children?: AtomNode['children'] | undefined
@@ -146,18 +147,7 @@ export function validateContentAtom(node: ContentAtomCandidate, ctx: z.Refinemen
     } else if (node.binding === undefined && node.actions !== undefined) {
       issue(ctx, ['actions'], 'Display-only Automation does not accept actions')
     }
-    if (
-      action?.path === 'fast' &&
-      !action.plan.steps.some(
-        (step) =>
-          step.op === 'set' &&
-          step.target === node.binding &&
-          step.value.source === 'input' &&
-          step.value.name === 'value',
-      )
-    ) {
-      issue(ctx, ['actions', 0, 'stateKey'], 'Automation toggle must target its enabled binding')
-    }
+    if (action?.path === 'fast') validateTypedControlBindingWrite(node, action, ctx)
   }
   if (node.type === 'Table' && parsed.success && node.props?.['rows'] !== undefined) {
     validateTableRows(node.props['rows'], node.props['columns'], ['props', 'rows'], ctx)

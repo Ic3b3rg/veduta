@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import type { AtomNode } from './atom.ts'
 import { AtomToneSchema } from './content-atoms.ts'
-import type { JsonObject } from './json.ts'
 
 export const AtomSpacingSchema = z.enum(['none', 'xs', 'sm', 'md', 'lg', 'xl'])
 export const BoxAtomPropsSchema = z
@@ -87,7 +86,7 @@ type LayoutAtomType = keyof typeof layoutSchemas
 
 interface LayoutAtomCandidate {
   type: AtomNode['type']
-  props?: JsonObject | undefined
+  props?: Readonly<Record<string, unknown>> | undefined
   binding?: string | undefined
   actions?: AtomNode['actions'] | undefined
   children?: AtomNode['children'] | undefined

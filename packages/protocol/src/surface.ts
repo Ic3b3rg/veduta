@@ -3,7 +3,7 @@ import { AtomNodeSchema, ComboboxAtomPropsSchema, type AtomNode } from './atom.t
 import { ChartAtomPropsSchema, chartSeriesSchema } from './chart.ts'
 import { JsonObjectSchema, type JsonObject } from './json.ts'
 import { validateContentState } from './content-atoms.ts'
-import { validateActionPlansState } from './action-inputs.ts'
+import { validateActionPlansState, type ActionOwningNode } from './action-inputs.ts'
 import {
   validateSelectionControlState,
   validateSelectionControlPlanValues,
@@ -236,7 +236,7 @@ export type NodeBindingRef =
   | { kind: 'fastAction'; key: string; actionName: string; path: (string | number)[] }
 
 export function collectNodeBindingRefs(
-  node: AtomNode,
+  node: ActionOwningNode,
   path: (string | number)[],
 ): NodeBindingRef[] {
   const refs: NodeBindingRef[] = []
