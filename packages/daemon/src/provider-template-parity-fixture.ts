@@ -1,3 +1,4 @@
+import { inputSetPlan } from '@veduta/protocol'
 import { rmSync } from 'node:fs'
 import {
   SurfaceSchema,
@@ -64,7 +65,9 @@ const TEMPLATE_TREE: Surface['tree'] = {
       type: 'Checkbox',
       binding: 'finished',
       props: { label: 'Finished' },
-      actions: [{ name: 'toggle', path: 'fast', stateKey: 'finished', payload: {} }],
+      actions: [
+        { name: 'toggle', path: 'fast', plan: inputSetPlan('finished', { type: 'boolean' }) },
+      ],
     },
   ],
 }

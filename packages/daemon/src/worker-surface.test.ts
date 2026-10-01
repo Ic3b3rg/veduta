@@ -1,3 +1,4 @@
+import { literalSetPlan } from '@veduta/protocol'
 import { SurfaceSchema, type AtomNode } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { describe, expect, it } from 'vitest'
@@ -68,7 +69,7 @@ describe('activeWorkerSurface', () => {
     const cancelButton = findNode(surface.tree, 'worker-cancel')
     expect(cancelButton?.type).toBe('Button')
     expect(cancelButton?.actions).toEqual([
-      { name: 'cancel', path: 'fast', stateKey: WORKER_CANCEL_STATE_KEY, payload: {} },
+      { name: 'cancel', path: 'fast', plan: literalSetPlan(WORKER_CANCEL_STATE_KEY, true) },
     ])
   })
 

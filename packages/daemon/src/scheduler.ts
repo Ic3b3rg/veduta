@@ -22,7 +22,11 @@ import {
   type Automation,
   type Condition,
 } from './scheduler-persistence.ts'
-import type { FastMutationNotice, Store } from './store.ts'
+import type { Store } from './store.ts'
+import type { CommittedFastActionOutcome } from '@veduta/protocol'
+import { fastActionChangedKeys } from './fast-action-projection.ts'
+import { SurfaceActionError } from './fast-action.ts'
+import type { FastActionPreflightContext } from './surface-engine.ts'
 import { AutomationOutcomeService } from './automation-outcome-service.ts'
 import {
   SchedulerOutcomeCoordinator,
@@ -127,6 +131,7 @@ export class Scheduler {
   private readonly judge: JudgeFn
   private readonly outcomes: SchedulerOutcomeCoordinator
   private disposeFastMutationObserver: (() => void) | undefined
+  private disposePreflight: (() => void) | undefined
   private timer: NodeJS.Timeout | undefined
   private running = false
   /** The run loop is armed only between start() and stop(). */
@@ -153,13 +158,13 @@ export class Scheduler {
       appendEvent: (spaceId, type, text, payload, origin) =>
         this.appendEvent(spaceId, type, text, payload, origin),
     })
+    this.subscribeToggles()
     this.outcomes.recoverInterruptedRuns()
     this.ensureSurfaces()
     this.outcomeService.recover()
     this.ensureSurfaces()
     this.outcomes.flushOutcomeTargetCleanups()
     this.reconcileOutcomeTargets()
-    this.subscribeToggles()
   }
 
   /** Arm the run loop: a single timeout to the earliest due occurrence. */
@@ -175,11 +180,16 @@ export class Scheduler {
     this.timer = undefined
     this.disposeFastMutationObserver?.()
     this.disposeFastMutationObserver = undefined
+    this.disposePreflight?.()
+    this.disposePreflight = undefined
   }
 
   private subscribeToggles(): void {
-    this.disposeFastMutationObserver = this.store.onFastMutation((notice) =>
-      this.syncToggleFromSurface(notice),
+    this.disposePreflight = this.store.onFastActionPreflight((context) =>
+      this.preflightToggle(context),
+    )
+    this.disposeFastMutationObserver = this.store.onFastActionOutcome('scheduler', (outcome) =>
+      this.syncToggleFromSurface(outcome),
     )
   }
 
@@ -988,24 +998,32 @@ export class Scheduler {
     }
   }
 
-  private syncToggleFromSurface(notice: FastMutationNotice): void {
-    const automationId = automationIdFromStateKey(notice.stateKey)
-    if (automationId === undefined) return
-    const automation = this.getAutomation(automationId)
-    if (!automation) return
-    const space = this.store.getSpace(automation.spaceId)
-    if (!space || notice.surfaceId !== automationsSurfaceIdForSpace(space)) return
-    // The toggle contract is an explicit boolean; anything else must not
-    // silently flip a job (truthy strings like "false" would invert it).
-    // The fast path already persisted the malformed value into Surface
-    // state, so re-project from SQLite to heal it — on a microtask: the
-    // Gateway broadcasts the malformed patch after this observer returns,
-    // and clients must receive the healing patches (higher cursors) last.
-    if (typeof notice.value !== 'boolean') {
-      queueMicrotask(() => this.refreshSurface(automation.spaceId))
-      return
+  private preflightToggle(context: FastActionPreflightContext): void {
+    for (const key of Object.keys(context.action.plan.targets)) {
+      const automationId = automationIdFromStateKey(key)
+      if (automationId === undefined) continue
+      const automation = this.getAutomation(automationId)
+      const space = automation && this.store.getSpace(automation.spaceId)
+      if (!space || context.surface.id !== automationsSurfaceIdForSpace(space)) continue
+      if (typeof context.nextSurface.state[key] !== 'boolean')
+        throw new SurfaceActionError('preflight_rejected', AUTOMATION_UNAVAILABLE)
     }
-    this.setEnabled(automation.spaceId, automationId, notice.value, 'surface')
+  }
+
+  private syncToggleFromSurface(outcome: CommittedFastActionOutcome): void {
+    const current = this.store.getSurface(outcome.surfaceId)
+    if (!current) return
+    for (const key of fastActionChangedKeys(outcome)) {
+      const automationId = automationIdFromStateKey(key)
+      if (automationId === undefined) continue
+      const automation = this.getAutomation(automationId)
+      const space = automation && this.store.getSpace(automation.spaceId)
+      if (!automation || !space || outcome.surfaceId !== automationsSurfaceIdForSpace(space))
+        continue
+      const value = current.state[key]
+      if (typeof value === 'boolean')
+        this.setEnabled(automation.spaceId, automationId, value, 'surface')
+    }
   }
 
   private schedule(): void {

@@ -1,5 +1,6 @@
 import {
   SurfaceSchema,
+  applySurfacePatch,
   type AtomNode,
   type ChatTurnCorrelation,
   type PatchOperation,
@@ -12,7 +13,11 @@ import {
   decisionErrorCaptionNode,
 } from './decision-surface.ts'
 import { SerializedWorkQueue } from './serialized-work-queue.ts'
-import type { FastMutationNotice, Store } from './store.ts'
+import type { Store } from './store.ts'
+import type { CommittedFastActionOutcome } from '@veduta/protocol'
+import { fastActionChangedKeys } from './fast-action-projection.ts'
+import { SurfaceActionError } from './fast-action.ts'
+import type { FastActionPreflightContext } from './surface-engine.ts'
 import type { TreeProposal } from './surface-engine.ts'
 import { effectiveOrigin, neutralizeDelimiters } from './taint.ts'
 import { walkAtomTree } from './templates.ts'
@@ -195,7 +200,9 @@ function summarizeNode(node: AtomNode): string {
   }
   for (const action of node.actions ?? []) {
     const stateKey =
-      action.stateKey === undefined ? '' : `(${neutralizeDelimiters(action.stateKey)})`
+      action.path === 'fast'
+        ? `(${Object.keys(action.plan.targets).map(neutralizeDelimiters).join(',')})`
+        : ''
     parts.push(`action=${neutralizeDelimiters(action.name)}@${action.path}${stateKey}`)
   }
   return parts.join(' ')
@@ -224,13 +231,13 @@ export interface TreeProposalResolutionResult {
 
 /**
  * Observes `store.onTreeProposal` to build the preview card, and
- * `store.onFastMutation` for Accept/Reject clicks on the cards it created —
+ * `store.onFastActionOutcome` for Accept/Reject clicks on the cards it created —
  * both wired in the constructor, unlike `ApprovalSurfaceManager`, which
  * needs a two-phase `setTrust` handshake only because `TrustLayer`'s own
  * constructor requires a port. Nothing here has that circularity.
  *
  * Resolution is funneled through a single serialized promise chain, exactly
- * as `ApprovalSurfaceManager` does: `onFastMutation` is a synchronous void
+ * as `ApprovalSurfaceManager` does: `onFastActionOutcome` is a synchronous void
  * callback, so nothing else awaits the async resolution work directly, and
  * every link in the chain ends in its own `catch` — a resolution failure is
  * logged (`onError`) and never surfaces as an unhandled rejection. Two
@@ -246,6 +253,7 @@ export class TreeProposalSurfaceManager {
   private readonly resolutions: SerializedWorkQueue
   private readonly unsubscribeProposal: () => void
   private readonly unsubscribeFastMutation: () => void
+  private readonly unsubscribePreflight: () => void
 
   constructor(options: TreeProposalSurfaceManagerOptions) {
     this.store = options.store
@@ -255,8 +263,11 @@ export class TreeProposalSurfaceManager {
     this.unsubscribeProposal = this.store.onTreeProposal((proposal, initiatingTurn) =>
       this.createCard(proposal, initiatingTurn),
     )
-    this.unsubscribeFastMutation = this.store.onFastMutation((notice) =>
-      this.handleFastMutation(notice),
+    this.unsubscribePreflight = this.store.onFastActionPreflight((context) =>
+      this.preflight(context),
+    )
+    this.unsubscribeFastMutation = this.store.onFastActionOutcome('tree-proposals', (outcome) =>
+      this.project(outcome),
     )
   }
 
@@ -266,7 +277,7 @@ export class TreeProposalSurfaceManager {
    * proposal — including one just reopened — ensures its card Surface
    * exists at the deterministic id. A card Surface that survived a daemon
    * restart on disk is already fully clickable —
-   * `handleFastMutation`/`resolve` resolve against the store directly, not
+   * `project`/`resolve` resolve against the store directly, not
    * against anything `start()` builds — so this only ever needs to recreate
    * a card that is missing entirely (e.g. the daemon crashed between
    * recording the proposal and creating its card). If a Surface already
@@ -331,6 +342,7 @@ export class TreeProposalSurfaceManager {
   dispose(): void {
     this.unsubscribeProposal()
     this.unsubscribeFastMutation()
+    this.unsubscribePreflight()
   }
 
   /** Test/shutdown hook: resolves once every enqueued resolution has settled. */
@@ -387,7 +399,7 @@ export class TreeProposalSurfaceManager {
 
   /**
    * The persisted daemon-owned card is the only clickable card — the same
-   * stance `ApprovalSurfaceManager.handleFastMutation` takes
+   * stance `ApprovalSurfaceManager.project` takes
    * (`approval-surface.ts`) — enforced by two required checks.
    * `treeProposalIdFromSurfaceId`'s strict grammar is a
    * cheap shape pre-filter, not proof the click landed on the real card, so
@@ -400,20 +412,53 @@ export class TreeProposalSurfaceManager {
    * and have a single user tap apply the proposal's operations to the
    * pinned Surface with `bypassPin: true` — no preview, no consent.
    */
-  private handleFastMutation(notice: FastMutationNotice): void {
-    if (notice.stateKey !== DECISION_ACCEPT_KEY && notice.stateKey !== DECISION_REJECT_KEY) return
-    if (!notice.value) return
-    const proposalId = treeProposalIdFromSurfaceId(notice.surfaceId)
-    if (proposalId === undefined) return // not a card-surface id shape at all
-    if (notice.surfaceId !== treeProposalSurfaceId(proposalId)) return // not the canonical id
-    if (!this.store.isSurfaceDaemonOwned(notice.surfaceId)) return // not the daemon's own card
-    // Cheap pre-filter only: `resolve()` re-checks this itself, against the
-    // store, at the moment it actually runs.
-    const proposal = this.store.getTreeProposal(proposalId)
-    if (!proposal || proposal.status !== 'pending') return
-    const decision = notice.stateKey === DECISION_ACCEPT_KEY ? 'accept' : 'reject'
-    this.resolutions.enqueue(async () => {
-      await this.resolve(proposalId, notice.surfaceId, decision, 'trusted:user')
+  private preflight(context: FastActionPreflightContext): void {
+    const id = treeProposalIdFromSurfaceId(context.surface.id)
+    if (
+      id === undefined ||
+      context.surface.id !== treeProposalSurfaceId(id) ||
+      !this.store.isSurfaceDaemonOwned(context.surface.id)
+    )
+      return
+    const keys = Object.keys(context.action.plan.targets)
+    if (!keys.some((key) => key === DECISION_ACCEPT_KEY || key === DECISION_REJECT_KEY)) return
+    const proposal = this.store.getTreeProposal(id)
+    if (!proposal || proposal.status !== 'pending')
+      throw new SurfaceActionError('preflight_rejected', 'This tree proposal is no longer pending')
+    if (keys.includes(DECISION_ACCEPT_KEY)) {
+      const target = this.store.getSurface(proposal.surfaceId)
+      if (
+        !target ||
+        this.store.getSurfaceVersion(proposal.surfaceId)?.treeVersion !==
+          proposal.expectedTreeVersion
+      )
+        throw new SurfaceActionError('preflight_rejected', STALE_PROPOSAL_MESSAGE)
+      try {
+        applySurfacePatch(target, { surfaceId: target.id, operations: proposal.operations })
+      } catch {
+        throw new SurfaceActionError('preflight_rejected', APPLY_FAILED_MESSAGE)
+      }
+    }
+  }
+
+  private project(outcome: CommittedFastActionOutcome): Promise<void> | void {
+    const id = treeProposalIdFromSurfaceId(outcome.surfaceId)
+    if (
+      id === undefined ||
+      outcome.surfaceId !== treeProposalSurfaceId(id) ||
+      !this.store.isSurfaceDaemonOwned(outcome.surfaceId)
+    )
+      return
+    if (this.store.getTreeProposal(id)?.status !== 'pending') return
+    const key = fastActionChangedKeys(outcome).find(
+      (key) =>
+        (key === DECISION_ACCEPT_KEY || key === DECISION_REJECT_KEY) &&
+        outcome.surface.state[key] === true,
+    )
+    if (!key) return
+    const decision = key === DECISION_ACCEPT_KEY ? 'accept' : 'reject'
+    return this.resolutions.enqueue(async () => {
+      await this.resolve(id, outcome.surfaceId, decision, 'trusted:user')
     })
   }
 

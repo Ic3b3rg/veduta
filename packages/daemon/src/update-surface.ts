@@ -1,3 +1,4 @@
+import { literalSetPlan } from '@veduta/protocol'
 import { SurfaceSchema, type AtomNode, type Surface } from '@veduta/protocol'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { untrustedOrigin, type Origin } from './taint.ts'
@@ -172,7 +173,7 @@ export function buttonsRowNode(view: UpdateSurfaceView): AtomNode {
       type: 'Button',
       props: { label: 'Apply update' },
       actions: [
-        { name: 'apply', path: 'fast', payload: { value: true }, stateKey: UPDATE_APPLY_STATE_KEY },
+        { name: 'apply', path: 'fast', plan: literalSetPlan(UPDATE_APPLY_STATE_KEY, true) },
       ],
     })
   }
@@ -180,9 +181,7 @@ export function buttonsRowNode(view: UpdateSurfaceView): AtomNode {
     id: 'update-check-button',
     type: 'Button',
     props: { label: 'Check now' },
-    actions: [
-      { name: 'check', path: 'fast', payload: { value: true }, stateKey: UPDATE_CHECK_STATE_KEY },
-    ],
+    actions: [{ name: 'check', path: 'fast', plan: literalSetPlan(UPDATE_CHECK_STATE_KEY, true) }],
   })
   return { id: BUTTONS_ROW_NODE_ID, type: 'Row', children }
 }

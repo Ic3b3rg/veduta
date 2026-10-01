@@ -1,3 +1,4 @@
+import { inputSetPlan } from '@veduta/protocol'
 import type { Space, Surface } from '@veduta/protocol'
 import { SpaceSchema, SurfaceSchema } from '@veduta/protocol'
 import { buildRelativeTimeValidity } from './relative-time-surface.ts'
@@ -65,7 +66,13 @@ export function seedSpaces(options: { relativeTimeNow?: () => Date; timeZone?: s
           type: 'Checkbox' as const,
           binding: label.toLowerCase(),
           props: { label },
-          actions: [{ name: 'toggle', path: 'fast' as const, stateKey: label.toLowerCase() }],
+          actions: [
+            {
+              name: 'toggle',
+              path: 'fast' as const,
+              plan: inputSetPlan(label.toLowerCase(), { type: 'boolean' }),
+            },
+          ],
         })),
       ],
     },

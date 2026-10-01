@@ -1,12 +1,18 @@
 import { createHash } from 'node:crypto'
 import {
   SurfaceSchema,
+  JsonObjectSchema,
   SurfaceTemplateSchema,
+  FastActionPlanSchema,
   canonicalJson,
   collectNodeBindingRefs,
   defaultAtomBindingValue,
   emptyAtomDataProp,
   isAtomCompositionProp,
+  isActionEmptyValue,
+  type ActionValueSpec,
+  type ActionRecordSpec,
+  type ActionValueSource,
   type Action,
   type AtomNode,
   type JsonObject,
@@ -235,10 +241,52 @@ function reduceTreeProps(node: AtomNode, dataProps: string[]): AtomNode {
     id: node.id,
     type: node.type,
     ...(node.binding !== undefined ? { binding: node.binding } : {}),
-    ...(node.actions !== undefined ? { actions: node.actions } : {}),
+    ...(node.actions !== undefined ? { actions: node.actions.map(portableAction) } : {}),
     ...(props !== undefined ? { props } : {}),
     ...(children !== undefined ? { children } : {}),
   }
+}
+
+function portableAction(action: Action): Action {
+  if (action.path === 'agent') return action
+  for (const step of action.plan.steps) {
+    const target = action.plan.targets[step.target]!
+    if (step.op === 'clear') continue
+    if (step.op === 'update' || step.op === 'remove') {
+      if (step.selector.source === 'literal')
+        throw new Error('Template extraction cannot retain an instance record selector')
+      if (step.op === 'update' && target.type === 'array' && target.items.type === 'object')
+        for (const [key, source] of Object.entries(step.fields))
+          portableSource(source, target.items.fields[key]!)
+    } else
+      portableSource(
+        step.value,
+        step.op === 'append' && target.type === 'array' ? target.items : target,
+      )
+  }
+  return { name: action.name, path: 'fast', plan: action.plan }
+}
+
+function portableSource(source: ActionValueSource, spec: ActionValueSpec | ActionRecordSpec): void {
+  if (source.source === 'input' || source.source === 'metadata') return
+  if (source.source === 'object') {
+    if (spec.type !== 'object')
+      throw new Error('Template Action object mapping has no record schema')
+    for (const [key, field] of Object.entries(source.fields)) {
+      if (key === spec.identityKey && field.source === 'literal')
+        throw new Error('Template extraction cannot retain an instance record identity')
+      portableSource(field, spec.fields[key]!)
+    }
+    return
+  }
+  if (isActionEmptyValue(source.value) || typeof source.value === 'boolean') return
+  if (
+    spec.type !== 'array' &&
+    spec.type !== 'object' &&
+    spec.enum?.some((option) => canonicalJson(option) === canonicalJson(source.value))
+  )
+    return
+  throw new Error('Template extraction cannot retain literal instance data in an Action')
 }
 
 function reduceNodeProps(node: AtomNode, props: JsonObject, dataProps: string[]): JsonObject {
@@ -296,6 +344,26 @@ export function surfaceFromTemplate(
       defaultState.set(node.binding, defaultAtomBindingValue(node.type))
     const history = node.type === 'Automation' ? node.props?.['historyBinding'] : undefined
     if (typeof history === 'string') defaultState.set(history, [])
+    for (const action of node.actions ?? []) {
+      if (action.path !== 'fast') continue
+      for (const [key, spec] of Object.entries(action.plan.targets)) {
+        // Owning text drafts retain their string contract, including numeric Form inputs.
+        if (defaultState.has(key)) continue
+        defaultState.set(
+          key,
+          spec.type === 'array'
+            ? []
+            : (spec.enum?.[0] ??
+                (spec.type === 'string'
+                  ? ''
+                  : spec.type === 'number'
+                    ? 0
+                    : spec.type === 'boolean'
+                      ? false
+                      : null)),
+        )
+      }
+    }
   })
 
   for (const key of Object.keys(providedState)) {
@@ -537,15 +605,14 @@ function sanitizeAndFilterNode(node: AtomNode): SanitizedNode {
       strippedAgentActions += 1
       return false
     })
-    .map((action) => ({
-      ...action,
-      name: neutralizeDelimiters(action.name),
-      ...(action.stateKey !== undefined ? { stateKey: neutralizeDelimiters(action.stateKey) } : {}),
-      ...(action.stateKeys !== undefined
-        ? { stateKeys: action.stateKeys.map(neutralizeDelimiters) }
-        : {}),
-      payload: sanitizeProps(action.payload),
-    }))
+    .map((action) => {
+      if (action.path !== 'fast') return action
+      return {
+        name: neutralizeDelimiters(action.name),
+        path: 'fast' as const,
+        plan: FastActionPlanSchema.parse(sanitizeProps(JsonObjectSchema.parse(action.plan))),
+      }
+    })
   const props = node.props === undefined ? undefined : sanitizeProps(node.props)
 
   let children: AtomNode[] | undefined

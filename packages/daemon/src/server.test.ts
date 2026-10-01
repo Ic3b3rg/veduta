@@ -1,3 +1,4 @@
+import { fastInvocation } from './surface-action-test-fixtures.ts'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -7,7 +8,7 @@ import { fromPartial } from '@total-typescript/shoehorn'
 import {
   AutomationOutcomeNotificationActionResultSchema,
   AutomationOutcomeNotificationSnapshotSchema,
-  FastSurfaceActionResultSchema,
+  CommittedFastActionOutcomeSchema,
   GatewayServerMessageSchema,
   MoveSurfaceResultSchema,
   PendingDecisionListSchema,
@@ -1319,14 +1320,14 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/surfaces/srf-groceries/actions',
-      payload: { nodeId: 'item-milk', name: 'toggle', payload: { value: true } },
+      payload: fastInvocation(store, 'srf-groceries', 'item-milk', 'toggle', { value: true }),
     })
     expect(res.statusCode).toBe(200)
-    const result = FastSurfaceActionResultSchema.parse(res.json())
+    const result = CommittedFastActionOutcomeSchema.parse(res.json())
     expect(result.surface.state['milk']).toBe(true)
     expect(result.surfaceCursor).toBe(baseline + 1)
     const events = store.eventLog('spc-health')
-    expect(events.at(-1)?.text).toContain('milk')
+    expect(events.at(-1)?.payload?.['targets']).toEqual(['milk'])
     expect(store.surfaceEventsAfter(baseline)).toMatchObject([
       {
         kind: 'patch',
@@ -1345,18 +1346,20 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
     const { app, store } = buildServer()
     const baseline = store.latestSurfaceCursor()
     let handlerCalls = 0
-    const dispose = store.onFastMutation((notice) => {
-      if (notice.surfaceId === 'srf-groceries' && notice.stateKey === 'milk') handlerCalls += 1
+    const dispose = store.onFastActionOutcome('http-test', (outcome) => {
+      if (outcome.surfaceId === 'srf-groceries') handlerCalls += 1
     })
     const request = {
       method: 'POST' as const,
       url: '/api/surfaces/srf-groceries/actions',
-      payload: {
-        nodeId: 'item-milk',
-        name: 'toggle',
-        payload: { value: true },
-        idempotencyKey: 'pwa-groceries-milk-on',
-      },
+      payload: fastInvocation(
+        store,
+        'srf-groceries',
+        'item-milk',
+        'toggle',
+        { value: true },
+        'pwa-groceries-milk-on',
+      ),
     }
 
     const first = await app.inject(request)
@@ -1369,12 +1372,12 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
 
     expect(first.statusCode).toBe(200)
     expect(retry.statusCode).toBe(200)
-    const firstResult = FastSurfaceActionResultSchema.parse(first.json())
-    const retryResult = FastSurfaceActionResultSchema.parse(retry.json())
+    const firstResult = CommittedFastActionOutcomeSchema.parse(first.json())
+    const retryResult = CommittedFastActionOutcomeSchema.parse(retry.json())
     expect(firstResult.surface.state['milk']).toBe(true)
     expect(firstResult.surfaceCursor).toBe(baseline + 1)
-    expect(retryResult.surface.state['milk']).toBe(false)
-    expect(retryResult.surfaceCursor).toBe(baseline + 2)
+    expect(retryResult.surface.state['milk']).toBe(true)
+    expect(retryResult.surfaceCursor).toBe(baseline + 1)
     expect(handlerCalls).toBe(1)
     expect(
       store
@@ -1383,7 +1386,8 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
           (event) =>
             event.type === 'fast_path' &&
             event.payload?.['surfaceId'] === 'srf-groceries' &&
-            event.payload?.['stateKey'] === 'milk',
+            Array.isArray(event.payload?.['targets']) &&
+            event.payload['targets'].includes('milk'),
         ),
     ).toHaveLength(1)
     expect(
@@ -1981,7 +1985,7 @@ describe('trust layer wiring (issue #14)', () => {
     const approve = await app.inject({
       method: 'POST',
       url: `/api/surfaces/${surfaceId}/actions`,
-      payload: { nodeId: 'decision-approve', name: 'press', payload: { value: true } },
+      payload: fastInvocation(store, surfaceId, 'decision-approve', 'press'),
     })
     expect(approve.statusCode).toBe(200)
 
@@ -2184,12 +2188,12 @@ describe('trust layer wiring (issue #14)', () => {
     await app.inject({
       method: 'POST',
       url: `/api/surfaces/${surfaceId}/actions`,
-      payload: { nodeId: 'decision-allowlist', name: 'toggle', payload: { value: true } },
+      payload: fastInvocation(store, surfaceId, 'decision-allowlist', 'toggle', { value: true }),
     })
     await app.inject({
       method: 'POST',
       url: `/api/surfaces/${surfaceId}/actions`,
-      payload: { nodeId: 'decision-approve', name: 'press', payload: { value: true } },
+      payload: fastInvocation(store, surfaceId, 'decision-approve', 'press'),
     })
     await vi.waitFor(() => {
       expect(store.eventLog('spc-health').some((e) => e.type === 'outbound.delivery')).toBe(true)
@@ -2251,7 +2255,7 @@ describe('Web Push notifications (issue #18)', () => {
     const action = await app.inject({
       method: 'POST',
       url: '/api/surfaces/srf-groceries/actions',
-      payload: { nodeId: 'item-milk', name: 'toggle', payload: { value: true } },
+      payload: fastInvocation(store, 'srf-groceries', 'item-milk', 'toggle', { value: true }),
     })
     expect(action.statusCode).toBe(200)
 

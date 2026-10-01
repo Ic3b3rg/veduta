@@ -54,6 +54,7 @@ export const ActionArraySpecSchema = z
     items: z.union([ActionScalarSpecSchema, ActionRecordSpecSchema]),
   })
   .strict()
+export type ActionRecordSpec = z.infer<typeof ActionRecordSpecSchema>
 export const ActionValueSpecSchema = z.union([ActionScalarSpecSchema, ActionArraySpecSchema])
 export type ActionValueSpec = z.infer<typeof ActionValueSpecSchema>
 export const ActionScalarSourceSchema = z.discriminatedUnion('source', [

@@ -1,3 +1,4 @@
+import { inputSetPlan } from '@veduta/protocol'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -58,7 +59,9 @@ function testSurface(id: string, spaceId: string): ReturnType<typeof SurfaceSche
           type: 'Checkbox',
           binding: 'done',
           props: { label: 'Done' },
-          actions: [{ name: 'toggle', path: 'fast', stateKey: 'done' }],
+          actions: [
+            { name: 'toggle', path: 'fast', plan: inputSetPlan('done', { type: 'boolean' }) },
+          ],
         },
       ],
     },

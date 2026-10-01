@@ -1,3 +1,4 @@
+import { inputSetPlan } from '@veduta/protocol'
 import { existsSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -41,7 +42,9 @@ function sampleTemplate(id: string): SurfaceTemplate {
           type: 'Checkbox',
           binding: 'done',
           props: { label: 'Done today' },
-          actions: [{ name: 'toggle', path: 'fast', stateKey: 'done' }],
+          actions: [
+            { name: 'toggle', path: 'fast', plan: inputSetPlan('done', { type: 'boolean' }) },
+          ],
         },
       ],
     },
@@ -166,7 +169,9 @@ describe('planTemplateImport / applyTemplateImport', () => {
             type: 'Checkbox',
             binding: 'finished',
             props: { label: 'Finished' },
-            actions: [{ name: 'toggle', path: 'fast', stateKey: 'finished' }],
+            actions: [
+              { name: 'toggle', path: 'fast', plan: inputSetPlan('finished', { type: 'boolean' }) },
+            ],
           },
         ],
       },
@@ -213,7 +218,7 @@ describe('planTemplateImport / applyTemplateImport', () => {
     })
 
     // The tree lands verbatim, from the imported Template, not from Space A.
-    expect(instantiated.tree).toEqual(importedTemplate.tree)
+    expect(instantiated.tree).toMatchObject(importedTemplate.tree)
     // The state holds B's own supplied values, never A's.
     expect(instantiated.state).toEqual({ finished: true })
     // The reuse is recorded against the imported Template.
@@ -404,7 +409,7 @@ describe('planTemplateImport / applyTemplateImport', () => {
           binding: 'done',
           actions: [
             { name: 'speak-to-agent', path: 'agent' },
-            { name: 'toggle', path: 'fast', stateKey: 'done' },
+            { name: 'toggle', path: 'fast', plan: inputSetPlan('done', { type: 'boolean' }) },
           ],
         },
         stateKeys: ['done'],
@@ -415,7 +420,7 @@ describe('planTemplateImport / applyTemplateImport', () => {
 
     expect(plan.strippedAgentActions).toBe(1)
     expect(plan.templates[0]?.tree.actions).toEqual([
-      { name: 'toggle', path: 'fast', stateKey: 'done', payload: {} },
+      { name: 'toggle', path: 'fast', plan: inputSetPlan('done', { type: 'boolean' }) },
     ])
   })
 

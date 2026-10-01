@@ -1,9 +1,11 @@
+import { fastInvocation } from './surface-action-test-fixtures.ts'
+import { formSetPlan, JsonObjectSchema, type CommittedFastActionOutcome } from '@veduta/protocol'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SurfaceSchema, type Surface } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
-import { Store, SurfaceActionError, type FastMutationNotice } from './store.ts'
+import { Store, SurfaceActionError } from './store.ts'
 
 const now = () => new Date('2026-09-01T08:00:00.000Z')
 
@@ -13,44 +15,41 @@ describe('atomic Form actions', () => {
     const first = new Store({ rootDir, now })
     first.createSurface(profileSurface(), 'agent')
     const cursorBeforeSubmit = first.latestSurfaceCursor()
-    const notices: FastMutationNotice[] = []
-    first.onFastMutation((notice) => notices.push(notice))
+    const notices: CommittedFastActionOutcome[] = []
+    first.onFastActionOutcome('form-test', (outcome) => {
+      notices.push(outcome)
+    })
 
-    const invocation = {
-      nodeId: 'profile-form',
-      name: 'submit',
-      payload: { value: { displayName: 'Grace', bio: 'Compiler pioneer' } },
-      idempotencyKey: 'profile-submit-grace',
-    }
+    const invocation = fastInvocation(
+      first,
+      'srf-profile',
+      'profile-form',
+      'submit',
+      { displayName: 'Grace', bio: 'Compiler pioneer' },
+      'profile-submit-grace',
+    )
     const committed = first.invokeSurfaceAction('srf-profile', invocation)
 
     expect(committed.path).toBe('fast')
     if (committed.path !== 'fast') throw new Error('expected fast Form action')
-    expect(committed.mutation).toMatchObject({
+    expect(committed.outcome).toMatchObject({
       duplicate: false,
       surface: {
         state: { displayName: 'Grace', bio: 'Compiler pioneer' },
       },
-      event: {
-        patch: {
-          operations: [
-            { target: 'state', op: 'replace', path: '/displayName', value: 'Grace' },
-            { target: 'state', op: 'replace', path: '/bio', value: 'Compiler pioneer' },
-          ],
-        },
+      patch: {
+        operations: [
+          { target: 'state', op: 'replace', path: '/displayName', value: 'Grace' },
+          { target: 'state', op: 'replace', path: '/bio', value: 'Compiler pioneer' },
+        ],
       },
     })
     expect(first.surfaceEventsAfter(cursorBeforeSubmit)).toHaveLength(1)
     expect(first.eventLog('spc-health').filter((event) => event.type === 'fast_path')).toHaveLength(
       1,
     )
-    expect(notices.map(({ stateKey, value }) => [stateKey, value])).toEqual([
-      ['displayName', 'Grace'],
-      ['bio', 'Compiler pioneer'],
-    ])
-    expect(new Set(notices.map(({ mutation }) => mutation.event.cursor))).toEqual(
-      new Set([committed.mutation.event.cursor]),
-    )
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toEqual(committed.outcome)
     first.close()
 
     const restarted = new Store({ rootDir, now })
@@ -58,7 +57,7 @@ describe('atomic Form actions', () => {
 
     expect(replayed.path).toBe('fast')
     if (replayed.path !== 'fast') throw new Error('expected fast Form replay')
-    expect(replayed.mutation.duplicate).toBe(true)
+    expect(replayed.outcome.duplicate).toBe(true)
     expect(restarted.getSurface('srf-profile')?.state).toEqual({
       displayName: 'Grace',
       bio: 'Compiler pioneer',
@@ -80,11 +79,16 @@ describe('atomic Form actions', () => {
     const stateBeforeSubmit = store.getSurface('srf-profile')?.state
 
     try {
-      store.invokeSurfaceAction('srf-profile', {
-        nodeId: 'profile-form',
-        name: 'submit',
-        payload,
-      })
+      store.invokeSurfaceAction(
+        'srf-profile',
+        fastInvocation(
+          store,
+          'srf-profile',
+          'profile-form',
+          'submit',
+          JsonObjectSchema.parse(payload.value ?? {}),
+        ),
+      )
       throw new Error('expected invalid Form payload to be rejected')
     } catch (error) {
       expect(error).toBeInstanceOf(SurfaceActionError)
@@ -107,7 +111,7 @@ function profileSurface(): Surface {
       id: 'profile-form',
       type: 'Form',
       props: { label: 'Profile details', submitLabel: 'Save profile' },
-      actions: [{ name: 'submit', path: 'fast', stateKeys: ['displayName', 'bio'] }],
+      actions: [{ name: 'submit', path: 'fast', plan: formSetPlan(['displayName', 'bio']) }],
       children: [
         {
           id: 'display-name',

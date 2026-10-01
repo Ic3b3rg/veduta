@@ -1,12 +1,11 @@
+import { SurfaceActionError } from './fast-action.ts'
 import {
   SYSTEM_SPACE_ID,
-  FormSubmitPayloadSchema,
   SurfaceSnapshotSchema,
   findDeclaredAction,
   type ChatTurnCorrelation,
   type AutomationOutcomeKind,
   type JsonObject,
-  type JsonValue,
   type PatchOperation,
   type Space,
   type Surface,
@@ -14,6 +13,9 @@ import {
   type SurfacePresentation,
   type SurfaceSnapshot,
   type ActionInvocation,
+  AgentActionInvocationSchema,
+  type FastActionOutcome,
+  type CommittedFastActionOutcome,
 } from '@veduta/protocol'
 import type { ToolDef } from './agent-runner.ts'
 import type { FactsDocument } from './facts.ts'
@@ -35,6 +37,7 @@ import {
   type QueuedAgentTurn,
   type SurfaceEngineEvent,
   type SurfaceMutation,
+  type FastActionPreflightContext,
   type SurfacePinMutation,
   type SurfacePresentationOptions,
   type SurfaceProvenance,
@@ -55,31 +58,9 @@ export interface StoreOptions {
 }
 
 export type SurfaceActionResult =
-  { path: 'fast'; mutation: SurfaceMutation } | { path: 'agent'; turn: QueuedAgentTurn }
-
-/**
- * A non-duplicate fast-path mutation as seen by observers: the explicit
- * value (never a flip) so downstream state converges under retries.
- */
-export interface FastMutationNotice {
-  surfaceId: string
-  stateKey: string
-  value: JsonValue
-  mutation: SurfaceMutation
-}
-
-export type SurfaceActionErrorCode =
-  'unknown_surface' | 'undeclared_action' | 'missing_value' | 'invalid_payload'
-
-export class SurfaceActionError extends Error {
-  constructor(
-    readonly code: SurfaceActionErrorCode,
-    message: string,
-  ) {
-    super(message)
-    this.name = 'SurfaceActionError'
-  }
-}
+  { path: 'fast'; outcome: FastActionOutcome } | { path: 'agent'; turn: QueuedAgentTurn }
+export { SurfaceActionError } from './fast-action.ts'
+export type { SurfaceActionErrorCode } from './fast-action.ts'
 
 /**
  * Store facade for the Gateway: Surfaces stay behind protocol validation,
@@ -94,7 +75,6 @@ export class Store {
   private readonly surfaceEngine: SurfaceEngine
   private readonly now: () => Date
   private readonly llmCalls = 0
-  private readonly fastMutationObservers = new Set<(notice: FastMutationNotice) => void>()
 
   constructor(options: StoreOptions = {}) {
     this.now = options.now ?? (() => new Date())
@@ -202,94 +182,34 @@ export class Store {
     return this.surfaceEngine.onTreeProposal(observer)
   }
 
-  /** Fast path: mutate one state key, stamp freshness, log the event. No LLM. */
-  applyFastAction(
-    surfaceId: string,
-    stateKey: string,
-    value: JsonValue,
-    idempotencyKey?: string,
-  ): SurfaceMutation {
-    return this.surfaceEngine.applyFastAction(surfaceId, stateKey, value, idempotencyKey)
-  }
-
-  /** Fast path: atomically commit every text value owned by one Form. */
-  applyFastFormAction(
-    surfaceId: string,
-    values: Record<string, string>,
-    idempotencyKey?: string,
-  ): SurfaceMutation {
-    return this.surfaceEngine.applyFastFormAction(surfaceId, values, idempotencyKey)
-  }
-
   invokeSurfaceAction(surfaceId: string, invocation: ActionInvocation): SurfaceActionResult {
+    if ('intentId' in invocation)
+      return { path: 'fast', outcome: this.surfaceEngine.invokeFastAction(surfaceId, invocation) }
     const surface = this.getSurface(surfaceId)
-    if (!surface) throw new SurfaceActionError('unknown_surface', `unknown Surface: ${surfaceId}`)
+    if (!surface) throw new SurfaceActionError('unknown_surface', 'unknown Surface')
     const action = findDeclaredAction(surface.tree, invocation.nodeId, invocation.name)
-    if (!action) {
+    if (!action) throw new SurfaceActionError('undeclared_action', 'undeclared Action')
+    if (action.path !== 'agent')
       throw new SurfaceActionError(
-        'undeclared_action',
-        `action "${invocation.name}" is not declared by node "${invocation.nodeId}"`,
+        'invalid_payload',
+        'fast Actions require a revision, stable intent identity, and typed inputs',
       )
+    return {
+      path: 'agent',
+      turn: this.surfaceEngine.enqueueAgentAction(
+        surface,
+        AgentActionInvocationSchema.parse(invocation),
+      ),
     }
-
-    if (action.path === 'agent') {
-      return { path: 'agent', turn: this.surfaceEngine.enqueueAgentAction(surface, invocation) }
-    }
-
-    if (action.stateKeys !== undefined) {
-      const values = parseFormSubmitValues(action.name, action.stateKeys, invocation.payload)
-      const mutation = this.applyFastFormAction(surfaceId, values, invocation.idempotencyKey)
-      if (!mutation.duplicate) {
-        for (const [stateKey, value] of Object.entries(values)) {
-          const notice = { surfaceId, stateKey, value, mutation }
-          this.notifyFastMutation(notice)
-        }
-      }
-      return { path: 'fast', mutation }
-    }
-
-    if (action.stateKey === undefined) {
-      throw new SurfaceActionError(
-        'undeclared_action',
-        `fast action "${invocation.name}" does not declare a state key`,
-      )
-    }
-
-    const value = invocation.payload?.['value']
-    if (value === undefined) {
-      throw new SurfaceActionError(
-        'missing_value',
-        `fast action "${invocation.name}" did not provide a value`,
-      )
-    }
-
-    const mutation = this.applyFastAction(
-      surfaceId,
-      action.stateKey,
-      value,
-      invocation.idempotencyKey,
-    )
-    if (!mutation.duplicate) {
-      const notice = { surfaceId, stateKey: action.stateKey, value, mutation }
-      this.notifyFastMutation(notice)
-    }
-    return { path: 'fast', mutation }
   }
-
-  /** Observe non-duplicate fast-path mutations (idempotent replays never notify). */
-  onFastMutation(observer: (notice: FastMutationNotice) => void): () => void {
-    this.fastMutationObservers.add(observer)
-    return () => this.fastMutationObservers.delete(observer)
+  onFastActionPreflight(preflight: (context: FastActionPreflightContext) => void): () => void {
+    return this.surfaceEngine.onFastActionPreflight(preflight)
   }
-
-  private notifyFastMutation(notice: FastMutationNotice): void {
-    for (const observer of this.fastMutationObservers) {
-      try {
-        observer(notice)
-      } catch (error) {
-        console.error('fast mutation observer failed', error)
-      }
-    }
+  onFastActionOutcome(
+    name: string,
+    observer: (outcome: CommittedFastActionOutcome) => void | Promise<void>,
+  ): () => void {
+    return this.surfaceEngine.onFastActionOutcome(name, observer)
   }
 
   createSurface(
@@ -521,42 +441,4 @@ export class Store {
   readGlobalDocs(): { soul: string; user: string } {
     return this.spacesEngine.readGlobalDocs()
   }
-}
-
-function parseFormSubmitValues(
-  actionName: string,
-  stateKeys: readonly string[],
-  payload: ActionInvocation['payload'],
-): Record<string, string> {
-  const parsed = FormSubmitPayloadSchema.safeParse(payload)
-  if (!parsed.success) {
-    throw new SurfaceActionError(
-      'invalid_payload',
-      `Form action "${actionName}" requires one string value for every text field`,
-    )
-  }
-
-  const submittedKeys = Object.keys(parsed.data.value)
-  if (
-    submittedKeys.length !== stateKeys.length ||
-    stateKeys.some((stateKey) => !Object.prototype.hasOwnProperty.call(parsed.data.value, stateKey))
-  ) {
-    throw new SurfaceActionError(
-      'invalid_payload',
-      `Form action "${actionName}" must submit exactly: ${stateKeys.join(', ')}`,
-    )
-  }
-
-  const values: Record<string, string> = {}
-  for (const stateKey of stateKeys) {
-    const value = parsed.data.value[stateKey]
-    if (value === undefined) {
-      throw new SurfaceActionError(
-        'invalid_payload',
-        `Form action "${actionName}" is missing "${stateKey}"`,
-      )
-    }
-    values[stateKey] = value
-  }
-  return values
 }

@@ -71,6 +71,16 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
       presentation text not null check (presentation in ('standard', 'full'))
     );
 
+    create table if not exists fast_action_intents (
+      intent_id text primary key, outcome_json text not null, commit_id text, event_cursor integer
+    );
+    create table if not exists fast_action_consumers (name text primary key);
+    create table if not exists fast_action_receipts (
+      intent_id text not null references fast_action_intents(intent_id),
+      consumer text not null references fast_action_consumers(name), received integer not null default 0,
+      primary key (intent_id, consumer)
+    );
+
     create table if not exists automation_outcome_idempotency_keys (
       key text primary key,
       event_cursor integer not null references surface_events(cursor)

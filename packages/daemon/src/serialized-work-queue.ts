@@ -4,8 +4,10 @@ export class SerializedWorkQueue {
 
   constructor(private readonly onError: (error: unknown) => void) {}
 
-  enqueue(work: () => Promise<void>): void {
-    this.chain = this.chain.then(work, work).catch(this.onError)
+  enqueue(work: () => Promise<void>): Promise<void> {
+    const result = this.chain.then(work, work)
+    this.chain = result.catch(this.onError)
+    return result
   }
 
   flush(): Promise<void> {

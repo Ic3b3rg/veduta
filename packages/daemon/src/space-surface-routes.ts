@@ -86,17 +86,17 @@ export function registerSpaceSurfaceRoutes(
     try {
       const result = store.invokeSurfaceAction(surfaceId, parsed.data)
       if (result.path === 'agent') return reply.status(202).send({ turn: result.turn })
-      const surface = store.getSurface(surfaceId) ?? result.mutation.surface
-      return FastSurfaceActionResultSchema.parse({
-        surface,
-        surfaceCursor: store.latestSurfaceCursor(),
-      })
+      return reply
+        .status(result.outcome.outcome === 'recovery_pending' ? 202 : 200)
+        .send(FastSurfaceActionResultSchema.parse(result.outcome))
     } catch (error) {
       if (error instanceof SurfaceCommitRecoveryPendingError) {
         return reply.status(503).send(recoveryPendingResponse(error))
       }
       if (error instanceof SurfaceActionError) {
-        return reply.status(statusForSurfaceActionError(error)).send({ error: error.message })
+        return reply
+          .status(statusForSurfaceActionError(error))
+          .send({ error: error.message, code: error.code })
       }
       throw error
     }
@@ -155,6 +155,12 @@ function recoveryPendingResponse(error: SurfaceCommitRecoveryPendingError) {
 
 function statusForSurfaceActionError(error: SurfaceActionError): number {
   if (error.code === 'unknown_surface') return 404
-  if (error.code === 'missing_value' || error.code === 'invalid_payload') return 400
+  if (error.code === 'stale_action' || error.code === 'intent_conflict') return 409
+  if (
+    error.code === 'invalid_payload' ||
+    error.code === 'missing_target' ||
+    error.code === 'preflight_rejected'
+  )
+    return 400
   return 403
 }

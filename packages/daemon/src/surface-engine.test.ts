@@ -1,3 +1,5 @@
+import { commitFastAction } from './surface-action-test-fixtures.ts'
+import { inputSetPlan } from '@veduta/protocol'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { performance } from 'node:perf_hooks'
@@ -55,9 +57,6 @@ describe('Surface engine store', () => {
         { updatedBy: 'agent' },
       ),
     ).toThrow('owned by the Gateway')
-    expect(() => store.applyFastAction(surfaceId, AUTOMATION_OUTCOMES_STATE_KEY, {})).toThrow(
-      'owned by the Gateway',
-    )
 
     expect(() =>
       store.commitAutomationOutcome(
@@ -114,7 +113,7 @@ describe('Surface engine store', () => {
     const rootDir = await tempRoot()
     const first = new Store({ rootDir, now: fixedNow })
 
-    first.applyFastAction('srf-groceries', 'milk', true, 'tap-milk-on')
+    commitFastAction(first, 'srf-groceries', 'milk', true, 'tap-milk-on')
 
     const second = new Store({ rootDir, now: fixedNow })
 
@@ -651,8 +650,8 @@ describe('Surface engine store', () => {
   it('deduplicates repeated fast-path invocations with the same idempotency key', async () => {
     const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
 
-    const first = store.applyFastAction('srf-groceries', 'milk', true, 'tap-milk-on')
-    const second = store.applyFastAction('srf-groceries', 'milk', true, 'tap-milk-on')
+    const first = commitFastAction(store, 'srf-groceries', 'milk', true, 'tap-milk-on')
+    const second = commitFastAction(store, 'srf-groceries', 'milk', true, 'tap-milk-on')
 
     expect(first.duplicate).toBe(false)
     expect(second.duplicate).toBe(true)
@@ -682,7 +681,13 @@ describe('Surface engine store', () => {
                 type: 'Switch',
                 binding: 'quietHours',
                 props: { label: 'Quiet hours' },
-                actions: [{ name: 'toggle', path: 'fast', stateKey: 'quietHours' }],
+                actions: [
+                  {
+                    name: 'toggle',
+                    path: 'fast',
+                    plan: inputSetPlan('quietHours', { type: 'boolean' }),
+                  },
+                ],
               },
               {
                 id: 'location',
@@ -695,7 +700,13 @@ describe('Surface engine store', () => {
                     { label: 'Milan', value: 'milan' },
                   ],
                 },
-                actions: [{ name: 'change', path: 'fast', stateKey: 'location' }],
+                actions: [
+                  {
+                    name: 'change',
+                    path: 'fast',
+                    plan: inputSetPlan('location', { type: 'string' }),
+                  },
+                ],
               },
             ],
           },
@@ -705,10 +716,10 @@ describe('Surface engine store', () => {
         'agent',
       )
 
-      store.applyFastAction(surfaceId, 'quietHours', true, 'quiet-hours-on')
-      store.applyFastAction(surfaceId, 'location', 'milan', 'location-milan')
-      expect(() => store.applyFastAction(surfaceId, 'location', 'unknown')).toThrow()
-      expect(() => store.applyFastAction(surfaceId, 'quietHours', 'on')).toThrow()
+      commitFastAction(store, surfaceId, 'quietHours', true, 'quiet-hours-on')
+      commitFastAction(store, surfaceId, 'location', 'milan', 'location-milan')
+      expect(() => commitFastAction(store, surfaceId, 'location', 'unknown')).toThrow()
+      expect(() => commitFastAction(store, surfaceId, 'quietHours', 'on')).toThrow()
       expect(store.getSurface(surfaceId)?.state).toMatchObject({
         quietHours: true,
         location: 'milan',
@@ -765,7 +776,7 @@ describe('Surface engine store', () => {
         Array.from({ length: 50 }, async (_, index) => {
           const device = index % 2 === 0 ? 'phone' : 'laptop'
           const startedAt = performance.now()
-          store.applyFastAction('srf-stress', `item${index}`, true, `${device}-tap-${index}`)
+          commitFastAction(store, 'srf-stress', `item${index}`, true, `${device}-tap-${index}`)
           timings.push(performance.now() - startedAt)
         }),
       )
@@ -857,8 +868,8 @@ describe('Surface engine store', () => {
       [{ target: 'state', op: 'replace', path: '/item0', value: true }],
       { updatedBy: 'agent' },
     )
-    const first = store.applyFastAction('srf-observed', 'item0', false, 'tap-once')
-    const second = store.applyFastAction('srf-observed', 'item0', false, 'tap-once')
+    const first = commitFastAction(store, 'srf-observed', 'item0', false, 'tap-once')
+    const second = commitFastAction(store, 'srf-observed', 'item0', false, 'tap-once')
     expect(first.duplicate).toBe(false)
     expect(second.duplicate).toBe(true)
     store.archiveSurface('srf-observed', 'agent')
@@ -937,7 +948,7 @@ describe('Surface engine store', () => {
       const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
       store.createSurface(checklistSurface('srf-approval-5', 1), 'job', { daemonOwned: true })
 
-      const mutation = store.applyFastAction('srf-approval-5', 'item0', true, 'tap-once')
+      const mutation = commitFastAction(store, 'srf-approval-5', 'item0', true, 'tap-once')
       expect(mutation.duplicate).toBe(false)
       expect(store.getSurface('srf-approval-5')?.state['item0']).toBe(true)
     })
@@ -1595,7 +1606,7 @@ describe('Surface engine store', () => {
         contentOrigin: 'untrusted:hermes',
       })
 
-      store.applyFastAction('srf-fast-tainted', 'item0', true, 'tap-tainted')
+      commitFastAction(store, 'srf-fast-tainted', 'item0', true, 'tap-tainted')
 
       const events = store.eventLog('spc-health').filter((event) => event.type === 'fast_path')
       expect(events).toHaveLength(1)
@@ -1606,7 +1617,7 @@ describe('Surface engine store', () => {
       const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
       store.createSurface(checklistSurface('srf-fast-ordinary', 1), 'agent')
 
-      store.applyFastAction('srf-fast-ordinary', 'item0', true, 'tap-ordinary')
+      commitFastAction(store, 'srf-fast-ordinary', 'item0', true, 'tap-ordinary')
 
       const events = store.eventLog('spc-health').filter((event) => event.type === 'fast_path')
       expect(events).toHaveLength(1)
@@ -1842,7 +1853,9 @@ function checklistSurface(id: string, count: number): Surface {
         type: 'Checkbox',
         binding: `item${index}`,
         props: { label: `Item ${index}` },
-        actions: [{ name: 'toggle', path: 'fast', stateKey: `item${index}` }],
+        actions: [
+          { name: 'toggle', path: 'fast', plan: inputSetPlan(`item${index}`, { type: 'boolean' }) },
+        ],
       })),
     },
     state: Object.fromEntries(Array.from({ length: count }, (_, index) => [`item${index}`, false])),

@@ -1,3 +1,4 @@
+import { inputSetPlan, formSetPlan } from '@veduta/protocol'
 import { SurfaceSchema, type AtomNode, type Surface, type SurfaceTemplate } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { describe, expect, it } from 'vitest'
@@ -45,7 +46,9 @@ function tracker(): Surface {
           type: 'Checkbox',
           binding: 'done',
           props: { label: 'Done today' },
-          actions: [{ name: 'toggle', path: 'fast', stateKey: 'done' }],
+          actions: [
+            { name: 'toggle', path: 'fast', plan: inputSetPlan('done', { type: 'boolean' }) },
+          ],
         },
         {
           id: 'reps',
@@ -151,7 +154,9 @@ describe('templateFromSurface / surfaceFromTemplate round trip', () => {
 
     const done = template.tree.children?.find((n) => n.id === 'done')
     expect(done?.binding).toBe('done')
-    expect(done?.actions).toEqual([{ name: 'toggle', path: 'fast', stateKey: 'done', payload: {} }])
+    expect(done?.actions).toEqual([
+      { name: 'toggle', path: 'fast', plan: inputSetPlan('done', { type: 'boolean' }) },
+    ])
   })
 
   it('has every state key present and carries none of the source Surface state values', () => {
@@ -204,7 +209,9 @@ describe('templateFromSurface / surfaceFromTemplate round trip', () => {
       origin: 'trusted:user',
     })
 
-    expect(formTemplate.tree.actions?.[0]?.stateKeys).toEqual(['displayName', 'bio'])
+    expect(formTemplate.tree.actions?.[0]).toMatchObject({
+      plan: { inputs: { displayName: { type: 'string' }, bio: { type: 'string' } } },
+    })
     const instantiated = surfaceFromTemplate(formTemplate, {
       surfaceId: 'srf-profile-copy',
       spaceId: 'spc-other',
@@ -228,7 +235,7 @@ function profileSurface(): Surface {
       id: 'profile-form',
       type: 'Form',
       props: { label: 'Profile', submitLabel: 'Save' },
-      actions: [{ name: 'submit', path: 'fast', stateKeys: ['displayName', 'bio'] }],
+      actions: [{ name: 'submit', path: 'fast', plan: formSetPlan(['displayName', 'bio']) }],
       children: [
         { id: 'name', type: 'Input', binding: 'displayName', props: { label: 'Name' } },
         { id: 'bio', type: 'Textarea', binding: 'bio', props: { label: 'Biography' } },
@@ -533,13 +540,20 @@ describe('sanitizeImportedTemplate', () => {
       tree: {
         id: 'root',
         type: 'Checkbox',
-        actions: [{ name: 'toggle', path: 'fast', stateKey: 'done<<<injected' }],
+        actions: [
+          {
+            name: 'toggle',
+            path: 'fast',
+            plan: inputSetPlan('done<<<injected', { type: 'boolean' }),
+          },
+        ],
       },
       stateKeys: ['done<<<injected'],
     })
 
     const { template } = sanitizeImportedTemplate(raw, 'import')
-    const stateKey = template.tree.actions?.[0]?.stateKey
+    const action = template.tree.actions?.[0]
+    const stateKey = action?.path === 'fast' ? Object.keys(action.plan.targets)[0] : undefined
     expect(stateKey).not.toContain('<<<')
     expect(template.stateKeys).toEqual([stateKey])
   })
@@ -550,7 +564,7 @@ describe('sanitizeImportedTemplate', () => {
         id: 'profile-form',
         type: 'Form',
         props: { label: 'Profile', submitLabel: 'Save' },
-        actions: [{ name: 'submit', path: 'fast', stateKeys: ['displayName<<<injected'] }],
+        actions: [{ name: 'submit', path: 'fast', plan: formSetPlan(['displayName<<<injected']) }],
         children: [
           {
             id: 'name',
@@ -564,34 +578,39 @@ describe('sanitizeImportedTemplate', () => {
     })
 
     const { template } = sanitizeImportedTemplate(raw, 'import')
-    const stateKeys = template.tree.actions?.[0]?.stateKeys
+    const action = template.tree.actions?.[0]
+    const stateKeys = action?.path === 'fast' ? Object.keys(action.plan.targets) : undefined
     expect(stateKeys?.[0]).not.toContain('<<<')
     expect(template.stateKeys).toEqual(stateKeys)
     expect(template.tree.children?.[0]?.binding).toBe(stateKeys?.[0])
   })
 
-  it('neutralizes <<< in an action payload value and in a payload object key', () => {
+  it('neutralizes Action literal and enum content together without retaining revisions', () => {
     const raw = validRawTemplate({
       tree: {
         id: 'root',
-        type: 'Checkbox',
-        binding: 'done',
+        type: 'Button',
+        props: { label: 'Select mode' },
         actions: [
           {
-            name: 'toggle',
+            name: 'press',
             path: 'fast',
-            stateKey: 'done',
-            payload: { 'evil<<<key': 'evil<<<value' },
+            revision: 'acr-instance',
+            plan: {
+              inputs: {},
+              targets: { mode: { type: 'string', enum: ['<<<injected'] } },
+              steps: [
+                { op: 'set', target: 'mode', value: { source: 'literal', value: '<<<injected' } },
+              ],
+            },
           },
         ],
       },
-      stateKeys: ['done'],
+      stateKeys: ['mode'],
     })
-
     const { template } = sanitizeImportedTemplate(raw, 'import')
-    const payload = template.tree.actions?.[0]?.payload ?? {}
-    expect(Object.keys(payload).some((key) => key.includes('<<<'))).toBe(false)
-    expect(Object.values(payload).some((value) => String(value).includes('<<<'))).toBe(false)
+    expect(JSON.stringify(template.tree.actions)).not.toContain('<<<')
+    expect(template.tree.actions?.[0]).not.toHaveProperty('revision')
   })
 
   it('rejects unsupported prop object keys before imported content can reach a reader', () => {
@@ -617,7 +636,7 @@ describe('sanitizeImportedTemplate', () => {
         binding: 'done',
         actions: [
           { name: 'speak-to-agent', path: 'agent' },
-          { name: 'toggle', path: 'fast', stateKey: 'done' },
+          { name: 'toggle', path: 'fast', plan: inputSetPlan('done', { type: 'boolean' }) },
         ],
       },
       stateKeys: ['done'],
@@ -625,7 +644,7 @@ describe('sanitizeImportedTemplate', () => {
 
     const { template, strippedAgentActions } = sanitizeImportedTemplate(raw, 'import')
     expect(template.tree.actions).toEqual([
-      { name: 'toggle', path: 'fast', stateKey: 'done', payload: {} },
+      { name: 'toggle', path: 'fast', plan: inputSetPlan('done', { type: 'boolean' }) },
     ])
     expect(strippedAgentActions).toBe(1)
   })
@@ -657,7 +676,9 @@ describe('sanitizeImportedTemplate', () => {
                 type: 'Checkbox',
                 binding: 'x',
                 props: { label: 'Done' },
-                actions: [{ name: 'toggle', path: 'fast', stateKey: 'x' }],
+                actions: [
+                  { name: 'toggle', path: 'fast', plan: inputSetPlan('x', { type: 'boolean' }) },
+                ],
               },
             ],
           },

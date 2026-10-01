@@ -1,3 +1,4 @@
+import { inputSetPlan } from '@veduta/protocol'
 import { SYSTEM_SPACE_ID } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import {
@@ -53,7 +54,11 @@ describe('automationsSurface', () => {
   it('declares the toggle as a fast action on the job state key', () => {
     const surface = automationsSurface(space, [reminder], freshness)
     const action = surface.tree.children?.[1]?.children?.[0]?.actions?.[0]
-    expect(action).toMatchObject({ name: 'toggle', path: 'fast', stateKey: 'job-3' })
+    expect(action).toMatchObject({
+      name: 'toggle',
+      path: 'fast',
+      plan: inputSetPlan('job-3', { type: 'boolean' }),
+    })
   })
 
   it('shows an empty-state Caption instead of disappearing', () => {

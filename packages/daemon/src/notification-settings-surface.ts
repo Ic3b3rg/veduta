@@ -1,3 +1,4 @@
+import { inputSetPlan } from '@veduta/protocol'
 import {
   SurfaceSchema,
   type AtomNode,
@@ -13,7 +14,11 @@ import {
   saveNotificationsConfig,
   type NotificationsConfig,
 } from './notifications-config.ts'
-import type { FastMutationNotice, Store } from './store.ts'
+import type { Store } from './store.ts'
+import type { CommittedFastActionOutcome } from '@veduta/protocol'
+import { fastActionChangedKeys } from './fast-action-projection.ts'
+import { SurfaceActionError } from './fast-action.ts'
+import type { FastActionPreflightContext } from './surface-engine.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 
 /**
@@ -23,7 +28,7 @@ import { SYSTEM_SPACE_ID } from './system-space.ts'
  * Stats. Same daemon-owned, persisted System-Space Surface idiom as
  * `heartbeat-surface.ts` — pre-created at boot, rebuilt on demand — but
  * unlike the Heartbeat metrics Surface this one also *writes back*: the
- * budget Select is a fast action, handled here via `store.onFastMutation`
+ * budget Select is a fast action, handled here via `store.onFastActionOutcome`
  * (the same mechanism `ApprovalSurfaceManager` uses for Approve/Reject
  * clicks), which persists a per-Space override to `notifications.json`.
  */
@@ -42,7 +47,7 @@ function budgetStateKey(spaceId: string): string {
   return `${BUDGET_STATE_KEY_PREFIX}${spaceId}`
 }
 
-/** Inverse of `budgetStateKey`: recovers the target Space id from a fast-mutation's stateKey. */
+/** Inverse of `budgetStateKey`: recovers the target Space id from a declared target key. */
 function spaceIdFromBudgetStateKey(stateKey: string): string | undefined {
   return stateKey.startsWith(BUDGET_STATE_KEY_PREFIX)
     ? stateKey.slice(BUDGET_STATE_KEY_PREFIX.length)
@@ -126,7 +131,9 @@ function spaceRowNode(
         type: 'Select',
         binding: stateKey,
         props: { label: 'Daily push budget', options: budgetOptionsFor(current) },
-        actions: [{ name: 'change', path: 'fast', stateKey, payload: {} }],
+        actions: [
+          { name: 'change', path: 'fast', plan: inputSetPlan(stateKey, { type: 'string' }) },
+        ],
       },
       {
         id: `notif-sent-${space.id}`,
@@ -271,7 +278,7 @@ export interface NotificationSettingsSurfaceManagerOptions {
  * Projects notification stats + config onto `srf-notifications`, following
  * the allowlist/heartbeat managers' persisted-Surface pattern: pre-create
  * at boot, rebuild whenever asked. Also the write side: it listens for
- * fast-path budget-Select clicks (`store.onFastMutation`, the same wiring
+ * fast-path budget-Select clicks (`store.onFastActionOutcome`, the same wiring
  * `ApprovalSurfaceManager` uses for Approve/Reject) and turns a valid one
  * into a persisted `notifications.json` override, notifying the caller
  * (`onConfigChanged`, wired to `NotificationCenter.updateConfig` outside
@@ -284,6 +291,7 @@ export class NotificationSettingsSurfaceManager {
   private readonly onConfigChanged: ((config: NotificationsConfig) => void) | undefined
   private readonly now: () => Date
   private readonly unsubscribe: () => void
+  private readonly unsubscribePreflight: () => void
 
   constructor(options: NotificationSettingsSurfaceManagerOptions) {
     this.store = options.store
@@ -291,7 +299,12 @@ export class NotificationSettingsSurfaceManager {
     this.rootDir = options.rootDir
     this.onConfigChanged = options.onConfigChanged
     this.now = options.now ?? (() => new Date())
-    this.unsubscribe = this.store.onFastMutation((notice) => this.handleFastMutation(notice))
+    this.unsubscribePreflight = this.store.onFastActionPreflight((context) =>
+      this.preflight(context),
+    )
+    this.unsubscribe = this.store.onFastActionOutcome('notification-settings', (outcome) =>
+      this.project(outcome),
+    )
   }
 
   /**
@@ -320,6 +333,7 @@ export class NotificationSettingsSurfaceManager {
 
   dispose(): void {
     this.unsubscribe()
+    this.unsubscribePreflight()
   }
 
   private userSpaces(): Space[] {
@@ -383,46 +397,45 @@ export class NotificationSettingsSurfaceManager {
     }
   }
 
-  private handleFastMutation(notice: FastMutationNotice): void {
-    if (notice.surfaceId !== NOTIFICATION_SETTINGS_SURFACE_ID) return
-    const spaceId = spaceIdFromBudgetStateKey(notice.stateKey)
-    if (spaceId === undefined) return
-
-    // The generic fast-path mechanism (`SurfaceEngine.applyFastAction`) has
-    // already written `notice.value` into the Surface's state by the time
-    // this observer runs — an invalid value must be reverted, not merely
-    // declined, or the Select would show a choice the daemon never
-    // accepted. `refreshSurface()` recomputes state from the persisted
-    // config, snapping the control back to the truthful value.
-    if (typeof notice.value !== 'string') {
-      // Never log `notice.value` itself: it comes from the client and may
-      // not be a safe/expected shape to print.
-      console.warn(
-        `notification-settings-surface: ignoring non-string value for stateKey "${notice.stateKey}"`,
-      )
-      this.refreshSurface()
-      return
-    }
-
+  private preflight(context: FastActionPreflightContext): void {
+    if (context.surface.id !== NOTIFICATION_SETTINGS_SURFACE_ID) return
     const config = loadNotificationsConfig(this.rootDir)
-    const offered = budgetOptionsFor(budgetFor(config, spaceId))
-    if (!offered.includes(notice.value)) {
-      // Log only the stateKey and that the value was rejected — never the
-      // value itself (client-controlled input; log hygiene).
-      console.warn(
-        `notification-settings-surface: ignoring invalid budget value for stateKey "${notice.stateKey}"`,
+    for (const key of Object.keys(context.action.plan.targets)) {
+      const spaceId = spaceIdFromBudgetStateKey(key)
+      if (spaceId === undefined) continue
+      const value = context.nextSurface.state[key]
+      if (
+        !this.store.getSpace(spaceId) ||
+        typeof value !== 'string' ||
+        !budgetOptionsFor(budgetFor(config, spaceId)).includes(value)
       )
-      this.refreshSurface()
-      return
+        throw new SurfaceActionError(
+          'preflight_rejected',
+          'The selected notification budget is no longer offered',
+        )
     }
+  }
 
-    const budget = Number.parseInt(notice.value, 10)
-    const nextConfig: NotificationsConfig = {
-      ...config,
-      spaceBudgets: { ...config.spaceBudgets, [spaceId]: budget },
+  private project(outcome: CommittedFastActionOutcome): void {
+    if (outcome.surfaceId !== NOTIFICATION_SETTINGS_SURFACE_ID) return
+    const current = this.store.getSurface(outcome.surfaceId)
+    if (!current) return
+    let config = loadNotificationsConfig(this.rootDir)
+    let changed = false
+    // Recovery projects the latest canonical choice, never an older receipt's snapshot.
+    for (const key of fastActionChangedKeys(outcome)) {
+      const spaceId = spaceIdFromBudgetStateKey(key)
+      const value = current.state[key]
+      if (spaceId === undefined || !this.store.getSpace(spaceId) || typeof value !== 'string')
+        continue
+      const budget = Number.parseInt(value, 10)
+      if (!Number.isFinite(budget) || budgetFor(config, spaceId) === budget) continue
+      config = { ...config, spaceBudgets: { ...config.spaceBudgets, [spaceId]: budget } }
+      changed = true
     }
-    saveNotificationsConfig(this.rootDir, nextConfig)
-    this.onConfigChanged?.(nextConfig)
+    if (!changed) return
+    saveNotificationsConfig(this.rootDir, config)
+    this.onConfigChanged?.(config)
     this.refreshSurface()
   }
 }

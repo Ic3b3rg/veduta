@@ -3,7 +3,11 @@ import type { JsonObject, Surface } from '@veduta/protocol'
 import type { AgentEvent, AgentRunner, ModelRef, ToolDef, TriggerRef } from './agent-runner.ts'
 import { SpendingCapError, type ModelRouter } from './model-routing.ts'
 import type { SpaceEvent } from './spaces-engine.ts'
-import type { FastMutationNotice, Store } from './store.ts'
+import type { Store } from './store.ts'
+import type { CommittedFastActionOutcome } from '@veduta/protocol'
+import { fastActionChangedKeys } from './fast-action-projection.ts'
+import { SurfaceActionError } from './fast-action.ts'
+import type { FastActionPreflightContext } from './surface-engine.ts'
 import { SurfaceCommitRecoveryPendingError } from './surface-commit.ts'
 import { untrustedOrigin } from './taint.ts'
 import {
@@ -176,6 +180,7 @@ export class WorkerPool {
   private readonly etaMinutes: number
   private readonly makeWorkerId: () => string
   private readonly disposeFastMutationObserver: () => void
+  private readonly disposePreflight: () => void
   private readonly liveWorkers = new Map<string, LiveWorker>()
   private readonly settledPromises = new Map<string, Promise<void>>()
   private bootRecoveryRetry: ReturnType<typeof setTimeout> | undefined
@@ -199,8 +204,11 @@ export class WorkerPool {
     this.now = options.now ?? (() => new Date())
     this.etaMinutes = options.etaMinutes ?? 5
     this.makeWorkerId = options.makeWorkerId ?? (() => randomUUID().slice(0, 8))
-    this.disposeFastMutationObserver = this.store.onFastMutation((notice) =>
-      this.onFastMutation(notice),
+    this.disposePreflight = this.store.onFastActionPreflight((context) =>
+      this.preflightCancel(context),
+    )
+    this.disposeFastMutationObserver = this.store.onFastActionOutcome('workers', (outcome) =>
+      this.projectCancel(outcome),
     )
   }
 
@@ -337,6 +345,7 @@ export class WorkerPool {
     this.disposed = true
     if (this.bootRecoveryRetry !== undefined) clearTimeout(this.bootRecoveryRetry)
     this.disposeFastMutationObserver()
+    this.disposePreflight()
     for (const live of this.liveWorkers.values()) {
       live.settled = true
       try {
@@ -617,21 +626,32 @@ export class WorkerPool {
     }
   }
 
-  /** Mirrors `scheduler.syncToggleFromSurface`: react to the Worker's own Cancel fast action. */
-  private onFastMutation(notice: FastMutationNotice): void {
-    if (notice.stateKey !== WORKER_CANCEL_STATE_KEY || notice.value !== true) return
+  private preflightCancel(context: FastActionPreflightContext): void {
+    if (!Object.hasOwn(context.action.plan.targets, WORKER_CANCEL_STATE_KEY)) return
     const live = [...this.liveWorkers.values()].find(
-      (worker) => worker.surfaceId === notice.surfaceId,
+      (worker) => worker.surfaceId === context.surface.id,
     )
-    if (!live || live.settled) return
+    if (!live) return
+    if (live.settled || context.nextSurface.state[WORKER_CANCEL_STATE_KEY] !== true)
+      throw new SurfaceActionError('preflight_rejected', 'This Worker is no longer running')
+  }
 
+  private projectCancel(outcome: CommittedFastActionOutcome): void {
+    if (
+      !fastActionChangedKeys(outcome).includes(WORKER_CANCEL_STATE_KEY) ||
+      outcome.surface.state[WORKER_CANCEL_STATE_KEY] !== true
+    )
+      return
+    const live = [...this.liveWorkers.values()].find(
+      (worker) => worker.surfaceId === outcome.surfaceId,
+    )
+    if (!live || live.settled || live.cancelled) return
     live.cancelled = true
     try {
       void live.runner?.abort()
     } catch {
-      // Best-effort: the terminal guard below still converges.
+      /* Cancellation still converges through the terminal guard. */
     }
-
     this.store.spacesEngine.appendEvent(live.spaceId, {
       type: 'worker.cancelled',
       text: 'Worker cancelled',

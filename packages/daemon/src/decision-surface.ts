@@ -1,3 +1,4 @@
+import { literalSetPlan } from '@veduta/protocol'
 import type { AtomNode } from '@veduta/protocol'
 
 export const DECISION_ERROR_CAPTION_NODE_ID = 'error'
@@ -8,7 +9,7 @@ export function decisionButtonNode(id: string, label: string, stateKey: string):
     id,
     type: 'Button',
     props: { label },
-    actions: [{ name: 'press', path: 'fast', stateKey, payload: { value: true } }],
+    actions: [{ name: 'press', path: 'fast', plan: literalSetPlan(stateKey, true) }],
   }
 }
 

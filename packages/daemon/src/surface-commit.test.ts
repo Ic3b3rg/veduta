@@ -1,3 +1,6 @@
+import { fastInvocation } from './surface-action-test-fixtures.ts'
+import { literalSetPlan } from '@veduta/protocol'
+import { commitFastAction } from './surface-action-test-fixtures.ts'
 import {
   appendFileSync,
   closeSync,
@@ -47,7 +50,10 @@ function prepareMutationFamily(store: Store, family: MutationFamily): void {
             id: 'trigger',
             type: 'Button',
             props: { label: 'Go' },
-            actions: [{ name: 'go', path: 'agent' }],
+            actions: [
+              { name: 'go', path: 'agent' },
+              { name: 'increment', path: 'fast', plan: literalSetPlan('count', 1) },
+            ],
           },
         ],
       },
@@ -107,7 +113,7 @@ function mutateFamily(store: Store, family: MutationFamily): void {
       )
       break
     case 'fast action':
-      store.applyFastAction('srf-target', 'count', 1, 'family-tap')
+      commitFastAction(store, 'srf-target', 'count', 1, 'family-tap')
       break
     case 'Agent-path enqueue':
       store.invokeSurfaceAction('srf-target', { nodeId: 'trigger', name: 'go' })
@@ -306,7 +312,7 @@ describe('recoverable Surface commits (#156)', () => {
     try {
       const before = store.getSurface('srf-groceries')
       const eventCount = store.eventLog('spc-health').length
-      expect(() => store.applyFastAction('srf-groceries', 'milk', true)).toThrow(
+      expect(() => commitFastAction(store, 'srf-groceries', 'milk', true)).toThrow(
         'injected preparation failure',
       )
       expect(store.getSurface('srf-groceries')).toEqual(before)
@@ -327,7 +333,7 @@ describe('recoverable Surface commits (#156)', () => {
         const before = store.eventLog('spc-health').length
         let pending: SurfaceCommitRecoveryPendingError | undefined
         try {
-          store.applyFastAction('srf-groceries', 'milk', true, 'same-tap')
+          commitFastAction(store, 'srf-groceries', 'milk', true, 'same-tap')
         } catch (error) {
           if (error instanceof SurfaceCommitRecoveryPendingError) pending = error
           else throw error
@@ -348,7 +354,7 @@ describe('recoverable Surface commits (#156)', () => {
           .filter((event) => event.payload?.['surfaceCommitId'] === pending?.commitId)
         expect(events).toHaveLength(1)
         expect(store.eventLog('spc-health')).toHaveLength(before + 1)
-        expect(store.applyFastAction('srf-groceries', 'milk', true, 'same-tap').duplicate).toBe(
+        expect(commitFastAction(store, 'srf-groceries', 'milk', true, 'same-tap').duplicate).toBe(
           true,
         )
         expect(store.eventLog('spc-health')).toHaveLength(before + 1)
@@ -365,7 +371,7 @@ describe('recoverable Surface commits (#156)', () => {
     const store = storeWithFault(rootDir, 'before_append')
     try {
       const other = store.spacesEngine.createSpace({ name: 'Other' })
-      expect(() => store.applyFastAction('srf-groceries', 'milk', true)).toThrow(
+      expect(() => commitFastAction(store, 'srf-groceries', 'milk', true)).toThrow(
         SurfaceCommitRecoveryPendingError,
       )
       expect(store.getSurface('srf-groceries')?.state['milk']).toBe(true)
@@ -400,7 +406,7 @@ describe('recoverable Surface commits (#156)', () => {
     })
     try {
       const other = store.spacesEngine.createSpace({ name: 'Other' })
-      expect(() => store.applyFastAction('srf-groceries', 'milk', true)).toThrow(
+      expect(() => commitFastAction(store, 'srf-groceries', 'milk', true)).toThrow(
         SurfaceCommitRecoveryPendingError,
       )
       expect(store.getSurface('srf-groceries')?.state['milk']).toBe(true)
@@ -459,7 +465,7 @@ describe('recoverable Surface commits (#156)', () => {
         { expectedTreeVersion: 2, updatedBy: 'agent' },
       )
       store.archiveSurface('srf-two', 'user')
-      store.applyFastAction('srf-groceries', 'milk', true, 'family-fast')
+      commitFastAction(store, 'srf-groceries', 'milk', true, 'family-fast')
       store.createSurface(
         SurfaceSchema.parse({
           ...surface('srf-agent-action'),
@@ -471,7 +477,10 @@ describe('recoverable Surface commits (#156)', () => {
                 id: 'trigger',
                 type: 'Button',
                 props: { label: 'Go' },
-                actions: [{ name: 'go', path: 'agent' }],
+                actions: [
+                  { name: 'go', path: 'agent' },
+                  { name: 'increment', path: 'fast', plan: literalSetPlan('count', 1) },
+                ],
               },
             ],
           },
@@ -525,14 +534,16 @@ describe('recoverable Surface commits (#156)', () => {
       const action = await app.inject({
         method: 'POST',
         url: '/api/surfaces/srf-groceries/actions',
-        payload: {
-          nodeId: 'item-milk',
-          name: 'toggle',
-          payload: { value: true },
-          idempotencyKey: 'api-tap',
-        },
+        payload: fastInvocation(
+          store,
+          'srf-groceries',
+          'item-milk',
+          'toggle',
+          { value: true },
+          'api-tap',
+        ),
       })
-      expect(action.statusCode).toBe(503)
+      expect(action.statusCode).toBe(202)
       expect(action.json()).toMatchObject({
         outcome: 'recovery_pending',
         surfaceCommitId: expect.stringMatching(/^scm-/),
@@ -551,12 +562,14 @@ describe('recoverable Surface commits (#156)', () => {
       const retry = await app.inject({
         method: 'POST',
         url: '/api/surfaces/srf-groceries/actions',
-        payload: {
-          nodeId: 'item-milk',
-          name: 'toggle',
-          payload: { value: true },
-          idempotencyKey: 'api-tap',
-        },
+        payload: fastInvocation(
+          store,
+          'srf-groceries',
+          'item-milk',
+          'toggle',
+          { value: true },
+          'api-tap',
+        ),
       })
       expect(retry.statusCode).toBe(200)
       expect(
@@ -574,7 +587,7 @@ describe('recoverable Surface commits (#156)', () => {
     const first = storeWithFault(rootDir, 'before_append')
     let firstId: string
     try {
-      expect(() => first.applyFastAction('srf-groceries', 'milk', true)).toThrow(
+      expect(() => commitFastAction(first, 'srf-groceries', 'milk', true)).toThrow(
         SurfaceCommitRecoveryPendingError,
       )
       firstId = String(records(rootDir)[0]?.['id'])
@@ -623,7 +636,7 @@ describe('recoverable Surface commits (#156)', () => {
       store.onSurfaceEvent(() => {
         laterObserver += 1
       })
-      expect(() => store.applyFastAction('srf-groceries', 'milk', true)).not.toThrow()
+      expect(() => commitFastAction(store, 'srf-groceries', 'milk', true)).not.toThrow()
       expect(laterObserver).toBe(1)
       expect(records(rootDir)).toMatchObject([{ state: 'delivered' }])
     } finally {
@@ -643,9 +656,9 @@ describe('recoverable Surface commits (#156)', () => {
         boundary === 'delivered' ? new Store({ rootDir, now }) : storeWithFault(rootDir, boundary)
       try {
         if (boundary === 'delivered') {
-          original.applyFastAction('srf-groceries', 'milk', true)
+          commitFastAction(original, 'srf-groceries', 'milk', true)
         } else {
-          expect(() => original.applyFastAction('srf-groceries', 'milk', true)).toThrow()
+          expect(() => commitFastAction(original, 'srf-groceries', 'milk', true)).toThrow()
         }
         const file = await createBackup({ rootDir, outDir: backupDir, keyMaterial, now })
         await restoreBackup({ file, targetRootDir: restoredRoot, keyMaterial })

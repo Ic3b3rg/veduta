@@ -1,3 +1,5 @@
+import { fastInvocation } from './surface-action-test-fixtures.ts'
+import { literalSetPlan } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { describe, expect, it } from 'vitest'
 import {
@@ -86,8 +88,7 @@ describe('allowlistSurface', () => {
     expect(revokeButton?.actions?.[0]).toMatchObject({
       name: 'revoke',
       path: 'fast',
-      stateKey: 'revoke.1',
-      payload: { value: true },
+      plan: literalSetPlan('revoke.1', true),
     })
   })
 
@@ -175,11 +176,10 @@ describe('AllowlistSurfaceManager', () => {
     const manager = new AllowlistSurfaceManager({ store, trust })
     manager.start()
 
-    store.invokeSurfaceAction(ALLOWLIST_SURFACE_ID, {
-      nodeId: 'allowlist-rule-5-revoke',
-      name: 'revoke',
-      payload: { value: true },
-    })
+    store.invokeSurfaceAction(
+      ALLOWLIST_SURFACE_ID,
+      fastInvocation(store, ALLOWLIST_SURFACE_ID, 'allowlist-rule-5-revoke', 'revoke', {}),
+    )
     // The revoke call is deferred to a microtask so the click's own fast-path
     // patch broadcasts before the rebuild it triggers; the rebuild itself is
     // further coalesced onto its own microtask, so both hops must
@@ -204,11 +204,10 @@ describe('AllowlistSurfaceManager', () => {
     manager.start()
     manager.dispose()
 
-    store.invokeSurfaceAction(ALLOWLIST_SURFACE_ID, {
-      nodeId: 'allowlist-rule-9-revoke',
-      name: 'revoke',
-      payload: { value: true },
-    })
+    store.invokeSurfaceAction(
+      ALLOWLIST_SURFACE_ID,
+      fastInvocation(store, ALLOWLIST_SURFACE_ID, 'allowlist-rule-9-revoke', 'revoke', {}),
+    )
     await Promise.resolve()
     await Promise.resolve()
     await manager.flush()

@@ -630,6 +630,43 @@ export class TrustLayer {
     return row.surfaceId === surfaceId
   }
 
+  /** Read-only owning-card precondition, shared with the typed approval authority. */
+  preflightCardDecision(
+    approvalId: string,
+    surfaceId: string,
+    decision: 'approve' | 'reject',
+  ): void {
+    const row = this.store.getRawRow(approvalId)
+    if (!row || row.status !== 'pending' || row.surfaceId !== surfaceId)
+      throw new Error('This approval is no longer pending')
+    if (decision === 'reject') return
+    const entry = this.registry.get(row.toolName)
+    if (!entry) throw new Error('The approval tool is no longer available')
+    const { candidateInput } = this.approvalInput(row, entry, 'surface')
+    const validated = entry.tool.schema.safeParse(candidateInput)
+    if (!validated.success) throw new Error(validated.error.message)
+  }
+
+  private approvalInput(
+    row: ApprovalRow,
+    entry: RegistryEntry,
+    inputSource: 'surface' | 'prepared',
+  ) {
+    const originalInput = rowProvenance(row).input as Record<string, unknown>
+    const editedState =
+      inputSource === 'surface' && row.surfaceId !== undefined
+        ? this.port.readEditedFields(row.surfaceId)
+        : undefined
+    const candidateInput =
+      editedState === undefined
+        ? originalInput
+        : {
+            ...originalInput,
+            ...extractEditedInput(editedState, entry.meta.editableKeys ?? []),
+          }
+    return { candidateInput, editedState }
+  }
+
   // -- Resolution -----------------------------------------------
 
   /**
@@ -712,18 +749,7 @@ export class TrustLayer {
       throw new Error(`trust layer: approval "${row.id}" has no card surface`)
 
     const provenance = rowProvenance(row)
-    const originalInput = provenance.input as Record<string, unknown>
-    const editedState =
-      inputSource === 'surface' && row.surfaceId !== undefined
-        ? this.port.readEditedFields(row.surfaceId)
-        : undefined
-    const candidateInput =
-      editedState === undefined
-        ? originalInput
-        : {
-            ...originalInput,
-            ...extractEditedInput(editedState, entry.meta.editableKeys ?? []),
-          }
+    const { candidateInput, editedState } = this.approvalInput(row, entry, inputSource)
     const validated = entry.tool.schema.safeParse(candidateInput)
 
     if (!validated.success) {

@@ -1,3 +1,4 @@
+import { commitFastAction } from './surface-action-test-fixtures.ts'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -117,7 +118,7 @@ describe('buildChecklist', () => {
       throw new Error('injected Event delivery failure')
     }
     try {
-      expect(() => store.applyFastAction('srf-groceries', 'milk', true)).toThrow(
+      expect(() => commitFastAction(store, 'srf-groceries', 'milk', true)).toThrow(
         SurfaceCommitRecoveryPendingError,
       )
       const prompts: string[] = []

@@ -1,3 +1,4 @@
+import { fastInvocation } from './surface-action-test-fixtures.ts'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -316,11 +317,10 @@ describe('acceptance: disabled automations', () => {
     })
 
     // Toggle through the declared fast action — the real user path.
-    const result = store.invokeSurfaceAction(SURFACE, {
-      nodeId: `automation-${timer.id}`,
-      name: 'toggle',
-      payload: { value: false },
-    })
+    const result = store.invokeSurfaceAction(
+      SURFACE,
+      fastInvocation(store, SURFACE, `automation-${timer.id}`, 'toggle', { value: false }),
+    )
     expect(result.path).toBe('fast')
     expect(scheduler.listAutomations(HEALTH)[0]?.enabled).toBe(false)
 
@@ -342,12 +342,14 @@ describe('acceptance: disabled automations', () => {
       action: 'Log my weight',
     })
 
-    const invocation = {
-      nodeId: `automation-${timer.id}`,
-      name: 'toggle',
-      payload: { value: false },
-      idempotencyKey: 'toggle-off-1',
-    }
+    const invocation = fastInvocation(
+      store,
+      SURFACE,
+      `automation-${timer.id}`,
+      'toggle',
+      { value: false },
+      'toggle-off-1',
+    )
     store.invokeSurfaceAction(SURFACE, invocation)
     store.invokeSurfaceAction(SURFACE, invocation)
 
@@ -368,12 +370,11 @@ describe('acceptance: disabled automations', () => {
 
     const cursor = store.latestSurfaceCursor()
     expect(() =>
-      store.invokeSurfaceAction(SURFACE, {
-        nodeId: `automation-${timer.id}`,
-        name: 'toggle',
-        payload: { value: 'false' },
-      }),
-    ).toThrow('Automation binding')
+      store.invokeSurfaceAction(
+        SURFACE,
+        fastInvocation(store, SURFACE, `automation-${timer.id}`, 'toggle', { value: 'false' }),
+      ),
+    ).toThrow('owning interaction')
 
     expect(scheduler.listAutomations(HEALTH)[0]?.enabled).toBe(true)
     expect(store.getSurface(SURFACE)?.state['job-1']).toBe(true)
@@ -391,11 +392,10 @@ describe('acceptance: disabled automations', () => {
     scheduler.start()
     scheduler.stop()
     scheduler.start()
-    store.invokeSurfaceAction(SURFACE, {
-      nodeId: `automation-${timer.id}`,
-      name: 'toggle',
-      payload: { value: false },
-    })
+    store.invokeSurfaceAction(
+      SURFACE,
+      fastInvocation(store, SURFACE, `automation-${timer.id}`, 'toggle', { value: false }),
+    )
 
     expect(scheduler.listAutomations(HEALTH)[0]?.enabled).toBe(false)
   })

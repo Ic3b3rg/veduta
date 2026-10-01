@@ -1,3 +1,4 @@
+import { inputSetPlan } from '@veduta/protocol'
 import {
   SYSTEM_SPACE_ID,
   SurfaceSchema,
@@ -79,8 +80,7 @@ export function automationsListNode(automations: AutomationListItem[]): AtomNode
             {
               name: 'toggle',
               path: 'fast',
-              payload: {},
-              stateKey: automationStateKey(automation.id),
+              plan: inputSetPlan(automationStateKey(automation.id), { type: 'boolean' }),
             },
           ],
         }))

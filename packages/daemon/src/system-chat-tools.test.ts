@@ -1,3 +1,5 @@
+import { fastInvocation } from './surface-action-test-fixtures.ts'
+import { literalSetPlan } from '@veduta/protocol'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -108,7 +110,7 @@ describe('createSystemChatTools', () => {
             id: 'toggle',
             type: 'Button',
             props: { label: 'Toggle' },
-            actions: [{ name: 'toggle', path: 'fast', stateKey: 'enabled' }],
+            actions: [{ name: 'toggle', path: 'fast', plan: literalSetPlan('enabled', true) }],
           },
           {
             id: 'explain',
@@ -128,14 +130,13 @@ describe('createSystemChatTools', () => {
     const eventsBefore = store.eventLog(SYSTEM_SPACE_ID).length
 
     try {
-      const fast = store.invokeSurfaceAction(actionable.id, {
-        nodeId: 'toggle',
-        name: 'toggle',
-        payload: { value: true },
-      })
+      const fast = store.invokeSurfaceAction(
+        actionable.id,
+        fastInvocation(store, actionable.id, 'toggle', 'toggle'),
+      )
       expect(fast).toMatchObject({
         path: 'fast',
-        mutation: { surface: { state: { enabled: true } } },
+        outcome: { outcome: 'committed', surface: { state: { enabled: true } } },
       })
 
       const agent = store.invokeSurfaceAction(actionable.id, {

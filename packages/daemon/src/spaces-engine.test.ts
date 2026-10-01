@@ -1,3 +1,4 @@
+import { commitFastAction } from './surface-action-test-fixtures.ts'
 import {
   appendFileSync,
   existsSync,
@@ -1425,12 +1426,12 @@ describe('Store memory contract', () => {
   it('puts fast-path events into the next active Space context', async () => {
     const store = new Store({ rootDir: await tempRoot(), now: fixedNow })
 
-    store.applyFastAction('srf-groceries', 'milk', true)
+    commitFastAction(store, 'srf-groceries', 'milk', true)
 
     const context = store.assembleSpaceContext('spc-health')
     expect(context).toContain('SOUL')
     expect(context.match(/^# SOUL$/gm)).toHaveLength(1)
-    expect(context).toContain('Groceries: milk -> true')
+    expect(context).toContain('Groceries: toggle committed 1 mutation steps')
   })
 
   it('assembles an abstention context for absent facts', async () => {

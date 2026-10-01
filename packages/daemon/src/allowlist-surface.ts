@@ -1,5 +1,10 @@
+import { literalSetPlan } from '@veduta/protocol'
 import { SurfaceSchema, type AtomNode, type PatchOperation, type Surface } from '@veduta/protocol'
-import type { FastMutationNotice, Store } from './store.ts'
+import type { Store } from './store.ts'
+import type { CommittedFastActionOutcome } from '@veduta/protocol'
+import { fastActionChangedKeys } from './fast-action-projection.ts'
+import { SurfaceActionError } from './fast-action.ts'
+import type { FastActionPreflightContext } from './surface-engine.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 import type { AllowlistRule } from './trust-layer.ts'
 
@@ -73,8 +78,7 @@ export function allowlistListNode(rules: AllowlistRule[]): AtomNode {
                 {
                   name: 'revoke',
                   path: 'fast',
-                  payload: { value: true },
-                  stateKey: revokeStateKey(rule.id),
+                  plan: literalSetPlan(revokeStateKey(rule.id), true),
                 },
               ],
             },
@@ -134,7 +138,7 @@ export interface AllowlistSurfaceManagerOptions {
  * following the scheduler's Surface-manager pattern
  * (`scheduler.ts`'s `ensureSurfaces`/`refreshSurface`): pre-create at
  * boot, rebuild on every trust-layer change, and turn a Revoke click
- * (observed via `store.onFastMutation`) into `trust.revokeAllowlistRule`.
+ * (observed via `store.onFastActionOutcome`) into `trust.revokeAllowlistRule`.
  */
 export class AllowlistSurfaceManager {
   private readonly store: Store
@@ -142,6 +146,7 @@ export class AllowlistSurfaceManager {
   private readonly now: () => Date
   private disposeChange: (() => void) | undefined
   private disposeFastMutation: (() => void) | undefined
+  private disposePreflight: (() => void) | undefined
   private dirty = false
   private coalesced: Promise<void> | undefined
 
@@ -155,8 +160,9 @@ export class AllowlistSurfaceManager {
   start(): void {
     this.ensureSurface()
     this.disposeChange = this.trust.onChange(() => this.scheduleRebuild())
-    this.disposeFastMutation = this.store.onFastMutation((notice) =>
-      this.handleFastMutation(notice),
+    this.disposePreflight = this.store.onFastActionPreflight((context) => this.preflight(context))
+    this.disposeFastMutation = this.store.onFastActionOutcome('allowlist', (outcome) =>
+      this.project(outcome),
     )
   }
 
@@ -165,6 +171,8 @@ export class AllowlistSurfaceManager {
     this.disposeChange = undefined
     this.disposeFastMutation?.()
     this.disposeFastMutation = undefined
+    this.disposePreflight?.()
+    this.disposePreflight = undefined
   }
 
   /** Test hook: resolves once any rebuild coalesced by the current burst has run. */
@@ -194,22 +202,34 @@ export class AllowlistSurfaceManager {
     })
   }
 
-  private handleFastMutation(notice: FastMutationNotice): void {
-    if (notice.surfaceId !== ALLOWLIST_SURFACE_ID) return
-    const ruleId = ruleIdFromRevokeStateKey(notice.stateKey)
-    if (ruleId === undefined) return
-    // The revoke click's own fast-path patch broadcasts synchronously as
-    // this observer returns (surface-engine.ts's central subscription);
-    // the rebuild that `trust.onChange` triggers below must reach clients
-    // afterward, with a higher cursor — deferred to a microtask, same
-    // reasoning as the scheduler's healing refresh (scheduler.ts).
-    queueMicrotask(() => {
-      try {
-        this.trust.revokeAllowlistRule(ruleId)
-      } catch (error) {
-        console.error('allowlist-surface: revoke failed', error)
-      }
-    })
+  private preflight(context: FastActionPreflightContext): void {
+    if (context.surface.id !== ALLOWLIST_SURFACE_ID) return
+    const active = this.trust.listAllowlistRules().filter((rule) => rule.revokedAt === undefined)
+    for (const key of Object.keys(context.action.plan.targets)) {
+      const id = ruleIdFromRevokeStateKey(key)
+      if (
+        id !== undefined &&
+        (!active.some((rule) => rule.id === id) || context.nextSurface.state[key] !== true)
+      )
+        throw new SurfaceActionError(
+          'preflight_rejected',
+          'This allowlist rule is no longer active',
+        )
+    }
+  }
+
+  private project(outcome: CommittedFastActionOutcome): void {
+    if (outcome.surfaceId !== ALLOWLIST_SURFACE_ID) return
+    for (const key of fastActionChangedKeys(outcome)) {
+      const id = ruleIdFromRevokeStateKey(key)
+      if (id === undefined || outcome.surface.state[key] !== true) continue
+      if (
+        this.trust
+          .listAllowlistRules()
+          .some((rule) => rule.id === id && rule.revokedAt === undefined)
+      )
+        this.trust.revokeAllowlistRule(id)
+    }
   }
 
   /** Project the trust layer's active rules (the source of truth) onto the Surface. */

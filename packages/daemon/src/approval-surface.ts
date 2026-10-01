@@ -1,3 +1,4 @@
+import { formSetPlan, inputSetPlan } from '@veduta/protocol'
 import { SurfaceSchema, type AtomNode, type JsonValue, type Surface } from '@veduta/protocol'
 import {
   DECISION_ERROR_CAPTION_NODE_ID,
@@ -6,7 +7,11 @@ import {
   decisionErrorCaptionNode,
 } from './decision-surface.ts'
 import { SerializedWorkQueue } from './serialized-work-queue.ts'
-import type { FastMutationNotice, Store } from './store.ts'
+import type { Store } from './store.ts'
+import type { CommittedFastActionOutcome } from '@veduta/protocol'
+import { fastActionChangedKeys } from './fast-action-projection.ts'
+import { SurfaceActionError } from './fast-action.ts'
+import type { FastActionPreflightContext } from './surface-engine.ts'
 import { neutralizeDelimiters } from './taint.ts'
 import {
   DECISION_ALLOWLIST_CHECKBOX_KEY,
@@ -41,7 +46,7 @@ export function approvalCardSurfaceId(approvalId: string): string {
  * card id encodes its approvalId deterministically, so a fast-mutation
  * notice can recover "its" approval from the id alone — a cheap string
  * pre-filter, never trusted on its own. The trust store's pending row is
- * still the source of truth (`handleFastMutation` checks it next); this
+ * still the source of truth (`project` checks it next); this
  * only rules out surfaces that could never be an approval card.
  */
 export function approvalIdFromSurfaceId(surfaceId: string): string | undefined {
@@ -126,8 +131,7 @@ function editableFieldsFormNode(fields: ApprovalCardModel['editableFields']): At
       {
         name: 'submit',
         path: 'fast',
-        payload: {},
-        stateKeys: fields.map((field) => fieldStateKey(field.key)),
+        plan: formSetPlan(fields.map((field) => fieldStateKey(field.key))),
       },
     ],
     children: fields.map((field) =>
@@ -161,7 +165,11 @@ function allowlistCheckboxNode(toolName: string): AtomNode {
     props: { label: `From now on, approve ${toolName} like this` },
     binding: DECISION_ALLOWLIST_CHECKBOX_KEY,
     actions: [
-      { name: 'toggle', path: 'fast', stateKey: DECISION_ALLOWLIST_CHECKBOX_KEY, payload: {} },
+      {
+        name: 'toggle',
+        path: 'fast',
+        plan: inputSetPlan(DECISION_ALLOWLIST_CHECKBOX_KEY, { type: 'boolean' }),
+      },
     ],
   }
 }
@@ -189,14 +197,14 @@ export interface ApprovalSurfaceManagerOptions {
 
 /**
  * Implements `ApprovalCardPort` against the real Surface engine, and
- * observes `store.onFastMutation` for Approve/Reject/allowlist-checkbox
+ * observes `store.onFastActionOutcome` for Approve/Reject/allowlist-checkbox
  * clicks on the cards it created. The trust layer itself is supplied after
  * construction (`setTrust`) — `TrustLayer`'s constructor requires a port, so
  * this manager must exist first; wiring constructs both then connects
  * them.
  *
  * Resolution is funneled through a single serialized promise chain (the
- * `fullTextChain` pattern in `server.ts`): `onFastMutation` is a synchronous
+ * `fullTextChain` pattern in `server.ts`): `onFastActionOutcome` is a synchronous
  * void callback, so nothing else awaits or observes the async
  * `trust.resolve()` work directly — every link in the chain ends in its own
  * `catch`, so a resolution failure is logged and never surfaces as an
@@ -206,7 +214,7 @@ export interface ApprovalSurfaceManagerOptions {
  *
  * There is deliberately no in-memory `surfaceId -> approvalId` map
  * (boot-rehydration race): the trust store's persisted `pending_approvals`
- * row is the only source of truth `handleFastMutation` consults, so a click
+ * row is the only source of truth `project` consults, so a click
  * on a card resolves correctly the instant the daemon can reach the store —
  * it never depends on `start()` (boot rehydration) having run first. An
  * in-memory cache would only ever be a redundant pre-filter here; the
@@ -217,25 +225,32 @@ export class ApprovalSurfaceManager implements ApprovalCardPort {
   private readonly onError: (error: unknown) => void
   private trust: TrustLayer | undefined
   private readonly resolutions: SerializedWorkQueue
-  private readonly unsubscribe: () => void
+  private unsubscribe: (() => void) | undefined
+  private readonly unsubscribePreflight: () => void
 
   constructor(options: ApprovalSurfaceManagerOptions) {
     this.store = options.store
     this.onError =
       options.onError ?? ((error) => console.error('approval surface: resolution failed', error))
     this.resolutions = new SerializedWorkQueue(this.onError)
-    this.unsubscribe = this.store.onFastMutation((notice) => this.handleFastMutation(notice))
+    this.unsubscribePreflight = this.store.onFastActionPreflight((context) =>
+      this.preflight(context),
+    )
   }
 
   /** Connects the trust layer this manager's card clicks resolve against. */
   setTrust(trust: TrustLayer): void {
     this.trust = trust
+    this.unsubscribe?.()
+    this.unsubscribe = this.store.onFastActionOutcome('approvals', (outcome) =>
+      this.project(outcome),
+    )
   }
 
   /**
    * Boot rehydration: a card
    * Surface that survived a daemon restart on disk is already fully
-   * clickable — `handleFastMutation` resolves against the trust store
+   * clickable — `project` resolves against the trust store
    * directly, not against anything `start()` builds — so this only ever
    * needs to repair what the store itself cannot recompute: a card Surface
    * whose `createCard()` crashed between inserting the row and recording
@@ -305,9 +320,10 @@ export class ApprovalSurfaceManager implements ApprovalCardPort {
     this.trust?.attachSurfaceId(record.approval.id, canonicalSurfaceId)
   }
 
-  /** Stops observing fast mutations. Idempotent-safe: `store.onFastMutation`'s returned cleanup already is. */
+  /** Stops observing fast mutations. Idempotent-safe: `store.onFastActionOutcome`'s returned cleanup already is. */
   dispose(): void {
-    this.unsubscribe()
+    this.unsubscribe?.()
+    this.unsubscribePreflight()
   }
 
   /** Test/shutdown hook: resolves once every enqueued resolution has settled. */
@@ -365,14 +381,41 @@ export class ApprovalSurfaceManager implements ApprovalCardPort {
    * click resolves correctly the moment the daemon can read it, regardless
    * of `start()`'s timing.
    */
-  private handleFastMutation(notice: FastMutationNotice): void {
-    if (notice.stateKey !== DECISION_APPROVE_KEY && notice.stateKey !== DECISION_REJECT_KEY) return
-    if (!notice.value) return
-    const approvalId = approvalIdFromSurfaceId(notice.surfaceId)
-    if (approvalId === undefined) return // not a card-surface id shape at all
-    if (!this.trust?.hasPendingCardSurface(approvalId, notice.surfaceId)) return
-    const decision = notice.stateKey === DECISION_APPROVE_KEY ? 'approve' : 'reject'
-    this.resolutions.enqueue(() => this.resolve(approvalId, decision))
+  private preflight(context: FastActionPreflightContext): void {
+    const id = approvalIdFromSurfaceId(context.surface.id)
+    if (id === undefined || !this.store.isSurfaceDaemonOwned(context.surface.id)) return
+    if (
+      !Object.keys(context.action.plan.targets).some(
+        (key) => key === DECISION_APPROVE_KEY || key === DECISION_REJECT_KEY,
+      )
+    )
+      return
+    try {
+      if (!this.trust) throw new Error('Approval authority is not ready')
+      this.trust.preflightCardDecision(
+        id,
+        context.surface.id,
+        Object.hasOwn(context.action.plan.targets, DECISION_APPROVE_KEY) ? 'approve' : 'reject',
+      )
+    } catch (error) {
+      throw new SurfaceActionError(
+        'preflight_rejected',
+        error instanceof Error ? error.message : 'Approval precondition failed',
+      )
+    }
+  }
+
+  private project(outcome: CommittedFastActionOutcome): Promise<void> | void {
+    const id = approvalIdFromSurfaceId(outcome.surfaceId)
+    if (id === undefined || !this.trust?.hasPendingCardSurface(id, outcome.surfaceId)) return
+    const key = fastActionChangedKeys(outcome).find(
+      (key) =>
+        (key === DECISION_APPROVE_KEY || key === DECISION_REJECT_KEY) &&
+        outcome.surface.state[key] === true,
+    )
+    if (!key) return
+    const decision = key === DECISION_APPROVE_KEY ? 'approve' : 'reject'
+    return this.resolutions.enqueue(() => this.resolve(id, decision))
   }
 
   private async resolve(approvalId: string, decision: 'approve' | 'reject'): Promise<void> {

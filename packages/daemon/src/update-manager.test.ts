@@ -1,3 +1,4 @@
+import { fastInvocation } from './surface-action-test-fixtures.ts'
 import { createServer, type Server } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
@@ -327,11 +328,10 @@ describe('UpdateManager.runCheck', () => {
     const surfaceBefore = store.getSurface(UPDATE_SURFACE_ID)
     expect(surfaceBefore!.state[UPDATE_CHECK_STATE_KEY]).toBe(false)
 
-    store.invokeSurfaceAction(UPDATE_SURFACE_ID, {
-      nodeId: 'update-check-button',
-      name: 'check',
-      payload: { value: true },
-    })
+    store.invokeSurfaceAction(
+      UPDATE_SURFACE_ID,
+      fastInvocation(store, UPDATE_SURFACE_ID, 'update-check-button', 'check', {}),
+    )
     await vi.waitFor(() => {
       const surface = store.getSurface(UPDATE_SURFACE_ID)
       expect(surface!.state[UPDATE_CHECK_STATE_KEY]).toBe(false)
@@ -802,6 +802,7 @@ describe('UpdateManager.applyUpdate', () => {
     }
     writeFileSync(join(home.stateDir, 'result.json'), JSON.stringify(firstResult))
 
+    manager.dispose()
     const booted = buildManager({ installedVersion: '1.1.0' })
     booted.register()
     booted.start()
@@ -837,6 +838,7 @@ describe('UpdateManager boot-time result ingestion', () => {
     }
     writeFileSync(join(home.stateDir, 'result.json'), JSON.stringify(result))
 
+    manager.dispose()
     const booted = buildManager({ installedVersion: '1.1.0' })
     booted.register()
     booted.start()
@@ -876,6 +878,7 @@ describe('UpdateManager boot-time result ingestion', () => {
       JSON.stringify({ phase: 'serving-check' }),
     )
 
+    manager.dispose()
     const booted = buildManager({ installedVersion: '1.1.0' })
     booted.register()
     booted.start()
@@ -924,6 +927,7 @@ describe('UpdateManager boot-time result ingestion', () => {
     const resultFile = join(home.stateDir, 'result.json')
     writeFileSync(resultFile, JSON.stringify(result))
 
+    manager.dispose()
     const booted = buildManager({ installedVersion: '1.1.0' })
     booted.register()
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -963,6 +967,7 @@ describe('UpdateManager boot-time result ingestion', () => {
     const resultFile = join(home.stateDir, 'result.json')
     writeFileSync(resultFile, JSON.stringify(result))
 
+    manager.dispose()
     const booted = buildManager({ installedVersion: '1.1.0' })
     booted.register()
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -1023,6 +1028,7 @@ describe('UpdateManager boot-time result ingestion', () => {
     }
     writeFileSync(join(home.stateDir, 'result.json'), JSON.stringify(result))
 
+    manager.dispose()
     const booted = buildManager({ installedVersion: '1.1.0' })
     booted.register()
     booted.start()

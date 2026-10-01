@@ -1,3 +1,4 @@
+import { inputSetPlan } from '@veduta/protocol'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -55,7 +56,9 @@ function trackerSurface(id: string, spaceId: string, options: { title?: string }
           type: 'Checkbox',
           binding: 'finished',
           props: { label: 'Finished' },
-          actions: [{ name: 'toggle', path: 'fast', stateKey: 'finished' }],
+          actions: [
+            { name: 'toggle', path: 'fast', plan: inputSetPlan('finished', { type: 'boolean' }) },
+          ],
         },
       ],
     },
@@ -88,7 +91,9 @@ function labeledTrackerSurface(id: string, spaceId: string, surfaceTitle: string
           type: 'Checkbox',
           binding: 'finished',
           props: { label: 'Finished' },
-          actions: [{ name: 'toggle', path: 'fast', stateKey: 'finished' }],
+          actions: [
+            { name: 'toggle', path: 'fast', plan: inputSetPlan('finished', { type: 'boolean' }) },
+          ],
         },
       ],
     },
@@ -153,7 +158,7 @@ describe('TemplateEngine', () => {
 
       const created = store.getSurface('srf-tracker-b')
       if (!created) throw new Error('expected the reused Surface to exist')
-      expect(created.tree).toEqual(template.tree)
+      expect(created.tree).toMatchObject(template.tree)
       expect(created.state).toEqual({ progress: 40, finished: false })
 
       const provenance = store.surfaceProvenance('srf-tracker-b')

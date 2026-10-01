@@ -1,3 +1,4 @@
+import { fastInvocation } from './surface-action-test-fixtures.ts'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -184,11 +185,16 @@ describe('NotificationSettingsSurfaceManager', () => {
     const { store, errands, manager, onConfigChanged } = setup()
     manager.start()
 
-    store.invokeSurfaceAction(NOTIFICATION_SETTINGS_SURFACE_ID, {
-      nodeId: `notif-budget-${errands.id}`,
-      name: 'change',
-      payload: { value: '5' },
-    })
+    store.invokeSurfaceAction(
+      NOTIFICATION_SETTINGS_SURFACE_ID,
+      fastInvocation(
+        store,
+        NOTIFICATION_SETTINGS_SURFACE_ID,
+        `notif-budget-${errands.id}`,
+        'change',
+        { value: '5' },
+      ),
+    )
 
     const config = loadNotificationsConfig(rootDir)
     expect(config.spaceBudgets[errands.id]).toBe(5)
@@ -201,24 +207,28 @@ describe('NotificationSettingsSurfaceManager', () => {
     expect(select?.props?.['options']).toEqual(['0', '1', '3', '5', '10'])
   })
 
-  it('ignores an invalid (non-offered) Select value with a console.warn, leaving config untouched', () => {
+  it('rejects a non-offered Select value before any durable change', () => {
     const { store, errands, manager, onConfigChanged } = setup()
     manager.start()
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
-    store.invokeSurfaceAction(NOTIFICATION_SETTINGS_SURFACE_ID, {
-      nodeId: `notif-budget-${errands.id}`,
-      name: 'change',
-      payload: { value: '2' },
-    })
-
-    expect(warn).toHaveBeenCalled()
+    const cursor = store.latestSurfaceCursor()
+    expect(() =>
+      store.invokeSurfaceAction(
+        NOTIFICATION_SETTINGS_SURFACE_ID,
+        fastInvocation(
+          store,
+          NOTIFICATION_SETTINGS_SURFACE_ID,
+          `notif-budget-${errands.id}`,
+          'change',
+          { value: '2' },
+        ),
+      ),
+    ).toThrow('owning interaction')
+    expect(store.latestSurfaceCursor()).toBe(cursor)
     expect(onConfigChanged).not.toHaveBeenCalled()
     const config = loadNotificationsConfig(rootDir)
     expect(config.spaceBudgets[errands.id]).toBeUndefined()
     const surface = store.getSurface(NOTIFICATION_SETTINGS_SURFACE_ID)!
     expect(surface.state[`notif-budget:${errands.id}`]).toBe('3')
-    warn.mockRestore()
   })
 
   it('refresh() re-reads stats and updates the Stat values', () => {
@@ -281,7 +291,8 @@ describe('NotificationSettingsSurfaceManager', () => {
   })
 
   it('start() on an existing Surface refreshes it, so a restart picks up on-disk config changes (not just first-boot creation)', () => {
-    const { store, errands, source } = setup()
+    const { store, errands, source, manager } = setup()
+    manager.dispose()
     const first = new NotificationSettingsSurfaceManager({
       store,
       source,
@@ -297,6 +308,7 @@ describe('NotificationSettingsSurfaceManager', () => {
       digestThreshold: 3,
     })
 
+    first.dispose()
     const second = new NotificationSettingsSurfaceManager({
       store,
       source,

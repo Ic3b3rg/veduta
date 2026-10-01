@@ -1,3 +1,5 @@
+import { fastInvocation } from './surface-action-test-fixtures.ts'
+import { commitFastAction } from './surface-action-test-fixtures.ts'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -261,7 +263,7 @@ describe('Space recovery gate', () => {
         checks += 1
         if (checks === 2) {
           deliveryAllowed = false
-          expect(() => store.applyFastAction('srf-groceries', 'milk', true)).toThrow(
+          expect(() => commitFastAction(store, 'srf-groceries', 'milk', true)).toThrow(
             SurfaceCommitRecoveryPendingError,
           )
         }
@@ -650,11 +652,10 @@ describe('cancel', () => {
     })
 
     const surfaceId = workerSurfaceId(workerId)
-    store.invokeSurfaceAction(surfaceId, {
-      nodeId: 'worker-cancel',
-      name: 'cancel',
-      payload: { value: true },
-    })
+    store.invokeSurfaceAction(
+      surfaceId,
+      fastInvocation(store, surfaceId, 'worker-cancel', 'cancel', {}),
+    )
 
     await pool.whenSettled(workerId)
 
@@ -707,7 +708,7 @@ describe('recoverAtBoot', () => {
       )
     }
     deliveryAllowed = false
-    expect(() => store.applyFastAction('srf-groceries', 'milk', true)).toThrow(
+    expect(() => commitFastAction(store, 'srf-groceries', 'milk', true)).toThrow(
       SurfaceCommitRecoveryPendingError,
     )
     const { pool } = makePool()
@@ -968,11 +969,10 @@ describe('high-risk safety invariant (review never fails open)', () => {
     const { pool } = makePool({
       runner,
       reviewComplete: async () => {
-        store.invokeSurfaceAction(workerSurfaceId(workerId), {
-          nodeId: 'worker-cancel',
-          name: 'cancel',
-          payload: { value: true },
-        })
+        store.invokeSurfaceAction(
+          workerSurfaceId(workerId),
+          fastInvocation(store, workerSurfaceId(workerId), 'worker-cancel', 'cancel', {}),
+        )
         return { text: verdictText({ verdict: 'pass', unsupportedClaims: [] }) }
       },
     })

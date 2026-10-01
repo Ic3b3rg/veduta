@@ -1,3 +1,5 @@
+import { fastInvocation } from './surface-action-test-fixtures.ts'
+import { formSetPlan, literalSetPlan } from '@veduta/protocol'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -91,12 +93,7 @@ describe('buildApprovalCardSurface', () => {
     expect(field?.binding).toBe(fieldStateKey('body'))
     expect(field?.actions).toBeUndefined()
     expect(findNode(surface.tree, 'editable-fields-form')?.actions).toEqual([
-      {
-        name: 'submit',
-        path: 'fast',
-        payload: {},
-        stateKeys: [fieldStateKey('body')],
-      },
+      { name: 'submit', path: 'fast', plan: formSetPlan([fieldStateKey('body')]) },
     ])
     expect(surface.state[fieldStateKey('body')]).toBe('hello')
 
@@ -109,13 +106,13 @@ describe('buildApprovalCardSurface', () => {
     expect(approve?.actions?.[0]).toMatchObject({
       name: 'press',
       path: 'fast',
-      stateKey: DECISION_APPROVE_KEY,
+      plan: literalSetPlan(DECISION_APPROVE_KEY, true),
     })
     const reject = findNode(surface.tree, 'decision-reject')
     expect(reject?.actions?.[0]).toMatchObject({
       name: 'press',
       path: 'fast',
-      stateKey: DECISION_REJECT_KEY,
+      plan: literalSetPlan(DECISION_REJECT_KEY, true),
     })
     expect(surface.state[DECISION_APPROVE_KEY]).toBe(false)
     expect(surface.state[DECISION_REJECT_KEY]).toBe(false)
@@ -293,18 +290,17 @@ async function createCard<TSchema extends z.ZodTypeAny>(
 }
 
 function pressButton(surfaceId: string, nodeId: string): void {
-  store.invokeSurfaceAction(surfaceId, { nodeId, name: 'press', payload: { value: true } })
+  store.invokeSurfaceAction(surfaceId, fastInvocation(store, surfaceId, nodeId, 'press', {}))
 }
 
 function submitEditedFields(surfaceId: string, fields: Record<string, string>): void {
   const value = Object.fromEntries(
     Object.entries(fields).map(([key, fieldValue]) => [fieldStateKey(key), fieldValue]),
   )
-  store.invokeSurfaceAction(surfaceId, {
-    nodeId: 'editable-fields-form',
-    name: 'submit',
-    payload: { value },
-  })
+  store.invokeSurfaceAction(
+    surfaceId,
+    fastInvocation(store, surfaceId, 'editable-fields-form', 'submit', value),
+  )
 }
 
 describe('ApprovalSurfaceManager (real Store + TrustLayer)', () => {
@@ -358,7 +354,7 @@ describe('ApprovalSurfaceManager (real Store + TrustLayer)', () => {
     expect(executed).toEqual([{ to: 'a@b.com', body: 'edited text' }])
   })
 
-  it('patches a validation-error Caption and keeps the card alive when the edit is invalid', async () => {
+  it('rejects invalid edited input before committing the approval and accepts a corrected retry', async () => {
     const executed: unknown[] = []
     const { surfaceId } = await createCard(
       sendMessageTool((input) => executed.push(input)),
@@ -367,15 +363,15 @@ describe('ApprovalSurfaceManager (real Store + TrustLayer)', () => {
     )
 
     submitEditedFields(surfaceId, { body: '' }) // violates z.string().min(1)
-    pressButton(surfaceId, 'decision-approve')
+    const cursor = store.latestSurfaceCursor()
+    expect(() => pressButton(surfaceId, 'decision-approve')).toThrow()
+    expect(store.latestSurfaceCursor()).toBe(cursor)
     await manager.flush()
 
     expect(executed).toEqual([])
     const stillPending = store.getSurface(surfaceId)
     expect(stillPending).toBeDefined()
-    const errorText = findNode(stillPending!.tree, 'error')?.props?.['text']
-    expect(typeof errorText).toBe('string')
-    expect(errorText as string).not.toBe('')
+    expect(stillPending?.state[DECISION_APPROVE_KEY]).toBe(false)
 
     // Fixing the field and approving again now goes through.
     submitEditedFields(surfaceId, { body: 'fixed' })
@@ -392,11 +388,10 @@ describe('ApprovalSurfaceManager (real Store + TrustLayer)', () => {
       body: 'hello',
     })
 
-    store.invokeSurfaceAction(surfaceId, {
-      nodeId: 'decision-allowlist',
-      name: 'toggle',
-      payload: { value: true },
-    })
+    store.invokeSurfaceAction(
+      surfaceId,
+      fastInvocation(store, surfaceId, 'decision-allowlist', 'toggle', { value: true }),
+    )
     pressButton(surfaceId, 'decision-approve')
     await manager.flush()
 
@@ -503,11 +498,10 @@ describe('ApprovalSurfaceManager (real Store + TrustLayer)', () => {
       manager2.start()
 
       try {
-        store2.invokeSurfaceAction(surfaceId, {
-          nodeId: 'decision-approve',
-          name: 'press',
-          payload: { value: true },
-        })
+        store2.invokeSurfaceAction(
+          surfaceId,
+          fastInvocation(store2, surfaceId, 'decision-approve', 'press', {}),
+        )
         await manager2.flush()
 
         expect(executed).toEqual([{ to: 'a@b.com', body: 'hello' }])
@@ -551,11 +545,10 @@ describe('ApprovalSurfaceManager (real Store + TrustLayer)', () => {
       // Deliberately no `trust2.start()` / `manager2.start()` before the click.
 
       try {
-        store2.invokeSurfaceAction(surfaceId, {
-          nodeId: 'decision-approve',
-          name: 'press',
-          payload: { value: true },
-        })
+        store2.invokeSurfaceAction(
+          surfaceId,
+          fastInvocation(store2, surfaceId, 'decision-approve', 'press', {}),
+        )
         await manager2.flush()
 
         expect(executed).toEqual([{ to: 'a@b.com', body: 'hello' }])
@@ -614,7 +607,7 @@ describe('ApprovalSurfaceManager (real Store + TrustLayer)', () => {
         { origin: 'trusted:system', daemonOwned: true },
       )
 
-      pressButton(canonicalSurfaceId, 'decision-approve')
+      expect(() => pressButton(canonicalSurfaceId, 'decision-approve')).toThrow('no longer pending')
       await manager.flush()
 
       expect(executed).toEqual([])

@@ -1,3 +1,4 @@
+import { literalSetPlan } from '@veduta/protocol'
 import { SurfaceSchema, type AtomNode, type Surface } from '@veduta/protocol'
 import type { WorkerReport } from './worker-briefing.ts'
 
@@ -77,7 +78,9 @@ export function workerActiveFooterNode(): AtomNode {
         id: 'worker-cancel',
         type: 'Button',
         props: { label: 'Cancel' },
-        actions: [{ name: 'cancel', path: 'fast', stateKey: WORKER_CANCEL_STATE_KEY, payload: {} }],
+        actions: [
+          { name: 'cancel', path: 'fast', plan: literalSetPlan(WORKER_CANCEL_STATE_KEY, true) },
+        ],
       },
     ],
   }

@@ -26,7 +26,11 @@ import { reconcileManagedJobs } from './managed-jobs.ts'
 import type { NotificationInput } from './notification-center.ts'
 import type { Scheduler } from './scheduler.ts'
 import type { SpaceEvent } from './spaces-engine.ts'
-import type { FastMutationNotice, Store } from './store.ts'
+import type { Store } from './store.ts'
+import type { CommittedFastActionOutcome } from '@veduta/protocol'
+import { fastActionChangedKeys } from './fast-action-projection.ts'
+import { SurfaceActionError } from './fast-action.ts'
+import type { FastActionPreflightContext } from './surface-engine.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { neutralizeDelimiters, untrustedOrigin, type Origin } from './taint.ts'
 import { UpdateDecisionStore, type UpdateDecisionRecord } from './update-decisions.ts'
@@ -263,6 +267,7 @@ export class UpdateManager {
   private readonly updateDecisions: UpdateDecisionStore
   private applyInFlight: Promise<UpdateDecisionRecord | undefined> | undefined
   private disposeFastMutation: (() => void) | undefined
+  private disposePreflight: (() => void) | undefined
   private pollTimer: NodeJS.Timeout | undefined
 
   constructor(options: UpdateManagerOptions) {
@@ -356,8 +361,9 @@ export class UpdateManager {
       targetSurfaceId: UPDATE_SURFACE_ID,
     })
     this.ensureSurface()
-    this.disposeFastMutation = this.store.onFastMutation((notice) =>
-      this.handleFastMutation(notice),
+    this.disposePreflight = this.store.onFastActionPreflight((context) => this.preflight(context))
+    this.disposeFastMutation = this.store.onFastActionOutcome('updates', (outcome) =>
+      this.project(outcome),
     )
   }
 
@@ -395,6 +401,8 @@ export class UpdateManager {
   dispose(): void {
     this.disposeFastMutation?.()
     this.disposeFastMutation = undefined
+    this.disposePreflight?.()
+    this.disposePreflight = undefined
     this.clearPollTimer()
   }
 
@@ -439,25 +447,43 @@ export class UpdateManager {
     }
   }
 
-  private handleFastMutation(notice: FastMutationNotice): void {
-    if (notice.surfaceId !== UPDATE_SURFACE_ID) return
-    if (notice.stateKey === UPDATE_CHECK_STATE_KEY) {
-      queueMicrotask(() => {
-        this.runCheck('manual')
-          .catch((error: unknown) => console.error('update-manager: check failed', error))
-          .finally(() => this.resetFastActionKey(UPDATE_CHECK_STATE_KEY))
-      })
-      return
-    }
-    if (notice.stateKey === UPDATE_APPLY_STATE_KEY) {
-      const expectedVersion = this.listUpdateDecisions()
-        .filter((decision) => decision.status === 'pending')
-        .at(-1)?.version
-      queueMicrotask(() => {
-        this.applyUpdate('trusted:user', expectedVersion)
-          .catch((error: unknown) => console.error('update-manager: apply failed', error))
-          .finally(() => this.resetFastActionKey(UPDATE_APPLY_STATE_KEY))
-      })
+  private preflight(context: FastActionPreflightContext): void {
+    if (context.surface.id !== UPDATE_SURFACE_ID) return
+    const keys = Object.keys(context.action.plan.targets)
+    if (
+      keys.some(
+        (key) =>
+          (key === UPDATE_CHECK_STATE_KEY || key === UPDATE_APPLY_STATE_KEY) &&
+          context.nextSurface.state[key] !== true,
+      )
+    )
+      throw new SurfaceActionError(
+        'preflight_rejected',
+        'Update actions require an explicit request',
+      )
+    if (
+      keys.includes(UPDATE_APPLY_STATE_KEY) &&
+      (!this.listUpdateDecisions().some((decision) => decision.status === 'pending') ||
+        existsSync(journalFilePath(this.home)) ||
+        existsSync(resultFilePath(this.home)))
+    )
+      throw new SurfaceActionError('preflight_rejected', 'No update offer is available to apply')
+  }
+
+  private async project(outcome: CommittedFastActionOutcome): Promise<void> {
+    if (outcome.surfaceId !== UPDATE_SURFACE_ID) return
+    for (const key of fastActionChangedKeys(outcome)) {
+      if (outcome.surface.state[key] !== true) continue
+      if (key === UPDATE_CHECK_STATE_KEY) {
+        await this.runCheck('manual')
+        this.resetFastActionKey(key)
+      } else if (key === UPDATE_APPLY_STATE_KEY) {
+        const expectedVersion = this.listUpdateDecisions()
+          .filter((decision) => decision.status === 'pending')
+          .at(-1)?.version
+        if (expectedVersion !== undefined) await this.applyUpdate('trusted:user', expectedVersion)
+        this.resetFastActionKey(key)
+      }
     }
   }
 

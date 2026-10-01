@@ -1,3 +1,5 @@
+import { literalSetPlan } from '@veduta/protocol'
+import { commitFastAction } from './surface-action-test-fixtures.ts'
 import { createHash } from 'node:crypto'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -110,7 +112,33 @@ describe('AutomationOutcomeService', () => {
       .digest('hex')
       .slice(0, 16)
     const deliveryId = `12:2026-09-02T08:00:00.000Z:${targetScope}`
-    fixture.store.applyFastAction(
+    fixture.store.patchState(
+      fixture.surfaceId,
+      [{ target: 'state', op: 'add', path: '/preclaimed', value: false }],
+      { updatedBy: 'agent' },
+    )
+    fixture.store.patchTree(
+      fixture.surfaceId,
+      [
+        {
+          target: 'tree',
+          op: 'add',
+          path: '/children/0',
+          value: {
+            id: 'preclaim',
+            type: 'Button',
+            props: { label: 'Preclaim' },
+            actions: [{ name: 'press', path: 'fast', plan: literalSetPlan('preclaimed', true) }],
+          },
+        },
+      ],
+      {
+        expectedTreeVersion: fixture.store.getSurfaceVersion(fixture.surfaceId)!.treeVersion,
+        updatedBy: 'agent',
+      },
+    )
+    commitFastAction(
+      fixture.store,
       fixture.surfaceId,
       'preclaimed',
       true,

@@ -1,3 +1,11 @@
+import { randomUUID } from 'node:crypto'
+import { FastActionLedger } from './fast-action-ledger.ts'
+import {
+  stampFastActionRevisions,
+  reduceFastAction,
+  SurfaceActionError,
+  freezeFastActionPreflight,
+} from './fast-action.ts'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -23,12 +31,19 @@ import {
   findAtom,
   findDeclaredAgentAction,
   surfaceRelativeTimeStatus,
-  type ActionInvocation,
+  FastActionInvocationSchema,
+  CommittedFastActionOutcomeSchema,
+  canonicalJson,
+  type FastActionInvocation,
+  type FastAction,
+  type FastActionOutcome,
+  type CommittedFastActionMetadata,
+  type CommittedFastActionOutcome,
+  type AgentActionInvocation,
   type AtomNode,
   type ChatTurnCorrelation,
   type Freshness,
   type JsonObject,
-  type JsonValue,
   type PatchOperation,
   type Surface,
   type SurfaceArchivedEvent,
@@ -90,6 +105,16 @@ type SurfaceWriteActor = Extract<Freshness['updatedBy'], 'agent' | 'user' | 'job
  * Event text has no other size bound.
  */
 const PIN_EVENT_TITLE_MAX_CHARS = 200
+
+export interface FastActionPreflightContext {
+  actor: 'trusted:user'
+  surface: Surface
+  node: AtomNode
+  action: FastAction
+  invocation: FastActionInvocation
+  nextSurface: Surface
+  operations: PatchOperation[]
+}
 
 export interface SurfaceMutation {
   surface: Surface
@@ -404,6 +429,8 @@ export class SurfaceEngine {
   private readonly hasSpace: (spaceId: string) => boolean
   private readonly surfaceCommitJournal?: SurfaceCommitJournal
   private stagedSurfaceCommits: SurfaceCommitRecord[] | undefined
+  private readonly fastActionLedger: FastActionLedger
+  private readonly fastActionPreflights = new Set<(context: FastActionPreflightContext) => void>()
   private readonly surfaceEventObservers = new Set<(event: SurfaceEngineEvent) => void>()
   private readonly treeProposalObservers = new Set<
     (proposal: TreeProposal, initiatingTurn?: ChatTurnCorrelation) => void
@@ -416,6 +443,7 @@ export class SurfaceEngine {
     this.timeZone = options.timeZone ?? 'UTC'
     this.hasSpace = options.hasSpace
     initializeSurfaceSchema(this.db)
+    this.fastActionLedger = new FastActionLedger(this.db)
     if (options.surfaceCommits) {
       this.surfaceCommitJournal = new SurfaceCommitJournal(
         this.db,
@@ -471,6 +499,7 @@ export class SurfaceEngine {
         }
       }
     }
+    this.fastActionLedger.publish()
   }
 
   listSurfaces(spaceId?: string): Surface[] {
@@ -634,6 +663,7 @@ export class SurfaceEngine {
   }
 
   close(): void {
+    this.fastActionLedger.close()
     this.db.close()
   }
 
@@ -1219,64 +1249,193 @@ export class SurfaceEngine {
     })
   }
 
-  applyFastAction(
-    surfaceId: string,
-    stateKey: string,
-    value: JsonValue,
-    idempotencyKey?: string,
-  ): SurfaceMutation {
-    const duplicate = idempotencyKey ? this.findIdempotentMutation(idempotencyKey) : undefined
-    if (duplicate) return duplicate
-
-    const surface = this.requireActiveSurface(surfaceId)
-    const operation = {
-      target: 'state' as const,
-      op: Object.prototype.hasOwnProperty.call(surface.state, stateKey)
-        ? ('replace' as const)
-        : ('add' as const),
-      path: statePath(stateKey),
-      value,
+  invokeFastAction(surfaceId: string, input: FastActionInvocation): FastActionOutcome {
+    const invocation = FastActionInvocationSchema.parse(input)
+    const original = this.fastActionLedger.get(invocation.intentId)
+    if (original) {
+      if (
+        original.surfaceId !== surfaceId ||
+        original.nodeId !== invocation.nodeId ||
+        original.actionName !== invocation.name ||
+        original.actionRevision !== invocation.actionRevision
+      )
+        throw new SurfaceActionError(
+          'intent_conflict',
+          'intent identity belongs to a different Action',
+        )
+      if (
+        original.outcome === 'committed' &&
+        !this.fastActionLedger.isDelivered(original.surfaceCommitId)
+      ) {
+        try {
+          this.assertSpaceReadyForAgent(original.surface.spaceId)
+        } catch (error) {
+          if (!(error instanceof SurfaceCommitRecoveryPendingError)) throw error
+          return {
+            outcome: 'recovery_pending',
+            surfaceId,
+            nodeId: original.nodeId,
+            actionName: original.actionName,
+            actionRevision: original.actionRevision,
+            intentId: original.intentId,
+            surfaceCommitId: error.commitId,
+            spaceId: error.spaceId,
+            duplicate: true,
+          }
+        }
+      }
+      this.fastActionLedger.publish()
+      return { ...original, duplicate: true }
     }
-    const mutation = this.patchSurface(surfaceId, [operation], {
-      updatedBy: 'user',
-      eventType: 'fast_path',
-      eventText: (patched) => `${patched.title}: ${stateKey} -> ${JSON.stringify(value)}`,
-      updateTreeVersion: false,
-      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
-      eventPayload: { surfaceId, stateKey, value },
-    })
-    return mutation
+    const existing = this.getSurface(surfaceId)
+    if (!existing) throw new SurfaceActionError('unknown_surface', 'unknown Surface')
+    this.assertSpaceReadyForAgent(existing.spaceId)
+    let outcome: FastActionOutcome
+    try {
+      outcome = this.runWrite(() => {
+        const current = this.requireActiveSurface(surfaceId)
+        const node = findAtom(current.tree, invocation.nodeId)
+        const action = node?.actions?.find((candidate) => candidate.name === invocation.name)
+        if (!node || action?.path !== 'fast')
+          throw new SurfaceActionError(
+            'undeclared_action',
+            'the declared fast Action no longer exists',
+          )
+        if (action.revision !== invocation.actionRevision)
+          throw new SurfaceActionError(
+            'stale_action',
+            'the Action changed since this intent was prepared',
+          )
+        const identity = {
+          surfaceId,
+          nodeId: node.id,
+          actionName: action.name,
+          actionRevision: invocation.actionRevision,
+          intentId: invocation.intentId,
+        }
+        const reduced = reduceFastAction(current, node, action, invocation, {
+          recordId: randomUUID(),
+          now: this.nowIso(),
+        })
+        for (const preflight of this.fastActionPreflights) {
+          try {
+            const result = preflight(
+              freezeFastActionPreflight({
+                actor: 'trusted:user' as const,
+                surface: current,
+                node,
+                action,
+                invocation,
+                nextSurface: reduced.surface,
+                operations: reduced.operations,
+              }),
+            )
+            if (result !== undefined)
+              throw new SurfaceActionError(
+                'preflight_rejected',
+                'preflight must be synchronous and cannot mutate state',
+              )
+          } catch (error) {
+            if (error instanceof SurfaceActionError) throw error
+            throw new SurfaceActionError(
+              'preflight_rejected',
+              error instanceof Error ? error.message : 'Action precondition failed',
+            )
+          }
+        }
+        if (reduced.operations.length === 0) {
+          const noop = {
+            ...identity,
+            outcome: 'noop' as const,
+            reason: reduced.reason,
+            duplicate: false,
+          }
+          this.fastActionLedger.record(noop)
+          return noop
+        }
+        assertAutomationOutcomeStateNotPatched(reduced.operations)
+        const currentVersion = this.requireVersion(surfaceId)
+        const patched = this.stampSurface(reduced.surface, 'user')
+        const patch = PatchSchema.parse({ surfaceId, operations: reduced.operations })
+        const cursor = this.latestSurfaceCursor() + 1
+        const origin = this.surfaceProvenance(surfaceId)?.contentOrigin ?? 'trusted:user'
+        this.updateSurface(
+          patched,
+          currentVersion.version + 1,
+          currentVersion.treeVersion,
+          undefined,
+          origin,
+        )
+        const title = truncate(neutralizeDelimiters(patched.title), PIN_EVENT_TITLE_MAX_CHARS)
+        const actionName = truncate(neutralizeDelimiters(action.name), PIN_EVENT_TITLE_MAX_CHARS)
+        const commit = this.stageSpaceEvent(
+          patched.spaceId,
+          {
+            at: patched.freshness.updatedAt,
+            type: 'fast_path',
+            text: `${title}: ${actionName} committed ${reduced.operations.length} mutation steps`,
+            origin: effectiveOrigin([origin], 'trusted:user'),
+            payload: {
+              ...identity,
+              targets: Object.keys(action.plan.targets),
+              operations: reduced.operations.length,
+            },
+          },
+          cursor,
+        )
+        const committed = CommittedFastActionOutcomeSchema.parse({
+          ...identity,
+          outcome: 'committed',
+          patch,
+          surface: patched,
+          surfaceVersion: currentVersion.version + 1,
+          treeVersion: currentVersion.treeVersion,
+          surfaceCommitId: commit.id,
+          eventCursor: cursor,
+          surfaceCursor: cursor,
+          duplicate: false,
+        })
+        const { surface: _surface, patch: _patch, ...metadata } = committed
+        this.insertPatchEvent(patched, patch, metadata)
+        this.fastActionLedger.record(committed)
+        return committed
+      })
+    } catch (error) {
+      if (!(error instanceof SurfaceCommitRecoveryPendingError)) throw error
+      const saved = this.fastActionLedger.get(invocation.intentId)
+      if (saved?.outcome !== 'committed') throw error
+      return {
+        outcome: 'recovery_pending',
+        surfaceId,
+        nodeId: saved.nodeId,
+        actionName: saved.actionName,
+        actionRevision: saved.actionRevision,
+        intentId: saved.intentId,
+        surfaceCommitId: saved.surfaceCommitId,
+        spaceId: saved.surface.spaceId,
+        duplicate: false,
+      }
+    }
+    if (outcome.outcome === 'committed')
+      this.notifySurfaceEvent({ kind: 'patch', event: this.eventByCursor(outcome.eventCursor) })
+    this.fastActionLedger.publish()
+    return outcome
   }
 
-  applyFastFormAction(
-    surfaceId: string,
-    values: Record<string, string>,
-    idempotencyKey?: string,
-  ): SurfaceMutation {
-    const duplicate = idempotencyKey ? this.findIdempotentMutation(idempotencyKey) : undefined
-    if (duplicate) return duplicate
-
-    const surface = this.requireActiveSurface(surfaceId)
-    const entries = Object.entries(values)
-    const stateKeys = entries.map(([stateKey]) => stateKey)
-    const operations: PatchOperation[] = entries.map(([stateKey, value]) => ({
-      target: 'state',
-      op: Object.prototype.hasOwnProperty.call(surface.state, stateKey) ? 'replace' : 'add',
-      path: statePath(stateKey),
-      value,
-    }))
-    return this.patchSurface(surfaceId, operations, {
-      updatedBy: 'user',
-      eventType: 'fast_path',
-      eventText: (patched) =>
-        `${patched.title}: submitted ${stateKeys.length} Form ${stateKeys.length === 1 ? 'field' : 'fields'}`,
-      updateTreeVersion: false,
-      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
-      eventPayload: { surfaceId, stateKeys, values },
-    })
+  onFastActionPreflight(preflight: (context: FastActionPreflightContext) => void): () => void {
+    this.fastActionPreflights.add(preflight)
+    return () => {
+      this.fastActionPreflights.delete(preflight)
+    }
+  }
+  onFastActionOutcome(
+    name: string,
+    observer: (outcome: CommittedFastActionOutcome) => void | Promise<void>,
+  ): () => void {
+    return this.fastActionLedger.observe(name, observer)
   }
 
-  enqueueAgentAction(surface: Surface, invocation: ActionInvocation): QueuedAgentTurn {
+  enqueueAgentAction(surface: Surface, invocation: AgentActionInvocation): QueuedAgentTurn {
     const atom = findAtom(surface.tree, invocation.nodeId)
     const action = findDeclaredAgentAction(surface.tree, invocation.nodeId, invocation.name)
     if (!atom || !action) {
@@ -1517,14 +1676,7 @@ export class SurfaceEngine {
 
       const storedContentOrigin = this.surfaceProvenance(surfaceId)?.contentOrigin ?? 'trusted:user'
 
-      // This write's own origin. A `fast_path` tap is always genuinely the
-      // user's own action — no attacker-influenced turn authored *this*
-      // write, `applyFastAction` never takes an `origin` option at all — so
-      // it is never anything but `trusted:user` here, regardless of what the
-      // Surface's own stored content carries (see `eventOrigin` below for
-      // where that distinction actually matters).
-      const writeOrigin: Origin =
-        options.eventType === 'fast_path' ? 'trusted:user' : (options.origin ?? 'trusted:system')
+      const writeOrigin: Origin = options.origin ?? 'trusted:system'
 
       // `content_origin` accumulates monotonically on every patch. A
       // tree-only special case would miss that an untrusted state patch can
@@ -1603,11 +1755,31 @@ export class SurfaceEngine {
     authoredRelativeTime?: RelativeTimeAuthoring,
   ): { patch: z.infer<typeof PatchSchema>; patched: Surface } {
     const updatedAt = this.nowIso()
-    const patch = PatchSchema.parse({
+    let patch = PatchSchema.parse({
       surfaceId,
       operations: stampPendingPatchOperations(operations, updatedAt),
     })
     const applied = applySurfacePatch(current, patch)
+    const tree = stampFastActionRevisions(applied.tree, current.tree)
+    if (canonicalJson(tree) !== canonicalJson(applied.tree)) {
+      patch = PatchSchema.parse({
+        ...patch,
+        operations: patch.operations.map((operation) =>
+          operation.target === 'tree' && (operation.op === 'add' || operation.op === 'replace')
+            ? { ...operation, value: findAtom(tree, operation.value.id) ?? operation.value }
+            : operation,
+        ),
+      })
+      const projected = applySurfacePatch(current, patch)
+      if (canonicalJson(projected.tree) !== canonicalJson(tree))
+        patch = PatchSchema.parse({
+          ...patch,
+          operations: [
+            ...patch.operations,
+            { target: 'tree', op: 'replace', path: '', value: tree },
+          ],
+        })
+    }
     const validity = validityAfterStatePatch({
       current: current.validity,
       authored: authoredRelativeTime,
@@ -1616,7 +1788,7 @@ export class SurfaceEngine {
       now: new Date(updatedAt),
     })
     const patched = this.stampSurface(
-      { ...applied, ...(validity === undefined ? {} : { validity }) },
+      { ...applied, tree, ...(validity === undefined ? {} : { validity }) },
       updatedBy,
       updatedAt,
     )
@@ -1731,6 +1903,7 @@ export class SurfaceEngine {
   private insertPatchEvent(
     surface: Surface,
     patch: z.infer<typeof PatchSchema>,
+    actionOutcome?: CommittedFastActionMetadata,
   ): SurfacePatchEvent {
     const cursor = this.latestSurfaceCursor() + 1
     const event = SurfacePatchEventSchema.parse({
@@ -1738,6 +1911,7 @@ export class SurfaceEngine {
       at: surface.freshness.updatedAt,
       spaceId: surface.spaceId,
       patch,
+      ...(actionOutcome === undefined ? {} : { actionOutcome }),
       freshness: surface.freshness,
       ...(surface.validity === undefined ? {} : { validity: surface.validity }),
     })
@@ -1876,7 +2050,7 @@ export class SurfaceEngine {
         : buildRelativeTimeValidity(relativeTime, this.timeZone, new Date(updatedAt))
     return SurfaceSchema.parse({
       ...input,
-      tree: stampPendingAtoms(input.tree, updatedAt),
+      tree: stampFastActionRevisions(stampPendingAtoms(input.tree, updatedAt)),
       freshness: {
         updatedAt,
         updatedBy,
@@ -1969,6 +2143,7 @@ export class SurfaceEngine {
     const at = this.nowIso()
     const adopted = SurfaceSchema.parse({
       ...input,
+      tree: stampFastActionRevisions(input.tree, existing.tree),
       state: {
         ...input.state,
         ...(outcomeStatuses.success
@@ -2308,7 +2483,10 @@ export class SurfaceEngine {
     if (surfaces.length === 0) return
     this.runWrite(() => {
       for (const surface of surfaces) {
-        const parsed = SurfaceSchema.parse(surface)
+        const parsed = SurfaceSchema.parse({
+          ...surface,
+          tree: stampFastActionRevisions(surface.tree),
+        })
         this.requireKnownSpace(parsed.spaceId)
         this.insertSurface(parsed, {
           version: 1,
@@ -2328,13 +2506,13 @@ export class SurfaceEngine {
     spaceId: string,
     input: AppendSpaceEventInput,
     surfaceEventCursor?: number,
-  ): void {
+  ): SurfaceCommitRecord {
     if (!this.stagedSurfaceCommits || !this.surfaceCommitJournal) {
       throw new Error('Surface commit transport is unavailable')
     }
-    this.stagedSurfaceCommits.push(
-      this.surfaceCommitJournal.prepare(spaceId, input, surfaceEventCursor),
-    )
+    const commit = this.surfaceCommitJournal.prepare(spaceId, input, surfaceEventCursor)
+    this.stagedSurfaceCommits.push(commit)
+    return commit
   }
 
   private runWrite<T>(write: () => T): T {
@@ -2395,10 +2573,6 @@ function stampPendingAtoms(node: AtomNode, startedAt: string): AtomNode {
 
 function truncate(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max)}…`
-}
-
-function statePath(key: string): string {
-  return `/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`
 }
 
 function contentOriginFromRow(row: Record<string, unknown>): Origin {

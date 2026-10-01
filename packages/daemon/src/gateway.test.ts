@@ -1,3 +1,4 @@
+import { commitFastAction, fastInvocation } from './surface-action-test-fixtures.ts'
 import {
   GatewayServerMessageSchema,
   SurfaceSchema,
@@ -73,7 +74,7 @@ describe('GatewayHub Surface sync', () => {
     first.receive({
       type: 'surface.action',
       surfaceId: 'srf-groceries',
-      invocation: { nodeId: 'item-milk', name: 'toggle', payload: { value: true } },
+      invocation: fastInvocation(store, 'srf-groceries', 'item-milk', 'toggle', { value: true }),
     })
 
     const firstPatch = first.lastSurfacePatch()
@@ -166,7 +167,7 @@ describe('GatewayHub Surface sync', () => {
 
     // The commit alone reaches every connected client through the Gateway's
     // central Surface-event subscription — no manual broadcast call needed.
-    store.applyFastAction('srf-groceries', 'eggs', false)
+    commitFastAction(store, 'srf-groceries', 'eggs', true)
 
     const reconnected = new FakeGatewaySocket()
     gateway.connect(reconnected)
@@ -470,13 +471,13 @@ describe('GatewayHub Surface sync', () => {
     first.receive({
       type: 'surface.action',
       surfaceId: 'srf-groceries',
-      invocation: { nodeId: 'item-milk', name: 'toggle', payload: { value: true } },
+      invocation: fastInvocation(store, 'srf-groceries', 'item-milk', 'toggle', { value: true }),
     })
     expect(store.getSurface('srf-groceries')?.state['milk']).toBe(false)
     second.receive({
       type: 'surface.action',
       surfaceId: 'srf-groceries',
-      invocation: { nodeId: 'item-milk', name: 'toggle', payload: { value: true } },
+      invocation: fastInvocation(store, 'srf-groceries', 'item-milk', 'toggle', { value: true }),
     })
     expect(store.getSurface('srf-groceries')?.state['milk']).toBe(true)
   })
@@ -514,7 +515,7 @@ describe('GatewayHub Surface sync', () => {
     socket.receive({
       type: 'surface.action',
       surfaceId: 'srf-groceries',
-      invocation: { nodeId: 'item-milk', name: 'toggle', payload: { value: true } },
+      invocation: fastInvocation(store, 'srf-groceries', 'item-milk', 'toggle', { value: true }),
     })
 
     expect(socket.surfacePatches()).toHaveLength(1)

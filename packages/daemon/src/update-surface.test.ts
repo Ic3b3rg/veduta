@@ -43,7 +43,9 @@ describe('updateSurface', () => {
   it('always declares the Check now button, with its stateKey', () => {
     const surface = updateSurface(idleView(), FRESHNESS)
     const checkButton = findNode(surface.tree, 'update-check-button')
-    expect(checkButton?.actions?.[0]?.stateKey).toBe(UPDATE_CHECK_STATE_KEY)
+    expect(checkButton?.actions?.[0]).toMatchObject({
+      plan: { targets: { [UPDATE_CHECK_STATE_KEY]: { type: 'boolean' } } },
+    })
   })
 
   it('omits the Apply update button when status is idle', () => {
@@ -59,7 +61,9 @@ describe('updateSurface', () => {
     }
     const surface = updateSurface(view, FRESHNESS)
     const applyButton = findNode(surface.tree, 'update-apply-button')
-    expect(applyButton?.actions?.[0]?.stateKey).toBe(UPDATE_APPLY_STATE_KEY)
+    expect(applyButton?.actions?.[0]).toMatchObject({
+      plan: { targets: { [UPDATE_APPLY_STATE_KEY]: { type: 'boolean' } } },
+    })
   })
 
   it('shows the "migrates your data" caption only when the offer migrates data', () => {

@@ -1,3 +1,5 @@
+import { fastInvocation } from './surface-action-test-fixtures.ts'
+import { inputSetPlan, literalSetPlan } from '@veduta/protocol'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -38,7 +40,9 @@ function targetSurface(id: string, count: number, title = 'Stress checklist'): S
         type: 'Checkbox',
         binding: `item${index}`,
         props: { label: `Item ${index}` },
-        actions: [{ name: 'toggle', path: 'fast', stateKey: `item${index}` }],
+        actions: [
+          { name: 'toggle', path: 'fast', plan: inputSetPlan(`item${index}`, { type: 'boolean' }) },
+        ],
       })),
     },
     state: Object.fromEntries(Array.from({ length: count }, (_, index) => [`item${index}`, false])),
@@ -105,7 +109,7 @@ function pressDecision(
   key: typeof DECISION_ACCEPT_KEY | typeof DECISION_REJECT_KEY,
 ) {
   const nodeId = key === DECISION_ACCEPT_KEY ? 'decision-accept' : 'decision-reject'
-  store.invokeSurfaceAction(surfaceId, { nodeId, name: 'press', payload: { value: true } })
+  store.invokeSurfaceAction(surfaceId, fastInvocation(store, surfaceId, nodeId, 'press', {}))
 }
 
 describe('TreeProposalSurfaceManager (real Store)', () => {
@@ -191,7 +195,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
             // action must target a state key that exists (`SurfaceSchema`'s
             // binding validation), and this test is about the preview
             // format, not about introducing a new state key.
-            actions: [{ name: 'submit', path: 'fast', stateKey: 'item0', payload: {} }],
+            actions: [{ name: 'submit', path: 'fast', plan: literalSetPlan('item0', true) }],
           },
         },
       ],
@@ -376,7 +380,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     expect(managerErrors).toHaveLength(0)
   })
 
-  it('terminalizes a stale proposal without applying it and shows the refusal on its card', async () => {
+  it('rejects a stale tree proposal before committing the owning Action', async () => {
     const { cardSurfaceId, proposalId, expectedTreeVersion } = pinAndPropose('srf-target-stale', 2)
 
     // Someone else applies a different tree change on the pinned target in
@@ -389,29 +393,18 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     if ('proposed' in bypassResult) throw new Error('expected a mutation, got a Tree proposal')
     expect(bypassResult.surface.tree.children).toHaveLength(3)
 
-    pressDecision(cardSurfaceId, DECISION_ACCEPT_KEY)
+    const cursor = store.latestSurfaceCursor()
+    expect(() => pressDecision(cardSurfaceId, DECISION_ACCEPT_KEY)).toThrow(
+      'changed since this proposal was recorded',
+    )
     await manager.flush()
-
-    // Refused: the proposal is durably stale, and the tree still only
-    // carries the bypass change, never the stale proposal's own operation.
-    expect(store.getTreeProposal(proposalId)).toMatchObject({
-      status: 'stale',
-      resolvedBy: 'trusted:user',
-    })
+    expect(store.latestSurfaceCursor()).toBe(cursor)
+    expect(store.getTreeProposal(proposalId)?.status).toBe('pending')
     const target = store.getSurface('srf-target-stale')
     expect(target?.tree.children?.map((node) => node.id)).toEqual(['node-0', 'node-1', 'note'])
     expect(findNode(target!.tree, 'note')?.props?.['text']).toBe('someone else got here first')
     expect(store.getSurfaceVersion('srf-target-stale')?.treeVersion).toBe(expectedTreeVersion + 1)
-
-    const card = store.getSurface(cardSurfaceId)
-    expect(card).toBeDefined()
-    const errorText = findNode(card!.tree, 'error')?.props?.['text']
-    expect(typeof errorText).toBe('string')
-    expect(errorText as string).not.toBe('')
-    expect(errorText as string).toContain('changed since this proposal was recorded')
-
-    // The pressed decision key was reset so the button is not stuck at `true`.
-    expect(card?.state[DECISION_ACCEPT_KEY]).toBe(false)
+    expect(store.getSurface(cardSurfaceId)?.state[DECISION_ACCEPT_KEY]).toBe(false)
   })
 
   it('a doubled Accept click applies the patch exactly once (tree_version moves by exactly 1)', async () => {
@@ -621,12 +614,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
               type: 'Button',
               props: { label: 'OK' },
               actions: [
-                {
-                  name: 'press',
-                  path: 'fast',
-                  stateKey: DECISION_ACCEPT_KEY,
-                  payload: { value: true },
-                },
+                { name: 'press', path: 'fast', plan: literalSetPlan(DECISION_ACCEPT_KEY, true) },
               ],
             },
           ],
@@ -705,7 +693,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     })
   })
 
-  it('reopens a proposal that fails to apply at accept time (a state patch removed the key the proposed node binds while treeVersion stayed put), so a later legitimate accept works', async () => {
+  it('rejects an invalid proposal before persistence and accepts a retry after restoring its binding', async () => {
     store.createSurface(targetSurface('srf-target-reopen', 2), 'agent')
     // An extra state key the base tree does not bind, so removing it later
     // does not also break `node-0`'s own pre-existing `item0` binding —
@@ -730,7 +718,9 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
         type: 'Checkbox',
         binding: 'reopenKey',
         props: { label: 'note' },
-        actions: [{ name: 'toggle', path: 'fast', stateKey: 'reopenKey', payload: {} }],
+        actions: [
+          { name: 'toggle', path: 'fast', plan: inputSetPlan('reopenKey', { type: 'boolean' }) },
+        ],
       },
     }
     const result = store.patchTree('srf-target-reopen', [boundOperation], {
@@ -747,19 +737,15 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
       updatedBy: 'agent',
     })
 
-    pressDecision(cardSurfaceId, DECISION_ACCEPT_KEY)
+    const cursor = store.latestSurfaceCursor()
+    expect(() => pressDecision(cardSurfaceId, DECISION_ACCEPT_KEY)).toThrow(
+      'applying this change failed',
+    )
     await manager.flush()
-
-    // Refused: the accept-time dry-run re-validation throws (the proposed
-    // node still binds `reopenKey`, now gone from state) even though the
-    // row was already claimed `accepted` — it must be put back to `pending`.
-    expect(managerErrors).toHaveLength(1)
+    expect(store.latestSurfaceCursor()).toBe(cursor)
+    expect(managerErrors).toHaveLength(0)
     expect(store.getTreeProposal(result.proposalId)?.status).toBe('pending')
-    const card = store.getSurface(cardSurfaceId)
-    expect(card).toBeDefined()
-    const errorText = findNode(card!.tree, 'error')?.props?.['text']
-    expect(errorText as string).toContain('applying this change failed')
-    expect(card?.state[DECISION_ACCEPT_KEY]).toBe(false) // reset, not stuck at true
+    expect(store.getSurface(cardSurfaceId)?.state[DECISION_ACCEPT_KEY]).toBe(false)
 
     // Restore the binding and accept again: the retry now succeeds.
     store.patchState(
@@ -773,7 +759,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     expect(store.getTreeProposal(result.proposalId)?.status).toBe('accepted')
     const target = store.getSurface('srf-target-reopen')
     expect(target?.tree.children?.map((node) => node.id)).toContain('bound-note')
-    expect(managerErrors).toHaveLength(1) // no new error on the successful retry
+    expect(managerErrors).toHaveLength(0)
   })
 
   it('a createCard failure (Surface already exists at the canonical id) is routed through onError, patchTree does not throw, and the proposal is still recorded exactly once', () => {
