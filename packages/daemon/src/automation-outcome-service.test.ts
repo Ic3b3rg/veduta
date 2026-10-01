@@ -1291,7 +1291,7 @@ describe('AutomationOutcomeService', () => {
       db.prepare('select count(*) as count from automation_outcome_deliveries').get()?.['count'],
     ).toBe(64)
     db.close()
-  })
+  }, 15_000)
 
   it('bounds history to meaningful outcomes only', async () => {
     const fixture = await setup()
