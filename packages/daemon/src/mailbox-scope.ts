@@ -1,3 +1,5 @@
+import { startOfZonedDay } from './timezone.ts'
+
 export interface MailboxAccount {
   id: string
   provider: 'gmail' | 'himalaya'
@@ -11,10 +13,12 @@ export interface MailboxScope {
   query: string
   sender?: string
   subject?: string
-  folder: 'INBOX' | 'ALL'
+  folder: string
   unreadOnly: boolean
   limit: number
-  window: { kind: 'all' } | { kind: 'dates'; after: string; before: string }
+  window:
+    | { kind: 'all' }
+    | { kind: 'dates'; after: string; before: string; afterEpoch: number; beforeEpoch: number }
 }
 
 export type ScopeResolution =
@@ -67,7 +71,46 @@ function windowFor(text: string, now: Date, timeZone: string): MailboxScope['win
   } else {
     return undefined
   }
-  return { kind: 'dates', after: dateLabel(after), before: dateLabel(before) }
+  const epochAtLocalMidnight = (date: Date) =>
+    Math.floor(
+      startOfZonedDay(timeZone, {
+        year: date.getUTCFullYear(),
+        month: date.getUTCMonth() + 1,
+        day: date.getUTCDate(),
+      }).getTime() / 1000,
+    )
+  return {
+    kind: 'dates',
+    after: dateLabel(after),
+    before: dateLabel(before),
+    afterEpoch: epochAtLocalMidnight(after),
+    beforeEpoch: epochAtLocalMidnight(before),
+  }
+}
+
+function requestedFolder(
+  request: string,
+  provider: MailboxAccount['provider'],
+): { status: 'resolved'; folder: string } | { status: 'clarify' } {
+  const explicit =
+    /\bin(?::|\s+)(?:the\s+)?([a-z][a-z0-9 _-]{0,79}?)(?=\s+(?:this week|last week|today|yesterday|unread|from|subject)|$)/i.exec(
+      request,
+    )
+  if (!explicit && /\bin(?::|\s+)/i.test(request)) return { status: 'clarify' }
+  const raw = explicit?.[1]?.replace(/\s+(?:label|folder|mailbox)$/i, '').trim()
+  if (raw && /^(?:a|an|my|some|any|unspecified|an? unspecified)(?:\s|$)/i.test(raw))
+    return { status: 'clarify' }
+  if (raw && !/^[a-z][a-z0-9 _-]{0,79}$/i.test(raw)) return { status: 'clarify' }
+  if (raw) {
+    const lower = raw.toLowerCase()
+    if (lower === 'all' || lower === 'all mail') return { status: 'resolved', folder: 'ALL' }
+    if (lower === 'inbox') return { status: 'resolved', folder: 'INBOX' }
+    return { status: 'resolved', folder: raw }
+  }
+  return {
+    status: 'resolved',
+    folder: /\binbox\b/i.test(request) || provider === 'himalaya' ? 'INBOX' : 'ALL',
+  }
 }
 
 /** The current trusted request, not model supplied arguments, fixes provider access bounds. */
@@ -96,6 +139,9 @@ export function resolveMailboxScope(
     }
   }
   const account = named[0] ?? ready[0]!
+  const folder = requestedFolder(request, account.provider)
+  if (folder.status === 'clarify')
+    return { status: 'clarify', question: 'Which exact Mailbox folder or label should I search?' }
   const sender = /\b(?:from|sender)\s+([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})\b/i.exec(request)?.[1]
   const subject =
     /\bsubject\s+["']?([a-z0-9][a-z0-9 _.-]{0,79})["']?(?=\s+(?:from|in|this|last|today|yesterday|unread)|$)/i
@@ -146,7 +192,7 @@ export function resolveMailboxScope(
               : subject!,
       ...(sender === undefined ? {} : { sender }),
       ...(subject === undefined ? {} : { subject }),
-      folder: /\binbox\b/i.test(request) || account.provider === 'himalaya' ? 'INBOX' : 'ALL',
+      folder: folder.folder,
       unreadOnly: /\bunread\b/i.test(request),
       limit: requestedLimit ?? 20,
       window: window ?? { kind: 'all' },
@@ -163,10 +209,14 @@ export function gmailQuery(scope: MailboxScope): string {
         : scope.query,
     ...(scope.kind !== 'sender' && scope.sender ? [`from:${scope.sender}`] : []),
     ...(scope.kind !== 'subject' && scope.subject ? [`subject:"${scope.subject}"`] : []),
-    scope.folder === 'INBOX' ? 'in:inbox' : '',
+    scope.folder === 'ALL'
+      ? ''
+      : /^(?:INBOX|Archive|Sent|Trash|Spam|Drafts)$/i.test(scope.folder)
+        ? `in:${scope.folder.toLowerCase()}`
+        : `label:"${scope.folder}"`,
     scope.unreadOnly ? 'is:unread' : '',
     scope.window.kind === 'dates'
-      ? `after:${scope.window.after} before:${scope.window.before}`
+      ? `after:${scope.window.afterEpoch} before:${scope.window.beforeEpoch}`
       : '',
   ]
     .filter(Boolean)

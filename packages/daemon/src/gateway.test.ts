@@ -281,7 +281,9 @@ describe('GatewayHub Surface sync', () => {
     const store = new Store({ now: fixedNow })
     const received: PwaChatInput[] = []
     const gateway = new GatewayHub(store, {
-      onChatTurn: (event) => received.push(event),
+      onChatTurn: (event) => {
+        received.push(event)
+      },
     })
     const socket = new FakeGatewaySocket()
     gateway.connect(socket)
@@ -376,7 +378,9 @@ describe('GatewayHub Surface sync', () => {
     const store = new Store()
     const received: PwaChatInput[] = []
     const gateway = new GatewayHub(store, {
-      onChatTurn: (event) => received.push(event),
+      onChatTurn: (event) => {
+        received.push(event)
+      },
     })
 
     const first = new FakeGatewaySocket()

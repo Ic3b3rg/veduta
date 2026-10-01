@@ -16,6 +16,7 @@ const CLIENT_ROUTE_PATTERN = {
   modelConnections: '/app/settings/models',
   gmailConnections: '/app/settings/gmail',
   himalayaConnections: '/app/settings/mailboxes',
+  serviceConnections: '/app/connections',
   space: '/app/space/:spaceSlug',
   surface: '/app/space/:spaceSlug/surface/:surfaceId',
 } as const
@@ -26,6 +27,7 @@ export const clientPath = {
   modelConnections: CLIENT_ROUTE_PATTERN.modelConnections,
   gmailConnections: CLIENT_ROUTE_PATTERN.gmailConnections,
   himalayaConnections: CLIENT_ROUTE_PATTERN.himalayaConnections,
+  serviceConnections: CLIENT_ROUTE_PATTERN.serviceConnections,
   space: (spaceSlug: string) =>
     pathFromPattern(CLIENT_ROUTE_PATTERN.space, {
       spaceSlug,
@@ -75,11 +77,13 @@ export function ClientRouteTable({
   modelConnections,
   gmailConnections,
   himalayaConnections,
+  serviceConnections,
 }: {
   appShell: ReactNode
   modelConnections: ReactNode
   gmailConnections: ReactNode
   himalayaConnections: ReactNode
+  serviceConnections: ReactNode
 }) {
   return (
     <Routes>
@@ -91,6 +95,7 @@ export function ClientRouteTable({
       <Route path={CLIENT_ROUTE_PATTERN.modelConnections} element={modelConnections} />
       <Route path={CLIENT_ROUTE_PATTERN.gmailConnections} element={gmailConnections} />
       <Route path={CLIENT_ROUTE_PATTERN.himalayaConnections} element={himalayaConnections} />
+      <Route path={CLIENT_ROUTE_PATTERN.serviceConnections} element={serviceConnections} />
       <Route path={CLIENT_ROUTE_PATTERN.space} element={appShell} />
       <Route path={CLIENT_ROUTE_PATTERN.surface} element={appShell} />
       <Route path="*" element={<Navigate to={clientPath.home} replace />} />

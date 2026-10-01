@@ -1,6 +1,6 @@
 import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
-import { UpdatePinningSchema } from '@veduta/protocol'
+import { UpdatePinningSchema, type ChatAcceptance, type ChatScope } from '@veduta/protocol'
 import type { FastifyInstance } from 'fastify'
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -16,6 +16,11 @@ import { ProgressiveAuthLockout } from './auth-rate-limit.ts'
 import { AuditSurfaceManager } from './audit-surface.ts'
 import { chatToolRegistry as buildChatToolRegistry } from './chat-tool-registry.ts'
 import { createChatLoop } from './chat-loop.ts'
+import { ChatTimeline } from './chat-timeline.ts'
+import { ChatTimelineCoordinator } from './chat-timeline-coordinator.ts'
+import { ServiceConnections } from './service-connections.ts'
+import { registerServiceConnectionRoutes } from './service-connection-routes.ts'
+import { registerChatTimelineRoutes } from './chat-timeline-routes.ts'
 import { AgentActionDispatcher } from './agent-action-dispatcher.ts'
 import type { QueuedAgentTurn } from './surface-engine.ts'
 import {
@@ -33,10 +38,14 @@ import { EventIngestion, type FetchStage } from './event-ingestion.ts'
 import type { ExternalEvent } from './external-event.ts'
 import { createFullTextFlow } from './full-text-flow.ts'
 import { registerGatewayRoute } from './gateway-route.ts'
-import { GatewayHub, type PwaChatInput } from './gateway.ts'
+import { GatewayHub, fullTextQueueId, type PwaChatInput } from './gateway.ts'
 import { CalendarSource, GmailSource, GoogleTokenProvider } from './google-sources.ts'
 import { GmailConnections } from './gmail-connections.ts'
 import { GmailMailbox } from './gmail-mailbox.ts'
+import { GithubMcpService, type GithubMcpSession } from './github-mcp-service.ts'
+import type { installReviewedGithubMcp } from './github-mcp-artifact.ts'
+import { createGithubMcpTools } from './github-mcp-tools.ts'
+import { createGithubIssueTool, guardGithubIssueTool } from './github-mcp-write-tool.ts'
 import { HimalayaConnections } from './himalaya-connections.ts'
 import { HimalayaMailbox } from './himalaya-mailbox.ts'
 import { createHimalayaInstallTool } from './himalaya-install-tool.ts'
@@ -147,6 +156,17 @@ export interface ServerOptions {
   egress?: { enforce?: boolean; extraAllow?: readonly string[] }
   /** Injectable Google transport for passive Gmail connection tests. */
   gmailFetch?: typeof fetch
+  /** Deterministic GitHub MCP verification and call transport for isolated integration tests. */
+  githubMcp?: {
+    fetchFn?: typeof fetch
+    install?: typeof installReviewedGithubMcp
+    createClient?: (input: {
+      executable: string
+      cwd: string
+      token: string
+      mode: 'read' | 'write'
+    }) => GithubMcpSession
+  }
   /** Scripted CLI transport for Himalaya setup and mailbox integration tests. */
   himalayaRun?: (request: CommandRequest) => Promise<CommandResult>
   /** Scripted Veduta-owned general command transport for provider parity tests. */
@@ -461,6 +481,8 @@ export function buildServer(options: ServerOptions = {}) {
     timeZone: memoryConfig.timezone,
     memoryBudget: memoryConfig.budget,
   })
+  const chatTimeline = new ChatTimeline(store.spacesEngine.rootDir, now)
+  app.addHook('onClose', () => chatTimeline.close())
   // The secrets resolver for the whole daemon (issue #15): the vault
   // when configured and openable, `secret://env/...` alone otherwise, with
   // every resolved value registered against the shared redactor. `vault` is
@@ -473,6 +495,7 @@ export function buildServer(options: ServerOptions = {}) {
   } = openVaultAndSecrets(store.spacesEngine.rootDir)
   const auth = options.auth ?? { mode: 'dev' as const }
   const gmailEgressPolicy: { current?: EgressPolicy } = {}
+  const githubEgressPolicy: { current?: EgressPolicy } = {}
   const gmailConnections = new GmailConnections({
     rootDir: store.spacesEngine.rootDir,
     vault,
@@ -496,6 +519,33 @@ export function buildServer(options: ServerOptions = {}) {
   app.addHook('onClose', async () => {
     himalayaConnections.close()
   })
+  const serviceConnections = new ServiceConnections(store.spacesEngine.rootDir, {
+    now,
+    onGrantChanged: (spaceId, summary) =>
+      store.spacesEngine.appendEvent(spaceId, {
+        type: 'service.capability',
+        text: summary,
+        origin: 'trusted:system',
+      }),
+    onCredentialRemoved: (ref) => vault?.delete(ref.slice('secret://vault/'.length)),
+  })
+  serviceConnections.onChange(() => {
+    if (
+      serviceConnections.snapshot().attempts.some((attempt) => attempt.review.service === 'github')
+    )
+      githubEgressPolicy.current?.allow([
+        'api.github.com',
+        'github.com',
+        'release-assets.githubusercontent.com',
+      ])
+  })
+  const githubMcp = new GithubMcpService({
+    rootDir: store.spacesEngine.rootDir,
+    connections: serviceConnections,
+    vault,
+    ...options.githubMcp,
+  })
+  app.addHook('onClose', () => githubMcp.stop())
   // The trust layer's admin Surfaces (allowlist, audit) need a durable home
   // (issue #14): materialize the System Space before anything else so
   // it exists no matter which subsystem writes to it first.
@@ -564,11 +614,14 @@ export function buildServer(options: ServerOptions = {}) {
   // key gets deterministic behavior through the mock routing candidate
   // (`model-routing.ts`'s `withMockFallback`), never through a second
   // handler (issue #37).
-  let chatTurnHandler: (event: PwaChatInput) => void = () => {}
+  let chatTurnHandler: (event: PwaChatInput) => ChatAcceptance | void = () => {}
+  let chatSubscribeHandler: (clientId: string, turnId: string) => ChatScope | undefined = () =>
+    undefined
   let agentActionHandler: (turn: QueuedAgentTurn) => void = () => {}
   const gateway = new GatewayHub(store, {
     onFullTextRequest,
     onChatTurn: (event) => chatTurnHandler(event),
+    onChatSubscribe: (clientId, turnId) => chatSubscribeHandler(clientId, turnId),
     onAgentAction: (turn) => agentActionHandler(turn),
     ...(auth.mode === 'production'
       ? {
@@ -717,6 +770,9 @@ export function buildServer(options: ServerOptions = {}) {
   const outboundTools = createOutboundTools(outboundTransport)
   for (const { tool, meta } of outboundTools) trust.register(tool, meta)
   const wrappedOutboundTools = trust.wrapTools(outboundTools.map(({ tool }) => tool))
+  const githubIssue = createGithubIssueTool({ store, github: githubMcp, now })
+  trust.register(githubIssue.tool, githubIssue.meta)
+  const wrappedGithubIssueTool = trust.wrapTools([githubIssue.tool])[0]!
 
   // Admin Surfaces: pre-created at boot, rebuilt on every trust-layer
   // change. Both live in the System Space materialized above.
@@ -1170,6 +1226,10 @@ export function buildServer(options: ServerOptions = {}) {
     ready: Promise.all([decisionRecovery, updateRecovery]),
   })
   scheduler.setPendingDecisionLookup((decisionId) => pendingDecisions.get(decisionId))
+  const disposeChatDecisionLifecycle = pendingDecisions.onLifecycle(({ revision, decision }) => {
+    const entry = chatTimeline.updateDecision(decision.id, revision, decision)
+    if (entry) gateway.broadcastChatTimelineEntry(entry)
+  })
   const settleTerminalDecisionOutcome = (decision: { id: string; state: string }) => {
     if (decision.state !== 'terminal') return Promise.resolve()
     return scheduler.outcomeService.settleDecision(decision.id, 'trusted:system')
@@ -1192,6 +1252,7 @@ export function buildServer(options: ServerOptions = {}) {
     store,
   })
   app.addHook('onClose', () => {
+    disposeChatDecisionLifecycle()
     disposePendingDecisionLifecycle()
     disposePendingDecisionOutcomeLifecycle()
   })
@@ -1282,17 +1343,46 @@ export function buildServer(options: ServerOptions = {}) {
     spawnWorkerTool,
     pendingDecisions,
     skills,
-    generalExecutionTool: createGeneralExecutionTool(store, options.commandRun),
-    himalayaInstallTool: createHimalayaInstallTool(himalayaConnections, store),
+    generalExecutionTool: createGeneralExecutionTool(store, trust, options.commandRun),
+    himalayaInstallTool: createHimalayaInstallTool(himalayaConnections, store, trust),
     mailboxToolsFor: (spaceId) =>
       createMailboxTools({
         store,
-        providers: [gmailMailbox, himalayaMailbox],
+        providers: [
+          {
+            accounts: () =>
+              gmailMailbox.accounts().filter((account) =>
+                serviceConnections.eligible({
+                  spaceId,
+                  service: 'gmail',
+                  action: 'search_mailbox',
+                  connectionId: account.id,
+                }),
+              ),
+            search: (scope, signal) => {
+              if (
+                !serviceConnections.eligible({
+                  spaceId,
+                  service: 'gmail',
+                  action: 'search_mailbox',
+                  connectionId: scope.account.id,
+                })
+              )
+                throw new Error('Gmail is not granted for this Space')
+              return gmailMailbox.search(scope, signal)
+            },
+          },
+          himalayaMailbox,
+        ],
         reader: mailboxReader,
         spaceId,
         timeZone: memoryConfig.timezone,
         now,
       }),
+    githubToolsFor: (spaceId) => [
+      ...createGithubMcpTools({ store, github: githubMcp, spaceId, now }),
+      guardGithubIssueTool(wrappedGithubIssueTool, spaceId),
+    ],
   })
 
   // The real chat loop (issue #37): every chat entry point — the global
@@ -1314,14 +1404,46 @@ export function buildServer(options: ServerOptions = {}) {
     timeZone: memoryConfig.timezone,
     isTrustWrapped,
     toolsFor: chatToolRegistry,
-    send: (clientId, frame) => gateway.sendToClient(clientId, frame),
+    send: (clientId, frame) => {
+      chatTimelineCoordinator?.receive(frame)
+      gateway.sendToClient(clientId, frame)
+      if ('turnId' in frame)
+        for (const subscriberId of chatTimelineCoordinator?.subscribersFor(frame.turnId) ?? [])
+          if (subscriberId !== clientId) gateway.sendToClient(subscriberId, frame)
+    },
     pendingDecisions,
     skills,
     commandCwd: dataDir,
   })
-  chatTurnHandler = (event) => {
-    void chatLoop.handleChatMessage(event)
-  }
+  const chatTimelineCoordinator = new ChatTimelineCoordinator({
+    timeline: chatTimeline,
+    hasSpace: (spaceId) => store.getSpace(spaceId) !== undefined,
+    spaces: () => store.listSpaces(),
+    serviceConnections,
+    runTurn: async (event) => {
+      const queueId = fullTextQueueId(event.text)
+      if (queueId === undefined) return chatLoop.handleChatMessage(event)
+      let reply: string
+      try {
+        reply = await onFullTextRequest(queueId)
+      } catch {
+        reply = `Full text for queue #${queueId} is not available.`
+      }
+      chatTimelineCoordinator.receive({
+        type: 'chat.turn-end',
+        turnId: event.turnId!,
+        message: { role: 'assistant', text: reply },
+      })
+    },
+    publish: (entry) => gateway.broadcastChatTimelineEntry(entry),
+    refreshDecision: async (id) => {
+      const snapshot = await pendingDecisions.list()
+      const decision = snapshot.decisions.find((candidate) => candidate.id === id)
+      return decision ? { decision, revision: snapshot.revision } : undefined
+    },
+  })
+  chatTurnHandler = (event) => chatTimelineCoordinator!.submit(event)
+  chatSubscribeHandler = (clientId, turnId) => chatTimelineCoordinator?.subscribe(clientId, turnId)
   const agentActions = new AgentActionDispatcher({
     store,
     loop: chatLoop,
@@ -1333,6 +1455,7 @@ export function buildServer(options: ServerOptions = {}) {
     })
   }
   app.addHook('onReady', () => {
+    chatTimelineCoordinator?.recover()
     void agentActions.recover().catch((error) => {
       console.error('Agent action recovery failed', error)
     })
@@ -1348,7 +1471,9 @@ export function buildServer(options: ServerOptions = {}) {
   // must finish — every runner aborted, every session's serialization chain
   // settled — before any of their own shutdown can safely start.
   app.addHook('onClose', async () => {
+    chatTimelineCoordinator?.prepareStop()
     await agentActions.stop()
+    await chatTimelineCoordinator?.idle()
   })
 
   const pwaDistDir = options.pwaDistDir ?? defaultPwaDistDir
@@ -1510,6 +1635,10 @@ export function buildServer(options: ServerOptions = {}) {
   })
   registerPushRoutes(app, { auth, pushStore, vapid })
   registerPendingDecisionRoutes(app, { service: pendingDecisions })
+  registerChatTimelineRoutes(app, {
+    timeline: chatTimeline,
+    hasSpace: (spaceId) => store.getSpace(spaceId) !== undefined,
+  })
   registerAutomationOutcomeRoutes(app, { service: scheduler.outcomeService })
 
   // Onboarding wizard routes (issue #19): registered directly on `app`,
@@ -1548,6 +1677,12 @@ export function buildServer(options: ServerOptions = {}) {
   })
   registerGmailConnectionRoutes(app, gmailConnections)
   registerHimalayaConnectionRoutes(app, himalayaConnections)
+  registerServiceConnectionRoutes(app, {
+    connections: serviceConnections,
+    gmail: gmailConnections,
+    github: githubMcp,
+    coordinator: chatTimelineCoordinator,
+  })
 
   registerIngestionRoutes(app, { ingestion, lockout })
   registerGatewayRoute(app, { auth, gateway })
@@ -1568,6 +1703,11 @@ export function buildServer(options: ServerOptions = {}) {
   const extraAllowHosts = [
     ...(options.egress?.extraAllow ?? []),
     ...(updateFeedHost ? [updateFeedHost] : []),
+    ...(serviceConnections
+      .snapshot()
+      .attempts.some((attempt) => attempt.review.service === 'github')
+      ? ['api.github.com', 'github.com', 'release-assets.githubusercontent.com']
+      : []),
   ]
   const egress = assembleEgressPolicy({
     rootDir: store.spacesEngine.rootDir,
@@ -1585,13 +1725,14 @@ export function buildServer(options: ServerOptions = {}) {
     )
       ? { googleHosts: ['oauth2.googleapis.com', 'www.googleapis.com', 'gmail.googleapis.com'] }
       : {}),
-    toolDomains: outboundTools.flatMap(({ tool }) => tool.egressDomains),
+    toolDomains: [...outboundTools, githubIssue].flatMap(({ tool }) => tool.egressDomains),
     ...(extraAllowHosts.length > 0 ? { extraAllow: extraAllowHosts } : {}),
     // The loopback (mock) profile and the test suite talk to loopback
     // constantly; the VPS and Local VPS profiles must not trust it specially.
     allowLoopback: auth.mode !== 'production',
   })
   gmailEgressPolicy.current = egress
+  githubEgressPolicy.current = egress
   egress.onDenial((denial) => {
     const line = defaultRedactor.redactText(JSON.stringify(denial))
     appendFileSync(join(store.spacesEngine.rootDir, 'egress-denials.jsonl'), `${line}\n`)
@@ -1605,6 +1746,7 @@ export function buildServer(options: ServerOptions = {}) {
     gateway,
     router,
     connections: registry,
+    serviceConnections,
     scheduler,
     ingestion,
     watchManager,

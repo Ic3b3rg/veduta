@@ -584,7 +584,8 @@ export class TrustStore {
         at text not null,
         kind text not null check (kind in (
           'action.decision', 'approval.decided', 'action.outcome',
-          'approval.edit_rejected', 'allowlist.created', 'allowlist.revoked'
+          'approval.edit_rejected', 'allowlist.created', 'allowlist.revoked',
+          'general.execution'
         )),
         ref_id text,
         tool_name text,
@@ -616,5 +617,49 @@ export class TrustStore {
         select raise(abort, 'audit_log is append-only: delete is forbidden');
       end;
     `)
+    this.ensureGeneralExecutionAuditKind()
+  }
+
+  private ensureGeneralExecutionAuditKind(): void {
+    const row = this.db
+      .prepare("select sql from sqlite_master where type = 'table' and name = 'audit_log'")
+      .get()
+    if (!row || requiredString(row, 'sql').includes("'general.execution'")) return
+    withImmediateTransaction(this.db, () => {
+      this.db.exec(`
+        create table audit_log_replacement (
+          id integer primary key autoincrement,
+          at text not null,
+          kind text not null check (kind in (
+            'action.decision', 'approval.decided', 'action.outcome',
+            'approval.edit_rejected', 'allowlist.created', 'allowlist.revoked',
+            'general.execution'
+          )),
+          ref_id text,
+          tool_name text,
+          level text,
+          decision text,
+          effective_origin text,
+          origin_chain_json text,
+          trigger_json text,
+          context_hash text,
+          input_json text,
+          outcome text,
+          detail text,
+          approved_by text,
+          allowlist_rule_id integer,
+          space_id text
+        );
+        insert into audit_log_replacement select * from audit_log;
+        drop table audit_log;
+        alter table audit_log_replacement rename to audit_log;
+        create unique index audit_log_outcome_once
+          on audit_log (ref_id) where kind = 'action.outcome';
+        create trigger audit_log_no_update before update on audit_log
+        begin select raise(abort, 'audit_log is append-only: update is forbidden'); end;
+        create trigger audit_log_no_delete before delete on audit_log
+        begin select raise(abort, 'audit_log is append-only: delete is forbidden'); end;
+      `)
+    })
   }
 }

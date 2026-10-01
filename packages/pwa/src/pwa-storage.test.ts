@@ -2,16 +2,13 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  CHAT_HISTORY_KEY,
-  CHAT_HISTORY_LIMIT,
   CHAT_QUEUE_KEY,
   FAST_ACTION_QUEUE_KEY,
-  persistChatHistory,
   persistQueuedFastActions,
-  readChatHistory,
   readQueuedChat,
   readQueuedFastActions,
 } from './pwa-storage.ts'
+import { PwaLiveStateRuntime } from './pwa-live-state-runtime.ts'
 
 beforeEach(() => {
   localStorage.clear()
@@ -19,16 +16,12 @@ beforeEach(() => {
 })
 
 describe('persisted PWA state', () => {
-  it('bounds and validates chat history', () => {
-    const entries = Array.from({ length: CHAT_HISTORY_LIMIT + 2 }, (_, index) => ({
-      role: 'user' as const,
-      text: `message ${index}`,
-    }))
-    persistChatHistory(entries)
-    expect(readChatHistory()).toEqual(entries.slice(-CHAT_HISTORY_LIMIT))
-
-    localStorage.setItem(CHAT_HISTORY_KEY, '[{"role":"unknown"}]')
-    expect(readChatHistory()).toEqual([])
+  it('ignores old browser chat history without deleting it', () => {
+    const legacy = '[{"role":"user","text":"old local entry"}]'
+    localStorage.setItem('veduta.chatHistory', legacy)
+    const runtime = new PwaLiveStateRuntime({ storage: localStorage })
+    expect(runtime.getSnapshot().chatEntries).toEqual([])
+    expect(localStorage.getItem('veduta.chatHistory')).toBe(legacy)
   })
 
   it('drops malformed queued records without discarding valid siblings', () => {

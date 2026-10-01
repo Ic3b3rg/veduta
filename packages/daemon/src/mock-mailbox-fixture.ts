@@ -7,7 +7,8 @@ import { isRecord, parseJson, toolCallMessage, toolResultText } from './mock-fix
 
 type PiToolResultMessage = Extract<PiChatContext['messages'][number], { role: 'toolResult' }>
 
-const REQUEST_RE = /\b(?:receipts?|newsletters?|subject|messages?\s+from)\b/i
+const REQUEST_RE =
+  /\b(?:receipts?|newsletters?|subject|messages?\s+from|unread\s+(?:emails?|mail|messages?))\b/i
 
 export function respondToMockMailbox(
   text: string,

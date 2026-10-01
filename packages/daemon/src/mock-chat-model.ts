@@ -36,6 +36,10 @@ import {
 } from './mock-invalid-authoring-fixture.ts'
 import { respondToMockSurfacePresentation } from './mock-surface-presentation-fixture.ts'
 import { respondToMockMailbox } from './mock-mailbox-fixture.ts'
+import {
+  respondToMockGithubIssues,
+  respondToMockGithubWrite,
+} from './mock-github-issues-fixture.ts'
 import { respondToMockHimalayaSetup } from './mock-himalaya-setup-fixture.ts'
 import {
   respondToComposedSurface,
@@ -168,6 +172,10 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
     if (himalayaSetupResponse) return himalayaSetupResponse
     const mailboxResponse = respondToMockMailbox(text, toolResultsAfter)
     if (mailboxResponse) return mailboxResponse
+    const githubWriteResponse = respondToMockGithubWrite(text, toolResultsAfter)
+    if (githubWriteResponse) return githubWriteResponse
+    const githubResponse = respondToMockGithubIssues(text, toolResultsAfter)
+    if (githubResponse) return githubResponse
 
     const lastToolResult = toolResultsAfter.at(-1)
     if (lastToolResult) return closingMessage(lastToolResult)

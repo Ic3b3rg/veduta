@@ -509,6 +509,7 @@ async function cardRuntime(surface: ReturnType<typeof formSurface>): Promise<Pwa
         ],
       }),
       fetchPendingDecisions: async () => ({ revision: 0, decisions: [] }),
+      fetchChatTimeline: async () => ({ entries: [] }),
       fetchAutomationOutcomeNotifications: async () => ({ revision: 0, notifications: [] }),
       connectGateway: (nextHandlers) => {
         handlers = nextHandlers

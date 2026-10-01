@@ -27,6 +27,7 @@ export interface ChatToolRegistryDeps {
   spawnWorkerTool: ToolDef
   pendingDecisions: Pick<PendingDecisionService, 'get'>
   mailboxToolsFor?: (spaceId: string) => ToolDef[]
+  githubToolsFor?: (spaceId: string) => ToolDef[]
   skills?: FirstPartySkills
   generalExecutionTool?: ToolDef
   himalayaInstallTool?: ToolDef
@@ -70,6 +71,7 @@ export function chatToolRegistry(
       ...(deps.generalExecutionTool === undefined ? [] : [deps.generalExecutionTool]),
       ...(deps.himalayaInstallTool === undefined ? [] : [deps.himalayaInstallTool]),
       ...(deps.mailboxToolsFor?.(spaceId) ?? []),
+      ...(deps.githubToolsFor?.(spaceId) ?? []),
     ]
     return [...primaryTools, ...(deps.skills?.tools(primaryTools.map((tool) => tool.name)) ?? [])]
   }

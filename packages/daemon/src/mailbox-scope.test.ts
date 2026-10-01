@@ -22,9 +22,11 @@ describe('trusted Mailbox scope resolution', () => {
       kind: 'dates',
       after: '2026/09/28',
       before: '2026/10/05',
+      afterEpoch: 1790546400,
+      beforeEpoch: 1791151200,
     })
     expect(gmailQuery(result.scope)).toBe(
-      '{receipt invoice} is:unread after:2026/09/28 before:2026/10/05',
+      '{receipt invoice} is:unread after:1790546400 before:1791151200',
     )
     expect(result.scope.limit).toBe(20)
   })
@@ -79,5 +81,36 @@ describe('trusted Mailbox scope resolution', () => {
     if (subject.status === 'resolved') {
       expect(gmailQuery(subject.scope)).toBe('subject:"Quarterly report"')
     }
+  })
+
+  it('uses the selected mailbox and local midnight instants for Gmail searches', () => {
+    const now = new Date('2026-10-01T12:00:00Z')
+    const archive = resolveMailboxScope(
+      'Show unread receipts in Archive this week',
+      [account],
+      now,
+      'Europe/Rome',
+    )
+    expect(archive.status).toBe('resolved')
+    if (archive.status !== 'resolved') return
+    expect(archive.scope.folder).toBe('Archive')
+    expect(gmailQuery(archive.scope)).toBe(
+      '{receipt invoice} in:archive is:unread after:1790546400 before:1791151200',
+    )
+    const namedLabel = resolveMailboxScope(
+      'Show last five newsletters in Travel Receipts label',
+      [account],
+      now,
+      'Europe/Rome',
+    )
+    expect(namedLabel.status).toBe('resolved')
+    if (namedLabel.status === 'resolved') {
+      expect(namedLabel.scope.folder).toBe('Travel Receipts')
+      expect(gmailQuery(namedLabel.scope)).toContain('label:"Travel Receipts"')
+    }
+    expect(
+      resolveMailboxScope('Show receipts in an unspecified folder this week', [account], now, 'UTC')
+        .status,
+    ).toBe('clarify')
   })
 })

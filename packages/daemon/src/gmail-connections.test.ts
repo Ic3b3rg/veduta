@@ -160,5 +160,7 @@ describe('passive Gmail connections', () => {
       'https://oauth2.googleapis.com/token',
       'https://gmail.googleapis.com/gmail/v1/users/me/profile',
     ])
+    second.remove('svc-gmail-legacy')
+    expect(new GmailConnections(options).snapshot().connections).toEqual([])
   })
 })

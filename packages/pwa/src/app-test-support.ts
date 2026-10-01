@@ -18,6 +18,7 @@ export function createAppApiMock(actual: typeof ApiModule) {
     ...actual,
     fetchAuthStatus: vi.fn(),
     fetchSpaces: vi.fn(),
+    fetchChatTimeline: vi.fn(async () => ({ entries: [] })),
     fetchOnboardingStatus: vi.fn(),
     fetchPendingDecisions: vi.fn(async () => ({ revision: 0, decisions: [] })),
     fetchAutomationOutcomeNotifications: vi.fn(async () => ({

@@ -58,6 +58,10 @@ function renderChatBar(
     <MemoryRouter>
       <ChatBar
         entries={nextEntries}
+        timelineEntries={[]}
+        hasOlder={false}
+        loadingOlder={false}
+        queuedChat={[]}
         streamingEntries={nextStreamingEntries}
         focusedSpace={undefined}
         focusToken="initial"
@@ -68,6 +72,9 @@ function renderChatBar(
         onResolvePendingDecision={onResolvePendingDecision}
         onDismissPendingDecision={vi.fn()}
         onSend={onSend}
+        onLoadOlder={vi.fn()}
+        onRetryInterrupted={vi.fn()}
+        onRetryQueued={vi.fn()}
       />
     </MemoryRouter>
   )

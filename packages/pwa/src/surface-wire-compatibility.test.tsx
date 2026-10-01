@@ -338,6 +338,7 @@ describe('Surface wire compatibility', () => {
           )
         if (path === '/api/pending-decisions')
           return new Response(JSON.stringify({ revision: 0, decisions: [] }))
+        if (path === '/api/chat/timeline') return new Response(JSON.stringify({ entries: [] }))
         if (path === '/api/spaces') {
           if (offline) throw new Error('offline')
           if (syncing)

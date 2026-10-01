@@ -11,6 +11,7 @@ import { OnboardingWizard } from './onboarding-wizard.tsx'
 import { SettingsModelConnections } from './settings-model-connections.tsx'
 import { SettingsGmailConnections } from './settings-gmail-connections.tsx'
 import { SettingsHimalayaConnections } from './settings-himalaya-connections.tsx'
+import { SettingsServiceConnections } from './settings-service-connections.tsx'
 import { ClientRouteTable, clientPath, useClientRouting } from './client-router.tsx'
 import { AppShell, type AppRouteSelection } from './app-shell.tsx'
 import { homeBlockedByStatusFailure } from './onboarding-state.ts'
@@ -322,6 +323,10 @@ function RoutedApp() {
       automationOutcomeNotifications={automationOutcomeNotifications}
       pendingAutomationOutcomeNotificationIds={pendingAutomationOutcomeNotificationIds}
       chatEntries={chatEntries}
+      chatTimelineEntries={snapshot.chatTimelineEntries}
+      chatHasOlder={snapshot.chatHasOlder}
+      chatLoadingOlder={snapshot.chatLoadingOlder}
+      queuedChat={snapshot.queuedChat.filter((entry) => entry.spaceId === focusedSpaceId)}
       streamingEntries={streamingTurns.map((turn) => ({
         turnId: turn.turnId,
         text: turn.text,
@@ -331,6 +336,7 @@ function RoutedApp() {
       onOpenModelConnections={() => navigate(clientPath.modelConnections)}
       onOpenGmailConnections={() => navigate(clientPath.gmailConnections)}
       onOpenHimalayaConnections={() => navigate(clientPath.himalayaConnections)}
+      onOpenServiceConnections={() => navigate(clientPath.serviceConnections)}
       onRetrySpaces={runtime.retry}
       onInstallDone={() => {
         localStorage.setItem(INSTALL_DISMISSED_KEY, '1')
@@ -355,6 +361,9 @@ function RoutedApp() {
       onOpenAutomationOutcomeNotification={openAutomationOutcomeNotification}
       onDismissAutomationOutcomeNotification={dismissAutomationOutcomeNotification}
       onSend={(message) => runtime.sendChat(message, focusedSpaceId)}
+      onLoadOlderChat={() => void runtime.loadOlderChat()}
+      onRetryInterruptedChat={(turnId) => void runtime.retryInterrupted(turnId)}
+      onRetryQueuedChat={runtime.retryQueuedChat}
     />
   )
 
@@ -370,6 +379,13 @@ function RoutedApp() {
         }
         himalayaConnections={
           <SettingsHimalayaConnections token={authToken} onBack={() => navigate(clientPath.home)} />
+        }
+        serviceConnections={
+          <SettingsServiceConnections
+            token={authToken}
+            spaces={spaces}
+            onBack={() => navigate(clientPath.home)}
+          />
         }
       />
     </PwaRuntimeContext.Provider>

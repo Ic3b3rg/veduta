@@ -9,6 +9,7 @@ import {
 import { AuthSessionTokenSchema } from './auth.ts'
 import { AutomationOutcomeNotificationSchema } from './automation-outcome.ts'
 import { ChatClientMessageSchema, ChatMessageSchema } from './chat.ts'
+import { ChatAcceptanceSchema, ChatTimelineEntrySchema } from './chat-timeline.ts'
 import { ActionInvocationSchema, PatchSchema } from './patch.ts'
 import {
   pendingDecisionChatFeedback,
@@ -344,6 +345,7 @@ export const GatewayClientMessageSchema = z.discriminatedUnion('type', [
       type: z.literal('chat.send'),
     })
     .merge(ChatClientMessageSchema),
+  z.object({ type: z.literal('chat.subscribe'), turnId: z.string().min(1) }),
   z.object({
     type: z.literal('surface.action'),
     surfaceId: z.string().min(1),
@@ -401,6 +403,13 @@ export function gatewayServerMessageSchema<
       z.object({
         type: z.literal('chat.message'),
         message: ChatMessageSchema,
+      }),
+      z.object({ type: z.literal('chat.accepted'), acceptance: ChatAcceptanceSchema }),
+      z.object({ type: z.literal('chat.timeline-entry'), entry: ChatTimelineEntrySchema }),
+      z.object({
+        type: z.literal('chat.submission-rejected'),
+        submissionId: z.string().uuid(),
+        error: z.string().min(1),
       }),
       ChatTurnStartMessageSchema,
       ChatTurnDeltaMessageSchema,

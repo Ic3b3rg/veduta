@@ -15,7 +15,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ApiModule from './api.ts'
 import { authStatus, installAppTestBrowser, resetAppTestBrowser } from './app-test-support.ts'
-import { AUTH_TOKEN_KEY, CHAT_HISTORY_KEY } from './pwa-storage.ts'
+import { AUTH_TOKEN_KEY } from './pwa-storage.ts'
 
 vi.mock('./api.ts', async (importOriginal) => {
   const { createAppApiMock } = await import('./app-test-support.ts')
@@ -27,6 +27,7 @@ import {
   connectGateway,
   fetchAutomationOutcomeNotifications,
   fetchAuthStatus,
+  fetchChatTimeline,
   fetchModelConnections,
   fetchOnboardingStatus,
   fetchSpaces,
@@ -365,20 +366,35 @@ describe('App routing', () => {
       target: { value: 'Global question' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-    expect(sendChat).toHaveBeenLastCalledWith('Global question', undefined)
+    expect(sendChat).toHaveBeenLastCalledWith(
+      'Global question',
+      undefined,
+      expect.any(String),
+      undefined,
+    )
 
     fireEvent.click(screen.getByRole('button', { name: /Health/ }))
     const spaceChat = await screen.findByRole('textbox', { name: 'Message Veduta in Health' })
     fireEvent.change(spaceChat, { target: { value: 'Space question' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-    expect(sendChat).toHaveBeenLastCalledWith('Space question', 'spc-health')
+    expect(sendChat).toHaveBeenLastCalledWith(
+      'Space question',
+      'spc-health',
+      expect.any(String),
+      undefined,
+    )
 
     fireEvent.click(screen.getByRole('button', { name: 'Focus Hydration' }))
     await waitFor(() => expect(location.pathname).toBe('/app/space/health/surface/srf-hydration'))
     const surfaceChat = screen.getByRole('textbox', { name: 'Message Veduta in Health' })
     fireEvent.change(surfaceChat, { target: { value: 'Surface-route question' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-    expect(sendChat).toHaveBeenLastCalledWith('Surface-route question', 'spc-health')
+    expect(sendChat).toHaveBeenLastCalledWith(
+      'Surface-route question',
+      'spc-health',
+      expect.any(String),
+      undefined,
+    )
   })
 
   it('keeps catalog Surface actions active inside the routed Space', async () => {
@@ -557,27 +573,40 @@ describe('App routing', () => {
 
   it('routes chat result links without reloading the PWA', async () => {
     const path = '/app/space/health/surface/srf-hydration'
-    localStorage.setItem(
-      CHAT_HISTORY_KEY,
-      JSON.stringify([
+    vi.mocked(fetchChatTimeline).mockResolvedValue({
+      entries: [
         {
-          role: 'assistant',
-          text: 'Hydration is ready.',
-          targets: [
-            {
-              spaceId: 'spc-health',
-              spaceSlug: 'health',
-              spaceName: 'Health',
-              surfaceId: 'srf-hydration',
-              surfaceTitle: 'Hydration',
-            },
-          ],
+          id: 'cte-result',
+          turnId: 'cht-result',
+          scope: { type: 'global' },
+          cursor: 'result-cursor',
+          position: 1,
+          revision: 1,
+          kind: 'assistant',
+          message: {
+            role: 'assistant',
+            text: 'Hydration is ready.',
+            targets: [
+              {
+                spaceId: 'spc-health',
+                spaceSlug: 'health',
+                spaceName: 'Health',
+                surfaceId: 'srf-hydration',
+                surfaceTitle: 'Hydration',
+              },
+            ],
+          },
+          createdAt: '2026-10-01T08:00:00.000Z',
+          updatedAt: '2026-10-01T08:00:00.000Z',
         },
-      ]),
-    )
+      ],
+    })
     mockReadyApp(healthSpaces())
 
     render(<App />)
+
+    await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+    act(() => vi.mocked(connectGateway).mock.calls[0]![0].onHello(0, 'result-client'))
 
     fireEvent.click(await screen.findByRole('link', { name: 'Open Health · Hydration' }))
 

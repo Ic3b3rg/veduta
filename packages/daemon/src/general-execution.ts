@@ -4,6 +4,7 @@ import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 import { defineTool, type ToolDef } from './agent-runner.ts'
 import { defaultRedactor } from './redaction.ts'
+import type { TrustLayer } from './trust-layer.ts'
 import type { Store } from './store.ts'
 
 const OUTPUT_LIMIT = 32 * 1024
@@ -125,6 +126,7 @@ export async function runCommand(request: CommandRequest): Promise<CommandResult
 
 export function createGeneralExecutionTool(
   store: Store,
+  audit: Pick<TrustLayer, 'recordGeneralExecution'>,
   run: (request: CommandRequest) => Promise<CommandResult> = runCommand,
 ): ToolDef {
   return defineTool({
@@ -145,12 +147,35 @@ export function createGeneralExecutionTool(
       if (!context.currentUserRequest || !context.spaceId) {
         return { content: 'A current trusted user request in a Space is required.' }
       }
-      const result = await run({
-        command: input.command,
-        cwd: input.cwd,
-        ...(input.deadlineMs === undefined ? {} : { deadlineMs: input.deadlineMs }),
-        ...(context.signal === undefined ? {} : { signal: context.signal }),
-      })
+      let result: CommandResult
+      try {
+        result = await run({
+          command: input.command,
+          cwd: input.cwd,
+          ...(input.deadlineMs === undefined ? {} : { deadlineMs: input.deadlineMs }),
+          ...(context.signal === undefined ? {} : { signal: context.signal }),
+        })
+      } catch {
+        audit.recordGeneralExecution({
+          toolName: 'execute_command',
+          context,
+          command: defaultRedactor.redactText(input.command),
+          cwd: input.cwd,
+          outcome: 'error',
+          detail: 'Command execution failed before a result was returned',
+        })
+        store.spacesEngine.appendEvent(context.spaceId, {
+          type: 'tool.execution',
+          text: 'Command execution failed',
+          origin: 'trusted:system',
+          payload: {
+            command: defaultRedactor.redactText(input.command),
+            cwd: input.cwd,
+            outcome: 'error',
+          },
+        })
+        throw new Error('Command execution failed')
+      }
       const safeCommand = defaultRedactor.redactText(result.command)
       const safeStdout = defaultRedactor.redactText(result.stdout)
       const safeStderr = defaultRedactor.redactText(result.stderr)
@@ -164,6 +189,17 @@ export function createGeneralExecutionTool(
         outputLimited: result.outputLimited,
         outputMode: input.outputMode,
       }
+      audit.recordGeneralExecution({
+        toolName: 'execute_command',
+        context,
+        command: safeCommand,
+        cwd: result.cwd,
+        outcome:
+          result.exitCode === 0 && !result.cancelled && !result.timedOut && !result.outputLimited
+            ? 'executed'
+            : 'error',
+        detail: `exit ${result.exitCode ?? 'signal'}; ${result.durationMs} ms; cancelled ${result.cancelled}; timed out ${result.timedOut}; output limited ${result.outputLimited}`,
+      })
       store.spacesEngine.appendEvent(context.spaceId, {
         type: 'tool.execution',
         text: `Command finished with exit status ${result.exitCode ?? 'signal'}`,

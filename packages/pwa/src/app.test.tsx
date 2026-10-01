@@ -5,6 +5,7 @@
 // exhaustive coverage in their own colocated tests.
 import {
   PENDING_DECISION_FALLBACK_FEEDBACK,
+  pendingDecisionFeedback,
   SurfaceArchivedEventSchema,
   SurfaceCreatedEventSchema,
   SurfaceMovedEventSchema,
@@ -16,6 +17,9 @@ import {
   type ModelConnectionsSnapshot,
   type OnboardingStatus,
   type PendingDecision,
+  type ChatScope,
+  type ChatMessage,
+  type ChatTimelineEntry,
   type PendingDecisionList,
   type Surface,
 } from '@veduta/protocol'
@@ -47,6 +51,7 @@ import {
   ApiResponseError,
   connectGateway,
   fetchAuthStatus,
+  fetchChatTimeline,
   fetchModelConnections,
   fetchOnboardingStatus,
   fetchPendingDecisions,
@@ -137,6 +142,96 @@ async function renderConnectedEmptyHealth(clientId: string) {
   if (!handlers) throw new Error('Gateway handlers were not registered')
   await act(async () => handlers.onHello(0, clientId))
   return handlers
+}
+
+type TestGatewayHandlers = Parameters<typeof connectGateway>[0]
+
+function emitTimelineReply(
+  handlers: TestGatewayHandlers,
+  turnId: string,
+  scope: ChatScope,
+  message: ChatMessage,
+): void {
+  handlers.onChatTimelineEntry?.({
+    type: 'chat.timeline-entry',
+    entry: {
+      id: `cte-${turnId}`,
+      turnId,
+      scope,
+      cursor: `cursor-${turnId}`,
+      position: 1,
+      revision: 1,
+      kind: 'assistant',
+      message,
+      createdAt: '2026-08-25T10:00:00.000Z',
+      updatedAt: '2026-08-25T10:00:00.000Z',
+    },
+  })
+}
+
+function emitTimelineDecision(
+  handlers: TestGatewayHandlers,
+  turnId: string,
+  decision: PendingDecision,
+  revision = 1,
+  scope: ChatScope = decision.scope,
+): void {
+  handlers.onChatTimelineEntry?.({
+    type: 'chat.timeline-entry',
+    entry: timelineDecisionEntry(turnId, decision, revision, scope),
+  })
+}
+
+function timelineDecisionEntry(
+  turnId: string,
+  decision: PendingDecision,
+  revision = 1,
+  scope: ChatScope = decision.scope,
+): ChatTimelineEntry {
+  return {
+    id: `cte-${decision.id}`,
+    turnId,
+    scope,
+    cursor: `cursor-${decision.id}`,
+    position: 1,
+    revision,
+    kind: 'decision',
+    message: {
+      role: 'assistant',
+      text: pendingDecisionFeedback(decision),
+      pendingDecisions: [decision],
+      ...(decision.state === 'pending' ? {} : { decisionFeedbackId: decision.id }),
+    },
+    createdAt: '2026-08-25T10:00:00.000Z',
+    updatedAt: '2026-08-25T10:00:00.000Z',
+  }
+}
+
+function emitTimelineFallback(
+  handlers: TestGatewayHandlers,
+  turnId: string,
+  decisionId: string,
+  scope: ChatScope,
+): void {
+  handlers.onChatTimelineEntry?.({
+    type: 'chat.timeline-entry',
+    entry: {
+      id: `cte-${decisionId}`,
+      turnId,
+      scope,
+      cursor: `cursor-${decisionId}`,
+      position: 1,
+      revision: 1,
+      kind: 'decision',
+      message: {
+        role: 'assistant',
+        text: PENDING_DECISION_FALLBACK_FEEDBACK,
+        pendingDecisionIds: [decisionId],
+      },
+      createdAt: '2026-08-25T10:00:00.000Z',
+      updatedAt: '2026-08-25T10:00:00.000Z',
+    },
+  })
 }
 
 describe('App', () => {
@@ -380,6 +475,15 @@ describe('App', () => {
         spaceId: 'spc-health',
         message: { role: 'assistant', text: 'Hydration Surface created.' },
       })
+      emitTimelineReply(
+        handlers,
+        'turn-create',
+        { type: 'space', spaceId: 'spc-health' },
+        {
+          role: 'assistant',
+          text: 'Hydration Surface created.',
+        },
+      )
       handlers.onSurfacePatch(patch)
     })
 
@@ -1110,20 +1214,25 @@ describe('App', () => {
 
   it('accepts a chat Space proposal through the common decision API without changing route', async () => {
     const handlers = await renderConnectedEmptyHealth('pwa-proposal')
+    const pending: PendingDecision = {
+      id: 'space-proposal:proposal-travel',
+      kind: 'space-proposal',
+      summary: 'Create Space “Travel”',
+      scope: { type: 'global' },
+      allowedResolutions: ['accept', 'reject'],
+      state: 'pending',
+      createdAt: '2026-08-25T10:00:00.000Z',
+    }
+    const accepted: PendingDecision = {
+      ...pending,
+      state: 'terminal',
+      outcome: 'accepted',
+      decisionAt: '2026-08-25T10:01:00.000Z',
+      resolvedAt: '2026-08-25T10:01:00.000Z',
+      resolvedBy: 'trusted:user',
+    }
     vi.mocked(resolvePendingDecision).mockResolvedValue({
-      decision: {
-        id: 'space-proposal:proposal-travel',
-        kind: 'space-proposal',
-        summary: 'Create Space “Travel”',
-        scope: { type: 'global' },
-        allowedResolutions: ['accept', 'reject'],
-        state: 'terminal',
-        outcome: 'accepted',
-        createdAt: '2026-08-25T10:00:00.000Z',
-        decisionAt: '2026-08-25T10:01:00.000Z',
-        resolvedAt: '2026-08-25T10:01:00.000Z',
-        resolvedBy: 'trusted:user',
-      },
+      decision: accepted,
       replayed: false,
     })
     vi.mocked(fetchSpaces).mockResolvedValueOnce({
@@ -1158,19 +1267,10 @@ describe('App', () => {
         message: {
           role: 'assistant',
           text: 'Travel needs its own Space.',
-          pendingDecisions: [
-            {
-              id: 'space-proposal:proposal-travel',
-              kind: 'space-proposal',
-              summary: 'Create Space “Travel”',
-              scope: { type: 'global' },
-              allowedResolutions: ['accept', 'reject'],
-              state: 'pending',
-              createdAt: '2026-08-25T10:00:00.000Z',
-            },
-          ],
+          pendingDecisions: [pending],
         },
       })
+      emitTimelineDecision(handlers, 'turn-proposal', pending)
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'Accept Create Space “Travel”' }))
@@ -1182,6 +1282,7 @@ describe('App', () => {
         undefined,
       ),
     )
+    act(() => emitTimelineDecision(handlers, 'turn-proposal', accepted, 2))
     expect(await screen.findByRole('button', { name: /Travel/ })).toBeDefined()
     expect(screen.getAllByText('Accepted: Create Space “Travel”.')).toHaveLength(2)
     expect(screen.queryByRole('button', { name: 'Accept Create Space “Travel”' })).toBeNull()
@@ -1338,6 +1439,7 @@ describe('App', () => {
           pendingDecisions: [pending],
         },
       })
+      emitTimelineDecision(handlers, 'turn-dismiss', pending, 1, { type: 'global' })
     })
 
     fireEvent.click(await screen.findByRole('link', { name: 'Home' }))
@@ -1404,6 +1506,7 @@ describe('App', () => {
           pendingDecisions: [pending],
         },
       })
+      emitTimelineDecision(handlers, 'turn-race', pending, 1, { type: 'global' })
     })
 
     fireEvent.click(await screen.findByRole('button', { name: '1 decision awaits review' }))
@@ -1431,6 +1534,7 @@ describe('App', () => {
     ).toBe(true)
 
     await act(async () => finishResolution?.({ decision: terminal, replayed: false }))
+    act(() => emitTimelineDecision(handlers, 'turn-race', terminal, 2, { type: 'global' }))
 
     expect(screen.queryByRole('button', { name: '1 decision awaits review' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Approve Send the weekly report' })).toBeNull()
@@ -1478,6 +1582,7 @@ describe('App', () => {
           pendingDecisions: [pending],
         },
       })
+      emitTimelineDecision(handlers, 'turn-approval', pending, 1, { type: 'global' })
       handlers.onApprovalCard({
         type: 'approval.card',
         card: {
@@ -1497,6 +1602,7 @@ describe('App', () => {
         decision: resolving,
         message: 'In progress: Send message to alice@example.com.',
       })
+      emitTimelineDecision(handlers, 'turn-approval', resolving, 2, { type: 'global' })
     })
 
     expect(
@@ -1514,6 +1620,7 @@ describe('App', () => {
         decision: terminal,
         message: 'Executed: Send message to alice@example.com.',
       })
+      emitTimelineDecision(handlers, 'turn-approval', terminal, 3, { type: 'global' })
       handlers.onPendingDecisionLifecycle({
         type: 'pending-decision.lifecycle',
         revision: 2,
@@ -1588,6 +1695,7 @@ describe('App', () => {
           pendingDecisionIds: [terminal.id],
         },
       })
+      emitTimelineFallback(handlers, 'turn-unprojected', terminal.id, { type: 'global' })
     })
 
     expect(await screen.findByText(PENDING_DECISION_FALLBACK_FEEDBACK)).toBeDefined()
@@ -1599,6 +1707,7 @@ describe('App', () => {
         decision: terminal,
         message: 'Executed: Send message to alice@example.com.',
       })
+      emitTimelineDecision(handlers, 'turn-unprojected', terminal, 2, { type: 'global' })
     })
 
     expect(screen.queryByText(PENDING_DECISION_FALLBACK_FEEDBACK)).toBeNull()
@@ -1638,10 +1747,14 @@ describe('App', () => {
         decision: resolving,
         message: 'In progress: Create Space “Travel”.',
       })
+      emitTimelineDecision(handlers, 'turn-reconnect', resolving)
     })
     expect(await screen.findAllByText('In progress: Create Space “Travel”.')).toHaveLength(2)
 
     vi.mocked(fetchPendingDecisions).mockResolvedValueOnce({ revision: 2, decisions: [terminal] })
+    vi.mocked(fetchChatTimeline).mockResolvedValueOnce({
+      entries: [timelineDecisionEntry('turn-reconnect', terminal, 2)],
+    })
     await act(async () => handlers.onHello(0, 'pwa-reconnect'))
 
     expect(
@@ -1680,6 +1793,7 @@ describe('App', () => {
         decision: terminal,
         message: 'Accepted: Create Space “Travel”.',
       })
+      emitTimelineDecision(handlers, 'turn-reconnect-race', terminal)
     })
     await act(async () => {
       resolveSnapshot?.({ revision: 2, decisions: [terminal] })
@@ -1709,6 +1823,9 @@ describe('App', () => {
     const snapshot = { revision: 4, decisions: [terminal] }
 
     vi.mocked(fetchPendingDecisions).mockResolvedValueOnce(snapshot)
+    vi.mocked(fetchChatTimeline).mockResolvedValueOnce({
+      entries: [timelineDecisionEntry('turn-offline', terminal, 2, { type: 'global' })],
+    })
     await act(async () => handlers.onHello(0, 'pwa-offline-outcome'))
 
     expect(

@@ -89,6 +89,47 @@ export async function verifyLiveRuntime(
         original === 'true' ? 'false' : 'true',
       )
     })
+    await test.step('committed Chat entries converge across devices and survive local storage loss', async () => {
+      const request = 'Summarize the Health Space in one sentence for timeline verification'
+      const composer = primary.getByRole('textbox', { name: 'Message Veduta in Health' })
+      await composer.fill(request)
+      await composer.press('Enter')
+      await expect(observer.locator('.chat-entry.user', { hasText: request })).toHaveCount(1)
+      await expect(observer.locator('.chat-entry.assistant').last()).toContainText('[mock]')
+      await observer.evaluate(() => {
+        localStorage.removeItem('veduta.chatHistory')
+        localStorage.removeItem('veduta.chatQueue')
+      })
+      await observer.reload()
+      await expect(observer.locator('.chat-entry.user', { hasText: request })).toHaveCount(1)
+      await expect(observer.locator('.chat-entry.assistant').last()).toContainText('[mock]')
+    })
+    await test.step('a second Chat page remains reachable after reload on another device', async () => {
+      const composer = primary.getByRole('textbox', { name: 'Message Veduta in Health' })
+      for (let index = 0; index < 21; index += 1) {
+        const request = `Timeline page proof ${index}`
+        const repliesBefore = await primary.locator('.chat-entry.assistant').count()
+        await composer.fill(request)
+        await composer.press('Enter')
+        await expect(primary.locator('.chat-entry.user', { hasText: request })).toHaveCount(1)
+        await expect(primary.locator('.chat-entry.assistant')).toHaveCount(repliesBefore + 1)
+      }
+      await observer.reload()
+      const loadOlder = observer.getByRole('button', { name: 'Load older messages' })
+      await expect(loadOlder).toBeVisible()
+      for (let page = 0; page < 10 && (await loadOlder.isVisible()); page += 1) {
+        const count = await observer.locator('.chat-entry').count()
+        await loadOlder.click()
+        await expect.poll(() => observer.locator('.chat-entry').count()).toBeGreaterThan(count)
+      }
+      await expect(
+        observer.locator('.chat-entry.user', { hasText: 'Timeline page proof 0' }),
+      ).toHaveCount(1)
+      await expect(
+        observer.locator('.chat-entry.user', { hasText: 'Timeline page proof 20' }),
+      ).toHaveCount(1)
+      expect(await observer.evaluate(() => localStorage.getItem('veduta.chatHistory'))).toBeNull()
+    })
     await test.step('missed-event reconnect preserves one queued Chat submission without reloading', async () => {
       disconnected = true
       await liveSocket?.close()

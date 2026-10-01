@@ -27,6 +27,7 @@ export type AuditKind =
   | 'approval.edit_rejected'
   | 'allowlist.created'
   | 'allowlist.revoked'
+  | 'general.execution'
 
 export type AuditOutcome = 'executed' | 'rejected' | 'expired' | 'error'
 

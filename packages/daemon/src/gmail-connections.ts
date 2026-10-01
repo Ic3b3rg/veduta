@@ -39,7 +39,13 @@ const RecordSchema = GmailConnectionSchema.extend({
   refreshTokenRef: SecretRefSchema.optional(),
   authorization: AuthorizationSchema.optional(),
 }).strict()
-const FileSchema = z.object({ version: z.literal(1), connections: z.array(RecordSchema) }).strict()
+const FileSchema = z
+  .object({
+    version: z.literal(1),
+    connections: z.array(RecordSchema),
+    dismissedLegacyIds: z.array(z.string()).default([]),
+  })
+  .strict()
 
 type Record = z.infer<typeof RecordSchema>
 
@@ -100,15 +106,18 @@ export class GmailConnections {
   private readonly now: () => Date
   private readonly tokenProviders = new Map<string, GoogleTokenProvider>()
   private records: Record[]
+  private readonly dismissedLegacyIds: Set<string>
 
   constructor(options: GmailConnectionsOptions) {
     this.options = options
     this.path = join(options.rootDir, FILE_NAME)
     this.fetchFn = options.fetchFn ?? fetch
     this.now = options.now ?? (() => new Date())
-    this.records = existsSync(this.path)
-      ? FileSchema.parse(readJsonFile(this.path, { description: 'Gmail connections' })).connections
-      : []
+    const stored = existsSync(this.path)
+      ? FileSchema.parse(readJsonFile(this.path, { description: 'Gmail connections' }))
+      : FileSchema.parse({ version: 1, connections: [] })
+    this.records = stored.connections
+    this.dismissedLegacyIds = new Set(stored.dismissedLegacyIds)
     this.normalizeInterruptedAuthorization()
     this.adoptLegacySource()
   }
@@ -151,7 +160,11 @@ export class GmailConnections {
     return this.snapshot()
   }
 
-  beginAuthorization(id: string, redirectOrigin: string): { authorizationUrl: string } {
+  beginAuthorization(
+    id: string,
+    redirectOrigin: string,
+    redirectPath: '/app/settings/gmail' | '/app/connections' = '/app/settings/gmail',
+  ): { authorizationUrl: string } {
     const record = this.find(id)
     const vault = this.requireVault()
     if (!this.options.allowedRedirectOrigins.includes(redirectOrigin)) {
@@ -159,7 +172,7 @@ export class GmailConnections {
     }
     const clientId = this.resolve(record.clientIdRef, 'Gmail OAuth client ID')
     this.resolve(record.clientSecretRef, 'Gmail OAuth client secret')
-    const redirectUri = `${redirectOrigin}/app/settings/gmail`
+    const redirectUri = `${redirectOrigin}${redirectPath}`
     const state = `${id}.${randomBytes(32).toString('base64url')}`
     const verifier = randomBytes(32).toString('base64url')
     const verifierRef = `secret://vault/gmail-oauth-verifier-${id}`
@@ -368,9 +381,42 @@ export class GmailConnections {
     }
   }
 
+  /** Identity-only check for a verified connection before another Space grants it. */
+  async verifyAccount(id: string): Promise<string> {
+    const record = this.find(id)
+    if (record.state !== 'ready' || !record.accountEmail || !record.refreshTokenRef)
+      throw new GmailConnectionError(409, 'Gmail connection needs authorization')
+    const provider = new GoogleTokenProvider({
+      clientIdRef: this.requiredRef(record.clientIdRef),
+      clientSecretRef: this.requiredRef(record.clientSecretRef),
+      refreshTokenRef: record.refreshTokenRef,
+      secrets: this.options.secrets,
+      fetchFn: this.fetchFn,
+    })
+    try {
+      const token = await provider.accessToken()
+      defaultRedactor.register(token)
+      const response = await this.fetchFn(PROFILE_ENDPOINT, {
+        method: 'GET',
+        headers: { authorization: `Bearer ${token}` },
+        redirect: 'error',
+      })
+      if (!response.ok) throw new Error('profile unavailable')
+      const profile = ProfileSchema.parse(await response.json())
+      if (profile.emailAddress.toLowerCase() !== record.accountEmail.toLowerCase())
+        throw new GmailConnectionError(409, 'Gmail account changed during verification')
+      return profile.emailAddress
+    } catch (error) {
+      throw error instanceof GmailConnectionError
+        ? error
+        : new GmailConnectionError(502, 'Gmail account verification failed')
+    }
+  }
+
   remove(id: string): GmailConnectionsSnapshot {
     const record = this.find(id)
     this.records = this.records.filter((candidate) => candidate.id !== id)
+    if (id === LEGACY_ID) this.dismissedLegacyIds.add(id)
     this.tokenProviders.delete(id)
     this.persist()
     for (const ref of [
@@ -462,7 +508,11 @@ export class GmailConnections {
   }
 
   private persist(): void {
-    const file = FileSchema.parse({ version: 1, connections: this.records })
+    const file = FileSchema.parse({
+      version: 1,
+      connections: this.records,
+      dismissedLegacyIds: [...this.dismissedLegacyIds],
+    })
     backupFile(this.path)
     writeJsonAtomic(this.path, file)
   }
@@ -481,7 +531,11 @@ export class GmailConnections {
   }
 
   private adoptLegacySource(): void {
-    if (this.records.some((record) => record.id === LEGACY_ID)) return
+    if (
+      this.records.some((record) => record.id === LEGACY_ID) ||
+      this.dismissedLegacyIds.has(LEGACY_ID)
+    )
+      return
     const source = loadIngestionConfig(this.options.rootDir).sources['gmail']
     if (source?.adapter !== 'gmail-push' || !source.google) return
     const { clientIdRef, clientSecretRef, refreshTokenRef } = source.google

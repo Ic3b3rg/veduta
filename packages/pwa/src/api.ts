@@ -1,5 +1,6 @@
 /** Stable PWA API facade. Implementations are grouped by transport responsibility. */
 export * from './api-http.ts'
+export * from './chat-timeline-api.ts'
 export * from './auth-api.ts'
 export * from './automation-outcome-notifications-api.ts'
 export * from './gateway-client.ts'

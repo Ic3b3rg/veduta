@@ -11,7 +11,8 @@ import {
 
 export interface GatewayConnection {
   close(): void
-  sendChat(text: string, spaceId?: string): boolean
+  sendChat(text: string, spaceId?: string, submissionId?: string, retryOf?: string): boolean
+  subscribeChat?(turnId: string): boolean
 }
 
 export interface GatewayHandlers {
@@ -32,6 +33,13 @@ export interface GatewayHandlers {
     message: Extract<RenderableGatewayServerMessage, { type: 'surface.action-turn' }>,
   ): void
   onChatMessage(message: Extract<RenderableGatewayServerMessage, { type: 'chat.message' }>): void
+  onChatAccepted?(message: Extract<RenderableGatewayServerMessage, { type: 'chat.accepted' }>): void
+  onChatTimelineEntry?(
+    message: Extract<RenderableGatewayServerMessage, { type: 'chat.timeline-entry' }>,
+  ): void
+  onChatSubmissionRejected?(
+    message: Extract<RenderableGatewayServerMessage, { type: 'chat.submission-rejected' }>,
+  ): void
   onChatTurnStart(
     message: Extract<RenderableGatewayServerMessage, { type: 'chat.turn-start' }>,
   ): void
@@ -89,7 +97,7 @@ export function connectGateway(handlers: GatewayHandlers): GatewayConnection {
 
   return {
     close: () => socket.close(),
-    sendChat(text, spaceId) {
+    sendChat(text, spaceId, submissionId, retryOf) {
       if (socket.readyState !== WebSocket.OPEN) return false
       socket.send(
         JSON.stringify(
@@ -97,8 +105,17 @@ export function connectGateway(handlers: GatewayHandlers): GatewayConnection {
             type: 'chat.send',
             text,
             ...(spaceId ? { spaceId } : {}),
+            ...(submissionId ? { submissionId } : {}),
+            ...(retryOf ? { retryOf } : {}),
           }),
         ),
+      )
+      return true
+    },
+    subscribeChat(turnId) {
+      if (socket.readyState !== WebSocket.OPEN) return false
+      socket.send(
+        JSON.stringify(GatewayClientMessageSchema.parse({ type: 'chat.subscribe', turnId })),
       )
       return true
     },
@@ -147,6 +164,15 @@ function dispatchGatewayMessage(
       break
     case 'chat.message':
       handlers.onChatMessage(message)
+      break
+    case 'chat.accepted':
+      handlers.onChatAccepted?.(message)
+      break
+    case 'chat.timeline-entry':
+      handlers.onChatTimelineEntry?.(message)
+      break
+    case 'chat.submission-rejected':
+      handlers.onChatSubmissionRejected?.(message)
       break
     case 'chat.turn-start':
       handlers.onChatTurnStart(message)

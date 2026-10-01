@@ -1,4 +1,4 @@
-import type { ChatMessage, PendingDecisionResolution } from '@veduta/protocol'
+import type { ChatMessage, ChatTimelineEntry, PendingDecisionResolution } from '@veduta/protocol'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Card } from '@veduta/catalog/ui/card'
@@ -11,9 +11,14 @@ import {
 import type { SpaceWithSurfaces } from './api.ts'
 import { clientPath } from './client-router.tsx'
 import { PendingDecisionControls } from './pending-decision-notifications.tsx'
+import type { QueuedChat } from './pwa-storage.ts'
 
 export function ChatBar({
   entries,
+  timelineEntries,
+  hasOlder,
+  loadingOlder,
+  queuedChat,
   streamingEntries,
   focusedSpace,
   focusToken,
@@ -24,8 +29,15 @@ export function ChatBar({
   onResolvePendingDecision,
   onDismissPendingDecision,
   onSend,
+  onLoadOlder,
+  onRetryInterrupted,
+  onRetryQueued,
 }: {
   entries: ChatMessage[]
+  timelineEntries: ChatTimelineEntry[]
+  hasOlder: boolean
+  loadingOlder: boolean
+  queuedChat: QueuedChat[]
   /** In-flight `chat.turn-*` turns, keyed by turnId (issue 037). Always
    * rendered after `entries` -- a turn only lands in `entries` once
    * `chat.turn-end`/`chat.turn-error` closes it. */
@@ -42,6 +54,9 @@ export function ChatBar({
   ) => Promise<void> | void
   onDismissPendingDecision: (decisionId: string) => void
   onSend: (text: string) => boolean
+  onLoadOlder: () => void
+  onRetryInterrupted: (turnId: string) => void
+  onRetryQueued: (id: string) => void
 }) {
   const [text, setText] = useState('')
   const [isAtBottom, setIsAtBottom] = useState(true)
@@ -111,18 +126,60 @@ export function ChatBar({
             setIsAtBottom(nextIsAtBottom)
           }}
         >
+          {hasOlder && (
+            <button type="button" disabled={loadingOlder} onClick={onLoadOlder}>
+              {loadingOlder ? 'Loading older messages…' : 'Load older messages'}
+            </button>
+          )}
           {entries.map((entry, index) => {
+            const timelineEntry = timelineEntries[index]
+            const retried =
+              timelineEntry?.kind === 'user' &&
+              (timelineEntries.some((candidate) => candidate.retryOf === timelineEntry.turnId) ||
+                queuedChat.some((candidate) => candidate.retryOf === timelineEntry.turnId))
             const visibleDecisions = (entry.pendingDecisions ?? []).filter(
               (decision) => decision.state !== 'pending' || !dismissedDecisionIds.has(decision.id),
             )
             return (
               <Card
-                key={`${entry.role}-${index}`}
+                key={timelineEntry?.id ?? `${entry.role}-${index}`}
                 className={`chat-entry ${entry.role}`}
+                data-chat-entry-id={timelineEntry?.id}
                 data-decision-feedback-id={entry.decisionFeedbackId}
               >
                 <strong>{entry.role === 'user' ? 'you' : 'veduta'}</strong>
                 <span>{entry.text}</span>
+                {timelineEntry?.kind === 'user' && timelineEntry.turnState === 'interrupted' && (
+                  <div>
+                    <span>Interrupted. Completion is unknown.</span>
+                    <button
+                      type="button"
+                      disabled={Boolean(retried)}
+                      onClick={() => onRetryInterrupted(timelineEntry.turnId)}
+                    >
+                      {retried ? 'Retry requested' : 'Retry'}
+                    </button>
+                  </div>
+                )}
+                {timelineEntry?.kind === 'user' &&
+                  (timelineEntry.turnState === 'accepted' ||
+                    timelineEntry.turnState === 'running' ||
+                    timelineEntry.turnState === 'waiting_connection') && (
+                    <small>
+                      {timelineEntry.turnState === 'accepted'
+                        ? 'Queued'
+                        : timelineEntry.turnState === 'waiting_connection'
+                          ? 'Waiting for service connection'
+                          : 'Running'}
+                    </small>
+                  )}
+                {timelineEntry?.connectionAttemptId && (
+                  <Link
+                    to={`${clientPath.serviceConnections}?attempt=${encodeURIComponent(timelineEntry.connectionAttemptId)}`}
+                  >
+                    Review service connection
+                  </Link>
+                )}
                 {entry.targets && entry.targets.length > 0 && (
                   <nav className="chat-result-links" aria-label="Results">
                     {entry.targets.map((target) => {
@@ -141,7 +198,7 @@ export function ChatBar({
                     })}
                   </nav>
                 )}
-                {entry.decisionFeedbackId === undefined && visibleDecisions.length > 0 && (
+                {visibleDecisions.length > 0 && (
                   <section className="chat-pending-decisions" aria-label="Pending decisions">
                     {visibleDecisions.map((decision) => {
                       const reviewPath = pendingDecisionReviewPaths.get(decision.id)
@@ -171,6 +228,18 @@ export function ChatBar({
               </Card>
             )
           })}
+          {queuedChat.map((queued) => (
+            <Card key={queued.id} className="chat-entry user" aria-label="Chat submission waiting">
+              <strong>you</strong>
+              <span>{queued.text}</span>
+              <small>{queued.status === 'rejected' ? 'Not accepted' : 'Waiting for Gateway'}</small>
+              {queued.status === 'rejected' && (
+                <button type="button" onClick={() => onRetryQueued(queued.id)}>
+                  Retry submission
+                </button>
+              )}
+            </Card>
+          ))}
           {streamingEntries.map((turn) => (
             <Card key={`streaming-${turn.turnId}`} className="chat-entry assistant streaming">
               <strong>veduta</strong>

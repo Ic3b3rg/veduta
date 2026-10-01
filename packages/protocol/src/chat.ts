@@ -148,6 +148,8 @@ export type ChatMessage = z.infer<typeof ChatMessageSchema>
 export const ChatClientMessageSchema = z.object({
   text: z.string().min(1),
   spaceId: z.string().min(1).optional(),
+  submissionId: z.string().uuid().optional(),
+  retryOf: z.string().min(1).optional(),
 })
 
 export type ChatClientMessage = z.infer<typeof ChatClientMessageSchema>

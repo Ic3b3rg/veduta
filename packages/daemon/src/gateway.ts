@@ -6,6 +6,9 @@ import {
   type ApprovalCard,
   type AgentActionTurn,
   type AutomationOutcomeNotificationLifecycleMessage,
+  type ChatAcceptance,
+  type ChatTimelineEntry,
+  type ChatScope,
   type GatewayClientMessage,
   type GatewayServerMessage,
   type PendingDecisionLifecycleMessage,
@@ -14,6 +17,7 @@ import {
 import type { QueuedAgentTurn, SurfaceEngineEvent } from './surface-engine.ts'
 import { SurfaceActionError, type Store } from './store.ts'
 import { SurfaceCommitRecoveryPendingError } from './surface-commit.ts'
+import { ChatTimelineError } from './chat-timeline.ts'
 
 export interface GatewaySocket {
   send(data: string): void
@@ -31,6 +35,9 @@ export interface PwaChatInput {
   clientId: string
   text: string
   spaceId?: string
+  submissionId?: string
+  retryOf?: string
+  turnId?: string
   receivedAt: string
 }
 
@@ -42,6 +49,11 @@ export interface PwaChatInput {
  */
 const FULL_TEXT_REQUEST_RE =
   /^(?:show|read)(?:\s+me)?\s+the\s+full\s+text(?:\s+of)?\s*(?:event|queue)?\s*#?(\d+)$/i
+
+export function fullTextQueueId(text: string): number | undefined {
+  const match = FULL_TEXT_REQUEST_RE.exec(text)
+  return match ? Number(match[1]) : undefined
+}
 
 interface GatewayClientSession {
   clientId: string
@@ -68,7 +80,8 @@ export class GatewayHub {
        * requesting client (a `chat.message` frame saying so) rather than
        * silently dropped.
        */
-      onChatTurn?: (event: PwaChatInput) => void
+      onChatTurn?: (event: PwaChatInput) => ChatAcceptance | void
+      onChatSubscribe?: (clientId: string, turnId: string) => ChatScope | undefined
       onAgentAction?: (turn: QueuedAgentTurn) => void
       /**
        * Answers a recognized "show me the full text of event #N" request
@@ -208,6 +221,10 @@ export class GatewayHub {
     this.broadcast({ type: 'pending-decision.lifecycle', ...lifecycle })
   }
 
+  broadcastChatTimelineEntry(entry: ChatTimelineEntry): void {
+    this.broadcast({ type: 'chat.timeline-entry', entry })
+  }
+
   /** Broadcasts confirmed durable In-app notification state; HTTP snapshots recover missed frames. */
   broadcastAutomationOutcomeNotification(
     lifecycle: Omit<AutomationOutcomeNotificationLifecycleMessage, 'type'>,
@@ -262,7 +279,21 @@ export class GatewayHub {
         text: frame.text,
         receivedAt: new Date().toISOString(),
         ...(frame.spaceId === undefined ? {} : { spaceId: frame.spaceId }),
+        ...(frame.submissionId === undefined ? {} : { submissionId: frame.submissionId }),
+        ...(frame.retryOf === undefined ? {} : { retryOf: frame.retryOf }),
       })
+      return
+    }
+
+    if (frame.type === 'chat.subscribe') {
+      const scope = this.options.onChatSubscribe?.(clientId, frame.turnId)
+      if (scope) {
+        send({
+          type: 'chat.turn-start',
+          turnId: frame.turnId,
+          ...(scope.type === 'space' ? { spaceId: scope.spaceId } : {}),
+        })
+      }
       return
     }
 
@@ -349,9 +380,9 @@ export class GatewayHub {
     if (!session) return
     session.presence.lastSeenAt = event.receivedAt
 
-    const fullTextMatch = FULL_TEXT_REQUEST_RE.exec(event.text)
-    if (fullTextMatch && this.options.onFullTextRequest) {
-      this.handleFullTextRequest(Number(fullTextMatch[1]), event.clientId)
+    const queueId = fullTextQueueId(event.text)
+    if (queueId !== undefined && this.options.onFullTextRequest && !this.options.onChatTurn) {
+      this.handleFullTextRequest(queueId, event.clientId)
       return
     }
 
@@ -362,7 +393,24 @@ export class GatewayHub {
       this.sendChatMessage(event.clientId, 'The Agent loop is not configured on this daemon yet.')
       return
     }
-    this.options.onChatTurn(event)
+    try {
+      const acceptance = this.options.onChatTurn(event)
+      if (acceptance) session.send({ type: 'chat.accepted', acceptance })
+    } catch (error) {
+      const message =
+        error instanceof ChatTimelineError
+          ? error.message
+          : error instanceof Error && error.message === 'Unknown Chat Space'
+            ? error.message
+            : 'Chat request could not be accepted.'
+      if (event.submissionId)
+        session.send({
+          type: 'chat.submission-rejected',
+          submissionId: event.submissionId,
+          error: message,
+        })
+      else session.send({ type: 'error', error: message })
+    }
   }
 
   private handleFullTextRequest(queueId: number, clientId: string): void {

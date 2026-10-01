@@ -8,6 +8,8 @@ import {
   type AuthStatus,
   type RenderableAtomNode,
   type ChatMessage,
+  type ChatScope,
+  type ChatTimelineEntry,
   type RenderableGatewayServerMessage,
   type JsonValue,
   type RenderableCommittedFastActionOutcome,
@@ -19,12 +21,8 @@ import {
 } from '@veduta/protocol'
 import * as defaultApi from './api.ts'
 import type { ActionConfirmations, ActionStatuses } from '@veduta/catalog'
-import {
-  applyTurnFrame,
-  interruptTurns,
-  type ChatTurnFrame,
-  type StreamingTurn,
-} from './chat-turn-state.ts'
+import { applyTurnFrame, type ChatTurnFrame, type StreamingTurn } from './chat-turn-state.ts'
+import { ChatTimelineProjection, scopeKey } from './chat-timeline-projection.ts'
 import { cachedSnapshot, saveSnapshot, type SurfaceStreamEvent } from './home-state.ts'
 import type { HomeSpacesLoadState } from './home-space-grid.tsx'
 import { LiveSurfaceProjection } from './live-surface-projection.ts'
@@ -37,10 +35,7 @@ import {
   AUTH_TOKEN_KEY,
   HOME_CACHE_KEY,
   SURFACE_ORDER_KEY,
-  CHAT_HISTORY_LIMIT,
-  readChatHistory,
   readQueuedChat,
-  persistChatHistory,
   persistQueuedChat,
   queuedChatEntry,
   type QueuedChat,
@@ -65,6 +60,9 @@ export interface PwaLiveStateSnapshot {
   readonly gatewayOnline: boolean
   readonly error: string | null
   readonly chatEntries: ChatMessage[]
+  readonly chatTimelineEntries: ChatTimelineEntry[]
+  readonly chatHasOlder: boolean
+  readonly chatLoadingOlder: boolean
   readonly streamingTurns: StreamingTurn[]
   readonly presence: Presence
   readonly pendingDecisions: PendingDecision[]
@@ -84,6 +82,7 @@ type RuntimeApi = Pick<
   typeof defaultApi,
   | 'fetchAuthStatus'
   | 'fetchSpaces'
+  | 'fetchChatTimeline'
   | 'connectGateway'
   | 'fetchPendingDecisions'
   | 'resolvePendingDecision'
@@ -125,6 +124,11 @@ export class PwaLiveStateRuntime {
   private loadState: HomeSpacesLoadState
   private error: string | null = null
   private chatEntries: ChatMessage[]
+  private readonly chatTimeline = new ChatTimelineProjection()
+  private focusedChatScope: ChatScope = { type: 'global' }
+  private transientChatEntries: ChatMessage[] = []
+  private chatLoadingOlder = false
+  private readonly latestChatLoads = new Map<string, Promise<void>>()
   private turns = new Map<string, StreamingTurn>()
   private presence: Presence = []
   private queuedChat: QueuedChat[]
@@ -142,13 +146,13 @@ export class PwaLiveStateRuntime {
     this.surfaces = new LiveSurfaceProjection(cached)
     this.loadState = cached === undefined ? 'loading' : 'ready'
     this.token = this.storage.getItem(AUTH_TOKEN_KEY) ?? undefined
-    this.chatEntries = readChatHistory(this.storage)
+    this.chatEntries = []
     this.queuedChat = readQueuedChat(this.storage)
     this.decisions = new LiveDecisionProjection({
       api: this.api,
       token: () => this.token,
       publish: () => this.publish(),
-      feedback: (update) => this.updateChat(update(this.chatEntries)),
+      feedback: () => {},
       refreshSpaces: () => this.refreshSpaces(),
       failed: (error) => this.failed(error),
     })
@@ -238,7 +242,6 @@ export class PwaLiveStateRuntime {
     this.eventBuffer = []
     this.actions.stop()
     this.agentActions.stop()
-    for (const entry of interruptTurns(this.turns)) this.appendChat(entry)
     this.turns = new Map()
     this.presence = []
     if (this.reconnectTimer !== undefined) clearTimeout(this.reconnectTimer)
@@ -257,6 +260,9 @@ export class PwaLiveStateRuntime {
     this.token = token
     this.clientId = undefined
     this.error = null
+    this.chatTimeline.clear()
+    this.transientChatEntries = []
+    this.refreshChatView()
     if (token) this.storage.setItem(AUTH_TOKEN_KEY, token)
     else this.storage.removeItem(AUTH_TOKEN_KEY)
     this.publish()
@@ -295,7 +301,16 @@ export class PwaLiveStateRuntime {
       gatewayOnline: this.online,
       error: this.error ?? this.actions?.error ?? this.agentActions?.error ?? null,
       chatEntries: this.chatEntries,
-      streamingTurns: [...this.turns.values()],
+      chatTimelineEntries: this.chatTimeline.entries(this.focusedChatScope),
+      chatHasOlder: this.chatTimeline.nextBefore(this.focusedChatScope) !== undefined,
+      chatLoadingOlder: this.chatLoadingOlder,
+      streamingTurns: [...this.turns.values()].filter(
+        (turn) =>
+          scopeKey(scopeForSpace(turn.spaceId)) === scopeKey(this.focusedChatScope) &&
+          !this.chatTimeline
+            .entries(this.focusedChatScope)
+            .some((entry) => entry.kind === 'decision' && entry.turnId === turn.turnId),
+      ),
       presence: this.presence,
       pendingDecisions: this.decisions?.decisions ?? [],
       resolvingDecisionIds: this.decisions?.resolvingIds ?? [],
@@ -322,13 +337,61 @@ export class PwaLiveStateRuntime {
     })
   }
 
-  private updateChat(entries: ChatMessage[]): void {
-    this.chatEntries = entries.slice(-CHAT_HISTORY_LIMIT)
-    persistChatHistory(this.chatEntries, this.storage)
+  private appendChat(entry: ChatMessage): void {
+    this.transientChatEntries = appendAuthoritativeChatEntry(this.transientChatEntries, entry)
+    this.refreshChatView()
   }
 
-  private appendChat(entry: ChatMessage): void {
-    this.updateChat(appendAuthoritativeChatEntry(this.chatEntries, entry))
+  private refreshChatView(): void {
+    this.chatEntries = [
+      ...this.chatTimeline.entries(this.focusedChatScope).map((entry) => entry.message),
+      ...this.transientChatEntries,
+    ]
+  }
+
+  private loadLatestChat(): Promise<void> {
+    const scope = this.focusedChatScope
+    const key = scopeKey(scope)
+    const existing = this.latestChatLoads.get(key)
+    if (existing) return existing
+    const epoch = this.epoch
+    const work = this.api
+      .fetchChatTimeline(scope, undefined, this.token)
+      .then((page) => {
+        if (!this.active(epoch)) return
+        this.chatTimeline.mergePage(scope, page)
+        for (const entry of page.entries)
+          if (entry.kind === 'user' && entry.turnState === 'running')
+            this.gateway?.subscribeChat?.(entry.turnId)
+        if (scopeKey(this.focusedChatScope) === key) this.refreshChatView()
+        this.publish()
+      })
+      .catch((error) => {
+        if (this.active(epoch)) this.failed(error, 'Chat history could not be loaded')
+      })
+      .finally(() => this.latestChatLoads.delete(key))
+    this.latestChatLoads.set(key, work)
+    return work
+  }
+
+  loadOlderChat = async (): Promise<void> => {
+    const scope = this.focusedChatScope
+    const before = this.chatTimeline.nextBefore(scope)
+    if (!before || this.chatLoadingOlder) return
+    const epoch = this.epoch
+    this.chatLoadingOlder = true
+    this.publish()
+    try {
+      const page = await this.api.fetchChatTimeline(scope, before, this.token)
+      if (!this.active(epoch)) return
+      this.chatTimeline.mergePage(scope, page, before)
+      if (scopeKey(this.focusedChatScope) === scopeKey(scope)) this.refreshChatView()
+    } catch (error) {
+      if (this.active(epoch)) this.failed(error, 'Older Chat history could not be loaded')
+    } finally {
+      this.chatLoadingOlder = false
+      if (this.active(epoch)) this.publish()
+    }
   }
 
   private connect(): void {
@@ -349,7 +412,6 @@ export class PwaLiveStateRuntime {
       this.refetchGeneration += 1
       this.refetch = undefined
       this.eventBuffer = []
-      for (const entry of interruptTurns(this.turns)) this.appendChat(entry)
       this.turns = new Map()
       this.decisions.cancel()
       this.notifications.beginConnection()
@@ -375,6 +437,9 @@ export class PwaLiveStateRuntime {
       onSurfacePresentation: (event) => receive({ type: 'surface.presentation', event }),
       onSurfaceActionTurn: receive,
       onChatMessage: receive,
+      onChatAccepted: receive,
+      onChatTimelineEntry: receive,
+      onChatSubmissionRejected: receive,
       onChatTurnStart: receive,
       onChatTurnDelta: receive,
       onChatTurnReplace: receive,
@@ -427,6 +492,7 @@ export class PwaLiveStateRuntime {
         void this.refreshSpaces()
         void this.decisions.refresh()
         void this.notifications.refresh()
+        void this.loadLatestChat()
         this.flushChat()
         void this.actions.flush()
         void this.agentActions.flush()
@@ -448,6 +514,25 @@ export class PwaLiveStateRuntime {
       case 'chat.message':
         this.appendChat(frame.message)
         break
+      case 'chat.accepted':
+        this.queuedChat = this.queuedChat.filter(
+          (entry) => entry.id !== frame.acceptance.submissionId,
+        )
+        persistQueuedChat(this.queuedChat, this.storage)
+        break
+      case 'chat.timeline-entry':
+        this.chatTimeline.observe(frame.entry)
+        if (frame.entry.kind === 'user' && frame.entry.turnState === 'running')
+          this.gateway?.subscribeChat?.(frame.entry.turnId)
+        if (scopeKey(frame.entry.scope) === scopeKey(this.focusedChatScope)) this.refreshChatView()
+        break
+      case 'chat.submission-rejected':
+        this.queuedChat = this.queuedChat.map((entry) =>
+          entry.id === frame.submissionId ? { ...entry, status: 'rejected' } : entry,
+        )
+        persistQueuedChat(this.queuedChat, this.storage)
+        this.error = frame.error
+        break
       case 'chat.turn-start':
       case 'chat.turn-delta':
       case 'chat.turn-replace':
@@ -458,7 +543,7 @@ export class PwaLiveStateRuntime {
           this.decisions.observe(frame.message.pendingDecisions ?? [])
         const result = applyTurnFrame(this.turns, frame)
         this.turns = result.turns
-        if (result.completed) this.appendChat(result.completed)
+        // The terminal entry arrives through the durable timeline frame.
         break
       }
       case 'pending-decision.lifecycle':
@@ -582,47 +667,87 @@ export class PwaLiveStateRuntime {
   }
 
   sendChat = (text: string, spaceId?: string): boolean => {
+    const queued = queuedChatEntry(text, spaceId)
     const parsed = GatewayClientMessageSchema.safeParse({
       type: 'chat.send',
       text,
       ...(spaceId ? { spaceId } : {}),
+      submissionId: queued.id,
     })
     if (!parsed.success) {
       this.reportError('Invalid Chat message')
       return false
     }
-    this.appendChat({ role: 'user', text })
-    const sent = this.trySendChat(text, spaceId)
-    if (!sent) {
-      this.queuedChat = [...this.queuedChat, queuedChatEntry(text, spaceId)]
-      persistQueuedChat(this.queuedChat, this.storage)
-    }
+    this.queuedChat = [...this.queuedChat, queued]
+    persistQueuedChat(this.queuedChat, this.storage)
+    this.trySendChat(queued)
     this.publish()
     return true
   }
 
+  retryInterrupted = (turnId: string): boolean => {
+    const source = this.chatTimeline
+      .entries(this.focusedChatScope)
+      .find(
+        (entry) =>
+          entry.turnId === turnId && entry.kind === 'user' && entry.turnState === 'interrupted',
+      )
+    if (!source) return false
+    if (
+      this.queuedChat.some((entry) => entry.retryOf === turnId) ||
+      this.chatTimeline.entries(this.focusedChatScope).some((entry) => entry.retryOf === turnId)
+    )
+      return false
+    const queued = queuedChatEntry(
+      source.message.text,
+      source.scope.type === 'space' ? source.scope.spaceId : undefined,
+      turnId,
+    )
+    this.queuedChat = [...this.queuedChat, queued]
+    persistQueuedChat(this.queuedChat, this.storage)
+    this.trySendChat(queued)
+    this.publish()
+    return true
+  }
+
+  retryQueuedChat = (id: string): void => {
+    const found = this.queuedChat.find((entry) => entry.id === id)
+    if (!found || found.status !== 'rejected') return
+    const queued = { ...found, status: 'queued' as const }
+    this.queuedChat = this.queuedChat.map((entry) => (entry.id === id ? queued : entry))
+    persistQueuedChat(this.queuedChat, this.storage)
+    this.trySendChat(queued)
+    this.publish()
+  }
+
   private flushChat(): void {
     if (!this.online) return
-    this.queuedChat = this.queuedChat.filter((entry) => {
+    for (const entry of this.queuedChat) {
+      if (entry.status === 'rejected') continue
       if (
         !GatewayClientMessageSchema.safeParse({
           type: 'chat.send',
           text: entry.text,
           ...(entry.spaceId ? { spaceId: entry.spaceId } : {}),
+          submissionId: entry.id,
+          ...(entry.retryOf ? { retryOf: entry.retryOf } : {}),
         }).success
       ) {
         this.error = 'Queued Chat contained an invalid message; it was not sent.'
-        return false
+        this.queuedChat = this.queuedChat.map((item) =>
+          item.id === entry.id ? { ...item, status: 'rejected' } : item,
+        )
+        continue
       }
-      return !this.trySendChat(entry.text, entry.spaceId)
-    })
+      this.trySendChat(entry)
+    }
     persistQueuedChat(this.queuedChat, this.storage)
   }
 
-  private trySendChat(text: string, spaceId?: string): boolean {
+  private trySendChat(entry: QueuedChat): boolean {
     if (!this.online) return false
     try {
-      return this.gateway?.sendChat(text, spaceId) ?? false
+      return this.gateway?.sendChat(entry.text, entry.spaceId, entry.id, entry.retryOf) ?? false
     } catch (error) {
       this.failed(error, 'Chat could not be sent')
       return false
@@ -765,6 +890,14 @@ export class PwaLiveStateRuntime {
   }
 
   focus = (spaceId: string | undefined, focusKey: string): void => {
+    const scope = scopeForSpace(spaceId)
+    if (scopeKey(scope) !== scopeKey(this.focusedChatScope)) {
+      this.focusedChatScope = scope
+      this.transientChatEntries = []
+      this.refreshChatView()
+      this.publish()
+    }
+    if (this.online) void this.loadLatestChat()
     if (this.notifications.focus(spaceId, focusKey) && this.online)
       void this.notifications.refresh()
     const space = this.surfaces.spaces.find((space) => space.id === spaceId)
@@ -797,6 +930,10 @@ export function createPwaLiveStateRuntime(
   options?: PwaLiveStateRuntimeOptions,
 ): PwaLiveStateRuntime {
   return new PwaLiveStateRuntime(options)
+}
+
+function scopeForSpace(spaceId: string | undefined): ChatScope {
+  return spaceId === undefined ? { type: 'global' } : { type: 'space', spaceId }
 }
 
 function mergeActionConfirmations(

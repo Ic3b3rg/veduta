@@ -8,6 +8,7 @@ import {
   type Surface,
   type SurfacePatchEvent,
   type SurfaceSnapshot,
+  type ChatTimelinePage,
 } from '@veduta/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as api from './api.ts'
@@ -115,8 +116,10 @@ function setup(initialStorage: Record<string, string> = {}) {
   })
   const connections: GatewayHandlers[] = []
   const sendChat = vi.fn<api.GatewayConnection['sendChat']>(() => true)
+  const subscribeChat = vi.fn(() => true)
   const close = vi.fn()
   const fetchSpaces = vi.fn(async () => snapshot())
+  const fetchChatTimeline = vi.fn(async (): Promise<ChatTimelinePage> => ({ entries: [] }))
   const invokeSurfaceAction = vi.fn(api.invokeSurfaceAction)
   const pinSurface = vi.fn(api.pinSurface)
   const fetchAuthStatus = vi
@@ -128,12 +131,13 @@ function setup(initialStorage: Record<string, string> = {}) {
       ...api,
       fetchAuthStatus,
       fetchSpaces,
+      fetchChatTimeline,
       invokeSurfaceAction,
       pinSurface,
       fetchPendingDecisions: vi.fn(async () => ({ revision: 0, decisions: [] })),
       connectGateway: vi.fn((handlers) => {
         connections.push(handlers)
-        return { sendChat, close }
+        return { sendChat, subscribeChat, close }
       }),
     },
   })
@@ -145,6 +149,8 @@ function setup(initialStorage: Record<string, string> = {}) {
     invokeSurfaceAction,
     pinSurface,
     sendChat,
+    subscribeChat,
+    fetchChatTimeline,
     close,
     values,
   }
@@ -272,13 +278,56 @@ describe('PWA live-state runtime', () => {
     expect(values.get('veduta.chatQueue')).toContain(identity)
     connections[0]!.onHello(0, 'client-test')
     await Promise.resolve()
-    expect(sendChat).toHaveBeenCalledExactlyOnceWith('queued message', 'spc-test')
+    expect(sendChat).toHaveBeenCalledExactlyOnceWith(
+      'queued message',
+      'spc-test',
+      identity,
+      undefined,
+    )
+    expect(runtime.getSnapshot().queuedChat).toHaveLength(1)
+    connections[0]!.onChatAccepted?.({
+      type: 'chat.accepted',
+      acceptance: {
+        submissionId: identity!,
+        turnId: 'cht-queued',
+        entryId: 'cte-queued',
+        scope: { type: 'space', spaceId: 'spc-test' },
+        state: 'accepted',
+      },
+    })
     expect(runtime.getSnapshot().queuedChat).toHaveLength(0)
     connections[0]!.onClose()
     await vi.advanceTimersByTimeAsync(1000)
     expect(connections[1]?.clientId).toBe('client-test')
     connections[1]!.onHello(0, 'client-test')
     expect(sendChat).toHaveBeenCalledTimes(1)
+    runtime.stop()
+  })
+
+  it('reattaches to a Gateway-owned running turn after reload without resubmitting', async () => {
+    const { runtime, connections, fetchChatTimeline, subscribeChat, sendChat } = setup()
+    fetchChatTimeline.mockResolvedValue({
+      entries: [
+        {
+          id: 'cte-running',
+          turnId: 'cht-running',
+          scope: { type: 'global' },
+          cursor: 'cursor-running',
+          position: 1,
+          revision: 2,
+          kind: 'user',
+          message: { role: 'user', text: 'Long request' },
+          createdAt: '2026-10-01T08:00:00.000Z',
+          updatedAt: '2026-10-01T08:00:01.000Z',
+          turnState: 'running',
+        },
+      ],
+    })
+    await runtime.start()
+    connections[0]!.onHello(0, 'new-device')
+    await vi.waitFor(() => expect(subscribeChat).toHaveBeenCalledWith('cht-running'))
+    expect(runtime.getSnapshot().chatEntries).toEqual([{ role: 'user', text: 'Long request' }])
+    expect(sendChat).not.toHaveBeenCalled()
     runtime.stop()
   })
 
@@ -347,7 +396,7 @@ describe('PWA live-state runtime', () => {
     runtime.stop()
   })
 
-  it('interrupts an unfinished Chat stream exactly once when stopped', async () => {
+  it('does not invent an interruption when a Chat stream disconnects', async () => {
     const { runtime, connections } = setup()
     await runtime.start()
     connections[0]!.onChatTurnStart({ type: 'chat.turn-start', turnId: 'old-turn' })
@@ -360,9 +409,7 @@ describe('PWA live-state runtime', () => {
     runtime.stop()
     await runtime.start()
     expect(runtime.getSnapshot().streamingTurns).toHaveLength(0)
-    expect(
-      runtime.getSnapshot().chatEntries.filter((entry) => entry.text.includes('Partial reply')),
-    ).toHaveLength(1)
+    expect(runtime.getSnapshot().chatEntries).toHaveLength(0)
     runtime.stop()
   })
 
@@ -392,7 +439,11 @@ describe('PWA live-state runtime', () => {
     const { runtime, connections, sendChat } = setup({
       'veduta.chatQueue': JSON.stringify([
         { id: 'invalid', text: '', at: '2026-10-01T08:00:00Z' },
-        { id: 'valid', text: 'Valid queued Chat', at: '2026-10-01T08:00:00Z' },
+        {
+          id: '00000000-0000-4000-8000-000000000001',
+          text: 'Valid queued Chat',
+          at: '2026-10-01T08:00:00Z',
+        },
       ]),
     })
     sendChat.mockImplementation((text) => {
@@ -401,9 +452,14 @@ describe('PWA live-state runtime', () => {
     })
     await runtime.start()
     expect(() => connections[0]!.onHello(0, 'client-test')).not.toThrow()
-    expect(sendChat).toHaveBeenCalledExactlyOnceWith('Valid queued Chat', undefined)
+    expect(sendChat).toHaveBeenCalledExactlyOnceWith(
+      'Valid queued Chat',
+      undefined,
+      '00000000-0000-4000-8000-000000000001',
+      undefined,
+    )
     expect(runtime.getSnapshot().error).toContain('Queued Chat')
-    expect(runtime.getSnapshot().queuedChat).toHaveLength(0)
+    expect(runtime.getSnapshot().queuedChat).toHaveLength(2)
     runtime.stop()
   })
 

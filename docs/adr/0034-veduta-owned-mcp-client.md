@@ -51,15 +51,42 @@ The inspected Linux archive has exactly three regular files: `LICENSE` (1,063 by
 `github-mcp-server` (25,493,688 bytes, digest above). A changed inventory is a different
 artifact requiring review.
 
+The same official v1.12.2 release was separately reviewed for the Darwin arm64 development host.
+`github-mcp-server_Darwin_arm64.tar.gz` has GitHub-published
+`sha256:7e6c5aec43f26b82d3580e77a4ee26872bcd34b48c9a08d0eaef48b5d0563904`.
+Its three regular files are `LICENSE` and `README.md` with the sizes and digests above, plus
+`github-mcp-server` (24,733,314 bytes,
+`sha256:8d7686ec4c5f2a9614c75b329163abaaa915a1cc92423253df4ee7ba2df88de0`).
+This review permits local proof on that host; each other architecture still needs its own reviewed
+artifact and exact inventory.
+
+The Darwin arm64 runtime launches that executable through the host's `sandbox-exec` with a policy
+that denies reads of the Gateway data root and the user's home except for the exact reviewed
+executable. A per-session loopback CONNECT proxy accepts only `api.github.com:443`; the child
+process's network sandbox permits only that proxy port. The Gateway supplies the PAT and proxy
+address in an otherwise minimal child environment. A profile without a verified process boundary
+must fail closed before MCP discovery. The Linux archive is pinned and inventoried, but Linux
+activation remains Unsupported until its process and egress boundary has its own runtime proof.
+
 For the first read, review and select only the GitHub `list_issues` tool, with a repository
 argument fixed by the Space grant. Tool discovery and account validation cannot list issues.
+The reviewed v1.12.2 `list_issues` input schema is captured in
+`packages/daemon/src/fixtures/github-list-issues-v1.12.2.json`; its compact JSON SHA-256 is
+`56536b79a8bd99d49767afbb6fea3dafad31b898094e88496b6d023a07fd9119`.
 The user requests a bounded list of open issues; the Agent calls that one tool, then creates a
-validated, source-linked Surface in the owning Space with a matching Event. A second test may
-enable the reviewed issue-creation tool with Issues write permission; its prepared exact
-repository/title/body require an L1 Approval card. The tool's response and a read-back determine
-the outcome. After a timeout or crash with uncertain remote effect, Veduta reports unknown and
-asks the user to inspect the issue before any retry. The same scenario must pass with BYOK and
-ChatGPT subscription fake Model connections, plus a disposable real GitHub repository/token.
+validated, source-linked Surface in the owning Space with a matching Event. The separate write
+profile selects only `issue_write` from the same v1.12.2 executable and fixes its method to
+`create`. Its reviewed schema is captured in
+`packages/daemon/src/fixtures/github-issue-write-v1.12.2.json`, with compact JSON SHA-256
+`97fade9d761e39e29714162058cbcc5a484d65372be703889dd86f9d062c811b`. Write needs its
+own repository-scoped Connection attempt and Space grant; a read grant cannot authorize it. The
+prepared exact repository, title, and body require an L1 Approval card with no allowlist or editable
+fields. The MCP response and a GitHub API read-back confirm the created issue before the Gateway
+writes a source-linked Surface. A durable effect record prevents replay of a confirmed write and
+refuses automatic retry of a started write whose outcome is unknown after a timeout or crash. The
+user must inspect the repository before requesting another write. The same scenario needs BYOK
+and ChatGPT subscription fake Model connection proof, plus a disposable real GitHub repository and
+fine-grained token.
 
 ## Discovery and per-Space eligibility
 

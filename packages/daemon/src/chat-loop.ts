@@ -323,7 +323,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
     spaceId: string | undefined,
     agentAction?: QueuedAgentTurn,
   ): Promise<AgentActionExecution> {
-    const turnId = randomUUID()
+    const turnId = event.turnId ?? randomUUID()
     const spaceField = spaceId === undefined ? {} : { spaceId }
     const enteredSpaces = new Map<string, Space>()
     const resultTargets: ChatResultTarget[] = []
@@ -702,7 +702,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
     event: PwaChatInput,
     intent: NonNullable<ReturnType<typeof parseChatDecisionIntent>>,
   ): Promise<void> {
-    const turnId = randomUUID()
+    const turnId = event.turnId ?? randomUUID()
     const spaceField = event.spaceId === undefined ? {} : { spaceId: event.spaceId }
     options.send(event.clientId, { type: 'chat.turn-start', turnId, ...spaceField })
     try {
@@ -750,7 +750,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
     if (stopped) {
       // Same lifecycle contract as the unknown-Space path below: an error
       // frame always closes a turn its own `chat.turn-start` opened.
-      const turnId = randomUUID()
+      const turnId = event.turnId ?? randomUUID()
       const spaceField = event.spaceId === undefined ? {} : { spaceId: event.spaceId }
       options.send(event.clientId, { type: 'chat.turn-start', turnId, ...spaceField })
       options.send(event.clientId, {
@@ -769,7 +769,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
       // loop opens a turn before it can ever close one, and a client
       // tracking turns by `turnId` (`chat-turn-state.ts`'s `applyTurnFrame`)
       // would otherwise see an error frame with no turn to close.
-      const turnId = randomUUID()
+      const turnId = event.turnId ?? randomUUID()
       options.send(event.clientId, { type: 'chat.turn-start', turnId, spaceId })
       options.send(event.clientId, {
         type: 'chat.turn-error',

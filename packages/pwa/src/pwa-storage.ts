@@ -1,14 +1,8 @@
-import {
-  ActionIntentIdSchema,
-  ChatMessageSchema,
-  FastActionInvocationSchema,
-  type ChatMessage,
-} from '@veduta/protocol'
+import { ActionIntentIdSchema, FastActionInvocationSchema } from '@veduta/protocol'
 import { z } from 'zod'
 
 export const AUTH_TOKEN_KEY = 'veduta.authToken'
 export const HOME_CACHE_KEY = 'veduta.homeSnapshot'
-export const CHAT_HISTORY_KEY = 'veduta.chatHistory'
 export const CHAT_QUEUE_KEY = 'veduta.chatQueue'
 export const FAST_ACTION_QUEUE_KEY = 'veduta.fastActionQueue'
 export const SURFACE_ORDER_KEY = 'veduta.surfaceOrder'
@@ -20,6 +14,8 @@ export interface QueuedChat {
   text: string
   at: string
   spaceId?: string
+  retryOf?: string
+  status?: 'queued' | 'rejected'
 }
 
 export const QueuedFastActionSchema = z
@@ -46,9 +42,17 @@ export interface BrowserInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' | string }>
 }
 
-export function queuedChatEntry(text: string, spaceId: string | undefined): QueuedChat {
+export function queuedChatEntry(
+  text: string,
+  spaceId: string | undefined,
+  retryOf?: string,
+): QueuedChat {
   const entry = { id: crypto.randomUUID(), text, at: new Date().toISOString() }
-  return spaceId === undefined ? entry : { ...entry, spaceId }
+  return {
+    ...entry,
+    ...(spaceId === undefined ? {} : { spaceId }),
+    ...(retryOf === undefined ? {} : { retryOf }),
+  }
 }
 
 export function defaultDeviceName(): string {
@@ -60,23 +64,6 @@ export function isStandalone(): boolean {
     window.matchMedia('(display-mode: standalone)').matches ||
     Boolean((navigator as Navigator & { standalone?: boolean }).standalone)
   )
-}
-
-export function readChatHistory(storage: Storage = localStorage): ChatMessage[] {
-  const raw = storage.getItem(CHAT_HISTORY_KEY)
-  if (!raw) return []
-  try {
-    const parsed = ChatMessageSchema.array().safeParse(JSON.parse(raw))
-    return parsed.success ? parsed.data : []
-  } catch {
-    return []
-  }
-}
-
-export const CHAT_HISTORY_LIMIT = 80
-
-export function persistChatHistory(entries: ChatMessage[], storage: Storage = localStorage): void {
-  storage.setItem(CHAT_HISTORY_KEY, JSON.stringify(entries.slice(-CHAT_HISTORY_LIMIT)))
 }
 
 export function readQueuedChat(storage: Storage = localStorage): QueuedChat[] {
@@ -143,7 +130,11 @@ function isQueuedChat(value: unknown): value is QueuedChat {
     typeof value['id'] === 'string' &&
     typeof value['text'] === 'string' &&
     typeof value['at'] === 'string' &&
-    (value['spaceId'] === undefined || typeof value['spaceId'] === 'string')
+    (value['spaceId'] === undefined || typeof value['spaceId'] === 'string') &&
+    (value['retryOf'] === undefined || typeof value['retryOf'] === 'string') &&
+    (value['status'] === undefined ||
+      value['status'] === 'queued' ||
+      value['status'] === 'rejected')
   )
 }
 

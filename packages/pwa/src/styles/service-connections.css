@@ -1,0 +1,60 @@
+.settings-service-connections {
+  display: grid;
+  gap: 24px;
+}
+
+.settings-service-connections section {
+  display: grid;
+  gap: 14px;
+}
+
+.settings-service-connections article {
+  background: var(--surface, transparent);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+}
+
+.settings-service-connections article h3,
+.settings-service-connections article h4,
+.settings-service-connections article p {
+  margin: 0;
+}
+
+.settings-service-connections dl {
+  display: grid;
+  gap: 4px 14px;
+  grid-template-columns: minmax(130px, 190px) minmax(0, 1fr);
+  margin: 0;
+}
+
+.settings-service-connections dt {
+  color: var(--text-soft);
+}
+
+.settings-service-connections dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-service-connections form,
+.settings-service-connections form label {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-service-connections form {
+  max-width: 38rem;
+}
+
+.settings-service-connections button {
+  justify-self: start;
+}
+
+@media (max-width: 640px) {
+  .settings-service-connections dl {
+    grid-template-columns: 1fr;
+  }
+}

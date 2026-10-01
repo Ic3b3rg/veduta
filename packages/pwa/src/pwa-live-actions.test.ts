@@ -111,6 +111,7 @@ function setup(stored: Record<string, string> = {}, fixture = initial) {
         passkeyRegistered: false,
       })),
       fetchPendingDecisions: vi.fn(async () => ({ revision: 0, decisions: [] })),
+      fetchChatTimeline: vi.fn(async () => ({ entries: [] })),
       fetchAutomationOutcomeNotifications: vi.fn(async () => ({ revision: 0, notifications: [] })),
       connectGateway: (handlers) => {
         connections.push(handlers)

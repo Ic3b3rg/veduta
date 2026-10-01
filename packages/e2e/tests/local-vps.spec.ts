@@ -7,6 +7,7 @@ import {
   type AutomationOutcomeOccurrence,
 } from '../../daemon/src/automation-outcome-service.ts'
 import { Store } from '../../daemon/src/store.ts'
+import { SpacesEngine } from '../../daemon/src/spaces-engine.ts'
 import { verifyLiveRuntime } from './live-runtime-journey.ts'
 import { expectCompleteGymPlan } from './gym-plan-journey.ts'
 import { verifySurfaceAuthoring } from './surface-authoring-journey.ts'
@@ -584,11 +585,26 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       const notification = page.locator('.pending-decision-notification', {
         hasText: 'Change the “Meals” Surface tree',
       })
+      const chatDecision = page.locator('.chat-entry', {
+        has: page.locator('.chat-pending-decision', { hasText: 'Change the “Meals” Surface tree' }),
+      })
+      await expect(chatDecision).toHaveCount(1)
+      const decisionEntryId = await chatDecision.getAttribute('data-chat-entry-id')
+      expect(decisionEntryId).toBeTruthy()
+      await page.reload()
+      await expect(chatDecision).toHaveCount(1)
+      await expect(chatDecision).toHaveAttribute('data-chat-entry-id', decisionEntryId!)
       await notification
         .getByRole('button', { name: 'Accept Change the “Meals” Surface tree' })
         .click()
       await expect(initiatingDecision).toHaveCount(0)
       await expect(meals.getByText('Today’s calorie estimate')).toBeVisible()
+      await expect(chatDecision).toHaveCount(1)
+      await expect(chatDecision.locator('.chat-pending-decision-outcome')).toBeVisible()
+      await page.reload()
+      await expect(chatDecision).toHaveCount(1)
+      await expect(chatDecision).toHaveAttribute('data-chat-entry-id', decisionEntryId!)
+      await expect(chatDecision.locator('.chat-pending-decision-outcome')).toBeVisible()
 
       await observerContext.close()
       observerContext = undefined
@@ -853,12 +869,122 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
 
     await verifyLiveRuntime(browser, page, stack!.origin)
 
+    await test.step('Chat reattaches to a live turn and requires explicit Retry after Gateway interruption', async () => {
+      await page.goto(`${stack!.origin}/app/space/health`)
+      const request = 'show progressive surface demo'
+      const composer = page.getByRole('textbox', { name: 'Message Veduta in Health' })
+      const users = page.locator('.chat-entry.user', { hasText: request })
+      await composer.fill(request)
+      await composer.press('Enter')
+      await expect(users.last()).toContainText('Running')
+      await page.reload()
+      await expect(users.last()).toContainText('Running')
+      await expect(users.last().getByText('Running')).toHaveCount(0, { timeout: 20_000 })
+
+      await composer.fill(request)
+      await composer.press('Enter')
+      await expect(users.last()).toContainText('Running')
+      const countBeforeRetry = await users.count()
+      const restart = {
+        port: stack!.port,
+        baseDir: stack!.baseDir,
+        legacyHome: stack!.legacyHome,
+      }
+      await stack!.stop()
+      new SpacesEngine({ rootDir: join(restart.baseDir, 'data') }).createSpace({ name: 'Work' })
+      stack = await startLocalVpsStack(restart)
+      await stack.waitForReadyLine()
+      await page.reload()
+      await expect(users.last()).toContainText('Interrupted. Completion is unknown.')
+      await users.last().getByRole('button', { name: 'Retry' }).click()
+      await expect(users).toHaveCount(countBeforeRetry + 1)
+      await expect(users.last().getByText('Running')).toHaveCount(0, { timeout: 20_000 })
+    })
+
+    await test.step('global, Health, and Work Chat timelines stay separate through navigation and reload', async () => {
+      const health = 'Health scope browser marker'
+      const global = 'Global scope browser marker'
+      const work = 'Work scope browser marker'
+      const send = async (name: string, message: string) => {
+        const composer = page.getByRole('textbox', { name })
+        await composer.fill(message)
+        await composer.press('Enter')
+        await expect(page.locator('.chat-entry.user', { hasText: message })).toHaveCount(1)
+      }
+      await send('Message Veduta in Health', health)
+      await page.goto(stack!.origin)
+      await send('Message Veduta', global)
+      await expect(page.locator('.chat-entry.user', { hasText: health })).toHaveCount(0)
+      await page.goto(`${stack!.origin}/app/space/work`)
+      await send('Message Veduta in Work', work)
+      await expect(page.locator('.chat-entry.user', { hasText: global })).toHaveCount(0)
+      await expect(page.locator('.chat-entry.user', { hasText: health })).toHaveCount(0)
+      await page.reload()
+      await expect(page.locator('.chat-entry.user', { hasText: work })).toHaveCount(1)
+      await page.goto(`${stack!.origin}/app/space/health`)
+      await expect(page.locator('.chat-entry.user', { hasText: health })).toHaveCount(1)
+      await expect(page.locator('.chat-entry.user', { hasText: work })).toHaveCount(0)
+      await page.goto(stack!.origin)
+      await expect(page.locator('.chat-entry.user', { hasText: global })).toHaveCount(1)
+      await expect(page.locator('.chat-entry.user', { hasText: work })).toHaveCount(0)
+    })
+
+    await test.step('shared Service connection review survives refresh and cancellation for GitHub and Gmail', async () => {
+      const composer = page.getByRole('textbox', { name: 'Message Veduta' })
+      await composer.fill('List open issues in example/disposable in Work Space')
+      await composer.press('Enter')
+      await page.getByRole('button', { name: 'Service connections' }).click()
+      const github = page.locator('section[aria-label="Connection attempts"] article', {
+        has: page.getByRole('heading', { name: 'GitHub for Work' }),
+      })
+      await expect(github).toContainText('list_issues')
+      await expect(github).toContainText('example/disposable')
+      await expect(github).toContainText('v1.12.2')
+      await expect(github.getByRole('button', { name: 'Verify GitHub connection' })).toBeDisabled()
+      await page.reload()
+      await expect(github).toContainText('State: reviewing')
+      const observerPage = observerContext!.pages()[0]!
+      await observerPage.goto(page.url())
+      const observerGithub = observerPage.locator(
+        'section[aria-label="Connection attempts"] article',
+        {
+          has: observerPage.getByRole('heading', { name: 'GitHub for Work' }),
+        },
+      )
+      await expect(observerGithub).toContainText('State: reviewing')
+      await github.getByRole('button', { name: 'Cancel this request' }).click()
+      await expect(github).toContainText('State: cancelled')
+      await expect(observerGithub).toContainText('State: cancelled')
+
+      await page.getByRole('button', { name: 'Back to Home' }).click()
+      await composer.fill('Find unread emails since 2026-09-30 in Work Space')
+      await composer.press('Enter')
+      await page.getByRole('button', { name: 'Service connections' }).click()
+      const gmail = page.locator('section[aria-label="Connection attempts"] article', {
+        has: page.getByRole('heading', { name: 'Gmail for Work' }),
+      })
+      await expect(gmail).toContainText('search_mailbox')
+      await expect(gmail).toContainText('Gateway native HTTPS')
+      await expect(
+        gmail.getByRole('button', { name: 'Continue to Gmail authorization' }),
+      ).toBeDisabled()
+      await page.reload()
+      await expect(gmail).toContainText('State: reviewing')
+      await gmail.getByRole('button', { name: 'Cancel this request' }).click()
+      await expect(gmail).toContainText('State: cancelled')
+      await page.getByRole('button', { name: 'Back to Home' }).click()
+    })
+
     await test.step('login leg: clear the token, log back in with the SAME virtual authenticator', async () => {
       await page.evaluate(() => localStorage.removeItem('veduta.authToken'))
       await page.reload()
 
       await expect(page.getByRole('button', { name: 'Sign in with passkey' })).toBeVisible()
       await page.getByRole('button', { name: 'Sign in with passkey' }).click()
+      await expect(
+        page.locator('.chat-entry.user', { hasText: 'Global scope browser marker' }),
+      ).toHaveCount(1)
+      await page.goto(`${stack!.origin}/app/space/health`)
       await expect(page.getByRole('button', { name: 'Focus Meals' })).toBeVisible({
         timeout: 15_000,
       })

@@ -60,8 +60,15 @@ const RecordSchema = HimalayaConnectionSchema.extend({
   imapPasswordRef: SecretRefSchema,
   smtpPasswordRef: SecretRefSchema.optional(),
   legacySource: z.string().optional(),
+  imapAuthMethod: z.enum(['LOGIN', 'AUTH=LOGIN', 'AUTH=PLAIN']).optional(),
 }).strict()
-const FileSchema = z.object({ version: z.literal(1), connections: z.array(RecordSchema) }).strict()
+const FileSchema = z
+  .object({
+    version: z.literal(1),
+    connections: z.array(RecordSchema),
+    dismissedLegacyIds: z.array(z.string()).default([]),
+  })
+  .strict()
 const CheckSchema = z.object({
   account: z.string(),
   backends: z.array(
@@ -113,6 +120,7 @@ export class HimalayaConnections {
   private readonly now: () => Date
   private readonly run: (request: CommandRequest) => Promise<CommandResult>
   private records: Record[]
+  private readonly dismissedLegacyIds: Set<string>
   private credentialDir: string | undefined
 
   constructor(private readonly options: HimalayaConnectionsOptions) {
@@ -121,10 +129,11 @@ export class HimalayaConnections {
     this.managedBinaryPath = join(options.rootDir, 'bin', 'himalaya')
     this.now = options.now ?? (() => new Date())
     this.run = options.run ?? runCommand
-    this.records = existsSync(this.recordsPath)
+    const file = existsSync(this.recordsPath)
       ? FileSchema.parse(readJsonFile(this.recordsPath, { description: 'Himalaya connections' }))
-          .connections
-      : []
+      : FileSchema.parse({ version: 1, connections: [] })
+    this.records = file.connections
+    this.dismissedLegacyIds = new Set(file.dismissedLegacyIds)
     this.adoptLegacySources()
   }
 
@@ -344,6 +353,7 @@ export class HimalayaConnections {
   remove(id: string): HimalayaConnectionsSnapshot {
     const record = this.find(id)
     this.records = this.records.filter((candidate) => candidate.id !== id)
+    if (record.legacySource) this.dismissedLegacyIds.add(id)
     this.persist()
     for (const ref of [record.imapPasswordRef, record.smtpPasswordRef]) {
       if (ref?.startsWith('secret://vault/himalaya-')) {
@@ -420,8 +430,8 @@ export class HimalayaConnections {
       `email = ${JSON.stringify(record.address)}`,
       `imap.server = ${JSON.stringify(record.imapServer)}`,
       ...(imapStarttls ? ['imap.starttls = true'] : []),
-      `imap.sasl.plain.username = ${JSON.stringify(imapUsername)}`,
-      `imap.sasl.plain.password.command = ${JSON.stringify(['cat', imapFile])}`,
+      `imap.sasl.${record.imapAuthMethod === 'AUTH=PLAIN' || !record.imapAuthMethod ? 'plain' : 'login'}.username = ${JSON.stringify(imapUsername)}`,
+      `imap.sasl.${record.imapAuthMethod === 'AUTH=PLAIN' || !record.imapAuthMethod ? 'plain' : 'login'}.password.command = ${JSON.stringify(['cat', imapFile])}`,
       `smtp.server = ${JSON.stringify(record.smtpServer)}`,
       ...(smtpStarttls ? ['smtp.starttls = true'] : []),
       `smtp.sasl.plain.username = ${JSON.stringify(smtpUsername)}`,
@@ -454,7 +464,14 @@ export class HimalayaConnections {
 
   private persist(): void {
     backupFile(this.recordsPath)
-    writeJsonAtomic(this.recordsPath, FileSchema.parse({ version: 1, connections: this.records }))
+    writeJsonAtomic(
+      this.recordsPath,
+      FileSchema.parse({
+        version: 1,
+        connections: this.records,
+        dismissedLegacyIds: [...this.dismissedLegacyIds],
+      }),
+    )
   }
 
   private adoptLegacySources(): void {
@@ -464,7 +481,8 @@ export class HimalayaConnections {
     )) {
       if (source.adapter !== 'imap-idle') continue
       const id = `svc-himalaya-legacy-${sourceName}`
-      if (this.records.some((record) => record.id === id)) continue
+      if (this.records.some((record) => record.id === id) || this.dismissedLegacyIds.has(id))
+        continue
       const username = this.options.secrets.resolve(source.imap.usernameRef)
       const at = this.now().toISOString()
       this.records.push({
@@ -476,6 +494,7 @@ export class HimalayaConnections {
         imapServer: `imaps://${source.imap.host}:${source.imap.port}`,
         imapUsernameRef: source.imap.usernameRef,
         imapPasswordRef: source.imap.passwordRef,
+        imapAuthMethod: source.imap.authMethod,
         legacySource: sourceName,
         state: 'needs_smtp',
         reason: 'Add SMTP settings to finish the passive Mailbox connection',

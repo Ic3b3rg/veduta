@@ -1,9 +1,11 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   GatewayServerMessageSchema,
   GmailConnectionsSnapshotSchema,
+  GMAIL_READ_SCOPE,
   SurfaceSchema,
   type GatewayServerMessage,
 } from '@veduta/protocol'
@@ -127,8 +129,34 @@ describe('focused Mailbox Chat with Gmail', () => {
     })
     const first = buildServer({ dataDir, gmailFetch, now: () => new Date('2026-10-01T12:00:00Z') })
     try {
-      await connectedAccount(first.app, 'Personal', 'personal')
-      await connectedAccount(first.app, 'Work', 'work')
+      const personalId = await connectedAccount(first.app, 'Personal', 'personal')
+      const workId = await connectedAccount(first.app, 'Work', 'work')
+      for (const [id, account] of [
+        [personalId, 'one@gmail.test'],
+        [workId, 'work@gmail.test'],
+      ] as const) {
+        const attempt = first.serviceConnections.createAttempt({
+          submissionId: randomUUID(),
+          turnId: `cht-grant-${id}`,
+          spaceId: 'spc-health',
+          requestSummary: 'Read bounded Mailbox summaries',
+          review: {
+            service: 'gmail',
+            scopes: [GMAIL_READ_SCOPE],
+            actions: ['search_mailbox'],
+            executionHost: 'Gateway native HTTPS',
+          },
+        })
+        first.serviceConnections.beginAuthorization(attempt.id)
+        first.serviceConnections.beginVerification(attempt.id)
+        first.serviceConnections.verified(attempt.id, {
+          connectionId: id,
+          account,
+          scopes: [GMAIL_READ_SCOPE],
+          mechanism: 'gmail-oauth',
+        })
+        first.serviceConnections.grant(attempt.id, account, [GMAIL_READ_SCOPE])
+      }
       expect(requests.filter((request) => request.url.includes('/messages'))).toHaveLength(0)
       const socket = new Socket()
       first.gateway.connect(socket)
@@ -163,7 +191,9 @@ describe('focused Mailbox Chat with Gmail', () => {
         (request) => request.url.endsWith('/messages') || request.url.includes('/messages?'),
       )!
       const query = new URL(list.url).searchParams
-      expect(query.get('q')).toBe('{receipt invoice} is:unread after:2026/09/28 before:2026/10/05')
+      expect(query.get('q')).toBe(
+        '{receipt invoice} label:"Personal" is:unread after:1790553600 before:1791158400',
+      )
       expect(query.get('maxResults')).toBe('20')
       expect(
         requests

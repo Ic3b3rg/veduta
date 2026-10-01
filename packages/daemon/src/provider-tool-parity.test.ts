@@ -1,8 +1,14 @@
+import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
-import { AtomNodeSchema } from '@veduta/protocol'
+import {
+  AtomNodeSchema,
+  type ServiceConnection,
+  type SpaceCapabilityGrant,
+  SurfaceSchema,
+} from '@veduta/protocol'
 import { z } from 'zod'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defineTool, type AgentEvent, type ModelRef } from './agent-runner.ts'
@@ -15,6 +21,8 @@ import {
   type FakeCodexTransport,
 } from './codex-app-server-fake.ts'
 import { fakeText, fakeToolCall, createFakeProvider } from './fake-provider.ts'
+import { createGithubMcpTools } from './github-mcp-tools.ts'
+import type { GithubMcpService } from './github-mcp-service.ts'
 import type { AdapterContext } from './model-connection-adapter.ts'
 import { codexSubscriptionAdapter } from './model-connection-codex.ts'
 import { defaultRoutingConfig, type SecretResolver } from './model-routing.ts'
@@ -25,6 +33,7 @@ import {
   type ProviderBridge,
 } from './pi-provider-bridge.ts'
 import { normalizeAgentEvents, normalizeSessionEntries } from './provider-parity-test-support.ts'
+import { Store } from './store.ts'
 import { piToolParameters } from './tool-parameters.ts'
 
 const createdDirs: string[] = []
@@ -180,6 +189,109 @@ function createSequentialCodexProvider(): {
 }
 
 describe('AgentRunner dynamic-tool provider parity', () => {
+  it('runs the same reviewed GitHub read ToolDef through BYOK and subscription inference', async () => {
+    const prompt = 'List open issues in example/disposable'
+    const input = { owner: 'example', repo: 'disposable' }
+    const run = async (method: 'byok' | 'subscription') => {
+      const store = new Store({ rootDir: tempDir(`veduta-github-${method}-`) })
+      const space = store.spacesEngine.createSpace({ name: 'Work' })
+      const calls: string[] = []
+      const github = fromPartial<GithubMcpService>({
+        listOpenIssues: async ({
+          spaceId,
+          repository,
+        }: Parameters<GithubMcpService['listOpenIssues']>[0]) => {
+          calls.push(`${spaceId}:${repository.owner}/${repository.name}`)
+          return {
+            text: JSON.stringify({ issues: [{ number: 14, title: 'Disposable result' }] }),
+            connection: fromPartial<ServiceConnection>({ id: 'svc-github-test' }),
+            grant: fromPartial<SpaceCapabilityGrant>({ id: 'grant-test' }),
+            origin: 'untrusted:github-mcp-svc-github-test',
+          }
+        },
+      })
+      const tools = createGithubMcpTools({
+        store,
+        github,
+        spaceId: space.id,
+        now: () => new Date('2026-10-01T12:00:00.000Z'),
+      })
+      const provider =
+        method === 'byok'
+          ? (() => {
+              const fake = createFakeProvider()
+              fake.setResponses([
+                { message: fakeToolCall('list_github_issues', input) },
+                { message: fakeText('done') },
+              ])
+              return fake
+            })()
+          : createCodexProvider({
+              tool: 'list_github_issues',
+              input,
+              resultText: JSON.stringify({
+                repository: 'example/disposable',
+                count: 1,
+                issues: [{ number: 14, title: 'Disposable result' }],
+                surfaceId: `srf-github-issues-${createHash('sha256')
+                  .update('github-subscription:call-1')
+                  .digest('hex')
+                  .slice(0, 24)}`,
+              }),
+              finalText: 'done',
+            }).bridge
+      const sessionStore = new PiJsonlSessionStore({
+        cwd: tempDir(`veduta-github-${method}-cwd-`),
+        sessionsRoot: tempDir(`veduta-github-${method}-sessions-`),
+      })
+      const runner = new PiAgentRunner({
+        sessionStore,
+        resolveModel: provider.resolveModel,
+        getApiKey: provider.getApiKey,
+        streamFn: provider.streamFn,
+        toolParameters: piToolParameters(tools),
+      })
+      const events: AgentEvent[] = []
+      runner.on((event) => {
+        events.push(event)
+      })
+      await runner.start(`github-${method}`)
+      await runner.prompt(prompt, {
+        model:
+          method === 'byok'
+            ? { provider: 'fake', modelId: 'fake-model', tier: 'reasoning' }
+            : {
+                provider: 'openai',
+                modelId: 'gpt-5-codex',
+                tier: 'reasoning',
+                connectionId: 'codex-conn',
+              },
+        tools,
+        spaceId: space.id,
+        trigger: { kind: 'chat', id: `github-${method}` },
+        initiatingTurn: { clientId: 'parity-client', turnId: `github-${method}` },
+      })
+      const surface = store.listSurfaces(space.id).find((item) => item.title === 'GitHub issues')
+      expect(surface).toBeDefined()
+      expect(SurfaceSchema.parse(surface).spaceId).toBe(space.id)
+      expect(JSON.stringify(surface!.tree)).toContain('Disposable result')
+      expect(store.eventLog(space.id).some((event) => event.type === 'surface.create')).toBe(true)
+      return {
+        calls: calls.map((call) => call.slice(call.indexOf(':') + 1)),
+        toolResults: events
+          .filter((event) => event.type === 'tool-result')
+          .map((event) => ({ toolName: event.toolName, isError: event.isError })),
+      }
+    }
+    const byok = await run('byok')
+    const subscription = await run('subscription')
+    expect(byok).toEqual({
+      calls: ['example/disposable'],
+      toolResults: [{ toolName: 'list_github_issues', isError: false }],
+    })
+    expect(subscription).toEqual(byok)
+  })
+
   it('rejects malformed Atom arguments with precise shared diagnostics before either provider can execute', async () => {
     const input = { value: { id: 'text', type: 'Text', props: { text: 'Visible', fontSize: 20 } } }
     const error = JSON.stringify({

@@ -24,6 +24,7 @@ function renderRoute(path: string) {
         modelConnections={<p>Model connections screen</p>}
         gmailConnections={<p>Gmail connections screen</p>}
         himalayaConnections={<p>IMAP and SMTP connections screen</p>}
+        serviceConnections={<p>Service connections screen</p>}
       />
     </MemoryRouter>,
   )
@@ -34,6 +35,7 @@ describe('client route table', () => {
     ['/', 'App shell'],
     ['/setup', 'App shell'],
     ['/app/settings/models', 'Model connections screen'],
+    ['/app/connections', 'Service connections screen'],
     ['/app/settings/gmail', 'Gmail connections screen'],
     ['/app/settings/mailboxes', 'IMAP and SMTP connections screen'],
     ['/app/space/health', 'App shell'],

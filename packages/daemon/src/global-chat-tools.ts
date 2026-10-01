@@ -173,6 +173,7 @@ function scopeFocusedTool(
 }
 
 const MUTATING_TOOL_NAMES = new Set([
+  'create_github_issue',
   'send_message',
   'transfer_funds',
   'create_surface',

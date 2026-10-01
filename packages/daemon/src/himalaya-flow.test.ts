@@ -97,6 +97,20 @@ describe('Himalaya Mailbox through focused Chat', () => {
       expect(
         server.store.eventLog('spc-health').filter((event) => event.type === 'tool.execution'),
       ).toHaveLength(2)
+      expect(
+        server.trust.auditEntries().filter((entry) => entry.kind === 'general.execution'),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ toolName: 'execute_command', outcome: 'error' }),
+          expect.objectContaining({ toolName: 'install_himalaya', outcome: 'executed' }),
+        ]),
+      )
+      expect(
+        server.trust
+          .auditEntries()
+          .filter((entry) => entry.kind === 'general.execution')
+          .every((entry) => Boolean(entry.contextHash)),
+      ).toBe(true)
     } finally {
       await server.app.close()
     }
@@ -243,7 +257,7 @@ describe('Himalaya Mailbox through focused Chat', () => {
     }
   })
 
-  it('adopts archived IMAP IDLE credentials idempotently without contacting the provider', () => {
+  it('adopts archived IMAP IDLE credentials idempotently without contacting the provider', async () => {
     const dataDir = root()
     const vault = SecretsVault.open(dataDir, Buffer.from('himalaya-flow-vault-key'))
     vault.set('archived-username', 'old@example.test')
@@ -260,7 +274,7 @@ describe('Himalaya Mailbox through focused Chat', () => {
             imap: {
               host: 'imap.old.test',
               port: 993,
-              authMethod: 'AUTH=PLAIN',
+              authMethod: 'AUTH=LOGIN',
               usernameRef: 'secret://vault/archived-username',
               passwordRef: 'secret://vault/archived-password',
             },
@@ -268,7 +282,20 @@ describe('Himalaya Mailbox through focused Chat', () => {
         },
       }),
     )
-    const run = vi.fn(async (request: CommandRequest) => outcome(request, ''))
+    const run = vi.fn(async (request: CommandRequest) =>
+      outcome(
+        request,
+        request.command.endsWith('--version')
+          ? 'himalaya v2.1.0\n'
+          : JSON.stringify({
+              account: 'svc-himalaya-legacy-oldmail',
+              backends: [
+                { backend: 'imap', ok: true },
+                { backend: 'smtp', ok: true },
+              ],
+            }),
+      ),
+    )
     const options = { rootDir: dataDir, vault, secrets: vault, run }
     const first = new HimalayaConnections(options)
     const second = new HimalayaConnections(options)
@@ -290,6 +317,13 @@ describe('Himalaya Mailbox through focused Chat', () => {
     })
     expect(vault.resolve('secret://vault/archived-password')).toBe('archived-imap-secret')
     expect(second.snapshot().connections[0]?.state).toBe('needs_verification')
+    await second.verify('svc-himalaya-legacy-oldmail')
+    const configDir = join(dataDir, 'himalaya-config')
+    expect(readFileSync(join(configDir, readdirSync(configDir)[0]!), 'utf8')).toContain(
+      'imap.sasl.login.username',
+    )
+    second.remove('svc-himalaya-legacy-oldmail')
+    expect(new HimalayaConnections(options).snapshot().connections).toEqual([])
     first.close()
     second.close()
   })

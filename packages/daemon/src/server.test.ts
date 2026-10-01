@@ -60,6 +60,17 @@ describe('Gmail connection routes under production auth', () => {
     })
     const routes = [
       ['GET', '/api/gmail-connections'],
+      ['GET', '/api/chat/timeline'],
+      ['GET', '/api/service-connections'],
+      ['POST', '/api/service-connections/attempts/example/github/authorize'],
+      ['POST', '/api/service-connections/attempts/example/gmail/authorize'],
+      ['POST', '/api/service-connections/gmail/callback'],
+      ['POST', '/api/service-connections/attempts/example/grant'],
+      ['POST', '/api/service-connections/attempts/example/cancel'],
+      ['POST', '/api/service-connections/attempts/example/retry'],
+      ['POST', '/api/service-connections/grants/example/disable'],
+      ['POST', '/api/service-connections/example/disable'],
+      ['DELETE', '/api/service-connections/example'],
       ['POST', '/api/gmail-connections'],
       ['PATCH', '/api/gmail-connections/svc-gmail-example'],
       ['POST', '/api/gmail-connections/svc-gmail-example/authorize'],
@@ -1901,22 +1912,26 @@ describe('event ingestion wiring (issue #12)', () => {
     const socket = new SchedulerFakeSocket()
     gateway.connect(socket)
     socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
-    socket.receive({ type: 'chat.send', text: 'show me the full text of event #1' })
+    socket.receive({
+      type: 'chat.send',
+      text: 'show me the full text of event #1',
+      submissionId: '58bc0db0-0f32-4439-a3c6-62a639934db6',
+    })
     // The dedicated turn resolves asynchronously (queue lookup + runner).
     await vi.waitFor(() => {
       expect(
         socket.sent.some(
           (frame) =>
-            frame.type === 'chat.message' &&
-            frame.message.text === 'Displayed the requested content.',
+            frame.type === 'chat.timeline-entry' &&
+            frame.entry.message.text === 'Displayed the requested content.',
         ),
       ).toBe(true)
     })
     // The canned mock reply is content-free by construction; the raw
     // subject never enters the chat history.
     const chatTexts = socket.sent
-      .filter((frame) => frame.type === 'chat.message')
-      .map((frame) => (frame as { message: { text: string } }).message.text)
+      .filter((frame) => frame.type === 'chat.timeline-entry')
+      .map((frame) => (frame as { entry: { message: { text: string } } }).entry.message.text)
     expect(chatTexts.join('\n')).not.toContain('secret lunch plan')
     const sessions = new PiJsonlSessionStore({
       cwd: store.spacesEngine.rootDir,

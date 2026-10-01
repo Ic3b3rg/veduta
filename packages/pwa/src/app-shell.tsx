@@ -1,6 +1,7 @@
 import type {
   AutomationOutcomeNotification,
   ChatMessage,
+  ChatTimelineEntry,
   PendingDecision,
   PendingDecisionResolution,
   RenderableSurface,
@@ -21,7 +22,7 @@ import {
 } from './pending-decision-notifications.tsx'
 import { presentPendingDecisions } from './pending-decision-presentation.ts'
 import { latestPendingDecisionFeedback } from './pending-decision-state.ts'
-import type { BrowserInstallPromptEvent } from './pwa-storage.ts'
+import type { BrowserInstallPromptEvent, QueuedChat } from './pwa-storage.ts'
 import { SpaceSection } from './space-section.tsx'
 import { SpaceAutomationOutcomeNotifications } from './space-automation-outcome-notifications.tsx'
 import type { SurfaceUpdateFeedback } from './surface-motion.ts'
@@ -53,12 +54,17 @@ interface AppShellProps {
   automationOutcomeNotifications: AutomationOutcomeNotification[]
   pendingAutomationOutcomeNotificationIds: ReadonlySet<string>
   chatEntries: ChatMessage[]
+  chatTimelineEntries: ChatTimelineEntry[]
+  chatHasOlder: boolean
+  chatLoadingOlder: boolean
+  queuedChat: QueuedChat[]
   streamingEntries: { turnId: string; text: string }[]
   focusChatToken: string
   focusChatOnRouteChange: boolean
   onOpenModelConnections: () => void
   onOpenGmailConnections: () => void
   onOpenHimalayaConnections: () => void
+  onOpenServiceConnections: () => void
   onRetrySpaces: () => void
   onInstallDone: () => void
   onFocusSpace: (space: SpaceWithSurfaces, surface?: RenderableSurface) => void
@@ -81,6 +87,9 @@ interface AppShellProps {
     notification: AutomationOutcomeNotification,
   ) => Promise<void> | void
   onSend: (message: string) => boolean
+  onLoadOlderChat: () => void
+  onRetryInterruptedChat: (turnId: string) => void
+  onRetryQueuedChat: (id: string) => void
 }
 
 interface RouteRecovery {
@@ -107,12 +116,17 @@ export function AppShell({
   automationOutcomeNotifications,
   pendingAutomationOutcomeNotificationIds,
   chatEntries,
+  chatTimelineEntries,
+  chatHasOlder,
+  chatLoadingOlder,
+  queuedChat,
   streamingEntries,
   focusChatToken,
   focusChatOnRouteChange,
   onOpenModelConnections,
   onOpenGmailConnections,
   onOpenHimalayaConnections,
+  onOpenServiceConnections,
   onRetrySpaces,
   onInstallDone,
   onFocusSpace,
@@ -124,6 +138,9 @@ export function AppShell({
   onOpenAutomationOutcomeNotification,
   onDismissAutomationOutcomeNotification,
   onSend,
+  onLoadOlderChat,
+  onRetryInterruptedChat,
+  onRetryQueuedChat,
 }: AppShellProps) {
   const focusedSpace = route.kind === 'space' ? route.space : undefined
   const focusedSurfaceId = route.kind === 'space' ? route.surfaceId : undefined
@@ -157,6 +174,9 @@ export function AppShell({
           </button>
           <button type="button" onClick={onOpenHimalayaConnections}>
             IMAP / SMTP connections
+          </button>
+          <button type="button" onClick={onOpenServiceConnections}>
+            Service connections
           </button>
           <NotificationBell token={authToken} />
           {showInstallGuide && <InstallButton prompt={installPrompt} onDone={onInstallDone} />}
@@ -270,6 +290,10 @@ export function AppShell({
 
       <ChatBar
         entries={chatEntries}
+        timelineEntries={chatTimelineEntries}
+        hasOlder={chatHasOlder}
+        loadingOlder={chatLoadingOlder}
+        queuedChat={queuedChat}
         streamingEntries={streamingEntries}
         focusedSpace={focusedSpace}
         focusToken={focusChatToken}
@@ -280,6 +304,9 @@ export function AppShell({
         onResolvePendingDecision={onResolvePendingDecision}
         onDismissPendingDecision={onDismissPendingDecision}
         onSend={onSend}
+        onLoadOlder={onLoadOlderChat}
+        onRetryInterrupted={onRetryInterruptedChat}
+        onRetryQueued={onRetryQueuedChat}
       />
     </div>
   )

@@ -1122,6 +1122,34 @@ export class TrustLayer {
     return this.store.auditEntries(limit)
   }
 
+  recordGeneralExecution(input: {
+    toolName: string
+    context: ToolContext
+    command: string
+    cwd?: string
+    outcome: 'executed' | 'error'
+    detail: string
+  }): void {
+    const origins = input.context.taint.origins()
+    this.store.insertAudit(
+      {
+        kind: 'general.execution',
+        refId: input.context.toolCallId,
+        toolName: input.toolName,
+        effectiveOrigin: effectiveOrigin(origins, input.context.origin),
+        originChain: origins,
+        trigger: input.context.trigger ?? { kind: 'chat', summary: 'User Chat request' },
+        contextHash: input.context.contextHash,
+        input: { command: input.command, ...(input.cwd ? { cwd: input.cwd } : {}) },
+        outcome: input.outcome,
+        detail: input.detail,
+        ...(input.context.spaceId ? { spaceId: input.context.spaceId } : {}),
+      },
+      this.nowIso(),
+    )
+    this.notifyChange()
+  }
+
   /** Simplest refresh mechanism for trust admin surfaces: subscribe, re-render on every mutation. */
   onChange(listener: () => void): () => void {
     this.changeListeners.add(listener)

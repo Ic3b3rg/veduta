@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ToolContext } from './agent-runner.ts'
 import { createGeneralExecutionTool, runCommand } from './general-execution.ts'
 import { defaultRedactor } from './redaction.ts'
@@ -26,7 +26,7 @@ describe('Veduta-owned general execution', () => {
     const cwd = fixture()
     const store = new Store({ rootDir: cwd })
     const space = store.spacesEngine.createSpace({ name: 'CLI fixture' })
-    const tool = createGeneralExecutionTool(store)
+    const tool = createGeneralExecutionTool(store, { recordGeneralExecution: vi.fn() })
     const context = fromPartial<ToolContext>({
       toolCallId: 'command-fixture',
       origin: 'trusted:user',
