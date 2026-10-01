@@ -1,14 +1,6 @@
 import type { ReactNode } from 'react'
 import { ActionFeedback, useActionFeedback, type AtomMotionAttributes } from './action-feedback.tsx'
-import {
-  boundValue,
-  choicesFrom,
-  findAction,
-  motionContent,
-  optionalText,
-  propBoolean,
-  text,
-} from './atom-helpers.ts'
+import { boundValue, choicesFrom, motionContent, optionalText, text } from './atom-helpers.ts'
 import { fieldStyle, inlineControlStyle, labelStyle } from './atom-styles.ts'
 import { tokensFor } from './design-system.ts'
 import type { AtomProps } from './types.ts'
@@ -46,45 +38,53 @@ export function SwitchAtom(props: AtomProps): ReactNode {
   return <SwitchControl {...props} />
 }
 
-export function ComboboxAtom({ node, ctx }: AtomProps): ReactNode {
+function ComboboxControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttributes): ReactNode {
   const tokens = tokensFor(ctx.theme)
+  const feedback = useActionFeedback({ node, ctx })
   const options = choicesFrom(node.props?.['options'])
   const selected = options.find((option) => option.value === boundValue(node, ctx)) ?? null
-  const action = findAction(node, ['change'])
   return (
-    <div style={fieldStyle(tokens)}>
-      <Label {...motionContent('label')} htmlFor={node.id} style={labelStyle(tokens)}>
-        {text(node.props?.['label'])}
-      </Label>
-      <Combobox
-        items={options}
-        value={selected}
-        itemToStringValue={(option) => option.label}
-        onValueChange={(next) => next && action && ctx.dispatch(node, action.name, next.value)}
-      >
-        <ComboboxInput
-          {...motionContent('value')}
-          id={node.id}
-          aria-label={text(node.props?.['label'])}
-          placeholder={optionalText(node.props?.['placeholder']) ?? 'Search options…'}
-          disabled={propBoolean(node.props, 'disabled', false)}
-          className="w-full"
-        />
-        <ComboboxContent>
-          <ComboboxEmpty>
-            {optionalText(node.props?.['emptyText']) ?? 'No options found.'}
-          </ComboboxEmpty>
-          <ComboboxList>
-            {(option) => (
-              <ComboboxItem key={option.value} value={option}>
-                {option.label}
-              </ComboboxItem>
-            )}
-          </ComboboxList>
-        </ComboboxContent>
-      </Combobox>
-    </div>
+    <ActionFeedback {...motion} feedback={feedback} ctx={ctx}>
+      <div style={fieldStyle(tokens)}>
+        <Label {...motionContent('label')} htmlFor={node.id} style={labelStyle(tokens)}>
+          {text(node.props?.['label'])}
+        </Label>
+        <Combobox
+          items={options}
+          value={selected}
+          disabled={feedback.disabled}
+          itemToStringValue={(option) => option.value}
+          onValueChange={(next) => next && void feedback.dispatch(next.value)}
+        >
+          <ComboboxInput
+            {...motionContent('value')}
+            {...feedback.attributes}
+            id={node.id}
+            aria-label={text(node.props?.['label'])}
+            placeholder={optionalText(node.props?.['placeholder']) ?? 'Search options…'}
+            disabled={feedback.disabled}
+            className="w-full"
+          />
+          <ComboboxContent>
+            <ComboboxEmpty>
+              {optionalText(node.props?.['emptyText']) ?? 'No options found.'}
+            </ComboboxEmpty>
+            <ComboboxList>
+              {(option) => (
+                <ComboboxItem key={option.value} value={option}>
+                  {option.label}
+                </ComboboxItem>
+              )}
+            </ComboboxList>
+          </ComboboxContent>
+        </Combobox>
+      </div>
+    </ActionFeedback>
   )
+}
+
+export function ComboboxAtom(props: AtomProps): ReactNode {
+  return <ComboboxControl {...props} />
 }
 
 export {

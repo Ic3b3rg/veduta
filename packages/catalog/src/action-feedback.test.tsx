@@ -156,3 +156,60 @@ it('Agent-backed Automation awaits acceptance without changing Scheduler state a
   view.rerender(renderNode(node, { state: { enabled: false }, dispatch }))
   expect(control.getAttribute('aria-checked')).toBe('false')
 })
+
+it('Combobox keeps search local and shows canonical selection during a recoverable offered-value change', async () => {
+  const node = AtomNodeSchema.parse({
+    id: 'city',
+    type: 'Combobox',
+    binding: 'city',
+    props: {
+      label: 'City',
+      options: [
+        { label: 'Rome', value: 'rm' },
+        { label: 'Milan', value: 'mi' },
+      ],
+    },
+    actions: [
+      {
+        name: 'change',
+        path: 'fast',
+        revision: 'acr-city',
+        plan: inputSetPlan('city', { type: 'string', enum: ['rm', 'mi'] }),
+      },
+    ],
+  })
+  let fail: (failure: Error) => void = () => {
+    throw new Error('Not submitted')
+  }
+  const pending = new Promise<void>((_resolve, reject) => {
+    fail = reject
+  })
+  const dispatch = vi.fn().mockReturnValueOnce(pending).mockResolvedValue(undefined)
+  const view = render(renderNode(node, { state: { city: 'rm' }, dispatch }))
+  const control = screen.getByRole('combobox', { name: 'City' })
+  expect(control).toHaveProperty('value', 'Rome')
+  act(() => control.focus())
+  fireEvent.keyDown(control, { key: 'ArrowDown' })
+  fireEvent.change(control, { target: { value: 'Mil' } })
+  expect(control).toHaveProperty('value', 'Mil')
+  expect(dispatch).not.toHaveBeenCalled()
+  fireEvent.click(await screen.findByRole('option', { name: 'Milan' }))
+  expect(control.getAttribute('aria-busy')).toBe('true')
+  expect(control).toHaveProperty('disabled', true)
+  expect(control).toHaveProperty('value', 'Rome')
+  expect(dispatch).toHaveBeenCalledExactlyOnceWith(node, 'change', 'mi')
+  await act(async () => fail(new Error('Offline')))
+  expect(screen.getByRole('alert').textContent).toBe('Offline')
+  expect(control.getAttribute('aria-describedby')).toBe(screen.getByRole('alert').id)
+  expect(control).toHaveProperty('disabled', false)
+  expect(control).toHaveProperty('value', 'Rome')
+
+  act(() => control.focus())
+  fireEvent.keyDown(control, { key: 'ArrowDown' })
+  fireEvent.change(control, { target: { value: 'Mil' } })
+  fireEvent.click(await screen.findByRole('option', { name: 'Milan' }))
+  await act(async () => {})
+  expect(dispatch).toHaveBeenNthCalledWith(2, node, 'change', 'mi')
+  view.rerender(renderNode(node, { state: { city: 'mi' }, dispatch }))
+  expect(control).toHaveProperty('value', 'Milan')
+})
