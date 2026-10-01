@@ -15,7 +15,7 @@ import { createPwaLiveStateRuntime, type PwaLiveStateRuntime } from './pwa-live-
 import { SurfaceCard } from './surface-card.tsx'
 import { PwaRuntimeContext } from './use-live-state.ts'
 
-const before = SurfaceSchema.parse({
+const initial = SurfaceSchema.parse({
   id: 'srf-agent-control',
   spaceId: 'spc-test',
   title: 'Agent action demo',
@@ -79,146 +79,176 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('an Agent Button waits for canonical completion, clears a late transport failure, and gives a fresh click a fresh identity', async () => {
-  const values = new Map<string, string>()
-  const storage = fromPartial<Storage>({
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => void values.set(key, value),
-    removeItem: (key: string) => void values.delete(key),
-  })
-  const connections: GatewayHandlers[] = []
-  const snapshot = fromPartial<SurfaceSnapshot>({
-    surfaceCursor: 0,
-    spaces: [{ id: before.spaceId, name: 'Test', slug: 'test', surfaces: [before] }],
-  })
-  let loseSecondResponse: (failure: Error) => void = () => {
-    throw new Error('No held Agent response')
-  }
-  const secondResponse = new Promise<api.SurfaceActionResponse>((_resolve, reject) => {
-    loseSecondResponse = reject
-  })
-  const invokeSurfaceAction = vi
-    .fn<typeof api.invokeSurfaceAction>()
-    .mockRejectedValueOnce(new api.ApiResponseError('Gateway unavailable. Try again.', 503))
-    .mockReturnValueOnce(secondResponse)
-  const runtime = createPwaLiveStateRuntime({
-    storage,
-    api: {
-      ...api,
-      invokeSurfaceAction,
-      fetchSpaces: vi.fn(async () => snapshot),
-      fetchAuthStatus: vi.fn(async () => ({
-        mode: 'dev' as const,
-        bootstrapRequired: false,
-        passkeyRegistered: false,
-      })),
-      fetchPendingDecisions: vi.fn(async () => ({ revision: 0, decisions: [] })),
-      fetchAutomationOutcomeNotifications: vi.fn(async () => ({ revision: 0, notifications: [] })),
-      connectGateway: (handlers) => {
-        connections.push(handlers)
-        return { sendChat: () => true, close: () => {} }
+it.each([
+  { label: 'declared payload', payload: { request: 'Complete the Agent action demo' } },
+  { label: 'omitted payload', payload: undefined },
+])(
+  'an Agent Button with $label waits for canonical completion, clears a late failure, and gives a fresh click a fresh identity',
+  async ({ payload }) => {
+    const before = SurfaceSchema.parse({
+      ...initial,
+      tree: {
+        ...initial.tree,
+        children: initial.tree.children?.map((node) =>
+          node.id === 'demo-button'
+            ? {
+                ...node,
+                actions: [
+                  { name: 'complete_demo', path: 'agent', ...(payload ? { payload } : {}) },
+                ],
+              }
+            : node,
+        ),
       },
-    },
-  })
-  try {
-    await runtime.start()
-    const gateway = connections[0]
-    if (!gateway?.onSurfaceActionTurn) throw new Error('Agent lifecycle connection unavailable')
-    await act(async () => gateway.onHello(0, 'agent-control-client'))
-    render(<AgentCard runtime={runtime} />)
-    const button = screen.getByRole('button', { name: 'Complete demo' })
-    fireEvent.click(button)
-    const alert = await screen.findByRole('alert')
-    expect(alert.textContent).toBe('Gateway unavailable. Try again.')
-    expect(button.getAttribute('aria-describedby')).toBe(alert.id)
-    expect(button).toHaveProperty('disabled', false)
-    expect(screen.getByText('Waiting')).toBeDefined()
-    const original = AgentActionInvocationSchema.parse(invokeSurfaceAction.mock.calls[0]?.[1])
-    expect(original.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/)
-    expect(original.payload).toEqual({ request: 'Complete the Agent action demo' })
-
-    const complete = (idempotencyKey: string | undefined, cursor: number) => {
-      const turn = AgentActionTurnSchema.parse({
-        id: `agent-turn-${cursor}`,
-        spaceId: before.spaceId,
-        surfaceId: before.id,
-        atomId: original.nodeId,
-        actionName: original.name,
-        idempotencyKey,
-        status: 'completed',
-        surfaceCursor: cursor,
-        message: { role: 'assistant', text: 'The declared Agent action completed.' },
-      })
-      if (turn.status !== 'completed') throw new Error('Expected completed Agent fixture')
-      return turn
-    }
-    const patch = (cursor: number) => ({
-      cursor,
-      at: '2026-10-01T12:00:01.000Z',
-      spaceId: before.spaceId,
-      patch: {
-        surfaceId: before.id,
-        operations: [
-          { target: 'state' as const, op: 'replace' as const, path: '/result', value: 'Completed' },
-          {
-            target: 'state' as const,
-            op: 'replace' as const,
-            path: '/records',
-            value: Array.from({ length: cursor }, (_, index) => ({
-              id: `agent-demo-${index + 1}`,
-              label: 'Completed',
-            })),
-          },
-        ],
-      },
-      freshness: { updatedAt: '2026-10-01T12:00:01.000Z', updatedBy: 'agent' as const },
     })
-    await act(async () => gateway.onSurfacePatch(patch(1)))
-    expect(screen.getAllByRole('cell', { name: 'Completed' })).toHaveLength(1)
-    expect(screen.getByRole('alert').textContent).toBe('Gateway unavailable. Try again.')
-    await act(async () =>
-      gateway.onSurfaceActionTurn?.({
-        type: 'surface.action-turn',
-        turn: complete(original.idempotencyKey, 1),
-      }),
-    )
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
-    expect(button.getAttribute('aria-invalid')).toBeNull()
-    expect(JSON.parse(values.get('veduta.agentActionQueue') ?? '[]')).toEqual([])
+    const values = new Map<string, string>()
+    const storage = fromPartial<Storage>({
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => void values.set(key, value),
+      removeItem: (key: string) => void values.delete(key),
+    })
+    const connections: GatewayHandlers[] = []
+    const snapshot = fromPartial<SurfaceSnapshot>({
+      surfaceCursor: 0,
+      spaces: [{ id: before.spaceId, name: 'Test', slug: 'test', surfaces: [before] }],
+    })
+    let loseSecondResponse: (failure: Error) => void = () => {
+      throw new Error('No held Agent response')
+    }
+    const secondResponse = new Promise<api.SurfaceActionResponse>((_resolve, reject) => {
+      loseSecondResponse = reject
+    })
+    const invokeSurfaceAction = vi
+      .fn<typeof api.invokeSurfaceAction>()
+      .mockRejectedValueOnce(new api.ApiResponseError('Gateway unavailable. Try again.', 503))
+      .mockReturnValueOnce(secondResponse)
+    const runtime = createPwaLiveStateRuntime({
+      storage,
+      api: {
+        ...api,
+        invokeSurfaceAction,
+        fetchSpaces: vi.fn(async () => snapshot),
+        fetchAuthStatus: vi.fn(async () => ({
+          mode: 'dev' as const,
+          bootstrapRequired: false,
+          passkeyRegistered: false,
+        })),
+        fetchPendingDecisions: vi.fn(async () => ({ revision: 0, decisions: [] })),
+        fetchAutomationOutcomeNotifications: vi.fn(async () => ({
+          revision: 0,
+          notifications: [],
+        })),
+        connectGateway: (handlers) => {
+          connections.push(handlers)
+          return { sendChat: () => true, close: () => {} }
+        },
+      },
+    })
+    try {
+      await runtime.start()
+      const gateway = connections[0]
+      if (!gateway?.onSurfaceActionTurn) throw new Error('Agent lifecycle connection unavailable')
+      await act(async () => gateway.onHello(0, 'agent-control-client'))
+      render(<AgentCard runtime={runtime} />)
+      const button = screen.getByRole('button', { name: 'Complete demo' })
+      fireEvent.click(button)
+      const alert = await screen.findByRole('alert')
+      expect(alert.textContent).toBe('Gateway unavailable. Try again.')
+      expect(button.getAttribute('aria-describedby')).toBe(alert.id)
+      expect(button).toHaveProperty('disabled', false)
+      expect(screen.getByText('Waiting')).toBeDefined()
+      const original = AgentActionInvocationSchema.parse(invokeSurfaceAction.mock.calls[0]?.[1])
+      expect(original.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/)
+      expect(original.payload).toEqual(payload ?? {})
 
-    fireEvent.click(button)
-    const fresh = AgentActionInvocationSchema.parse(invokeSurfaceAction.mock.calls[1]?.[1])
-    expect(fresh.idempotencyKey).not.toBe(original.idempotencyKey)
-    expect(button).toHaveProperty('disabled', true)
-    expect(button.getAttribute('aria-busy')).toBe('true')
-    const {
-      message: _message,
-      surfaceCursor: _cursor,
-      ...identity
-    } = complete(fresh.idempotencyKey, 2)
-    await act(async () =>
-      gateway.onSurfaceActionTurn?.({
-        type: 'surface.action-turn',
-        turn: AgentActionTurnSchema.parse({ ...identity, status: 'running' }),
-      }),
-    )
-    expect(button).toHaveProperty('disabled', true)
-    expect(screen.getAllByRole('cell', { name: 'Completed' })).toHaveLength(1)
-    await act(async () => gateway.onSurfacePatch(patch(2)))
-    expect(button).toHaveProperty('disabled', true)
-    await act(async () =>
-      gateway.onSurfaceActionTurn?.({
-        type: 'surface.action-turn',
-        turn: complete(fresh.idempotencyKey, 2),
-      }),
-    )
-    await waitFor(() => expect(button).toHaveProperty('disabled', false))
-    expect(screen.queryByRole('status')).toBeNull()
-    expect(screen.getAllByRole('cell', { name: 'Completed' })).toHaveLength(2)
-    await act(async () => loseSecondResponse(new api.ApiResponseError('Late lost response', 503)))
-    expect(screen.queryByRole('alert')).toBeNull()
-    expect(invokeSurfaceAction).toHaveBeenCalledTimes(2)
-  } finally {
-    runtime.stop()
-  }
-})
+      const complete = (idempotencyKey: string | undefined, cursor: number) => {
+        const turn = AgentActionTurnSchema.parse({
+          id: `agent-turn-${cursor}`,
+          spaceId: before.spaceId,
+          surfaceId: before.id,
+          atomId: original.nodeId,
+          actionName: original.name,
+          idempotencyKey,
+          status: 'completed',
+          surfaceCursor: cursor,
+          message: { role: 'assistant', text: 'The declared Agent action completed.' },
+        })
+        if (turn.status !== 'completed') throw new Error('Expected completed Agent fixture')
+        return turn
+      }
+      const patch = (cursor: number) => ({
+        cursor,
+        at: '2026-10-01T12:00:01.000Z',
+        spaceId: before.spaceId,
+        patch: {
+          surfaceId: before.id,
+          operations: [
+            {
+              target: 'state' as const,
+              op: 'replace' as const,
+              path: '/result',
+              value: 'Completed',
+            },
+            {
+              target: 'state' as const,
+              op: 'replace' as const,
+              path: '/records',
+              value: Array.from({ length: cursor }, (_, index) => ({
+                id: `agent-demo-${index + 1}`,
+                label: 'Completed',
+              })),
+            },
+          ],
+        },
+        freshness: { updatedAt: '2026-10-01T12:00:01.000Z', updatedBy: 'agent' as const },
+      })
+      await act(async () => gateway.onSurfacePatch(patch(1)))
+      expect(screen.getAllByRole('cell', { name: 'Completed' })).toHaveLength(1)
+      expect(screen.getByRole('alert').textContent).toBe('Gateway unavailable. Try again.')
+      await act(async () =>
+        gateway.onSurfaceActionTurn?.({
+          type: 'surface.action-turn',
+          turn: complete(original.idempotencyKey, 1),
+        }),
+      )
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+      expect(button.getAttribute('aria-invalid')).toBeNull()
+      expect(JSON.parse(values.get('veduta.agentActionQueue') ?? '[]')).toEqual([])
+
+      fireEvent.click(button)
+      const fresh = AgentActionInvocationSchema.parse(invokeSurfaceAction.mock.calls[1]?.[1])
+      expect(fresh.idempotencyKey).not.toBe(original.idempotencyKey)
+      expect(button).toHaveProperty('disabled', true)
+      expect(button.getAttribute('aria-busy')).toBe('true')
+      const {
+        message: _message,
+        surfaceCursor: _cursor,
+        ...identity
+      } = complete(fresh.idempotencyKey, 2)
+      await act(async () =>
+        gateway.onSurfaceActionTurn?.({
+          type: 'surface.action-turn',
+          turn: AgentActionTurnSchema.parse({ ...identity, status: 'running' }),
+        }),
+      )
+      expect(button).toHaveProperty('disabled', true)
+      expect(screen.getAllByRole('cell', { name: 'Completed' })).toHaveLength(1)
+      await act(async () => gateway.onSurfacePatch(patch(2)))
+      expect(button).toHaveProperty('disabled', true)
+      await act(async () =>
+        gateway.onSurfaceActionTurn?.({
+          type: 'surface.action-turn',
+          turn: complete(fresh.idempotencyKey, 2),
+        }),
+      )
+      await waitFor(() => expect(button).toHaveProperty('disabled', false))
+      expect(screen.queryByRole('status')).toBeNull()
+      expect(screen.getAllByRole('cell', { name: 'Completed' })).toHaveLength(2)
+      await act(async () => loseSecondResponse(new api.ApiResponseError('Late lost response', 503)))
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(invokeSurfaceAction).toHaveBeenCalledTimes(2)
+    } finally {
+      runtime.stop()
+    }
+  },
+)
