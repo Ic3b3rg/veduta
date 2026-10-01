@@ -168,9 +168,9 @@ unrecognized prose; the persistent migration and importer transition remain sepa
 
 ### 3.4 Surface engine
 
-A Surface = **a declarative tree of Atoms + typed state + bindings**. Closed catalog (~24 ChatKit-style Atoms + `Progress`, `Stat`, `ListItem`, `Automation`), protocol based on **Google's A2UI** ([ADR-0003](docs/adr/0003-declarative-atoms.md)). Every Atom action declares its path:
+A Surface = **a declarative tree of Atoms + typed state + bindings**. Veduta owns its closed catalog and canonical protocol, informed by **Google's A2UI** ([ADR-0003](docs/adr/0003-declarative-atoms.md)). Every Atom action declares its path:
 
-- **Fast path**: the daemon mutates the state and logs the event to the Event log — zero LLM, native-app latency. _Memory contract_: the Agent always reads the events before reasoning about a Space.
+- **Fast path**: one closed typed Action plan reduces the latest canonical state and appends its matching redacted Event — zero LLM, native-app latency. Plans use only `set`, `append`, `update`, `remove`, and `clear`, with exact existing targets and stable record identities. The client supplies typed owning inputs plus the Gateway-sealed Action revision and stable intent UUID. _Memory contract_: the Agent always reads the events before reasoning about a Space.
 - **Agent path**: the action goes to the Agent with an honest wait.
 
 Every validated Surface mutation that requires a matching Space Event completes through one
@@ -179,6 +179,15 @@ identity; success and observers occur only after the append-only Event is durabl
 partial write remains `recovery_pending` and blocks Agent reasoning only for the affected Space
 until idempotent reconciliation completes
 ([ADR-0030](docs/adr/0030-recoverable-surface-commits.md)).
+
+Fast Action results use one `committed | noop | recovery_pending` contract. A committed result carries
+the original canonical Surface, Patch, versions, commit identity, and matching Event/Surface cursor;
+its metadata also travels on the realtime Patch. An intent retry returns that original result.
+A no-op changes no Surface version and emits no Event. Domain preconditions run before persistence;
+post-delivery consumers receive one batch and durably receipt their successful projections.
+Forms keep text drafts local and submit complete typed inputs through the same plan. Templates retain
+portable plans and target dependencies while excluding Gateway revisions and instance identities.
+Future A2UI/AG-UI adapters may project this authority but cannot add another reducer or executor.
 
 The engine also owns an explicit Space-scoped authorable-reader boundary. Focused turns request a
 stable compact inventory on demand, then read one complete `SurfaceSchema`-validated Surface with

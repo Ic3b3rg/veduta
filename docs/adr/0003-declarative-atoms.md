@@ -1,8 +1,8 @@
 # Surfaces = a tree of declarative Atoms from a closed catalog, never free-form HTML
 
-A Surface is a declarative tree of **Atoms** (~24, the ChatKit set plus Progress, Stat, ListItem, Automation) bound to **typed state** via bindings; the protocol is built on **Google's A2UI** rather than a proprietary format. The Agent instantiates and patches, it does not generate markup. Every Atom action declares its path: **fast path** (deterministic mutation + event in the log, zero LLM) or **agent path**.
+A Surface is a declarative tree of **Atoms** from a closed catalog, bound to **typed state** via bindings. Veduta owns the canonical protocol, persistence, validation, and execution; A2UI supplies conceptual inspiration. The Agent instantiates and patches, it does not generate markup. Every Atom action declares its path: **fast path** (deterministic mutation + matching Event, zero LLM) or **agent path**.
 
-Rationale: (1) persistent Surfaces must be updatable via diffs — free-form HTML cannot be patched reliably; (2) visual consistency is the differentiator, and with a catalog we own the design system; (3) A2UI is an existing open spec: interop and a magnet for contributors. Good compositions become saved and reused **Templates** (consistency across regenerations).
+Rationale: (1) persistent Surfaces must be updatable via diffs — free-form HTML cannot be patched reliably; (2) a closed catalog provides visual consistency; (3) structured UI protocols inform the design without owning local execution. Good compositions become saved and reused **Templates** (consistency across regenerations).
 
 Status: accepted
 
@@ -13,11 +13,64 @@ For v1 we use an A2UI-inspired mapping rather than direct adoption of OpenClaw-s
 Mapping:
 
 - A2UI component → `AtomNode` (`type`, JSON `props`, `children`)
-- A2UI action → `Action` (`name`, `path: "fast" | "agent"`, JSON `payload`)
+- A2UI action concept → Veduta `Action` (`name`, `path: "fast" | "agent"`); fast Actions carry a closed typed plan, while Agent Actions retain their declared JSON payload
 - Component state → `Surface.state`, addressed by Atom `binding`
 - Incremental updates → `Patch` operations scoped to `state` or `tree`
 
 The compatibility target is conceptual: agents can produce structured UI actions and components, while Veduta keeps persistence, validation, and rendering under the local protocol.
+
+## Unified fast Action execution (issue #161)
+
+Every fast Action declares one plan with typed owning inputs, exact existing top-level state
+targets, and an ordered batch of `set`, `append`, `update`, `remove`, or `clear` steps. Values
+come from typed interaction inputs, literal JSON, flat record mappings, or the Gateway's `recordId`
+and `now` metadata. Object collections declare unique nonempty string or number identities;
+updates and removals select that identity and explicitly reject or no-op when it is missing.
+There are no client-selected targets, array indexes, predicates, nested paths, formulas, or scripts.
+
+The Gateway seals an opaque UUID revision for the persisted Action declaration and its owning
+input semantics. Unchanged semantics retain it; changed plans, controls, or Form fields receive a
+new revision. Author-supplied revisions grant no authority. A strict invocation carries only the
+node, Action name, revision, stable UUID intent identity, and typed inputs. A new stale intent is
+rejected. An already recorded intent returns its original result even after the declaration changes.
+
+The engine reduces the latest canonical state under its existing write serialization. It validates
+every intermediate complete Surface before any durable write and runs read-only domain preconditions
+before commit. One changed batch persists its Surface, Patch, intent outcome, and recoverable Space
+Event intent in one SQLite transaction. Event delivery completes before success or projections.
+The Event identifies the Action and its target names without copying submitted values. See
+[ADR-0030](0030-recoverable-surface-commits.md) for reconciliation.
+
+The shared outcome is `committed`, `noop`, or `recovery_pending`. A committed outcome includes the
+original canonical Surface, Patch, versions, Surface commit identity, and Event/Surface cursors.
+The Event cursor is the matching `SurfacePatchEvent.cursor`; the Space Event shares its commit
+identity. HTTP uses 200 for committed/no-op results and 202 for pending delivery. Replay returns
+the original outcome with `duplicate: true`. A no-op creates no Patch, Surface version, commit,
+or Space Event. The same committed metadata accompanies the realtime Patch as `actionOutcome`.
+
+Post-delivery consumers receive one committed batch. Actual domain projections retain named
+receipts, replaying only delivered outcomes still awaiting that consumer. A successful asynchronous
+projection records its receipt after completion. Exceptions remain diagnostics and never reverse
+the original success. Domain decision authorities keep their existing exactly-once gates. State
+projections inspect current canonical state so an older receipt cannot restore an older choice.
+
+Input and Textarea keystrokes remain local drafts. An owning Form submits its complete typed
+input set; it may append a record, update another bound value, and clear draft sources in one plan.
+An Input may declare `valueType: 'number'`; the owning control converts a finite submitted text
+value to a number while its canonical draft binding stays a string. Button inputs are empty;
+fixed values belong in the declared plan.
+
+Templates retain portable plans and all target dependencies, with schema-appropriate empty defaults.
+Gateway revisions and generated record identities stay outside the Template. Literal instance
+record selectors or personal append/set data make extraction/import fail visibly instead of
+inventing a neutral identity. Imported Agent Actions remain stripped. This pre-1.0 boundary requires
+clean data roots: legacy scalar `stateKey` and Form `stateKeys` declarations are rejected, not
+heuristically rewritten.
+
+Any future A2UI or AG-UI adapter is a projection of canonical Veduta state and outcomes. It cannot
+introduce a second reducer, state authority, domain executor, or LLM route for deterministic local
+interactions. The layer distinction is documented in [research 17](../references/17-ag-ui-hermes-veduta.md)
+and [research 18](../references/18-ag-ui-a2ui-subscriptions.md).
 
 ## Issue 029 progressive composition
 

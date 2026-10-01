@@ -447,11 +447,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(milk).toBeChecked()
       await expect(surfaceCard(page, 'Groceries').getByRole('alert')).toHaveCount(0)
 
-      // Event log coverage (ADR-0003): `SurfaceEngine.applyFastAction`
-      // (surface-engine.ts) logs `fast_path` events as
-      // `"<Surface title>: <stateKey> -> <JSON value>"`, e.g.
-      // `"Groceries: milk -> true"` -- the checkbox's own state key and new
-      // value, verbatim.
+      // ADR-0003: one redacted Event identifies the committed Action and targets.
       const events = await fetchSpaceEvents(page, stack!.origin)
       expect(events.some(isGroceriesToggleEvent)).toBe(true)
     })
@@ -662,9 +658,9 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         await expect.poll(() => actionRequests.length).toBe(2)
         await expect(approval.getByRole('alert')).toHaveCount(0)
 
-        expect(actionRequests[0]?.['idempotencyKey']).toBe(actionRequests[1]?.['idempotencyKey'])
+        expect(actionRequests[0]?.['intentId']).toBe(actionRequests[1]?.['intentId'])
         expect(actionRequests[1]).toMatchObject({
-          payload: { value: { 'field.body': 'edited and retained' } },
+          inputs: { 'field.body': 'edited and retained' },
         })
         await expect
           .poll(async () => {
@@ -679,9 +675,11 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         )
         expect(submitEvents).toHaveLength(eventsBefore + 1)
         expect(submitEvents.at(-1)?.payload).toMatchObject({
-          stateKeys: ['field.body'],
-          values: { 'field.body': 'edited and retained' },
+          actionName: 'submit',
+          targets: ['field.body'],
+          intentId: actionRequests[1]?.['intentId'],
         })
+        expect(submitEvents.at(-1)?.payload).not.toHaveProperty('values')
 
         await page.reload()
         await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'true')
@@ -947,9 +945,10 @@ interface SpaceEventEntry {
   payload?: {
     role?: string
     surfaceId?: string
-    stateKeys?: string[]
+    actionName?: string
+    intentId?: string
+    targets?: string[]
     toolCalls?: Array<{ toolName?: string }>
-    values?: Record<string, unknown>
   }
 }
 
@@ -1011,7 +1010,8 @@ function formSubmitEvents(events: SpaceEventEntry[], surfaceId: string): SpaceEv
     (event) =>
       event.type === 'fast_path' &&
       event.payload?.surfaceId === surfaceId &&
-      Array.isArray(event.payload.stateKeys),
+      event.payload.actionName === 'submit' &&
+      Array.isArray(event.payload.targets),
   )
 }
 
@@ -1024,7 +1024,11 @@ function isMealPatchEvent(event: SpaceEventEntry): boolean {
   return event.type === 'surface.patch_state' && event.text.includes('Meals')
 }
 
-/** The Event log entry the Groceries "Milk" checkbox's fast path produces (`SurfaceEngine.applyFastAction`). */
+/** The matching redacted Event for the Groceries checkbox's committed Action. */
 function isGroceriesToggleEvent(event: SpaceEventEntry): boolean {
-  return event.type === 'fast_path' && event.text.includes('milk')
+  return (
+    event.type === 'fast_path' &&
+    event.payload?.surfaceId === 'srf-groceries' &&
+    event.payload.targets?.includes('milk') === true
+  )
 }
