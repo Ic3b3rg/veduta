@@ -20,6 +20,7 @@ import {
 import type { QueuedFastAction } from './pwa-storage.ts'
 import { affectedAtomIdsForStateKey, type SurfaceUpdateFeedback } from './surface-motion.ts'
 import { useCatalogTheme } from './theme.ts'
+import { usePwaRuntime } from './use-live-state.ts'
 
 export function SurfaceCard({
   surface,
@@ -55,6 +56,7 @@ export function SurfaceCard({
   onError: (message: string) => void
 }) {
   const theme = useCatalogTheme()
+  const runtime = usePwaRuntime()
   const cardRef = useRef<HTMLElement>(null)
   const [formActionKeyFor, clearFormActionScope] = useFormActionRetryKeys()
   const handledRevealFeedbackRef = useRef<string | undefined>(undefined)
@@ -98,6 +100,8 @@ export function SurfaceCard({
   }, [revealHighlighted])
   const dispatch = useCallback(
     (node: AtomNode, actionName: string, value?: JsonValue) => {
+      if (runtime) return runtime.dispatchSurfaceAction(surface.id, node.id, actionName, value)
+      const invokeFast = invokeFastAction
       const action = node.actions?.find((a) => a.name === actionName)
       if (!action) {
         onError(`"${surface.title}" update failed: undeclared action "${actionName}"`)
@@ -129,7 +133,7 @@ export function SurfaceCard({
           const formActionFingerprint = `${formActionScope}:${JSON.stringify(value)}`
           const retryKey = formActionKeyFor(formActionFingerprint, idempotencyKey)
 
-          return invokeFastAction(surface.id, node.id, actionName, value, token, retryKey)
+          return invokeFast(surface.id, node.id, actionName, value, token, retryKey)
             .then(({ surface: updated, surfaceCursor }) => {
               clearFormActionScope(formActionScope)
               onPatched(
@@ -151,7 +155,7 @@ export function SurfaceCard({
             ? [node.id]
             : affectedAtomIdsForStateKey(optimistic.tree, action.stateKey),
         )
-        invokeFastAction(surface.id, node.id, actionName, value, token, idempotencyKey)
+        invokeFast(surface.id, node.id, actionName, value, token, idempotencyKey)
           .then(({ surface: updated, surfaceCursor }) =>
             onPatched(updated, undefined, surfaceCursor),
           )
@@ -171,11 +175,19 @@ export function SurfaceCard({
       }
 
       const payload = value === undefined ? action.payload : { ...action.payload, value }
-      invokeSurfaceAction(surface.id, node.id, actionName, payload, token).catch((e: Error) =>
-        onError(`"${surface.title}" action failed: ${e.message}`),
-      )
+      const invoking = invokeSurfaceAction(surface.id, node.id, actionName, payload, token)
+      invoking.catch((e: Error) => onError(`"${surface.title}" action failed: ${e.message}`))
     },
-    [clearFormActionScope, formActionKeyFor, onError, onPatched, onQueueFastAction, surface, token],
+    [
+      clearFormActionScope,
+      formActionKeyFor,
+      onError,
+      onPatched,
+      onQueueFastAction,
+      runtime,
+      surface,
+      token,
+    ],
   )
 
   return (

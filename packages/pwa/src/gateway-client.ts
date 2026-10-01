@@ -1,5 +1,6 @@
 import {
   GatewayServerMessageSchema,
+  GatewayClientMessageSchema,
   type GatewayServerMessage,
   type SurfaceArchivedEvent,
   type SurfaceMovedEvent,
@@ -48,18 +49,21 @@ export function connectGateway(handlers: GatewayHandlers): GatewayConnection {
 
   socket.onopen = () => {
     socket.send(
-      JSON.stringify({
-        type: 'hello',
-        surfaceCursor: handlers.surfaceCursor,
-        token: handlers.token,
-        ...(handlers.clientId ? { clientId: handlers.clientId } : {}),
-      }),
+      JSON.stringify(
+        GatewayClientMessageSchema.parse({
+          type: 'hello',
+          surfaceCursor: handlers.surfaceCursor,
+          token: handlers.token,
+          ...(handlers.clientId ? { clientId: handlers.clientId } : {}),
+        }),
+      ),
     )
   }
 
   socket.onmessage = (event) => {
     const message = parseGatewayMessage(event.data)
     if (message) dispatchGatewayMessage(handlers, message)
+    else handlers.onError('Malformed Gateway frame; refreshing confirmed state.')
   }
   socket.onclose = () => handlers.onClose()
 
@@ -67,7 +71,15 @@ export function connectGateway(handlers: GatewayHandlers): GatewayConnection {
     close: () => socket.close(),
     sendChat(text, spaceId) {
       if (socket.readyState !== WebSocket.OPEN) return false
-      socket.send(JSON.stringify({ type: 'chat.send', text, ...(spaceId ? { spaceId } : {}) }))
+      socket.send(
+        JSON.stringify(
+          GatewayClientMessageSchema.parse({
+            type: 'chat.send',
+            text,
+            ...(spaceId ? { spaceId } : {}),
+          }),
+        ),
+      )
       return true
     },
   }

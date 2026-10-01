@@ -6,6 +6,7 @@ import {
   type AutomationOutcomeOccurrence,
 } from '../../daemon/src/automation-outcome-service.ts'
 import { Store } from '../../daemon/src/store.ts'
+import { verifyLiveRuntime } from './live-runtime-journey.ts'
 import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stack.ts'
 
 /**
@@ -791,6 +792,8 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       expect(page.url()).toBe(focusedUrl)
       await expect(page.getByRole('region', { name: 'Automation updates' })).toHaveCount(0)
     })
+
+    await verifyLiveRuntime(browser, page, stack!.origin)
 
     await test.step('login leg: clear the token, log back in with the SAME virtual authenticator', async () => {
       await page.evaluate(() => localStorage.removeItem('veduta.authToken'))

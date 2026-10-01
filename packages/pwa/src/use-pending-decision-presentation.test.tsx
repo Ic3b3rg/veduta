@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { ChatMessage, PendingDecision } from '@veduta/protocol'
+import type { PendingDecision } from '@veduta/protocol'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { useState } from 'react'
@@ -12,7 +12,7 @@ vi.mock('./api.ts', async (importOriginal) => ({
 }))
 
 import { fetchPendingDecisions, type SpaceWithSurfaces } from './api.ts'
-import { usePendingDecisionController } from './use-pending-decision-controller.ts'
+import { usePendingDecisionPresentation } from './use-pending-decision-presentation.ts'
 
 const firstDecision = decision('approval:first')
 const secondDecision = decision('approval:second')
@@ -24,20 +24,23 @@ function useHarness(
     onRevealSurface?: (spaceSlug: string, surfaceId: string) => void
   } = {},
 ) {
-  const [chatEntries, setChatEntries] = useState<ChatMessage[]>([])
-  const controller = usePendingDecisionController({
-    authToken: 'token',
+  const [decisions, setDecisions] = useState<PendingDecision[]>([])
+  const presentation = usePendingDecisionPresentation({
+    decisions,
     spaces: [],
     focusedSpaceId: undefined,
-    setChatEntries,
-    onUnauthorized: vi.fn(),
-    onReplaceSpaces: vi.fn(),
     onRevealSurface: vi.fn(),
     wasRevealShown: () => false,
-    onError: vi.fn(),
     ...options,
   })
-  return { ...controller, chatEntries }
+  return {
+    ...presentation,
+    decisions: decisions.filter((decision) => !presentation.dismissedDecisionIds.has(decision.id)),
+    observeProjectedDecisions: setDecisions,
+    refreshPendingDecisionSnapshot: () => {
+      void fetchPendingDecisions('token').then((snapshot) => setDecisions(snapshot.decisions))
+    },
+  }
 }
 
 beforeEach(() => {
@@ -49,7 +52,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('usePendingDecisionController', () => {
+describe('Pending-decision presentation', () => {
   it.each(['surface-first', 'decision-first'])(
     'reveals a decision in the current Space without changing the route (%s)',
     (order) => {

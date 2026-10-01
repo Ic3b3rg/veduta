@@ -47,8 +47,8 @@ export function isStandalone(): boolean {
   )
 }
 
-export function readChatHistory(): ChatMessage[] {
-  const raw = localStorage.getItem(CHAT_HISTORY_KEY)
+export function readChatHistory(storage: Storage = localStorage): ChatMessage[] {
+  const raw = storage.getItem(CHAT_HISTORY_KEY)
   if (!raw) return []
   try {
     const parsed = ChatMessageSchema.array().safeParse(JSON.parse(raw))
@@ -60,28 +60,31 @@ export function readChatHistory(): ChatMessage[] {
 
 export const CHAT_HISTORY_LIMIT = 80
 
-export function persistChatHistory(entries: ChatMessage[]): void {
-  localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(entries.slice(-CHAT_HISTORY_LIMIT)))
+export function persistChatHistory(entries: ChatMessage[], storage: Storage = localStorage): void {
+  storage.setItem(CHAT_HISTORY_KEY, JSON.stringify(entries.slice(-CHAT_HISTORY_LIMIT)))
 }
 
-export function readQueuedChat(): QueuedChat[] {
-  return readArray(CHAT_QUEUE_KEY).filter(isQueuedChat)
+export function readQueuedChat(storage: Storage = localStorage): QueuedChat[] {
+  return readArray(CHAT_QUEUE_KEY, storage).filter(isQueuedChat)
 }
 
-export function persistQueuedChat(entries: QueuedChat[]): void {
-  localStorage.setItem(CHAT_QUEUE_KEY, JSON.stringify(entries))
+export function persistQueuedChat(entries: QueuedChat[], storage: Storage = localStorage): void {
+  storage.setItem(CHAT_QUEUE_KEY, JSON.stringify(entries))
 }
 
-export function readQueuedFastActions(): QueuedFastAction[] {
-  return readArray(FAST_ACTION_QUEUE_KEY).filter(isQueuedFastAction)
+export function readQueuedFastActions(storage: Storage = localStorage): QueuedFastAction[] {
+  return readArray(FAST_ACTION_QUEUE_KEY, storage).filter(isQueuedFastAction)
 }
 
-export function persistQueuedFastActions(entries: QueuedFastAction[]): void {
-  localStorage.setItem(FAST_ACTION_QUEUE_KEY, JSON.stringify(entries))
+export function persistQueuedFastActions(
+  entries: QueuedFastAction[],
+  storage: Storage = localStorage,
+): void {
+  storage.setItem(FAST_ACTION_QUEUE_KEY, JSON.stringify(entries))
 }
 
-function readArray(key: string): unknown[] {
-  const raw = localStorage.getItem(key)
+function readArray(key: string, storage: Storage): unknown[] {
+  const raw = storage.getItem(key)
   if (!raw) return []
   try {
     const parsed = JSON.parse(raw)

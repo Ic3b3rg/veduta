@@ -1,12 +1,9 @@
-// @vitest-environment jsdom
 import type {
   ChatMessage,
   PendingDecision,
   PendingDecisionLifecycleMessage,
   PendingDecisionList,
 } from '@veduta/protocol'
-import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
-import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ApiModule from './api.ts'
 
@@ -15,8 +12,8 @@ vi.mock('./api.ts', async (importOriginal) => ({
   fetchPendingDecisions: vi.fn(),
 }))
 
-import { ApiResponseError, fetchPendingDecisions } from './api.ts'
-import { usePendingDecisionSync } from './use-pending-decision-sync.ts'
+import { ApiResponseError, fetchPendingDecisions, resolvePendingDecision } from './api.ts'
+import { LiveDecisionProjection } from './live-decision-projection.ts'
 
 const pending: PendingDecision = {
   id: 'approval:effect-1',
@@ -67,32 +64,58 @@ function deferred<T>(): {
   return { promise, resolve, reject }
 }
 
-function useHarness(onUnauthorized: () => void) {
-  const [chatEntries, setChatEntries] = useState<ChatMessage[]>([])
-  const [decisions, setDecisions] = useState<PendingDecision[]>([])
-  const sync = usePendingDecisionSync({
-    authToken: 'token',
-    setChatEntries,
-    setDecisions,
-    onUnauthorized,
+function createHarness(onUnauthorized: () => void) {
+  let chatEntries: ChatMessage[] = []
+  const sync = new LiveDecisionProjection({
+    api: { fetchPendingDecisions, resolvePendingDecision },
+    token: () => 'token',
+    publish: () => {},
+    feedback: (update) => {
+      chatEntries = update(chatEntries)
+    },
+    refreshSpaces: async () => {},
+    failed: (error) => {
+      if (error instanceof ApiResponseError && error.status === 401) {
+        sync.cancel()
+        onUnauthorized()
+      } else console.warn('failed to refresh Pending decisions:', error)
+    },
   })
-  return { ...sync, chatEntries, decisions }
+  return {
+    result: {
+      get current() {
+        return {
+          chatEntries,
+          decisions: sync.decisions,
+          refreshPendingDecisionSnapshot: () => sync.refresh(),
+          cancelPendingDecisionSnapshot: () => sync.cancel(),
+          handlePendingDecisionLifecycle: (frame: PendingDecisionLifecycleMessage) =>
+            sync.accept(frame),
+          observeProjectedDecisions: (decisions: PendingDecision[]) => sync.observe(decisions),
+        }
+      },
+    },
+  }
 }
+
+function act<T>(fn: () => T): T {
+  return fn()
+}
+const waitFor = vi.waitFor
 
 beforeEach(() => {
   vi.mocked(fetchPendingDecisions).mockReset()
 })
 
 afterEach(() => {
-  cleanup()
   vi.restoreAllMocks()
 })
 
-describe('usePendingDecisionSync', () => {
+describe('runtime Pending-decision projection', () => {
   it('buffers live frames during a snapshot and applies only revisions newer than it', async () => {
     const snapshot = deferred<PendingDecisionList>()
     vi.mocked(fetchPendingDecisions).mockReturnValueOnce(snapshot.promise)
-    const { result } = renderHook(() => useHarness(vi.fn()))
+    const { result } = createHarness(vi.fn())
 
     act(() => {
       result.current.refreshPendingDecisionSnapshot()
@@ -116,7 +139,7 @@ describe('usePendingDecisionSync', () => {
   it('keeps a live chat projection that arrives while an older snapshot is in flight', async () => {
     const snapshot = deferred<PendingDecisionList>()
     vi.mocked(fetchPendingDecisions).mockReturnValueOnce(snapshot.promise)
-    const { result } = renderHook(() => useHarness(vi.fn()))
+    const { result } = createHarness(vi.fn())
 
     act(() => {
       result.current.refreshPendingDecisionSnapshot()
@@ -132,7 +155,7 @@ describe('usePendingDecisionSync', () => {
   it('drops a cancelled snapshot and every frame buffered for that generation', async () => {
     const snapshot = deferred<PendingDecisionList>()
     vi.mocked(fetchPendingDecisions).mockReturnValueOnce(snapshot.promise)
-    const { result } = renderHook(() => useHarness(vi.fn()))
+    const { result } = createHarness(vi.fn())
 
     act(() => {
       result.current.refreshPendingDecisionSnapshot()
@@ -149,7 +172,7 @@ describe('usePendingDecisionSync', () => {
     const snapshot = deferred<PendingDecisionList>()
     vi.mocked(fetchPendingDecisions).mockReturnValueOnce(snapshot.promise)
     const onUnauthorized = vi.fn()
-    const { result } = renderHook(() => useHarness(onUnauthorized))
+    const { result } = createHarness(onUnauthorized)
 
     act(() => {
       result.current.refreshPendingDecisionSnapshot()
@@ -165,7 +188,7 @@ describe('usePendingDecisionSync', () => {
     const snapshot = deferred<PendingDecisionList>()
     vi.mocked(fetchPendingDecisions).mockReturnValueOnce(snapshot.promise)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const { result } = renderHook(() => useHarness(vi.fn()))
+    const { result } = createHarness(vi.fn())
 
     act(() => {
       result.current.refreshPendingDecisionSnapshot()

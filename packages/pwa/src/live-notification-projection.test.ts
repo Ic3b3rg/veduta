@@ -1,11 +1,9 @@
-// @vitest-environment jsdom
 import type {
   AutomationOutcomeNotification,
   AutomationOutcomeNotificationActionResult,
   AutomationOutcomeNotificationLifecycleMessage,
   AutomationOutcomeNotificationSnapshot,
 } from '@veduta/protocol'
-import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ApiModule from './automation-outcome-notifications-api.ts'
 
@@ -21,7 +19,7 @@ import {
   fetchAutomationOutcomeNotifications,
   openAutomationOutcomeNotification,
 } from './automation-outcome-notifications-api.ts'
-import { useAutomationOutcomeNotificationSync } from './use-automation-outcome-notification-sync.ts'
+import { LiveNotificationProjection } from './live-notification-projection.ts'
 
 beforeEach(() => {
   vi.mocked(fetchAutomationOutcomeNotifications).mockReset()
@@ -30,17 +28,14 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  cleanup()
   vi.restoreAllMocks()
 })
 
-describe('useAutomationOutcomeNotificationSync', () => {
+describe('runtime Automation notification projection', () => {
   it('buffers lifecycle frames and does not let an older snapshot resurrect terminal state', async () => {
     const snapshot = deferred<AutomationOutcomeNotificationSnapshot>()
     vi.mocked(fetchAutomationOutcomeNotifications).mockReturnValueOnce(snapshot.promise)
-    const { result } = renderHook(() =>
-      useAutomationOutcomeNotificationSync(options({ spaceId: 'spc-health' })),
-    )
+    const { result } = renderHook(() => projectionHarness(options({ spaceId: 'spc-health' })))
 
     act(() => {
       result.current.refresh()
@@ -60,7 +55,7 @@ describe('useAutomationOutcomeNotificationSync', () => {
       notifications: [unread({ spaceId: 'spc-work', spaceSlug: 'work' })],
     })
     const { result, rerender } = renderHook(
-      ({ spaceId }) => useAutomationOutcomeNotificationSync(options({ spaceId })),
+      ({ spaceId }) => projectionHarness(options({ spaceId })),
       { initialProps: { spaceId: 'spc-health' as string | undefined } },
     )
     act(() =>
@@ -80,9 +75,7 @@ describe('useAutomationOutcomeNotificationSync', () => {
         revision: 2,
         notifications: [unread({ revision: 2, summary: 'Restored backup outcome' })],
       })
-    const { result } = renderHook(() =>
-      useAutomationOutcomeNotificationSync(options({ spaceId: 'spc-health' })),
-    )
+    const { result } = renderHook(() => projectionHarness(options({ spaceId: 'spc-health' })))
     let oldSocketHandler!: (message: AutomationOutcomeNotificationLifecycleMessage) => void
     act(() => {
       oldSocketHandler = result.current.beginConnection()
@@ -116,12 +109,12 @@ describe('useAutomationOutcomeNotificationSync', () => {
     const opened = deferred<AutomationOutcomeNotificationActionResult>()
     vi.mocked(openAutomationOutcomeNotification).mockReturnValueOnce(opened.promise)
     vi.mocked(dismissAutomationOutcomeNotification).mockResolvedValueOnce({
-      revision: 3,
-      notification: unread({ revision: 3, state: 'dismissed' }),
+      revision: 7,
+      notification: unread({ revision: 7, state: 'dismissed' }),
     })
     const onOpenSurface = vi.fn()
     const { result } = renderHook(() =>
-      useAutomationOutcomeNotificationSync(options({ spaceId: 'spc-health', onOpenSurface })),
+      projectionHarness(options({ spaceId: 'spc-health', onOpenSurface })),
     )
     await act(async () => result.current.refresh())
 
@@ -167,7 +160,7 @@ describe('useAutomationOutcomeNotificationSync', () => {
     })
     const onOpenSurface = vi.fn()
     const { result } = renderHook(() =>
-      useAutomationOutcomeNotificationSync(options({ spaceId: 'spc-health', onOpenSurface })),
+      projectionHarness(options({ spaceId: 'spc-health', onOpenSurface })),
     )
     await act(async () => result.current.refresh())
 
@@ -185,7 +178,7 @@ describe('useAutomationOutcomeNotificationSync', () => {
     vi.mocked(openAutomationOutcomeNotification).mockReturnValueOnce(opened.promise)
     const onOpenSurface = vi.fn()
     const { result } = renderHook(() =>
-      useAutomationOutcomeNotificationSync(options({ spaceId: 'spc-health', onOpenSurface })),
+      projectionHarness(options({ spaceId: 'spc-health', onOpenSurface })),
     )
     act(() => void result.current.beginConnection())
     await act(async () => result.current.refresh())
@@ -218,7 +211,7 @@ describe('useAutomationOutcomeNotificationSync', () => {
     vi.mocked(openAutomationOutcomeNotification).mockReturnValueOnce(opened.promise)
     const onOpenSurface = vi.fn()
     const { result, rerender } = renderHook(
-      ({ spaceId }) => useAutomationOutcomeNotificationSync(options({ spaceId, onOpenSurface })),
+      ({ spaceId }) => projectionHarness(options({ spaceId, onOpenSurface })),
       { initialProps: { spaceId: 'spc-health' as string | undefined } },
     )
     await act(async () => result.current.refresh())
@@ -249,9 +242,7 @@ describe('useAutomationOutcomeNotificationSync', () => {
     const onOpenSurface = vi.fn()
     const { result, rerender } = renderHook(
       ({ focusKey }) =>
-        useAutomationOutcomeNotificationSync(
-          options({ spaceId: 'spc-health', focusKey, onOpenSurface }),
-        ),
+        projectionHarness(options({ spaceId: 'spc-health', focusKey, onOpenSurface })),
       { initialProps: { focusKey: 'location-a:srf-overview' } },
     )
     await act(async () => result.current.refresh())
@@ -331,4 +322,66 @@ function deferred<T>() {
     reject = rejectPromise
   })
   return { promise, resolve, reject }
+}
+
+function act<T>(fn: () => T): T {
+  return fn()
+}
+
+function projectionHarness(initial: ReturnType<typeof options>) {
+  let current = initial
+  const projection = new LiveNotificationProjection({
+    api: {
+      fetchAutomationOutcomeNotifications,
+      openAutomationOutcomeNotification,
+      dismissAutomationOutcomeNotification,
+    },
+    token: () => current.authToken,
+    publish: () => {},
+    failed: current.onError,
+  })
+  projection.focus(initial.spaceId, initial.focusKey)
+  let epoch = 0
+  return {
+    get notifications() {
+      return projection.notifications
+    },
+    refresh: () => projection.refresh(),
+    handleLifecycle: (message: AutomationOutcomeNotificationLifecycleMessage) =>
+      projection.accept(message),
+    beginConnection: () => {
+      projection.beginConnection()
+      const generation = ++epoch
+      return (message: AutomationOutcomeNotificationLifecycleMessage) => {
+        if (generation === epoch) projection.accept(message)
+      }
+    },
+    open: async (notification: AutomationOutcomeNotification) => {
+      const href = await projection.act(notification, 'open')
+      if (href) current.onOpenSurface(href)
+    },
+    dismiss: (notification: AutomationOutcomeNotification) =>
+      projection.act(notification, 'dismiss'),
+    focus: (next: { spaceId?: string | undefined; focusKey?: string | undefined }) => {
+      current = { ...current, ...next, focusKey: next.focusKey ?? current.focusKey }
+      projection.focus(current.spaceId, current.focusKey)
+    },
+  }
+}
+
+function renderHook(
+  factory: (props: {
+    spaceId?: string | undefined
+    focusKey?: string
+  }) => ReturnType<typeof projectionHarness>,
+  config?: { initialProps: { spaceId?: string | undefined; focusKey?: string } },
+) {
+  const initial = config?.initialProps ?? {}
+  const projection = factory(initial)
+  return {
+    result: { current: projection },
+    rerender: (props: { spaceId?: string | undefined; focusKey?: string }) => {
+      projection.focus(props)
+    },
+  }
 }
