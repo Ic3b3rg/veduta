@@ -1568,7 +1568,16 @@ export class SurfaceEngine {
         type: 'agent_path',
         text: `${surface.title}: ${invocation.name} requested from Atom "${atom.id}"`,
         origin: effectiveOrigin([contentOrigin], 'trusted:user'),
-        payload: { surfaceId: surface.id, atomId: atom.id, actionName: invocation.name, payload },
+        payload: {
+          agentTurnId: `agent-turn-${Number(result.lastInsertRowid)}`,
+          ...(invocation.idempotencyKey === undefined
+            ? {}
+            : { idempotencyKey: invocation.idempotencyKey }),
+          surfaceId: surface.id,
+          atomId: atom.id,
+          actionName: invocation.name,
+          payload,
+        },
       })
       return Number(result.lastInsertRowid)
     })

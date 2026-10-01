@@ -74,7 +74,10 @@ describe('durable Agent Action execution lifecycle (issue #146)', () => {
     expect(store.snapshot()).toEqual(before)
     const requested = store.eventLog(surface.spaceId).filter((event) => event.type === 'agent_path')
     expect(requested).toHaveLength(1)
-    expect(requested[0]?.origin).toBe('untrusted:template')
+    expect(requested[0]).toMatchObject({
+      origin: 'untrusted:template',
+      payload: { agentTurnId: result.turn.id, idempotencyKey: 'review-intent' },
+    })
 
     const restored = restart(store, rootDir)
     expect(restored.agentTurns()).toEqual([result.turn])
@@ -109,6 +112,19 @@ describe('durable Agent Action execution lifecycle (issue #146)', () => {
     expect(restored.claimAgentTurn(result.turn.id)).toBeUndefined()
     expect(restored.queuedAgentTurns()).toEqual([])
     expect(restored.eventLog(surface.spaceId)).toEqual(eventsBefore)
+  })
+
+  it('correlates a legacy invocation without adding an absent retry key to its Event', () => {
+    const { store, surface } = setup()
+    const result = store.invokeSurfaceAction(surface.id, {
+      nodeId: 'review',
+      name: 'review_choices',
+    })
+    if (result.path !== 'agent') throw new Error('expected an Agent Action')
+    const requested = store.eventLog(surface.spaceId).filter((event) => event.type === 'agent_path')
+    expect(requested).toHaveLength(1)
+    expect(requested[0]?.payload?.['agentTurnId']).toBe(result.turn.id)
+    expect(requested[0]?.payload).not.toHaveProperty('idempotencyKey')
   })
 
   it('replays one global request identity before revalidating a changed or removed declaration', () => {
