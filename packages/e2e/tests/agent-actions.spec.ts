@@ -186,17 +186,85 @@ test('Agent controls execute through the shared loop and converge across authent
       expect((await observerWire.outcomeFor(invocation.idempotencyKey)).status).toBe('completed')
     })
 
+    await test.step('navigation remount and a full reload preserve pending feedback while the terminal response is held', async () => {
+      const captured = signal<void>()
+      const releaseOld = signal<void>()
+      const replayed = signal<void>()
+      const releaseReplay = signal<void>()
+      releasePending = () => {
+        releaseOld.resolve()
+        releaseReplay.resolve()
+      }
+      primaryWire.holdUpdates = true
+      primaryWire.interceptNext(async (route) => {
+        await primaryWire.captureHttp(route)
+        captured.resolve()
+        await releaseOld.promise
+        if (!route.request().failure()) await route.fulfill({ status: 503, body: '{}' })
+      })
+      await complete(page).click()
+      await captured.promise
+      const original = latest(primaryWire.requests).invocation
+      const turn = await primaryWire.outcomeFor(original.idempotencyKey)
+      expect(turn.status).toBe('completed')
+      await expect(complete(page)).toBeDisabled()
+      await expect(card(page).getByRole('cell', { name: 'Completed', exact: true })).toHaveCount(3)
+      await expect(
+        card(observer.page).getByRole('cell', { name: 'Completed', exact: true }),
+      ).toHaveCount(4)
+      await page
+        .getByRole('navigation', { name: 'Breadcrumb' })
+        .getByRole('link', { name: /^Home/ })
+        .click()
+      await expect(page.getByRole('main', { name: 'Home' })).toBeVisible()
+      await page
+        .getByRole('main', { name: 'Home' })
+        .getByRole('link', { name: /Health/ })
+        .click()
+      await expect(complete(page)).toBeDisabled()
+      await expect(complete(page)).toHaveAttribute('aria-busy', 'true')
+      await expect(card(page).getByRole('status')).toHaveText('Working…')
+
+      primaryWire.interceptNext(async (route) => {
+        const { response } = await primaryWire.captureHttp(route)
+        replayed.resolve()
+        await releaseReplay.promise
+        await route.fulfill({ response })
+      })
+      primaryWire.dropUpdates()
+      await page.reload()
+      await replayed.promise
+      expect(latest(primaryWire.requests).invocation).toEqual(original)
+      await expect(complete(page)).toBeDisabled()
+      await expect(complete(page)).toHaveAttribute('aria-busy', 'true')
+      await expect(card(page).getByRole('status')).toHaveText('Working…')
+      await expectRecords(4)
+      releaseReplay.resolve()
+      await expect(complete(page)).toBeEnabled()
+      await expect(card(page).getByRole('status')).toHaveCount(0)
+      primaryWire.releaseUpdates()
+      releaseOld.resolve()
+      await expect(card(page).getByRole('alert')).toHaveCount(0)
+      const responses = primaryWire.outcomes.filter(
+        (outcome) => outcome.idempotencyKey === original.idempotencyKey,
+      )
+      expect(
+        responses.every((outcome) => outcome.id === turn.id && outcome.status === 'completed'),
+      ).toBe(true)
+    })
+
     await test.step('reload, same-root Gateway restart, and authenticated replay preserve canonical identities without another turn', async () => {
       const expected = [
         { id: 'agent-demo-1', label: 'Completed' },
         { id: 'agent-demo-2', label: 'Completed' },
         { id: 'agent-demo-3', label: 'Completed' },
+        { id: 'agent-demo-4', label: 'Completed' },
       ]
       expect(records(await readSurface(page, origin, AGENT_ACTION_SURFACE_ID), 'records')).toEqual(
         expected,
       )
       for (const client of clients) await client.reload()
-      await expectRecords(3)
+      await expectRecords(4)
       await surfaceStack.stop()
       restarted = await startLocalVpsStack({
         port: surfaceStack.port,
@@ -205,7 +273,7 @@ test('Agent controls execute through the shared loop and converge across authent
       })
       await restarted.waitForReadyLine()
       for (const client of clients) await client.reload()
-      await expectRecords(3)
+      await expectRecords(4)
       for (const client of clients) {
         await expect(complete(client)).toBeEnabled()
         await expect(card(client).getByRole('alert')).toHaveCount(0)
@@ -227,15 +295,15 @@ test('Agent controls execute through the shared loop and converge across authent
       const events = (await readEvents(page, origin)).filter(
         (event) => event.payload?.['surfaceId'] === AGENT_ACTION_SURFACE_ID,
       )
-      expect(events.filter((event) => event.type === 'agent_path')).toHaveLength(4)
-      expect(events.filter((event) => event.type === 'surface.patch_state')).toHaveLength(3)
+      expect(events.filter((event) => event.type === 'agent_path')).toHaveLength(5)
+      expect(events.filter((event) => event.type === 'surface.patch_state')).toHaveLength(4)
       const turns = new Map(
         [...primaryWire.outcomes, ...observerWire.outcomes].map((turn) => [
           turn.idempotencyKey,
           turn,
         ]),
       )
-      expect(turns.size).toBe(4)
+      expect(turns.size).toBe(5)
       for (const [idempotencyKey, turn] of turns) {
         expect(ActionIntentIdSchema.safeParse(idempotencyKey).success).toBe(true)
         const requests = events.filter(
@@ -248,7 +316,7 @@ test('Agent controls execute through the shared loop and converge across authent
       expect(
         records(await readSurface(observer.page, origin, AGENT_ACTION_SURFACE_ID), 'records'),
       ).toEqual(expected)
-      await expectRecords(3)
+      await expectRecords(4)
     })
   } finally {
     releasePending()

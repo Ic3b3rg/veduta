@@ -201,6 +201,9 @@ a visible status, and a failure exposes an associated accessible alert while per
 Matching late canonical confirmations clear local pending or error feedback, including for an
 unbound Button. The existing PWA runtime owns intent identity, retry, queueing, and reconciliation;
 the catalog does not add a reducer or transport controller.
+The runtime also projects pending, queued, or failed Agent status per control. A navigation remount
+or reload therefore restores an honest wait or recoverable error while the original invocation
+awaits confirmation. These statuses and completion receipts never become persisted Surface state.
 
 Required selection and date controls need explicit valid initial state when a Template's neutral
 default cannot satisfy their contract. Template reuse does not choose the first option or today's
@@ -213,9 +216,10 @@ Conformance evidence is maintained at public boundaries:
 - [Catalog interaction and accessible feedback](../../packages/catalog/src/control-contracts.test.tsx)
 - [Gateway persistence, invocation, Event, and Chat acceptance](../../packages/daemon/src/control-actions-acceptance.test.ts)
 - [Actual SurfaceCard and runtime late Button recovery](../../packages/pwa/src/surface-control-recovery.test.tsx)
+- [Agent SurfaceCard completion, late recovery, remount, and reload](../../packages/pwa/src/surface-agent-control-recovery.test.tsx)
 - [Authenticated two-session pointer and keyboard journey, retry, reload, and reconnect](../../packages/e2e/tests/controls.spec.ts)
 - [Agent execution, concurrent retry, atomic failure, and restart through the Gateway](../../packages/daemon/src/agent-action-acceptance.test.ts)
-- [Actual SurfaceCard Agent wait and late confirmation](../../packages/pwa/src/surface-agent-control-recovery.test.tsx)
+- [Authenticated Agent execution, rejected writes, retry, reload, and Gateway restart](../../packages/e2e/tests/agent-actions.spec.ts)
 
 ## Read compatibility for Atom version skew (issue #148)
 

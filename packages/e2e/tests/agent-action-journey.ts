@@ -99,6 +99,10 @@ export class AgentActionWire {
     for (const send of held) send()
   }
 
+  dropUpdates(): void {
+    this.held = []
+  }
+
   async disconnect(): Promise<void> {
     this.disconnected = true
     this.held = []

@@ -20,6 +20,13 @@ shared transport abstraction. Gateway-owned durable Chat timelines remain govern
 the runtime may project and reconcile their live client state without becoming their durable
 authority.
 
+Agent-backed Surface commands use this same runtime ownership. Their retry UUIDs survive reload,
+and scoped status projections restore pending or recoverable failure feedback after a control
+remounts. Queued and running turn acknowledgments cannot complete a command. A terminal success
+is reconciled only after its canonical Surface cursor is available, while failed outcomes remain
+visible and permit a new attempt. The catalog observes these statuses and receipts through the
+existing subscription boundary without adding execution or transport authority.
+
 Keeping the live state distributed through React callbacks was rejected because every new feature
 widens event-specific seams and makes lifecycle ownership harder to test. A parallel reducer or
 cache beside existing React authority was rejected because two projections cannot deterministically
