@@ -153,7 +153,14 @@ describe('planTemplateImport / applyTemplateImport', () => {
         type: 'Box',
         children: [
           { id: 'title', type: 'Title', props: { text: 'Workout tracker' } },
-          { id: 'log', type: 'Table', props: { rows: [{ day: 'Mon', reps: 10 }] } },
+          {
+            id: 'log',
+            type: 'Table',
+            props: {
+              columns: ['day', 'reps'],
+              rows: [{ day: 'Mon', reps: 10 }],
+            },
+          },
           {
             id: 'done',
             type: 'Checkbox',
@@ -173,9 +180,8 @@ describe('planTemplateImport / applyTemplateImport', () => {
       updatedBy: 'user',
     })
     if (!template) throw new Error('expected a Template to be saved on pin')
-    // The Table's rows never travel with the Template's tree: derivation
-    // drops any array/object-valued prop and records where, instead.
-    expect(template.tree.children?.find((node) => node.id === 'log')?.props?.rows).toBeUndefined()
+    // Composition survives; instance rows become an explicitly empty collection.
+    expect(template.tree.children?.find((node) => node.id === 'log')?.props?.rows).toEqual([])
     expect(template.dataProps).toEqual(['log.rows'])
 
     const bundle = exportTemplates(storeA.spacesEngine, spaceA.id)
@@ -212,13 +218,10 @@ describe('planTemplateImport / applyTemplateImport', () => {
     expect(instantiated.state).toEqual({ finished: true })
     // The reuse is recorded against the imported Template.
     expect(storeB.surfaceProvenance(instantiated.id)?.templateId).toBe(template.id)
-    // What the reuse path does *not* carry: a `dataProps` entry only ever
-    // records that a prop existed and was dropped — instantiating a
-    // Template never reintroduces it. Restoring `log.rows` would require a
-    // separate, explicit data-patching step, not something `instantiate`
-    // (or `create_surface_from_template`) does on its own.
+    // Restoring personal rows requires an explicit content write in the destination.
     const log = instantiated.tree.children?.find((node) => node.id === 'log')
-    expect(log?.props?.rows).toBeUndefined()
+    expect(log?.props?.rows).toEqual([])
+    expect(log?.props?.columns).toEqual(['day', 'reps'])
   })
 
   it('refuses on a colliding id, writes nothing, and names the exact rm command', async () => {
@@ -446,7 +449,7 @@ describe('planTemplateImport / applyTemplateImport', () => {
           type: 'Box',
           children: [
             { id: 'title', type: 'Title', props: { text: 'Groceries' } },
-            { id: 'count', type: 'Stat', props: { value: 3 } },
+            { id: 'count', type: 'Stat', props: { label: 'Count', value: 3 } },
           ],
         },
       }),

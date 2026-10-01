@@ -358,7 +358,7 @@ describe('acceptance: disabled automations', () => {
     expect(toggleEvents).toHaveLength(1)
   })
 
-  it('ignores non-boolean toggle values instead of truthiness-flipping the job', async () => {
+  it('rejects non-boolean toggle values before changing the Surface or job', () => {
     const scheduler = createScheduler()
     const timer = scheduler.armTimer({
       spaceId: HEALTH,
@@ -366,18 +366,18 @@ describe('acceptance: disabled automations', () => {
       action: 'Log my weight',
     })
 
-    store.invokeSurfaceAction(SURFACE, {
-      nodeId: `automation-${timer.id}`,
-      name: 'toggle',
-      payload: { value: 'false' },
-    })
+    const cursor = store.latestSurfaceCursor()
+    expect(() =>
+      store.invokeSurfaceAction(SURFACE, {
+        nodeId: `automation-${timer.id}`,
+        name: 'toggle',
+        payload: { value: 'false' },
+      }),
+    ).toThrow('Automation binding')
 
     expect(scheduler.listAutomations(HEALTH)[0]?.enabled).toBe(true)
-    // The malformed value reached Surface state through the fast path; the
-    // scheduler re-projects from SQLite on a microtask (after the Gateway
-    // broadcast of the malformed patch) to heal it.
-    await new Promise<void>((resolve) => queueMicrotask(resolve))
     expect(store.getSurface(SURFACE)?.state['job-1']).toBe(true)
+    expect(store.latestSurfaceCursor()).toBe(cursor)
   })
 
   it('keeps syncing Surface toggles after a stop/start cycle', () => {
