@@ -351,6 +351,7 @@ describe('App routing', () => {
     render(<App />)
 
     await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+    act(() => vi.mocked(connectGateway).mock.calls[0]![0].onHello(0, 'route-client'))
     fireEvent.change(screen.getByRole('textbox', { name: 'Message Veduta' }), {
       target: { value: 'Global question' },
     })

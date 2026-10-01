@@ -722,7 +722,7 @@ describe('connectGateway chat.turn-* dispatch', () => {
     expect(onAutomationOutcomeNotificationLifecycle).toHaveBeenCalledWith(frame)
   })
 
-  it('drops a frame that fails schema validation without calling any handler', () => {
+  it('reports a malformed frame visibly without dispatching invalid domain data', () => {
     const onChatTurnDelta = vi.fn()
     const onError = vi.fn()
     const { socket } = connectWithFakeSocket({ onChatTurnDelta, onError })
@@ -731,7 +731,9 @@ describe('connectGateway chat.turn-* dispatch', () => {
     deliver(socket, { type: 'chat.turn-delta', spaceId: 'spc-home', text: 'x' })
 
     expect(onChatTurnDelta).not.toHaveBeenCalled()
-    expect(onError).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledExactlyOnceWith(
+      'Malformed Gateway frame; refreshing confirmed state.',
+    )
   })
 })
 
