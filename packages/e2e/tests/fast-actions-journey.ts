@@ -162,7 +162,10 @@ export class ActionWire {
   private held: (() => void)[] = []
   private next: ActionInterceptor | undefined
 
-  constructor(private readonly page: Page) {}
+  constructor(
+    private readonly page: Page,
+    private readonly heldSurfaceIds: readonly string[] = [ITEM_SURFACE_ID, MEASUREMENT_SURFACE_ID],
+  ) {}
 
   async install(): Promise<void> {
     await this.page.route('**/api/surfaces/*/actions', async (route) => {
@@ -190,7 +193,7 @@ export class ActionWire {
         const outcome = frame.type === 'surface.patch' ? frame.event.actionOutcome : undefined
         const fixture =
           frame.type === 'surface.patch' &&
-          [ITEM_SURFACE_ID, MEASUREMENT_SURFACE_ID].includes(frame.event.patch.surfaceId)
+          this.heldSurfaceIds.includes(frame.event.patch.surfaceId)
         const send = () => {
           if (outcome) this.delivered.push(outcome)
           socket.send(message)

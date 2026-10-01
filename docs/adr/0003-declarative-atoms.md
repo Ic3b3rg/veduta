@@ -148,6 +148,52 @@ tree, typed state, Pin, and canonical order. The Agent chooses presentation at c
 change it later only for an explicit current user request; models never author CSS, percentages, or
 grid instructions.
 
+## Selection and action controls (issue #146)
+
+Button, Checkbox, Select, RadioGroup, and DatePicker have strict props and are leaves: even an
+empty `children` array is rejected. Each requires a visible nonempty `label`, permits an optional
+boolean `disabled`, and declares exactly one Action. Their owning interaction contracts are:
+
+| Atom       | Additional props                                                                  | Canonical bound value                                                          | Action inputs                                           |
+| ---------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| Button     | Optional `variant`: `default`, `secondary`, or `ghost`                            | No binding                                                                     | Empty inputs; the declared Action supplies fixed values |
+| Checkbox   | None                                                                              | Boolean                                                                        | Fast `toggle` with `{ value: boolean }`                 |
+| Select     | Nonempty `options` of strict `{ label, value }` objects with unique string values | An offered option value                                                        | Fast `change` with `{ value: string }`                  |
+| RadioGroup | The same option contract as Select                                                | An offered option value                                                        | Fast `change` with `{ value: string }`                  |
+| DatePicker | Optional `allowEmpty`                                                             | A real calendar date in `YYYY-MM-DD` format; `''` only with `allowEmpty: true` | Fast `change` with `{ value: string }`                  |
+
+Selection input enums exactly match the offered values. The last plan step targeting a selection
+control's own binding must set it from `input.value`; other batch targets remain available.
+Complete Surface validation checks current bound values and every statically known literal or
+`clear` assignment in a fast plan, including intermediate writes. Gateway record identities and
+timestamps cannot supply calendar-only dates. Dynamic inputs still undergo the existing invocation
+and intermediate Surface validation before persistence. This preserves the ordered batch contract
+of issue #161 instead of admitting a plan that can only fail during execution.
+
+A Button may retain its declared Agent Action. A supplied Agent payload must exactly match the
+declared payload, and a disabled Button is rejected before enqueue or Event creation. Fast Button
+inputs remain empty; fixed payload values belong in the persisted plan.
+
+The catalog uses labelled native controls and the RadioGroup keyboard interaction. Displayed values
+come from canonical state. An outstanding invocation disables its control, exposes `aria-busy` and
+a visible status, and a failure exposes an associated accessible alert while permitting retry.
+Matching late canonical confirmations clear local pending or error feedback, including for an
+unbound Button. The existing PWA runtime owns intent identity, retry, queueing, and reconciliation;
+the catalog does not add a reducer or transport controller.
+
+Required selection and date controls need explicit valid initial state when a Template's neutral
+default cannot satisfy their contract. Template reuse does not choose the first option or today's
+date. An explicitly optional DatePicker may use the empty default. Stripping an imported Agent
+Action cannot make an inert Button acceptable.
+
+Conformance evidence is maintained at public boundaries:
+
+- [Protocol declarations, canonical values, and plan validation](../../packages/protocol/src/control-atoms.test.ts)
+- [Catalog interaction and accessible feedback](../../packages/catalog/src/control-contracts.test.tsx)
+- [Gateway persistence, invocation, Event, and Chat acceptance](../../packages/daemon/src/control-actions-acceptance.test.ts)
+- [Actual SurfaceCard and runtime late Button recovery](../../packages/pwa/src/surface-control-recovery.test.tsx)
+- [Authenticated two-session pointer and keyboard journey, retry, reload, and reconnect](../../packages/e2e/tests/controls.spec.ts)
+
 ## Read compatibility for Atom version skew (issue #148)
 
 Authoring and persistence keep the closed canonical Atom catalog. Client reads have an explicit
