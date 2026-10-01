@@ -32,6 +32,7 @@ interface Intent {
   scope: string
   failedLocal: boolean
   superseded: boolean
+  retainDraftReceipt: boolean
   receipt?: RenderableFastActionOutcome | CommittedFastActionMetadata
   attempt?: {
     local: boolean
@@ -115,13 +116,16 @@ export class LiveActionCommands {
     this.message = null
   }
 
-  dispatch(input: {
-    surfaceId: string
-    nodeId: string
-    name: string
-    actionRevision: string
-    inputs: JsonObject
-  }): Promise<void> {
+  dispatch(
+    input: {
+      surfaceId: string
+      nodeId: string
+      name: string
+      actionRevision: string
+      inputs: JsonObject
+    },
+    retainDraftReceipt = false,
+  ): Promise<void> {
     if (!this.started) return Promise.reject(new Error('The Gateway connection is not active.'))
     const scope = canonicalJson({
       surfaceId: input.surfaceId,
@@ -158,6 +162,7 @@ export class LiveActionCommands {
       this.entries = [...this.entries, intent.entry]
       this.persist()
     }
+    intent.retainDraftReceipt = retainDraftReceipt
     return this.send(intent, true)
   }
 
@@ -221,6 +226,7 @@ export class LiveActionCommands {
       fingerprint,
       failedLocal: false,
       superseded: false,
+      retainDraftReceipt: false,
       scope,
     }
     this.intents.set(entry.id, intent)
@@ -321,7 +327,8 @@ export class LiveActionCommands {
     const attempt = intent.attempt
     delete intent.attempt
     attempt?.resolve()
-    if (intent.superseded || attempt?.local || !intent.failedLocal) this.forget(intent.entry.id)
+    if (intent.superseded || !intent.retainDraftReceipt || attempt?.local || !intent.failedLocal)
+      this.forget(intent.entry.id)
     if (!intent.superseded) this.message = null
     // Failed local drafts can acknowledge a late receipt once without creating a second intent.
     while (this.intents.size > this.entries.length + 64) {

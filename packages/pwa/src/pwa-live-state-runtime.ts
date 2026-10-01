@@ -682,13 +682,16 @@ export class PwaLiveStateRuntime {
       throw error
     }
     this.error = null
-    return this.actions.dispatch({
-      surfaceId,
-      nodeId,
-      name,
-      actionRevision: action.revision,
-      inputs: parsed.data,
-    })
+    return this.actions.dispatch(
+      {
+        surfaceId,
+        nodeId,
+        name,
+        actionRevision: action.revision,
+        inputs: parsed.data,
+      },
+      node.type === 'Form',
+    )
   }
 
   acknowledgeSurfaceAction = (

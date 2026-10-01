@@ -9,6 +9,7 @@ import {
 } from '@veduta/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as api from './api.ts'
+import { committedActionOutcome } from './action-test-support.ts'
 import type { GatewayHandlers } from './gateway-client.ts'
 import { createPwaLiveStateRuntime } from './pwa-live-state-runtime.ts'
 
@@ -277,9 +278,9 @@ describe('PWA live Action lifecycle', () => {
     runtime.stop()
   })
 
-  it('keeps Event recovery pending and acknowledges its late canonical receipt once', async () => {
+  it('retires a recovered control receipt before accepting a fresh gesture', async () => {
     const { runtime, invokeSurfaceAction, connections, start } = setup()
-    invokeSurfaceAction.mockImplementation(async (_id, invocation) => {
+    invokeSurfaceAction.mockImplementationOnce(async (_id, invocation) => {
       const outcome = committed(invocation)
       return {
         outcome: 'recovery_pending',
@@ -293,6 +294,7 @@ describe('PWA live Action lifecycle', () => {
         duplicate: false,
       }
     })
+    invokeSurfaceAction.mockImplementation(async (_id, invocation) => committed(invocation, 2))
     await start()
     await expect(runtime.dispatchSurfaceAction(initial.id, 'done', 'toggle', true)).rejects.toThrow(
       'awaiting Event recovery',
@@ -311,11 +313,12 @@ describe('PWA live Action lifecycle', () => {
     })
     expect(runtime.getSnapshot().queuedFastActions).toHaveLength(0)
     await runtime.dispatchSurfaceAction(initial.id, 'done', 'toggle', true)
-    expect(invokeSurfaceAction).toHaveBeenCalledTimes(1)
+    expect(invokeSurfaceAction).toHaveBeenCalledTimes(2)
+    expect(invokeSurfaceAction.mock.calls[1]![1]).not.toEqual(invokeSurfaceAction.mock.calls[0]![1])
     runtime.stop()
   })
 
-  it('keeps a failed local submission acknowledgement after automatic retry succeeds', async () => {
+  it('creates a fresh control intent after automatic retry confirms the previous gesture', async () => {
     const { runtime, invokeSurfaceAction, connections, start } = setup()
     invokeSurfaceAction.mockRejectedValueOnce(new api.ApiResponseError('Retry required', 503))
     invokeSurfaceAction.mockImplementation(async (_id, invocation) => committed(invocation))
@@ -331,7 +334,89 @@ describe('PWA live Action lifecycle', () => {
     expect(runtime.getSnapshot().queuedFastActions).toHaveLength(0)
     expect(invokeSurfaceAction).toHaveBeenCalledTimes(2)
     await runtime.dispatchSurfaceAction(initial.id, 'done', 'toggle', true)
+    expect(invokeSurfaceAction).toHaveBeenCalledTimes(3)
+    expect(invokeSurfaceAction.mock.calls[2]![1]).not.toEqual(invokeSurfaceAction.mock.calls[1]![1])
+    runtime.stop()
+  })
+
+  it('does not absorb a fresh Button append after late confirmation of a failed attempt', async () => {
+    const fixture = SurfaceSchema.parse({
+      ...initial,
+      tree: {
+        id: 'add',
+        type: 'Button',
+        props: { label: 'Add item' },
+        actions: [
+          {
+            name: 'add',
+            path: 'fast',
+            revision: 'acr-add',
+            plan: {
+              inputs: {},
+              targets: {
+                items: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    identityKey: 'id',
+                    fields: { id: { type: 'string' }, label: { type: 'string' } },
+                  },
+                },
+              },
+              steps: [
+                {
+                  op: 'append',
+                  target: 'items',
+                  value: {
+                    source: 'object',
+                    fields: {
+                      id: { source: 'metadata', name: 'recordId' },
+                      label: { source: 'literal', value: 'A' },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      state: { items: [] },
+    })
+    const { runtime, invokeSurfaceAction, connections, start } = setup({}, fixture)
+    const first = { id: 'first', label: 'A' }
+    const second = { id: 'second', label: 'A' }
+    const outcome = (invocation: ActionInvocation, items: (typeof first)[], cursor: number) =>
+      committedActionOutcome(
+        invocation,
+        { ...fixture, state: { items } },
+        {
+          surfaceId: fixture.id,
+          operations: [{ target: 'state', op: 'replace', path: '/items', value: items }],
+        },
+        cursor,
+      )
+    invokeSurfaceAction.mockRejectedValueOnce(new api.ApiResponseError('Response lost', 503))
+    invokeSurfaceAction.mockImplementation(async (_id, invocation) =>
+      outcome(invocation, [first, second], 2),
+    )
+    await start()
+    await expect(runtime.dispatchSurfaceAction(fixture.id, 'add', 'add')).rejects.toThrow(
+      'Response lost',
+    )
+    const original = invokeSurfaceAction.mock.calls[0]![1]
+    const { surface: _surface, patch, ...actionOutcome } = outcome(original, [first], 1)
+    connections[0]!.onSurfacePatch({
+      cursor: 1,
+      at: '2026-10-01T08:00:01Z',
+      spaceId: fixture.spaceId,
+      patch,
+      actionOutcome,
+      freshness: fixture.freshness,
+    })
+    await runtime.dispatchSurfaceAction(fixture.id, 'add', 'add')
     expect(invokeSurfaceAction).toHaveBeenCalledTimes(2)
+    expect(invokeSurfaceAction.mock.calls[1]![1]).not.toEqual(original)
+    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['items']).toEqual([first, second])
     runtime.stop()
   })
 
