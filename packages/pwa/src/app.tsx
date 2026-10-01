@@ -9,6 +9,8 @@ import { ApiResponseError, fetchOnboardingStatus, type SpaceWithSurfaces } from 
 import { AuthGate } from './auth-gate.tsx'
 import { OnboardingWizard } from './onboarding-wizard.tsx'
 import { SettingsModelConnections } from './settings-model-connections.tsx'
+import { SettingsGmailConnections } from './settings-gmail-connections.tsx'
+import { SettingsHimalayaConnections } from './settings-himalaya-connections.tsx'
 import { ClientRouteTable, clientPath, useClientRouting } from './client-router.tsx'
 import { AppShell, type AppRouteSelection } from './app-shell.tsx'
 import { homeBlockedByStatusFailure } from './onboarding-state.ts'
@@ -327,6 +329,8 @@ function RoutedApp() {
       focusChatToken={focusChatToken}
       focusChatOnRouteChange={focusChatOnRouteChange}
       onOpenModelConnections={() => navigate(clientPath.modelConnections)}
+      onOpenGmailConnections={() => navigate(clientPath.gmailConnections)}
+      onOpenHimalayaConnections={() => navigate(clientPath.himalayaConnections)}
       onRetrySpaces={runtime.retry}
       onInstallDone={() => {
         localStorage.setItem(INSTALL_DISMISSED_KEY, '1')
@@ -360,6 +364,12 @@ function RoutedApp() {
         appShell={appShell}
         modelConnections={
           <SettingsModelConnections token={authToken} onBack={() => navigate(clientPath.home)} />
+        }
+        gmailConnections={
+          <SettingsGmailConnections token={authToken} onBack={() => navigate(clientPath.home)} />
+        }
+        himalayaConnections={
+          <SettingsHimalayaConnections token={authToken} onBack={() => navigate(clientPath.home)} />
         }
       />
     </PwaRuntimeContext.Provider>

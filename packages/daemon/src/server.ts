@@ -35,6 +35,21 @@ import { createFullTextFlow } from './full-text-flow.ts'
 import { registerGatewayRoute } from './gateway-route.ts'
 import { GatewayHub, type PwaChatInput } from './gateway.ts'
 import { CalendarSource, GmailSource, GoogleTokenProvider } from './google-sources.ts'
+import { GmailConnections } from './gmail-connections.ts'
+import { GmailMailbox } from './gmail-mailbox.ts'
+import { HimalayaConnections } from './himalaya-connections.ts'
+import { HimalayaMailbox } from './himalaya-mailbox.ts'
+import { createHimalayaInstallTool } from './himalaya-install-tool.ts'
+import { registerHimalayaConnectionRoutes } from './himalaya-connection-routes.ts'
+import { registerGmailConnectionRoutes } from './gmail-connection-routes.ts'
+import { createMailboxTools } from './mailbox-tools.ts'
+import {
+  createGeneralExecutionTool,
+  type CommandRequest,
+  type CommandResult,
+} from './general-execution.ts'
+import { MailboxSummaryReader } from './mailbox-summary-reader.ts'
+import { FirstPartySkills } from './skill-catalog.ts'
 import { loadHeartbeatConfig } from './heartbeat-config.ts'
 import { HeartbeatSurfaceManager } from './heartbeat-surface.ts'
 import { Heartbeat, type HeartbeatOptions } from './heartbeat.ts'
@@ -130,6 +145,12 @@ export interface ServerOptions {
    * and the test suite must never get a global denying dispatcher by default.
    */
   egress?: { enforce?: boolean; extraAllow?: readonly string[] }
+  /** Injectable Google transport for passive Gmail connection tests. */
+  gmailFetch?: typeof fetch
+  /** Scripted CLI transport for Himalaya setup and mailbox integration tests. */
+  himalayaRun?: (request: CommandRequest) => Promise<CommandResult>
+  /** Scripted Veduta-owned general command transport for provider parity tests. */
+  commandRun?: (request: CommandRequest) => Promise<CommandResult>
   /**
    * Injectable Web Push transport (issue #18): tests and a future dev
    * profile inject a recording fake so no real push service is ever
@@ -450,6 +471,31 @@ export function buildServer(options: ServerOptions = {}) {
     secrets,
     keyMaterial: vaultKeyMaterial,
   } = openVaultAndSecrets(store.spacesEngine.rootDir)
+  const auth = options.auth ?? { mode: 'dev' as const }
+  const gmailEgressPolicy: { current?: EgressPolicy } = {}
+  const gmailConnections = new GmailConnections({
+    rootDir: store.spacesEngine.rootDir,
+    vault,
+    secrets,
+    allowedRedirectOrigins:
+      auth.mode === 'production'
+        ? auth.allowedOrigins
+        : ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://127.0.0.1:8787'],
+    ...(options.gmailFetch === undefined ? {} : { fetchFn: options.gmailFetch }),
+    now,
+    onConfigured: () =>
+      gmailEgressPolicy.current?.allow(['oauth2.googleapis.com', 'gmail.googleapis.com']),
+  })
+  const himalayaConnections = new HimalayaConnections({
+    rootDir: store.spacesEngine.rootDir,
+    vault,
+    secrets,
+    now,
+    ...(options.himalayaRun === undefined ? {} : { run: options.himalayaRun }),
+  })
+  app.addHook('onClose', async () => {
+    himalayaConnections.close()
+  })
   // The trust layer's admin Surfaces (allowlist, audit) need a durable home
   // (issue #14): materialize the System Space before anything else so
   // it exists no matter which subsystem writes to it first.
@@ -487,7 +533,6 @@ export function buildServer(options: ServerOptions = {}) {
   // (`chat-tool-registry.ts`'s `chatToolRegistry`): it is what offers
   // `search_memory` to a live turn.
 
-  const auth = options.auth ?? { mode: 'dev' as const }
   // Onboarding wizard profile (issue #19; widened to a third value by issue
   // 023): `options.profile` wins when a caller sets it explicitly (the
   // Local VPS boot branch does); otherwise this mirrors the historical
@@ -921,7 +966,7 @@ export function buildServer(options: ServerOptions = {}) {
     config: () => routingState.current(),
     connections: connectionRuntimes,
     secrets,
-    mockResponder: createMockChatResponder({ now, timeZone: memoryConfig.timezone }),
+    mockResponder: createMockChatResponder({ now, timeZone: memoryConfig.timezone, cwd: dataDir }),
   })
   const proactiveCompletions = createProactiveCompletions({ router, bridge })
   judgeCompletion = proactiveCompletions.judge
@@ -955,7 +1000,11 @@ export function buildServer(options: ServerOptions = {}) {
       config: candidateConfig,
       connections: connectionRuntimes,
       secrets,
-      mockResponder: createMockChatResponder({ now, timeZone: memoryConfig.timezone }),
+      mockResponder: createMockChatResponder({
+        now,
+        timeZone: memoryConfig.timezone,
+        cwd: dataDir,
+      }),
     })
     return probeModel(probeBridge, {
       provider: record.provider,
@@ -1205,6 +1254,21 @@ export function buildServer(options: ServerOptions = {}) {
   // `chatToolRegistry` below.
   const spawnWorkerTool = createSpawnWorkerTool(workerPool)
 
+  const gmailMailbox = new GmailMailbox(gmailConnections)
+  const himalayaMailbox = new HimalayaMailbox(himalayaConnections)
+  const skills = new FirstPartySkills(undefined, (text) => {
+    const lower = text.toLowerCase()
+    const named = [...gmailMailbox.accounts(), ...himalayaMailbox.accounts()].filter(
+      (account) =>
+        lower.includes(account.address.toLowerCase()) ||
+        (account.name.length > 2 && lower.includes(account.name.toLowerCase())),
+    )
+    if (named.length === 1) return named[0]!.provider
+    const available = [...gmailMailbox.accounts(), ...himalayaMailbox.accounts()]
+    return available.length === 1 ? available[0]!.provider : undefined
+  })
+  const mailboxReader = new MailboxSummaryReader(router, proactiveCompletions.reader)
+
   // The chat tool registry (issue #37, exact set per `chat-tool-registry.ts`'s
   // doc comment): built through the shared builder so this daemon's real
   // registry and `tool-parameters.test.ts`'s registry-shape assertions can
@@ -1217,6 +1281,18 @@ export function buildServer(options: ServerOptions = {}) {
     scheduler,
     spawnWorkerTool,
     pendingDecisions,
+    skills,
+    generalExecutionTool: createGeneralExecutionTool(store, options.commandRun),
+    himalayaInstallTool: createHimalayaInstallTool(himalayaConnections, store),
+    mailboxToolsFor: (spaceId) =>
+      createMailboxTools({
+        store,
+        providers: [gmailMailbox, himalayaMailbox],
+        reader: mailboxReader,
+        spaceId,
+        timeZone: memoryConfig.timezone,
+        now,
+      }),
   })
 
   // The real chat loop (issue #37): every chat entry point — the global
@@ -1240,6 +1316,8 @@ export function buildServer(options: ServerOptions = {}) {
     toolsFor: chatToolRegistry,
     send: (clientId, frame) => gateway.sendToClient(clientId, frame),
     pendingDecisions,
+    skills,
+    commandCwd: dataDir,
   })
   chatTurnHandler = (event) => {
     void chatLoop.handleChatMessage(event)
@@ -1468,6 +1546,8 @@ export function buildServer(options: ServerOptions = {}) {
     profile,
     probe: (connectionId, modelId) => probeSlot.current(connectionId, modelId),
   })
+  registerGmailConnectionRoutes(app, gmailConnections)
+  registerHimalayaConnectionRoutes(app, himalayaConnections)
 
   registerIngestionRoutes(app, { ingestion, lockout })
   registerGatewayRoute(app, { auth, gateway })
@@ -1499,10 +1579,11 @@ export function buildServer(options: ServerOptions = {}) {
       routingState.current(),
       loadConnectionsConfig(store.spacesEngine.rootDir),
     ),
-    ...(Object.values(ingestionConfig.sources).some(
+    ...(gmailConnections.snapshot().connections.length > 0 ||
+    Object.values(ingestionConfig.sources).some(
       (source) => source.adapter !== 'imap-idle' && Boolean(source.google),
     )
-      ? { googleHosts: ['oauth2.googleapis.com', 'www.googleapis.com'] }
+      ? { googleHosts: ['oauth2.googleapis.com', 'www.googleapis.com', 'gmail.googleapis.com'] }
       : {}),
     toolDomains: outboundTools.flatMap(({ tool }) => tool.egressDomains),
     ...(extraAllowHosts.length > 0 ? { extraAllow: extraAllowHosts } : {}),
@@ -1510,6 +1591,7 @@ export function buildServer(options: ServerOptions = {}) {
     // constantly; the VPS and Local VPS profiles must not trust it specially.
     allowLoopback: auth.mode !== 'production',
   })
+  gmailEgressPolicy.current = egress
   egress.onDenial((denial) => {
     const line = defaultRedactor.redactText(JSON.stringify(denial))
     appendFileSync(join(store.spacesEngine.rootDir, 'egress-denials.jsonl'), `${line}\n`)

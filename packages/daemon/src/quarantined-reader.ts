@@ -186,7 +186,7 @@ function correctiveNote(reason: string): string {
 
 type ParseOutcome = { ok: true; output: ReaderOutput } | { ok: false; reason: string }
 
-function parseAndSanitize(text: string): ParseOutcome {
+export function parseAndSanitize(text: string): ParseOutcome {
   let json: unknown
   try {
     json = JSON.parse(stripJsonCodeFence(text))

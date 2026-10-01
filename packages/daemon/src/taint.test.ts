@@ -95,6 +95,21 @@ describe('gateToolsForOrigins', () => {
   const l2 = fromPartial<ToolFixture>({ name: 'delete_account', level: 'L2' })
   const noLevel = fromPartial<ToolFixture>({ name: 'legacy_tool' })
 
+  it('offers scoped external reads and general execution without changing L1/L2 wrapping', () => {
+    const read = fromPartial<ToolDef>({
+      name: 'search_mailbox',
+      level: 'R0',
+      egressDomains: ['gmail.googleapis.com'],
+    })
+    const command = fromPartial<ToolDef>({
+      name: 'execute_command',
+      level: 'general',
+      egressDomains: [],
+    })
+    const gated = gateToolsForOrigins([read, command, l1, l2], ['untrusted:gmail'], () => false)
+    expect(gated.map((tool) => tool.name)).toEqual(['search_mailbox', 'execute_command'])
+  })
+
   it('keeps every tool when all origins are trusted', () => {
     const tools = [l0, l1, l2, noLevel]
     expect(gateToolsForOrigins(tools, ['trusted:user', 'trusted:system'])).toEqual(tools)

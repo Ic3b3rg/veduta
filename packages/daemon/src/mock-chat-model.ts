@@ -35,6 +35,8 @@ import {
   INVALID_AUTHORING_REQUEST,
 } from './mock-invalid-authoring-fixture.ts'
 import { respondToMockSurfacePresentation } from './mock-surface-presentation-fixture.ts'
+import { respondToMockMailbox } from './mock-mailbox-fixture.ts'
+import { respondToMockHimalayaSetup } from './mock-himalaya-setup-fixture.ts'
 import {
   respondToComposedSurface,
   COMPOSED_SURFACE_REQUEST,
@@ -86,6 +88,7 @@ export interface MockChatModelOptions {
   timeZone?: string
   /** Delay between demo fills; tests inject zero while the Loopback profile stays observable. */
   progressiveDelayMs?: number
+  cwd?: string
 }
 
 /** `PiChatContext['messages']`'s element type, named locally so this file never
@@ -161,6 +164,10 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
     if (automationResponse) return automationResponse
     const presentationResponse = respondToMockSurfacePresentation(text, toolResultsAfter)
     if (presentationResponse) return presentationResponse
+    const himalayaSetupResponse = respondToMockHimalayaSetup(text, toolResultsAfter, options.cwd)
+    if (himalayaSetupResponse) return himalayaSetupResponse
+    const mailboxResponse = respondToMockMailbox(text, toolResultsAfter)
+    if (mailboxResponse) return mailboxResponse
 
     const lastToolResult = toolResultsAfter.at(-1)
     if (lastToolResult) return closingMessage(lastToolResult)

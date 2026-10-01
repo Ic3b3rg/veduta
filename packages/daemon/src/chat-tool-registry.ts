@@ -6,6 +6,7 @@ import { createGlobalChatTools, type GlobalChatTurnHooks } from './global-chat-t
 import type { MemoryRetrieval } from './memory-retrieval.ts'
 import { createMemoryTools } from './memory-tools.ts'
 import type { Scheduler } from './scheduler.ts'
+import type { FirstPartySkills } from './skill-catalog.ts'
 import type { PendingDecisionService } from './pending-decision-service.ts'
 import type { Store } from './store.ts'
 import { createSystemChatTools } from './system-chat-tools.ts'
@@ -25,6 +26,10 @@ export interface ChatToolRegistryDeps {
   scheduler: Scheduler
   spawnWorkerTool: ToolDef
   pendingDecisions: Pick<PendingDecisionService, 'get'>
+  mailboxToolsFor?: (spaceId: string) => ToolDef[]
+  skills?: FirstPartySkills
+  generalExecutionTool?: ToolDef
+  himalayaInstallTool?: ToolDef
 }
 
 /**
@@ -52,7 +57,7 @@ export function chatToolRegistry(
       templateEngine: deps.templateEngine,
       spaceId,
     })
-    return [
+    const primaryTools = [
       ...deps.wrappedOutboundTools,
       ...surfaceTools,
       ...createMemoryTools(deps.store.spacesEngine, {
@@ -62,7 +67,11 @@ export function chatToolRegistry(
       ...templateTools(deps.templateEngine, { activeSpaceId: spaceId }),
       ...createFocusedAutomationTools({ scheduler: deps.scheduler, spaceId }),
       deps.spawnWorkerTool,
+      ...(deps.generalExecutionTool === undefined ? [] : [deps.generalExecutionTool]),
+      ...(deps.himalayaInstallTool === undefined ? [] : [deps.himalayaInstallTool]),
+      ...(deps.mailboxToolsFor?.(spaceId) ?? []),
     ]
+    return [...primaryTools, ...(deps.skills?.tools(primaryTools.map((tool) => tool.name)) ?? [])]
   }
 
   return (spaceId, hooks) => {

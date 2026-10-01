@@ -108,6 +108,9 @@ importers:
       web-push:
         specifier: ^3.6.7
         version: 3.6.7
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
       zod:
         specifier: ^3.25.0
         version: 3.25.76

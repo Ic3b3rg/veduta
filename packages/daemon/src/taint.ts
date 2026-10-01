@@ -58,12 +58,11 @@ export function hasUntrusted(origins: Iterable<Origin | undefined>): boolean {
  * whether a wrapping predicate is supplied:
  *
  * - No `isWrapped` (the pre-trust-layer regime, issue #13): if any origin
- *   feeding a turn is untrusted, only `level: 'L0'` tools survive — the
- *   model cannot call what it does not have. L1+ tools are removed
- *   outright, not just denied at call time.
+ *   feeding a turn is untrusted, L1/L2 tools are removed outright.
  *
  * - `isWrapped` supplied (issue #14's trust layer wraps every registered
- *   L1/L2 tool before offering it to a turn): `L0` tools always pass; `L1`
+ *   L1/L2 tool before offering it to a turn): `L0`, `R0`, and `general`
+ *   tools pass; `L1`
  *   and `L2` tools pass iff `isWrapped(tool)` is true — **regardless of the
  *   turn's taint**. The model is allowed to see and call a wrapped action
  *   even in a tainted turn, because the wrapped handler makes the real
@@ -71,11 +70,10 @@ export function hasUntrusted(origins: Iterable<Origin | undefined>): boolean {
  *   accumulator (`ToolContext.taint`) rather than this pre-turn
  *   snapshot — that is how issue #14's approval cards re-admit L1+ instead
  *   of stripping it. An unwrapped L1/L2 tool is still stripped
- *   unconditionally: nothing reaches the model without either `L0` or a
- *   trust wrapper.
+ *   unconditionally.
  *
- * Fail-closed in both regimes: a tool whose `level` is missing or not one
- * of `'L0'`/`'L1'`/`'L2'` never survives, wrapped or not. In addition — and
+ * Fail-closed in the wrapped regime: a tool whose `level` is missing or not one
+ * of `'L0'`/`'R0'`/`'general'`/`'L1'`/`'L2'` never survives. In addition — and
  * ahead of either regime's own filtering — a tool that declares `level:
  * 'L0'` yet also declares a non-empty `egressDomains` is dropped
  * unconditionally, regardless of taint, wrapping, or an `isWrapped`
@@ -99,11 +97,16 @@ export function gateToolsForOrigins<
   if (isWrapped) {
     return withoutUngatedEgress.filter(
       (tool) =>
-        tool.level === 'L0' || ((tool.level === 'L1' || tool.level === 'L2') && isWrapped(tool)),
+        tool.level === 'L0' ||
+        tool.level === 'R0' ||
+        tool.level === 'general' ||
+        ((tool.level === 'L1' || tool.level === 'L2') && isWrapped(tool)),
     )
   }
   if (!hasUntrusted(origins)) return withoutUngatedEgress
-  return withoutUngatedEgress.filter((tool) => tool.level === 'L0')
+  return withoutUngatedEgress.filter(
+    (tool) => tool.level === 'L0' || tool.level === 'R0' || tool.level === 'general',
+  )
 }
 
 /**

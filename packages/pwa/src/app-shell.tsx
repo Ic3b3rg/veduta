@@ -57,6 +57,8 @@ interface AppShellProps {
   focusChatToken: string
   focusChatOnRouteChange: boolean
   onOpenModelConnections: () => void
+  onOpenGmailConnections: () => void
+  onOpenHimalayaConnections: () => void
   onRetrySpaces: () => void
   onInstallDone: () => void
   onFocusSpace: (space: SpaceWithSurfaces, surface?: RenderableSurface) => void
@@ -109,6 +111,8 @@ export function AppShell({
   focusChatToken,
   focusChatOnRouteChange,
   onOpenModelConnections,
+  onOpenGmailConnections,
+  onOpenHimalayaConnections,
   onRetrySpaces,
   onInstallDone,
   onFocusSpace,
@@ -147,6 +151,12 @@ export function AppShell({
           <ChatModelSelects token={authToken} />
           <button type="button" onClick={onOpenModelConnections}>
             Model connections
+          </button>
+          <button type="button" onClick={onOpenGmailConnections}>
+            Gmail connections
+          </button>
+          <button type="button" onClick={onOpenHimalayaConnections}>
+            IMAP / SMTP connections
           </button>
           <NotificationBell token={authToken} />
           {showInstallGuide && <InstallButton prompt={installPrompt} onDone={onInstallDone} />}

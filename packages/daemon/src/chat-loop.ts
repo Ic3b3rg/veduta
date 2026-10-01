@@ -9,6 +9,7 @@ import {
   type Space,
 } from '@veduta/protocol'
 import type { SessionContextFilter, SessionMessage, SessionStore, ToolDef } from './agent-runner.ts'
+import type { FirstPartySkills } from './skill-catalog.ts'
 import { parseChatDecisionIntent, respondToChatDecisionIntent } from './chat-decision.ts'
 import type { PwaChatInput } from './gateway.ts'
 import type { ModelRouter } from './model-routing.ts'
@@ -152,6 +153,8 @@ export interface ChatLoopOptions {
   /** Clock and global user timezone injected into every turn's context. */
   now?: () => Date
   timeZone?: string
+  skills?: FirstPartySkills
+  commandCwd?: string
 }
 
 export interface ChatLoop {
@@ -414,8 +417,21 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
     try {
       const sessionId = sessionIdFor(spaceId)
       const runner = await getRunner(sessionId, spaceId)
-      const { systemPrompt, contextOrigins } = buildContext(spaceId)
+      const { systemPrompt: baseSystemPrompt, contextOrigins } = buildContext(spaceId)
       const turnTools = options.toolsFor(spaceId, turnHooks)
+      const skillMetadata =
+        spaceId === undefined || spaceId === SYSTEM_SPACE_ID
+          ? ''
+          : (options.skills?.metadata(
+              event.text,
+              turnTools.map((tool) => tool.name),
+            ) ?? '')
+      const commandWorkspace = options.commandCwd
+        ? `# Command execution\nUse ${JSON.stringify(options.commandCwd)} as the explicit working directory for Gateway-owned CLI work unless the user requested another directory.`
+        : ''
+      const systemPrompt = [baseSystemPrompt, skillMetadata, commandWorkspace]
+        .filter(Boolean)
+        .join('\n\n')
       // An authoring-capable turn can emit a false success before its first tool
       // starts. Buffer model text until the turn outcome is known; final Chat
       // confirmations then describe the Gateway result.

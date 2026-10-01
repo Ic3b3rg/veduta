@@ -1,0 +1,52 @@
+.gmail-connections-settings h1 {
+  font-size: 20px;
+  margin: 0;
+}
+
+.gmail-connections-settings h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.gmail-connection-list {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.gmail-connection-heading,
+.gmail-connection-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gmail-connection-actions label {
+  display: grid;
+  gap: 4px;
+}
+
+.gmail-connection-detail {
+  color: var(--text-soft);
+  font-size: 13px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.gmail-connection-add {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+}
+
+.gmail-connection-add p {
+  margin: 0;
+}
+
+.gmail-connection-add code {
+  overflow-wrap: anywhere;
+}

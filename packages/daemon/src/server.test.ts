@@ -52,6 +52,36 @@ import type {
 } from './web-push-transport.ts'
 import { signBody } from './webhook-verify.ts'
 
+describe('Gmail connection routes under production auth', () => {
+  it('requires a passkey session for every connection operation', async () => {
+    const { auth, token } = await readyAuthStore()
+    const { app } = buildServer({
+      auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
+    })
+    const routes = [
+      ['GET', '/api/gmail-connections'],
+      ['POST', '/api/gmail-connections'],
+      ['PATCH', '/api/gmail-connections/svc-gmail-example'],
+      ['POST', '/api/gmail-connections/svc-gmail-example/authorize'],
+      ['POST', '/api/gmail-connections/svc-gmail-example/complete'],
+      ['POST', '/api/gmail-connections/svc-gmail-example/fail'],
+      ['POST', '/api/gmail-connections/svc-gmail-example/verify-legacy'],
+      ['DELETE', '/api/gmail-connections/svc-gmail-example'],
+    ] as const
+    for (const [method, url] of routes) {
+      const denied = await app.inject({ method, url })
+      expect(denied.statusCode).toBe(401)
+      const authenticated = await app.inject({
+        method,
+        url,
+        headers: { authorization: `Bearer ${token}` },
+      })
+      expect(authenticated.statusCode).not.toBe(401)
+    }
+    await app.close()
+  })
+})
+
 describe('PWA static assets', () => {
   it('serves the built PWA index and assets without allowing path traversal', async () => {
     const pwaDistDir = await mkdtemp(join(tmpdir(), 'veduta-pwa-'))

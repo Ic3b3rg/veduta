@@ -45,7 +45,16 @@ export interface GlobalChatToolsOptions {
  */
 export function createGlobalChatTools(options: GlobalChatToolsOptions): ToolDef[] {
   const enteredSpaceIds = new Set<string>()
-  const schemaTools = options.focusedToolsFor(SCHEMA_SPACE_ID)
+  const focusedToolsBySpace = new Map<string, ToolDef[]>()
+  const focusedToolsFor = (spaceId: string): ToolDef[] => {
+    const existing = focusedToolsBySpace.get(spaceId)
+    if (existing) return existing
+    const created = options.focusedToolsFor(spaceId)
+    focusedToolsBySpace.set(spaceId, created)
+    return created
+  }
+  const cachedOptions = { ...options, focusedToolsFor }
+  const schemaTools = focusedToolsFor(SCHEMA_SPACE_ID)
 
   return [
     defineTool({
@@ -99,7 +108,7 @@ export function createGlobalChatTools(options: GlobalChatToolsOptions): ToolDef[
         }
       },
     }),
-    ...schemaTools.map((tool) => scopeFocusedTool(tool, options, enteredSpaceIds)),
+    ...schemaTools.map((tool) => scopeFocusedTool(tool, cachedOptions, enteredSpaceIds)),
   ]
 }
 

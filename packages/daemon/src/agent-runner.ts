@@ -197,15 +197,19 @@ export interface ToolDef<TSchema extends z.ZodTypeAny = z.ZodTypeAny> {
   /**
    * ADR-0007 trust level: `L0` runs free inside the daemon; `L1` requires
    * approval before an outbound effect; `L2` never runs automatically.
+   * `R0` is a read-only external pull whose handler binds the request to
+   * trusted user scope (ADR-0024). `general` is Veduta-owned command
+   * execution (ADR-0026); it has no domain-wide effect classification.
    * Required — `gateToolsForOrigins` fails closed on a missing level.
    */
-  level: 'L0' | 'L1' | 'L2'
+  level: 'L0' | 'R0' | 'L1' | 'L2' | 'general'
   /**
    * Network hosts this tool's handler may contact (ADR-0007, SECURITY.md
    * §3.4): declared here so the daemon can one day deny everything else at
    * the network layer — enforcement itself is issue #15, this field is
    * only the declaration. `L0` tools never leave the daemon and declare
-   * `[]`.
+   * `[]`. `general` cannot declare static domains for arbitrary commands;
+   * an empty list for it makes no least-privilege claim (ADR-0026).
    */
   egressDomains: readonly string[]
   handler(input: z.infer<TSchema>, context: ToolContext): Promise<ToolResult> | ToolResult
