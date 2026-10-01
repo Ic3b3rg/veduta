@@ -59,6 +59,47 @@ ChatGPT account with device-code login enabled in its security settings.
   log contained `surface.create` followed by `surface.patch_state`. The existing Local VPS Spaces
   were not modified, and credential contents were not printed.
 
+## ChatGPT subscription — complete Surface contract smoke
+
+This is the real-account complement to the clean Local VPS regression for
+[issue #150](https://github.com/Ic3b3rg/veduta/issues/150). Complete the connection and model
+verification steps above, then select that ChatGPT subscription connection in **Model connections**.
+Use a new disposable Space; leave existing Spaces and local data intact. From Home Chat, request a
+Space named **Surface smoke**, review its Pending decision, and accept it. Open that Space before
+the following requests. A second already authenticated device may open the same Space to check
+live convergence.
+
+1. **Editable Form and visible collection.** Ask:
+   `Create a Surface with an item list and an Add Form containing one text field. Keep typing local;
+submitting must append a stable item record to the displayed list and clear the field together.`
+   Type `Surface smoke item` into the field. Before submitting, the list must stay unchanged. Submit
+   with Enter: one item must appear immediately, the draft must clear, and the field must remain
+   usable. Add another item with the submit button. Refresh and verify both records remain. If a
+   request fails, the draft and a readable error must remain available for retry.
+2. **Complete three-day plan.** Send the reported request exactly:
+   `data la mia dieta fammi una scheda per la palestra 3 giorni a settimana`
+   Verify the new Surface contains three distinct sessions with exercises, sets, repetitions, rest,
+   progression, and safety/caveat text. A title or empty card alone fails this scenario. The final
+   Chat confirmation must describe content actually visible in the saved Surface. Refresh and
+   verify the complete content remains.
+3. **Weight record and Chart.** Ask for a Weight tracker with a current-value summary, dated
+   measurement history, and a line Chart over that same history. Then send exactly:
+   `mi sono pesato e sono 74 kg`
+   Verify `74 kg` in the summary, one dated `74` record, and a visible Chart value for the same
+   measurement without refreshing. Refresh and check all three again. The other device must show
+   the same committed measurement.
+4. **Explicit full presentation.** Ask:
+   `Make the gym plan Surface full-row.`
+   At a desktop width with more than one available column, the plan must span the complete Surface
+   row. Verify the plan content and its Pin state are unchanged, and the other device sees the same
+   placement. Refresh, close/reopen the PWA, and verify the Form records, plan, weight visualization,
+   and full presentation remain intact.
+
+Record the date, selected connection/model, results for all four scenarios, and any observed error
+or mismatch. These instructions require no data reset, legacy migration, provider-specific code,
+or prompt configuration. The execution record dated 2026-08-11 above covers its original two-tool
+smoke; a completed four-scenario run should be recorded separately before closing parent issue #140.
+
 ## Deterministic contract for Connection parity
 
 The provider-parity suite drives the same public `AgentRunner.prompt()` scenarios through

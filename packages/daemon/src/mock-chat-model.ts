@@ -29,6 +29,10 @@ import {
   WEIGHT_MEASUREMENT_REQUEST,
 } from './mock-chart-fixture.ts'
 import { respondToStructuredPlan, STRUCTURED_PLAN_REQUEST } from './mock-structured-plan-fixture.ts'
+import {
+  respondToInvalidAuthoring,
+  INVALID_AUTHORING_REQUEST,
+} from './mock-invalid-authoring-fixture.ts'
 import { respondToMockSurfacePresentation } from './mock-surface-presentation-fixture.ts'
 import {
   respondToComposedSurface,
@@ -120,6 +124,7 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
     }
     if (isFullTextPrompt(text)) return piFauxAssistantMessage(FULL_TEXT_REPLY)
     if (text === STRUCTURED_PLAN_REQUEST) return respondToStructuredPlan(toolResultsAfter)
+    if (text === INVALID_AUTHORING_REQUEST) return respondToInvalidAuthoring(toolResultsAfter)
     if (text === COMPOSED_SURFACE_REQUEST)
       return respondToComposedSurface(toolResultsAfter, progressiveDelayMs)
     if (text === MEAL_REQUEST) {
