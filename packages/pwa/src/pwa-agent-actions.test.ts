@@ -97,6 +97,9 @@ describe('PWA Agent action lifecycle', () => {
     await vi.waitFor(() => expect(h.invoke).toHaveBeenCalledTimes(1))
     await Promise.resolve()
     expect(settled).toBe(false)
+    expect(h.runtime.getSnapshot().actionStatuses[surface.id]?.['run']?.['run']).toEqual({
+      status: 'pending',
+    })
     const invocation = h.invoke.mock.calls[0]![1]
     if ('intentId' in invocation || !invocation.idempotencyKey)
       throw new Error('Agent UUID required')
@@ -105,6 +108,7 @@ describe('PWA Agent action lifecycle', () => {
       turn: completed(invocation.idempotencyKey),
     })
     await dispatch
+    expect(h.runtime.getSnapshot().actionStatuses[surface.id]).toBeUndefined()
     expect(h.runtime.getSnapshot().chatEntries.at(-1)?.text).toBe('The declared action completed.')
     h.runtime.stop()
   })
@@ -116,10 +120,18 @@ describe('PWA Agent action lifecycle', () => {
     await expect(h.runtime.dispatchSurfaceAction(surface.id, 'run', 'run')).rejects.toThrow(
       'Response lost',
     )
+    expect(h.runtime.getSnapshot().actionStatuses[surface.id]?.['run']?.['run']).toEqual({
+      status: 'failed',
+      message: 'Response lost',
+    })
     const original = h.invoke.mock.calls[0]![1]
     expect(original).toHaveProperty('idempotencyKey', expect.any(String))
     h.runtime.stop()
     const next = harness(h.values)
+    expect(next.runtime.getSnapshot().actionStatuses[surface.id]?.['run']?.['run']).toEqual({
+      status: 'queued',
+      message: 'The Agent action is queued and awaits confirmation.',
+    })
     next.invoke.mockImplementation(async (_id, invocation) => {
       if ('intentId' in invocation || !invocation.idempotencyKey)
         throw new Error('Agent UUID required')
@@ -173,6 +185,10 @@ describe('PWA Agent action lifecycle', () => {
       'Surface update was rejected',
     )
     expect(h.runtime.getSnapshot().chatEntries).toHaveLength(0)
+    expect(h.runtime.getSnapshot().actionStatuses[surface.id]?.['run']?.['run']).toEqual({
+      status: 'failed',
+      message: 'The proposed Surface update was rejected.',
+    })
     const previous = h.invoke.mock.calls[0]![1]
     h.invoke.mockImplementation(async (_id, invocation) => {
       if ('intentId' in invocation || !invocation.idempotencyKey)
@@ -181,6 +197,7 @@ describe('PWA Agent action lifecycle', () => {
     })
     await h.runtime.dispatchSurfaceAction(surface.id, 'run', 'run')
     expect(h.invoke.mock.calls[1]![1]).not.toEqual(previous)
+    expect(h.runtime.getSnapshot().actionStatuses[surface.id]).toBeUndefined()
     h.runtime.stop()
   })
 })

@@ -6,7 +6,7 @@ import {
   type AgentActionTurn,
   type JsonObject,
 } from '@veduta/protocol'
-import type { ActionConfirmations } from '@veduta/catalog'
+import type { ActionConfirmations, ActionStatuses } from '@veduta/catalog'
 import { z } from 'zod'
 import { ApiResponseError } from './api-http.ts'
 
@@ -21,8 +21,23 @@ type Entry = z.infer<typeof EntrySchema>
 interface Intent {
   entry: Entry
   fingerprint: string
+  failure?: string
   receipt?: AgentActionTurn
   attempt?: { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void }
+}
+
+interface ActionScope {
+  surfaceId: string
+  nodeId: string
+  name: string
+}
+
+function actionScope(entry: Entry): ActionScope {
+  return {
+    surfaceId: entry.surfaceId,
+    nodeId: entry.invocation.nodeId,
+    name: entry.invocation.name,
+  }
 }
 
 /** Agent waits and retry identities belong to the live runtime, alongside fast Action intents. */
@@ -33,6 +48,7 @@ export class LiveAgentActionCommands {
     string,
     { surfaceId: string; nodeId: string; name: string; value: ActionConfirmations[string][string] }
   >()
+  private readonly failures = new Map<string, ActionScope & { message: string }>()
   private started = false
   private generation = 0
   private flushing: Promise<void> | undefined
@@ -85,6 +101,28 @@ export class LiveAgentActionCommands {
     return result
   }
 
+  get actionStatuses(): Record<string, ActionStatuses> {
+    const result: Record<string, ActionStatuses> = {}
+    for (const failure of this.failures.values()) {
+      const nodes = (result[failure.surfaceId] ??= {})
+      const actions = (nodes[failure.nodeId] ??= {})
+      actions[failure.name] = { status: 'failed', message: failure.message }
+    }
+    for (const intent of this.intents.values()) {
+      const scope = actionScope(intent.entry)
+      if (this.latest.get(canonicalJson(scope)) !== intent.entry.invocation.idempotencyKey) continue
+      const nodes = (result[scope.surfaceId] ??= {})
+      const actions = (nodes[scope.nodeId] ??= {})
+      actions[scope.name] =
+        intent.attempt || intent.receipt
+          ? { status: 'pending' }
+          : intent.failure
+            ? { status: 'failed', message: intent.failure }
+            : { status: 'queued', message: 'The Agent action is queued and awaits confirmation.' }
+    }
+    return result
+  }
+
   acknowledge(surfaceId: string, nodeId: string, name: string, intentId: string): void {
     const key = canonicalJson({ surfaceId, nodeId, name })
     if (this.confirmations.get(key)?.value.intentId !== intentId) return
@@ -127,10 +165,9 @@ export class LiveAgentActionCommands {
         surfaceId,
         invocation: { nodeId, name, payload, idempotencyKey: crypto.randomUUID() },
       })
-    this.latest.set(
-      canonicalJson({ surfaceId, nodeId, name }),
-      intent.entry.invocation.idempotencyKey,
-    )
+    const scope = canonicalJson(actionScope(intent.entry))
+    this.latest.set(scope, intent.entry.invocation.idempotencyKey)
+    this.failures.delete(scope)
     this.persist()
     return this.send(intent)
   }
@@ -163,16 +200,14 @@ export class LiveAgentActionCommands {
       this.persist()
       const attempt = intent.attempt
       delete intent.attempt
+      const scope = canonicalJson(actionScope(intent.entry))
       if (turn.status === 'failed') {
         this.message = turn.error
+        if (this.latest.get(scope) === turn.idempotencyKey) this.rememberFailure(intent, turn.error)
         attempt?.reject(new Error(turn.error))
       } else {
-        const scope = canonicalJson({
-          surfaceId: turn.surfaceId,
-          nodeId: turn.atomId,
-          name: turn.actionName,
-        })
-        if (this.latest.get(scope) === turn.idempotencyKey)
+        if (this.latest.get(scope) === turn.idempotencyKey) {
+          this.failures.delete(scope)
           this.confirmations.set(scope, {
             surfaceId: turn.surfaceId,
             nodeId: turn.atomId,
@@ -185,6 +220,7 @@ export class LiveAgentActionCommands {
               outcome: 'completed',
             },
           })
+        }
         if (this.confirmations.size > 64) {
           const oldest = this.confirmations.keys().next().value
           if (oldest !== undefined) this.confirmations.delete(oldest)
@@ -230,14 +266,7 @@ export class LiveAgentActionCommands {
       }),
     }
     this.intents.set(entry.invocation.idempotencyKey, intent)
-    this.latest.set(
-      canonicalJson({
-        surfaceId: entry.surfaceId,
-        nodeId: invocation.nodeId,
-        name: invocation.name,
-      }),
-      entry.invocation.idempotencyKey,
-    )
+    this.latest.set(canonicalJson(actionScope(entry)), entry.invocation.idempotencyKey)
     return intent
   }
 
@@ -246,6 +275,7 @@ export class LiveAgentActionCommands {
     if (!this.options.online()) {
       const error = new Error('Gateway offline. The Agent action is queued and has not completed.')
       this.message = error.message
+      delete intent.failure
       this.options.changed()
       return Promise.reject(error)
     }
@@ -258,6 +288,8 @@ export class LiveAgentActionCommands {
     })
     const attempt = { promise, resolve, reject }
     intent.attempt = attempt
+    delete intent.failure
+    this.failures.delete(canonicalJson(actionScope(intent.entry)))
     this.message = null
     const receive = async () => {
       try {
@@ -290,6 +322,7 @@ export class LiveAgentActionCommands {
   private reject(intent: Intent, error: Error): void {
     const attempt = intent.attempt
     delete intent.attempt
+    intent.failure = error.message
     if (
       error instanceof ApiResponseError &&
       error.status >= 400 &&
@@ -297,6 +330,11 @@ export class LiveAgentActionCommands {
       ![408, 429].includes(error.status)
     ) {
       this.intents.delete(intent.entry.invocation.idempotencyKey)
+      if (
+        this.latest.get(canonicalJson(actionScope(intent.entry))) ===
+        intent.entry.invocation.idempotencyKey
+      )
+        this.rememberFailure(intent, error.message)
       this.persist()
     }
     this.message = error.message
@@ -304,6 +342,15 @@ export class LiveAgentActionCommands {
     this.options.changed()
     if (error instanceof ApiResponseError && error.status === 401)
       this.options.authenticationFailure(error)
+  }
+
+  private rememberFailure(intent: Intent, message: string): void {
+    const scope = actionScope(intent.entry)
+    this.failures.set(canonicalJson(scope), { ...scope, message })
+    if (this.failures.size > 64) {
+      const oldest = this.failures.keys().next().value
+      if (oldest !== undefined) this.failures.delete(oldest)
+    }
   }
 
   private persist(): void {

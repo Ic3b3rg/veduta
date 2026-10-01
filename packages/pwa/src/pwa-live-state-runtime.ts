@@ -18,7 +18,7 @@ import {
   type SurfaceMoveDirection,
 } from '@veduta/protocol'
 import * as defaultApi from './api.ts'
-import type { ActionConfirmations } from '@veduta/catalog'
+import type { ActionConfirmations, ActionStatuses } from '@veduta/catalog'
 import {
   applyTurnFrame,
   interruptTurns,
@@ -74,6 +74,7 @@ export interface PwaLiveStateSnapshot {
   readonly queuedChat: QueuedChat[]
   readonly queuedFastActions: QueuedFastAction[]
   readonly actionConfirmations: Record<string, ActionConfirmations>
+  readonly actionStatuses: Record<string, ActionStatuses>
   readonly surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback>
   readonly presentationEvents: LivePresentationEvent[]
   readonly connectionGeneration: number
@@ -306,6 +307,7 @@ export class PwaLiveStateRuntime {
         this.actions?.confirmations ?? {},
         this.agentActions?.actionConfirmations ?? {},
       ),
+      actionStatuses: this.agentActions?.actionStatuses ?? {},
       surfaceUpdateFeedbacks: this.surfaceUpdateFeedbacks,
       presentationEvents: this.presentationEvents,
       connectionGeneration: this.connectionGeneration,
