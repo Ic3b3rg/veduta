@@ -7,8 +7,9 @@ Discovery snapshot: 2026-09-30 09:04 UTC, from the first-party
 records the observed counts; downloads are artifact retrievals, not active use or compatibility.
 The versions below are **review targets** from the published catalog on 2026-09-30. The Hub must
 also capture and compare the actual downloaded SHA-256 before any installation; these names and
-versions alone are not immutable byte identities. No candidate was installed or exercised in this
-decision review, so none is yet Verified.
+versions alone are not immutable byte identities. The two hard examples were exercised with
+disposable data on 2026-10-01 in the [published extension proof](30-published-extension-live-proof.md).
+No candidate was installed in Veduta or granted a Verified listing.
 
 The exact published archives for the two hard compatibility examples were fetched on 2026-09-30
 through ClawHub's versioned download API with the publisher handle specified:
@@ -18,10 +19,10 @@ through ClawHub's versioned download API with the publisher handle specified:
 | [Obsidian v1.0.0](https://clawhub.ai/api/v1/download?slug=obsidian&version=1.0.0&ownerHandle=steipete)                        | `ff964e127170088a5e5e280f9f437afcba3a6e3d579c05b947a37b7f4253bf1b` | `SKILL.md` SHA-256 `dc45b522a0f08fa11762b330b5355ccaca789bd645b0c450fe75026f69d728b2` requests `obsidian-cli`, the old Yakitrak Homebrew formula, a Mac-local Obsidian vault registry, and a desktop URI handler. The current renamed CLI and a VPS-local disposable vault cannot satisfy that recipe without a reviewed adaptation.            |
 | [Self-improving-agent v4.0.2](https://clawhub.ai/api/v1/download?slug=self-improving-agent&version=4.0.2&ownerHandle=pskoett) | `89f2a239f9d675c4c5787cf61c17f709cd38cb9c7d395f9dc50f487a59a47291` | `hooks/openclaw/HOOK.md` SHA-256 `2ae0820cc5cad75d9ecce8cfc6a9c4c8baafcb4c96f820bf85f3a0e7ff2364f5` declares `agent:bootstrap` and `command:new/reset`; `handler.js` SHA-256 `b94261dce2de54ba6bd1d6aca48d9ef11236cbe7396bd37354daa218e0ceecf3` reads ended-session transcripts. Neither hook nor that transcript path is in Veduta's host API. |
 
-This byte-level inspection establishes the blockers and reproducible version pins. It does not
-execute either package against disposable data or prove an adapted version works. The live
-validation criterion in #177 therefore remains open, alongside the implementation proofs in
-#185 and #187.
+This byte-level inspection establishes the blockers and reproducible version pins. The linked
+2026-10-01 live proof executes the renamed dependency and unchanged published hook, including
+restart, failure and recovery. It validates #177's decision against concrete original behavior;
+the separate Veduta integration proofs in #185 and #187 remain required before activation.
 
 | Candidate                                                                                    | Published pin and discovery rank                                                                                                                                                                                                                   | Useful task, advertised behavior, and host assumptions                                                                                                                                                                                                                                                                                                                                                                                     | Current decision and live gate                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

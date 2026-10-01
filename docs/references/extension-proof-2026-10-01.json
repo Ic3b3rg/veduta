@@ -1,0 +1,152 @@
+{
+  "observedAt": "2026-10-01",
+  "purpose": "Published artifact identity and disposable-process verification; not Veduta runtime compatibility",
+  "artifacts": [
+    {
+      "url": "https://clawhub.ai/api/v1/download?slug=obsidian&version=1.0.0&ownerHandle=steipete",
+      "sha256": "ff964e127170088a5e5e280f9f437afcba3a6e3d579c05b947a37b7f4253bf1b",
+      "inventory": [
+        {
+          "path": "skill-card.md",
+          "bytes": 1565,
+          "sha256": "eb2a6bdbebb689b4210a6af87e5ea5948faff85edef93affb0315ec18310e823"
+        },
+        {
+          "path": "SKILL.md",
+          "bytes": 2334,
+          "sha256": "dc45b522a0f08fa11762b330b5355ccaca789bd645b0c450fe75026f69d728b2"
+        },
+        {
+          "path": "_meta.json",
+          "bytes": 127,
+          "sha256": "097709ff9fc7c56a4645ec8544be578ca7c23a086fe2c1ae2b6a5add670c43d7"
+        }
+      ]
+    },
+    {
+      "url": "https://clawhub.ai/api/v1/download?slug=self-improving-agent&version=4.0.2&ownerHandle=pskoett",
+      "sha256": "89f2a239f9d675c4c5787cf61c17f709cd38cb9c7d395f9dc50f487a59a47291",
+      "inventory": [
+        {
+          "path": "assets/ERRORS.md",
+          "bytes": 75,
+          "sha256": "731f4a26fee7074d11e999920e5c3ca63b0e025b75a4d9966429ee88a2cb5988"
+        },
+        {
+          "path": "assets/FEATURE_REQUESTS.md",
+          "bytes": 84,
+          "sha256": "a6291573936034efaad57b43b6f57bdb35ed627f01ce9309b2c781da63563c37"
+        },
+        {
+          "path": "assets/LEARNINGS.md",
+          "bytes": 1135,
+          "sha256": "58b31d4cda7d1f2a6fdaf1aff06f45288e6cb0161dd1ed1bf2152c7f8c3c88da"
+        },
+        {
+          "path": "assets/SKILL-TEMPLATE.md",
+          "bytes": 3407,
+          "sha256": "3ee008f80d53e0e576f7e747ac4c4e040ff659f02d3f5689a95524a3696e4881"
+        },
+        {
+          "path": "CHANGELOG.md",
+          "bytes": 7598,
+          "sha256": "8d8e946a3e1482470068773fa62482af3440431b3aa400df23b8c781906ba934"
+        },
+        {
+          "path": "hooks/openclaw/handler.js",
+          "bytes": 13741,
+          "sha256": "b94261dce2de54ba6bd1d6aca48d9ef11236cbe7396bd37354daa218e0ceecf3"
+        },
+        {
+          "path": "hooks/openclaw/handler.test.js",
+          "bytes": 8921,
+          "sha256": "3047f4239bc3eadcb8f12cc3515f946e86b16cb482de82ae900e5b994c403e69"
+        },
+        {
+          "path": "hooks/openclaw/handler.ts",
+          "bytes": 14615,
+          "sha256": "35f8ccd18d6979b4bacfbf1841f4f0965193ed694e46fa6cee67994f3ac838ba"
+        },
+        {
+          "path": "hooks/openclaw/HOOK.md",
+          "bytes": 2465,
+          "sha256": "2ae0820cc5cad75d9ecce8cfc6a9c4c8baafcb4c96f820bf85f3a0e7ff2364f5"
+        },
+        {
+          "path": "references/examples.md",
+          "bytes": 8287,
+          "sha256": "ba521451abf0f1cc774b061894c94689390dafa3ce3905f63d5fa6f860a5e3b8"
+        },
+        {
+          "path": "references/openclaw-integration.md",
+          "bytes": 9814,
+          "sha256": "517a40ddec886f07cf66cb7c98e61ea464af953b505610722ed46a297741708a"
+        },
+        {
+          "path": "references/uninstall.md",
+          "bytes": 1891,
+          "sha256": "c569a88473ac0187e0d9dde1686eb24efe4666d84af2a149b5fb8e99b7a99828"
+        },
+        {
+          "path": "scripts/extract-skill.sh",
+          "bytes": 5293,
+          "sha256": "d9af3d6f2cde0eeb3c0a85b898828656c1c6d9d51f61ba38f9801030424f5147"
+        },
+        {
+          "path": "skill-card.md",
+          "bytes": 2633,
+          "sha256": "6f9beece207f7b423e9a20c1b804b664741ee8d76cc77ade7240766b32d4916d"
+        },
+        {
+          "path": "SKILL.md",
+          "bytes": 21361,
+          "sha256": "eff889950f23bb8a3de90cd617481bbf2557f9495f884bd5b1e9b7604a20817c"
+        },
+        {
+          "path": "_meta.json",
+          "bytes": 139,
+          "sha256": "04625ceaaaf10ec6f6d8e016b6416efd4d11ea5c1685bab2a4fb4966aa9aaf6b"
+        }
+      ]
+    }
+  ],
+  "dependency": {
+    "source": "https://github.com/Yakitrak/notesmd-cli/releases/tag/v0.3.7",
+    "sourceCommit": "58830c82327b8b34f8e5d52e5a3a7cfa0ad0ab5a",
+    "archiveSha256": "b657c8b19c5fb6524136b3c47c10c3febffa9e48e8253313ea9f6f6fc32d6c72",
+    "binarySha256": "e8bdfec71da2a4c0ca63c90a599ff3b556f7c6f69bb09de6706f4c9fd2e24cf3",
+    "sourceArchiveSha256": "e6702d67c488e9ca650c3a716d5ec1a80973ed0d8eab2a10ac9389e00700ac93",
+    "license": "MIT",
+    "platform": "Darwin universal (arm64/x86_64)",
+    "version": "0.3.7",
+    "runtimeDependencies": "Direct and vendored dependency source at the pinned source commit; no package installation required for the released binary."
+  },
+  "outcomes": {
+    "obsidian": "Adaptation required: renamed dependency, wrong search syntax, no headless URI handler, encoded Markdown link drift",
+    "selfImprovingAgent": "Unsupported: foreign lifecycle/transcript/authority assumptions; port requires complete independent proof",
+    "publishedHookTests": {
+      "passed": 13,
+      "failed": 0
+    },
+    "additionalPublishedHookProbes": [
+      "opt-out",
+      "bounded/redacted sweep",
+      "restart/exact dedup/reminder",
+      "Veduta event mismatch",
+      "extraction draft/no overwrite/path refusal"
+    ],
+    "cliProbes": [
+      "version/help",
+      "missing registry and registration recovery",
+      "default lookup/restart",
+      "search-content/list",
+      "create/read",
+      "move/wikilink/alias/plain Markdown update",
+      "encoded Markdown link failure",
+      "open partial effect and read recovery",
+      "delete",
+      "missing vault",
+      "path traversal refusal"
+    ]
+  }
+}

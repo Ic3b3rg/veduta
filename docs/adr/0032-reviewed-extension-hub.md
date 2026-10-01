@@ -42,6 +42,9 @@ succeeded, or one tool call worked. An adapted port receives a new Veduta artifa
 the listing links its exact foreign source and distinguishes the port from native compatibility.
 The dated candidate review and explicit proof scenarios are in
 [extension candidate evidence](../references/28-extension-candidate-evidence.md).
+The [published-artifact live proof](../references/30-published-extension-live-proof.md) records
+the exact Obsidian and self-improving-agent versions, disposable runtime results, dependency drift,
+host-only behavior, and the remaining activation blockers. Neither package is verified in Veduta.
 
 ## Veduta-native host contract v1
 
