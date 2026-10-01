@@ -1013,7 +1013,7 @@ describe('production auth boundary', () => {
       },
     })
     expect(events.at(-1)?.text).toContain('≈ 430–650 kcal')
-    expect(events.at(-1)?.text).toContain('Meals now shows')
+    expect(events.at(-1)?.text).toContain('Saved Surface “Meals”')
   })
 })
 

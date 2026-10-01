@@ -280,12 +280,16 @@ describe('createChatLoop', () => {
           ? [{ message: fakeToolCall('enter_space', { spaceId: 'health' }) }]
           : []),
         {
-          message: fakeToolCall('set_surface_presentation', {
-            ...(scope === 'global' ? { spaceId: 'health' } : {}),
-            surfaceId: 'srf-groceries',
-            presentation: 'full',
-            userRequest: request,
-          }),
+          message: fakeTextAndToolCall(
+            'Saved an unsupported interactive dashboard.',
+            'set_surface_presentation',
+            {
+              ...(scope === 'global' ? { spaceId: 'health' } : {}),
+              surfaceId: 'srf-groceries',
+              presentation: 'full',
+              userRequest: request,
+            },
+          ),
         },
         {
           factory: (context) => {
@@ -297,7 +301,7 @@ describe('createChatLoop', () => {
               toolName: 'set_surface_presentation',
               isError: false,
             })
-            return fakeText('Groceries now uses full presentation.')
+            return fakeText('Saved an unsupported interactive dashboard with every control.')
           },
         },
       ])
@@ -311,8 +315,18 @@ describe('createChatLoop', () => {
         ).toHaveLength(1)
         expect(h.frames.at(-1)?.frame).toMatchObject({
           type: 'chat.turn-end',
-          message: { text: 'Groceries now uses full presentation.' },
+          message: {
+            text: expect.stringContaining('Saved Surface “Groceries” (full presentation).'),
+          },
         })
+        expect(h.frames.filter(({ frame }) => frame.type === 'chat.turn-delta')).toEqual([])
+        expect(
+          h.frames.filter(
+            ({ frame }) =>
+              (frame.type === 'chat.turn-end' || frame.type === 'chat.turn-replace') &&
+              frame.message.text.includes('unsupported interactive dashboard'),
+          ),
+        ).toEqual([])
       } finally {
         await loop.stop()
       }
@@ -340,9 +354,7 @@ describe('createChatLoop', () => {
             toolName: 'set_surface_presentation',
             isError: true,
           })
-          return fakeText(
-            'Only standard or full presentation is supported. Groceries was unchanged.',
-          )
+          return fakeText('Groceries now uses a 900px dashboard with all requested controls.')
         },
       },
     ])
@@ -355,7 +367,7 @@ describe('createChatLoop', () => {
       expect(h.frames.at(-1)?.frame).toMatchObject({
         type: 'chat.turn-end',
         message: {
-          text: 'Only standard or full presentation is supported. Groceries was unchanged.',
+          text: expect.stringContaining('A Surface change was not saved:'),
         },
       })
     } finally {
@@ -1040,7 +1052,7 @@ describe('createChatLoop', () => {
       expect(h.store.getSurface('srf-blind-plan')?.state['status']).toBe('Before')
       expect(h.frames.at(-1)?.frame).toMatchObject({
         type: 'chat.turn-end',
-        message: { text: 'I need to enter Health first.' },
+        message: { text: expect.stringContaining('call enter_space first') },
       })
       expect(
         h.store
@@ -1129,13 +1141,18 @@ describe('createChatLoop', () => {
       expect(h.frames.at(-1)?.frame).toMatchObject({
         type: 'chat.turn-end',
         message: {
-          text: 'Both plans are ready.',
+          text: expect.stringContaining('Saved Surface “Health plan”'),
           targets: [
             expect.objectContaining({ spaceId: health.id, surfaceId: 'srf-health-plan' }),
             expect.objectContaining({ spaceId: work.id, surfaceId: 'srf-work-plan' }),
           ],
         },
       })
+
+      const last = h.frames.at(-1)?.frame
+      if (last?.type !== 'chat.turn-end') throw new Error('expected a final reply')
+      expect(last.message.text).toContain('Saved Surface “Work plan”')
+      expect(last.message.text).toContain('Status: Ready')
 
       for (const [spaceId, surfaceId] of [
         [health.id, 'srf-health-plan'],

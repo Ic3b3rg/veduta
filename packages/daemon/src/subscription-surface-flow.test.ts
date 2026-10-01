@@ -524,14 +524,17 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
       const focusedTurnEnds = socket.sent.flatMap((frame) =>
         frame.type === 'chat.turn-end' && frame.spaceId === SPACE_ID ? [frame.message.text] : [],
       )
-      expect(focusedTurnEnds).toEqual(['Hydration Surface created.', 'Hydration updated.'])
+      expect(focusedTurnEnds).toEqual([
+        expect.stringContaining('Status: Needs water'),
+        expect.stringContaining('Status: On track'),
+      ])
       expect(
         socket.sent
           .flatMap((frame) =>
             frame.type === 'chat.turn-delta' && frame.spaceId === SPACE_ID ? [frame.text] : [],
           )
           .join(''),
-      ).toBe('Hydration Surface created.Hydration updated.')
+      ).toBe('')
 
       const dynamicToolDefinitions = transport.requests
         .filter((request) => request.method === 'thread/start')
@@ -659,7 +662,7 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
         turnId: start.turnId,
         message: {
           role: 'assistant',
-          text: 'Hydration created globally.',
+          text: expect.stringContaining('Saved Surface “Hydration”'),
           targets: [
             {
               spaceId: SPACE_ID,
@@ -771,7 +774,7 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
         },
         {
           type: 'turn',
-          text: 'Hydration Surface created.',
+          text: expect.stringContaining('Status: Needs water'),
           origin: 'trusted:system',
           payload: { role: 'assistant', toolCalls: [{ toolName: 'create_surface' }] },
         },
@@ -789,7 +792,7 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
         },
         {
           type: 'turn',
-          text: 'Hydration updated.',
+          text: expect.stringContaining('Status: On track'),
           origin: 'trusted:system',
           payload: { role: 'assistant', toolCalls: [{ toolName: 'patch_state' }] },
         },

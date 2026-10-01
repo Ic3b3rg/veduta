@@ -23,6 +23,7 @@ import { effectiveOrigin, type Origin } from './taint.ts'
 import { zonedParts } from './timezone.ts'
 import { piToolParameters } from './tool-parameters.ts'
 import { SURFACE_ATOM_AUTHORING_GUIDE } from './surface-authoring-guide.ts'
+import { SurfaceChatConfirmation } from './surface-chat-confirmation.ts'
 
 /**
  * Chat inside a Space: the Agent has the Space's assembled context and its
@@ -315,6 +316,20 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
     const resultTargets: ChatResultTarget[] = []
     const pendingDecisions: PendingDecision[] = []
     const pendingDecisionIds = new Set<string>()
+    const cursorBeforeTurn = options.store.latestSurfaceCursor()
+    const surfaceConfirmation = new SurfaceChatConfirmation(
+      (id) => options.store.getSurface(id),
+      (surface) =>
+        options.store
+          .surfaceEventsAfter(cursorBeforeTurn)
+          .some(
+            (entry) =>
+              entry.kind === 'archived' &&
+              entry.event.surfaceId === surface.id &&
+              entry.event.spaceId === surface.spaceId &&
+              entry.event.at === surface.freshness.updatedAt,
+          ),
+    )
 
     const authoritativePendingMessage = () => {
       const projectedIds = new Set(pendingDecisions.map((decision) => decision.id))
@@ -391,6 +406,10 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
       const runner = await getRunner(sessionId, spaceId)
       const { systemPrompt, contextOrigins } = buildContext(spaceId)
       const turnTools = options.toolsFor(spaceId, turnHooks)
+      // An authoring-capable turn can emit a false success before its first tool
+      // starts. Buffer model text until the turn outcome is known; final Chat
+      // confirmations then describe the Gateway result.
+      const bufferAuthoringText = SurfaceChatConfirmation.hasAuthoringTools(turnTools)
 
       if (spaceId !== undefined) {
         options.store.spacesEngine.appendEvent(spaceId, {
@@ -456,6 +475,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
         }
       }
       const unsubscribe = runner.on((agentEvent) => {
+        surfaceConfirmation.observe(agentEvent)
         if (agentEvent.type === 'text-delta') {
           const emitSeparator = pendingSeparator
           pendingSeparator = false
@@ -464,7 +484,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
             // Once a tool has produced a Pending decision, only the daemon-derived
             // lifecycle text may be visible. The model's closing status is still
             // accumulated for session continuity but is never streamed to clients.
-            if (pendingDecisionIds.size > 0) return
+            if (pendingDecisionIds.size > 0 || bufferAuthoringText) return
             if (emitSeparator) {
               options.send(event.clientId, {
                 type: 'chat.turn-delta',
@@ -534,7 +554,7 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
         pendingDecisionIds.size === 0
           ? {
               role: 'assistant' as const,
-              text: finalText,
+              text: surfaceConfirmation.feedback() ?? finalText,
               ...(resultTargets.length === 0 ? {} : { targets: resultTargets }),
             }
           : {

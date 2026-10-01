@@ -245,7 +245,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         .fill('create a weight tracker in Health')
       await page.getByRole('button', { name: 'Send message' }).click()
       await expect(page.locator('.chat-entry.assistant').last()).toContainText(
-        'The Weight tracker is ready in Health.',
+        'Saved Surface “Weight tracker”',
       )
     })
 
@@ -269,7 +269,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         .fill('mi sono pesato e sono 74 kg')
       await page.getByRole('button', { name: 'Send message' }).click()
       await expectWeightRecorded(page)
-      await expect(page.locator('.chat-entry.assistant').last()).toContainText('Recorded 74 kg')
+      await expect(page.locator('.chat-entry.assistant').last()).toContainText('74 kg')
 
       const canonical = await fetchSurface(page, stack!.origin, 'srf-health-weight-tracker')
       expect(canonical.state).toEqual({
@@ -325,17 +325,10 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         0,
       )
 
-      // The reply itself must reach the chat log, not only the Surface it
-      // patched (issue #37, chat-loop.ts's `chat.turn-end`): the mock chat
-      // model's deterministic journey includes the derived patch line, and
-      // it must show up exactly once in the rendered chat log, as the
-      // assistant's own entry. Not asserted here: the transient streaming
-      // affordance (the cursor rendered on an in-flight `chat.turn-delta`) --
-      // the mock's stream completes in a handful of milliseconds, so there
-      // is no reliable window in which to observe it in this real-browser
-      // journey; the manual `pnpm dev` + browser check covers that visually.
+      // The Gateway-derived confirmation must reach Chat once. Authoring
+      // turns do not stream a model's unverified descriptions of a write.
       await expect(
-        page.locator('.chat-entry.assistant').filter({ hasText: /Logging: fesa di tacchino/ }),
+        page.locator('.chat-entry.assistant').filter({ hasText: /Saved Surface “Meals”/ }),
       ).toHaveCount(1)
 
       // Event log coverage (ADR-0003): the chat turn's own `patch_state` tool
@@ -376,11 +369,9 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
       await chatInput.fill('aggiungi ai meals la colazione con ricotta, cereali e latte')
       await page.getByRole('button', { name: 'Send message' }).click()
-      await expect(
-        page
-          .locator('.chat-entry.assistant')
-          .filter({ hasText: /Logging: ricotta, cereali e latte/ }),
-      ).toHaveCount(1)
+      await expect(page.locator('.chat-entry.assistant').last()).toContainText(
+        'Saved Surface “Meals”',
+      )
 
       await chatInput.fill('Quante calorie ho mangiato oggi ?')
       await page.getByRole('button', { name: 'Send message' }).click()

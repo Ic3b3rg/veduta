@@ -38,10 +38,10 @@ test('the reported three-day plan visibly contains complete structured content a
   await expectCompletePlan()
   await expect(
     page.locator('.chat-entry.assistant').filter({
-      hasText:
-        'Saved Gym plan — 3 days: Session 1 — Strength; Session 2 — Upper body; Session 3 — Full body.',
+      hasText: 'Saved Surface “Gym plan — 3 days”',
     }),
   ).toHaveCount(1)
+  await expect(page.locator('.chat-entry.assistant').last()).toContainText('Session 3 — Full body')
   await page.reload()
   await expectCompletePlan()
   await page.setViewportSize({ width: 390, height: 844 })
