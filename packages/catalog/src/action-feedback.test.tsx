@@ -157,7 +157,7 @@ it('Agent-backed Automation awaits acceptance without changing Scheduler state a
   expect(control.getAttribute('aria-checked')).toBe('false')
 })
 
-it('Combobox keeps search local and shows canonical selection during a recoverable offered-value change', async () => {
+it('Combobox keeps search local and reconciles a keyboard retry before its late HTTP failure', async () => {
   const node = AtomNodeSchema.parse({
     id: 'city',
     type: 'Combobox',
@@ -184,8 +184,15 @@ it('Combobox keeps search local and shows canonical selection during a recoverab
   const pending = new Promise<void>((_resolve, reject) => {
     fail = reject
   })
-  const dispatch = vi.fn().mockReturnValueOnce(pending).mockResolvedValue(undefined)
-  const view = render(renderNode(node, { state: { city: 'rm' }, dispatch }))
+  let failRetry: (failure: Error) => void = () => {
+    throw new Error('Not retried')
+  }
+  const retryPending = new Promise<void>((_resolve, reject) => {
+    failRetry = reject
+  })
+  const dispatch = vi.fn().mockReturnValueOnce(pending).mockReturnValueOnce(retryPending)
+  const acknowledgeAction = vi.fn()
+  const view = render(renderNode(node, { state: { city: 'rm' }, dispatch, acknowledgeAction }))
   const control = screen.getByRole('combobox', { name: 'City' })
   expect(control).toHaveProperty('value', 'Rome')
   act(() => control.focus())
@@ -207,9 +214,35 @@ it('Combobox keeps search local and shows canonical selection during a recoverab
   act(() => control.focus())
   fireEvent.keyDown(control, { key: 'ArrowDown' })
   fireEvent.change(control, { target: { value: 'Mil' } })
-  fireEvent.click(await screen.findByRole('option', { name: 'Milan' }))
+  await screen.findByRole('option', { name: 'Milan' })
+  fireEvent.keyDown(control, { key: 'ArrowDown' })
+  fireEvent.keyDown(control, { key: 'Enter' })
   await act(async () => {})
   expect(dispatch).toHaveBeenNthCalledWith(2, node, 'change', 'mi')
-  view.rerender(renderNode(node, { state: { city: 'mi' }, dispatch }))
+  expect(control).toHaveProperty('value', 'Rome')
+  view.rerender(
+    renderNode(node, {
+      state: { city: 'mi' },
+      dispatch,
+      acknowledgeAction,
+      actionConfirmations: {
+        city: {
+          change: {
+            intentId: 'confirmed-city',
+            actionRevision: 'acr-city',
+            inputs: { value: 'mi' },
+            outcome: 'committed',
+          },
+        },
+      },
+    }),
+  )
+  await act(async () => {})
+  expect(control).toHaveProperty('value', 'Milan')
+  expect(control).toHaveProperty('disabled', false)
+  expect(screen.queryByRole('status')).toBeNull()
+  expect(acknowledgeAction).toHaveBeenCalledExactlyOnceWith('city', 'change', 'confirmed-city')
+  await act(async () => failRetry(new Error('The HTTP response was lost')))
+  expect(screen.queryByRole('alert')).toBeNull()
   expect(control).toHaveProperty('value', 'Milan')
 })
