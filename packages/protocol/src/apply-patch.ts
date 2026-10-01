@@ -13,6 +13,14 @@ export function applySurfacePatch(surface: Surface, patch: Patch): Surface {
   const next = clonePlain(surface)
 
   for (const operation of patch.operations) {
+    if (
+      operation.target === 'tree' &&
+      operation.path === '' &&
+      (operation.op === 'add' || operation.op === 'replace')
+    ) {
+      next.tree = clonePlain(operation.value)
+      continue
+    }
     applyOperation(operation.target === 'state' ? next.state : next.tree, operation)
   }
 

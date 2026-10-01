@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { SurfaceSchema } from './surface.ts'
 import { FastActionInvocationSchema } from './patch.ts'
 import { FastActionOutcomeSchema } from './action-outcome.ts'
+import { applySurfacePatch } from './apply-patch.ts'
+import { fastActionInputsSchema } from './action-inputs.ts'
 
 function collectionSurface() {
   return {
@@ -54,6 +56,29 @@ function collectionSurface() {
 }
 
 describe('closed fast Action plans', () => {
+  it('validates owning Form inputs through a future read-only layout wrapper', () => {
+    const surface = SurfaceSchema.parse(collectionSurface())
+    const action = surface.tree.actions?.[0]
+    if (action?.path !== 'fast') throw new Error('fast Action required')
+    const owner = {
+      type: 'Form',
+      children: [{ type: 'FutureLayout', children: [{ type: 'Input', binding: 'draft' }] }],
+    }
+    expect(fastActionInputsSchema(owner, action).parse({ draft: 'Bread' })).toEqual({
+      draft: 'Bread',
+    })
+    expect(fastActionInputsSchema(owner, action).safeParse({ draft: 74 }).success).toBe(false)
+  })
+  it('applies a canonical root-tree replacement that carries a resealed owning Action', () => {
+    const surface = SurfaceSchema.parse(collectionSurface())
+    const tree = { ...surface.tree, props: { label: 'New form', submitLabel: 'Add' } }
+    expect(
+      applySurfacePatch(surface, {
+        surfaceId: surface.id,
+        operations: [{ target: 'tree', op: 'replace', path: '', value: tree }],
+      }).tree,
+    ).toEqual(tree)
+  })
   it('accepts a command Form that appends one record and clears its local draft source', () => {
     const surface = SurfaceSchema.parse(collectionSurface())
     expect(SurfaceSchema.parse(JSON.parse(JSON.stringify(surface)))).toEqual(surface)

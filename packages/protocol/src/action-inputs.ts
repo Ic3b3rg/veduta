@@ -1,5 +1,5 @@
 import type { z } from 'zod'
-import type { AtomNode } from './atom.ts'
+import type { Action } from './action.ts'
 import type { FastAction } from './action.ts'
 import {
   actionValueMatches,
@@ -10,16 +10,19 @@ import {
 } from './action-plan.ts'
 import { canonicalJson, JsonObjectSchema, type JsonObject } from './json.ts'
 
-/** The complete inputs owned by this interaction, independent of its mutation targets. */
-export function owningActionInputs(node: {
+export interface ActionOwningNode {
   type: string
   props?: JsonObject | undefined
   binding?: string | undefined
-  children?: AtomNode[] | undefined
-}): Record<string, ActionScalarSpec> {
+  children?: readonly ActionOwningNode[] | undefined
+  actions?: Action[] | undefined
+}
+
+/** The complete inputs owned by this interaction, independent of its mutation targets. */
+export function owningActionInputs(node: ActionOwningNode): Record<string, ActionScalarSpec> {
   if (node.type === 'Form') {
     const fields: Record<string, ActionScalarSpec> = {}
-    function walk(child: AtomNode): void {
+    function walk(child: ActionOwningNode): void {
       if (child.type === 'Form') return
       if ((child.type === 'Input' || child.type === 'Textarea') && child.binding) {
         fields[child.binding] = {
@@ -55,7 +58,7 @@ export function owningActionInputs(node: {
 }
 
 export function validateOwningActionDeclarations(
-  node: Parameters<typeof owningActionInputs>[0] & { actions?: AtomNode['actions'] | undefined },
+  node: Parameters<typeof owningActionInputs>[0] & { actions?: Action[] | undefined },
   ctx: z.RefinementCtx,
 ): void {
   const names = new Set<string>()
@@ -98,7 +101,7 @@ export function validateOwningActionDeclarations(
   })
 }
 
-export function fastActionInputsSchema(node: AtomNode, action: FastAction) {
+export function fastActionInputsSchema(node: ActionOwningNode, action: FastAction) {
   return JsonObjectSchema.superRefine((inputs, ctx) => {
     const expected = owningActionInputs(node)
     for (const key of new Set([...Object.keys(inputs), ...Object.keys(expected)])) {
@@ -135,12 +138,15 @@ function isCalendarDate(value: unknown): boolean {
 
 /** One shared validation hook for canonical writes, Template reuse, and catalog rendering. */
 export function validateActionPlansState(
-  tree: AtomNode,
+  tree: ActionOwningNode & { actions?: Action[] | undefined },
   state: JsonObject,
   ctx: z.RefinementCtx,
 ): void {
   const declarations = new Map<string, string>()
-  function walk(node: AtomNode, path: (string | number)[]): void {
+  function walk(
+    node: ActionOwningNode & { actions?: Action[] | undefined },
+    path: (string | number)[],
+  ): void {
     node.actions?.forEach((action, index) => {
       if (action.path !== 'fast') return
       const plan = action.plan

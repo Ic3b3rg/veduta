@@ -28,7 +28,7 @@ const TreeSetOperationSchema = z
   .object({
     target: z.literal('tree'),
     op: z.enum(['add', 'replace']),
-    path: JsonPointerSchema,
+    path: z.union([JsonPointerSchema, z.literal('')]),
     value: AtomNodeSchema,
   })
   .strict()
