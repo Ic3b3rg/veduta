@@ -1,27 +1,21 @@
 import type { Surface, SurfaceMoveDirection } from '@veduta/protocol'
 import { freshnessLabel, type SpaceWithSurfaces } from './api.ts'
 import { AttentionBadge } from './attention-badge.tsx'
-import type { QueuedFastAction } from './pwa-storage.ts'
 import { SurfaceCard } from './surface-card.tsx'
 import type { SurfaceUpdateFeedback } from './surface-motion.ts'
 
 export function SpaceSection({
   space,
-  authToken,
   focused,
   focusedSurfaceId,
   surfaceRevealFeedbackKeys,
   surfaceUpdateFeedbacks,
   onFocus,
   onMoveSurface,
-  onPatched,
-  onQueueFastAction,
   onTogglePin,
   onSurfaceRevealFeedbackShown,
-  onError,
 }: {
   space: SpaceWithSurfaces
-  authToken: string | undefined
   focused: boolean
   focusedSurfaceId: string | undefined
   surfaceRevealFeedbackKeys: Record<string, string>
@@ -32,11 +26,8 @@ export function SpaceSection({
     surfaceId: string,
     direction: SurfaceMoveDirection,
   ) => void
-  onPatched: (surface: Surface, affectedAtomIds?: readonly string[], surfaceCursor?: number) => void
-  onQueueFastAction: (action: QueuedFastAction) => void
   onTogglePin: (surface: Surface, pinned: boolean) => void
   onSurfaceRevealFeedbackShown: (surfaceId: string, feedbackKey: string) => void
-  onError: (message: string) => void
 }) {
   const surfaces = space.surfaces
 
@@ -60,7 +51,6 @@ export function SpaceSection({
           <SurfaceCard
             key={surface.id}
             surface={surface}
-            token={authToken}
             selected={surface.id === focusedSurfaceId}
             revealFeedbackKey={surfaceRevealFeedbackKeys[surface.id]}
             updateFeedback={surfaceUpdateFeedbacks[surface.id]}
@@ -69,13 +59,10 @@ export function SpaceSection({
             onFocus={() => onFocus(space, surface)}
             onMoveUp={() => onMoveSurface(space, surface.id, 'up')}
             onMoveDown={() => onMoveSurface(space, surface.id, 'down')}
-            onPatched={onPatched}
-            onQueueFastAction={onQueueFastAction}
             onTogglePin={(pinned) => onTogglePin(surface, pinned)}
             onRevealFeedbackShown={(feedbackKey) =>
               onSurfaceRevealFeedbackShown(surface.id, feedbackKey)
             }
-            onError={onError}
           />
         ))}
       </div>

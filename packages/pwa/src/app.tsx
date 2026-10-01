@@ -330,8 +330,6 @@ function RoutedApp() {
       }}
       onFocusSpace={focusSpace}
       onMoveSurface={moveSurface}
-      onSurfacePatched={runtime.confirmSurface}
-      onQueueFastAction={runtime.queueFastAction}
       onTogglePin={(surface) => void runtime.togglePin(surface)}
       onSurfaceRevealFeedbackShown={(surfaceId, feedbackKey) => {
         shownSurfaceRevealKeysRef.current.add(feedbackKey)
@@ -344,7 +342,6 @@ function RoutedApp() {
           acknowledgePendingDecisionReveal(surfaceId, pendingDecisionRevealKey)
         }
       }}
-      onError={setError}
       onResolvePendingDecision={runtime.resolveDecision}
       onDismissPendingDecision={dismissPendingDecision}
       onOpenAutomationOutcomeNotification={openAutomationOutcomeNotification}

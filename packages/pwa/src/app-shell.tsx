@@ -21,7 +21,7 @@ import {
 } from './pending-decision-notifications.tsx'
 import { presentPendingDecisions } from './pending-decision-presentation.ts'
 import { latestPendingDecisionFeedback } from './pending-decision-state.ts'
-import type { BrowserInstallPromptEvent, QueuedFastAction } from './pwa-storage.ts'
+import type { BrowserInstallPromptEvent } from './pwa-storage.ts'
 import { SpaceSection } from './space-section.tsx'
 import { SpaceAutomationOutcomeNotifications } from './space-automation-outcome-notifications.tsx'
 import type { SurfaceUpdateFeedback } from './surface-motion.ts'
@@ -65,15 +65,8 @@ interface AppShellProps {
     surfaceId: string,
     direction: SurfaceMoveDirection,
   ) => void
-  onSurfacePatched: (
-    surface: Surface,
-    affectedAtomIds?: readonly string[],
-    surfaceCursor?: number,
-  ) => void
-  onQueueFastAction: (action: QueuedFastAction) => void
   onTogglePin: (surface: Surface, pinned: boolean) => void
   onSurfaceRevealFeedbackShown: (surfaceId: string, feedbackKey: string) => void
-  onError: (message: string) => void
   onResolvePendingDecision: (
     decisionId: string,
     resolution: PendingDecisionResolution,
@@ -93,7 +86,7 @@ interface RouteRecovery {
   message: string
 }
 
-/** The fixed PWA shell; App owns networking and persistence and supplies route-derived selection. */
+/** The fixed PWA shell; React supplies presentation and route-derived selection from the live runtime. */
 export function AppShell({
   authToken,
   gatewayOnline,
@@ -120,11 +113,8 @@ export function AppShell({
   onInstallDone,
   onFocusSpace,
   onMoveSurface,
-  onSurfacePatched,
-  onQueueFastAction,
   onTogglePin,
   onSurfaceRevealFeedbackShown,
-  onError,
   onResolvePendingDecision,
   onDismissPendingDecision,
   onOpenAutomationOutcomeNotification,
@@ -255,18 +245,14 @@ export function AppShell({
             <SpaceSection
               key={space.id}
               space={space}
-              authToken={authToken}
               focused={space.id === focusedSpace?.id}
               focusedSurfaceId={focusedSurfaceId}
               surfaceRevealFeedbackKeys={surfaceRevealFeedbackKeys}
               surfaceUpdateFeedbacks={surfaceUpdateFeedbacks}
               onFocus={onFocusSpace}
               onMoveSurface={onMoveSurface}
-              onPatched={onSurfacePatched}
-              onQueueFastAction={onQueueFastAction}
               onTogglePin={onTogglePin}
               onSurfaceRevealFeedbackShown={onSurfaceRevealFeedbackShown}
-              onError={onError}
             />
           ))}
         </main>

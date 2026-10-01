@@ -1,5 +1,10 @@
 import { fromPartial } from '@total-typescript/shoehorn'
-import type { Surface, SurfacePatchEvent, SurfaceSnapshot } from '@veduta/protocol'
+import {
+  GatewayClientMessageSchema,
+  type Surface,
+  type SurfacePatchEvent,
+  type SurfaceSnapshot,
+} from '@veduta/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as api from './api.ts'
 import type { GatewayHandlers } from './gateway-client.ts'
@@ -51,14 +56,16 @@ function patch(value: number, cursor: number): SurfacePatchEvent {
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason: Error) => void
+  const promise = new Promise<T>((done, failed) => {
     resolve = done
+    reject = failed
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
-function setup() {
-  const values = new Map<string, string>()
+function setup(initialStorage: Record<string, string> = {}) {
+  const values = new Map<string, string>(Object.entries(initialStorage))
   const storage = fromPartial<Storage>({
     getItem: (key: string) => values.get(key) ?? null,
     setItem: (key: string, value: string) => {
@@ -69,21 +76,22 @@ function setup() {
     },
   })
   const connections: GatewayHandlers[] = []
-  const sendChat = vi.fn(() => true)
+  const sendChat = vi.fn<api.GatewayConnection['sendChat']>(() => true)
   const close = vi.fn()
   const fetchSpaces = vi.fn(async () => snapshot())
   const invokeFastAction = vi.fn(api.invokeFastAction)
+  const pinSurface = vi.fn(api.pinSurface)
+  const fetchAuthStatus = vi
+    .fn(api.fetchAuthStatus)
+    .mockResolvedValue({ mode: 'dev', bootstrapRequired: false, passkeyRegistered: false })
   const runtime = createPwaLiveStateRuntime({
     storage,
     api: {
       ...api,
-      fetchAuthStatus: vi.fn(async () => ({
-        mode: 'dev' as const,
-        bootstrapRequired: false,
-        passkeyRegistered: false,
-      })),
+      fetchAuthStatus,
       fetchSpaces,
       invokeFastAction,
+      pinSurface,
       fetchPendingDecisions: vi.fn(async () => ({ revision: 0, decisions: [] })),
       connectGateway: vi.fn((handlers) => {
         connections.push(handlers)
@@ -91,7 +99,17 @@ function setup() {
       }),
     },
   })
-  return { runtime, connections, fetchSpaces, invokeFastAction, sendChat, close, values }
+  return {
+    runtime,
+    connections,
+    fetchSpaces,
+    fetchAuthStatus,
+    invokeFastAction,
+    pinSurface,
+    sendChat,
+    close,
+    values,
+  }
 }
 
 afterEach(() => vi.useRealTimers())
@@ -270,6 +288,148 @@ describe('PWA live-state runtime', () => {
     connections[0]!.onSurfacePatch(patch(88, 88))
     await Promise.resolve()
     expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['value']).toBe(0)
+    runtime.stop()
+  })
+
+  it('interrupts an unfinished Chat stream exactly once when stopped', async () => {
+    const { runtime, connections } = setup()
+    await runtime.start()
+    connections[0]!.onChatTurnStart({ type: 'chat.turn-start', turnId: 'old-turn' })
+    connections[0]!.onChatTurnDelta({
+      type: 'chat.turn-delta',
+      turnId: 'old-turn',
+      text: 'Partial reply',
+    })
+    runtime.stop()
+    runtime.stop()
+    await runtime.start()
+    expect(runtime.getSnapshot().streamingTurns).toHaveLength(0)
+    expect(
+      runtime.getSnapshot().chatEntries.filter((entry) => entry.text.includes('Partial reply')),
+    ).toHaveLength(1)
+    runtime.stop()
+  })
+
+  it('keeps a known production session signed out while revocation status recovery is unavailable', async () => {
+    const { runtime, connections, fetchAuthStatus } = setup({
+      'veduta.authToken': 'vdt_device_session',
+    })
+    fetchAuthStatus.mockResolvedValueOnce({
+      mode: 'production',
+      bootstrapRequired: false,
+      passkeyRegistered: true,
+    })
+    await runtime.start()
+    const status = deferred<Awaited<ReturnType<typeof api.fetchAuthStatus>>>()
+    fetchAuthStatus.mockReturnValueOnce(status.promise)
+    connections[0]!.onError('Gateway session revoked')
+    expect(runtime.getSnapshot().authToken).toBeUndefined()
+    expect(runtime.getSnapshot().authStatus?.mode).toBe('production')
+    status.reject(new Error('Auth status unavailable'))
+    await vi.waitFor(() => expect(runtime.getSnapshot().error).toContain('Auth status unavailable'))
+    expect(runtime.getSnapshot().authStatus?.mode).toBe('production')
+    expect(connections).toHaveLength(1)
+    runtime.stop()
+  })
+
+  it('reports an invalid persisted Chat entry and still sends valid queued work', async () => {
+    const { runtime, connections, sendChat } = setup({
+      'veduta.chatQueue': JSON.stringify([
+        { id: 'invalid', text: '', at: '2026-10-01T08:00:00Z' },
+        { id: 'valid', text: 'Valid queued Chat', at: '2026-10-01T08:00:00Z' },
+      ]),
+    })
+    sendChat.mockImplementation((text) => {
+      GatewayClientMessageSchema.parse({ type: 'chat.send', text })
+      return true
+    })
+    await runtime.start()
+    expect(() => connections[0]!.onHello(0, 'client-test')).not.toThrow()
+    expect(sendChat).toHaveBeenCalledExactlyOnceWith('Valid queued Chat', undefined)
+    expect(runtime.getSnapshot().error).toContain('Queued Chat')
+    expect(runtime.getSnapshot().queuedChat).toHaveLength(0)
+    runtime.stop()
+  })
+
+  it('preserves a confirmed Pin through an older in-flight snapshot and duplicate frame', async () => {
+    const { runtime, connections, fetchSpaces, pinSurface } = setup()
+    await runtime.start()
+    const fetching = deferred<SurfaceSnapshot>()
+    fetchSpaces.mockReturnValueOnce(fetching.promise)
+    connections[0]!.onHello(0, 'client-test')
+    pinSurface.mockResolvedValue(
+      fromPartial({
+        surface: { ...surface(), pinned: true },
+        order: {
+          spaceId: 'spc-test',
+          cursor: 2,
+          pinnedSurfaceIds: ['srf-test'],
+          regularSurfaceIds: [],
+        },
+      }),
+    )
+    await runtime.togglePin(surface())
+    connections[0]!.onSurfacePinned({
+      cursor: 2,
+      at: '2026-10-01T08:00:02Z',
+      spaceId: 'spc-test',
+      surfaceId: 'srf-test',
+      pinned: true,
+      freshness: { updatedAt: '2026-10-01T08:00:02Z', updatedBy: 'user' },
+      order: {
+        spaceId: 'spc-test',
+        cursor: 2,
+        pinnedSurfaceIds: ['srf-test'],
+        regularSurfaceIds: [],
+      },
+    })
+    fetching.resolve(snapshot(0, 0))
+    await vi.waitFor(() => expect(runtime.getSnapshot().surfaceCursor).toBe(2))
+    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.pinned).toBe(true)
+    runtime.stop()
+  })
+
+  it('continues recovery through a corrupt buffered patch to a later valid frame', async () => {
+    const { runtime, connections, fetchSpaces } = setup()
+    await runtime.start()
+    const fetching = deferred<SurfaceSnapshot>()
+    fetchSpaces.mockReturnValueOnce(fetching.promise)
+    connections[0]!.onHello(0, 'client-test')
+    connections[0]!.onSurfacePatch({
+      ...patch(1, 1),
+      patch: {
+        surfaceId: 'srf-test',
+        operations: [{ target: 'state', op: 'replace', path: '/missing', value: 1 }],
+      },
+    })
+    connections[0]!.onSurfacePatch(patch(2, 2))
+    fetching.resolve(snapshot())
+    await vi.waitFor(() =>
+      expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['value']).toBe(2),
+    )
+    expect(runtime.getSnapshot().error).toBeTruthy()
+    runtime.stop()
+  })
+
+  it('flushes work added during an in-flight queue batch without requiring reconnect', async () => {
+    const { runtime, connections, invokeFastAction } = setup()
+    const response = deferred<Awaited<ReturnType<typeof api.invokeFastAction>>>()
+    invokeFastAction.mockReturnValueOnce(response.promise)
+    invokeFastAction.mockResolvedValue(fromPartial({ surface: surface(2), surfaceCursor: 2 }))
+    await runtime.start()
+    connections[0]!.onHello(0, 'client-test')
+    const intent = {
+      surfaceId: 'srf-test',
+      nodeId: 'root',
+      actionName: 'set',
+      value: 1,
+      at: '2026-10-01T08:00:00Z',
+    }
+    runtime.queueFastAction({ ...intent, id: 'first', idempotencyKey: 'first' })
+    runtime.queueFastAction({ ...intent, id: 'second', idempotencyKey: 'second', value: 2 })
+    response.resolve(fromPartial({ surface: surface(1), surfaceCursor: 1 }))
+    await vi.waitFor(() => expect(runtime.getSnapshot().queuedFastActions).toHaveLength(0))
+    expect(invokeFastAction.mock.calls.map((call) => call[5])).toEqual(['first', 'second'])
     runtime.stop()
   })
 

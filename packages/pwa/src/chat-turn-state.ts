@@ -1,7 +1,7 @@
 import type { ChatMessage, GatewayServerMessage } from '@veduta/protocol'
 
 /** One in-flight streamed Agent turn (issue 037). Keyed by `turnId` in
- * `App` rather than a single slot: a global turn and a per-Space turn can be
+ * the live runtime: a global turn and a per-Space turn can be
  * streaming concurrently, and each must accumulate its own text. */
 export interface StreamingTurn {
   turnId: string
@@ -32,9 +32,8 @@ export interface ApplyTurnFrameResult {
 }
 
 /**
- * Pure reducer over the streaming-turns map: `App` owns the map in state and
- * a ref mirror (matching its `spacesRef`/`replaceSpaces` pattern elsewhere),
- * calling this on every `chat.turn-*` frame instead of branching inline.
+ * Pure reducer over the runtime-owned streaming-turns map, called for every
+ * validated `chat.turn-*` frame.
  * `chat.turn-replace` discards streamed model text once the daemon owns a
  * Pending-decision status, and later deltas cannot overwrite that status.
  * `chat.turn-end` carries the complete final text and is NOT a concatenation

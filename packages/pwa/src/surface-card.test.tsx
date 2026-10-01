@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 import { AUTOMATION_OUTCOMES_STATE_KEY, SurfaceSchema } from '@veduta/protocol'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { ComponentProps } from 'react'
+import { useSyncExternalStore, type ComponentProps } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SurfaceCard } from './surface-card.tsx'
+import * as api from './api.ts'
+import { createPwaLiveStateRuntime, type PwaLiveStateRuntime } from './pwa-live-state-runtime.ts'
+import { PwaRuntimeContext } from './use-live-state.ts'
+
+const runtimes: PwaLiveStateRuntime[] = []
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -20,6 +25,9 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  for (const runtime of runtimes.splice(0)) runtime.stop()
+  localStorage.clear()
+  vi.unstubAllGlobals()
   vi.useRealTimers()
 })
 
@@ -34,11 +42,8 @@ describe('SurfaceCard relative-time validity', () => {
         onFocus={vi.fn()}
         onMoveUp={vi.fn()}
         onMoveDown={vi.fn()}
-        onPatched={vi.fn()}
-        onQueueFastAction={vi.fn()}
         onTogglePin={vi.fn()}
         onRevealFeedbackShown={vi.fn()}
-        onError={vi.fn()}
       />,
     )
 
@@ -88,11 +93,8 @@ describe('SurfaceCard material hierarchy', () => {
         onFocus={vi.fn()}
         onMoveUp={vi.fn()}
         onMoveDown={vi.fn()}
-        onPatched={vi.fn()}
-        onQueueFastAction={vi.fn()}
         onTogglePin={vi.fn()}
         onRevealFeedbackShown={vi.fn()}
-        onError={vi.fn()}
       />,
     )
 
@@ -184,9 +186,8 @@ describe('SurfaceCard Form submission', () => {
       ),
     )
     vi.stubGlobal('fetch', fetchMock)
-    const onPatched = vi.fn()
-    const onQueueFastAction = vi.fn()
-    render(<SurfaceCard {...surfaceCardProps(initial, { onPatched, onQueueFastAction })} />)
+    const runtime = await cardRuntime(initial)
+    render(<RuntimeCard runtime={runtime} {...surfaceCardProps(initial)} />)
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Display name' }), {
       target: { value: 'Grace' },
@@ -196,7 +197,7 @@ describe('SurfaceCard Form submission', () => {
     })
 
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(onPatched).not.toHaveBeenCalled()
+    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]).toEqual(initial)
     expect(initial.state).toEqual({ displayName: 'Ada', bio: 'First programmer' })
 
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
@@ -210,8 +211,8 @@ describe('SurfaceCard Form submission', () => {
       payload: { value: { displayName: 'Grace', bio: 'Compiler pioneer' } },
     })
     expect(body.idempotencyKey).toMatch(/^fast-/)
-    await waitFor(() => expect(onPatched).toHaveBeenCalledWith(updated, expect.any(Array), 7))
-    expect(onQueueFastAction).not.toHaveBeenCalled()
+    await waitFor(() => expect(runtime.getSnapshot().spaces[0]?.surfaces[0]).toEqual(updated))
+    expect(runtime.getSnapshot().queuedFastActions).toHaveLength(0)
   })
 
   it('keeps the draft visible and retries with the same idempotency key after failure', async () => {
@@ -231,8 +232,8 @@ describe('SurfaceCard Form submission', () => {
         new Response(JSON.stringify({ surface: updated, surfaceCursor: 8 }), { status: 200 }),
       )
     vi.stubGlobal('fetch', fetchMock)
-    const onQueueFastAction = vi.fn()
-    const view = render(<SurfaceCard {...surfaceCardProps(initial, { onQueueFastAction })} />)
+    const runtime = await cardRuntime(initial)
+    const view = render(<RuntimeCard runtime={runtime} {...surfaceCardProps(initial)} />)
     const name = screen.getByRole('textbox', { name: 'Display name' }) as HTMLInputElement
 
     fireEvent.change(name, { target: { value: 'Grace' } })
@@ -240,16 +241,16 @@ describe('SurfaceCard Form submission', () => {
 
     expect((await screen.findByRole('alert')).textContent).toBe('The Form could not be saved.')
     expect(name.value).toBe('Grace')
-    expect(onQueueFastAction).not.toHaveBeenCalled()
+    expect(runtime.getSnapshot().queuedFastActions).toHaveLength(0)
 
     view.rerender(
-      <SurfaceCard
+      <RuntimeCard
+        runtime={runtime}
         {...surfaceCardProps(
           SurfaceSchema.parse({
             ...initial,
             freshness: { updatedAt: '2026-09-01T08:00:30.000Z', updatedBy: 'agent' },
           }),
-          { onQueueFastAction },
         )}
       />,
     )
@@ -289,7 +290,8 @@ describe('SurfaceCard Form submission', () => {
       .mockResolvedValueOnce(responseFor(katherine, 2))
       .mockResolvedValueOnce(responseFor(grace, 3))
     vi.stubGlobal('fetch', fetchMock)
-    const view = render(<SurfaceCard {...surfaceCardProps(initial)} />)
+    const runtime = await cardRuntime(initial)
+    const view = render(<RuntimeCard runtime={runtime} {...surfaceCardProps(initial)} />)
     const name = screen.getByRole('textbox', { name: 'Display name' })
     const save = screen.getByRole('button', { name: 'Save profile' })
 
@@ -301,7 +303,7 @@ describe('SurfaceCard Form submission', () => {
     fireEvent.click(save)
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
-    view.rerender(<SurfaceCard {...surfaceCardProps(katherine)} />)
+    view.rerender(<RuntimeCard runtime={runtime} {...surfaceCardProps(katherine)} />)
 
     fireEvent.change(name, { target: { value: 'Grace' } })
     fireEvent.click(save)
@@ -388,11 +390,56 @@ function surfaceCardProps(
     onFocus: vi.fn(),
     onMoveUp: vi.fn(),
     onMoveDown: vi.fn(),
-    onPatched: vi.fn(),
-    onQueueFastAction: vi.fn(),
     onTogglePin: vi.fn(),
     onRevealFeedbackShown: vi.fn(),
-    onError: vi.fn(),
     ...overrides,
   }
+}
+
+async function cardRuntime(surface: ReturnType<typeof formSurface>): Promise<PwaLiveStateRuntime> {
+  const runtime = createPwaLiveStateRuntime({
+    api: {
+      ...api,
+      fetchAuthStatus: async () => ({
+        mode: 'dev',
+        bootstrapRequired: false,
+        passkeyRegistered: false,
+      }),
+      fetchSpaces: async () => ({
+        surfaceCursor: 0,
+        spaces: [
+          {
+            id: surface.spaceId,
+            slug: 'health',
+            name: 'Health',
+            archived: false,
+            attention: 0,
+            attentionRevision: 0,
+            surfaces: [surface],
+          },
+        ],
+      }),
+      fetchPendingDecisions: async () => ({ revision: 0, decisions: [] }),
+      connectGateway: () => ({ close: () => {}, sendChat: () => false }),
+    },
+  })
+  runtimes.push(runtime)
+  await runtime.start()
+  return runtime
+}
+
+function RuntimeCard({
+  runtime,
+  ...props
+}: ComponentProps<typeof SurfaceCard> & { runtime: PwaLiveStateRuntime }) {
+  const snapshot = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot)
+  const surface =
+    snapshot.spaces
+      .flatMap((space) => space.surfaces)
+      .find((surface) => surface.id === props.surface.id) ?? props.surface
+  return (
+    <PwaRuntimeContext.Provider value={runtime}>
+      <SurfaceCard {...props} surface={surface} />
+    </PwaRuntimeContext.Provider>
+  )
 }

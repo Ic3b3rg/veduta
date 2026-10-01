@@ -21,6 +21,7 @@ export class LiveSurfaceProjection {
   cursor = 0
   private patchCursors = new Map<string, number>()
   private presentationCursors = new Map<string, number>()
+  private pinCursors = new Map<string, number>()
   private orderCursors = new Map<string, number>()
   private rebasing = false
 
@@ -32,6 +33,7 @@ export class LiveSurfaceProjection {
     this.cursor = 0
     this.patchCursors.clear()
     this.presentationCursors.clear()
+    this.pinCursors.clear()
     this.orderCursors.clear()
     this.rebasing = true
   }
@@ -93,6 +95,10 @@ export class LiveSurfaceProjection {
           surface.id,
           Math.max(snapshot.surfaceCursor, this.presentationCursors.get(surface.id) ?? -1),
         )
+        this.pinCursors.set(
+          surface.id,
+          Math.max(snapshot.surfaceCursor, this.pinCursors.get(surface.id) ?? -1),
+        )
       }
     }
   }
@@ -118,19 +124,27 @@ export class LiveSurfaceProjection {
       this.cursor = Math.max(this.cursor, cursor)
       return true
     }
+    if (
+      event.type === 'surface.pinned' &&
+      cursor < (this.pinCursors.get(event.event.surfaceId) ?? -1)
+    )
+      return false
     const result = applySurfaceStreamEvent(this.spaces, event)
     if (!result.applied) return false
+    const freshnessId =
+      surfaceId ?? (event.type === 'surface.pinned' ? event.event.surfaceId : undefined)
     const previous =
-      surfaceId &&
-      this.spaces.flatMap((space) => space.surfaces).find((surface) => surface.id === surfaceId)
+      freshnessId &&
+      this.spaces.flatMap((space) => space.surfaces).find((surface) => surface.id === freshnessId)
     this.spaces = result.spaces.map((space) => ({
       ...space,
       surfaces: space.surfaces.map((surface) =>
         previous &&
-        surface.id === surfaceId &&
+        surface.id === freshnessId &&
         Math.max(
-          this.patchCursors.get(surfaceId) ?? -1,
-          this.presentationCursors.get(surfaceId) ?? -1,
+          this.patchCursors.get(freshnessId) ?? -1,
+          this.presentationCursors.get(freshnessId) ?? -1,
+          this.pinCursors.get(freshnessId) ?? -1,
         ) > cursor
           ? { ...surface, freshness: previous.freshness }
           : surface,
@@ -143,6 +157,7 @@ export class LiveSurfaceProjection {
         cursor,
       )
     if (order !== undefined) this.orderCursors.set(order.spaceId, cursor)
+    if (event.type === 'surface.pinned') this.pinCursors.set(event.event.surfaceId, cursor)
     if (event.type === 'surface.created') this.patchCursors.set(event.event.surface.id, cursor)
     return true
   }
@@ -152,7 +167,8 @@ export class LiveSurfaceProjection {
     if (
       cursor !== undefined &&
       cursor <= (this.patchCursors.get(surface.id) ?? -1) &&
-      cursor <= (this.presentationCursors.get(surface.id) ?? -1)
+      cursor <= (this.presentationCursors.get(surface.id) ?? -1) &&
+      cursor <= (this.pinCursors.get(surface.id) ?? -1)
     )
       return false
     let found = false
@@ -170,6 +186,7 @@ export class LiveSurfaceProjection {
         surface.id,
         Math.max(cursor, this.presentationCursors.get(surface.id) ?? -1),
       )
+      this.pinCursors.set(surface.id, Math.max(cursor, this.pinCursors.get(surface.id) ?? -1))
     }
     return found
   }
@@ -192,11 +209,15 @@ export class LiveSurfaceProjection {
     if (!previous) return surface
     const contentIsNewer = (this.patchCursors.get(surface.id) ?? -1) > cursor
     const presentationIsNewer = (this.presentationCursors.get(surface.id) ?? -1) > cursor
+    const pinIsNewer = (this.pinCursors.get(surface.id) ?? -1) > cursor
     return {
       ...surface,
       ...(contentIsNewer ? { tree: previous.tree, state: previous.state } : {}),
       ...(presentationIsNewer ? { presentation: previous.presentation } : {}),
-      ...(contentIsNewer || presentationIsNewer ? { freshness: previous.freshness } : {}),
+      ...(pinIsNewer ? { pinned: previous.pinned } : {}),
+      ...(contentIsNewer || presentationIsNewer || pinIsNewer
+        ? { freshness: previous.freshness }
+        : {}),
     }
   }
 }

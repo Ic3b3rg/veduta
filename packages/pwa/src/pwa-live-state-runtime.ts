@@ -10,6 +10,7 @@ import {
   type JsonValue,
   type FastSurfaceActionResult,
   type PendingDecisionResolution,
+  type PendingDecision,
   type Surface,
   type SurfaceMoveDirection,
 } from '@veduta/protocol'
@@ -66,7 +67,7 @@ export interface PwaLiveStateSnapshot {
   readonly chatEntries: ChatMessage[]
   readonly streamingTurns: StreamingTurn[]
   readonly presence: Presence
-  readonly pendingDecisions: ReturnType<LiveDecisionProjection['decisions']['slice']>
+  readonly pendingDecisions: PendingDecision[]
   readonly resolvingDecisionIds: string[]
   readonly automationOutcomeNotifications: AutomationOutcomeNotification[]
   readonly pendingAutomationOutcomeNotificationIds: string[]
@@ -126,6 +127,7 @@ export class PwaLiveStateRuntime {
   private queuedChat: QueuedChat[]
   private queuedFastActions: QueuedFastAction[]
   private queueFlush: Promise<void> | undefined
+  private queueFlushRequested = false
   private refetch: Promise<void> | undefined
   private refetchGeneration = 0
   private eventBuffer: SurfaceStreamEvent[] = []
@@ -186,7 +188,14 @@ export class PwaLiveStateRuntime {
     } catch (error) {
       if (!this.active(epoch)) return
       this.loadState = this.surfaces.spaces.length ? 'ready' : 'error'
-      this.failed(error, this.surfaces.spaces.length ? 'Offline: showing cached Home' : undefined)
+      this.failed(
+        error,
+        this.authStatus?.mode === 'production' && !this.token
+          ? 'Gateway sign-in status unavailable'
+          : this.surfaces.spaces.length
+            ? 'Offline: showing cached Home'
+            : undefined,
+      )
     }
   }
 
@@ -198,6 +207,10 @@ export class PwaLiveStateRuntime {
     this.refetchGeneration += 1
     this.refetch = undefined
     this.eventBuffer = []
+    this.optimisticSurfaces.clear()
+    for (const entry of interruptTurns(this.turns)) this.appendChat(entry)
+    this.turns = new Map()
+    this.presence = []
     if (this.reconnectTimer !== undefined) clearTimeout(this.reconnectTimer)
     this.reconnectTimer = undefined
     const gateway = this.gateway
@@ -213,7 +226,6 @@ export class PwaLiveStateRuntime {
     this.stop()
     this.token = token
     this.clientId = undefined
-    this.authStatus = undefined
     this.error = null
     if (token) this.storage.setItem(AUTH_TOKEN_KEY, token)
     else this.storage.removeItem(AUTH_TOKEN_KEY)
@@ -486,14 +498,18 @@ export class PwaLiveStateRuntime {
         this.eventBuffer = []
         for (const event of buffered) {
           if (event.event.cursor <= snapshot.surfaceCursor) continue
-          const previous =
-            event.type === 'surface.patch'
-              ? this.findSurface(event.event.patch.surfaceId)
-              : undefined
-          if (!this.surfaces.apply(event))
-            this.error = `Surface update could not be applied at cursor ${event.event.cursor}`
-          if (previous && previous !== this.findSurface(previous.id))
-            this.optimisticSurfaces.delete(previous.id)
+          try {
+            const previous =
+              event.type === 'surface.patch'
+                ? this.findSurface(event.event.patch.surfaceId)
+                : undefined
+            if (!this.surfaces.apply(event))
+              this.error = `Surface update could not be applied at cursor ${event.event.cursor}`
+            if (previous && previous !== this.findSurface(previous.id))
+              this.optimisticSurfaces.delete(previous.id)
+          } catch (error) {
+            this.failed(error)
+          }
         }
         this.loadState = 'ready'
         this.saveSurfaces()
@@ -530,7 +546,7 @@ export class PwaLiveStateRuntime {
       return false
     }
     this.appendChat({ role: 'user', text })
-    const sent = this.online && (this.gateway?.sendChat(text, spaceId) ?? false)
+    const sent = this.trySendChat(text, spaceId)
     if (!sent) {
       this.queuedChat = [...this.queuedChat, queuedChatEntry(text, spaceId)]
       persistQueuedChat(this.queuedChat, this.storage)
@@ -541,10 +557,30 @@ export class PwaLiveStateRuntime {
 
   private flushChat(): void {
     if (!this.online) return
-    this.queuedChat = this.queuedChat.filter(
-      (entry) => !this.gateway?.sendChat(entry.text, entry.spaceId),
-    )
+    this.queuedChat = this.queuedChat.filter((entry) => {
+      if (
+        !GatewayClientMessageSchema.safeParse({
+          type: 'chat.send',
+          text: entry.text,
+          ...(entry.spaceId ? { spaceId: entry.spaceId } : {}),
+        }).success
+      ) {
+        this.error = 'Queued Chat contained an invalid message; it was not sent.'
+        return false
+      }
+      return !this.trySendChat(entry.text, entry.spaceId)
+    })
     persistQueuedChat(this.queuedChat, this.storage)
+  }
+
+  private trySendChat(text: string, spaceId?: string): boolean {
+    if (!this.online) return false
+    try {
+      return this.gateway?.sendChat(text, spaceId) ?? false
+    } catch (error) {
+      this.failed(error, 'Chat could not be sent')
+      return false
+    }
   }
 
   queueFastAction = (action: QueuedFastAction): void => {
@@ -558,7 +594,10 @@ export class PwaLiveStateRuntime {
 
   private async flushActions(): Promise<void> {
     if (!this.online) return
-    if (this.queueFlush) return this.queueFlush
+    if (this.queueFlush) {
+      this.queueFlushRequested = true
+      return this.queueFlush
+    }
     const epoch = this.epoch
     const queued = [...this.queuedFastActions]
     const flush = async () => {
@@ -590,8 +629,10 @@ export class PwaLiveStateRuntime {
       await this.queueFlush
     } finally {
       this.queueFlush = undefined
+      const resume = this.queueFlushRequested || epoch !== this.epoch
+      this.queueFlushRequested = false
       this.publish()
-      if (epoch !== this.epoch && this.online) void this.flushActions()
+      if (resume && this.online) void this.flushActions()
     }
   }
 
@@ -665,8 +706,12 @@ export class PwaLiveStateRuntime {
       value,
     })
     const key = form ? (this.formRetryKeys.get(fingerprint) ?? initialKey) : initialKey
-    if (form) this.formRetryKeys.set(fingerprint, key)
-    else {
+    if (form) {
+      this.formRetryKeys.set(fingerprint, key)
+      const oldest =
+        this.formRetryKeys.size > 32 ? this.formRetryKeys.keys().next().value : undefined
+      if (oldest !== undefined) this.formRetryKeys.delete(oldest)
+    } else {
       const optimistic = defaultApi.optimisticFastSurface(surface, node, name, value)
       this.optimisticSurfaces.set(surfaceId, { key, surface: optimistic })
       this.feedback(
