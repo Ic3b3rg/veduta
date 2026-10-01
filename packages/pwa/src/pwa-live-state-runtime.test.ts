@@ -1,6 +1,10 @@
 import { fromPartial } from '@total-typescript/shoehorn'
 import {
   GatewayClientMessageSchema,
+  FastActionInvocationSchema,
+  SurfaceSchema,
+  inputSetPlan,
+  literalSetPlan,
   type Surface,
   type SurfacePatchEvent,
   type SurfaceSnapshot,
@@ -9,19 +13,53 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as api from './api.ts'
 import type { GatewayHandlers } from './gateway-client.ts'
 import { createPwaLiveStateRuntime } from './pwa-live-state-runtime.ts'
+import { committedActionOutcome } from './action-test-support.ts'
+import { LiveSurfaceProjection } from './live-surface-projection.ts'
 
 function surface(value = 0): Surface {
-  return {
+  return SurfaceSchema.parse({
     id: 'srf-test',
     spaceId: 'spc-test',
     title: 'Test',
-    tree: { id: 'root', type: 'Stat', props: { label: 'Value' }, binding: 'value' },
+    tree: {
+      id: 'root',
+      type: 'Box',
+      children: [
+        { id: 'value', type: 'Stat', props: { label: 'Value' }, binding: 'value' },
+        {
+          id: 'set-one',
+          type: 'Button',
+          props: { label: 'Set one' },
+          actions: [
+            {
+              name: 'set',
+              path: 'fast',
+              revision: 'acr-set-one',
+              plan: literalSetPlan('value', 1),
+            },
+          ],
+        },
+        {
+          id: 'set-two',
+          type: 'Button',
+          props: { label: 'Set two' },
+          actions: [
+            {
+              name: 'set',
+              path: 'fast',
+              revision: 'acr-set-two',
+              plan: literalSetPlan('value', 2),
+            },
+          ],
+        },
+      ],
+    },
     state: { value },
     pinned: false,
     pinnable: true,
     presentation: 'standard',
     freshness: { updatedAt: '2026-10-01T08:00:00Z', updatedBy: 'user' },
-  }
+  })
 }
 
 function snapshot(value = 0, cursor = 0): SurfaceSnapshot {
@@ -79,7 +117,7 @@ function setup(initialStorage: Record<string, string> = {}) {
   const sendChat = vi.fn<api.GatewayConnection['sendChat']>(() => true)
   const close = vi.fn()
   const fetchSpaces = vi.fn(async () => snapshot())
-  const invokeFastAction = vi.fn(api.invokeFastAction)
+  const invokeSurfaceAction = vi.fn(api.invokeSurfaceAction)
   const pinSurface = vi.fn(api.pinSurface)
   const fetchAuthStatus = vi
     .fn(api.fetchAuthStatus)
@@ -90,7 +128,7 @@ function setup(initialStorage: Record<string, string> = {}) {
       ...api,
       fetchAuthStatus,
       fetchSpaces,
-      invokeFastAction,
+      invokeSurfaceAction,
       pinSurface,
       fetchPendingDecisions: vi.fn(async () => ({ revision: 0, decisions: [] })),
       connectGateway: vi.fn((handlers) => {
@@ -104,7 +142,7 @@ function setup(initialStorage: Record<string, string> = {}) {
     connections,
     fetchSpaces,
     fetchAuthStatus,
-    invokeFastAction,
+    invokeSurfaceAction,
     pinSurface,
     sendChat,
     close,
@@ -132,41 +170,59 @@ describe('PWA live-state runtime', () => {
     expect(runtime.getSnapshot().gatewayOnline).toBe(false)
   })
 
-  it('keeps optimistic control feedback out of the confirmed cache', async () => {
-    const { runtime, connections, fetchSpaces, invokeFastAction, values } = setup()
+  it('keeps a pending control unchanged until its canonical outcome commits', async () => {
+    const { runtime, connections, fetchSpaces, invokeSurfaceAction, values } = setup()
     const initial = surface()
     initial.tree = {
       id: 'root',
       type: 'Checkbox',
       binding: 'done',
       props: { label: 'Done' },
-      actions: [{ name: 'toggle', path: 'fast', stateKey: 'done', payload: {} }],
+      actions: [
+        {
+          name: 'toggle',
+          path: 'fast',
+          revision: 'acr-done',
+          plan: inputSetPlan('done', { type: 'boolean' }),
+        },
+      ],
     }
     initial.state = { done: false }
     const initialSnapshot = snapshot()
     initialSnapshot.spaces[0]!.surfaces = [initial]
     fetchSpaces.mockResolvedValue(initialSnapshot)
-    const response = deferred<Awaited<ReturnType<typeof api.invokeFastAction>>>()
-    invokeFastAction.mockReturnValue(response.promise)
+    const response = deferred<Awaited<ReturnType<typeof api.invokeSurfaceAction>>>()
+    invokeSurfaceAction.mockReturnValue(response.promise)
     await runtime.start()
     connections[0]!.onHello(0, 'client-test')
     await Promise.resolve()
     const submitting = runtime.dispatchSurfaceAction(initial.id, 'root', 'toggle', true)
-    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['done']).toBe(true)
+    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['done']).toBe(false)
     expect(JSON.parse(values.get('veduta.homeSnapshot')!).spaces[0].surfaces[0].state.done).toBe(
       false,
     )
+    const invocation = invokeSurfaceAction.mock.calls[0]?.[1]
+    if (!invocation) throw new Error('Expected the typed toggle invocation')
     response.resolve(
-      fromPartial({ surface: { ...initial, state: { done: true } }, surfaceCursor: 1 }),
+      committedActionOutcome(
+        invocation,
+        { ...initial, state: { done: true } },
+        {
+          surfaceId: initial.id,
+          operations: [{ target: 'state', op: 'replace', path: '/done', value: true }],
+        },
+        1,
+      ),
     )
     await submitting
+    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['done']).toBe(true)
     expect(JSON.parse(values.get('veduta.homeSnapshot')!).spaces[0].surfaces[0].state.done).toBe(
       true,
     )
     runtime.stop()
   })
 
-  it('replays buffered frames and refuses stale HTTP results without moving the global cursor', async () => {
+  it('replays buffered frames after a stale HTTP snapshot', async () => {
     const { runtime, connections, fetchSpaces } = setup()
     await runtime.start()
     const fetching = deferred<SurfaceSnapshot>()
@@ -175,17 +231,15 @@ describe('PWA live-state runtime', () => {
     connections[0]!.onSurfacePatch(patch(2, 2))
     fetching.resolve(snapshot(1, 1))
     await vi.waitFor(() => expect(runtime.getSnapshot().surfaceCursor).toBe(2))
-    runtime.confirmSurface(surface(3), undefined, 3)
-    runtime.confirmSurface(surface(1), undefined, 1)
-    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['value']).toBe(3)
+    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['value']).toBe(2)
+    connections[0]!.onSurfacePatch(patch(1, 1))
+    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['value']).toBe(2)
     expect(runtime.getSnapshot().surfaceCursor).toBe(2)
-    connections[0]!.onSurfacePatch(patch(2, 2))
-    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['value']).toBe(3)
     runtime.stop()
   })
 
   it('reconciles presentation and content independently when their frames arrive out of order', async () => {
-    const { runtime, connections } = setup()
+    const { runtime, connections, fetchSpaces } = setup()
     await runtime.start()
     connections[0]!.onSurfacePresentation({
       cursor: 2,
@@ -201,7 +255,9 @@ describe('PWA live-state runtime', () => {
       state: { value: 1 },
       freshness: { updatedAt: '2026-10-01T08:00:02Z' },
     })
-    runtime.confirmSurface(surface(1), undefined, 1)
+    fetchSpaces.mockResolvedValueOnce(snapshot(1, 1))
+    connections[0]!.onHello(2, 'client-test')
+    await vi.waitFor(() => expect(fetchSpaces).toHaveBeenCalledTimes(2))
     expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.presentation).toBe('full')
     runtime.stop()
   })
@@ -245,33 +301,33 @@ describe('PWA live-state runtime', () => {
     runtime.stop()
   })
 
-  it('resumes a queued intent after remount without applying a stopped HTTP result', async () => {
-    const { runtime, connections, invokeFastAction } = setup()
-    const oldResult = deferred<Awaited<ReturnType<typeof api.invokeFastAction>>>()
-    invokeFastAction.mockReturnValueOnce(oldResult.promise)
-    invokeFastAction.mockResolvedValue(fromPartial({ surface: surface(2), surfaceCursor: 2 }))
+  it('resumes an unsettled intent after remount without applying a stopped HTTP result', async () => {
+    const { runtime, connections, invokeSurfaceAction } = setup()
+    const oldResult = deferred<Awaited<ReturnType<typeof api.invokeSurfaceAction>>>()
+    invokeSurfaceAction.mockReturnValueOnce(oldResult.promise)
+    invokeSurfaceAction.mockImplementation(async (_surfaceId, invocation) =>
+      committedActionOutcome(invocation, surface(2), patch(2, 2).patch, 2),
+    )
     await runtime.start()
-    runtime.queueFastAction({
-      id: 'queued-intent',
-      surfaceId: 'srf-test',
-      nodeId: 'root',
-      actionName: 'set',
-      value: 2,
-      idempotencyKey: 'stable-intent',
-      at: '2026-10-01T08:00:00Z',
-    })
     connections[0]!.onHello(0, 'client-test')
-    expect(invokeFastAction).toHaveBeenCalledTimes(1)
+    const submitting = runtime
+      .dispatchSurfaceAction('srf-test', 'set-two', 'set')
+      .catch(() => undefined)
+    await vi.waitFor(() => expect(invokeSurfaceAction).toHaveBeenCalledTimes(1))
+    const invocation = invokeSurfaceAction.mock.calls[0]?.[1]
+    if (!invocation) throw new Error('Expected the typed set invocation')
     runtime.stop()
     await runtime.start()
     connections[1]!.onHello(0, 'client-test')
-    oldResult.resolve(fromPartial({ surface: surface(99), surfaceCursor: 99 }))
-    await vi.waitFor(() => expect(invokeFastAction).toHaveBeenCalledTimes(2))
+    oldResult.resolve(committedActionOutcome(invocation, surface(99), patch(99, 99).patch, 99))
+    await submitting
+    await vi.waitFor(() => expect(invokeSurfaceAction).toHaveBeenCalledTimes(2))
     await vi.waitFor(() => expect(runtime.getSnapshot().queuedFastActions).toHaveLength(0))
-    expect(invokeFastAction.mock.calls.map((call) => call[5])).toEqual([
-      'stable-intent',
-      'stable-intent',
-    ])
+    const invocations = invokeSurfaceAction.mock.calls.map((call) =>
+      FastActionInvocationSchema.parse(call[1]),
+    )
+    expect(invocations[0]?.intentId).toBe(invocations[1]?.intentId)
+    expect(invocations[1]).toEqual(invocations[0])
     expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['value']).toBe(2)
     runtime.stop()
   })
@@ -412,24 +468,33 @@ describe('PWA live-state runtime', () => {
   })
 
   it('flushes work added during an in-flight queue batch without requiring reconnect', async () => {
-    const { runtime, connections, invokeFastAction } = setup()
-    const response = deferred<Awaited<ReturnType<typeof api.invokeFastAction>>>()
-    invokeFastAction.mockReturnValueOnce(response.promise)
-    invokeFastAction.mockResolvedValue(fromPartial({ surface: surface(2), surfaceCursor: 2 }))
+    const { runtime, connections, invokeSurfaceAction } = setup()
+    const response = deferred<Awaited<ReturnType<typeof api.invokeSurfaceAction>>>()
+    invokeSurfaceAction.mockReturnValueOnce(response.promise)
+    invokeSurfaceAction.mockImplementation(async (_surfaceId, invocation) =>
+      committedActionOutcome(invocation, surface(2), patch(2, 2).patch, 2),
+    )
     await runtime.start()
+    const firstSubmission = runtime
+      .dispatchSurfaceAction('srf-test', 'set-one', 'set')
+      .catch(() => undefined)
     connections[0]!.onHello(0, 'client-test')
-    const intent = {
-      surfaceId: 'srf-test',
-      nodeId: 'root',
-      actionName: 'set',
-      value: 1,
-      at: '2026-10-01T08:00:00Z',
-    }
-    runtime.queueFastAction({ ...intent, id: 'first', idempotencyKey: 'first' })
-    runtime.queueFastAction({ ...intent, id: 'second', idempotencyKey: 'second', value: 2 })
-    response.resolve(fromPartial({ surface: surface(1), surfaceCursor: 1 }))
+    await vi.waitFor(() => expect(invokeSurfaceAction).toHaveBeenCalledTimes(1))
+    const secondSubmission = runtime
+      .dispatchSurfaceAction('srf-test', 'set-two', 'set')
+      .catch(() => undefined)
+    const invocation = invokeSurfaceAction.mock.calls[0]?.[1]
+    if (!invocation) throw new Error('Expected the first typed set invocation')
+    response.resolve(committedActionOutcome(invocation, surface(1), patch(1, 1).patch, 1))
+    await Promise.all([firstSubmission, secondSubmission])
+    await vi.waitFor(() => expect(invokeSurfaceAction).toHaveBeenCalledTimes(2))
     await vi.waitFor(() => expect(runtime.getSnapshot().queuedFastActions).toHaveLength(0))
-    expect(invokeFastAction.mock.calls.map((call) => call[5])).toEqual(['first', 'second'])
+    const invocations = invokeSurfaceAction.mock.calls.map((call) =>
+      FastActionInvocationSchema.parse(call[1]),
+    )
+    expect(invocations.map((invocation) => invocation.nodeId)).toEqual(['set-one', 'set-two'])
+    expect(invocations[0]?.intentId).not.toBe(invocations[1]?.intentId)
+    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['value']).toBe(2)
     runtime.stop()
   })
 
@@ -446,5 +511,18 @@ describe('PWA live-state runtime', () => {
     connections[0]!.onError('Malformed Gateway frame')
     expect(runtime.getSnapshot().error).toContain('Malformed Gateway frame')
     runtime.stop()
+  })
+})
+
+describe('Live Surface projection confirmation', () => {
+  it('keeps a newer canonical HTTP confirmation without advancing the realtime cursor', () => {
+    const projection = new LiveSurfaceProjection(snapshot())
+    projection.apply({ type: 'surface.patch', event: patch(2, 2) })
+    projection.confirmSurface(surface(3), 3)
+    projection.confirmSurface(surface(1), 1)
+    expect(projection.spaces[0]?.surfaces[0]?.state['value']).toBe(3)
+    expect(projection.cursor).toBe(2)
+    projection.apply({ type: 'surface.patch', event: patch(2, 2) })
+    expect(projection.spaces[0]?.surfaces[0]?.state['value']).toBe(3)
   })
 })

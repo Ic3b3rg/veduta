@@ -71,11 +71,12 @@ describe('Form text Atoms', () => {
   })
 
   it('retains the draft after failure and permits an explicit retry', async () => {
+    const submission = deferred()
     const dispatch = vi
       .fn<(node: KnownRenderableAtomNode, actionName: string, value?: JsonValue) => Promise<void>>()
       .mockRejectedValueOnce(new Error('The Gateway could not save this Form.'))
-      .mockResolvedValueOnce(undefined)
-    render(renderNode(formSurface.tree, { state: formSurface.state, dispatch }))
+      .mockReturnValueOnce(submission.promise)
+    const view = render(renderNode(formSurface.tree, { state: formSurface.state, dispatch }))
 
     const name = screen.getByRole('textbox', { name: 'Display name' }) as HTMLInputElement
     fireEvent.change(name, { target: { value: 'Grace' } })
@@ -92,6 +93,13 @@ describe('Form text Atoms', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
 
     await waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2))
+    view.rerender(
+      renderNode(formSurface.tree, {
+        state: { ...formSurface.state, displayName: 'Grace' },
+        dispatch,
+      }),
+    )
+    await act(async () => submission.resolve())
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
     expect(dispatch.mock.calls[0]?.[2]).toEqual(dispatch.mock.calls[1]?.[2])
     expect(name.value).toBe('Grace')
