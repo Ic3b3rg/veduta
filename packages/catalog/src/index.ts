@@ -8,5 +8,7 @@ export type {
   AtomProps,
   SurfaceUpdateFeedback,
   ActionConfirmation,
+  AgentActionConfirmation,
+  FastActionConfirmation,
   ActionConfirmations,
 } from './types.ts'

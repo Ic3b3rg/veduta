@@ -10,11 +10,10 @@ import { boundValue } from './atom-helpers.ts'
 import { tokensFor } from './design-system.ts'
 import type { AtomProps, RenderContext } from './types.ts'
 
-interface ControlAttempt {
-  revision: string | undefined
-  inputs: string
-  confirmed: boolean
-}
+type ControlAttempt = { confirmed: boolean } & (
+  | { path: 'fast'; revision: string | undefined; inputs: string }
+  | { path: 'agent'; payload: string }
+)
 
 export interface AtomMotionAttributes {
   'data-veduta-atom-id'?: string
@@ -38,17 +37,22 @@ export function useActionFeedback({ node, ctx }: AtomProps) {
   useEffect(() => {
     if (
       !action ||
-      action.path !== 'fast' ||
       !confirmation ||
-      confirmation.actionRevision !== action.revision ||
+      (action.path === 'fast'
+        ? confirmation.path === 'agent' || confirmation.actionRevision !== action.revision
+        : confirmation.path !== 'agent') ||
       acknowledged.current === confirmation.intentId
     )
       return
     acknowledged.current = confirmation.intentId
     const attempt = currentAttempt.current
     if (
-      attempt?.revision === confirmation.actionRevision &&
-      attempt.inputs === canonicalJson(confirmation.inputs)
+      attempt &&
+      (confirmation.path === 'agent'
+        ? attempt.path === 'agent' && attempt.payload === canonicalJson(confirmation.payload)
+        : attempt.path === 'fast' &&
+          attempt.revision === confirmation.actionRevision &&
+          attempt.inputs === canonicalJson(confirmation.inputs))
     ) {
       attempt.confirmed = true
       pendingRef.current = false
@@ -70,11 +74,19 @@ export function useActionFeedback({ node, ctx }: AtomProps) {
       )
       return
     }
-    const attempt: ControlAttempt = {
-      revision: action.path === 'fast' ? action.revision : undefined,
-      inputs: canonicalJson(inputs),
-      confirmed: false,
-    }
+    const attempt: ControlAttempt =
+      action.path === 'fast'
+        ? {
+            path: 'fast',
+            revision: action.revision,
+            inputs: canonicalJson(inputs),
+            confirmed: false,
+          }
+        : {
+            path: 'agent',
+            payload: canonicalJson(ownsValue ? { ...action.payload, ...inputs } : action.payload),
+            confirmed: false,
+          }
     currentAttempt.current = attempt
     pendingRef.current = true
     setPending(true)

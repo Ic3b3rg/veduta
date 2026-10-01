@@ -190,7 +190,12 @@ function reconcileFormConfirmation(
 ): void {
   if (!form) return
   const confirmation = ctx.actionConfirmations?.[nodeId]?.[actionName]
-  if (!confirmation || confirmation.actionRevision !== actionRevision) return
+  if (
+    !confirmation ||
+    confirmation.path === 'agent' ||
+    confirmation.actionRevision !== actionRevision
+  )
+    return
   const state = formDraftState(form)
   if (state.acknowledgedIntentId === confirmation.intentId) return
   const submitted = state.submissions.get(canonicalJson(confirmation.inputs))

@@ -12,12 +12,23 @@ export interface SurfaceUpdateFeedback {
   atomIds: readonly string[]
 }
 
-export interface ActionConfirmation {
+export interface FastActionConfirmation {
+  path?: 'fast'
   intentId: string
   actionRevision: string
   inputs: JsonObject
   outcome: 'committed' | 'noop'
 }
+
+export interface AgentActionConfirmation {
+  path: 'agent'
+  intentId: string
+  turnId: string
+  payload: JsonObject
+  outcome: 'completed'
+}
+
+export type ActionConfirmation = FastActionConfirmation | AgentActionConfirmation
 
 export type ActionConfirmations = Record<string, Record<string, ActionConfirmation>>
 
