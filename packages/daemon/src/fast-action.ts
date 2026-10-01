@@ -23,6 +23,7 @@ export type SurfaceActionErrorCode =
   | 'missing_target'
   | 'preflight_rejected'
   | 'intent_conflict'
+  | 'idempotency_conflict'
 export class SurfaceActionError extends Error {
   constructor(
     readonly code: SurfaceActionErrorCode,

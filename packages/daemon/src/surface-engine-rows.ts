@@ -1,5 +1,6 @@
 import {
   AtomNodeSchema,
+  AgentActionTurnSchema,
   JsonObjectSchema,
   PatchOperationSchema,
   SurfaceArchivedEventSchema,
@@ -139,13 +140,24 @@ export function treeProposalFromRow(row: Record<string, unknown>): TreeProposal 
 
 export function agentTurnFromRow(row: Record<string, unknown>): QueuedAgentTurn {
   const id = requiredNumber(row, 'id')
-  return {
+  const idempotencyKey = optionalString(row, 'idempotency_key')
+  const result = optionalString(row, 'result_json')
+  const contentOrigin = requiredString(row, 'content_origin')
+  if (!isValidOrigin(contentOrigin)) throw new Error('invalid Agent Action content origin')
+  const summary = AgentActionTurnSchema.parse({
     id: `agent-turn-${id}`,
-    at: requiredString(row, 'at'),
     spaceId: requiredString(row, 'space_id'),
     surfaceId: requiredString(row, 'surface_id'),
     atomId: requiredString(row, 'atom_id'),
     actionName: requiredString(row, 'action_name'),
+    status: requiredString(row, 'status'),
+    ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+    ...(result === undefined ? {} : JSON.parse(result)),
+  })
+  return {
+    ...summary,
+    at: requiredString(row, 'at'),
+    contentOrigin,
     payload: JsonObjectSchema.parse(JSON.parse(requiredString(row, 'payload_json'))),
     surface: SurfaceSchema.parse(JSON.parse(requiredString(row, 'surface_json'))),
     atom: AtomNodeSchema.parse(JSON.parse(requiredString(row, 'atom_json'))),

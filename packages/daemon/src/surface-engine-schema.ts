@@ -109,7 +109,12 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
       action_name text not null,
       payload_json text not null,
       surface_json text not null,
-      atom_json text not null
+      atom_json text not null,
+      content_origin text not null,
+      status text not null default 'queued' check (status in ('queued', 'running', 'completed', 'failed')),
+      idempotency_key text unique,
+      request_json text not null,
+      result_json text
     );
 
     create table if not exists tree_proposals (
@@ -131,6 +136,26 @@ export function initializeSurfaceSchema(db: DatabaseSync): void {
   // `create table if not exists` does not update databases created by older
   // versions, so each additive column is also migrated explicitly.
   ensureSqliteColumn(db, 'surface_events', 'kind', "text not null default 'patch'")
+  // Pre-lifecycle requests have no execution receipt or trustworthy captured origin.
+  // They must never be replayed automatically after this upgrade (issue #146).
+  ensureSqliteColumn(
+    db,
+    'agent_turns',
+    'content_origin',
+    "text not null default 'untrusted:legacy-action'",
+  )
+  ensureSqliteColumn(db, 'agent_turns', 'status', "text not null default 'failed'")
+  ensureSqliteColumn(db, 'agent_turns', 'idempotency_key', 'text')
+  ensureSqliteColumn(db, 'agent_turns', 'request_json', "text not null default ''")
+  ensureSqliteColumn(db, 'agent_turns', 'result_json', 'text')
+  db.exec(`
+    update agent_turns
+    set result_json = '{"error":"Recorded before durable execution tracking; inspect canonical outcome before retrying"}'
+    where status = 'failed' and result_json is null and request_json = ''
+      and content_origin = 'untrusted:legacy-action';
+    create unique index if not exists agent_turns_idempotency
+      on agent_turns (idempotency_key) where idempotency_key is not null;
+  `)
   db.exec(`
     insert or ignore into surface_commit_baseline (id, legacy_surface_cursor, recorded_at)
     values (1, (select coalesce(max(cursor), 0) from surface_events), datetime('now'))

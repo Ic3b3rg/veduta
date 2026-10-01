@@ -4,6 +4,7 @@ import {
   SurfaceSnapshotSchema,
   findDeclaredAction,
   type ChatTurnCorrelation,
+  type ChatMessage,
   type AutomationOutcomeKind,
   type JsonObject,
   type PatchOperation,
@@ -185,6 +186,9 @@ export class Store {
   invokeSurfaceAction(surfaceId: string, invocation: ActionInvocation): SurfaceActionResult {
     if ('intentId' in invocation)
       return { path: 'fast', outcome: this.surfaceEngine.invokeFastAction(surfaceId, invocation) }
+    const parsedInvocation = AgentActionInvocationSchema.parse(invocation)
+    const replay = this.surfaceEngine.replayAgentAction(surfaceId, parsedInvocation)
+    if (replay) return { path: 'agent', turn: replay }
     const surface = this.getSurface(surfaceId)
     if (!surface) throw new SurfaceActionError('unknown_surface', 'unknown Surface')
     const action = findDeclaredAction(surface.tree, invocation.nodeId, invocation.name)
@@ -196,10 +200,7 @@ export class Store {
       )
     return {
       path: 'agent',
-      turn: this.surfaceEngine.enqueueAgentAction(
-        surface,
-        AgentActionInvocationSchema.parse(invocation),
-      ),
+      turn: this.surfaceEngine.enqueueAgentAction(surface, parsedInvocation),
     }
   }
   onFastActionPreflight(preflight: (context: FastActionPreflightContext) => void): () => void {
@@ -394,6 +395,29 @@ export class Store {
 
   agentTurns(): QueuedAgentTurn[] {
     return this.surfaceEngine.agentTurns()
+  }
+
+  agentTurn(id: string): QueuedAgentTurn | undefined {
+    return this.surfaceEngine.agentTurn(id)
+  }
+
+  queuedAgentTurns(): QueuedAgentTurn[] {
+    return this.surfaceEngine.queuedAgentTurns()
+  }
+
+  claimAgentTurn(id: string): QueuedAgentTurn | undefined {
+    return this.surfaceEngine.claimAgentTurn(id)
+  }
+
+  finishAgentTurn(
+    id: string,
+    result: { message: ChatMessage; surfaceCursor: number } | { error: string },
+  ): QueuedAgentTurn | undefined {
+    return this.surfaceEngine.finishAgentTurn(id, result)
+  }
+
+  interruptAgentTurns(): QueuedAgentTurn[] {
+    return this.surfaceEngine.interruptAgentTurns()
   }
 
   llmCallCount(): number {

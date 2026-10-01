@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   AUTOMATION_OUTCOMES_STATE_KEY,
+  AgentActionTurnSchema,
   AutomationOutcomeStatusesSchema,
   type AutomationOutcomeKind,
   AtomNodeSchema,
@@ -40,6 +41,8 @@ import {
   type CommittedFastActionMetadata,
   type CommittedFastActionOutcome,
   type AgentActionInvocation,
+  type AgentActionTurn,
+  type ChatMessage,
   type AtomNode,
   type ChatTurnCorrelation,
   type Freshness,
@@ -216,16 +219,25 @@ export type SurfaceEngineEvent =
   | { kind: 'moved'; event: SurfaceMovedEvent }
   | { kind: 'presentation'; event: SurfacePresentationEvent }
 
-export interface QueuedAgentTurn {
-  id: string
+export type QueuedAgentTurn = AgentActionTurn & {
   at: string
-  spaceId: string
-  surfaceId: string
-  atomId: string
-  actionName: string
   payload: JsonObject
   surface: Surface
   atom: AtomNode
+  contentOrigin: Origin
+}
+
+/** Projects a durable private execution snapshot onto its strict public status. */
+export function agentActionTurnSummary(turn: QueuedAgentTurn): AgentActionTurn {
+  const {
+    at: _at,
+    payload: _payload,
+    surface: _surface,
+    atom: _atom,
+    contentOrigin: _origin,
+    ...summary
+  } = turn
+  return AgentActionTurnSchema.parse(summary)
 }
 
 export interface SurfaceEngineOptions {
@@ -456,6 +468,7 @@ export class SurfaceEngine {
     for (const failure of this.reconcilePendingSurfaceCommits()) {
       console.error('Surface commit boot recovery pending', failure)
     }
+    this.interruptAgentTurns()
   }
 
   recoveryPending(spaceId?: string): SurfaceCommitRecord[] {
@@ -1461,6 +1474,8 @@ export class SurfaceEngine {
   }
 
   enqueueAgentAction(surface: Surface, invocation: AgentActionInvocation): QueuedAgentTurn {
+    const duplicate = this.replayAgentAction(surface.id, invocation)
+    if (duplicate) return duplicate
     const atom = findAtom(surface.tree, invocation.nodeId)
     const action = findDeclaredAgentAction(surface.tree, invocation.nodeId, invocation.name)
     if (!atom || !action) {
@@ -1495,13 +1510,18 @@ export class SurfaceEngine {
     // typed (docs/SECURITY.md §3.2). `effectiveOrigin` keeps the untrusted
     // mark when the content carries one, and falls back to `trusted:user`
     // for the ordinary case — a Surface the user really did create.
-    const contentOrigin = this.surfaceProvenance(surface.id)?.contentOrigin
+    const contentOrigin = this.surfaceProvenance(surface.id)?.contentOrigin ?? 'trusted:user'
+    const request = agentActionRequest(surface.id, invocation)
+    this.assertSpaceReadyForAgent(surface.spaceId)
     const id = this.runWrite(() => {
+      const replay = this.findAgentActionRequest(surface.id, invocation)
+      if (replay) return agentTurnRowId(replay.id)!
       const result = this.db
         .prepare(
           `insert into agent_turns
-             (at, space_id, surface_id, atom_id, action_name, payload_json, surface_json, atom_json)
-           values (?, ?, ?, ?, ?, ?, ?, ?)`,
+             (at, space_id, surface_id, atom_id, action_name, payload_json, surface_json, atom_json,
+              content_origin, status, idempotency_key, request_json)
+           values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
         )
         .run(
           at,
@@ -1512,6 +1532,9 @@ export class SurfaceEngine {
           JSON.stringify(payload),
           JSON.stringify(surface),
           JSON.stringify(atom),
+          contentOrigin,
+          invocation.idempotencyKey ?? null,
+          request,
         )
       this.stageSpaceEvent(surface.spaceId, {
         at,
@@ -1523,21 +1546,111 @@ export class SurfaceEngine {
       return Number(result.lastInsertRowid)
     })
 
-    return {
-      id: `agent-turn-${id}`,
-      at,
-      spaceId: surface.spaceId,
-      surfaceId: surface.id,
-      atomId: atom.id,
-      actionName: invocation.name,
-      payload,
-      surface,
-      atom,
+    return this.agentTurn(`agent-turn-${id}`)!
+  }
+
+  /** Stable request replays resolve before the current Surface or declaration is inspected. */
+  replayAgentAction(
+    surfaceId: string,
+    invocation: AgentActionInvocation,
+  ): QueuedAgentTurn | undefined {
+    const replay = this.findAgentActionRequest(surfaceId, invocation)
+    if (replay) this.assertSpaceReadyForAgent(replay.spaceId)
+    return replay
+  }
+
+  private findAgentActionRequest(
+    surfaceId: string,
+    invocation: AgentActionInvocation,
+  ): QueuedAgentTurn | undefined {
+    if (invocation.idempotencyKey === undefined) return undefined
+    const row = this.db
+      .prepare('select * from agent_turns where idempotency_key = ?')
+      .get(invocation.idempotencyKey)
+    if (!row) return undefined
+    if (requiredString(row, 'request_json') !== agentActionRequest(surfaceId, invocation)) {
+      throw new SurfaceActionError(
+        'idempotency_conflict',
+        'this Agent Action request identity is already assigned to a different request',
+      )
     }
+    return agentTurnFromRow(row)
   }
 
   agentTurns(): QueuedAgentTurn[] {
     return this.db.prepare('select * from agent_turns order by id').all().map(agentTurnFromRow)
+  }
+
+  agentTurn(id: string): QueuedAgentTurn | undefined {
+    const rowId = agentTurnRowId(id)
+    if (rowId === undefined) return undefined
+    const row = this.db.prepare('select * from agent_turns where id = ?').get(rowId)
+    return row === undefined ? undefined : agentTurnFromRow(row)
+  }
+
+  queuedAgentTurns(): QueuedAgentTurn[] {
+    return this.db
+      .prepare("select * from agent_turns where status = 'queued' order by id")
+      .all()
+      .map(agentTurnFromRow)
+  }
+
+  /** A request cannot enter the Agent loop until its matching Space Event is delivered. */
+  claimAgentTurn(id: string): QueuedAgentTurn | undefined {
+    const current = this.agentTurn(id)
+    if (current?.status !== 'queued') return undefined
+    this.assertSpaceReadyForAgent(current.spaceId)
+    const changed = this.db
+      .prepare("update agent_turns set status = 'running' where id = ? and status = 'queued'")
+      .run(agentTurnRowId(id)!)
+    return changed.changes === 0 ? undefined : this.agentTurn(id)
+  }
+
+  finishAgentTurn(
+    id: string,
+    result: { message: ChatMessage; surfaceCursor: number } | { error: string },
+  ): QueuedAgentTurn | undefined {
+    return withImmediateTransaction(this.db, () => {
+      const current = this.agentTurn(id)
+      if (!current || current.status === 'completed' || current.status === 'failed') return current
+      if ('message' in result && current.status !== 'running') {
+        throw new Error('an Agent Action must be running before completion')
+      }
+      if ('message' in result && result.surfaceCursor !== this.latestSurfaceCursor()) {
+        throw new Error(
+          'Agent Action completion must identify the current authoritative Surface cursor',
+        )
+      }
+      const summary = AgentActionTurnSchema.parse({
+        ...agentActionTurnSummary(current),
+        status: 'message' in result ? 'completed' : 'failed',
+        ...result,
+      })
+      this.db
+        .prepare('update agent_turns set status = ?, result_json = ? where id = ?')
+        .run(summary.status, JSON.stringify(result), agentTurnRowId(id)!)
+      return this.agentTurn(id)
+    })
+  }
+
+  /** A running turn may have caused external effects; boot recovery never executes it again. */
+  interruptAgentTurns(): QueuedAgentTurn[] {
+    return withImmediateTransaction(this.db, () => {
+      const running = this.db
+        .prepare("select id from agent_turns where status = 'running' order by id")
+        .all()
+      this.db
+        .prepare(
+          "update agent_turns set status = 'failed', result_json = ? where status = 'running'",
+        )
+        .run(
+          JSON.stringify({
+            error:
+              'Agent action execution was interrupted; inspect canonical outcome before retrying',
+          }),
+        )
+      return running.map((row) => this.agentTurn(`agent-turn-${requiredNumber(row, 'id')}`)!)
+    })
   }
 
   surfaceTools(): ToolDef[] {
@@ -2576,6 +2689,22 @@ function assertPatchTarget(operations: PatchOperation[], target: 'state' | 'tree
   if (wrongTarget) {
     throw new Error(`${target} patch cannot include ${wrongTarget.target} operation`)
   }
+}
+
+function agentTurnRowId(id: string): number | undefined {
+  const match = /^agent-turn-([1-9]\d*)$/.exec(id)
+  if (!match) return undefined
+  const rowId = Number(match[1])
+  return Number.isSafeInteger(rowId) ? rowId : undefined
+}
+
+function agentActionRequest(surfaceId: string, invocation: AgentActionInvocation): string {
+  return canonicalJson({
+    surfaceId,
+    nodeId: invocation.nodeId,
+    name: invocation.name,
+    ...(invocation.payload === undefined ? {} : { payload: invocation.payload }),
+  })
 }
 
 function assertAutomationOutcomeStateNotPatched(operations: PatchOperation[]): void {
