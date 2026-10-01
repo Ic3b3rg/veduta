@@ -11,12 +11,14 @@ import {
   type RenderableGatewayServerMessage,
   type JsonValue,
   type RenderableCommittedFastActionOutcome,
+  type RenderablePatchOperation,
   type PendingDecisionResolution,
   type PendingDecision,
   type RenderableSurface,
   type SurfaceMoveDirection,
 } from '@veduta/protocol'
 import * as defaultApi from './api.ts'
+import type { ActionConfirmations } from '@veduta/catalog'
 import {
   applyTurnFrame,
   interruptTurns,
@@ -70,6 +72,7 @@ export interface PwaLiveStateSnapshot {
   readonly pendingAutomationOutcomeNotificationIds: string[]
   readonly queuedChat: QueuedChat[]
   readonly queuedFastActions: QueuedFastAction[]
+  readonly actionConfirmations: Record<string, ActionConfirmations>
   readonly surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback>
   readonly presentationEvents: LivePresentationEvent[]
   readonly connectionGeneration: number
@@ -272,6 +275,7 @@ export class PwaLiveStateRuntime {
       pendingAutomationOutcomeNotificationIds: this.notifications?.pendingIds ?? [],
       queuedChat: this.queuedChat,
       queuedFastActions: this.actions?.queued ?? [],
+      actionConfirmations: this.actions?.confirmations ?? {},
       surfaceUpdateFeedbacks: this.surfaceUpdateFeedbacks,
       presentationEvents: this.presentationEvents,
       connectionGeneration: this.connectionGeneration,
@@ -308,6 +312,7 @@ export class PwaLiveStateRuntime {
       if (!this.active(epoch) || generation !== this.connectionGeneration) return
       this.gateway = undefined
       this.online = false
+      this.actions.disconnect()
       this.refetchGeneration += 1
       this.refetch = undefined
       this.eventBuffer = []
@@ -374,6 +379,7 @@ export class PwaLiveStateRuntime {
     switch (frame.type) {
       case 'hello':
         if (frame.surfaceCursor < this.surfaces.cursor) {
+          this.actions.disconnect()
           this.refetchGeneration += 1
           this.refetch = undefined
           this.eventBuffer = []
@@ -466,10 +472,7 @@ export class PwaLiveStateRuntime {
       if (event.type === 'surface.patch' && previous !== undefined) {
         const current = this.findSurface(previous.id)
         if (current && current !== previous) {
-          this.feedback(
-            current.id,
-            affectedAtomIdsForPatch(previous, current, event.event.patch.operations),
-          )
+          this.feedbackForPatch(previous, current, event.event.patch.operations)
         }
       }
       this.acceptActionReceipt(event)
@@ -509,10 +512,7 @@ export class PwaLiveStateRuntime {
               this.acceptActionReceipt(event)
               const current = previous && this.findSurface(previous.id)
               if (previous && current && current !== previous && event.type === 'surface.patch')
-                this.feedback(
-                  current.id,
-                  affectedAtomIdsForPatch(previous, current, event.event.patch.operations),
-                )
+                this.feedbackForPatch(previous, current, event.event.patch.operations)
             }
           } catch (error) {
             this.failed(error)
@@ -599,13 +599,21 @@ export class PwaLiveStateRuntime {
     const previous = this.findSurface(outcome.surfaceId)
     if (!this.surfaces.confirmSurface(outcome.surface, outcome.surfaceCursor)) return
     const current = this.findSurface(outcome.surfaceId)
-    if (previous && current)
-      this.feedback(
-        current.id,
-        affectedAtomIdsForPatch(previous, current, outcome.patch.operations),
-      )
     this.saveSurfaces()
+    if (previous && current) this.feedbackForPatch(previous, current, outcome.patch.operations)
     this.publish()
+  }
+
+  private feedbackForPatch(
+    previous: RenderableSurface,
+    next: RenderableSurface,
+    operations: RenderablePatchOperation[],
+  ): void {
+    try {
+      this.feedback(next.id, affectedAtomIdsForPatch(previous, next, operations))
+    } catch (error) {
+      console.warn('Surface motion feedback unavailable', error)
+    }
   }
 
   private feedback(surfaceId: string, atomIds: readonly string[]): void {
@@ -682,6 +690,13 @@ export class PwaLiveStateRuntime {
       inputs: parsed.data,
     })
   }
+
+  acknowledgeSurfaceAction = (
+    surfaceId: string,
+    nodeId: string,
+    name: string,
+    intentId: string,
+  ): void => this.actions.acknowledge(surfaceId, nodeId, name, intentId)
 
   async togglePin(surface: RenderableSurface): Promise<void> {
     const epoch = this.epoch

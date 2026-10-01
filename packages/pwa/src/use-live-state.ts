@@ -17,3 +17,12 @@ export function useLiveState() {
 export function usePwaRuntime(): PwaLiveStateRuntime | undefined {
   return useContext(PwaRuntimeContext)
 }
+
+const noSubscription = () => () => {}
+
+/** The catalog observes local command confirmations while canonical values stay in Surface state. */
+export function useActionConfirmations(surfaceId: string) {
+  const runtime = usePwaRuntime()
+  const read = () => runtime?.getSnapshot().actionConfirmations[surfaceId]
+  return useSyncExternalStore(runtime?.subscribe ?? noSubscription, read, read)
+}

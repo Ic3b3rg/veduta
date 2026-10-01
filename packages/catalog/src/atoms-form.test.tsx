@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
-import { SurfaceSchema, formSetPlan, type KnownRenderableAtomNode, type JsonValue } from '@veduta/protocol'
+import {
+  SurfaceSchema,
+  formSetPlan,
+  type KnownRenderableAtomNode,
+  type JsonValue,
+} from '@veduta/protocol'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderNode } from './render.tsx'

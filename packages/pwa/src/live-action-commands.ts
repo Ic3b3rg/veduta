@@ -8,6 +8,7 @@ import {
   type RenderableCommittedFastActionOutcome,
   type RenderableFastActionOutcome,
 } from '@veduta/protocol'
+import type { ActionConfirmation, ActionConfirmations } from '@veduta/catalog'
 import { ApiResponseError, ReloadRequiredError } from './api-http.ts'
 import {
   persistQueuedFastActions,
@@ -29,8 +30,11 @@ interface Intent {
   entry: QueuedFastAction
   fingerprint: string
   scope: string
+  failedLocal: boolean
+  superseded: boolean
   receipt?: RenderableFastActionOutcome | CommittedFastActionMetadata
   attempt?: {
+    local: boolean
     promise: Promise<void>
     resolve: () => void
     reject: (error: Error) => void
@@ -46,6 +50,16 @@ export class LiveActionCommands {
   private generation = 0
   private flushing: Promise<void> | undefined
   private message: string | null
+  private readonly confirmed = new Map<
+    string,
+    {
+      surfaceId: string
+      nodeId: string
+      name: string
+      confirmation: ActionConfirmation
+    }
+  >()
+  private confirmedProjection: Record<string, ActionConfirmations> = {}
 
   constructor(private readonly options: CommandOptions) {
     const queue = readFastActionQueue(options.storage)
@@ -63,6 +77,18 @@ export class LiveActionCommands {
   get error(): string | null {
     return this.message
   }
+  get confirmations(): Record<string, ActionConfirmations> {
+    return this.confirmedProjection
+  }
+
+  acknowledge(surfaceId: string, nodeId: string, name: string, intentId: string): void {
+    const scope = canonicalJson({ surfaceId, nodeId, name })
+    if (this.confirmed.get(scope)?.confirmation.intentId !== intentId) return
+    this.confirmed.delete(scope)
+    if (this.intents.get(intentId)?.receipt) this.forget(intentId)
+    this.projectConfirmations()
+    this.options.changed()
+  }
 
   start(): void {
     this.started = true
@@ -70,9 +96,14 @@ export class LiveActionCommands {
 
   stop(): void {
     this.started = false
+    this.disconnect()
+  }
+
+  disconnect(): void {
     this.generation += 1
     this.flushing = undefined
     for (const intent of this.intents.values()) {
+      if (intent.attempt?.local) intent.failedLocal = true
       intent.attempt?.reject(
         new Error('The connection changed; this action is queued for confirmation.'),
       )
@@ -98,11 +129,6 @@ export class LiveActionCommands {
       name: input.name,
     })
     const fingerprint = canonicalJson(input)
-    for (const [id, candidate] of this.intents) {
-      if (candidate.scope === scope && candidate.fingerprint !== fingerprint && candidate.receipt) {
-        this.forget(id)
-      }
-    }
     const existingId = this.fingerprints.get(fingerprint)
     let intent = existingId ? this.intents.get(existingId) : undefined
     if (intent?.receipt) {
@@ -112,6 +138,8 @@ export class LiveActionCommands {
       return Promise.resolve()
     }
     if (!intent) {
+      this.confirmed.delete(scope)
+      this.projectConfirmations()
       const intentId = crypto.randomUUID()
       const invocation = FastActionInvocationSchema.parse({
         nodeId: input.nodeId,
@@ -130,7 +158,7 @@ export class LiveActionCommands {
       this.entries = [...this.entries, intent.entry]
       this.persist()
     }
-    return this.send(intent)
+    return this.send(intent, true)
   }
 
   /** Called only after the runtime has accepted the canonical Patch delivery. */
@@ -167,6 +195,20 @@ export class LiveActionCommands {
   }
 
   private remember(entry: QueuedFastAction): Intent {
+    const scope = canonicalJson({
+      surfaceId: entry.surfaceId,
+      nodeId: entry.invocation.nodeId,
+      name: entry.invocation.name,
+    })
+    for (const [id, previous] of this.intents) {
+      if (previous.scope !== scope || id === entry.id) continue
+      if (previous.receipt) this.forget(id)
+      else {
+        previous.superseded = true
+        if (this.fingerprints.get(previous.fingerprint) === id)
+          this.fingerprints.delete(previous.fingerprint)
+      }
+    }
     const fingerprint = canonicalJson({
       surfaceId: entry.surfaceId,
       nodeId: entry.invocation.nodeId,
@@ -177,20 +219,19 @@ export class LiveActionCommands {
     const intent: Intent = {
       entry,
       fingerprint,
-      scope: canonicalJson({
-        surfaceId: entry.surfaceId,
-        nodeId: entry.invocation.nodeId,
-        name: entry.invocation.name,
-      }),
+      failedLocal: false,
+      superseded: false,
+      scope,
     }
     this.intents.set(entry.id, intent)
     this.fingerprints.set(fingerprint, entry.id)
     return intent
   }
 
-  private send(intent: Intent): Promise<void> {
+  private send(intent: Intent, local = false): Promise<void> {
     if (intent.attempt) return intent.attempt.promise
     if (!this.options.online()) {
+      if (local) intent.failedLocal = true
       const error = new Error('Gateway offline. This action is queued and has not been confirmed.')
       this.message = error.message
       this.options.changed()
@@ -203,7 +244,7 @@ export class LiveActionCommands {
       resolve = done
       reject = failed
     })
-    const attempt = { promise, resolve, reject }
+    const attempt = { promise, resolve, reject, local }
     intent.attempt = attempt
     this.message = null
     this.options.changed()
@@ -232,6 +273,7 @@ export class LiveActionCommands {
       } catch (failure) {
         if (!this.started || generation !== this.generation || intent.attempt !== attempt) return
         const error = failure instanceof Error ? failure : new Error(String(failure))
+        if (attempt.local) intent.failedLocal = true
         delete intent.attempt
         if (terminal(error)) {
           this.removeQueued(intent.entry.id)
@@ -250,18 +292,37 @@ export class LiveActionCommands {
 
   private complete(
     intent: Intent,
-    receipt: RenderableFastActionOutcome | CommittedFastActionMetadata,
+    receipt:
+      | Exclude<RenderableFastActionOutcome, { outcome: 'recovery_pending' }>
+      | CommittedFastActionMetadata,
   ): void {
     if (intent.receipt) return
     intent.receipt = receipt
+    if (!intent.superseded) {
+      this.confirmed.delete(intent.scope)
+      this.confirmed.set(intent.scope, {
+        surfaceId: intent.entry.surfaceId,
+        nodeId: intent.entry.invocation.nodeId,
+        name: intent.entry.invocation.name,
+        confirmation: {
+          intentId: intent.entry.id,
+          actionRevision: intent.entry.invocation.actionRevision,
+          inputs: intent.entry.invocation.inputs,
+          outcome: receipt.outcome,
+        },
+      })
+    }
+    if (this.confirmed.size > 64) {
+      const oldest = this.confirmed.keys().next().value
+      if (oldest !== undefined) this.confirmed.delete(oldest)
+    }
+    this.projectConfirmations()
     this.removeQueued(intent.entry.id)
     const attempt = intent.attempt
     delete intent.attempt
-    if (attempt) {
-      attempt.resolve()
-      this.forget(intent.entry.id)
-    }
-    this.message = null
+    attempt?.resolve()
+    if (intent.superseded || attempt?.local || !intent.failedLocal) this.forget(intent.entry.id)
+    if (!intent.superseded) this.message = null
     // Failed local drafts can acknowledge a late receipt once without creating a second intent.
     while (this.intents.size > this.entries.length + 64) {
       const oldest = [...this.intents].find(([, value]) => value.receipt !== undefined)
@@ -285,6 +346,26 @@ export class LiveActionCommands {
 
   private persist(): void {
     persistQueuedFastActions(this.entries, this.options.storage)
+  }
+
+  private projectConfirmations(): void {
+    const surfaces = new Map<string, Map<string, Map<string, ActionConfirmation>>>()
+    for (const value of this.confirmed.values()) {
+      const nodes =
+        surfaces.get(value.surfaceId) ?? new Map<string, Map<string, ActionConfirmation>>()
+      surfaces.set(value.surfaceId, nodes)
+      const actions = nodes.get(value.nodeId) ?? new Map<string, ActionConfirmation>()
+      nodes.set(value.nodeId, actions)
+      actions.set(value.name, value.confirmation)
+    }
+    this.confirmedProjection = Object.fromEntries(
+      [...surfaces].map(([surfaceId, nodes]) => [
+        surfaceId,
+        Object.fromEntries(
+          [...nodes].map(([nodeId, actions]) => [nodeId, Object.fromEntries(actions)]),
+        ),
+      ]),
+    )
   }
 }
 

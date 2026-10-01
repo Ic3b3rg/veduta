@@ -95,12 +95,28 @@ export function readFastActionQueue(storage: Storage = localStorage): {
   entries: QueuedFastAction[]
   invalid: boolean
 } {
-  const raw = readArray(FAST_ACTION_QUEUE_KEY, storage)
+  let raw: unknown
+  const stored = storage.getItem(FAST_ACTION_QUEUE_KEY)
+  if (stored === null) return { entries: [], invalid: false }
+  try {
+    raw = JSON.parse(stored)
+  } catch {
+    return { entries: [], invalid: true }
+  }
+  if (!Array.isArray(raw)) return { entries: [], invalid: true }
   const entries = raw.flatMap((value) => {
     const parsed = QueuedFastActionSchema.safeParse(value)
     return parsed.success ? [parsed.data] : []
   })
-  return { entries, invalid: entries.length !== raw.length }
+  const unique = new Map<string, QueuedFastAction>()
+  const conflicts = new Set<string>()
+  for (const entry of entries) {
+    const previous = unique.get(entry.id)
+    if (previous && JSON.stringify(previous) !== JSON.stringify(entry)) conflicts.add(entry.id)
+    unique.set(entry.id, entry)
+  }
+  for (const id of conflicts) unique.delete(id)
+  return { entries: [...unique.values()], invalid: unique.size !== raw.length }
 }
 
 export function persistQueuedFastActions(

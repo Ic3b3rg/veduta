@@ -13,7 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { freshnessLabel } from './api.ts'
 import type { SurfaceUpdateFeedback } from './surface-motion.ts'
 import { useCatalogTheme } from './theme.ts'
-import { usePwaRuntime } from './use-live-state.ts'
+import { useActionConfirmations, usePwaRuntime } from './use-live-state.ts'
 
 export function SurfaceCard({
   surface,
@@ -42,6 +42,7 @@ export function SurfaceCard({
 }) {
   const theme = useCatalogTheme()
   const runtime = usePwaRuntime()
+  const actionConfirmations = useActionConfirmations(surface.id)
   const cardRef = useRef<HTMLElement>(null)
   const handledRevealFeedbackRef = useRef<string | undefined>(undefined)
   const revealedWhileSelectedRef = useRef(false)
@@ -87,6 +88,11 @@ export function SurfaceCard({
       if (!runtime) return Promise.reject(new Error('Surface actions are unavailable'))
       return runtime.dispatchSurfaceAction(surface.id, node.id, actionName, value)
     },
+    [runtime, surface.id],
+  )
+  const acknowledgeAction = useCallback(
+    (nodeId: string, name: string, intentId: string) =>
+      runtime?.acknowledgeSurfaceAction(surface.id, nodeId, name, intentId),
     [runtime, surface.id],
   )
 
@@ -165,6 +171,8 @@ export function SurfaceCard({
         {renderNode(surface.tree, {
           state: surface.state,
           dispatch,
+          actionConfirmations,
+          acknowledgeAction,
           theme,
           ...(updateFeedback ? { motion: { update: updateFeedback } } : {}),
         })}

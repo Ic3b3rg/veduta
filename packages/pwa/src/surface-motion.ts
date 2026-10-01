@@ -67,6 +67,7 @@ function treeRegionCandidates(
   nextAtoms: ReadonlyMap<string, AtomLocation>,
 ): ReadonlyMap<string, TreeRegionCandidate> {
   const candidates = new Map<string, TreeRegionCandidate>()
+  if (!operations.some((operation) => operation.target === 'tree')) return candidates
   const replacementOrigins = new Map<string, string>()
   const treeChanged = !valuesEqual(previous.tree, next.tree)
   let trackingSurface = surfaceWithAllBindingKeys(previous, next, operations)
