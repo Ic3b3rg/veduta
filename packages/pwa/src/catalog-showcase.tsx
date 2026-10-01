@@ -11,9 +11,10 @@ export function CatalogShowcasePage() {
   function dispatch(node: KnownRenderableAtomNode, actionName: string, value?: JsonValue): void {
     const action = node.actions?.find((candidate) => candidate.name === actionName)
     if (action?.path !== 'fast') return
-    const stateKey = action.stateKey
-    if (stateKey !== undefined && value !== undefined) {
-      setState((current) => ({ ...current, [stateKey]: value }))
+    const step = action.plan.steps.length === 1 ? action.plan.steps[0] : undefined
+    // The contributor preview demonstrates single-value controls with ephemeral sample state.
+    if (step?.op === 'set' && step.value.source === 'input' && value !== undefined) {
+      setState((current) => ({ ...current, [step.target]: value }))
     }
   }
 

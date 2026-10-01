@@ -1,5 +1,7 @@
 import {
   GatewayClientMessageSchema,
+  fastActionInputsSchema,
+  owningActionInputs,
   isKnownRenderableAtomNode,
   RenderableGatewayServerMessageSchema,
   type AutomationOutcomeNotification,
@@ -7,9 +9,8 @@ import {
   type RenderableAtomNode,
   type ChatMessage,
   type RenderableGatewayServerMessage,
-  type JsonObject,
   type JsonValue,
-  type RenderableFastSurfaceActionResult,
+  type RenderableCommittedFastActionOutcome,
   type PendingDecisionResolution,
   type PendingDecision,
   type RenderableSurface,
@@ -27,6 +28,7 @@ import type { HomeSpacesLoadState } from './home-space-grid.tsx'
 import { LiveSurfaceProjection } from './live-surface-projection.ts'
 import { LiveDecisionProjection } from './live-decision-projection.ts'
 import { LiveNotificationProjection } from './live-notification-projection.ts'
+import { LiveActionCommands } from './live-action-commands.ts'
 import { appendAuthoritativeChatEntry } from './pending-decision-state.ts'
 import {
   AUTH_TOKEN_KEY,
@@ -35,19 +37,13 @@ import {
   CHAT_HISTORY_LIMIT,
   readChatHistory,
   readQueuedChat,
-  readQueuedFastActions,
   persistChatHistory,
   persistQueuedChat,
-  persistQueuedFastActions,
   queuedChatEntry,
   type QueuedChat,
   type QueuedFastAction,
 } from './pwa-storage.ts'
-import {
-  affectedAtomIdsForPatch,
-  affectedAtomIdsForStateKey,
-  type SurfaceUpdateFeedback,
-} from './surface-motion.ts'
+import { affectedAtomIdsForPatch, type SurfaceUpdateFeedback } from './surface-motion.ts'
 
 type Presence = Extract<RenderableGatewayServerMessage, { type: 'presence.update' }>['presence']
 export type LivePresentationEvent = {
@@ -92,7 +88,6 @@ type RuntimeApi = Pick<
   | 'markSpaceAttentionSeen'
   | 'pinSurface'
   | 'moveSurface'
-  | 'invokeFastAction'
   | 'invokeSurfaceAction'
 >
 
@@ -108,6 +103,7 @@ export class PwaLiveStateRuntime {
   private readonly surfaces: LiveSurfaceProjection
   private readonly decisions: LiveDecisionProjection
   private readonly notifications: LiveNotificationProjection
+  private readonly actions: LiveActionCommands
   private readonly listeners = new Set<() => void>()
   private snapshot!: PwaLiveStateSnapshot
   private started = false
@@ -126,17 +122,12 @@ export class PwaLiveStateRuntime {
   private turns = new Map<string, StreamingTurn>()
   private presence: Presence = []
   private queuedChat: QueuedChat[]
-  private queuedFastActions: QueuedFastAction[]
-  private queueFlush: Promise<void> | undefined
-  private queueFlushRequested = false
   private refetch: Promise<void> | undefined
   private refetchGeneration = 0
   private eventBuffer: SurfaceStreamEvent[] = []
   private surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback> = {}
   private feedbackSequence = 0
   private presentationEvents: LivePresentationEvent[] = []
-  private optimisticSurfaces = new Map<string, { key: string; surface: RenderableSurface }>()
-  private formRetryKeys = new Map<string, string>()
 
   constructor(options: PwaLiveStateRuntimeOptions = {}) {
     this.api = options.api ?? defaultApi
@@ -147,7 +138,6 @@ export class PwaLiveStateRuntime {
     this.token = this.storage.getItem(AUTH_TOKEN_KEY) ?? undefined
     this.chatEntries = readChatHistory(this.storage)
     this.queuedChat = readQueuedChat(this.storage)
-    this.queuedFastActions = readQueuedFastActions(this.storage)
     this.decisions = new LiveDecisionProjection({
       api: this.api,
       token: () => this.token,
@@ -161,6 +151,16 @@ export class PwaLiveStateRuntime {
       token: () => this.token,
       publish: () => this.publish(),
       failed: (error) => this.failed(error, 'Automation notification failed'),
+    })
+    this.actions = new LiveActionCommands({
+      storage: this.storage,
+      token: () => this.token,
+      online: () => this.online,
+      invoke: (surfaceId, invocation, token) =>
+        this.api.invokeSurfaceAction(surfaceId, invocation, token),
+      confirmed: (outcome) => this.confirmAction(outcome),
+      changed: () => this.publish(),
+      authenticationFailure: (error) => this.failed(error),
     })
     this.publish()
   }
@@ -177,6 +177,7 @@ export class PwaLiveStateRuntime {
   async start(): Promise<void> {
     if (this.started) return
     this.started = true
+    this.actions.start()
     const epoch = ++this.epoch
     try {
       const status = await this.api.fetchAuthStatus()
@@ -208,7 +209,7 @@ export class PwaLiveStateRuntime {
     this.refetchGeneration += 1
     this.refetch = undefined
     this.eventBuffer = []
-    this.optimisticSurfaces.clear()
+    this.actions.stop()
     for (const entry of interruptTurns(this.turns)) this.appendChat(entry)
     this.turns = new Map()
     this.presence = []
@@ -236,6 +237,7 @@ export class PwaLiveStateRuntime {
 
   reportError = (message: string | null): void => {
     this.error = message
+    if (message === null) this.actions.dismissError()
     this.publish()
   }
 
@@ -254,18 +256,13 @@ export class PwaLiveStateRuntime {
 
   private publish(): void {
     this.snapshot = freeze({
-      spaces: this.surfaces.spaces.map((space) => ({
-        ...space,
-        surfaces: space.surfaces.map(
-          (surface) => this.optimisticSurfaces.get(surface.id)?.surface ?? surface,
-        ),
-      })),
+      spaces: this.surfaces.spaces,
       surfaceCursor: this.surfaces.cursor,
       homeSpacesLoadState: this.loadState,
       authToken: this.token,
       authStatus: this.authStatus,
       gatewayOnline: this.online,
-      error: this.error,
+      error: this.error ?? this.actions?.error ?? null,
       chatEntries: this.chatEntries,
       streamingTurns: [...this.turns.values()],
       presence: this.presence,
@@ -274,7 +271,7 @@ export class PwaLiveStateRuntime {
       automationOutcomeNotifications: this.notifications?.notifications ?? [],
       pendingAutomationOutcomeNotificationIds: this.notifications?.pendingIds ?? [],
       queuedChat: this.queuedChat,
-      queuedFastActions: this.queuedFastActions,
+      queuedFastActions: this.actions?.queued ?? [],
       surfaceUpdateFeedbacks: this.surfaceUpdateFeedbacks,
       presentationEvents: this.presentationEvents,
       connectionGeneration: this.connectionGeneration,
@@ -380,7 +377,6 @@ export class PwaLiveStateRuntime {
           this.refetchGeneration += 1
           this.refetch = undefined
           this.eventBuffer = []
-          this.optimisticSurfaces.clear()
           this.surfaces.rebase()
         }
         this.clientId = frame.clientId
@@ -391,7 +387,7 @@ export class PwaLiveStateRuntime {
         void this.decisions.refresh()
         void this.notifications.refresh()
         this.flushChat()
-        void this.flushActions()
+        void this.actions.flush()
         break
       case 'surface.created':
         this.present(frame)
@@ -470,13 +466,13 @@ export class PwaLiveStateRuntime {
       if (event.type === 'surface.patch' && previous !== undefined) {
         const current = this.findSurface(previous.id)
         if (current && current !== previous) {
-          this.optimisticSurfaces.delete(current.id)
           this.feedback(
             current.id,
             affectedAtomIdsForPatch(previous, current, event.event.patch.operations),
           )
         }
       }
+      this.acceptActionReceipt(event)
       this.saveSurfaces()
     } catch (error) {
       this.failed(error)
@@ -498,7 +494,10 @@ export class PwaLiveStateRuntime {
         const buffered = this.eventBuffer.sort((a, b) => a.event.cursor - b.event.cursor)
         this.eventBuffer = []
         for (const event of buffered) {
-          if (event.event.cursor <= snapshot.surfaceCursor) continue
+          if (event.event.cursor <= snapshot.surfaceCursor) {
+            this.acceptActionReceipt(event)
+            continue
+          }
           try {
             const previous =
               event.type === 'surface.patch'
@@ -506,8 +505,15 @@ export class PwaLiveStateRuntime {
                 : undefined
             if (!this.surfaces.apply(event))
               this.error = `Surface update could not be applied at cursor ${event.event.cursor}`
-            if (previous && previous !== this.findSurface(previous.id))
-              this.optimisticSurfaces.delete(previous.id)
+            else {
+              this.acceptActionReceipt(event)
+              const current = previous && this.findSurface(previous.id)
+              if (previous && current && current !== previous && event.type === 'surface.patch')
+                this.feedback(
+                  current.id,
+                  affectedAtomIdsForPatch(previous, current, event.event.patch.operations),
+                )
+            }
           } catch (error) {
             this.failed(error)
           }
@@ -584,72 +590,22 @@ export class PwaLiveStateRuntime {
     }
   }
 
-  queueFastAction = (action: QueuedFastAction): void => {
-    if (!this.started) return
-    if (this.queuedFastActions.some((candidate) => candidate.id === action.id)) return
-    this.queuedFastActions = [...this.queuedFastActions, action]
-    persistQueuedFastActions(this.queuedFastActions, this.storage)
+  private acceptActionReceipt(event: SurfaceStreamEvent): void {
+    if (event.type === 'surface.patch' && event.event.actionOutcome)
+      this.actions.acceptCommittedReceipt(event.event.actionOutcome)
+  }
+
+  private confirmAction(outcome: RenderableCommittedFastActionOutcome): void {
+    const previous = this.findSurface(outcome.surfaceId)
+    if (!this.surfaces.confirmSurface(outcome.surface, outcome.surfaceCursor)) return
+    const current = this.findSurface(outcome.surfaceId)
+    if (previous && current)
+      this.feedback(
+        current.id,
+        affectedAtomIdsForPatch(previous, current, outcome.patch.operations),
+      )
+    this.saveSurfaces()
     this.publish()
-    if (this.online) void this.flushActions()
-  }
-
-  private async flushActions(): Promise<void> {
-    if (!this.online) return
-    if (this.queueFlush) {
-      this.queueFlushRequested = true
-      return this.queueFlush
-    }
-    const epoch = this.epoch
-    const queued = [...this.queuedFastActions]
-    const flush = async () => {
-      for (const action of queued) {
-        if (!this.active(epoch) || !this.online) break
-        try {
-          const result = await this.api.invokeFastAction(
-            action.surfaceId,
-            action.nodeId,
-            action.actionName,
-            action.value,
-            this.token,
-            action.idempotencyKey,
-          )
-          if (!this.active(epoch)) return
-          this.confirmSurface(result.surface, undefined, result.surfaceCursor)
-          this.clearOptimistic(action.surfaceId, action.idempotencyKey)
-          this.queuedFastActions = this.queuedFastActions.filter(
-            (candidate) => candidate.id !== action.id,
-          )
-          persistQueuedFastActions(this.queuedFastActions, this.storage)
-        } catch (error) {
-          if (this.active(epoch)) this.failed(error)
-        }
-      }
-    }
-    this.queueFlush = flush()
-    try {
-      await this.queueFlush
-    } finally {
-      this.queueFlush = undefined
-      const resume = this.queueFlushRequested || epoch !== this.epoch
-      this.queueFlushRequested = false
-      this.publish()
-      if (resume && this.online) void this.flushActions()
-    }
-  }
-
-  confirmSurface = (
-    surface: RenderableSurface,
-    atomIds?: readonly string[],
-    cursor?: number,
-  ): void => {
-    try {
-      if (!this.surfaces.confirmSurface(surface, cursor)) return
-      if (atomIds) this.feedback(surface.id, atomIds)
-      this.saveSurfaces()
-      this.publish()
-    } catch (error) {
-      this.failed(error)
-    }
   }
 
   private feedback(surfaceId: string, atomIds: readonly string[]): void {
@@ -682,100 +638,49 @@ export class PwaLiveStateRuntime {
         ? node.actions?.find((action) => action.name === name)
         : undefined
     if (!surface || !node || !isKnownRenderableAtomNode(node) || !action) {
-      this.reportError(`Surface update failed: undeclared action "${name}"`)
-      return
+      const error = new Error(`Surface update failed: undeclared action "${name}"`)
+      this.reportError(error.message)
+      throw error
     }
     if (action.path === 'agent') {
       const payload = value === undefined ? action.payload : { ...action.payload, value }
+      const epoch = this.epoch
       try {
-        await this.invokeAction(surfaceId, nodeId, name, payload)
+        const result = await this.api.invokeSurfaceAction(
+          surfaceId,
+          { nodeId, name, payload },
+          this.token,
+        )
+        if (!('turn' in result)) throw new Error('The Agent action did not return a turn.')
       } catch (error) {
-        this.failed(error, `"${surface.title}" action failed`)
-      }
-      return
-    }
-    const form = action.stateKeys !== undefined
-    if (
-      value === undefined ||
-      (form && (value === null || typeof value !== 'object' || Array.isArray(value)))
-    ) {
-      const error = new Error(`fast action "${name}" did not provide its declared input`)
-      this.failed(error, `"${surface.title}" update failed`)
-      if (form) throw error
-      return
-    }
-    const scope = JSON.stringify({ surfaceId, nodeId, name })
-    const fingerprint = `${scope}:${JSON.stringify(value)}`
-    const initialKey = defaultApi.fastActionIdempotencyKey({
-      surfaceId,
-      surfaceUpdatedAt: surface.freshness.updatedAt,
-      nodeId,
-      actionName: name,
-      value,
-    })
-    const key = form ? (this.formRetryKeys.get(fingerprint) ?? initialKey) : initialKey
-    if (form) {
-      this.formRetryKeys.set(fingerprint, key)
-      const oldest =
-        this.formRetryKeys.size > 32 ? this.formRetryKeys.keys().next().value : undefined
-      if (oldest !== undefined) this.formRetryKeys.delete(oldest)
-    } else {
-      const optimistic = defaultApi.optimisticFastSurface(surface, node, name, value)
-      this.optimisticSurfaces.set(surfaceId, { key, surface: optimistic })
-      this.feedback(
-        surfaceId,
-        action.stateKey ? affectedAtomIdsForStateKey(surface.tree, action.stateKey) : [nodeId],
-      )
-      this.publish()
-    }
-    const epoch = this.epoch
-    const generation = this.connectionGeneration
-    try {
-      const result = await this.api.invokeFastAction(
-        surfaceId,
-        nodeId,
-        name,
-        value,
-        this.token,
-        key,
-      )
-      if (!this.active(epoch) || generation !== this.connectionGeneration) return
-      this.clearOptimistic(surfaceId, key)
-      const atomIds = form
-        ? [
-            ...new Set(
-              action.stateKeys?.flatMap((stateKey) =>
-                affectedAtomIdsForStateKey(result.surface.tree, stateKey),
-              ),
-            ),
-          ]
-        : undefined
-      this.confirmSurface(result.surface, atomIds, result.surfaceCursor)
-      for (const fingerprint of this.formRetryKeys.keys())
-        if (fingerprint.startsWith(`${scope}:`)) this.formRetryKeys.delete(fingerprint)
-      this.publish()
-    } catch (error) {
-      if (!this.active(epoch)) return
-      if (form) {
-        this.failed(error, `"${surface.title}" update failed`)
+        if (this.active(epoch)) this.failed(error, `"${surface.title}" action failed`)
         throw error
       }
-      this.queueFastAction({
-        id: key,
-        surfaceId,
-        nodeId,
-        actionName: name,
-        value,
-        idempotencyKey: key,
-        at: new Date().toISOString(),
-      })
-      this.failed(error, `"${surface.title}" update queued`)
+      return
     }
-  }
-
-  private clearOptimistic(surfaceId: string, key: string): void {
-    if (this.optimisticSurfaces.get(surfaceId)?.key === key)
-      this.optimisticSurfaces.delete(surfaceId)
+    if (!action.revision) {
+      const error = new Error(
+        'This action has no Gateway revision. Refresh the Surface before trying again.',
+      )
+      this.reportError(error.message)
+      throw error
+    }
+    const owned = owningActionInputs(node)
+    const input = node.type === 'Form' ? value : Object.hasOwn(owned, 'value') ? { value } : {}
+    const parsed = fastActionInputsSchema(node, action).safeParse(input)
+    if (!parsed.success) {
+      const error = new Error(parsed.error.issues.map((issue) => issue.message).join('; '))
+      this.reportError(error.message)
+      throw error
+    }
+    this.error = null
+    return this.actions.dispatch({
+      surfaceId,
+      nodeId,
+      name,
+      actionRevision: action.revision,
+      inputs: parsed.data,
+    })
   }
 
   async togglePin(surface: RenderableSurface): Promise<void> {
@@ -837,47 +742,6 @@ export class PwaLiveStateRuntime {
     notification: AutomationOutcomeNotification,
     action: 'open' | 'dismiss',
   ): Promise<string | undefined> => this.notifications.act(notification, action)
-
-  async invokeAction(
-    surfaceId: string,
-    nodeId: string,
-    name: string,
-    payload?: JsonObject,
-    idempotencyKey?: string,
-  ): Promise<defaultApi.SurfaceActionResponse> {
-    const epoch = this.epoch
-    const result = await this.api.invokeSurfaceAction(
-      surfaceId,
-      nodeId,
-      name,
-      payload,
-      this.token,
-      idempotencyKey,
-    )
-    if (this.active(epoch) && 'surface' in result)
-      this.confirmSurface(result.surface, undefined, result.surfaceCursor)
-    return result
-  }
-
-  async invokeFastValue(
-    surfaceId: string,
-    nodeId: string,
-    name: string,
-    value: JsonValue,
-    idempotencyKey?: string,
-  ): Promise<RenderableFastSurfaceActionResult> {
-    const epoch = this.epoch
-    const result = await this.api.invokeFastAction(
-      surfaceId,
-      nodeId,
-      name,
-      value,
-      this.token,
-      idempotencyKey,
-    )
-    if (this.active(epoch)) this.confirmSurface(result.surface, undefined, result.surfaceCursor)
-    return result
-  }
 }
 
 export function createPwaLiveStateRuntime(

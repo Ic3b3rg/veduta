@@ -1,4 +1,5 @@
 import type { FormEvent, ReactNode } from 'react'
+import { owningActionInputs, type ActionScalarSpec, type JsonObject } from '@veduta/protocol'
 import { boundValue, boundedNumber, motionContent, optionalText, text } from './atom-helpers.ts'
 import { fieldStyle, labelStyle } from './atom-styles.ts'
 import { tokensFor } from './design-system.ts'
@@ -30,7 +31,11 @@ export function InputAtom({ node, ctx }: AtomProps): ReactNode {
         onChange={(event) => markFormDirty(event.currentTarget.form)}
         placeholder={optionalText(node.props?.['placeholder'])}
         ref={(element) => reconcileCanonicalValue(element, value)}
-        type={optionalText(node.props?.['inputType']) ?? 'text'}
+        type={
+          node.props?.['valueType'] === 'number'
+            ? 'number'
+            : (optionalText(node.props?.['inputType']) ?? 'text')
+        }
       />
     </Label>
   )
@@ -63,7 +68,7 @@ export function TextareaAtom({ node, ctx }: AtomProps): ReactNode {
 export function FormAtom({ node, ctx, children }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
   const action = node.actions?.find(
-    (candidate) => candidate.name === 'submit' && candidate.stateKeys !== undefined,
+    (candidate) => candidate.name === 'submit' && candidate.path === 'fast',
   )
   const submitLabel = text(node.props?.['submitLabel'])
 
@@ -72,7 +77,7 @@ export function FormAtom({ node, ctx, children }: AtomProps): ReactNode {
     const form = event.currentTarget
     if (!action || form.dataset['vedutaSubmitting'] === 'true') return
 
-    const draft = readFormDraft(form, action.stateKeys ?? [])
+    const draft = readFormDraft(form, owningActionInputs(node))
     if (!draft) {
       showFormError(form, 'This Form is incomplete and cannot be submitted.')
       return
@@ -83,6 +88,7 @@ export function FormAtom({ node, ctx, children }: AtomProps): ReactNode {
     try {
       await ctx.dispatch(node, action.name, draft)
       delete form.dataset['vedutaFormDirty']
+      form.reset()
     } catch (error) {
       showFormError(form, submitErrorMessage(error))
     } finally {
@@ -125,21 +131,27 @@ function reconcileCanonicalValue(
   canonicalValue: string,
 ): void {
   if (!element) return
+  element.defaultValue = canonicalValue
   if (element.form?.dataset['vedutaFormDirty'] === 'true') return
   if (element.value !== canonicalValue) element.value = canonicalValue
 }
 
 function readFormDraft(
   form: HTMLFormElement,
-  stateKeys: readonly string[],
-): Record<string, string> | undefined {
-  const draft: Record<string, string> = {}
-  for (const stateKey of stateKeys) {
+  fields: Record<string, ActionScalarSpec>,
+): JsonObject | undefined {
+  const draft: JsonObject = {}
+  for (const [stateKey, spec] of Object.entries(fields)) {
     const field = form.elements.namedItem(stateKey)
     if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) {
       return undefined
     }
-    draft[stateKey] = field.value
+    if (spec.type === 'number') {
+      if (field.value.trim() === '') return undefined
+      const value = Number(field.value)
+      if (!Number.isFinite(value)) return undefined
+      draft[stateKey] = value
+    } else draft[stateKey] = field.value
   }
   return draft
 }

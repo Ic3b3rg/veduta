@@ -45,7 +45,7 @@ export function findAction(node: Pick<AtomNode, 'actions'>, names: string[]): Ac
 }
 
 export function actionValue(action: Action): JsonValue | undefined {
-  return action.payload['value']
+  return action.path === 'agent' ? action.payload['value'] : undefined
 }
 
 export function spacing(
