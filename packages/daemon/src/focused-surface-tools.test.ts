@@ -195,7 +195,7 @@ describe('createFocusedSurfaceTools', () => {
     expect(result.origins).toEqual(['trusted:system'])
   })
 
-  it('binds create_surface to the focused Space and strips any caller-supplied Space id', async () => {
+  it('binds create_surface to the focused Space and rejects a caller-supplied Space id', async () => {
     const { store, space, tools } = harness()
     const otherSpace = store.spacesEngine.createSpace({ name: 'Redirect Target' })
     const createSurface = toolNamed(tools, 'create_surface')
@@ -215,7 +215,7 @@ describe('createFocusedSurfaceTools', () => {
       ].sort(),
     )
 
-    const input = createSurface.schema.parse({
+    const authoring = {
       id: 'srf-bound-create',
       spaceId: otherSpace.id,
       title: 'Bound create',
@@ -225,8 +225,10 @@ describe('createFocusedSurfaceTools', () => {
         children: [{ id: 'fixture-content', type: 'Text', props: { text: 'Fixture content' } }],
       },
       state: { ready: true },
-    })
-    expect(input).not.toHaveProperty('spaceId')
+    }
+    expect(createSurface.schema.safeParse(authoring).success).toBe(false)
+    const { spaceId: _spaceId, ...focusedAuthoring } = authoring
+    const input = createSurface.schema.parse(focusedAuthoring)
     await createSurface.handler(input, trustedContext)
 
     expect(store.getSurface('srf-bound-create')).toMatchObject({ spaceId: space.id })
@@ -336,7 +338,6 @@ describe('createFocusedSurfaceTools', () => {
     const createSurface = toolNamed(tools, 'create_surface')
     const candidate = {
       id: 'srf-template-candidate',
-      spaceId: otherSpace.id,
       title: 'Habit tracker',
       intent: 'Habit tracker',
       tree: {

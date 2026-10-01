@@ -58,6 +58,9 @@ branch. Contract-specific protocol suites cover invalid declarations and bound s
 Complete writes share `parseSurface` and `parseSurfacePatch`, before durable mutation.
 The complete tree must contain visible content or an explicit empty/Pending state. An empty
 layout, spacing/dividers, decoration, or blank text alone is rejected as `empty_surface_content`.
+The Surface and tool-input roots are strict: an unsupported top-level placement such as
+`width: "100%"` is rejected with an `unrecognized_keys` path rather than silently discarded.
+Focused and global Chat schemas retain the same rejection while adding their authorized fields.
 Static Action checks cover every offered finite selection, both boolean outcomes and the optional
 empty DatePicker choice against all Atoms bound to the written state key. A Surface with conflicting
 shared-control choices is rejected before persistence, while the existing reducer remains the sole

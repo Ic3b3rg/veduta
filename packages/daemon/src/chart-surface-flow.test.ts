@@ -29,7 +29,12 @@ afterEach(() => {
 async function executeTool(tools: ToolDef[], name: string, input: unknown) {
   const tool = tools.find((candidate) => candidate.name === name)
   if (!tool) throw new Error(`missing Surface tool ${name}`)
-  return tool.handler(tool.schema.parse(input), context)
+  // The mock responder emits global Chat arguments; this journey calls the focused tool directly.
+  const focusedInput =
+    typeof input === 'object' && input !== null && !Array.isArray(input) && 'spaceId' in input
+      ? (({ spaceId: _spaceId, ...rest }) => rest)(input)
+      : input
+  return tool.handler(tool.schema.parse(focusedInput), context)
 }
 
 describe('Chart Surface tool journey', () => {

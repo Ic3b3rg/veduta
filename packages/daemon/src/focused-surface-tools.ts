@@ -2,9 +2,8 @@ import { z } from 'zod'
 import { defineTool, type ToolDef } from './agent-runner.ts'
 import { bindToolToSpace, renderFocusedStoredJson } from './focused-tool-support.ts'
 import type { Store } from './store.ts'
-import { CreateSurfaceToolInputSchema } from './surface-engine.ts'
 import {
-  CreateSurfaceGateExtensionSchema,
+  CreateSurfaceGateToolSchema,
   gateCreateSurfaceTool,
   type TemplateEngine,
 } from './template-engine.ts'
@@ -13,9 +12,7 @@ const ListSurfacesSchema = z.object({})
 const ReadSurfaceSchema = z.object({
   surfaceId: z.string().min(1),
 })
-const FocusedCreateSurfaceSchema = CreateSurfaceToolInputSchema.omit({ spaceId: true }).and(
-  CreateSurfaceGateExtensionSchema,
-)
+const FocusedCreateSurfaceSchema = CreateSurfaceGateToolSchema.omit({ spaceId: true })
 
 export interface FocusedSurfaceToolsOptions {
   store: Store

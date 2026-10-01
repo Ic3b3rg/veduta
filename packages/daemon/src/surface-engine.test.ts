@@ -14,6 +14,7 @@ import {
 } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import type { ToolContext } from './agent-runner.ts'
+import { SurfaceChatConfirmation } from './surface-chat-confirmation.ts'
 import { Store } from './store.ts'
 import { TurnTaintAccumulator } from './taint.ts'
 import {
@@ -1425,6 +1426,22 @@ describe('Surface engine store', () => {
         'tree change proposed for Surface srf-proposal-tool, awaiting the user',
       )
       expect(outcome.details).toMatchObject({ proposalId: expect.any(Number) })
+      const confirmation = new SurfaceChatConfirmation((id) => store.getSurface(id))
+      confirmation.observe({
+        type: 'tool-start',
+        toolCallId: 'call-patch_tree',
+        toolName: 'patch_tree',
+        input: { surfaceId: 'srf-proposal-tool' },
+      })
+      confirmation.observe({
+        type: 'tool-result',
+        toolCallId: 'call-patch_tree',
+        toolName: 'patch_tree',
+        content: outcome.content,
+        details: outcome.details,
+        isError: false,
+      })
+      expect(confirmation.feedback()).toBe('A Surface change is proposed and awaits your decision.')
     })
 
     it('an untrusted target Surface folds its content_origin into surface.tree_proposal, neutralizing and truncating the interpolated title', async () => {

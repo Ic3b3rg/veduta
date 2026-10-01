@@ -140,6 +140,15 @@ describe('SurfaceSchema', () => {
     },
   )
 
+  it('rejects an unknown root placement field with a precise authoring path', () => {
+    const result = SurfaceSchema.safeParse({ ...textFormSurface, width: '100%' })
+    expect(result.success).toBe(false)
+    if (result.success) return
+    expect(SurfaceValidationError.fromZod(result.error).validationIssues).toContainEqual(
+      expect.objectContaining({ path: ['width'], code: 'unrecognized_keys' }),
+    )
+  })
+
   it('accepts one submit-only Form with multiple text fields', () => {
     const parsed = SurfaceSchema.parse(textFormSurface)
 

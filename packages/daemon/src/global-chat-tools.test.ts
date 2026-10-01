@@ -288,6 +288,16 @@ describe('createGlobalChatTools', () => {
     const h = harness()
     const enterSpace = toolNamed(h.tools, 'enter_space')
     const createSurface = toolNamed(h.tools, 'create_surface')
+    expect(
+      createSurface.schema.safeParse({
+        spaceId: h.health.slug,
+        id: 'srf-unsupported-width',
+        title: 'Unsupported width',
+        tree: { id: 'body', type: 'Text', props: { text: 'Content' } },
+        state: {},
+        width: '100%',
+      }).success,
+    ).toBe(false)
     await enterSpace.handler(enterSpace.schema.parse({ spaceId: h.health.slug }), context())
     await createSurface.handler(
       createSurface.schema.parse({

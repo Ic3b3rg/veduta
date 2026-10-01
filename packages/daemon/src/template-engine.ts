@@ -1,6 +1,5 @@
 import { z } from 'zod'
 import {
-  AtomNodeSchema,
   JsonObjectSchema,
   SYSTEM_SPACE_ID,
   SurfaceTemplateIdSchema,
@@ -11,6 +10,7 @@ import {
   type SurfaceTemplate,
 } from '@veduta/protocol'
 import { defineTool, type ToolDef } from './agent-runner.ts'
+import { CreateSurfaceToolInputSchema } from './surface-engine.ts'
 import type { Store } from './store.ts'
 import {
   matchTemplates,
@@ -430,30 +430,11 @@ export const CreateSurfaceGateExtensionSchema = z.object({
   justification: z.string().trim().min(1).max(JUSTIFICATION_MAX_CHARS).optional(),
 })
 
-/**
- * The four `create_surface` fields `gateCreateSurfaceTool` reads directly
- * off the wrapped tool's input (`id`, `spaceId`, `title`, `tree`), declared
- * locally so the gate does not depend on the wrapped `ToolDef`'s own schema
- * type for them. `gateCreateSurfaceTool` accepts a plain `ToolDef`, whose
- * `schema` is typed as the generic `z.ZodTypeAny` — intersecting that with
- * this schema still validates all four fields at runtime (zod does not care
- * how TypeScript widens the type), but a TypeScript intersection absorbs an
- * `any` operand, so `z.infer` of that runtime schema collapses to `any`.
- * `CreateSurfaceGateInput` below, derived only from this schema and
- * `CreateSurfaceGateExtensionSchema` (neither of them `any`), is what
- * recovers compile-time checking: a rename of `title`/`tree`/`spaceId`/`id`
- * on `create_surface` itself now fails to compile here, instead of
- * producing `treeSignature(undefined)` at runtime.
- */
-const CreateSurfaceGateInputSchema = z.object({
-  id: z.string().min(1),
-  spaceId: z.string().min(1),
-  title: z.string().min(1),
-  tree: AtomNodeSchema,
-})
-
-type CreateSurfaceGateInput = z.infer<typeof CreateSurfaceGateInputSchema> &
-  z.infer<typeof CreateSurfaceGateExtensionSchema>
+/** The gate adds only these two fields to the strict authoring input. */
+export const CreateSurfaceGateToolSchema = CreateSurfaceToolInputSchema.extend(
+  CreateSurfaceGateExtensionSchema.shape,
+)
+type CreateSurfaceGateInput = z.infer<typeof CreateSurfaceGateToolSchema>
 
 /**
  * The three Template-reuse tools (issue #22):
@@ -574,12 +555,10 @@ export function templateTools(
  * adds the refusal/regenerated bookkeeping around it.
  */
 export function gateCreateSurfaceTool(tool: ToolDef, engine: TemplateEngine): ToolDef {
-  const schema = tool.schema.and(CreateSurfaceGateInputSchema).and(CreateSurfaceGateExtensionSchema)
-
   return defineTool({
     name: tool.name,
     description: tool.description,
-    schema,
+    schema: CreateSurfaceGateToolSchema,
     level: tool.level,
     egressDomains: tool.egressDomains,
     async handler(input: CreateSurfaceGateInput, context) {
@@ -602,7 +581,8 @@ export function gateCreateSurfaceTool(tool: ToolDef, engine: TemplateEngine): To
         }
       }
 
-      const result = await tool.handler(input, context)
+      const { intent: _intent, justification: _justification, ...createInput } = input
+      const result = await tool.handler(createInput, context)
 
       if (bestMatch !== undefined && input.justification !== undefined) {
         engine.store.spacesEngine.appendEvent(input.spaceId, {

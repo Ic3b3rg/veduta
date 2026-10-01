@@ -232,6 +232,29 @@ describe('piToolParameters', () => {
     }
   })
 
+  it('rejects unsupported placement in the actual focused authoring tool', () => {
+    const { tools, dispose } = buildRealRegistry()
+    try {
+      const create = tools.find((tool) => tool.name === 'create_surface')
+      if (!create) throw new Error('create_surface missing from the chat registry')
+      const input = {
+        id: 'srf-placement',
+        title: 'A visible Surface',
+        tree: { id: 'body', type: 'Text', props: { text: 'Visible content' } },
+        state: {},
+        intent: 'A visible Surface',
+      }
+      expect(create.schema.safeParse(input).success).toBe(true)
+      expect(create.schema.safeParse({ ...input, width: '100%' }).success).toBe(false)
+      expect(
+        (piToolParameters(tools)['create_surface'] as { additionalProperties?: boolean })
+          .additionalProperties,
+      ).toBe(false)
+    } finally {
+      dispose()
+    }
+  })
+
   it('does not throw when toPiAgentTool maps every derived parameter schema (the cheapest honest proxy for PiAgentRunner.toPiTools)', () => {
     const { tools, dispose } = buildRealRegistry()
     try {

@@ -142,7 +142,7 @@ describe('SurfaceChatConfirmation', () => {
       toolCallId: 'call-1',
       toolName: 'patch_tree',
       content: 'proposed',
-      details: { proposalId: 'proposal-1' },
+      details: { proposalId: 1 },
       isError: false,
     })
     expect(confirmation.feedback()).toBe('A Surface change is proposed and awaits your decision.')

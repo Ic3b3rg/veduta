@@ -355,20 +355,24 @@ export interface SurfaceProvenance {
   contentOrigin: Origin
 }
 
-export const CreateSurfaceToolInputSchema = z.object({
-  id: z.string().min(1),
-  spaceId: z.string().min(1),
-  title: z.string().min(1),
-  tree: AtomNodeSchema,
-  state: JsonObjectSchema,
-  presentation: SurfacePresentationSchema.optional(),
-  relativeTime: RelativeTimeAuthoringSchema.optional(),
-})
+export const CreateSurfaceToolInputSchema = z
+  .object({
+    id: z.string().min(1),
+    spaceId: z.string().min(1),
+    title: z.string().min(1),
+    tree: AtomNodeSchema,
+    state: JsonObjectSchema,
+    presentation: SurfacePresentationSchema.optional(),
+    relativeTime: RelativeTimeAuthoringSchema.optional(),
+  })
+  .strict()
 
-const SurfacePatchToolInputSchema = z.object({
-  surfaceId: z.string().min(1),
-  operations: z.array(PatchOperationSchema).min(1),
-})
+const SurfacePatchToolInputSchema = z
+  .object({
+    surfaceId: z.string().min(1),
+    operations: z.array(PatchOperationSchema).min(1),
+  })
+  .strict()
 
 const PatchStateToolInputSchema = SurfacePatchToolInputSchema.extend({
   relativeTime: RelativeTimeAuthoringSchema.optional(),
@@ -378,15 +382,19 @@ const PatchTreeToolInputSchema = SurfacePatchToolInputSchema.extend({
   expectedTreeVersion: z.number().int().nonnegative(),
 })
 
-const ArchiveSurfaceToolInputSchema = z.object({
-  surfaceId: z.string().min(1),
-})
+const ArchiveSurfaceToolInputSchema = z
+  .object({
+    surfaceId: z.string().min(1),
+  })
+  .strict()
 
-const SetSurfacePresentationToolInputSchema = z.object({
-  surfaceId: z.string().min(1),
-  presentation: SurfacePresentationSchema,
-  userRequest: z.string().min(1),
-})
+const SetSurfacePresentationToolInputSchema = z
+  .object({
+    surfaceId: z.string().min(1),
+    presentation: SurfacePresentationSchema,
+    userRequest: z.string().min(1),
+  })
+  .strict()
 
 type CreateSurfaceInput = z.infer<typeof CreateSurfaceToolInputSchema>
 
@@ -2250,8 +2258,10 @@ export class SurfaceEngine {
           ? input.validity
           : undefined
         : buildRelativeTimeValidity(relativeTime, this.timeZone, new Date(updatedAt))
+    const surfaceInput = { ...input }
+    if ('relativeTime' in surfaceInput) delete surfaceInput.relativeTime
     const validated = parseSurface({
-      ...input,
+      ...surfaceInput,
       freshness: {
         updatedAt,
         updatedBy,

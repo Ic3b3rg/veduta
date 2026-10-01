@@ -111,7 +111,10 @@ function scopeFocusedTool(
   const scoped = defineTool({
     name: schemaTool.name,
     description: `${schemaTool.description} In global chat, spaceId is a required active Space id or slug and enter_space must succeed first.`,
-    schema: schemaTool.schema.and(GlobalSpaceTargetSchema),
+    schema:
+      schemaTool.schema instanceof z.ZodObject
+        ? schemaTool.schema.extend(GlobalSpaceTargetSchema.shape)
+        : schemaTool.schema.and(GlobalSpaceTargetSchema),
     level: schemaTool.level,
     egressDomains: schemaTool.egressDomains,
     async handler(input, context) {

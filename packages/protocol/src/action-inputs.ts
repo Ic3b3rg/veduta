@@ -58,6 +58,15 @@ export function owningActionInputs(node: ActionOwningNode): Record<string, Actio
   return {}
 }
 
+function sameOwningInputTypes(
+  declared: Record<string, ActionScalarSpec>,
+  owned: Record<string, ActionScalarSpec>,
+): boolean {
+  const types = (inputs: Record<string, ActionScalarSpec>) =>
+    Object.fromEntries(Object.entries(inputs).map(([key, spec]) => [key, { type: spec.type }]))
+  return canonicalJson(types(declared)) === canonicalJson(types(owned))
+}
+
 export function validateOwningActionDeclarations(
   node: Parameters<typeof owningActionInputs>[0] & { actions?: Action[] | undefined },
   ctx: z.RefinementCtx,
@@ -73,16 +82,7 @@ export function validateOwningActionDeclarations(
     names.add(action.name)
     if (action.path !== 'fast') return
     const owned = owningActionInputs(node)
-    if (
-      canonicalJson(
-        Object.fromEntries(
-          Object.entries(action.plan.inputs).map(([key, spec]) => [key, { type: spec.type }]),
-        ),
-      ) !==
-      canonicalJson(
-        Object.fromEntries(Object.entries(owned).map(([key, spec]) => [key, { type: spec.type }])),
-      )
-    )
+    if (!sameOwningInputTypes(action.plan.inputs, owned))
       ctx.addIssue({
         code: 'custom',
         path: ['actions', index, 'plan', 'inputs'],
@@ -151,21 +151,7 @@ export function validateActionPlansState(
       const base = [...path, 'actions', index, 'plan']
       const issue = (at: (string | number)[], message: string) =>
         ctx.addIssue({ code: 'custom', path: [...base, ...at], message })
-      if (
-        canonicalJson(
-          Object.fromEntries(
-            Object.entries(action.plan.inputs).map(([key, spec]) => [key, { type: spec.type }]),
-          ),
-        ) !==
-        canonicalJson(
-          Object.fromEntries(
-            Object.entries(owningActionInputs(node)).map(([key, spec]) => [
-              key,
-              { type: spec.type },
-            ]),
-          ),
-        )
-      )
+      if (!sameOwningInputTypes(action.plan.inputs, owningActionInputs(node)))
         issue(['inputs'], 'inputs must exactly match the owning Atom interaction fields and types')
       for (const [key, spec] of Object.entries(action.plan.targets)) {
         if (!Object.hasOwn(state, key) || !actionValueMatches(spec, state[key]!))

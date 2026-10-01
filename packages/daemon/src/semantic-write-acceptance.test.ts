@@ -10,6 +10,7 @@ import {
 } from '@veduta/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Store } from './store.ts'
+import { CreateSurfaceToolInputSchema } from './surface-engine.ts'
 
 const stores: { store: Store; root: string }[] = []
 afterEach(() => {
@@ -62,6 +63,22 @@ function rejected(write: () => unknown, expectedPath: (string | number)[]) {
 }
 
 describe('complete semantic write acceptance', () => {
+  it('refuses unsupported root placement before tool dispatch or canonical creation', () => {
+    const { store, surface, space } = fixture()
+    const before = canonical(store, space.id)
+    const authoring = {
+      id: 'srf-ignored-width',
+      spaceId: space.id,
+      title: 'Unsupported width',
+      tree: surface.tree,
+      state: surface.state,
+      width: '100%',
+    }
+    expect(CreateSurfaceToolInputSchema.safeParse(authoring).success).toBe(false)
+    rejected(() => store.createSurface(fromPartial<Surface>(authoring), 'agent'), ['width'])
+    expect(canonical(store, space.id)).toEqual(before)
+  })
+
   it('refuses a layout-only card and removal of the last visible content atomically', () => {
     const { store, surface, space } = fixture()
     const before = canonical(store, space.id)

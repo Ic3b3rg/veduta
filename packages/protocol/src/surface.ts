@@ -16,10 +16,12 @@ import { validateActionOperability } from './action-operability.ts'
  * tree of Atoms bound to typed state, owned by a Space. Freshness metadata
  * is mandatory — a stale Surface presented as current destroys trust.
  */
-export const FreshnessSchema = z.object({
-  updatedAt: z.string().datetime(),
-  updatedBy: z.enum(['agent', 'user', 'job', 'seed', 'system']),
-})
+export const FreshnessSchema = z
+  .object({
+    updatedAt: z.string().datetime(),
+    updatedBy: z.enum(['agent', 'user', 'job', 'seed', 'system']),
+  })
+  .strict()
 
 export const SurfacePresentationSchema = z.enum(['standard', 'full'])
 
@@ -74,30 +76,32 @@ export const RelativeTimeValiditySchema = z
     })
   })
 
-export const SurfaceObjectSchema = z.object({
-  id: z.string().min(1),
-  spaceId: z.string().min(1),
-  title: z.string().min(1),
-  tree: AtomNodeSchema,
-  state: JsonObjectSchema,
-  freshness: FreshnessSchema,
-  /** Responsive Surface host placement, independent of content, Pin, and order. */
-  presentation: SurfacePresentationSchema.default('standard'),
-  /** The user locked this Surface's tree; the Agent may still patch state. */
-  pinned: z.boolean().default(false),
-  /**
-   * False for Surfaces whose ownership or projection makes pinning invalid.
-   * Gateway-owned System Surfaces may still expose true because their Pin is
-   * an ordinary presentation preference.
-   */
-  pinnable: z.boolean().default(true),
-  /**
-   * An optional, explicit contract for visible state derived from a user-local
-   * calendar window. Source records remain separate from projected state so
-   * crossing the boundary never requires deleting history.
-   */
-  validity: RelativeTimeValiditySchema.optional(),
-})
+export const SurfaceObjectSchema = z
+  .object({
+    id: z.string().min(1),
+    spaceId: z.string().min(1),
+    title: z.string().min(1),
+    tree: AtomNodeSchema,
+    state: JsonObjectSchema,
+    freshness: FreshnessSchema,
+    /** Responsive Surface host placement, independent of content, Pin, and order. */
+    presentation: SurfacePresentationSchema.default('standard'),
+    /** The user locked this Surface's tree; the Agent may still patch state. */
+    pinned: z.boolean().default(false),
+    /**
+     * False for Surfaces whose ownership or projection makes pinning invalid.
+     * Gateway-owned System Surfaces may still expose true because their Pin is
+     * an ordinary presentation preference.
+     */
+    pinnable: z.boolean().default(true),
+    /**
+     * An optional, explicit contract for visible state derived from a user-local
+     * calendar window. Source records remain separate from projected state so
+     * crossing the boundary never requires deleting history.
+     */
+    validity: RelativeTimeValiditySchema.optional(),
+  })
+  .strict()
 
 /** Complete-tree validation keeps ancestor-sensitive contracts intact at rendering boundaries. */
 export const AtomTreeStateSchema = z

@@ -8,7 +8,7 @@
   "mockEnabled": false,
   "isolatedData": true,
   "authFixtureDeviceCount": 2,
-  "surfaceCursorAfterRestart": 67,
+  "surfaceCursorAfterRestart": 71,
   "form": {
     "surfaceId": "add-item",
     "state": {

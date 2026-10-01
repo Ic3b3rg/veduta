@@ -98,7 +98,13 @@ export class SurfaceChatConfirmation {
       })
     } else {
       this.calls.set(event.toolCallId, {
-        status: typeof details?.['proposalId'] === 'string' ? 'proposed' : 'unconfirmed',
+        status:
+          call.toolName === 'patch_tree' &&
+          Number.isSafeInteger(details?.['proposalId']) &&
+          typeof details?.['proposalId'] === 'number' &&
+          details['proposalId'] > 0
+            ? 'proposed'
+            : 'unconfirmed',
         toolName: call.toolName,
         target: call.target,
         effects: call.effects,

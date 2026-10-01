@@ -215,7 +215,7 @@ describe('chatToolRegistry', () => {
       const createSurface = chatToolRegistry(deps)(ACTIVE_SPACE_ID).find(
         (tool) => tool.name === 'create_surface',
       )
-      expect(createSurface?.schema).toBeInstanceOf(z.ZodIntersection)
+      expect(createSurface?.schema).toBeInstanceOf(z.ZodObject)
     } finally {
       dispose()
     }
