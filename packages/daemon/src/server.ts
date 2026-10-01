@@ -16,6 +16,8 @@ import { ProgressiveAuthLockout } from './auth-rate-limit.ts'
 import { AuditSurfaceManager } from './audit-surface.ts'
 import { chatToolRegistry as buildChatToolRegistry } from './chat-tool-registry.ts'
 import { createChatLoop } from './chat-loop.ts'
+import { AgentActionDispatcher } from './agent-action-dispatcher.ts'
+import type { QueuedAgentTurn } from './surface-engine.ts'
 import {
   CodexSessionPool,
   CODEX_BINARY_MISSING_REASON,
@@ -518,9 +520,11 @@ export function buildServer(options: ServerOptions = {}) {
   // (`model-routing.ts`'s `withMockFallback`), never through a second
   // handler (issue #37).
   let chatTurnHandler: (event: PwaChatInput) => void = () => {}
+  let agentActionHandler: (turn: QueuedAgentTurn) => void = () => {}
   const gateway = new GatewayHub(store, {
     onFullTextRequest,
     onChatTurn: (event) => chatTurnHandler(event),
+    onAgentAction: (turn) => agentActionHandler(turn),
     ...(auth.mode === 'production'
       ? {
           auth: {
@@ -1240,6 +1244,21 @@ export function buildServer(options: ServerOptions = {}) {
   chatTurnHandler = (event) => {
     void chatLoop.handleChatMessage(event)
   }
+  const agentActions = new AgentActionDispatcher({
+    store,
+    loop: chatLoop,
+    publish: (turn) => gateway.broadcastAgentActionTurn(turn),
+  })
+  agentActionHandler = (turn) => {
+    void agentActions.execute(turn).catch((error) => {
+      console.error('Agent action dispatch failed', error)
+    })
+  }
+  app.addHook('onReady', () => {
+    void agentActions.recover().catch((error) => {
+      console.error('Agent action recovery failed', error)
+    })
+  })
   // Graceful shutdown (issue #37 fix): every `onClose` hook above this one
   // (memory index, push store, trust layer/Tree proposals, scheduler/
   // Heartbeat/Reflection, WorkerPool) was registered earlier in this
@@ -1251,7 +1270,7 @@ export function buildServer(options: ServerOptions = {}) {
   // must finish — every runner aborted, every session's serialization chain
   // settled — before any of their own shutdown can safely start.
   app.addHook('onClose', async () => {
-    await chatLoop.stop()
+    await agentActions.stop()
   })
 
   const pwaDistDir = options.pwaDistDir ?? defaultPwaDistDir
@@ -1409,6 +1428,7 @@ export function buildServer(options: ServerOptions = {}) {
     pushStore,
     notificationCenter,
     templateEngine,
+    executeAgentAction: (turn) => agentActions.execute(turn),
   })
   registerPushRoutes(app, { auth, pushStore, vapid })
   registerPendingDecisionRoutes(app, { service: pendingDecisions })

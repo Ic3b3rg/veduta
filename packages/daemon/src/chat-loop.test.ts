@@ -269,6 +269,56 @@ describe('createChatLoop', () => {
     for (const built of harnesses.splice(0)) built.cleanup()
   })
 
+  it('runs a declared Surface Agent action through the Space session with its stored origin', async () => {
+    const h = harness()
+    const surface = h.store.createSurface(
+      {
+        id: 'srf-agent-loop',
+        spaceId: 'spc-health',
+        title: 'Agent action',
+        tree: {
+          id: 'run',
+          type: 'Button',
+          props: { label: 'Run' },
+          actions: [{ name: 'run', path: 'agent', payload: { request: 'Explain this Surface' } }],
+        },
+        state: {},
+        pinned: false,
+        pinnable: true,
+        presentation: 'standard',
+        freshness: { updatedAt: '2026-10-01T08:00:00Z', updatedBy: 'agent' },
+      },
+      'agent',
+      { origin: 'untrusted:template' },
+    )
+    const result = h.store.invokeSurfaceAction(surface.id, { nodeId: 'run', name: 'run' })
+    if (result.path !== 'agent') throw new Error('expected a declared Agent action')
+    h.fake.setResponses([
+      { message: fakeToolCall('test_tool', { value: 'action executed' }) },
+      { message: fakeText('The declared action completed.') },
+    ])
+
+    const outcome = await h.chatLoop.handleAgentAction(result.turn)
+
+    expect(outcome).toEqual({
+      message: { role: 'assistant', text: 'The declared action completed.' },
+    })
+    expect(h.toolExecutions).toEqual([{ name: 'test_tool', input: { value: 'action executed' } }])
+    expect(h.toolContexts[0]).toMatchObject({
+      spaceId: 'spc-health',
+      origin: 'untrusted:template',
+      trigger: { kind: 'agent-turn', id: result.turn.id },
+    })
+    expect(
+      h.store.eventLog('spc-health').filter((event) => event.type === 'agent_path'),
+    ).toHaveLength(1)
+    expect(
+      h.store
+        .eventLog('spc-health')
+        .filter((event) => event.type === 'turn' && event.payload?.['role'] === 'user'),
+    ).toHaveLength(0)
+  })
+
   it.each(['focused', 'global'])(
     'changes presentation through the real %s Agent registry with current Chat evidence',
     async (scope) => {

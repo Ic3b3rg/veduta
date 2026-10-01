@@ -3,13 +3,14 @@ import {
   GatewayClientMessageSchema,
   GatewayServerMessageSchema,
   type ApprovalCard,
+  type AgentActionTurn,
   type AutomationOutcomeNotificationLifecycleMessage,
   type GatewayClientMessage,
   type GatewayServerMessage,
   type PendingDecisionLifecycleMessage,
   type PresenceEntry,
 } from '@veduta/protocol'
-import type { SurfaceEngineEvent } from './surface-engine.ts'
+import type { QueuedAgentTurn, SurfaceEngineEvent } from './surface-engine.ts'
 import { SurfaceActionError, type Store } from './store.ts'
 import { SurfaceCommitRecoveryPendingError } from './surface-commit.ts'
 
@@ -67,6 +68,7 @@ export class GatewayHub {
        * silently dropped.
        */
       onChatTurn?: (event: PwaChatInput) => void
+      onAgentAction?: (turn: QueuedAgentTurn) => void
       /**
        * Answers a recognized "show me the full text of event #N" request
        * (docs/SECURITY.md §3.3): runs the dedicated, gated turn
@@ -236,6 +238,10 @@ export class GatewayHub {
     this.clients.get(clientId)?.send(frame)
   }
 
+  broadcastAgentActionTurn(turn: AgentActionTurn): void {
+    this.broadcast({ type: 'surface.action-turn', turn })
+  }
+
   private handleClientFrame(
     clientId: string,
     frame: Exclude<GatewayClientMessage, { type: 'hello' }>,
@@ -269,7 +275,11 @@ export class GatewayHub {
       // The mutation's own commit already reached every client through the
       // central Surface-event subscription above — this call is only about
       // routing the request and surfacing errors to the requester.
-      this.store.invokeSurfaceAction(frame.surfaceId, frame.invocation)
+      const result = this.store.invokeSurfaceAction(frame.surfaceId, frame.invocation)
+      if (result.path === 'agent') {
+        if (this.options.onAgentAction) this.options.onAgentAction(result.turn)
+        else send({ type: 'error', error: 'The Agent action executor is unavailable.' })
+      }
     } catch (error) {
       if (error instanceof SurfaceCommitRecoveryPendingError) {
         send({

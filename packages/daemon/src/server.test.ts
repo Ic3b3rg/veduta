@@ -1471,7 +1471,7 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
     expect(res.statusCode).toBe(404)
   })
 
-  it('queues an Agent turn for declared agent-path actions', async () => {
+  it('executes a declared Agent action through the live Space loop before returning completion', async () => {
     const { app, store } = buildServer()
     store.createSurface(agentActionSurface(), 'agent')
 
@@ -1481,19 +1481,23 @@ describe('POST /api/surfaces/:id/actions (fast path)', () => {
       payload: { nodeId: 'regenerate', name: 'regenerate_plan', payload: { reason: 'stale' } },
     })
 
-    expect(res.statusCode).toBe(202)
+    expect(res.statusCode).toBe(200)
     expect(res.json()).toMatchObject({
       turn: {
         surfaceId: 'srf-agent-action',
         atomId: 'regenerate',
         actionName: 'regenerate_plan',
-        payload: { reason: 'stale' },
+        status: 'completed',
+        surfaceCursor: store.latestSurfaceCursor(),
+        message: { role: 'assistant', text: expect.any(String) },
       },
     })
     expect(store.agentTurns().at(-1)).toMatchObject({
       surfaceId: 'srf-agent-action',
       atomId: 'regenerate',
       actionName: 'regenerate_plan',
+      status: 'completed',
+      payload: { reason: 'stale' },
     })
     expect(
       store

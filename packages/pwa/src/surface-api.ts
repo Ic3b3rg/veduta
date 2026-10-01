@@ -1,5 +1,6 @@
 import {
   ActionInvocationSchema,
+  AgentActionResultSchema,
   RenderableFastActionOutcomeSchema,
   MoveSurfaceResultSchema,
   RenderablePinSurfaceResultSchema,
@@ -17,7 +18,7 @@ export type SpaceWithSurfaces = RenderableSurfaceSnapshot['spaces'][number]
 
 const SurfaceActionResponseSchema = z.union([
   RenderableFastActionOutcomeSchema,
-  z.object({ turn: z.object({ id: z.string().min(1) }).passthrough() }),
+  AgentActionResultSchema,
 ])
 
 const SpaceAttentionSeenResponseSchema = z.object({

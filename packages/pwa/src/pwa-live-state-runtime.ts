@@ -31,6 +31,7 @@ import { LiveSurfaceProjection } from './live-surface-projection.ts'
 import { LiveDecisionProjection } from './live-decision-projection.ts'
 import { LiveNotificationProjection } from './live-notification-projection.ts'
 import { LiveActionCommands } from './live-action-commands.ts'
+import { LiveAgentActionCommands } from './live-agent-action-commands.ts'
 import { appendAuthoritativeChatEntry } from './pending-decision-state.ts'
 import {
   AUTH_TOKEN_KEY,
@@ -107,6 +108,7 @@ export class PwaLiveStateRuntime {
   private readonly decisions: LiveDecisionProjection
   private readonly notifications: LiveNotificationProjection
   private readonly actions: LiveActionCommands
+  private readonly agentActions: LiveAgentActionCommands
   private readonly listeners = new Set<() => void>()
   private snapshot!: PwaLiveStateSnapshot
   private started = false
@@ -165,6 +167,26 @@ export class PwaLiveStateRuntime {
       changed: () => this.publish(),
       authenticationFailure: (error) => this.failed(error),
     })
+    this.agentActions = new LiveAgentActionCommands({
+      storage: this.storage,
+      token: () => this.token,
+      online: () => this.online,
+      invoke: (surfaceId, invocation, token) =>
+        this.api.invokeSurfaceAction(surfaceId, invocation, token),
+      confirmed: async (turn) => {
+        const epoch = this.epoch
+        await this.refreshSpaces()
+        if (!this.active(epoch)) throw new Error('The Agent confirmation connection changed.')
+        if (this.surfaces.cursor < turn.surfaceCursor)
+          throw new Error(
+            'The Agent completed, but its canonical Surface updates are not yet available. Retry to confirm.',
+          )
+        this.decisions.observe(turn.message.pendingDecisions ?? [])
+        this.appendChat(turn.message)
+      },
+      changed: () => this.publish(),
+      authenticationFailure: (error) => this.failed(error),
+    })
     this.publish()
   }
 
@@ -181,6 +203,7 @@ export class PwaLiveStateRuntime {
     if (this.started) return
     this.started = true
     this.actions.start()
+    this.agentActions.start()
     const epoch = ++this.epoch
     try {
       const status = await this.api.fetchAuthStatus()
@@ -213,6 +236,7 @@ export class PwaLiveStateRuntime {
     this.refetch = undefined
     this.eventBuffer = []
     this.actions.stop()
+    this.agentActions.stop()
     for (const entry of interruptTurns(this.turns)) this.appendChat(entry)
     this.turns = new Map()
     this.presence = []
@@ -240,7 +264,10 @@ export class PwaLiveStateRuntime {
 
   reportError = (message: string | null): void => {
     this.error = message
-    if (message === null) this.actions.dismissError()
+    if (message === null) {
+      this.actions.dismissError()
+      this.agentActions.dismissError()
+    }
     this.publish()
   }
 
@@ -265,7 +292,7 @@ export class PwaLiveStateRuntime {
       authToken: this.token,
       authStatus: this.authStatus,
       gatewayOnline: this.online,
-      error: this.error ?? this.actions?.error ?? null,
+      error: this.error ?? this.actions?.error ?? this.agentActions?.error ?? null,
       chatEntries: this.chatEntries,
       streamingTurns: [...this.turns.values()],
       presence: this.presence,
@@ -275,7 +302,10 @@ export class PwaLiveStateRuntime {
       pendingAutomationOutcomeNotificationIds: this.notifications?.pendingIds ?? [],
       queuedChat: this.queuedChat,
       queuedFastActions: this.actions?.queued ?? [],
-      actionConfirmations: this.actions?.confirmations ?? {},
+      actionConfirmations: mergeActionConfirmations(
+        this.actions?.confirmations ?? {},
+        this.agentActions?.actionConfirmations ?? {},
+      ),
       surfaceUpdateFeedbacks: this.surfaceUpdateFeedbacks,
       presentationEvents: this.presentationEvents,
       connectionGeneration: this.connectionGeneration,
@@ -313,6 +343,7 @@ export class PwaLiveStateRuntime {
       this.gateway = undefined
       this.online = false
       this.actions.disconnect()
+      this.agentActions.disconnect()
       this.refetchGeneration += 1
       this.refetch = undefined
       this.eventBuffer = []
@@ -340,6 +371,7 @@ export class PwaLiveStateRuntime {
       onSurfacePinned: (event) => receive({ type: 'surface.pinned', event }),
       onSurfaceMoved: (event) => receive({ type: 'surface.moved', event }),
       onSurfacePresentation: (event) => receive({ type: 'surface.presentation', event }),
+      onSurfaceActionTurn: receive,
       onChatMessage: receive,
       onChatTurnStart: receive,
       onChatTurnDelta: receive,
@@ -380,6 +412,7 @@ export class PwaLiveStateRuntime {
       case 'hello':
         if (frame.surfaceCursor < this.surfaces.cursor) {
           this.actions.disconnect()
+          this.agentActions.disconnect()
           this.refetchGeneration += 1
           this.refetch = undefined
           this.eventBuffer = []
@@ -394,10 +427,14 @@ export class PwaLiveStateRuntime {
         void this.notifications.refresh()
         this.flushChat()
         void this.actions.flush()
+        void this.agentActions.flush()
         break
       case 'surface.created':
         this.present(frame)
         this.applySurfaceEvent(frame)
+        break
+      case 'surface.action-turn':
+        this.agentActions.accept(frame.turn)
         break
       case 'surface.patch':
       case 'surface.archived':
@@ -651,20 +688,9 @@ export class PwaLiveStateRuntime {
       throw error
     }
     if (action.path === 'agent') {
-      const payload = value === undefined ? action.payload : { ...action.payload, value }
-      const epoch = this.epoch
-      try {
-        const result = await this.api.invokeSurfaceAction(
-          surfaceId,
-          { nodeId, name, payload },
-          this.token,
-        )
-        if (!('turn' in result)) throw new Error('The Agent action did not return a turn.')
-      } catch (error) {
-        if (this.active(epoch)) this.failed(error, `"${surface.title}" action failed`)
-        throw error
-      }
-      return
+      const payload = value === undefined ? (action.payload ?? {}) : { ...action.payload, value }
+      this.error = null
+      return this.agentActions.dispatch(surfaceId, nodeId, name, payload)
     }
     if (!action.revision) {
       const error = new Error(
@@ -699,7 +725,10 @@ export class PwaLiveStateRuntime {
     nodeId: string,
     name: string,
     intentId: string,
-  ): void => this.actions.acknowledge(surfaceId, nodeId, name, intentId)
+  ): void => {
+    this.actions.acknowledge(surfaceId, nodeId, name, intentId)
+    this.agentActions.acknowledge(surfaceId, nodeId, name, intentId)
+  }
 
   async togglePin(surface: RenderableSurface): Promise<void> {
     const epoch = this.epoch
@@ -766,6 +795,20 @@ export function createPwaLiveStateRuntime(
   options?: PwaLiveStateRuntimeOptions,
 ): PwaLiveStateRuntime {
   return new PwaLiveStateRuntime(options)
+}
+
+function mergeActionConfirmations(
+  fast: Record<string, ActionConfirmations>,
+  agent: Record<string, ActionConfirmations>,
+): Record<string, ActionConfirmations> {
+  const result = { ...fast }
+  for (const [surfaceId, nodes] of Object.entries(agent)) {
+    const merged = { ...result[surfaceId] }
+    for (const [nodeId, actions] of Object.entries(nodes))
+      merged[nodeId] = { ...merged[nodeId], ...actions }
+    result[surfaceId] = merged
+  }
+  return result
 }
 
 function freeze<T>(value: T): T {

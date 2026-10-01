@@ -1,5 +1,7 @@
 import {
   ActionInvocationSchema,
+  AgentActionResultSchema,
+  type AgentActionTurn,
   FastSurfaceActionResultSchema,
   MoveSurfaceRequestSchema,
   MoveSurfaceResultSchema,
@@ -14,6 +16,7 @@ import type { PushStore } from './push-store.ts'
 import { SurfaceActionError, type Store } from './store.ts'
 import { SurfaceMoveError, SurfaceNotPinnableError } from './surface-engine.ts'
 import { SurfaceCommitRecoveryPendingError } from './surface-commit.ts'
+import type { QueuedAgentTurn } from './surface-engine.ts'
 import type { TemplateEngine } from './template-engine.ts'
 
 const PinSurfaceBodySchema = z.object({ pinned: z.boolean() })
@@ -23,6 +26,7 @@ export interface SpaceSurfaceRouteDeps {
   pushStore: PushStore
   notificationCenter: NotificationCenter
   templateEngine: TemplateEngine
+  executeAgentAction: (turn: QueuedAgentTurn) => Promise<AgentActionTurn>
 }
 
 export function registerSpaceSurfaceRoutes(
@@ -79,13 +83,18 @@ export function registerSpaceSurfaceRoutes(
     return { count: result.count, revision: result.revision }
   })
 
-  app.post('/api/surfaces/:surfaceId/actions', (request, reply) => {
+  app.post('/api/surfaces/:surfaceId/actions', async (request, reply) => {
     const { surfaceId } = request.params as { surfaceId: string }
     const parsed = ActionInvocationSchema.safeParse(request.body)
     if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
     try {
       const result = store.invokeSurfaceAction(surfaceId, parsed.data)
-      if (result.path === 'agent') return reply.status(202).send({ turn: result.turn })
+      if (result.path === 'agent') {
+        const turn = await deps.executeAgentAction(result.turn)
+        return reply
+          .status(turn.status === 'queued' || turn.status === 'running' ? 202 : 200)
+          .send(AgentActionResultSchema.parse({ turn }))
+      }
       return reply
         .status(result.outcome.outcome === 'recovery_pending' ? 202 : 200)
         .send(FastSurfaceActionResultSchema.parse(result.outcome))
@@ -155,7 +164,12 @@ function recoveryPendingResponse(error: SurfaceCommitRecoveryPendingError) {
 
 function statusForSurfaceActionError(error: SurfaceActionError): number {
   if (error.code === 'unknown_surface') return 404
-  if (error.code === 'stale_action' || error.code === 'intent_conflict') return 409
+  if (
+    error.code === 'stale_action' ||
+    error.code === 'intent_conflict' ||
+    error.code === 'idempotency_conflict'
+  )
+    return 409
   if (
     error.code === 'invalid_payload' ||
     error.code === 'missing_target' ||

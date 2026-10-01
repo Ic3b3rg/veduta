@@ -28,6 +28,9 @@ export interface GatewayHandlers {
   onSurfacePinned(event: SurfacePinnedEvent): void
   onSurfaceMoved(event: SurfaceMovedEvent): void
   onSurfacePresentation(event: SurfacePresentationEvent): void
+  onSurfaceActionTurn?(
+    message: Extract<RenderableGatewayServerMessage, { type: 'surface.action-turn' }>,
+  ): void
   onChatMessage(message: Extract<RenderableGatewayServerMessage, { type: 'chat.message' }>): void
   onChatTurnStart(
     message: Extract<RenderableGatewayServerMessage, { type: 'chat.turn-start' }>,
@@ -138,6 +141,9 @@ function dispatchGatewayMessage(
       break
     case 'surface.presentation':
       handlers.onSurfacePresentation(message.event)
+      break
+    case 'surface.action-turn':
+      handlers.onSurfaceActionTurn?.(message)
       break
     case 'chat.message':
       handlers.onChatMessage(message)
