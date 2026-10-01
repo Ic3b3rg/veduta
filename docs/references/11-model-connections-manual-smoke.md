@@ -38,10 +38,13 @@ ChatGPT account with device-code login enabled in its security settings.
    summary, and leave the Atom tree unchanged.
 8. Send a natural paraphrase of the same request. Confirm the eligible real Model connection
    follows the same read-before-write path without an application or configuration change.
-9. Return to global chat and ask it to change that Surface. It must not mutate the Surface: global
-   chat still receives no Space tool registry. Inspect the focused Space's session, Surface
-   provenance, and Event log and confirm they contain the same tool/result and
-   `surface.create`/`surface.patch_state` records as a BYOK run, apart from provider metadata.
+9. Return to Home Chat and explicitly name the owning Space when asking to change that Surface.
+   The Agent must enter that Space before using the same scoped Surface tools, leave the current
+   route unchanged, and link to the confirmed result. An ambiguous target requires clarification.
+   Inspect the owning Space's session, Surface provenance, and Event log and confirm they contain
+   the same tool/result and `surface.create`/`surface.patch_state` records as a BYOK run, apart from
+   provider metadata. This is the global scope contract completed in
+   [issue #136](https://github.com/Ic3b3rg/veduta/issues/136).
 10. Trigger a refresh (`GET /api/model-connections/:id` after 5 idle minutes, or restart the
     daemon and reconnect) and confirm the connection stays `connected` without re-entering
     anything.
@@ -227,4 +230,5 @@ writes, and Surface changes; ChatGPT uses the pinned `codex app-server`; Claude 
 unavailable until its provider permits third-party routing; and BYOK uses the same connection
 lifecycle. ADR-0016 and issues 070–079 subsequently replaced the narrow initial Codex inference
 boundary with the complete dynamic-tool contract while preserving every provider-native tool
-refusal. Global chat scope remains a separate concern owned by issue 136.
+refusal. Global Chat now uses explicitly Space-scoped forms of the same tools after entering each
+target Space, as specified by [issue #136](https://github.com/Ic3b3rg/veduta/issues/136).
