@@ -620,13 +620,9 @@ describe('recoverable Surface commits (#156)', () => {
     }
   })
 
-  it('restores encrypted live backups from all four commit boundaries to one mutation and one Event', async () => {
-    for (const boundary of [
-      'before_prepare',
-      'before_append',
-      'after_delivery',
-      'delivered',
-    ] as const) {
+  it.each(['before_prepare', 'before_append', 'after_delivery', 'delivered'] as const)(
+    'restores encrypted live backup from %s to one mutation and one Event',
+    async (boundary) => {
       const rootDir = root()
       const backupDir = root()
       const restoredRoot = root()
@@ -658,8 +654,8 @@ describe('recoverable Surface commits (#156)', () => {
         rmSync(backupDir, { recursive: true, force: true })
         rmSync(restoredRoot, { recursive: true, force: true })
       }
-    }
-  })
+    },
+  )
 
   it('records an upgrade baseline without pairing or rewriting legacy Events', () => {
     const rootDir = root()
