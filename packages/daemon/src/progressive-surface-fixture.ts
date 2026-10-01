@@ -70,7 +70,14 @@ export function progressiveSurfaceInput(at: Date): Record<string, unknown> {
         },
       ],
     },
-    state: {},
+    state: {
+      distanceByDay: [
+        { label: 'Day 1', value: 54 },
+        { label: 'Day 2', value: 81 },
+        { label: 'Day 3', value: 63 },
+        { label: 'Day 4', value: 88 },
+      ],
+    },
   }
 }
 
@@ -117,14 +124,15 @@ export const progressiveFillSteps: readonly ProgressiveFillStep[] = [
       value: {
         id: 'progressive-chart',
         type: 'Chart',
+        binding: 'distanceByDay',
         props: {
+          type: 'bar',
+          xKey: 'label',
+          yKey: 'value',
           label: 'Distance by day',
-          data: [
-            { label: 'Day 1', value: 54 },
-            { label: 'Day 2', value: 81 },
-            { label: 'Day 3', value: 63 },
-            { label: 'Day 4', value: 88 },
-          ],
+          xLabel: 'Day',
+          yLabel: 'Distance (km)',
+          emptyText: 'No distance recorded.',
         },
       },
     },

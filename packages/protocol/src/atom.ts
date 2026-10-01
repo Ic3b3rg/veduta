@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { ActionSchema, FormSubmitActionSchema, type Action } from './action.ts'
 import { AutomationRunHistorySchema } from './automation-outcome.ts'
+import { ChartAtomPropsSchema } from './chart.ts'
 import { JsonObjectSchema, type JsonObject } from './json.ts'
 
 /**
@@ -230,7 +231,21 @@ function validateAtomNode(node: PendingAtomCandidate, ctx: z.RefinementCtx): voi
   validateAutomationAtom(node, ctx)
   validateDisclosureAtom(node, ctx)
   validateNewControlAtom(node, ctx)
+  validateChartAtom(node, ctx)
   validateAtomicActions(node, ctx)
+}
+
+function validateChartAtom(node: PendingAtomCandidate, ctx: z.RefinementCtx): void {
+  if (node.type !== 'Chart') return
+  addPropsIssues(ChartAtomPropsSchema.safeParse(node.props), ctx)
+  if (!node.binding) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['binding'],
+      message: 'Chart requires a binding to its ordered records',
+    })
+  }
+  rejectFields(node, ['actions', 'children'], 'Chart must be a read-only leaf Atom', ctx)
 }
 
 function addPropsIssues(

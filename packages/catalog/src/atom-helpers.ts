@@ -10,7 +10,6 @@ import type { CatalogTokens } from './design-system.ts'
 import type { RenderContext } from './types.ts'
 
 type Choice = { label: string; value: string }
-type DataPoint = { label: string; value: number }
 
 export interface MotionContentAttributes {
   'data-veduta-motion-content': 'true'
@@ -105,25 +104,6 @@ export function tableColumns(value: unknown, rows: JsonObject[]): string[] {
     if (fromProps.length > 0) return fromProps
   }
   return Object.keys(rows[0] ?? {})
-}
-
-export function dataPoints(value: unknown): DataPoint[] {
-  if (Array.isArray(value)) {
-    return value.flatMap((entry, index) => {
-      if (typeof entry === 'number') return [{ label: String(index + 1), value: entry }]
-      if (!isRecord(entry)) return []
-      const pointValue = Number(entry['value'])
-      if (!Number.isFinite(pointValue)) return []
-      return [{ label: text(entry['label'] ?? index + 1), value: pointValue }]
-    })
-  }
-  if (isRecord(value)) {
-    return Object.entries(value).flatMap(([label, raw]) => {
-      const pointValue = Number(raw)
-      return Number.isFinite(pointValue) ? [{ label: humanLabel(label), value: pointValue }] : []
-    })
-  }
-  return []
 }
 
 /** Marks the smallest meaningful rendered content boundary inside an Atom. */

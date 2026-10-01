@@ -61,15 +61,35 @@ const createSurfaceInput = {
     children: [
       { id: 'title', type: 'Title' as const, props: { text: 'Hydration' } },
       { id: 'status', type: 'Stat' as const, binding: 'status', props: { label: 'Status' } },
+      {
+        id: 'hydration-chart',
+        type: 'Chart' as const,
+        binding: 'readings',
+        props: {
+          type: 'line',
+          xKey: 'day',
+          yKey: 'litres',
+          label: 'Daily water',
+          xLabel: 'Day',
+          yLabel: 'Water (litres)',
+          emptyText: 'No water recorded yet.',
+        },
+      },
     ],
   },
-  state: { status: 'Needs water' },
+  state: { status: 'Needs water', readings: [] },
 }
 
 const patchStateInput = {
   surfaceId: SURFACE_ID,
   operations: [
     { target: 'state' as const, op: 'replace' as const, path: '/status', value: 'On track' },
+    {
+      target: 'state' as const,
+      op: 'replace' as const,
+      path: '/readings',
+      value: [{ day: 'Monday', litres: 2 }],
+    },
   ],
 }
 
@@ -491,11 +511,14 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
         type: 'surface.patch',
         event: {
           patch: {
-            operations: [{ target: 'state', op: 'replace', path: '/status', value: 'On track' }],
+            operations: patchStateInput.operations,
           },
         },
       })
       expect(SurfaceSchema.parse(store.getSurface(SURFACE_ID)).state['status']).toBe('On track')
+      expect(SurfaceSchema.parse(store.getSurface(SURFACE_ID)).state['readings']).toEqual([
+        { day: 'Monday', litres: 2 },
+      ])
       expect(store.surfaceProvenance(SURFACE_ID)).toEqual({ contentOrigin: 'trusted:system' })
 
       const focusedTurnEnds = socket.sent.flatMap((frame) =>
@@ -730,7 +753,7 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
           type: 'surface.patch_state',
           text: 'Patched state for Surface "Hydration"',
           origin: 'trusted:system',
-          payload: { surfaceId: SURFACE_ID, operations: 1, surfaceCommitId: 'scm-<id>' },
+          payload: { surfaceId: SURFACE_ID, operations: 2, surfaceCommitId: 'scm-<id>' },
         },
       ])
       expect(subscriptionEventLog).toEqual([
@@ -762,7 +785,7 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
           type: 'surface.patch_state',
           text: 'Patched state for Surface "Hydration"',
           origin: 'trusted:system',
-          payload: { surfaceId: SURFACE_ID, operations: 1, surfaceCommitId: 'scm-<id>' },
+          payload: { surfaceId: SURFACE_ID, operations: 2, surfaceCommitId: 'scm-<id>' },
         },
         {
           type: 'turn',

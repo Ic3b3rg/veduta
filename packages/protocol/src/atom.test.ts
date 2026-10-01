@@ -66,20 +66,6 @@ describe('Pending Atom protocol', () => {
       }).success,
     ).toBe(false)
   })
-
-  it('keeps existing Atom props backward compatible', () => {
-    expect(
-      AtomNodeSchema.parse({
-        id: 'existing-chart',
-        type: 'Chart',
-        props: { variant: 'future-chart-style', customOption: true },
-      }),
-    ).toMatchObject({
-      id: 'existing-chart',
-      type: 'Chart',
-      props: { variant: 'future-chart-style', customOption: true },
-    })
-  })
 })
 
 describe('Disclosure and selection Atom contracts', () => {

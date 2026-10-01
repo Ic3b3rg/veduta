@@ -8,6 +8,7 @@ export {
   type FormSubmitPayload,
 } from './action.ts'
 export { applySurfacePatch, applySurfacePatchEvent } from './apply-patch.ts'
+export { ChartAtomPropsSchema, chartSeriesSchema, type ChartAtomProps } from './chart.ts'
 export {
   AuthDeviceSchema,
   AuthModeSchema,

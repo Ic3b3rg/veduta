@@ -23,6 +23,11 @@ import {
   relativeTimeSourceRecords,
 } from './relative-time-surface.ts'
 import { respondToMockAutomation } from './mock-automation-fixture.ts'
+import {
+  mockWeightTrackerInput,
+  respondToMockWeightMeasurement,
+  WEIGHT_MEASUREMENT_REQUEST,
+} from './mock-chart-fixture.ts'
 import { isRecord, parseJson, toolCallMessage, toolResultText } from './mock-fixture-support.ts'
 import { mockWorkerReportForPrompt, mockWorkerReviewText } from './mock-worker-runner.ts'
 import { zonedParts } from './timezone.ts'
@@ -129,6 +134,9 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
     if (text === GLOBAL_WEIGHT_TRACKER_REQUEST) {
       return respondToGlobalWeightTrackerFixture(toolResultsAfter)
     }
+    if (text === WEIGHT_MEASUREMENT_REQUEST) {
+      return respondToMockWeightMeasurement(toolResultsAfter, now())
+    }
     if (text === PROGRESSIVE_SURFACE_REQUEST) {
       return respondToProgressiveSurfaceFixture(toolResultsAfter, now(), progressiveDelayMs)
     }
@@ -161,22 +169,7 @@ function respondToGlobalWeightTrackerFixture(results: PiToolResultMessage[]): Pi
       'create_surface',
       {
         spaceId: 'health',
-        id: 'srf-health-weight-tracker',
-        title: 'Weight tracker',
-        tree: {
-          id: 'root',
-          type: 'Box',
-          children: [
-            { id: 'title', type: 'Title', props: { text: 'Weight tracker' } },
-            {
-              id: 'current-weight',
-              type: 'Stat',
-              binding: 'currentWeight',
-              props: { label: 'Current weight' },
-            },
-          ],
-        },
-        state: { currentWeight: 'Not recorded' },
+        ...mockWeightTrackerInput(),
       },
       'Creating a durable weight tracker in Health.',
     )

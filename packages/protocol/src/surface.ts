@@ -1,5 +1,6 @@
 import { z, type ZodIssue } from 'zod'
 import { AtomNodeSchema, ComboboxAtomPropsSchema, type AtomNode } from './atom.ts'
+import { ChartAtomPropsSchema, chartSeriesSchema } from './chart.ts'
 import { JsonObjectSchema, type JsonObject } from './json.ts'
 
 /**
@@ -91,6 +92,7 @@ export const SurfaceSchema = SurfaceObjectSchema.superRefine((surface, ctx) => {
   validateTextFormTree(surface.tree, false, ['tree'], ctx)
   validateTextFormState(surface.tree, surface.state, ctx)
   validateNewControlState(surface.tree, surface.state, ctx)
+  validateChartState(surface.tree, surface.state, ctx)
   validateRelativeTimeContract(surface, ctx)
 }).transform(normalizeRelativeTimeOccurrences)
 
@@ -98,6 +100,21 @@ export type Surface = z.infer<typeof SurfaceSchema>
 export type Freshness = z.infer<typeof FreshnessSchema>
 export type RelativeTimeWindow = z.infer<typeof RelativeTimeWindowSchema>
 export type RelativeTimeValidity = z.infer<typeof RelativeTimeValiditySchema>
+
+function validateChartState(node: AtomNode, state: JsonObject, ctx: z.RefinementCtx): void {
+  if (node.type === 'Chart' && node.binding && hasStateKey(state, node.binding)) {
+    const props = ChartAtomPropsSchema.safeParse(node.props)
+    if (props.success) {
+      const series = chartSeriesSchema(props.data).safeParse(state[node.binding])
+      if (!series.success) {
+        for (const issue of series.error.issues) {
+          ctx.addIssue({ ...issue, path: ['state', node.binding, ...issue.path] })
+        }
+      }
+    }
+  }
+  node.children?.forEach((child) => validateChartState(child, state, ctx))
+}
 
 export interface SurfaceRelativeTimeStatus {
   status: 'current' | 'expired'

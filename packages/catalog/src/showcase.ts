@@ -204,7 +204,15 @@ export const catalogShowcaseSurface: Surface = SurfaceSchema.parse({
         id: 'showcase-chart',
         type: 'Chart',
         binding: 'chartData',
-        props: { label: 'Completions by day' },
+        props: {
+          type: 'bar',
+          xKey: 'label',
+          yKey: 'value',
+          label: 'Completions by day',
+          xLabel: 'Day',
+          yLabel: 'Completions',
+          emptyText: 'No completions yet.',
+        },
       },
       {
         id: 'showcase-image',

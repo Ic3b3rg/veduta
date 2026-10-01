@@ -667,7 +667,20 @@ describe('renderNode', () => {
       type: 'Box',
       children: [
         { id: 'progress', type: 'Progress', binding: 'progress', props: { label: 'Progress' } },
-        { id: 'chart', type: 'Chart', binding: 'points', props: { label: 'Weekly values' } },
+        {
+          id: 'chart',
+          type: 'Chart',
+          binding: 'points',
+          props: {
+            type: 'bar',
+            xKey: 'label',
+            yKey: 'value',
+            label: 'Weekly values',
+            xLabel: 'Day',
+            yLabel: 'Value',
+            emptyText: 'No values recorded.',
+          },
+        },
       ],
     })
     const view = render(

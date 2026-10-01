@@ -26,6 +26,7 @@ import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stac
  *                a durable occurrence-dated source record, and no expired UI.
  *   Issue #67 - a pinned patch_tree Pending decision is revealed only in the initiating tab.
  *   Issue #142 - Form text stays local until one atomic, retryable submit and survives reload.
+ *   Issue #145 - Chat records 74 kg into the live current value, history, and Chart across restart.
  *
  * Also covers the Space Event log (ADR-0003: every fast-path mutation
  * appends to it) via `GET /api/spaces/spc-health/events` -- both right
@@ -235,6 +236,16 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await page.setViewportSize({ width: 1280, height: 720 })
     })
 
+    await test.step('create a Weight tracker through global Chat (issue 145)', async () => {
+      await page
+        .getByRole('textbox', { name: 'Message Veduta', exact: true })
+        .fill('create a weight tracker in Health')
+      await page.getByRole('button', { name: 'Send message' }).click()
+      await expect(page.locator('.chat-entry.assistant').last()).toContainText(
+        'The Weight tracker is ready in Health.',
+      )
+    })
+
     await test.step('Home links to the seeded Health Space and its Surfaces', async () => {
       await page
         .getByRole('main', { name: 'Home' })
@@ -243,6 +254,29 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(page.getByRole('main', { name: 'Health Space' })).toBeVisible()
       await expect(page.getByRole('button', { name: 'Focus Meals' })).toBeVisible()
       await expect(page.getByRole('button', { name: 'Focus Groceries' })).toBeVisible()
+    })
+
+    await test.step('Italian measurement updates the current value, history, and Chart live and after reload (issue 145)', async () => {
+      const tracker = surfaceCard(page, 'Weight tracker')
+      await expect(tracker.getByRole('img', { name: /Weight history/ })).toContainText(
+        'No weight recorded yet.',
+      )
+      await page
+        .getByRole('textbox', { name: 'Message Veduta in Health' })
+        .fill('mi sono pesato e sono 74 kg')
+      await page.getByRole('button', { name: 'Send message' }).click()
+      await expectWeightRecorded(page)
+      await expect(page.locator('.chat-entry.assistant').last()).toContainText('Recorded 74 kg')
+
+      const canonical = await fetchSurface(page, stack!.origin, 'srf-health-weight-tracker')
+      expect(canonical.state).toEqual({
+        currentWeight: '74 kg',
+        weightRecords: [{ occurredAt: expect.any(String), weight: 74 }],
+      })
+      await page.reload()
+      await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'true')
+      await expectWeightRecorded(page)
+      expect((await fetchSurface(page, stack!.origin, canonical.id)).state).toEqual(canonical.state)
     })
 
     await test.step('the Italian meal request discovers, reads, and patches Meals (AC2)', async () => {
@@ -322,7 +356,8 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       )
       const patchIndex = events.findIndex(isMealPatchEvent)
       const assistantTurnIndex = events.findIndex(
-        (event) => event.type === 'turn' && event.payload?.role === 'assistant',
+        (event, index) =>
+          index > patchIndex && event.type === 'turn' && event.payload?.role === 'assistant',
       )
       expect(userTurnIndex).toBeGreaterThanOrEqual(0)
       expect(patchIndex).toBeGreaterThan(userTurnIndex)
@@ -395,7 +430,10 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await summary.evaluate((node) => node.setAttribute('data-e2e-resolved', 'summary'))
 
       await expect(progressive.getByText('286 km', { exact: true })).toBeVisible({ timeout: 3_000 })
-      await expect(progressive.getByText('Day 4', { exact: true })).toBeVisible({ timeout: 3_000 })
+      await expect(progressive.getByRole('img', { name: /Distance by day/ })).toHaveAccessibleName(
+        /Day 4: 88/,
+        { timeout: 3_000 },
+      )
       await expect(progressive.getByText('Camogli', { exact: true })).toBeVisible({
         timeout: 3_000,
       })
@@ -445,6 +483,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         'true',
       )
       await expect(observerPage.getByRole('button', { name: 'Focus Groceries' })).toBeVisible()
+      await expectWeightRecorded(observerPage)
 
       await Promise.all([
         page.evaluate(() => window.scrollTo(0, 0)),
@@ -693,6 +732,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         timeout: 30_000,
       })
       await expectMealLogged(page, 2)
+      await expectWeightRecorded(page)
       expect((await fetchSurface(page, stack.origin, 'srf-meals')).validity).toMatchObject({
         kind: 'relative-time',
         source: { stateKey: 'mealRecords', occurredAtKey: 'occurredAt' },
@@ -776,6 +816,16 @@ function surfaceCard(page: Page, title: string) {
   return page.locator('article.surface-card', {
     has: page.getByRole('button', { name: `Focus ${title}` }),
   })
+}
+
+async function expectWeightRecorded(page: Page): Promise<void> {
+  const tracker = surfaceCard(page, 'Weight tracker')
+  await expect(tracker.getByText('74 kg', { exact: true })).toBeVisible()
+  await expect(tracker.getByRole('cell', { name: '74', exact: true })).toBeVisible()
+  await expect(tracker.getByRole('img', { name: /Weight history/ })).toHaveAccessibleName(
+    /Weight \(kg\).*: 74/,
+  )
+  await expect(tracker.locator('.recharts-line-dot')).toHaveCount(1)
 }
 
 async function deliverAutomationOutcomeFixture(baseDir: string): Promise<void> {
