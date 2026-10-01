@@ -8,6 +8,8 @@ import {
 } from '../../daemon/src/automation-outcome-service.ts'
 import { Store } from '../../daemon/src/store.ts'
 import { verifyLiveRuntime } from './live-runtime-journey.ts'
+import { expectCompleteGymPlan } from './gym-plan-journey.ts'
+import { verifySurfaceAuthoring } from './surface-authoring-journey.ts'
 import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stack.ts'
 
 /**
@@ -30,6 +32,8 @@ import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stac
  *   Issue #142 - Form text stays local until one atomic, retryable submit and survives reload.
  *   Issue #145 - Chat records 74 kg into the live current value, history, and Chart across restart.
  *   Issue #143 - explicit Chat presentation updates both tabs and survives reload and restart.
+ *   Issue #150 - one clean root also proves the complete gym plan, Add/Log collections,
+ *                and atomic invalid authoring with honest Chat failure.
  *
  * Also covers the Space Event log (ADR-0003: every fast-path mutation
  * appends to it) via `GET /api/spaces/spc-health/events` -- both right
@@ -746,6 +750,8 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       ])
     })
 
+    await verifySurfaceAuthoring(page, stack!.origin, stack!.baseDir)
+
     await test.step('create a recurring Automation for the outcome delivery journey (issue 091)', async () => {
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
       await chatInput.fill('Create a daily automation to review my plan at 9am')
@@ -772,6 +778,19 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       })
       await expectMealLogged(page, 2)
       await expectWeightRecorded(page)
+      await expectCompleteGymPlan(page)
+      await expect(
+        surfaceCard(page, 'Item collection').getByRole('cell', {
+          name: 'Command collection record',
+          exact: true,
+        }),
+      ).toBeVisible()
+      await expect(
+        surfaceCard(page, 'Measurement log').getByRole('cell', {
+          name: '18.5',
+          exact: true,
+        }),
+      ).toBeVisible()
       expect((await fetchSurface(page, stack.origin, 'srf-meals')).validity).toMatchObject({
         kind: 'relative-time',
         source: { stateKey: 'mealRecords', occurredAtKey: 'occurredAt' },

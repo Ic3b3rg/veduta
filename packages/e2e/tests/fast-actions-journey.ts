@@ -80,12 +80,16 @@ export function surfaceCard(page: Page, title: string) {
   })
 }
 
-export async function readSurface(page: Page, origin: string, surfaceId: string): Promise<Surface> {
+export async function readSurfaceSnapshot(page: Page, origin: string) {
   const response = await page.request.get(`${origin}/api/spaces`, {
     headers: await authenticatedHeaders(page),
   })
   expect(response.ok()).toBe(true)
-  const snapshot = SurfaceSnapshotSchema.parse(await response.json())
+  return SurfaceSnapshotSchema.parse(await response.json())
+}
+
+export async function readSurface(page: Page, origin: string, surfaceId: string): Promise<Surface> {
+  const snapshot = await readSurfaceSnapshot(page, origin)
   const surface = snapshot.spaces.flatMap((space) => space.surfaces).find((s) => s.id === surfaceId)
   if (!surface) throw new Error(`Surface ${surfaceId} is missing from the authenticated snapshot`)
   return surface
