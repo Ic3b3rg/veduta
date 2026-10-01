@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { ActionFeedback, useActionFeedback, type AtomMotionAttributes } from './action-feedback.tsx'
 import {
   boundValue,
   choicesFrom,
@@ -22,20 +23,27 @@ import {
 import { Label } from './ui/label.tsx'
 import { Switch } from './ui/switch.tsx'
 
-export function SwitchAtom({ node, ctx }: AtomProps): ReactNode {
+function SwitchControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttributes): ReactNode {
   const tokens = tokensFor(ctx.theme)
-  const action = findAction(node, ['toggle'])
+  const feedback = useActionFeedback({ node, ctx })
   return (
-    <Label style={inlineControlStyle(tokens)}>
-      <Switch
-        {...motionContent('value')}
-        checked={boundValue(node, ctx) === true}
-        disabled={propBoolean(node.props, 'disabled', false)}
-        onCheckedChange={(next) => action && ctx.dispatch(node, action.name, next)}
-      />
-      <span {...motionContent('label')}>{text(node.props?.['label'])}</span>
-    </Label>
+    <ActionFeedback {...motion} feedback={feedback} ctx={ctx}>
+      <Label style={inlineControlStyle(tokens)}>
+        <Switch
+          {...motionContent('value')}
+          {...feedback.attributes}
+          checked={boundValue(node, ctx) === true}
+          disabled={feedback.disabled}
+          onCheckedChange={(next) => void feedback.dispatch(next)}
+        />
+        <span {...motionContent('label')}>{text(node.props?.['label'])}</span>
+      </Label>
+    </ActionFeedback>
   )
+}
+
+export function SwitchAtom(props: AtomProps): ReactNode {
+  return <SwitchControl {...props} />
 }
 
 export function ComboboxAtom({ node, ctx }: AtomProps): ReactNode {

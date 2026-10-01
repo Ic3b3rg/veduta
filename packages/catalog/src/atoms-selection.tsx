@@ -1,10 +1,5 @@
-import {
-  canonicalJson,
-  fastActionInputsSchema,
-  type JsonObject,
-  type JsonValue,
-} from '@veduta/protocol'
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
+import { ActionFeedback, useActionFeedback, type AtomMotionAttributes } from './action-feedback.tsx'
 import { boundValue, choicesFrom, motionContent, optionalText, text } from './atom-helpers.ts'
 import { fieldStyle, inlineControlStyle, labelStyle } from './atom-styles.ts'
 import { tokensFor } from './design-system.ts'
@@ -16,111 +11,19 @@ import { Label } from './ui/label.tsx'
 import { NativeSelect } from './ui/native-select.tsx'
 import { RadioGroup, RadioGroupItem } from './ui/radio-group.tsx'
 
-interface ControlAttempt {
-  revision: string | undefined
-  inputs: string
-  confirmed: boolean
-}
-
-/** Local feedback observes the host's canonical confirmation; the host owns execution and retry. */
-function ActionControl({
-  node,
-  ctx,
-  'data-veduta-atom-id': atomId,
-  'data-veduta-motion-id': motionId,
-}: AtomProps & {
-  'data-veduta-atom-id'?: string
-  'data-veduta-motion-id'?: string
-}): ReactNode {
+function ActionControl({ node, ctx, ...motion }: AtomProps & AtomMotionAttributes): ReactNode {
   const tokens = tokensFor(ctx.theme)
-  const errorId = useId()
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState<string>()
-  const pendingRef = useRef(false)
-  const currentAttempt = useRef<ControlAttempt | undefined>(undefined)
-  const acknowledged = useRef<string | undefined>(undefined)
-  const action = node.actions?.[0]
-  const { acknowledgeAction } = ctx
-  const confirmation = action ? ctx.actionConfirmations?.[node.id]?.[action.name] : undefined
+  const feedback = useActionFeedback({ node, ctx })
+  const { dispatch, disabled, attributes } = feedback
   const value = boundValue(node, ctx)
   const label = text(node.props?.['label'])
-  const disabled = node.props?.['disabled'] === true || pending
-
-  useEffect(() => {
-    if (
-      !action ||
-      action.path !== 'fast' ||
-      !confirmation ||
-      confirmation.actionRevision !== action.revision ||
-      acknowledged.current === confirmation.intentId
-    )
-      return
-    acknowledged.current = confirmation.intentId
-    const attempt = currentAttempt.current
-    if (
-      attempt?.revision === confirmation.actionRevision &&
-      attempt.inputs === canonicalJson(confirmation.inputs)
-    ) {
-      attempt.confirmed = true
-      pendingRef.current = false
-      setPending(false)
-      setError(undefined)
-    }
-    acknowledgeAction?.(node.id, action.name, confirmation.intentId)
-  }, [action, confirmation, acknowledgeAction, node.id])
-
-  const dispatch = async (next?: JsonValue) => {
-    if (!action || node.props?.['disabled'] === true || pendingRef.current) return
-    if (node.type !== 'Button' && next === value) return
-    const inputs: JsonObject = node.type === 'Button' ? {} : { value: next ?? null }
-    if (action.path === 'fast' && !fastActionInputsSchema(node, action).safeParse(inputs).success) {
-      setError(
-        node.type === 'DatePicker'
-          ? 'Choose a valid calendar date.'
-          : 'Choose one of the offered values.',
-      )
-      return
-    }
-    const attempt: ControlAttempt = {
-      revision: action.path === 'fast' ? action.revision : undefined,
-      inputs: canonicalJson(inputs),
-      confirmed: false,
-    }
-    currentAttempt.current = attempt
-    pendingRef.current = true
-    setPending(true)
-    setError(undefined)
-    try {
-      if (node.type === 'Button') await ctx.dispatch(node, action.name)
-      else await ctx.dispatch(node, action.name, next)
-    } catch (failure) {
-      if (!attempt.confirmed && currentAttempt.current === attempt) {
-        setError(
-          failure instanceof Error && failure.message.trim()
-            ? failure.message
-            : 'Could not save changes. Try again.',
-        )
-      }
-    } finally {
-      if (currentAttempt.current === attempt) {
-        pendingRef.current = false
-        setPending(false)
-      }
-    }
-  }
-
-  const feedback = {
-    'aria-busy': pending || undefined,
-    'aria-invalid': error ? true : undefined,
-    'aria-describedby': error ? errorId : undefined,
-  } as const
   let control: ReactNode
   if (node.type === 'Button') {
     const variant = optionalText(node.props?.['variant'])
     control = (
       <Button
         {...motionContent('content')}
-        {...feedback}
+        {...attributes}
         type="button"
         disabled={disabled}
         onClick={() => void dispatch()}
@@ -134,7 +37,7 @@ function ActionControl({
       <Label style={inlineControlStyle(tokens)}>
         <Checkbox
           {...motionContent('value')}
-          {...feedback}
+          {...attributes}
           disabled={disabled}
           checked={value === true}
           onCheckedChange={(next) => void dispatch(next === true)}
@@ -153,7 +56,7 @@ function ActionControl({
           {label}
         </legend>
         <RadioGroup
-          {...feedback}
+          {...attributes}
           aria-label={label}
           disabled={disabled}
           name={`${node.id}-radio`}
@@ -183,7 +86,7 @@ function ActionControl({
         {node.type === 'DatePicker' ? (
           <Input
             {...motionContent('value')}
-            {...feedback}
+            {...attributes}
             aria-label={label}
             type="date"
             required={node.props?.['allowEmpty'] !== true}
@@ -194,7 +97,7 @@ function ActionControl({
         ) : (
           <NativeSelect
             {...motionContent('value', { signature: `value:${text(value)}` })}
-            {...feedback}
+            {...attributes}
             aria-label={label}
             disabled={disabled}
             value={text(value)}
@@ -216,23 +119,9 @@ function ActionControl({
     )
   }
   return (
-    <div
-      data-veduta-atom-id={atomId}
-      data-veduta-motion-id={motionId}
-      style={{ display: 'grid', gap: tokens.space.xs }}
-    >
+    <ActionFeedback {...motion} feedback={feedback} ctx={ctx}>
       {control}
-      {pending && (
-        <span role="status" aria-live="polite">
-          Working…
-        </span>
-      )}
-      {error && (
-        <div id={errorId} role="alert" style={{ color: tokens.color.danger }}>
-          {error}
-        </div>
-      )}
-    </div>
+    </ActionFeedback>
   )
 }
 
