@@ -1,9 +1,14 @@
 import type { FormEvent, ReactNode } from 'react'
-import { owningActionInputs, type ActionScalarSpec, type JsonObject } from '@veduta/protocol'
+import {
+  canonicalJson,
+  owningActionInputs,
+  type ActionScalarSpec,
+  type JsonObject,
+} from '@veduta/protocol'
 import { boundValue, boundedNumber, motionContent, optionalText, text } from './atom-helpers.ts'
 import { fieldStyle, labelStyle } from './atom-styles.ts'
 import { tokensFor } from './design-system.ts'
-import type { AtomProps } from './types.ts'
+import type { AtomProps, RenderContext } from './types.ts'
 import { Button } from './ui/button.tsx'
 import { Input } from './ui/input.tsx'
 import { Label } from './ui/label.tsx'
@@ -12,6 +17,23 @@ import { Textarea } from './ui/textarea.tsx'
 const FORM_FIELD_SELECTOR = '[data-veduta-form-field]'
 const FORM_ERROR_SELECTOR = '[data-veduta-form-error]'
 const FORM_SUBMIT_SELECTOR = '[data-veduta-form-submit]'
+
+interface SubmittedDraft {
+  actionName: string
+  actionRevision: string | undefined
+  fingerprint: string
+  editGeneration: number
+  confirmed: boolean
+}
+
+interface FormDraftState {
+  editGeneration: number
+  submissions: Map<string, SubmittedDraft>
+  current?: SubmittedDraft
+  pending?: SubmittedDraft
+}
+
+const formDrafts = new WeakMap<HTMLFormElement, FormDraftState>()
 
 export function InputAtom({ node, ctx }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
@@ -67,9 +89,10 @@ export function TextareaAtom({ node, ctx }: AtomProps): ReactNode {
 
 export function FormAtom({ node, ctx, children }: AtomProps): ReactNode {
   const tokens = tokensFor(ctx.theme)
-  const action = node.actions?.find(
+  const declaredAction = node.actions?.find(
     (candidate) => candidate.name === 'submit' && candidate.path === 'fast',
   )
+  const action = declaredAction?.path === 'fast' ? declaredAction : undefined
   const submitLabel = text(node.props?.['submitLabel'])
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -84,15 +107,35 @@ export function FormAtom({ node, ctx, children }: AtomProps): ReactNode {
     }
 
     clearFormError(form)
+    const draftState = formDraftState(form)
+    const submitted: SubmittedDraft = {
+      actionName: action.name,
+      actionRevision: action.revision,
+      fingerprint: canonicalJson(draft),
+      editGeneration: draftState.editGeneration,
+      confirmed: false,
+    }
+    draftState.submissions.set(submitted.fingerprint, submitted)
+    draftState.current = submitted
+    draftState.pending = submitted
     setFormPending(form, true)
     try {
       await ctx.dispatch(node, action.name, draft)
-      delete form.dataset['vedutaFormDirty']
-      form.reset()
+      if (
+        draftState.current === submitted &&
+        draftState.editGeneration === submitted.editGeneration
+      ) {
+        resetFormDraft(form)
+      }
     } catch (error) {
-      showFormError(form, submitErrorMessage(error))
+      if (!submitted.confirmed && draftState.current === submitted) {
+        showFormError(form, submitErrorMessage(error))
+      }
     } finally {
-      setFormPending(form, false)
+      if (draftState.pending === submitted) {
+        delete draftState.pending
+        setFormPending(form, false)
+      }
     }
   }
 
@@ -109,6 +152,7 @@ export function FormAtom({ node, ctx, children }: AtomProps): ReactNode {
       aria-label={text(node.props?.['label'])}
       noValidate
       onSubmit={submit}
+      ref={(form) => reconcileFormConfirmation(form, node.id, action.name, action.revision, ctx)}
       style={{ display: 'grid', gap: tokens.space.md }}
     >
       {children}
@@ -122,8 +166,61 @@ export function FormAtom({ node, ctx, children }: AtomProps): ReactNode {
 
 function markFormDirty(form: HTMLFormElement | null): void {
   if (!form) return
+  formDraftState(form).editGeneration += 1
   form.dataset['vedutaFormDirty'] = 'true'
   clearFormError(form)
+}
+
+function formDraftState(form: HTMLFormElement): FormDraftState {
+  let state = formDrafts.get(form)
+  if (!state) {
+    state = { editGeneration: 0, submissions: new Map() }
+    formDrafts.set(form, state)
+  }
+  return state
+}
+
+function reconcileFormConfirmation(
+  form: HTMLFormElement | null,
+  nodeId: string,
+  actionName: string,
+  actionRevision: string | undefined,
+  ctx: RenderContext,
+): void {
+  if (!form) return
+  const state = formDrafts.get(form)
+  const confirmation = ctx.actionConfirmations?.[nodeId]?.[actionName]
+  const submitted = confirmation
+    ? state?.submissions.get(canonicalJson(confirmation.inputs))
+    : undefined
+  if (
+    !state ||
+    !submitted ||
+    !confirmation ||
+    submitted.actionName !== actionName ||
+    submitted.actionRevision !== actionRevision ||
+    submitted.actionRevision !== confirmation.actionRevision ||
+    submitted.fingerprint !== canonicalJson(confirmation.inputs)
+  ) {
+    return
+  }
+
+  state.submissions.delete(submitted.fingerprint)
+  const current = state.current === submitted
+  if (current) delete state.current
+  submitted.confirmed = true
+  if (current && state.editGeneration === submitted.editGeneration) resetFormDraft(form)
+  if (state.pending === submitted) {
+    delete state.pending
+    setFormPending(form, false)
+  }
+  ctx.acknowledgeAction?.(nodeId, actionName, confirmation.intentId)
+}
+
+function resetFormDraft(form: HTMLFormElement): void {
+  delete form.dataset['vedutaFormDirty']
+  clearFormError(form)
+  form.reset()
 }
 
 function reconcileCanonicalValue(

@@ -205,6 +205,7 @@ function motionNodePropsEqual(previous: MotionNodeProps, next: MotionNodeProps):
   if (previous.ctx.theme !== next.ctx.theme) return false
   if (!valuesEqual(previous.node, next.node)) return false
   if (!boundStateEqual(previous.node, previous.ctx.state, next.ctx.state)) return false
+  if (!formConfirmationsEqual(previous.node, previous.ctx, next.ctx)) return false
   if (!motionEqual(previous.node, previous.ctx.motion?.update, next.ctx.motion?.update))
     return false
   if (previous.ctx.dispatch !== next.ctx.dispatch) return false
@@ -219,6 +220,25 @@ function boundStateEqual(
   return collectRenderableNodeBindingRefs(node, []).every(
     (ref) => ref.kind !== 'binding' || valuesEqual(previous[ref.key], next[ref.key]),
   )
+}
+
+function formConfirmationsEqual(
+  node: RenderableAtomNode,
+  previous: RenderContext,
+  next: RenderContext,
+): boolean {
+  if (isKnownRenderableAtomNode(node) && node.type === 'Form') {
+    if (previous.acknowledgeAction !== next.acknowledgeAction) return false
+    if (
+      !valuesEqual(
+        previous.actionConfirmations?.[node.id]?.['submit'],
+        next.actionConfirmations?.[node.id]?.['submit'],
+      )
+    ) {
+      return false
+    }
+  }
+  return (node.children ?? []).every((child) => formConfirmationsEqual(child, previous, next))
 }
 
 function motionEqual(
