@@ -1,4 +1,10 @@
-import { ChatMessageSchema, type ChatMessage, type JsonValue } from '@veduta/protocol'
+import {
+  ActionIntentIdSchema,
+  ChatMessageSchema,
+  FastActionInvocationSchema,
+  type ChatMessage,
+} from '@veduta/protocol'
+import { z } from 'zod'
 
 export const AUTH_TOKEN_KEY = 'veduta.authToken'
 export const HOME_CACHE_KEY = 'veduta.homeSnapshot'
@@ -16,15 +22,24 @@ export interface QueuedChat {
   spaceId?: string
 }
 
-export interface QueuedFastAction {
-  id: string
-  surfaceId: string
-  nodeId: string
-  actionName: string
-  value: JsonValue
-  idempotencyKey: string
-  at: string
-}
+export const QueuedFastActionSchema = z
+  .object({
+    id: ActionIntentIdSchema,
+    surfaceId: z.string().min(1),
+    invocation: FastActionInvocationSchema,
+    at: z.string().datetime(),
+    status: z.enum(['queued', 'recovery_pending']),
+  })
+  .strict()
+  .superRefine((record, ctx) => {
+    if (record.id !== record.invocation.intentId)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['id'],
+        message: 'queue identity must match the action intent',
+      })
+  })
+export type QueuedFastAction = z.infer<typeof QueuedFastActionSchema>
 
 export interface BrowserInstallPromptEvent extends Event {
   prompt(): Promise<void>
@@ -73,7 +88,19 @@ export function persistQueuedChat(entries: QueuedChat[], storage: Storage = loca
 }
 
 export function readQueuedFastActions(storage: Storage = localStorage): QueuedFastAction[] {
-  return readArray(FAST_ACTION_QUEUE_KEY, storage).filter(isQueuedFastAction)
+  return readFastActionQueue(storage).entries
+}
+
+export function readFastActionQueue(storage: Storage = localStorage): {
+  entries: QueuedFastAction[]
+  invalid: boolean
+} {
+  const raw = readArray(FAST_ACTION_QUEUE_KEY, storage)
+  const entries = raw.flatMap((value) => {
+    const parsed = QueuedFastActionSchema.safeParse(value)
+    return parsed.success ? [parsed.data] : []
+  })
+  return { entries, invalid: entries.length !== raw.length }
 }
 
 export function persistQueuedFastActions(
@@ -101,19 +128,6 @@ function isQueuedChat(value: unknown): value is QueuedChat {
     typeof value['text'] === 'string' &&
     typeof value['at'] === 'string' &&
     (value['spaceId'] === undefined || typeof value['spaceId'] === 'string')
-  )
-}
-
-function isQueuedFastAction(value: unknown): value is QueuedFastAction {
-  return (
-    isRecord(value) &&
-    typeof value['id'] === 'string' &&
-    typeof value['surfaceId'] === 'string' &&
-    typeof value['nodeId'] === 'string' &&
-    typeof value['actionName'] === 'string' &&
-    typeof value['idempotencyKey'] === 'string' &&
-    typeof value['at'] === 'string' &&
-    'value' in value
   )
 }
 
