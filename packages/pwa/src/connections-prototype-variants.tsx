@@ -9,7 +9,6 @@ import {
   TableCell,
 } from '@veduta/catalog/ui/table'
 import { Button } from '@veduta/catalog/ui/button'
-import { useState } from 'react'
 import { statusLabels, type DemoConnection } from './connections-prototype-data.ts'
 import { ProviderMark, PrototypeIcon } from './connections-prototype-icons.tsx'
 
@@ -17,6 +16,7 @@ interface VariantProps {
   items: DemoConnection[]
   onOpen: (item: DemoConnection) => void
   selectedModel: string
+  selectedConnection: string | undefined
 }
 export function ConnectionStatus({ item }: { item: DemoConnection }) {
   return (
@@ -52,39 +52,41 @@ function AccessLabel({ item }: { item: DemoConnection }) {
   )
 }
 
-export function CatalogVariant({ items, onOpen, selectedModel }: VariantProps) {
+export function CatalogVariant({ items, onOpen, selectedModel, selectedConnection }: VariantProps) {
   return (
     <div className="cp-catalog-grid">
       {items.map((item) => (
-        <Card className="cp-service-card" key={item.id}>
-          <div className="cp-card-top">
+        <Card
+          className={`cp-service-card ${selectedConnection === item.id ? 'cp-selected-card' : ''}`}
+          key={item.id}
+        >
+          <div className="cp-card-summary">
             <ProviderMark id={item.id} />
+            <div className="cp-card-identity">
+              <h2>
+                {item.name}
+                {selectedModel === item.id && (
+                  <Badge variant="secondary" className="cp-default">
+                    Default
+                  </Badge>
+                )}
+              </h2>
+              <span>
+                {item.account ||
+                  (item.category === 'extensions' ? 'Explore this capability' : 'Add an account')}
+              </span>
+            </div>
             <ConnectionStatus item={item} />
-          </div>
-          <h2>
-            {item.name}
-            {selectedModel === item.id && (
-              <Badge variant="secondary" className="cp-default">
-                Agent default
-              </Badge>
-            )}
-          </h2>
-          <p>{item.description}</p>
-          <div className="cp-card-meta">
-            <span>{item.method}</span>
-            <span>
-              {item.account ||
-                (item.category === 'extensions'
-                  ? 'Explore this capability'
-                  : 'Choose an account during setup')}
-            </span>
           </div>
           <div className="cp-card-footer">
             <AccessLabel item={item} />
             <Button
-              variant={item.status === 'available' ? 'default' : 'outline'}
-              className={item.status === 'available' ? 'cp-primary' : 'cp-button'}
+              variant="ghost"
+              size="sm"
+              className="cp-card-action"
               aria-label={`${action(item)} ${item.name}`}
+              aria-expanded={selectedConnection === item.id}
+              aria-controls="cp-connection-detail"
               onClick={() => onOpen(item)}
             >
               {action(item)}
@@ -178,103 +180,37 @@ export function ControlVariant({ items, onOpen, selectedModel }: VariantProps) {
   )
 }
 
-export function GuidedVariant({ items, onOpen, selectedModel }: VariantProps) {
-  const [selectedId, setSelectedId] = useState('github')
-  const selected = items.find((item) => item.id === selectedId) ?? items[0]
-  if (!selected) return <p className="cp-empty">No matching connections. Try another search.</p>
-  const isService = selected.category === 'services'
+export function GuidedVariant({ items, onOpen, selectedModel, selectedConnection }: VariantProps) {
   return (
-    <div className="cp-guided-layout">
-      <div className="cp-guided-list" aria-label="Choose a connection">
-        {items.map((item) => (
-          <Button
-            variant="ghost"
-            key={item.id}
-            className={
-              item.id === selected.id ? 'cp-guided-choice cp-selected' : 'cp-guided-choice'
-            }
-            aria-pressed={item.id === selected.id}
-            onClick={() => setSelectedId(item.id)}
-          >
-            <ProviderMark id={item.id} />
-            <div>
-              <strong>{item.name}</strong>
-              <span>{statusLabels[item.status]}</span>
-            </div>
-            <PrototypeIcon name="arrow" size={16} />
-          </Button>
-        ))}
-      </div>
-      <Card className="cp-guided-detail">
-        <div className="cp-guided-heading">
-          <ProviderMark id={selected.id} />
-          <ConnectionStatus item={selected} />
-        </div>
-        <h2>{selected.name}</h2>
-        <p className="cp-guided-description">{selected.description}</p>
-        {selected.account && (
-          <div className="cp-account-line">
-            <strong>{selected.account}</strong>
-            <AccessLabel item={selected} />
+    <div className="cp-guided-list" aria-label="Choose a connection">
+      {items.map((item) => (
+        <Button
+          variant="ghost"
+          key={item.id}
+          className={
+            item.id === selectedConnection ? 'cp-guided-choice cp-selected' : 'cp-guided-choice'
+          }
+          aria-label={`${action(item)} ${item.name}`}
+          aria-expanded={item.id === selectedConnection}
+          aria-controls="cp-connection-detail"
+          onClick={() => onOpen(item)}
+        >
+          <ProviderMark id={item.id} />
+          <div>
+            <strong>
+              {item.name}
+              {selectedModel === item.id && (
+                <Badge variant="secondary" className="cp-default">
+                  Default
+                </Badge>
+              )}
+            </strong>
+            <span>{item.account || item.method}</span>
           </div>
-        )}
-        <h3>
-          {selected.status === 'connected' ? 'You’re in control' : 'What happens during setup'}
-        </h3>
-        <ol className="cp-setup-steps">
-          <li>
-            <strong>
-              {isService
-                ? 'Choose your account'
-                : selected.category === 'models'
-                  ? 'Choose your connection method'
-                  : 'Review the capability'}
-            </strong>
-            <p>
-              {isService
-                ? `Continue with ${selected.name === 'Gmail' ? 'Google' : selected.name}.`
-                : selected.method}
-            </p>
-          </li>
-          <li>
-            <strong>{isService ? 'Review the requested access' : 'Check the connection'}</strong>
-            <p>
-              {isService
-                ? 'Start with read access. Writes require a separate approval.'
-                : 'See the setup requirements and any missing pieces.'}
-            </p>
-          </li>
-          <li>
-            <strong>
-              {isService
-                ? 'Choose the Spaces'
-                : selected.category === 'models'
-                  ? 'Choose your Agent model'
-                  : 'Choose where it is available'}
-            </strong>
-            <p>
-              {isService
-                ? 'You can change or revoke access here at any time.'
-                : selected.category === 'models'
-                  ? 'Use the same Agent capabilities across every Space.'
-                  : 'Installing a Skill or MCP grants no account permission.'}
-            </p>
-          </li>
-        </ol>
-        <div className="cp-guided-bottom">
-          <span>
-            {selectedModel === selected.id ? 'Your current Agent default' : selected.method}
-          </span>
-          <Button
-            className="cp-primary"
-            aria-label={`${action(selected)} ${selected.name}`}
-            onClick={() => onOpen(selected)}
-          >
-            {action(selected)} {selected.name}
-            <PrototypeIcon name="arrow" size={17} />
-          </Button>
-        </div>
-      </Card>
+          <ConnectionStatus item={item} />
+          <PrototypeIcon name="arrow" size={16} />
+        </Button>
+      ))}
     </div>
   )
 }

@@ -28,13 +28,33 @@ export function PrototypeConnectionWizard({
   onSelectModel,
 }: WizardProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 880px)').matches)
   const [step, setStep] = useState<'review' | 'authorize' | 'grant'>('review')
   const [spaces, setSpaces] = useState(item?.spaces ?? [])
   const [resource, setResource] = useState(item?.resource ?? '')
   const [denied, setDenied] = useState(false)
   useEffect(() => {
-    dialogRef.current?.showModal()
+    const media = window.matchMedia('(max-width: 880px)')
+    const update = () => setMobile(media.matches)
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
   }, [])
+  useEffect(() => {
+    if (!mobile) return
+    const previousFocus = document.activeElement
+    const previousOverflow = document.body.style.overflow
+    dialogRef.current?.showModal()
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected)
+        previousFocus.focus({ preventScroll: true })
+    }
+  }, [mobile])
+  useEffect(() => {
+    contentRef.current?.scrollTo({ top: 0 })
+  }, [step])
   const toggleSpace = (space: string) =>
     setSpaces((current) =>
       current.includes(space) ? current.filter((value) => value !== space) : [...current, space],
@@ -81,32 +101,94 @@ export function PrototypeConnectionWizard({
       )}
     </>
   )
-  return (
-    <dialog
-      ref={dialogRef}
-      className="cp-dialog"
-      onCancel={onClose}
-      aria-labelledby="cp-dialog-title"
-    >
+  const footer = !item ? (
+    <Button variant="outline" onClick={onClose}>
+      Cancel
+    </Button>
+  ) : mode === 'manage' ? (
+    <>
+      <Button variant="outline" onClick={onClose}>
+        Cancel
+      </Button>
+      <Button onClick={() => onSave({ ...item, spaces, resource })}>Save changes</Button>
+    </>
+  ) : step === 'review' ? (
+    <>
+      <Button variant="outline" onClick={onClose}>
+        Cancel
+      </Button>
+      <Button
+        onClick={() => {
+          setDenied(false)
+          setStep('authorize')
+        }}
+      >
+        {item.id === 'gmail'
+          ? 'Continue with Google'
+          : item.id === 'github'
+            ? 'Continue with GitHub'
+            : 'Continue setup'}
+        <PrototypeIcon name="arrow" size={17} />
+      </Button>
+    </>
+  ) : step === 'authorize' ? (
+    <>
+      <Button
+        variant="outline"
+        onClick={() => {
+          setDenied(true)
+          setStep('review')
+        }}
+      >
+        Simulate denial
+      </Button>
+      <Button onClick={() => setStep('grant')}>
+        Use demo authorization
+        <PrototypeIcon name="check" size={17} />
+      </Button>
+    </>
+  ) : (
+    <>
+      <Button variant="outline" onClick={onClose}>
+        Cancel
+      </Button>
+      <Button
+        onClick={() =>
+          onSave({
+            ...item,
+            account: demoAccount,
+            spaces,
+            resource,
+            status: item.category === 'extensions' ? 'previewed' : 'connected',
+          })
+        }
+      >
+        {spaces.length
+          ? 'Connect & allow access'
+          : item.category === 'extensions'
+            ? 'Save demo setup'
+            : 'Save demo connection'}
+      </Button>
+    </>
+  )
+  const content = (
+    <>
       <header className="cp-dialog-header">
-        <span>Connection setup</span>
+        <span>{mode === 'manage' ? 'Connection details' : 'Connection setup'}</span>
         <Button
           variant="ghost"
           size="icon-sm"
           className="cp-icon-button"
-          aria-label="Close setup"
+          aria-label="Close details"
           onClick={onClose}
         >
           <PrototypeIcon name="close" />
         </Button>
       </header>
-      <div className="cp-dialog-content">
+      <div ref={contentRef} className="cp-dialog-content">
         <div className="cp-demo-note">
           <PrototypeIcon name="models" size={17} />
-          <span>
-            Interactive prototype. Authorization and verification are simulated. Use no real
-            credentials.
-          </span>
+          <span>Demo only. Authorization and verification are simulated.</span>
         </div>
         {!item ? (
           <>
@@ -139,6 +221,7 @@ export function PrototypeConnectionWizard({
             {mode === 'manage' ? (
               <>
                 <ConnectionStatus item={item} />
+                <p className="cp-detail-description">{item.description}</p>
                 <div className="cp-account-preview">
                   <span>{item.category === 'extensions' ? 'Capability' : 'Account'}</span>
                   <strong>{item.account || 'No account connected'}</strong>
@@ -195,17 +278,6 @@ export function PrototypeConnectionWizard({
                     </>
                   )}
                 </div>
-                <footer className="cp-dialog-footer">
-                  <Button variant="outline" className="cp-button" onClick={onClose}>
-                    Cancel
-                  </Button>
-                  <Button
-                    className="cp-primary"
-                    onClick={() => onSave({ ...item, spaces, resource })}
-                  >
-                    Save changes
-                  </Button>
-                </footer>
               </>
             ) : (
               <>
@@ -259,25 +331,6 @@ export function PrototypeConnectionWizard({
                         Demo authorization denied. No connection or Space access was saved.
                       </p>
                     )}
-                    <footer className="cp-dialog-footer">
-                      <Button variant="outline" className="cp-button" onClick={onClose}>
-                        Cancel
-                      </Button>
-                      <Button
-                        className="cp-primary"
-                        onClick={() => {
-                          setDenied(false)
-                          setStep('authorize')
-                        }}
-                      >
-                        {item.id === 'gmail'
-                          ? 'Continue with Google'
-                          : item.id === 'github'
-                            ? 'Continue with GitHub'
-                            : 'Continue setup'}
-                        <PrototypeIcon name="arrow" size={17} />
-                      </Button>
-                    </footer>
                   </>
                 )}
                 {step === 'authorize' && (
@@ -298,22 +351,6 @@ export function PrototypeConnectionWizard({
                       <span>{demoAccount}</span>
                       <small>Example account for this prototype</small>
                     </div>
-                    <footer className="cp-dialog-footer">
-                      <Button
-                        variant="outline"
-                        className="cp-button"
-                        onClick={() => {
-                          setDenied(true)
-                          setStep('review')
-                        }}
-                      >
-                        Simulate denial
-                      </Button>
-                      <Button className="cp-primary" onClick={() => setStep('grant')}>
-                        Use demo authorization
-                        <PrototypeIcon name="check" size={17} />
-                      </Button>
-                    </footer>
                   </>
                 )}
                 {step === 'grant' && (
@@ -343,29 +380,6 @@ export function PrototypeConnectionWizard({
                           ? 'This previews the setup only. It is not a verified extension installation.'
                           : 'All changes here exist only in this prototype.'}
                     </p>
-                    <footer className="cp-dialog-footer">
-                      <Button variant="outline" className="cp-button" onClick={onClose}>
-                        Cancel
-                      </Button>
-                      <Button
-                        className="cp-primary"
-                        onClick={() =>
-                          onSave({
-                            ...item,
-                            account: demoAccount ?? '',
-                            spaces,
-                            resource,
-                            status: item.category === 'extensions' ? 'previewed' : 'connected',
-                          })
-                        }
-                      >
-                        {spaces.length
-                          ? 'Connect & allow access'
-                          : item.category === 'extensions'
-                            ? 'Save demo setup'
-                            : 'Save demo connection'}
-                      </Button>
-                    </footer>
                   </>
                 )}
               </>
@@ -373,6 +387,32 @@ export function PrototypeConnectionWizard({
           </>
         )}
       </div>
+      <footer className="cp-dialog-footer">{footer}</footer>
+    </>
+  )
+  return mobile ? (
+    <dialog
+      ref={dialogRef}
+      className="cp-dialog cp-mobile-drawer"
+      id="cp-connection-detail"
+      onCancel={(event) => {
+        event.preventDefault()
+        onClose()
+      }}
+      aria-labelledby="cp-dialog-title"
+    >
+      {content}
     </dialog>
+  ) : (
+    <aside
+      className="cp-dialog cp-detail-panel"
+      id="cp-connection-detail"
+      aria-labelledby="cp-dialog-title"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') onClose()
+      }}
+    >
+      {content}
+    </aside>
   )
 }

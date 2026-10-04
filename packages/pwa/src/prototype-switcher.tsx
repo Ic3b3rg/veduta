@@ -17,7 +17,7 @@ export function PrototypeSwitcher({
       const target = event.target
       if (
         target instanceof Element &&
-        target.closest('input, textarea, select, [contenteditable], dialog')
+        target.closest('input, textarea, select, [contenteditable], .cp-dialog')
       )
         return
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return

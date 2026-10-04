@@ -31,6 +31,15 @@ const typography: CSSProperties & Record<`--cp-font-${string}`, string> = Object
     .map(([key, value]) => [`--cp-font-${key}`, `${value}px`]),
 )
 
+function connectionMode(item: DemoConnection) {
+  return item.status === 'connected' ||
+    item.status === 'disabled' ||
+    item.status === 'included' ||
+    item.status === 'previewed'
+    ? 'manage'
+    : 'connect'
+}
+
 export function ConnectionsPrototype() {
   return (
     <BrowserRouter>
@@ -61,7 +70,12 @@ function ConnectionsPrototypePage() {
   const [dialog, setDialog] = useState<{
     item: DemoConnection | null
     mode: 'connect' | 'manage'
-  } | null>(null)
+  } | null>(() => {
+    const item = demoConnections.find((connection) => connection.category === section)
+    return item && variant !== 'B' && !window.matchMedia('(max-width: 880px)').matches
+      ? { item, mode: connectionMode(item) }
+      : null
+  })
   const [notice, setNotice] = useState('')
   const changeVariant = useCallback(
     (next: PrototypeVariant) =>
@@ -84,17 +98,12 @@ function ConnectionsPrototypePage() {
     setSearch('')
     setFilter('all')
     setMobileNav(false)
+    setDialog(null)
   }
   const openItem = (item: DemoConnection) =>
     setDialog({
       item,
-      mode:
-        item.status === 'connected' ||
-        item.status === 'disabled' ||
-        item.status === 'included' ||
-        item.status === 'previewed'
-          ? 'manage'
-          : 'connect',
+      mode: connectionMode(item),
     })
   const saveItem = (item: DemoConnection) => {
     setConnections((current) => current.map((value) => (value.id === item.id ? item : value)))
@@ -119,7 +128,45 @@ function ConnectionsPrototypePage() {
     (item) => item.category === 'services' && item.status === 'connected',
   )
   const attention = connections.filter((item) => item.status === 'needs_reconnect')
-  const variantProps = { items, onOpen: openItem, selectedModel }
+  const variantProps = {
+    items,
+    onOpen: openItem,
+    selectedModel,
+    selectedConnection: dialog?.item?.id,
+  }
+  const hasDetailPanel =
+    dialog !== null ||
+    (variant !== 'B' &&
+      (section === 'services' || section === 'models' || section === 'extensions'))
+  const connectionDetail = dialog ? (
+    <PrototypeConnectionWizard
+      key={`${dialog.item?.id ?? 'choose'}-${dialog.mode}`}
+      item={dialog.item}
+      mode={dialog.mode}
+      catalog={connections.filter((item) =>
+        section === 'models' || section === 'extensions' ? item.category === section : true,
+      )}
+      onChoose={(item) => setDialog({ item, mode: connectionMode(item) })}
+      onClose={() => setDialog(null)}
+      onSave={saveItem}
+      onReconnect={() => {
+        if (dialog.item) setDialog({ item: dialog.item, mode: 'connect' })
+      }}
+      onSelectModel={() => {
+        if (dialog.item) {
+          setSelectedModel(dialog.item.id)
+          setDialog(null)
+          setNotice(`Demo Agent default set to ${dialog.item.name}.`)
+        }
+      }}
+    />
+  ) : (
+    <Card className="cp-detail-empty" id="cp-connection-detail">
+      <PrototypeIcon name="services" size={26} />
+      <strong>Select a connection</strong>
+      <p>Account details, setup, and Space access appear here.</p>
+    </Card>
+  )
   const navSections: PrototypeSection[] = ['overview', 'services', 'models', 'extensions', 'access']
   return (
     <div className={`cp-app cp-variant-${variant}`} style={typography}>
@@ -236,267 +283,264 @@ function ConnectionsPrototypePage() {
               </Button>
             </div>
           )}
-          {(section === 'services' || section === 'models' || section === 'extensions') && (
-            <>
-              <div className="cp-toolbar">
-                <div className="cp-filters" aria-label="Filter connections">
-                  {(['all', 'connected', 'available'] as const).map((value) => (
-                    <Button
-                      key={value}
-                      variant={filter === value ? 'secondary' : 'ghost'}
-                      size="sm"
-                      aria-pressed={filter === value}
-                      onClick={() => setFilter(value)}
-                    >
-                      {value === 'all'
-                        ? 'All'
-                        : value === 'connected'
-                          ? 'Connected / included'
-                          : 'Available'}
-                    </Button>
-                  ))}
-                </div>
-                <label className="cp-search">
-                  <PrototypeIcon name="search" size={17} />
-                  <Input
-                    aria-label="Search connections"
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Search connections…"
-                  />
-                </label>
-              </div>
-              {!items.length ? (
-                <Card className="cp-empty">
-                  <CardContent>No matching connections. Try another search or filter.</CardContent>
-                </Card>
-              ) : variant === 'A' ? (
-                <CatalogVariant {...variantProps} />
-              ) : variant === 'B' ? (
-                <ControlVariant {...variantProps} />
-              ) : (
-                <GuidedVariant {...variantProps} />
-              )}
-              <div className="cp-explainer">
-                <PrototypeIcon name="access" size={20} />
-                <div>
-                  <strong>
-                    {section === 'services'
-                      ? 'One account, explicit access for each Space'
-                      : section === 'models'
-                        ? 'Same Agent, whichever model you choose'
-                        : 'Capabilities and accounts stay separate'}
-                  </strong>
-                  <p>
-                    {section === 'services'
-                      ? 'A connected account is passive until you ask for work or a confirmed Automation runs. Manage its Space access here.'
-                      : section === 'models'
-                        ? 'Your Model connection provides inference. Veduta keeps ownership of tools, memory, and Surfaces.'
-                        : 'Included GitHub MCP support is ready to configure. Your GitHub account still needs to be connected and granted to a Space.'}
-                  </p>
-                  {section === 'services' && (
-                    <Button variant="link" size="sm" onClick={() => changeSection('access')}>
-                      Manage Space access
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </>
-          )}
-          {section === 'overview' && (
-            <>
-              <div className="cp-overview-stats">
-                {[
-                  {
-                    title: 'Service accounts',
-                    value: connectedServices.length,
-                    detail: 'Connected in this demo',
-                    section: 'services',
-                  },
-                  {
-                    title: 'Model connections',
-                    value: connections.filter(
-                      (item) => item.category === 'models' && item.status === 'connected',
-                    ).length,
-                    detail: selectedModel
-                      ? `${connections.find((item) => item.id === selectedModel)?.name ?? 'Model'} is the Agent default`
-                      : 'Choose an Agent default',
-                    section: 'models',
-                  },
-                  {
-                    title: 'Included capabilities',
-                    value: connections.filter((item) => item.status === 'included').length,
-                    detail: 'Skills and MCP support',
-                    section: 'extensions',
-                  },
-                ].map((stat) => (
-                  <Card key={stat.title} className="cp-stat-card">
-                    <CardHeader>
-                      <CardTitle>{stat.title}</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <strong>{stat.value}</strong>
-                      <p>{stat.detail}</p>
-                      <Button
-                        variant="link"
-                        onClick={() =>
-                          changeSection(
-                            stat.section === 'models'
-                              ? 'models'
-                              : stat.section === 'extensions'
-                                ? 'extensions'
-                                : 'services',
-                          )
-                        }
-                      >
-                        Manage
-                        <PrototypeIcon name="arrow" size={16} />
-                      </Button>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-              <div className="cp-overview-columns">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Needs your attention</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {attention.map((item) => (
-                      <div className="cp-attention-row" key={item.id}>
-                        <PrototypeIcon name="alert" />
-                        <div>
-                          <strong>{item.name}</strong>
-                          <p>The demo API connection needs authorization again.</p>
-                        </div>
-                        <Button variant="outline" onClick={() => openItem(item)}>
-                          Reconnect
+          <div className={hasDetailPanel ? 'cp-workspace cp-with-detail' : 'cp-workspace'}>
+            <div className="cp-workspace-list">
+              {(section === 'services' || section === 'models' || section === 'extensions') && (
+                <>
+                  <div className="cp-toolbar">
+                    <div className="cp-filters" aria-label="Filter connections">
+                      {(['all', 'connected', 'available'] as const).map((value) => (
+                        <Button
+                          key={value}
+                          variant={filter === value ? 'secondary' : 'ghost'}
+                          size="sm"
+                          aria-pressed={filter === value}
+                          onClick={() => setFilter(value)}
+                        >
+                          {value === 'all'
+                            ? 'All'
+                            : value === 'connected'
+                              ? 'Connected / included'
+                              : 'Available'}
                         </Button>
-                      </div>
-                    ))}
-                    {!attention.length && <p>Your demo connections are up to date.</p>}
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Add your next service</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p>Connect GitHub to bring repository work into the Space you choose.</p>
-                    <Button
-                      onClick={() => {
-                        const item = connections.find((value) => value.id === 'github')
-                        if (item) openItem(item)
-                      }}
-                    >
-                      Connect GitHub
-                      <PrototypeIcon name="arrow" size={16} />
-                    </Button>
-                  </CardContent>
-                </Card>
-              </div>
-            </>
-          )}
-          {section === 'access' && (
-            <div className="cp-access-grid">
-              {demoSpaces.map((space) => (
-                <Card key={space} className="cp-space-card">
-                  <CardHeader>
-                    <CardTitle>
-                      <span className={`cp-space-icon cp-space-${space.toLowerCase()}`}>
-                        {space.slice(0, 1)}
-                      </span>
-                      {space}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {connections
-                      .filter((item) => item.category === 'services')
-                      .map((item) => (
-                        <div className="cp-grant-row" key={item.id}>
-                          <ProviderMark id={item.id} />
-                          <div>
-                            <strong>{item.name}</strong>
-                            <span>
-                              {item.status === 'connected'
-                                ? item.spaces.includes(space)
-                                  ? 'Read access'
-                                  : 'No access'
-                                : 'Connect the account first'}
-                            </span>
-                          </div>
-                          <Checkbox
-                            aria-label={`${space} access to ${item.name}`}
-                            disabled={item.status !== 'connected'}
-                            checked={item.spaces.includes(space)}
-                            onCheckedChange={() => {
-                              const spaces = item.spaces.includes(space)
-                                ? item.spaces.filter((value) => value !== space)
-                                : [...item.spaces, space]
-                              setConnections((current) =>
-                                current.map((value) =>
-                                  value.id === item.id ? { ...item, spaces } : value,
-                                ),
-                              )
-                              setNotice(`Demo ${item.name} access updated for ${space}.`)
-                            }}
-                          />
-                        </div>
                       ))}
-                  </CardContent>
-                </Card>
-              ))}
-              <p className="cp-access-footnote">
-                Changing access applies to future work. Existing Surfaces and results stay in their
-                owning Space.
-              </p>
+                    </div>
+                    <label className="cp-search">
+                      <PrototypeIcon name="search" size={17} />
+                      <Input
+                        aria-label="Search connections"
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                        placeholder="Search connections…"
+                      />
+                    </label>
+                  </div>
+                  {!items.length ? (
+                    <Card className="cp-empty">
+                      <CardContent>
+                        No matching connections. Try another search or filter.
+                      </CardContent>
+                    </Card>
+                  ) : variant === 'A' ? (
+                    <CatalogVariant {...variantProps} />
+                  ) : variant === 'B' ? (
+                    <ControlVariant {...variantProps} />
+                  ) : (
+                    <GuidedVariant {...variantProps} />
+                  )}
+                  <div className="cp-explainer">
+                    <PrototypeIcon name="access" size={20} />
+                    <div>
+                      <strong>
+                        {section === 'services'
+                          ? 'One account, explicit access for each Space'
+                          : section === 'models'
+                            ? 'Same Agent, whichever model you choose'
+                            : 'Capabilities and accounts stay separate'}
+                      </strong>
+                      <p>
+                        {section === 'services'
+                          ? 'A connected account is passive until you ask for work or a confirmed Automation runs. Manage its Space access here.'
+                          : section === 'models'
+                            ? 'Your Model connection provides inference. Veduta keeps ownership of tools, memory, and Surfaces.'
+                            : 'Included GitHub MCP support is ready to configure. Your GitHub account still needs to be connected and granted to a Space.'}
+                      </p>
+                      {section === 'services' && (
+                        <Button variant="link" size="sm" onClick={() => changeSection('access')}>
+                          Manage Space access
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+              {section === 'overview' && (
+                <>
+                  <div className="cp-overview-stats">
+                    {[
+                      {
+                        title: 'Service accounts',
+                        value: connectedServices.length,
+                        detail: 'Connected in this demo',
+                        section: 'services',
+                      },
+                      {
+                        title: 'Model connections',
+                        value: connections.filter(
+                          (item) => item.category === 'models' && item.status === 'connected',
+                        ).length,
+                        detail: selectedModel
+                          ? `${connections.find((item) => item.id === selectedModel)?.name ?? 'Model'} is the Agent default`
+                          : 'Choose an Agent default',
+                        section: 'models',
+                      },
+                      {
+                        title: 'Included capabilities',
+                        value: connections.filter((item) => item.status === 'included').length,
+                        detail: 'Skills and MCP support',
+                        section: 'extensions',
+                      },
+                    ].map((stat) => (
+                      <Card key={stat.title} className="cp-stat-card">
+                        <CardHeader>
+                          <CardTitle>{stat.title}</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <strong>{stat.value}</strong>
+                          <p>{stat.detail}</p>
+                          <Button
+                            variant="link"
+                            onClick={() =>
+                              changeSection(
+                                stat.section === 'models'
+                                  ? 'models'
+                                  : stat.section === 'extensions'
+                                    ? 'extensions'
+                                    : 'services',
+                              )
+                            }
+                          >
+                            Manage
+                            <PrototypeIcon name="arrow" size={16} />
+                          </Button>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                  <div className="cp-overview-columns">
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Needs your attention</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        {attention.map((item) => (
+                          <div className="cp-attention-row" key={item.id}>
+                            <PrototypeIcon name="alert" />
+                            <div>
+                              <strong>{item.name}</strong>
+                              <p>The demo API connection needs authorization again.</p>
+                            </div>
+                            <Button variant="outline" onClick={() => openItem(item)}>
+                              Reconnect
+                            </Button>
+                          </div>
+                        ))}
+                        {!attention.length && <p>Your demo connections are up to date.</p>}
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Add your next service</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <p>Connect GitHub to bring repository work into the Space you choose.</p>
+                        <Button
+                          onClick={() => {
+                            const item = connections.find((value) => value.id === 'github')
+                            if (item) openItem(item)
+                          }}
+                        >
+                          Connect GitHub
+                          <PrototypeIcon name="arrow" size={16} />
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </>
+              )}
+              {section === 'access' && (
+                <div className="cp-access-grid">
+                  {demoSpaces.map((space) => (
+                    <Card key={space} className="cp-space-card">
+                      <CardHeader>
+                        <CardTitle>
+                          <span className={`cp-space-icon cp-space-${space.toLowerCase()}`}>
+                            {space.slice(0, 1)}
+                          </span>
+                          {space}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        {connections
+                          .filter((item) => item.category === 'services')
+                          .map((item) => (
+                            <div className="cp-grant-row" key={item.id}>
+                              <ProviderMark id={item.id} />
+                              <div>
+                                <strong>{item.name}</strong>
+                                <span>
+                                  {item.status === 'connected'
+                                    ? item.spaces.includes(space)
+                                      ? 'Read access'
+                                      : 'No access'
+                                    : 'Connect the account first'}
+                                </span>
+                              </div>
+                              <Checkbox
+                                aria-label={`${space} access to ${item.name}`}
+                                disabled={item.status !== 'connected'}
+                                checked={item.spaces.includes(space)}
+                                onCheckedChange={() => {
+                                  const spaces = item.spaces.includes(space)
+                                    ? item.spaces.filter((value) => value !== space)
+                                    : [...item.spaces, space]
+                                  setConnections((current) =>
+                                    current.map((value) =>
+                                      value.id === item.id ? { ...item, spaces } : value,
+                                    ),
+                                  )
+                                  setNotice(`Demo ${item.name} access updated for ${space}.`)
+                                }}
+                              />
+                            </div>
+                          ))}
+                      </CardContent>
+                    </Card>
+                  ))}
+                  <p className="cp-access-footnote">
+                    Changing access applies to future work. Existing Surfaces and results stay in
+                    their owning Space.
+                  </p>
+                </div>
+              )}
+              <details className="cp-state">
+                <summary>
+                  Prototype state <span>In memory · resets on reload</span>
+                </summary>
+                <pre>
+                  {JSON.stringify(
+                    {
+                      variant,
+                      section,
+                      selectedModel,
+                      selectedConnection: dialog?.item?.id,
+                      connections,
+                    },
+                    null,
+                    2,
+                  )}
+                </pre>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setConnections(
+                      demoConnections.map((item) => ({ ...item, spaces: [...item.spaces] })),
+                    )
+                    setSelectedModel('chatgpt')
+                    setDialog(null)
+                    setNotice('Demo state reset.')
+                  }}
+                >
+                  Reset demo
+                </Button>
+              </details>
             </div>
-          )}
-          <details className="cp-state">
-            <summary>
-              Prototype state <span>In memory · resets on reload</span>
-            </summary>
-            <pre>{JSON.stringify({ variant, section, selectedModel, connections }, null, 2)}</pre>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setConnections(
-                  demoConnections.map((item) => ({ ...item, spaces: [...item.spaces] })),
-                )
-                setSelectedModel('chatgpt')
-                setNotice('Demo state reset.')
-              }}
-            >
-              Reset demo
-            </Button>
-          </details>
+            {hasDetailPanel && connectionDetail}
+          </div>
         </main>
       </div>
       <PrototypeSwitcher variant={variant} onChange={changeVariant} />
-      {dialog && (
-        <PrototypeConnectionWizard
-          key={`${dialog.item?.id ?? 'choose'}-${dialog.mode}`}
-          item={dialog.item}
-          mode={dialog.mode}
-          catalog={connections.filter((item) =>
-            section === 'models' || section === 'extensions' ? item.category === section : true,
-          )}
-          onChoose={(item) => setDialog({ item, mode: 'connect' })}
-          onClose={() => setDialog(null)}
-          onSave={saveItem}
-          onReconnect={() => {
-            if (dialog.item) setDialog({ item: dialog.item, mode: 'connect' })
-          }}
-          onSelectModel={() => {
-            if (dialog.item) {
-              setSelectedModel(dialog.item.id)
-              setDialog(null)
-              setNotice(`Demo Agent default set to ${dialog.item.name}.`)
-            }
-          }}
-        />
-      )}
     </div>
   )
 }

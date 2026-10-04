@@ -20,13 +20,18 @@ The default return link leads to the existing local PWA at <http://localhost:878
 
 ## Compare
 
-- **A — Service catalog:** scannable connection cards with account, status, and Space access.
+- **A — Service catalog:** compact account cards with status and Space access, plus a detail panel.
 - **B — Control panel:** a compact table for inspecting several connections at once.
-- **C — Guided overview:** a selector and one expanded connection with setup guidance.
+- **C — Guided overview:** a compact account list sharing the detail and setup panel.
+
+On desktop, A and C keep the selected connection in a panel on the right; the list stays
+interactive. On smaller screens (up to 880 CSS pixels), selecting a connection opens the same
+content in a full-screen drawer. Its body scrolls independently, with the close button and
+actions always visible. Escape closes it and focus returns to the opener.
 
 All three retain the same sidebar. The floating bar or left/right arrow keys switch variants;
 `variant` and `section` are URL parameters retained on reload. Arrow keys keep their ordinary
-behavior inside fields and setup dialogs.
+behavior inside fields and the detail panel.
 
 Try connecting GitHub, deny authorization once, retry with demo authorization, grant Work only,
 and inspect Space access. Manage the Gmail example to reconnect, disable, or remove it. Models
@@ -46,5 +51,8 @@ for #180/#181 or provide a general Hub installer.
 
 ## Verdict
 
-Pending the user's review of the three variants. Preserve this prototype on its own branch;
+The user preferred A and C, with A as the desktop basis, and requested smaller cards because
+details can be opened separately. The revised prototype combines A's compact account cards with
+C's list/detail organization. Mobile uses a full-screen, scrollable drawer instead of a centered
+modal. This revision is ready for visual review. Preserve the prototype on its own branch;
 production implementation should retain only the selected design after the required review.
