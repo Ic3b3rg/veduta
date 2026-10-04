@@ -176,12 +176,23 @@ export function registerServiceConnectionRoutes(
           parsed.data.gmailConnectionId === undefined
             ? CreateGmailConnectionRequestSchema.safeParse({
                 name: parsed.data.name,
-                clientId: parsed.data.clientId,
-                clientSecret: parsed.data.clientSecret,
+                ...(parsed.data.clientId === undefined ? {} : { clientId: parsed.data.clientId }),
+                ...(parsed.data.clientSecret === undefined
+                  ? {}
+                  : { clientSecret: parsed.data.clientSecret }),
               })
             : undefined
         if (newConnection && !newConnection.success)
           throw new ServiceConnectionError(400, 'Gmail OAuth client credentials are required')
+        if (
+          newConnection?.success &&
+          !('clientId' in newConnection.data) &&
+          !options.gmail.snapshot().oauthClient?.configured
+        )
+          throw new ServiceConnectionError(
+            409,
+            'Set up Google OAuth before connecting a Gmail account',
+          )
         if (
           parsed.data.gmailConnectionId &&
           snapshot().attempts.some(

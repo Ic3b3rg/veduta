@@ -1,15 +1,21 @@
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { GMAIL_READ_SCOPE } from '@veduta/protocol'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GmailConnections } from './gmail-connections.ts'
 import { loadIngestionConfig, saveIngestionConfig } from './ingestion-config.ts'
 import { PreFilterRulesSchema } from './pre-filter.ts'
 import { SecretsVault } from './secrets-vault.ts'
 
+const roots: string[] = []
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
 function fixture(fetchFn: typeof fetch) {
   const rootDir = mkdtempSync(join(tmpdir(), 'veduta-gmail-connections-'))
+  roots.push(rootDir)
   const vault = SecretsVault.open(rootDir, Buffer.from('test-key'))
   const connections = new GmailConnections({
     rootDir,
@@ -113,6 +119,7 @@ describe('passive Gmail connections', () => {
 
   it('adopts legacy credentials without touching Google until explicit verification', async () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'veduta-gmail-legacy-'))
+    roots.push(rootDir)
     const vault = SecretsVault.open(rootDir, Buffer.from('test-key'))
     vault.set('gmail-client-id', 'old-id')
     vault.set('gmail-client-secret', 'old-secret')
@@ -162,5 +169,265 @@ describe('passive Gmail connections', () => {
     ])
     second.remove('svc-gmail-legacy')
     expect(new GmailConnections(options).snapshot().connections).toEqual([])
+  })
+
+  it('reuses protected installation credentials after restart and removing an account', async () => {
+    const requests: string[] = []
+    const fetchFn = async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      requests.push(url)
+      if (url.endsWith('/token')) {
+        const body = new URLSearchParams(String(init?.body))
+        expect(body.get('client_id')).toBe('shared-client')
+        expect(body.get('client_secret')).toBe('shared-secret')
+        return json({
+          access_token: body.get('code'),
+          refresh_token: `refresh-${body.get('code')}`,
+          scope: GMAIL_READ_SCOPE,
+        })
+      }
+      if (url.endsWith('/profile')) {
+        const bearer = new Headers(init?.headers).get('authorization')
+        return json({
+          emailAddress: bearer === 'Bearer first' ? 'first@gmail.test' : 'second@gmail.test',
+        })
+      }
+      throw new Error('Setup accessed mailbox content')
+    }
+    const { rootDir, vault, connections } = fixture(fetchFn)
+    connections.configureOAuthClient({ clientId: 'shared-client', clientSecret: 'shared-secret' })
+    expect(connections.snapshot().oauthClient).toEqual({ configured: true })
+    expect(requests).toEqual([])
+    const first = connections.create({ name: 'First' }).connections[0]!
+    const second = connections.create({ name: 'Second' }).connections[1]!
+    for (const [account, code] of [
+      [first, 'first'],
+      [second, 'second'],
+    ] as const) {
+      const url = new URL(
+        connections.beginAuthorization(account.id, 'https://veduta.test').authorizationUrl,
+      )
+      await connections.completeAuthorization(account.id, code, url.searchParams.get('state')!)
+    }
+    connections.remove(first.id)
+    expect(vault.resolve(`secret://vault/gmail-refresh-token-${first.id}`)).toBeUndefined()
+    expect(vault.resolve(`secret://vault/gmail-refresh-token-${second.id}`)).toBe('refresh-second')
+    const restored = new GmailConnections({
+      rootDir,
+      vault,
+      secrets: vault,
+      allowedRedirectOrigins: ['https://veduta.test'],
+      fetchFn,
+    })
+    restored.remove(second.id)
+    const next = restored.create({ name: 'Third' }).connections[0]!
+    expect(
+      new URL(
+        restored.beginAuthorization(next.id, 'https://veduta.test').authorizationUrl,
+      ).searchParams.get('client_id'),
+    ).toBe('shared-client')
+    const disk = readFileSync(join(rootDir, 'gmail-connections.json'), 'utf8')
+    const backup = readdirSync(rootDir)
+      .filter((file) => file.startsWith('gmail-connections.json.bak-'))
+      .map((file) => readFileSync(join(rootDir, file), 'utf8'))
+      .join('\n')
+    for (const secret of ['shared-client', 'shared-secret', 'refresh-first', 'refresh-second']) {
+      expect(disk).not.toContain(secret)
+      expect(backup).not.toContain(secret)
+      expect(JSON.stringify(restored.snapshot())).not.toContain(secret)
+    }
+    expect(requests).toHaveLength(4)
+  })
+
+  it('keeps an in-flight authorization bound to its client when installation settings change', async () => {
+    let exchangedClient: string | null = null
+    const { connections } = fixture(async (input, init) => {
+      if (String(input).endsWith('/token')) {
+        exchangedClient = new URLSearchParams(String(init?.body)).get('client_id')
+        return json({ access_token: 'access', refresh_token: 'refresh', scope: GMAIL_READ_SCOPE })
+      }
+      return json({ emailAddress: 'first@gmail.test' })
+    })
+    connections.configureOAuthClient({
+      clientId: 'original-client',
+      clientSecret: 'original-secret',
+    })
+    const account = connections.create({ name: 'First' }).connections[0]!
+    const url = new URL(
+      connections.beginAuthorization(account.id, 'https://veduta.test').authorizationUrl,
+    )
+    connections.configureOAuthClient({
+      clientId: 'replacement-client',
+      clientSecret: 'replacement-secret',
+    })
+    await connections.completeAuthorization(account.id, 'code', url.searchParams.get('state')!)
+    expect(exchangedClient).toBe('original-client')
+    expect(
+      new URL(
+        connections.beginAuthorization(account.id, 'https://veduta.test').authorizationUrl,
+      ).searchParams.get('client_id'),
+    ).toBe('original-client')
+    const next = connections.create({ name: 'Second' }).connections[1]!
+    expect(
+      new URL(
+        connections.beginAuthorization(next.id, 'https://veduta.test').authorizationUrl,
+      ).searchParams.get('client_id'),
+    ).toBe('replacement-client')
+  })
+
+  it('requires configuration before a new account and recovers a draft after correcting the client', () => {
+    const { connections } = fixture(async () => {
+      throw new Error('Setup contacted Google')
+    })
+    expect(() => connections.create({ name: 'First' })).toThrow(/Google OAuth/)
+    expect(connections.snapshot().connections).toEqual([])
+    connections.configureOAuthClient({
+      clientId: 'incorrect-client',
+      clientSecret: 'incorrect-secret',
+    })
+    const draft = connections.create({ name: 'First' }).connections[0]!
+    const url = new URL(
+      connections.beginAuthorization(draft.id, 'https://veduta.test').authorizationUrl,
+    )
+    connections.failAuthorization(draft.id, url.searchParams.get('state')!, 'access_denied')
+    connections.configureOAuthClient({
+      clientId: 'corrected-client',
+      clientSecret: 'corrected-secret',
+    })
+    expect(
+      new URL(
+        connections.beginAuthorization(draft.id, 'https://veduta.test').authorizationUrl,
+      ).searchParams.get('client_id'),
+    ).toBe('corrected-client')
+  })
+
+  it('rejects a second-device authorization restart while Google verifies the original client', async () => {
+    let releaseToken!: (response: Response) => void
+    const tokenResponse = new Promise<Response>((resolve) => {
+      releaseToken = resolve
+    })
+    const { connections } = fixture(async (input, init) => {
+      if (String(input).endsWith('/token')) {
+        const body = new URLSearchParams(String(init?.body))
+        expect(body.get('client_id')).toBe('original-client')
+        expect(body.get('client_secret')).toBe('original-secret')
+        if (body.get('grant_type') === 'authorization_code') return tokenResponse
+        expect(body.get('refresh_token')).toBe('original-refresh')
+        return json({ access_token: 'refreshed-access', expires_in: 3600 })
+      }
+      return json({ emailAddress: 'first@gmail.test' })
+    })
+    connections.configureOAuthClient({
+      clientId: 'original-client',
+      clientSecret: 'original-secret',
+    })
+    const account = connections.create({ name: 'First' }).connections[0]!
+    const url = new URL(
+      connections.beginAuthorization(account.id, 'https://veduta.test').authorizationUrl,
+    )
+    const completion = connections.completeAuthorization(
+      account.id,
+      'code',
+      url.searchParams.get('state')!,
+    )
+    try {
+      expect(connections.snapshot().connections[0]?.state).toBe('verifying')
+      connections.configureOAuthClient({
+        clientId: 'replacement-client',
+        clientSecret: 'replacement-secret',
+      })
+      expect(() => connections.beginAuthorization(account.id, 'https://veduta.test')).toThrow(
+        /verification is already in progress/,
+      )
+    } finally {
+      releaseToken(
+        json({
+          access_token: 'access',
+          refresh_token: 'original-refresh',
+          scope: GMAIL_READ_SCOPE,
+        }),
+      )
+      await completion
+    }
+    expect(await connections.verifyAccount(account.id)).toBe('first@gmail.test')
+    expect(connections.snapshot().connections[0]?.state).toBe('ready')
+  })
+
+  it('reuses an unambiguous existing Google client without re-entering credentials', () => {
+    const fetchFn = async () => {
+      throw new Error('Migration contacted Google')
+    }
+    const { rootDir, vault, connections } = fixture(fetchFn)
+    const old = connections.create({
+      name: 'Existing',
+      clientId: 'existing-client',
+      clientSecret: 'existing-secret',
+    }).connections[0]!
+    const restored = new GmailConnections({
+      rootDir,
+      vault,
+      secrets: vault,
+      allowedRedirectOrigins: ['https://veduta.test'],
+      fetchFn,
+    })
+    restored.remove(old.id)
+    const next = restored.create({ name: 'Second account' }).connections[0]!
+    expect(
+      new URL(
+        restored.beginAuthorization(next.id, 'https://veduta.test').authorizationUrl,
+      ).searchParams.get('client_id'),
+    ).toBe('existing-client')
+  })
+
+  it('requires a deliberate installation configuration when existing clients differ', () => {
+    const fetchFn = async () => {
+      throw new Error('Migration contacted Google')
+    }
+    const { rootDir, vault, connections } = fixture(fetchFn)
+    for (const clientId of ['first-client', 'second-client'])
+      connections.create({ name: clientId, clientId, clientSecret: 'secret' })
+    const restored = new GmailConnections({
+      rootDir,
+      vault,
+      secrets: vault,
+      allowedRedirectOrigins: ['https://veduta.test'],
+      fetchFn,
+    })
+    expect(() => restored.create({ name: 'New account' })).toThrow(/Google OAuth/)
+    expect(restored.snapshot().connections).toHaveLength(2)
+  })
+
+  it('ignores unavailable existing clients when adopting an agreed usable configuration', () => {
+    const fetchFn = async () => {
+      throw new Error('Migration contacted Google')
+    }
+    const { rootDir, vault, connections } = fixture(fetchFn)
+    const unavailable = connections.create({
+      name: 'Unavailable',
+      clientId: 'unavailable-client',
+      clientSecret: 'unavailable-secret',
+    }).connections[0]!
+    connections.create({
+      name: 'Existing',
+      clientId: 'existing-client',
+      clientSecret: 'existing-secret',
+    })
+    vault.delete(`gmail-client-id-${unavailable.id}`)
+    vault.delete(`gmail-client-secret-${unavailable.id}`)
+    const restored = new GmailConnections({
+      rootDir,
+      vault,
+      secrets: vault,
+      allowedRedirectOrigins: ['https://veduta.test'],
+      fetchFn,
+    })
+    expect(restored.snapshot().oauthClient).toEqual({ configured: true })
+    const next = restored.create({ name: 'New account' }).connections[2]!
+    expect(
+      new URL(
+        restored.beginAuthorization(next.id, 'https://veduta.test').authorizationUrl,
+      ).searchParams.get('client_id'),
+    ).toBe('existing-client')
+    expect(restored.snapshot().connections).toHaveLength(3)
   })
 })

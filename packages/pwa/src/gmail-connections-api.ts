@@ -2,6 +2,7 @@ import {
   BeginGmailAuthorizationResponseSchema,
   GmailConnectionsSnapshotSchema,
   type CreateGmailConnectionRequest,
+  type ConfigureGmailOAuthClientRequest,
   type GmailConnectionsSnapshot,
 } from '@veduta/protocol'
 import { deleteJson, getJson, patchJson, postJson } from './api-http.ts'
@@ -11,6 +12,13 @@ const itemPath = (id: string) => `${base}/${encodeURIComponent(id)}`
 
 export async function fetchGmailConnections(token?: string): Promise<GmailConnectionsSnapshot> {
   return GmailConnectionsSnapshotSchema.parse(await getJson(base, token))
+}
+
+export async function configureGmailOAuthClient(
+  input: ConfigureGmailOAuthClientRequest,
+  token?: string,
+): Promise<GmailConnectionsSnapshot> {
+  return GmailConnectionsSnapshotSchema.parse(await postJson(`${base}/oauth-client`, input, token))
 }
 
 export async function createGmailConnection(

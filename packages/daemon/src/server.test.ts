@@ -72,6 +72,7 @@ describe('Gmail connection routes under production auth', () => {
       ['POST', '/api/service-connections/example/disable'],
       ['DELETE', '/api/service-connections/example'],
       ['POST', '/api/gmail-connections'],
+      ['POST', '/api/gmail-connections/oauth-client'],
       ['PATCH', '/api/gmail-connections/svc-gmail-example'],
       ['POST', '/api/gmail-connections/svc-gmail-example/authorize'],
       ['POST', '/api/gmail-connections/svc-gmail-example/complete'],

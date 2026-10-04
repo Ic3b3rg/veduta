@@ -68,8 +68,10 @@ export function ConnectionCreate({
           </label>
           {service === 'gmail' ? (
             <p className="connection-note">
-              Google OAuth · read-only mail. Have the OAuth client credentials for your Google Cloud
-              project ready.
+              Google OAuth · read-only mail.{' '}
+              {controller.gmail?.oauthClient?.configured
+                ? 'Google is configured. Continue to connect an account.'
+                : 'A short guide will help you configure Google once for this installation.'}
             </p>
           ) : (
             <>

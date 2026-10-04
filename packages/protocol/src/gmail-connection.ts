@@ -23,16 +23,23 @@ export const GmailConnectionSchema = z
   .strict()
 
 export const GmailConnectionsSnapshotSchema = z
-  .object({ connections: z.array(GmailConnectionSchema) })
+  .object({
+    connections: z.array(GmailConnectionSchema),
+    oauthClient: z.object({ configured: z.boolean() }).strict().optional(),
+  })
   .strict()
 
-export const CreateGmailConnectionRequestSchema = z
+export const ConfigureGmailOAuthClientRequestSchema = z
   .object({
-    name: GmailConnectionSchema.shape.name,
     clientId: z.string().trim().min(1).max(500),
     clientSecret: z.string().min(1).max(2000),
   })
   .strict()
+
+export const CreateGmailConnectionRequestSchema = z.union([
+  z.object({ name: GmailConnectionSchema.shape.name }).strict(),
+  ConfigureGmailOAuthClientRequestSchema.extend({ name: GmailConnectionSchema.shape.name }),
+])
 
 export const BeginGmailAuthorizationRequestSchema = z
   .object({ redirectOrigin: z.string().url() })
@@ -57,3 +64,6 @@ export const RenameGmailConnectionRequestSchema = z
 export type GmailConnection = z.infer<typeof GmailConnectionSchema>
 export type GmailConnectionsSnapshot = z.infer<typeof GmailConnectionsSnapshotSchema>
 export type CreateGmailConnectionRequest = z.infer<typeof CreateGmailConnectionRequestSchema>
+export type ConfigureGmailOAuthClientRequest = z.infer<
+  typeof ConfigureGmailOAuthClientRequestSchema
+>

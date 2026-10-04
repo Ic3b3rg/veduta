@@ -236,6 +236,31 @@ button.connection-list-item[aria-pressed='true'] {
   font-size: 0.8125rem;
   color: var(--catalog-color-text-muted);
 }
+.connection-setup-guide {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.connection-setup-guide h3,
+.connection-setup-guide p,
+.connection-setup-guide ol {
+  margin: 0;
+}
+.connection-setup-guide ol {
+  padding-left: 20px;
+  display: grid;
+  gap: 12px;
+  line-height: 1.5;
+}
+.connection-setup-guide code {
+  overflow-wrap: anywhere;
+  font-size: 0.75rem;
+}
+.connection-copy-value {
+  display: block;
+  margin: 8px 0;
+  user-select: all;
+}
 .connection-provider-list {
   display: grid;
   gap: 10px;

@@ -2,6 +2,7 @@ import {
   BeginGmailAuthorizationRequestSchema,
   BeginGmailAuthorizationResponseSchema,
   CompleteGmailAuthorizationRequestSchema,
+  ConfigureGmailOAuthClientRequestSchema,
   CreateGmailConnectionRequestSchema,
   FailGmailAuthorizationRequestSchema,
   GmailConnectionsSnapshotSchema,
@@ -29,6 +30,15 @@ export function registerGmailConnectionRoutes(
   connections: GmailConnections,
 ): void {
   app.get('/api/gmail-connections', () => connections.snapshot())
+
+  app.post('/api/gmail-connections/oauth-client', (request, reply) => {
+    const parsed = ConfigureGmailOAuthClientRequestSchema.safeParse(request.body)
+    if (!parsed.success)
+      return reply.status(400).send({ error: 'Invalid Google OAuth client configuration' })
+    return guarded(reply, () =>
+      GmailConnectionsSnapshotSchema.parse(connections.configureOAuthClient(parsed.data)),
+    )
+  })
 
   app.post('/api/gmail-connections', (request, reply) => {
     const parsed = CreateGmailConnectionRequestSchema.safeParse(request.body)

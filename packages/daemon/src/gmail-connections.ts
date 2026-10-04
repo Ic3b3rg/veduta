@@ -6,6 +6,7 @@ import {
   GmailConnectionsSnapshotSchema,
   GmailConnectionSchema,
   type CreateGmailConnectionRequest,
+  type ConfigureGmailOAuthClientRequest,
   type GmailConnection,
   type GmailConnectionsSnapshot,
 } from '@veduta/protocol'
@@ -25,6 +26,9 @@ const LEGACY_ID = 'svc-gmail-legacy'
 const AUTHORIZATION_LIFETIME_MS = 10 * 60 * 1000
 
 const SecretRefSchema = z.string().regex(/^secret:\/\/(vault|env)\/[a-zA-Z0-9_-]+$/)
+const OAuthClientSchema = z
+  .object({ clientIdRef: SecretRefSchema, clientSecretRef: SecretRefSchema })
+  .strict()
 const AuthorizationSchema = z
   .object({
     stateHash: z.string().length(64),
@@ -38,12 +42,14 @@ const RecordSchema = GmailConnectionSchema.extend({
   clientSecretRef: SecretRefSchema.optional(),
   refreshTokenRef: SecretRefSchema.optional(),
   authorization: AuthorizationSchema.optional(),
+  usesSharedClient: z.boolean().optional(),
 }).strict()
 const FileSchema = z
   .object({
     version: z.literal(1),
     connections: z.array(RecordSchema),
     dismissedLegacyIds: z.array(z.string()).default([]),
+    oauthClient: OAuthClientSchema.optional(),
   })
   .strict()
 
@@ -106,6 +112,7 @@ export class GmailConnections {
   private readonly now: () => Date
   private readonly tokenProviders = new Map<string, GoogleTokenProvider>()
   private records: Record[]
+  private oauthClient: z.infer<typeof OAuthClientSchema> | undefined
   private readonly dismissedLegacyIds: Set<string>
 
   constructor(options: GmailConnectionsOptions) {
@@ -117,26 +124,72 @@ export class GmailConnections {
       ? FileSchema.parse(readJsonFile(this.path, { description: 'Gmail connections' }))
       : FileSchema.parse({ version: 1, connections: [] })
     this.records = stored.connections
+    this.oauthClient = stored.oauthClient
     this.dismissedLegacyIds = new Set(stored.dismissedLegacyIds)
     this.normalizeInterruptedAuthorization()
     this.adoptLegacySource()
+    this.adoptOAuthClient()
   }
 
   snapshot(): GmailConnectionsSnapshot {
     return GmailConnectionsSnapshotSchema.parse({
       connections: this.records.map(publicConnection),
+      oauthClient: {
+        configured: Boolean(
+          this.oauthClient &&
+          this.options.secrets.resolve(this.oauthClient.clientIdRef) &&
+          this.options.secrets.resolve(this.oauthClient.clientSecretRef),
+        ),
+      },
     })
+  }
+
+  configureOAuthClient(input: ConfigureGmailOAuthClientRequest): GmailConnectionsSnapshot {
+    const vault = this.requireVault()
+    defaultRedactor.register(input.clientId)
+    defaultRedactor.register(input.clientSecret)
+    const id = randomUUID()
+    const next = {
+      clientIdRef: `secret://vault/gmail-oauth-id-${id}`,
+      clientSecretRef: `secret://vault/gmail-oauth-secret-${id}`,
+    }
+    const previous = this.oauthClient
+    try {
+      vault.set(next.clientIdRef.slice('secret://vault/'.length), input.clientId)
+      vault.set(next.clientSecretRef.slice('secret://vault/'.length), input.clientSecret)
+      this.oauthClient = next
+      this.persist()
+    } catch (error) {
+      this.oauthClient = previous
+      this.releaseSecret(next.clientIdRef)
+      this.releaseSecret(next.clientSecretRef)
+      throw error
+    }
+    this.releaseSecret(previous?.clientIdRef)
+    this.releaseSecret(previous?.clientSecretRef)
+    this.options.onConfigured?.()
+    return this.snapshot()
   }
 
   create(input: CreateGmailConnectionRequest): GmailConnectionsSnapshot {
     const vault = this.requireVault()
-    defaultRedactor.register(input.clientSecret)
     const id = `svc-gmail-${randomUUID()}`
     const at = this.now().toISOString()
-    const clientIdRef = `secret://vault/gmail-client-id-${id}`
-    const clientSecretRef = `secret://vault/gmail-client-secret-${id}`
-    vault.set(clientIdRef.slice('secret://vault/'.length), input.clientId)
-    vault.set(clientSecretRef.slice('secret://vault/'.length), input.clientSecret)
+    const usesSharedClient = !('clientId' in input)
+    let clientIdRef: string
+    let clientSecretRef: string
+    if ('clientId' in input) {
+      defaultRedactor.register(input.clientSecret)
+      clientIdRef = `secret://vault/gmail-client-id-${id}`
+      clientSecretRef = `secret://vault/gmail-client-secret-${id}`
+      vault.set(clientIdRef.slice('secret://vault/'.length), input.clientId)
+      vault.set(clientSecretRef.slice('secret://vault/'.length), input.clientSecret)
+    } else {
+      if (!this.oauthClient || !this.snapshot().oauthClient?.configured)
+        throw new GmailConnectionError(409, 'Set up Google OAuth before connecting a Gmail account')
+      clientIdRef = this.oauthClient.clientIdRef
+      clientSecretRef = this.oauthClient.clientSecretRef
+    }
     this.records.push({
       id,
       name: input.name,
@@ -146,6 +199,7 @@ export class GmailConnections {
       updatedAt: at,
       clientIdRef,
       clientSecretRef,
+      ...(usesSharedClient ? { usesSharedClient: true } : {}),
     })
     this.persist()
     this.options.onConfigured?.()
@@ -166,9 +220,24 @@ export class GmailConnections {
     redirectPath: '/app/settings/gmail' | '/app/connections' = '/app/settings/gmail',
   ): { authorizationUrl: string } {
     const record = this.find(id)
+    if (record.state === 'verifying')
+      throw new GmailConnectionError(409, 'Gmail verification is already in progress')
     const vault = this.requireVault()
     if (!this.options.allowedRedirectOrigins.includes(redirectOrigin)) {
       throw new GmailConnectionError(400, 'unsupported Gmail authorization origin')
+    }
+    const previousClient = {
+      clientIdRef: record.clientIdRef,
+      clientSecretRef: record.clientSecretRef,
+    }
+    if (
+      record.usesSharedClient &&
+      !record.accountEmail &&
+      !record.refreshTokenRef &&
+      this.oauthClient
+    ) {
+      record.clientIdRef = this.oauthClient.clientIdRef
+      record.clientSecretRef = this.oauthClient.clientSecretRef
     }
     const clientId = this.resolve(record.clientIdRef, 'Gmail OAuth client ID')
     this.resolve(record.clientSecretRef, 'Gmail OAuth client secret')
@@ -188,6 +257,9 @@ export class GmailConnections {
     delete record.reason
     record.updatedAt = this.now().toISOString()
     this.persist()
+
+    this.releaseSecret(previousClient.clientIdRef)
+    this.releaseSecret(previousClient.clientSecretRef)
 
     const url = new URL('https://accounts.google.com/o/oauth2/v2/auth')
     url.searchParams.set('client_id', clientId)
@@ -425,9 +497,7 @@ export class GmailConnections {
       record.refreshTokenRef,
       record.authorization?.verifierRef,
     ]) {
-      if (ref?.startsWith('secret://vault/')) {
-        this.options.vault?.delete(ref.slice('secret://vault/'.length))
-      }
+      this.releaseSecret(ref)
     }
     return this.snapshot()
   }
@@ -512,9 +582,27 @@ export class GmailConnections {
       version: 1,
       connections: this.records,
       dismissedLegacyIds: [...this.dismissedLegacyIds],
+      ...(this.oauthClient ? { oauthClient: this.oauthClient } : {}),
     })
     backupFile(this.path)
     writeJsonAtomic(this.path, file)
+  }
+
+  private releaseSecret(ref: string | undefined): void {
+    if (!ref?.startsWith('secret://vault/')) return
+    if (ref === this.oauthClient?.clientIdRef || ref === this.oauthClient?.clientSecretRef) return
+    if (
+      this.records.some((record) =>
+        [
+          record.clientIdRef,
+          record.clientSecretRef,
+          record.refreshTokenRef,
+          record.authorization?.verifierRef,
+        ].includes(ref),
+      )
+    )
+      return
+    this.options.vault?.delete(ref.slice('secret://vault/'.length))
   }
 
   private normalizeInterruptedAuthorization(): void {
@@ -555,6 +643,33 @@ export class GmailConnections {
       clientSecretRef,
       refreshTokenRef,
     })
+    this.persist()
+  }
+
+  private adoptOAuthClient(): void {
+    if (this.oauthClient || this.records.length === 0) return
+    const clients = this.records.flatMap((record) => {
+      const { clientIdRef, clientSecretRef } = record
+      if (!clientIdRef || !clientSecretRef) return []
+      const clientId = this.options.secrets.resolve(clientIdRef)
+      const clientSecret = this.options.secrets.resolve(clientSecretRef)
+      return clientId && clientSecret
+        ? [{ clientIdRef, clientSecretRef, clientId, clientSecret }]
+        : []
+    })
+    const first = clients[0]
+    if (
+      !first ||
+      clients.some(
+        (client) =>
+          client.clientId !== first.clientId || client.clientSecret !== first.clientSecret,
+      )
+    )
+      return
+    this.oauthClient = {
+      clientIdRef: first.clientIdRef,
+      clientSecretRef: first.clientSecretRef,
+    }
     this.persist()
   }
 }

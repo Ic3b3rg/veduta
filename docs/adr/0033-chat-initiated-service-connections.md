@@ -136,3 +136,28 @@ requires protected reconnect and new grants. Legacy Gmail and IMAP/SMTP connecti
 visible with their actual verification state; the page makes no provider-content request while
 listing accounts. Gmail uses the existing Google OAuth client setup and GitHub uses the reviewed
 fine-grained-token mechanism from ADR-0034. Provider OAuth expansion is separate work.
+
+## Amendment: guided provider setup and one final grant confirmation
+
+The user-approved refinement in issue #181 guides Google web-client setup once per installation.
+The authenticated PWA links to Google's project, Gmail API, Auth platform and client settings,
+supplies the exact redirect URI to copy, and collects client ID/secret outside Chat. The Gateway
+stores only protected credential references for the installation default. Saving this configuration
+does not verify an account or contact Gmail. New accounts reuse it through the ordinary OAuth path.
+Each authorized account retains the client and refresh-token binding that issued its authorization;
+changing the default affects new accounts, and removing one account preserves the default and
+credentials still used by other accounts. Existing clients may supply the default only when their
+resolved credentials agree unambiguously. An interrupted or pending authorization remains bound to
+its original client until explicitly retried.
+
+GitHub retains ADR-0034's fine-grained PAT profile. A link opens GitHub's token creation with the
+reviewed owner, Issues permission, token name and expiration prefilled; the user still chooses the
+exact repository. Existing tokens may be entered directly. No GitHub OAuth or broader token profile
+is added.
+
+Review remains visible before the explicit **Continue to Google**, **Verify GitHub** or **Use
+verified account** action. That action starts authorization; no additional review checkbox is
+required. Provider consent remains Google's authority for its scopes. One final Veduta confirmation
+shows the exact verified account and granted scopes, then saves only the explicitly chosen Space
+grants. Management may save without grants, and Chat continuation retains its existing at-most-once
+pre-effect contract. Subsequent task-effect Approvals remain independent of connection setup.

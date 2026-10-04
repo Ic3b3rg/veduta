@@ -1,7 +1,11 @@
 import { Input } from '@veduta/catalog/ui/input'
+import { Button } from '@veduta/catalog/ui/button'
 import { NativeSelect } from '@veduta/catalog/ui/native-select'
 import type { ConnectionAttempt, GmailConnection, ServiceConnection } from '@veduta/protocol'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { configureGmailOAuthClient } from './gmail-connections-api.ts'
+import { GmailOAuthSetupGuide } from './gmail-oauth-setup-guide.tsx'
+import { GithubTokenGuide } from './github-token-guide.tsx'
 import type { ConnectionsController } from './connections-controller.ts'
 import {
   authorizeGithubAttempt,
@@ -15,23 +19,34 @@ export function ConnectionAuthorizationForm({
   gmailAccounts,
   controller,
   token,
-  reviewed,
+  onValidityChange,
 }: {
   attempt: ConnectionAttempt
   existing: ServiceConnection | undefined
   gmailAccounts: GmailConnection[]
   controller: ConnectionsController
   token?: string
-  reviewed: boolean
+  onValidityChange: (valid: boolean) => void
 }) {
   const [githubToken, setGithubToken] = useState('')
   const [gmailId, setGmailId] = useState(attempt.connectionId ?? '')
   const [name, setName] = useState('Gmail')
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
+  const [editingClient, setEditingClient] = useState(false)
+  const configured = controller.gmail?.oauthClient?.configured === true
+  const needsClient = !configured || editingClient
   const reusable = attempt.origin === 'management' && existing?.state === 'ready'
+  const valid =
+    reusable ||
+    (attempt.review.service === 'github'
+      ? /^github_pat_[A-Za-z0-9_]{20,}$/.test(githubToken)
+      : Boolean(
+          gmailId || (name.trim() && (!needsClient || (clientId.trim() && clientSecret.trim()))),
+        ))
+  useEffect(() => onValidityChange(valid), [valid, onValidityChange])
   const submit = () => {
-    if (!reviewed || controller.busy) return
+    if (!valid || controller.busy) return
     if (reusable) {
       void controller.run(() =>
         serviceConnectionAction(`attempts/${attempt.id}/use-connection`, token),
@@ -43,9 +58,14 @@ export function ConnectionAuthorizationForm({
       setGithubToken('')
       void controller.run(() => authorizeGithubAttempt(attempt.id, secret, token))
     } else {
-      const input = gmailId ? { gmailConnectionId: gmailId } : { name, clientId, clientSecret }
+      const input = gmailId ? { gmailConnectionId: gmailId } : { name: name.trim() }
+      const credentials = { clientId: clientId.trim(), clientSecret }
       setClientSecret('')
       void controller.run(async () => {
+        if (!gmailId && needsClient) {
+          await configureGmailOAuthClient(credentials, token)
+          setEditingClient(false)
+        }
         const result = await authorizeGmailAttempt(attempt.id, input, token)
         if (result.authorizationUrl) window.location.assign(result.authorizationUrl)
       })
@@ -66,41 +86,16 @@ export function ConnectionAuthorizationForm({
         </p>
       ) : attempt.review.service === 'github' ? (
         <>
-          <h3>Authorize GitHub</h3>
-          <ol>
-            <li>
-              In GitHub, create a{' '}
-              <a
-                href="https://github.com/settings/personal-access-tokens/new"
-                target="_blank"
-                rel="noreferrer"
-              >
-                fine-grained personal access token
-              </a>
-              .
-            </li>
-            <li>
-              Select only{' '}
-              <strong>
-                {attempt.review.repository?.owner}/{attempt.review.repository?.name}
-              </strong>{' '}
-              and grant Issues{' '}
-              {attempt.review.actions.includes('issue_write') ? 'read and write' : 'read'} access.
-            </li>
-            <li>Paste the token below to verify your account and the reviewed server.</li>
-          </ol>
-          <p className="connection-note">
-            This connection currently uses a token. Verification checks your identity and tool
-            availability.
-          </p>
+          <GithubTokenGuide review={attempt.review} />
           <label>
             Fine-grained GitHub token
             <Input
               type="password"
               autoComplete="off"
               required
-              minLength={20}
+              minLength={31}
               maxLength={300}
+              pattern="github_pat_[A-Za-z0-9_]{20,}"
               value={githubToken}
               onChange={(event) => setGithubToken(event.target.value)}
             />
@@ -124,28 +119,6 @@ export function ConnectionAuthorizationForm({
           )}
           {!gmailId && (
             <>
-              <ol>
-                <li>
-                  In{' '}
-                  <a
-                    href="https://console.cloud.google.com/apis/credentials"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Google Cloud
-                  </a>
-                  , enable the Gmail API and configure the OAuth consent screen. Add your account as
-                  a test user if the app is in testing.
-                </li>
-                <li>
-                  Create a Web application OAuth client. Add this exact redirect URI:{' '}
-                  <code>{window.location.origin}/app/connections</code>.
-                </li>
-                <li>
-                  Enter the client credentials below, then continue to Google to choose your
-                  account.
-                </li>
-              </ol>
               <label>
                 Connection name
                 <Input
@@ -155,27 +128,32 @@ export function ConnectionAuthorizationForm({
                   onChange={(event) => setName(event.target.value)}
                 />
               </label>
-              <label>
-                Google OAuth client ID
-                <Input
-                  required
-                  autoComplete="off"
-                  maxLength={500}
-                  value={clientId}
-                  onChange={(event) => setClientId(event.target.value)}
+              {needsClient ? (
+                <GmailOAuthSetupGuide
+                  clientId={clientId}
+                  clientSecret={clientSecret}
+                  onClientId={setClientId}
+                  onClientSecret={setClientSecret}
                 />
-              </label>
-              <label>
-                Google OAuth client secret
-                <Input
-                  required
-                  type="password"
-                  autoComplete="off"
-                  maxLength={500}
-                  value={clientSecret}
-                  onChange={(event) => setClientSecret(event.target.value)}
-                />
-              </label>
+              ) : (
+                <>
+                  <p role="status">Google OAuth is configured for this installation.</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setEditingClient(true)}
+                  >
+                    Change Google setup
+                  </Button>
+                </>
+              )}
+              {editingClient && (
+                <p className="connection-note">
+                  New accounts will use this configuration. Existing authorized accounts keep their
+                  original Google client.
+                </p>
+              )}
             </>
           )}
           <p className="connection-note">

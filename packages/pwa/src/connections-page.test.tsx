@@ -16,7 +16,8 @@ const attemptId = 'aa6849aa-d68e-46bb-89d7-d935d55c82ef'
 const response = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
-function setup(mobile = false) {
+function setup(mobile = false, googleConfigured = false) {
+  let configured = googleConfigured
   let snapshot = ServiceConnectionsSnapshotSchema.parse({
     attempts: [],
     connections: [],
@@ -43,15 +44,23 @@ function setup(mobile = false) {
                 id: attemptId,
                 submissionId: body['submissionId'],
                 origin: 'management',
-                requestSummary: 'Connect GitHub',
-                review: {
-                  service: 'github',
-                  scopes: ['GitHub Issues: read in example/disposable'],
-                  actions: ['list_issues'],
-                  repository: body['repository'],
-                  executionHost: 'Gateway local stdio',
-                  serverVersion: 'v1.12.2',
-                },
+                requestSummary: body['service'] === 'gmail' ? 'Connect Gmail' : 'Connect GitHub',
+                review:
+                  body['service'] === 'gmail'
+                    ? {
+                        service: 'gmail',
+                        scopes: ['https://www.googleapis.com/auth/gmail.readonly'],
+                        actions: ['search_mailbox'],
+                        executionHost: 'Gateway native HTTPS',
+                      }
+                    : {
+                        service: 'github',
+                        scopes: ['GitHub Issues: read in example/disposable'],
+                        actions: ['list_issues'],
+                        repository: body['repository'],
+                        executionHost: 'Gateway local stdio',
+                        serverVersion: 'v1.12.2',
+                      },
                 state: 'reviewing',
                 createdAt: at,
                 updatedAt: at,
@@ -62,10 +71,17 @@ function setup(mobile = false) {
         }
         if (path.endsWith('/github/authorize'))
           return response({ error: 'GitHub verification failed' }, 502)
+        if (path === '/api/gmail-connections/oauth-client') {
+          configured = true
+          return response({ connections: [], oauthClient: { configured } })
+        }
+        if (path.endsWith('/gmail/authorize'))
+          return response({ error: 'Google authorization could not start' }, 502)
       }
       if (path === '/api/service-connections') return response(snapshot)
-      if (path === '/api/gmail-connections' || path === '/api/himalaya-connections')
-        return response({ connections: [] })
+      if (path === '/api/gmail-connections')
+        return response({ connections: [], oauthClient: { configured } })
+      if (path === '/api/himalaya-connections') return response({ connections: [] })
       throw new Error(`Unexpected request: ${path}`)
     }),
   )
@@ -100,9 +116,14 @@ describe('ConnectionsPage', () => {
     ).toBe(true)
     fireEvent.submit(document.getElementById(`authorize-${attemptId}`)!)
     expect(requests).toHaveLength(1)
-    fireEvent.click(within(detail).getByRole('checkbox'))
+    expect(within(detail).queryByRole('checkbox')).toBeNull()
+    const creationUrl = new URL(
+      within(detail).getByRole('link', { name: 'Create a token for Veduta' }).getAttribute('href')!,
+    )
+    expect(creationUrl.searchParams.get('target_name')).toBe('example')
+    expect(creationUrl.searchParams.get('issues')).toBe('read')
     fireEvent.change(within(detail).getByLabelText('Fine-grained GitHub token'), {
-      target: { value: 'github_pat_test_secret' },
+      target: { value: 'github_pat_' + 'x'.repeat(30) },
     })
     fireEvent.submit(document.getElementById(`authorize-${attemptId}`)!)
     await waitFor(() =>
@@ -112,6 +133,74 @@ describe('ConnectionsPage', () => {
       (within(detail).getByLabelText('Fine-grained GitHub token') as HTMLInputElement).value,
     ).toBe('')
     expect(screen.queryByRole('button', { name: 'Save access' })).toBeNull()
+  })
+
+  it('guides Google setup once and sends credentials only to the protected configuration endpoint', async () => {
+    const requests = setup()
+    render(
+      <MemoryRouter initialEntries={['/app/connections']}>
+        <ConnectionsPage spaces={[]} />
+      </MemoryRouter>,
+    )
+    await screen.findByText('No accounts connected yet.')
+    fireEvent.click(screen.getByRole('button', { name: 'Add account' }))
+    fireEvent.submit(document.getElementById('create-service')!)
+    const detail = await screen.findByRole('complementary', { name: 'Gmail setup details' })
+    expect(within(detail).getByRole('link', { name: 'Enable Gmail API' })).toBeDefined()
+    expect(within(detail).getByRole('button', { name: 'Copy redirect URI' })).toBeDefined()
+    fireEvent.change(within(detail).getByLabelText('Google OAuth client ID'), {
+      target: { value: 'guided-client' },
+    })
+    fireEvent.change(within(detail).getByLabelText('Google OAuth client secret'), {
+      target: { value: 'guided-secret' },
+    })
+    fireEvent.submit(document.getElementById(`authorize-${attemptId}`)!)
+    await waitFor(() =>
+      expect(within(detail).getByRole('alert').textContent).toBe(
+        'Google authorization could not start',
+      ),
+    )
+    expect(requests.slice(1)).toEqual([
+      {
+        path: '/api/gmail-connections/oauth-client',
+        body: { clientId: 'guided-client', clientSecret: 'guided-secret' },
+      },
+      {
+        path: `/api/service-connections/attempts/${attemptId}/gmail/authorize`,
+        body: { redirectOrigin: window.location.origin, name: 'Gmail' },
+      },
+    ])
+    expect(within(detail).queryByLabelText('Google OAuth client secret')).toBeNull()
+    expect(
+      within(detail).getByText('Google OAuth is configured for this installation.'),
+    ).toBeDefined()
+    expect(within(detail).queryByRole('button', { name: 'Save access' })).toBeNull()
+  })
+
+  it('connects a subsequent Gmail account without collecting Google client credentials again', async () => {
+    const requests = setup(false, true)
+    render(
+      <MemoryRouter initialEntries={['/app/connections']}>
+        <ConnectionsPage spaces={[]} />
+      </MemoryRouter>,
+    )
+    await screen.findByText('No accounts connected yet.')
+    fireEvent.click(screen.getByRole('button', { name: 'Add account' }))
+    fireEvent.submit(document.getElementById('create-service')!)
+    const detail = await screen.findByRole('complementary', { name: 'Gmail setup details' })
+    expect(within(detail).queryByLabelText('Google OAuth client ID')).toBeNull()
+    fireEvent.submit(document.getElementById(`authorize-${attemptId}`)!)
+    await waitFor(() =>
+      expect(within(detail).getByRole('alert').textContent).toBe(
+        'Google authorization could not start',
+      ),
+    )
+    expect(requests.slice(1)).toEqual([
+      {
+        path: `/api/service-connections/attempts/${attemptId}/gmail/authorize`,
+        body: { redirectOrigin: window.location.origin, name: 'Gmail' },
+      },
+    ])
   })
 
   it('opens a modal Sheet on mobile and restores focus after Escape', async () => {
@@ -131,6 +220,56 @@ describe('ConnectionsPage', () => {
     fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(add))
+  })
+
+  it('offers explicit review before cancelling a terminal authorization failure', async () => {
+    setup(true)
+    let attempt = ConnectionAttemptSchema.parse({
+      id: attemptId,
+      submissionId: '69ed1cf2-e1fd-4b58-b2aa-999c304beb55',
+      origin: 'management',
+      requestSummary: 'Connect Gmail',
+      review: {
+        service: 'gmail',
+        scopes: ['https://www.googleapis.com/auth/gmail.readonly'],
+        actions: ['search_mailbox'],
+        executionHost: 'Gateway native HTTPS',
+      },
+      state: 'failed',
+      reason: 'Gmail authorization was declined.',
+      createdAt: at,
+      updatedAt: at,
+    })
+    const actions: string[] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const path = String(url)
+      if (init?.method === 'POST') {
+        actions.push(path)
+        if (path.endsWith('/retry')) attempt = { ...attempt, state: 'reviewing' }
+        else if (path.endsWith('/cancel')) attempt = { ...attempt, state: 'cancelled' }
+        else throw new Error(`Unexpected mutation: ${path}`)
+      }
+      if (path.startsWith('/api/service-connections'))
+        return response({ attempts: [attempt], connections: [], grants: [] })
+      if (path === '/api/gmail-connections')
+        return response({ connections: [], oauthClient: { configured: true } })
+      return response({ connections: [] })
+    })
+    render(
+      <MemoryRouter initialEntries={[`/app/connections?attempt=${attemptId}`]}>
+        <ConnectionsPage spaces={[]} />
+      </MemoryRouter>,
+    )
+    const dialog = await screen.findByRole('dialog', { name: 'Gmail setup' })
+    expect(within(dialog).queryByRole('button', { name: 'Cancel setup' })).toBeNull()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Return to review' }))
+    await within(dialog).findByRole('button', { name: 'Continue to Google' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel setup' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(actions).toEqual([
+      `/api/service-connections/attempts/${attemptId}/retry`,
+      `/api/service-connections/attempts/${attemptId}/cancel`,
+    ])
   })
 
   it('returns focus to the selected setup after a direct mobile load', async () => {

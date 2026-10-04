@@ -65,8 +65,65 @@ export async function verifyConnectionsSettings(page: Page, observerPage: Page):
   await expect(gmailDrawer.getByRole('button', { name: 'Continue to Google' })).toBeDisabled()
   await page.reload()
   await expect(gmailDrawer).toContainText('State: reviewing')
+  await expect(gmailDrawer.getByRole('checkbox')).toHaveCount(0)
+  await gmailDrawer.getByLabel('Connection name', { exact: true }).fill('Disposable settings Gmail')
+  await gmailDrawer.getByLabel('Google OAuth client ID').fill('disposable-google-client')
+  await gmailDrawer.getByLabel('Google OAuth client secret').fill('disposable-google-secret')
+  const origin = new URL(page.url()).origin
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin })
+  await gmailDrawer.getByRole('button', { name: 'Copy redirect URI' }).click()
+  await expect(
+    gmailDrawer.getByRole('status').filter({ hasText: 'Redirect URI copied.' }),
+  ).toBeVisible()
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    `${origin}/app/connections`,
+  )
+  // Only provider consent is replaced. The protected configuration, attempt and denial callback
+  // use the actual Gateway; this fixture never claims successful Google OAuth.
+  await page.route('https://accounts.google.com/o/oauth2/v2/auth?**', (route) =>
+    route.fulfill({ contentType: 'text/html', body: '<p>Google consent denial fixture</p>' }),
+  )
+  await gmailDrawer.getByRole('button', { name: 'Continue to Google' }).click()
+  await page.waitForURL('https://accounts.google.com/o/oauth2/v2/auth?**')
+  const authorization = new URL(page.url())
+  expect(authorization.searchParams.get('redirect_uri')).toBe(`${origin}/app/connections`)
+  expect(authorization.searchParams.get('scope')).toBe(
+    'https://www.googleapis.com/auth/gmail.readonly',
+  )
+  const denied = new URL(`${origin}/app/connections`)
+  denied.searchParams.set('state', authorization.searchParams.get('state')!)
+  denied.searchParams.set('error', 'access_denied')
+  await page.goto(denied.toString())
+  await expect(gmailDrawer).toContainText('Gmail authorization was declined.')
+  await expect(gmailDrawer.getByRole('button', { name: 'Save access' })).toHaveCount(0)
+  expect(page.url()).not.toContain('state=')
+  await expect(gmailDrawer.getByRole('button', { name: 'Cancel setup' })).toHaveCount(0)
+  await gmailDrawer.getByRole('button', { name: 'Return to review' }).click()
+  await expect(gmailDrawer).toContainText('State: reviewing')
   await gmailDrawer.getByRole('button', { name: 'Cancel setup' }).click()
   await expect(gmailDrawer).toHaveCount(0)
+  await page.getByRole('button', { name: 'Add account', exact: true }).click()
+  await page.getByRole('button', { name: 'Review access', exact: true }).click()
+  await expect(gmailDrawer).toContainText('Google OAuth is configured for this installation.')
+  await expect(gmailDrawer.getByLabel('Google OAuth client ID')).toHaveCount(0)
+  await expect(gmailDrawer.getByRole('button', { name: 'Continue to Google' })).toBeEnabled()
+  await page.reload()
+  await expect(gmailDrawer).toContainText('Google OAuth is configured for this installation.')
+  await observerPage.goto(page.url())
+  await expect(
+    observerPage.getByRole('complementary', { name: 'Gmail setup details' }),
+  ).toContainText('Google OAuth is configured for this installation.')
+  await gmailDrawer.getByRole('button', { name: 'Cancel setup' }).click()
+  const disposableGmail = page
+    .locator('.connection-list-item')
+    .filter({ hasText: 'Disposable settings Gmail' })
+  await disposableGmail.click()
+  page.once('dialog', (dialog) => void dialog.accept())
+  await page
+    .getByRole('dialog', { name: 'Disposable settings Gmail' })
+    .getByRole('button', { name: 'Remove', exact: true })
+    .click()
+  await expect(disposableGmail).toHaveCount(0)
 
   await account.click()
   page.once('dialog', (dialog) => void dialog.accept())

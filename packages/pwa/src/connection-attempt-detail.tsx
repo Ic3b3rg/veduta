@@ -22,7 +22,7 @@ export function ConnectionAttemptDetail({
   token?: string
   onDone: (connectionId?: string) => void
 }) {
-  const [reviewed, setReviewed] = useState(false)
+  const [canAuthorize, setCanAuthorize] = useState(false)
   const [spaceIds, setSpaceIds] = useState<string[]>([])
   const { busy, error, services, gmail } = controller
   const space = spaces.find((item) => item.id === attempt.spaceId)
@@ -73,27 +73,14 @@ export function ConnectionAttemptDetail({
         {attempt.nextAction && <p>{attempt.nextAction}</p>}
         <ConnectionReview review={attempt.review} />
         {attempt.state === 'reviewing' && (
-          <>
-            <div className="connection-check">
-              <Checkbox
-                id={`review-${attempt.id}`}
-                checked={reviewed}
-                onCheckedChange={(value) => setReviewed(value === true)}
-              />
-              <label htmlFor={`review-${attempt.id}`}>
-                I reviewed the account, access, actions and execution host
-                {attempt.origin === 'chat' ? ` for ${space?.name ?? attempt.spaceId}` : ''}.
-              </label>
-            </div>
-            <ConnectionAuthorizationForm
-              reviewed={reviewed}
-              attempt={attempt}
-              existing={existing}
-              gmailAccounts={gmail?.connections ?? []}
-              controller={controller}
-              {...(token ? { token } : {})}
-            />
-          </>
+          <ConnectionAuthorizationForm
+            onValidityChange={setCanAuthorize}
+            attempt={attempt}
+            existing={existing}
+            gmailAccounts={gmail?.connections ?? []}
+            controller={controller}
+            {...(token ? { token } : {})}
+          />
         )}
         {['authorizing', 'verifying'].includes(attempt.state) && (
           <p role="status">
@@ -154,7 +141,7 @@ export function ConnectionAttemptDetail({
           </Button>
         )}
         {attempt.state === 'reviewing' && (
-          <Button type="submit" form={`authorize-${attempt.id}`} disabled={!reviewed || busy}>
+          <Button type="submit" form={`authorize-${attempt.id}`} disabled={!canAuthorize || busy}>
             {existing?.state === 'ready' && attempt.origin === 'management'
               ? 'Use verified account'
               : attempt.review.service === 'gmail'
@@ -169,7 +156,7 @@ export function ConnectionAttemptDetail({
               : 'Save access'}
           </Button>
         )}
-        {!['cancelled', 'ready'].includes(attempt.state) && (
+        {!['cancelled', 'ready', 'failed', 'unsupported'].includes(attempt.state) && (
           <Button
             variant="outline"
             disabled={busy}

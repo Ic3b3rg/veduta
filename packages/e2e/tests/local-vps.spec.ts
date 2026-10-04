@@ -966,7 +966,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       const gmail = page.getByRole('complementary', { name: 'Gmail setup details' })
       await expect(gmail).toContainText('search_mailbox')
       await expect(gmail).toContainText('Gateway native HTTPS')
-      await expect(gmail.getByRole('button', { name: 'Continue to Google' })).toBeDisabled()
+      await expect(gmail.getByRole('button', { name: 'Continue to Google' })).toBeEnabled()
       await page.reload()
       await expect(gmail).toContainText('State: reviewing')
       await gmail.getByRole('button', { name: 'Cancel setup' }).click()
