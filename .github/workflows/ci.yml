@@ -20,6 +20,11 @@ jobs:
       - run: pnpm format:check
       - run: pnpm typecheck
       - run: pnpm test
+        # Serialize files on shared runners. Tests retain their concurrent operations,
+        # assertions and deadlines.
+        env:
+          VITEST_MAX_THREADS: 1
+          VITEST_MAX_FORKS: 1
       - run: pnpm build
       - run: pnpm --filter @veduta/e2e exec playwright install --with-deps chromium
       - run: pnpm --filter @veduta/e2e run test:e2e
