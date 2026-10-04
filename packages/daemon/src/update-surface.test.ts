@@ -160,6 +160,48 @@ describe('updateSurface', () => {
       tone: 'danger',
     })
   })
+
+  it.each(['rolled-back', 'refused'] as const)(
+    'keeps a long %s diagnostic visible within the Badge contract',
+    (status) => {
+      const surface = updateSurface(
+        {
+          currentVersion: '1.0.0',
+          status,
+          outcomeDetail: `stage-1 self-check failed: ${'candidate diagnostics\n'.repeat(50)}`,
+        },
+        FRESHNESS,
+      )
+      const badge = findNode(surface.tree, 'update-outcome-badge')
+      if (badge?.type !== 'Badge') throw new Error('Missing update outcome Badge')
+      const text = badge.props.text
+      expect(text).toContain('stage-1 self-check failed:')
+      expect(text.length).toBeLessThanOrEqual(240)
+      expect(text.endsWith('…')).toBe(true)
+      expect(badge.props.tone).toBe('danger')
+      expect(findNode(surface.tree, 'update-outcome-caption')).toBeUndefined()
+    },
+  )
+
+  it('keeps a long check failure visible without hiding the available update', () => {
+    const surface = updateSurface(
+      {
+        currentVersion: '1.0.0',
+        status: 'update-available',
+        available: { version: '1.1.0', notes: 'Bug fixes', migratesData: false },
+        checkError: `download refused: ${'https://updates.example/path/'.repeat(50)}`,
+      },
+      FRESHNESS,
+    )
+    const badge = findNode(surface.tree, 'update-check-error-badge')
+    if (badge?.type !== 'Badge') throw new Error('Missing update check failure Badge')
+    const text = badge.props.text
+    expect(text).toContain('Update check failed: download refused:')
+    expect(text.length).toBeLessThanOrEqual(240)
+    expect(text.endsWith('…')).toBe(true)
+    expect(badge.props.tone).toBe('danger')
+    expect(findNode(surface.tree, 'update-apply-button')).toBeDefined()
+  })
 })
 
 describe('updateSurfaceContentOrigin', () => {

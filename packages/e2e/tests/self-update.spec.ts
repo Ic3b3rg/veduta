@@ -837,8 +837,9 @@ interface SpaceEventEntry {
     failedStage?: string
     resultId?: string
     surfaceId?: string
-    stateKey?: string
-    value?: unknown
+    nodeId?: string
+    actionName?: string
+    targets?: string[]
   }
 }
 
@@ -847,8 +848,9 @@ function countCheckNowActions(events: readonly SpaceEventEntry[]): number {
     (event) =>
       event.type === 'fast_path' &&
       event.payload?.surfaceId === 'srf-update' &&
-      event.payload.stateKey === 'check.requested' &&
-      event.payload.value === true,
+      event.payload.nodeId === 'update-check-button' &&
+      event.payload.actionName === 'check' &&
+      event.payload.targets?.includes('check.requested') === true,
   ).length
 }
 

@@ -57,6 +57,7 @@ const CURRENT_STAT_NODE_ID = 'update-current-version'
 const AVAILABLE_SLOT_NODE_ID = 'update-available-slot'
 const OUTCOME_SLOT_NODE_ID = 'update-outcome-slot'
 const BUTTONS_ROW_NODE_ID = 'update-buttons'
+const BADGE_TEXT_MAX_CHARS = 240
 
 /**
  * The origin release-notes content carries once an offer is shown
@@ -142,7 +143,7 @@ export function outcomeSlotNode(view: UpdateSurfaceView): AtomNode {
       children.push({
         id: 'update-outcome-badge',
         type: 'Badge',
-        props: { text: view.outcomeDetail, tone },
+        props: { text: badgeText(view.outcomeDetail), tone },
       })
     }
   }
@@ -151,7 +152,7 @@ export function outcomeSlotNode(view: UpdateSurfaceView): AtomNode {
     children.push({
       id: 'update-check-error-badge',
       type: 'Badge',
-      props: { text: `Update check failed: ${view.checkError}`, tone: 'danger' },
+      props: { text: badgeText(`Update check failed: ${view.checkError}`), tone: 'danger' },
     })
   }
 
@@ -163,6 +164,13 @@ export function outcomeSlotNode(view: UpdateSurfaceView): AtomNode {
   })
 
   return { id: OUTCOME_SLOT_NODE_ID, type: 'Box', children }
+}
+
+/** Keeps the Badge projection within the protocol limit; result and Event diagnostics remain intact. */
+function badgeText(value: string): string {
+  return value.length <= BADGE_TEXT_MAX_CHARS
+    ? value
+    : `${value.slice(0, BADGE_TEXT_MAX_CHARS - 1)}…`
 }
 
 export function buttonsRowNode(view: UpdateSurfaceView): AtomNode {

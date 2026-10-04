@@ -8,6 +8,7 @@ import {
   AUTOMATION_OUTCOMES_STATE_KEY,
   SurfaceSchema,
   UpdateMarkerSchema,
+  UpdateResultSchema,
   type AtomNode,
   type ReleaseMetadata,
   type UpdatePinning,
@@ -839,6 +840,56 @@ describe('UpdateManager.applyUpdate', () => {
 })
 
 describe('UpdateManager boot-time result ingestion', () => {
+  it('acknowledges a long rollback diagnostic after persisting a valid failure Surface', async () => {
+    const home = resolveUpdateHome(updateHomeDir)
+    mkdirSync(home.stateDir, { recursive: true })
+    const reason = `stage-1 self-check failed: ${'candidate stderr diagnostics\n'.repeat(50)}`
+    const result: UpdateResult = {
+      id: 'result-long-rollback',
+      outcome: 'rolled-back',
+      fromVersion: '1.0.0',
+      toVersion: '1.1.0',
+      reason,
+      finishedAt: now().toISOString(),
+      failedStage: 'health',
+    }
+    const resultPath = join(home.stateDir, 'result.json')
+    writeFileSync(resultPath, JSON.stringify(result))
+
+    manager.dispose()
+    const booted = buildManager()
+    try {
+      booted.register()
+      booted.start()
+      await vi.waitFor(() => {
+        expect(existsSync(join(home.stateDir, `result-acked-${result.id}`))).toBe(true)
+      })
+
+      const surface = SurfaceSchema.parse(store.getSurface(UPDATE_SURFACE_ID))
+      const badge = findNode(surface.tree, 'update-outcome-badge')
+      if (badge?.type !== 'Badge') throw new Error('Missing update outcome Badge')
+      expect(badge.props.tone).toBe('danger')
+      expect(badge.props.text).toContain('stage-1 self-check failed:')
+      expect(findNode(surface.tree, 'update-outcome-caption')).toBeUndefined()
+      const events = store
+        .eventLog(SYSTEM_SPACE_ID)
+        .filter((event) => event.type === 'update.outcome')
+      expect(events).toHaveLength(1)
+      expect(events[0]?.payload?.['reason']).toBe(reason)
+      expect(events[0]?.origin).toBe(untrustedOrigin('update-feed'))
+      expect(store.surfaceProvenance(UPDATE_SURFACE_ID)?.contentOrigin).toBe(
+        untrustedOrigin('update-feed'),
+      )
+      expect(booted.getUpdateDecision('1.1.0')?.outcomeDetail).toBe(reason)
+      expect(UpdateResultSchema.parse(JSON.parse(readFileSync(resultPath, 'utf8'))).reason).toBe(
+        reason,
+      )
+      expect(notifications.filter((notification) => notification.level === 'badge')).toHaveLength(1)
+    } finally {
+      booted.dispose()
+    }
+  })
+
   it('ingests a pre-existing result.json durably and idempotently on repeat boots', () => {
     const home = resolveUpdateHome(updateHomeDir)
     mkdirSync(home.stateDir, { recursive: true })
