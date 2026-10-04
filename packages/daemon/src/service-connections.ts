@@ -117,6 +117,7 @@ export class ServiceConnections {
     requestSummary: string
     review: ConnectionReview
     connectionId?: string
+    renewAuthorization?: true
   }): ConnectionAttempt {
     const review = ConnectionReviewSchema.parse(input.review)
     const existing = this.attempts.find((attempt) => attempt.submissionId === input.submissionId)
@@ -125,6 +126,7 @@ export class ServiceConnections {
         existing.origin !== (input.origin ?? 'chat') ||
         existing.turnId !== input.turnId ||
         existing.spaceId !== input.spaceId ||
+        existing.renewAuthorization !== input.renewAuthorization ||
         existing.requestSummary !== input.requestSummary ||
         JSON.stringify(existing.review) !== JSON.stringify(review)
       )
@@ -141,6 +143,7 @@ export class ServiceConnections {
       turnId: input.turnId,
       spaceId: input.spaceId,
       ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+      ...(input.renewAuthorization ? { renewAuthorization: true } : {}),
       requestSummary: input.requestSummary.trim().slice(0, 700),
       review,
       state: 'reviewing',
@@ -188,6 +191,7 @@ export class ServiceConnections {
     delete attempt.verifiedAccount
     delete attempt.verifiedScopes
     if (
+      !attempt.renewAuthorization &&
       !this.connections.some(
         (connection) => connection.id === attempt.connectionId && connection.state !== 'removed',
       )

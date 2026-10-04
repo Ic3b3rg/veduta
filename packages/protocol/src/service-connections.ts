@@ -67,6 +67,7 @@ export const ConnectionAttemptSchema = z
     reason: z.string().max(400).optional(),
     nextAction: z.string().max(200).optional(),
     connectionId: z.string().min(1).optional(),
+    renewAuthorization: z.literal(true).optional(),
     verifiedAccount: z.string().max(240).optional(),
     verifiedScopes: z.array(z.string()).optional(),
     continuation: z.enum(['unclaimed', 'claimed', 'completed']).default('unclaimed'),
@@ -94,6 +95,7 @@ export const CreateServiceConnectionAttemptRequestSchema = z
       .strict()
       .optional(),
     connectionId: z.string().min(1).optional(),
+    renewAuthorization: z.literal(true).optional(),
   })
   .strict()
   .superRefine((input, context) => {
@@ -101,6 +103,8 @@ export const CreateServiceConnectionAttemptRequestSchema = z
       context.addIssue({ code: 'custom', message: 'GitHub requires an exact repository' })
     if (input.service === 'gmail' && input.repository)
       context.addIssue({ code: 'custom', message: 'Gmail does not use a repository' })
+    if (input.renewAuthorization && !input.connectionId)
+      context.addIssue({ code: 'custom', message: 'Renewal requires an existing connection' })
   })
 export type CreateServiceConnectionAttemptRequest = z.infer<
   typeof CreateServiceConnectionAttemptRequestSchema

@@ -24,6 +24,87 @@ const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token'
 const PROFILE_ENDPOINT = 'https://gmail.googleapis.com/gmail/v1/users/me/profile'
 const LEGACY_ID = 'svc-gmail-legacy'
 const AUTHORIZATION_LIFETIME_MS = 10 * 60 * 1000
+const AUTHORIZATION_VERIFICATION_TIMEOUT_MS = 10_000
+const MAX_OAUTH_ERROR_BYTES = 4096
+const OAuthErrorSchema = z.object({ error: z.string() })
+const OAuthFailureMessages = new Map<string, string>([
+  [
+    'invalid_client',
+    'Google rejected the OAuth client (invalid_client). In Google OAuth setup, update the Client ID and full Client secret from the same Google Cloud Web application client, then try again.',
+  ],
+  [
+    'invalid_grant',
+    'Google rejected the authorization code (invalid_grant). Return to review and start a new authorization with Google.',
+  ],
+  [
+    'redirect_uri_mismatch',
+    'Google rejected the redirect URI (redirect_uri_mismatch). Add the exact redirect URI shown in Google OAuth setup to your Google Cloud client, then try again.',
+  ],
+  [
+    'deleted_client',
+    'The Google OAuth client was deleted (deleted_client). Restore or create a Web application client in Google Cloud, update Google OAuth setup, then try again.',
+  ],
+  [
+    'unauthorized_client',
+    'Google rejected this client type (unauthorized_client). Use a Web application client in Google OAuth setup, then try again.',
+  ],
+  [
+    'invalid_request',
+    'Google rejected the OAuth request (invalid_request). Review Google OAuth setup and start a new authorization. If it still fails, report this error code.',
+  ],
+])
+
+const BoundClientFailureMessages = new Map<string, string>([
+  [
+    'invalid_client',
+    'Google rejected the OAuth client (invalid_client). Check the Client ID and full Client secret for its original Web application client. If credentials changed, remove this account, update Google OAuth setup, and add it again.',
+  ],
+  [
+    'deleted_client',
+    "Google rejected this connection's original client (deleted_client). Restore it in Google Cloud, or remove this account, update Google OAuth setup, and add it again.",
+  ],
+  [
+    'unauthorized_client',
+    "Google rejected this connection's original client type (unauthorized_client). Check its Web application configuration in Google Cloud, or remove this account, update Google OAuth setup, and add it again.",
+  ],
+])
+
+async function authorizationFailure(
+  response: Response,
+  signal: AbortSignal,
+  usesInstallationClient: boolean,
+): Promise<string> {
+  const fallback = 'Gmail authorization was rejected'
+  const reader = response.body?.getReader()
+  if (!reader) return fallback
+  const cancel = () => void reader.cancel().catch(() => {})
+  signal.addEventListener('abort', cancel, { once: true })
+  if (signal.aborted) cancel()
+  const chunks: Uint8Array[] = []
+  let bytes = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      bytes += value.byteLength
+      if (bytes > MAX_OAUTH_ERROR_BYTES) return fallback
+      chunks.push(value)
+    }
+    // Provider descriptions may echo credentials; only known codes select product-owned text.
+    const parsed = OAuthErrorSchema.safeParse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+    if (!parsed.success) return fallback
+    return (
+      (!usesInstallationClient ? BoundClientFailureMessages.get(parsed.data.error) : undefined) ??
+      OAuthFailureMessages.get(parsed.data.error) ??
+      fallback
+    )
+  } catch {
+    return fallback
+  } finally {
+    signal.removeEventListener('abort', cancel)
+    cancel()
+  }
+}
 
 const SecretRefSchema = z.string().regex(/^secret:\/\/(vault|env)\/[a-zA-Z0-9_-]+$/)
 const OAuthClientSchema = z
@@ -301,9 +382,12 @@ export class GmailConnections {
     record.updatedAt = this.now().toISOString()
     this.persist()
     defaultRedactor.register(code)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), AUTHORIZATION_VERIFICATION_TIMEOUT_MS)
     try {
       const response = await this.fetchFn(TOKEN_ENDPOINT, {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           grant_type: 'authorization_code',
@@ -314,7 +398,15 @@ export class GmailConnections {
           code_verifier: verifier,
         }).toString(),
       })
-      if (!response.ok) throw new GmailConnectionError(502, 'Gmail authorization was rejected')
+      if (!response.ok)
+        throw new GmailConnectionError(
+          502,
+          await authorizationFailure(
+            response,
+            controller.signal,
+            Boolean(record.usesSharedClient && !record.accountEmail && !record.refreshTokenRef),
+          ),
+        )
       const tokens = TokenResponseSchema.parse(await response.json())
       defaultRedactor.register(tokens.access_token)
       defaultRedactor.register(tokens.refresh_token)
@@ -322,11 +414,13 @@ export class GmailConnections {
         throw new GmailConnectionError(409, 'Gmail did not grant the requested read-only scope')
       }
       const profileResponse = await this.fetchFn(PROFILE_ENDPOINT, {
+        signal: controller.signal,
         headers: { authorization: `Bearer ${tokens.access_token}` },
       })
       if (!profileResponse.ok)
         throw new GmailConnectionError(502, 'Gmail account verification failed')
       const profile = ProfileSchema.parse(await profileResponse.json())
+      controller.signal.throwIfAborted()
       if (
         record.accountEmail &&
         record.accountEmail.toLowerCase() !== profile.emailAddress.toLowerCase()
@@ -356,17 +450,23 @@ export class GmailConnections {
       this.persist()
       return this.snapshot()
     } catch (error) {
+      const failure = controller.signal.aborted
+        ? new GmailConnectionError(
+            502,
+            'Gmail authorization timed out. Return to review and try again.',
+          )
+        : error instanceof GmailConnectionError
+          ? error
+          : new GmailConnectionError(502, 'Gmail authorization failed')
       if (this.records.includes(record)) {
         record.state = 'failed'
-        record.reason =
-          error instanceof GmailConnectionError ? error.message : 'Gmail authorization failed'
+        record.reason = failure.message
         record.updatedAt = this.now().toISOString()
         this.persist()
       }
-      throw error instanceof GmailConnectionError
-        ? error
-        : new GmailConnectionError(502, 'Gmail authorization failed')
+      throw failure
     } finally {
+      clearTimeout(timeout)
       this.options.vault?.delete(authorization.verifierRef.slice('secret://vault/'.length))
     }
   }

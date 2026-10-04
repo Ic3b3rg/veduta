@@ -89,6 +89,107 @@ function setup(mobile = false, googleConfigured = false) {
 }
 
 describe('ConnectionsPage', () => {
+  it.each(['failed', 'ready'] as const)(
+    'renews a saved %s Gmail account through the shared authorization review',
+    async (state) => {
+      setup()
+      const connectionId = 'svc-gmail-saved-proof'
+      const requests: { path: string; body: unknown }[] = []
+      let snapshot = ServiceConnectionsSnapshotSchema.parse({
+        attempts: [],
+        connections: [],
+        grants: [],
+      })
+      vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+        const path = String(url)
+        if (init?.method === 'POST') {
+          const body = JSON.parse(String(init.body)) as Record<string, unknown>
+          requests.push({ path, body })
+          if (path === '/api/service-connections/attempts') {
+            snapshot = ServiceConnectionsSnapshotSchema.parse({
+              ...snapshot,
+              attempts: [
+                {
+                  id: attemptId,
+                  submissionId: body['submissionId'],
+                  origin: 'management',
+                  requestSummary: 'Connect Gmail',
+                  connectionId,
+                  renewAuthorization: body['renewAuthorization'],
+                  review: {
+                    service: 'gmail',
+                    scopes: ['https://www.googleapis.com/auth/gmail.readonly'],
+                    actions: ['search_mailbox'],
+                    executionHost: 'Gateway native HTTPS',
+                  },
+                  state: 'reviewing',
+                  createdAt: at,
+                  updatedAt: at,
+                },
+              ],
+            })
+            return response(snapshot)
+          }
+          return response({ error: 'Google authorization could not start' }, 502)
+        }
+        if (path === '/api/service-connections') return response(snapshot)
+        if (path === '/api/gmail-connections')
+          return response({
+            oauthClient: { configured: true },
+            connections: [
+              {
+                id: connectionId,
+                name: 'Saved Gmail',
+                state,
+                accountEmail: 'saved@gmail.test',
+                scopes: ['https://www.googleapis.com/auth/gmail.readonly'],
+                createdAt: at,
+                updatedAt: at,
+              },
+            ],
+          })
+        return response({ connections: [] })
+      })
+      render(
+        <MemoryRouter initialEntries={['/app/connections']}>
+          <ConnectionsPage spaces={[]} />
+        </MemoryRouter>,
+      )
+      fireEvent.click(
+        await screen.findByRole('button', { name: new RegExp(`Saved Gmail.*${state}`) }),
+      )
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: state === 'ready' ? 'Reconnect' : 'Authorize with Google',
+        }),
+      )
+      const detail = await screen.findByRole('complementary', { name: 'Gmail setup details' })
+      expect(within(detail).getByRole('status').textContent).toContain('State: reviewing')
+      expect(requests).toHaveLength(1)
+      expect(requests[0]).toMatchObject({
+        path: '/api/service-connections/attempts',
+        body: { service: 'gmail', connectionId, renewAuthorization: true },
+      })
+      await waitFor(() =>
+        expect(within(detail).getByRole('button', { name: 'Continue to Google' })).toHaveProperty(
+          'disabled',
+          false,
+        ),
+      )
+      fireEvent.click(within(detail).getByRole('button', { name: 'Continue to Google' }))
+      await within(detail).findByRole('alert')
+      expect(requests[1]).toMatchObject({
+        path: `/api/service-connections/attempts/${attemptId}/gmail/authorize`,
+        body: { gmailConnectionId: connectionId, redirectOrigin: window.location.origin },
+      })
+      expect(
+        requests.some(
+          (request) => request.path === `/api/gmail-connections/${connectionId}/authorize`,
+        ),
+      ).toBe(false)
+    },
+  )
+
   it('uses a compact dedicated layout and reviews an account before authorization, with honest errors', async () => {
     const requests = setup()
     render(

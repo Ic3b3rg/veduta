@@ -117,6 +117,155 @@ describe('passive Gmail connections', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    ['invalid_client', /invalid_client.*Client ID.*full Client secret/],
+    ['invalid_grant', /invalid_grant.*new authorization/],
+    ['redirect_uri_mismatch', /redirect_uri_mismatch.*exact redirect URI/],
+    ['deleted_client', /deleted_client.*Restore.*Google OAuth setup/],
+    ['unauthorized_client', /unauthorized_client.*Web application/],
+    ['invalid_request', /invalid_request.*Google OAuth setup/],
+  ])(
+    'preserves a safe recovery reason for Google %s without provider text',
+    async (error, reason) => {
+      const fetchFn = vi.fn<typeof fetch>(async () =>
+        json(
+          { error, error_description: 'PROVIDER-ECHO-private-value-code', extra: 'SECRET' },
+          400,
+        ),
+      )
+      const { rootDir, vault, connections } = fixture(fetchFn)
+      const id = connections.create({
+        name: 'Personal',
+        clientId: 'id',
+        clientSecret: 'private-value',
+      }).connections[0]!.id
+      const { authorizationUrl } = connections.beginAuthorization(id, 'https://veduta.test')
+      const state = new URL(authorizationUrl).searchParams.get('state')!
+      await expect(connections.completeAuthorization(id, 'code', state)).rejects.toThrow(reason)
+      const restored = new GmailConnections({
+        rootDir,
+        vault,
+        secrets: vault,
+        allowedRedirectOrigins: ['https://veduta.test'],
+        fetchFn,
+      })
+      expect(restored.snapshot().connections[0]).toMatchObject({
+        state: 'failed',
+        reason: expect.stringMatching(reason),
+      })
+      expect(vault.resolve(`secret://vault/gmail-refresh-token-${id}`)).toBeUndefined()
+      expect(vault.resolve(`secret://vault/gmail-oauth-verifier-${id}`)).toBeUndefined()
+      const files = readdirSync(rootDir)
+        .filter((name) => name.startsWith('gmail-connections.json'))
+        .map((name) => readFileSync(join(rootDir, name), 'utf8'))
+        .join('\n')
+      expect(files).not.toContain('PROVIDER-ECHO')
+      expect(files).not.toContain('private-value')
+      expect(files).not.toContain('SECRET')
+      expect(fetchFn.mock.calls.map(([url]) => String(url))).toEqual([
+        'https://oauth2.googleapis.com/token',
+      ])
+    },
+  )
+
+  it.each([
+    ['unknown', JSON.stringify({ error: 'PROVIDER-SECRET', error_description: 'PROVIDER-ECHO' })],
+    ['malformed', 'PROVIDER-ECHO-not-json'],
+    ['missing code', JSON.stringify({ error_description: 'PROVIDER-ECHO' })],
+    [
+      'oversized',
+      JSON.stringify({ error: 'invalid_client', error_description: 'PROVIDER-ECHO'.repeat(1024) }),
+    ],
+  ])('uses a safe fallback for an %s Google failure response', async (_kind, body) => {
+    const { connections } = fixture(async () => new Response(body, { status: 400 }))
+    const id = connections.create({
+      name: 'Personal',
+      clientId: 'id',
+      clientSecret: 'private-value',
+    }).connections[0]!.id
+    const { authorizationUrl } = connections.beginAuthorization(id, 'https://veduta.test')
+    const state = new URL(authorizationUrl).searchParams.get('state')!
+    await expect(connections.completeAuthorization(id, 'code', state)).rejects.toThrow(
+      'Gmail authorization was rejected',
+    )
+    expect(connections.snapshot().connections[0]?.reason).toBe('Gmail authorization was rejected')
+    expect(JSON.stringify(connections.snapshot())).not.toContain('PROVIDER-')
+  })
+
+  it('fails a stalled Google error body within the authorization deadline', async () => {
+    vi.useFakeTimers()
+    let stream!: ReadableStreamDefaultController<Uint8Array>
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        stream = controller
+        controller.enqueue(new TextEncoder().encode('{"error":"invalid_client",'))
+      },
+    })
+    const { vault, connections } = fixture(async () => new Response(body, { status: 400 }))
+    const id = connections.create({
+      name: 'Personal',
+      clientId: 'id',
+      clientSecret: 'private-value',
+    }).connections[0]!.id
+    const { authorizationUrl } = connections.beginAuthorization(id, 'https://veduta.test')
+    const state = new URL(authorizationUrl).searchParams.get('state')!
+    const completion = connections.completeAuthorization(id, 'code', state).catch(() => {})
+    try {
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(connections.snapshot().connections[0]).toMatchObject({
+        state: 'failed',
+        reason: expect.stringMatching(/timed out.*review/),
+      })
+      expect(vault.resolve(`secret://vault/gmail-oauth-verifier-${id}`)).toBeUndefined()
+    } finally {
+      try {
+        stream.close()
+      } catch {
+        // Cancellation already closed the response stream.
+      }
+      await completion
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['invalid_client', 'deleted_client', 'unauthorized_client'])(
+    'explains original-client recovery for a connected account rejected with %s',
+    async (error) => {
+      let rejected = false
+      const clients: (string | null)[] = []
+      const { connections } = fixture(async (input, init) => {
+        if (String(input).endsWith('/token')) {
+          clients.push(new URLSearchParams(String(init?.body)).get('client_id'))
+          return rejected
+            ? json({ error }, 400)
+            : json({ access_token: 'access', refresh_token: 'refresh', scope: GMAIL_READ_SCOPE })
+        }
+        return json({ emailAddress: 'first@gmail.test' })
+      })
+      connections.configureOAuthClient({ clientId: 'original', clientSecret: 'original-secret' })
+      const id = connections.create({ name: 'Personal' }).connections[0]!.id
+      const initial = new URL(
+        connections.beginAuthorization(id, 'https://veduta.test').authorizationUrl,
+      )
+      await connections.completeAuthorization(id, 'first-code', initial.searchParams.get('state')!)
+      connections.configureOAuthClient({ clientId: 'replacement', clientSecret: 'new-secret' })
+      const reconnect = new URL(
+        connections.beginAuthorization(id, 'https://veduta.test').authorizationUrl,
+      )
+      rejected = true
+      await expect(
+        connections.completeAuthorization(id, 'new-code', reconnect.searchParams.get('state')!),
+      ).rejects.toThrow(/original.*remove.*add it again/)
+      expect(clients).toEqual(['original', 'original'])
+      expect(connections.snapshot().connections[0]).toMatchObject({
+        id,
+        accountEmail: 'first@gmail.test',
+        state: 'failed',
+        reason: expect.stringMatching(/original.*remove.*add it again/),
+      })
+    },
+  )
+
   it('adopts legacy credentials without touching Google until explicit verification', async () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'veduta-gmail-legacy-'))
     roots.push(rootDir)

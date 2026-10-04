@@ -5,6 +5,7 @@ import {
   ChatTimelinePageSchema,
   GMAIL_READ_SCOPE,
   GatewayServerMessageSchema,
+  GmailConnectionsSnapshotSchema,
   ServiceConnectionsSnapshotSchema,
   SurfaceSchema,
   type GatewayServerMessage,
@@ -48,6 +49,224 @@ function allFiles(root: string): string {
 }
 
 describe('Chat to shared Gmail Service connection', () => {
+  it('preserves reconnect intent across restart and renews OAuth instead of testing the old token', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'veduta-service-gmail-reconnect-'))
+    roots.push(root)
+    process.env['VEDUTA_VAULT_KEY'] = 'isolated-gmail-reconnect-test-key'
+    const requests: string[] = []
+    const gmailFetch: typeof fetch = async (input) => {
+      requests.push(String(input))
+      return String(input).endsWith('/token')
+        ? json({ access_token: 'access', refresh_token: 'refresh', scope: GMAIL_READ_SCOPE })
+        : json({ emailAddress: 'saved@gmail.test' })
+    }
+    const first = buildServer({ dataDir: root, gmailFetch })
+    let attemptId!: string
+    let gmailId!: string
+    const submissionId = '9709c37f-bb41-4cf7-9587-736351779b63'
+    try {
+      await first.app.inject({
+        method: 'POST',
+        url: '/api/gmail-connections/oauth-client',
+        payload: { clientId: 'original-client', clientSecret: 'original-secret' },
+      })
+      const created = await first.app.inject({
+        method: 'POST',
+        url: '/api/gmail-connections',
+        payload: { name: 'Saved Gmail' },
+      })
+      gmailId = GmailConnectionsSnapshotSchema.parse(created.json()).connections[0]!.id
+      const initialBegin = await first.app.inject({
+        method: 'POST',
+        url: `/api/gmail-connections/${gmailId}/authorize`,
+        payload: { redirectOrigin: 'http://localhost:5173' },
+      })
+      const initial = new URL(initialBegin.json().authorizationUrl)
+      const completed = await first.app.inject({
+        method: 'POST',
+        url: `/api/gmail-connections/${gmailId}/complete`,
+        payload: { code: 'first-code', state: initial.searchParams.get('state')! },
+      })
+      expect(completed.statusCode).toBe(200)
+      requests.length = 0
+      const reviewed = await first.app.inject({
+        method: 'POST',
+        url: '/api/service-connections/attempts',
+        payload: {
+          submissionId,
+          service: 'gmail',
+          connectionId: gmailId,
+          renewAuthorization: true,
+        },
+      })
+      expect(reviewed.statusCode).toBe(200)
+      const attempt = ServiceConnectionsSnapshotSchema.parse(reviewed.json()).attempts[0]!
+      attemptId = attempt.id
+      expect(attempt).toMatchObject({
+        connectionId: gmailId,
+        renewAuthorization: true,
+        state: 'reviewing',
+      })
+    } finally {
+      await first.app.close()
+    }
+    const restarted = buildServer({ dataDir: root, gmailFetch })
+    try {
+      const reuseIdentity = await restarted.app.inject({
+        method: 'POST',
+        url: '/api/service-connections/attempts',
+        payload: {
+          submissionId,
+          service: 'gmail',
+          connectionId: gmailId,
+          renewAuthorization: true,
+        },
+      })
+      expect(reuseIdentity.statusCode).toBe(200)
+      expect(ServiceConnectionsSnapshotSchema.parse(reuseIdentity.json()).attempts[0]?.id).toBe(
+        attemptId,
+      )
+      const changedIntent = await restarted.app.inject({
+        method: 'POST',
+        url: '/api/service-connections/attempts',
+        payload: { submissionId, service: 'gmail', connectionId: gmailId },
+      })
+      expect(changedIntent.statusCode).toBe(409)
+      const bypass = await restarted.app.inject({
+        method: 'POST',
+        url: `/api/service-connections/attempts/${attemptId}/use-connection`,
+      })
+      expect(bypass.statusCode).toBe(409)
+      const begin = await restarted.app.inject({
+        method: 'POST',
+        url: `/api/service-connections/attempts/${attemptId}/gmail/authorize`,
+        payload: { gmailConnectionId: gmailId, redirectOrigin: 'http://localhost:5173' },
+      })
+      expect(begin.statusCode).toBe(200)
+      const authorization = new URL(begin.json().authorizationUrl)
+      expect(authorization.searchParams.get('redirect_uri')).toBe(
+        'http://localhost:5173/app/connections',
+      )
+      expect(authorization.searchParams.get('client_id')).toBe('original-client')
+      const gmail = GmailConnectionsSnapshotSchema.parse(
+        (await restarted.app.inject({ method: 'GET', url: '/api/gmail-connections' })).json(),
+      )
+      expect(gmail.connections[0]?.id).toBe(gmailId)
+      expect(restarted.serviceConnections.attempt(attemptId)?.state).toBe('authorizing')
+      expect(restarted.serviceConnections.snapshot().grants).toEqual([])
+      expect(requests).toEqual([])
+      const denied = await restarted.app.inject({
+        method: 'POST',
+        url: '/api/service-connections/gmail/callback',
+        payload: { state: authorization.searchParams.get('state')!, error: 'access_denied' },
+      })
+      expect(denied.statusCode).toBe(200)
+      const retried = await restarted.app.inject({
+        method: 'POST',
+        url: `/api/service-connections/attempts/${attemptId}/retry`,
+      })
+      expect(retried.statusCode).toBe(200)
+      expect(ServiceConnectionsSnapshotSchema.parse(retried.json()).attempts[0]).toMatchObject({
+        connectionId: gmailId,
+        renewAuthorization: true,
+        state: 'reviewing',
+      })
+      const next = await restarted.app.inject({
+        method: 'POST',
+        url: `/api/service-connections/attempts/${attemptId}/gmail/authorize`,
+        payload: { gmailConnectionId: gmailId, redirectOrigin: 'http://localhost:5173' },
+      })
+      expect(next.statusCode).toBe(200)
+      expect(new URL(next.json().authorizationUrl).searchParams.get('state')?.split('.')[0]).toBe(
+        gmailId,
+      )
+      expect(requests).toEqual([])
+    } finally {
+      await restarted.app.close()
+    }
+  })
+
+  it('keeps the safe Google failure across devices and restart without granting or reading mail', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'veduta-service-gmail-failure-'))
+    roots.push(root)
+    process.env['VEDUTA_VAULT_KEY'] = 'isolated-gmail-failure-test-key'
+    const gmailFetch = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({ error: 'invalid_client', error_description: 'PROVIDER-ECHO-SECRET' }),
+          { status: 400 },
+        ),
+    )
+    const first = buildServer({ dataDir: root, gmailFetch })
+    let attemptId!: string
+    try {
+      await first.app.ready()
+      const work = first.store.spacesEngine.createSpace({ name: 'Work' })
+      const socket = new Socket()
+      first.gateway.connect(socket)
+      socket.receive({ type: 'hello', surfaceCursor: first.store.latestSurfaceCursor() })
+      socket.receive({
+        type: 'chat.send',
+        text: 'Find unread emails receipts from this week using one@gmail.test',
+        spaceId: work.id,
+        submissionId: '6af37df4-dcc5-40e1-b66c-2e3c97e33f06',
+      })
+      await vi.waitFor(() => expect(first.serviceConnections.snapshot().attempts).toHaveLength(1))
+      attemptId = first.serviceConnections.snapshot().attempts[0]!.id
+      const begin = await first.app.inject({
+        method: 'POST',
+        url: `/api/service-connections/attempts/${attemptId}/gmail/authorize`,
+        payload: {
+          redirectOrigin: 'http://localhost:5173',
+          name: 'Personal',
+          clientId: 'fixture-client',
+          clientSecret: 'fixture-secret',
+        },
+      })
+      expect(begin.statusCode).toBe(200)
+      const state = new URL(begin.json().authorizationUrl).searchParams.get('state')!
+      const failed = await first.app.inject({
+        method: 'POST',
+        url: '/api/service-connections/gmail/callback',
+        payload: { state, code: 'fixture-code' },
+      })
+      expect(failed.statusCode).toBe(502)
+      expect(failed.json().error).toMatch(/invalid_client.*full Client secret/)
+      const observed = ServiceConnectionsSnapshotSchema.parse(
+        (await first.app.inject({ method: 'GET', url: '/api/service-connections' })).json(),
+      )
+      expect(observed.attempts[0]).toMatchObject({
+        state: 'failed',
+        reason: failed.json().error,
+      })
+      expect(observed.grants).toEqual([])
+      expect(observed.connections).toEqual([])
+      expect(first.store.listSurfaces(work.id).some((surface) => surface.title === 'Mailbox')).toBe(
+        false,
+      )
+      expect(gmailFetch.mock.calls.map(([url]) => String(url))).toEqual([
+        'https://oauth2.googleapis.com/token',
+      ])
+      expect(allFiles(root)).not.toContain('PROVIDER-ECHO')
+      expect(allFiles(root)).not.toContain('fixture-secret')
+    } finally {
+      await first.app.close()
+    }
+    const restarted = buildServer({ dataDir: root, gmailFetch })
+    try {
+      const restored = ServiceConnectionsSnapshotSchema.parse(
+        (await restarted.app.inject({ method: 'GET', url: '/api/service-connections' })).json(),
+      )
+      expect(restored.attempts.find((attempt) => attempt.id === attemptId)).toMatchObject({
+        state: 'failed',
+        reason: expect.stringMatching(/invalid_client.*full Client secret/),
+      })
+      expect(restored.grants).toEqual([])
+    } finally {
+      await restarted.app.close()
+    }
+  })
+
   it('verifies identity without reading mail, grants one Space, resumes once, and survives restart', async () => {
     const root = mkdtempSync(join(tmpdir(), 'veduta-service-gmail-'))
     roots.push(root)

@@ -36,7 +36,8 @@ export function ConnectionAuthorizationForm({
   const [editingClient, setEditingClient] = useState(false)
   const configured = controller.gmail?.oauthClient?.configured === true
   const needsClient = !configured || editingClient
-  const reusable = attempt.origin === 'management' && existing?.state === 'ready'
+  const reusable =
+    attempt.origin === 'management' && existing?.state === 'ready' && !attempt.renewAuthorization
   const valid =
     reusable ||
     (attempt.review.service === 'github'

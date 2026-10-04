@@ -142,7 +142,9 @@ export function ConnectionAttemptDetail({
         )}
         {attempt.state === 'reviewing' && (
           <Button type="submit" form={`authorize-${attempt.id}`} disabled={!canAuthorize || busy}>
-            {existing?.state === 'ready' && attempt.origin === 'management'
+            {existing?.state === 'ready' &&
+            attempt.origin === 'management' &&
+            !attempt.renewAuthorization
               ? 'Use verified account'
               : attempt.review.service === 'gmail'
                 ? 'Continue to Google'

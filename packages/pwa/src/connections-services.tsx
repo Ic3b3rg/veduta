@@ -287,6 +287,14 @@ export function ConnectionsServices({
                 onReview={() => {
                   if (gmailAccount) review({ service: 'gmail', connectionId: gmailAccount.id })
                 }}
+                onAuthorize={() => {
+                  if (gmailAccount)
+                    review({
+                      service: 'gmail',
+                      connectionId: gmailAccount.id,
+                      renewAuthorization: true,
+                    })
+                }}
                 onRemoved={() => setSelection(null)}
               />
             )}

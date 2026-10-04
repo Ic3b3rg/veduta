@@ -119,6 +119,7 @@ export function registerServiceConnectionRoutes(
           : `Connect ${input.service === 'github' ? 'GitHub' : 'Gmail'}`,
         review,
         ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+        ...(input.renewAuthorization ? { renewAuthorization: true } : {}),
       })
       return snapshot()
     })
@@ -131,7 +132,12 @@ export function registerServiceConnectionRoutes(
     return guarded(reply, () => {
       const attempt = options.connections.attempt(id)
       const connection = snapshot().connections.find((item) => item.id === attempt?.connectionId)
-      if (!attempt || attempt.origin !== 'management' || connection?.state !== 'ready')
+      if (
+        !attempt ||
+        attempt.origin !== 'management' ||
+        attempt.renewAuthorization ||
+        connection?.state !== 'ready'
+      )
         throw new ServiceConnectionError(409, 'A verified connection is required')
       options.connections.beginAuthorization(id)
       options.connections.beginVerification(id)
@@ -217,7 +223,7 @@ export function registerServiceConnectionRoutes(
           .snapshot()
           .connections.find((connection) => connection.id === gmailConnectionId)
         if (!existing) throw new ServiceConnectionError(404, 'Gmail connection not found')
-        if (existing.state === 'ready' && existing.accountEmail) {
+        if (existing.state === 'ready' && existing.accountEmail && !attempt.renewAuthorization) {
           options.connections.beginVerification(id)
           const verified = await options.gmail.verifyAccount(gmailConnectionId)
           options.connections.verified(id, {
@@ -292,7 +298,13 @@ export function registerServiceConnectionRoutes(
         })
       } catch (error) {
         if (options.connections.attempt(attempt.id)?.state === 'verifying')
-          options.connections.fail(attempt.id, 'failed', 'Gmail verification failed; reconnect.')
+          options.connections.fail(
+            attempt.id,
+            'failed',
+            error instanceof GmailConnectionError
+              ? error.message
+              : 'Gmail verification failed; reconnect.',
+          )
         options.coordinator.resumeConnection(attempt.id)
         throw error
       }

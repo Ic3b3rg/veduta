@@ -5,7 +5,6 @@ import { ConnectionDetailBody, ConnectionDetailFooter } from './connections-layo
 import { GmailConnectionCard } from './settings-gmail-connections.tsx'
 import { HimalayaConnectionCard } from './settings-himalaya-connections.tsx'
 import {
-  beginGmailAuthorization,
   removeGmailConnection,
   renameGmailConnection,
   verifyLegacyGmailConnection,
@@ -24,6 +23,7 @@ export function ConnectionMailboxDetail({
   controller,
   token,
   onReview,
+  onAuthorize,
   onRemoved,
 }: {
   gmail?: GmailConnection
@@ -31,6 +31,7 @@ export function ConnectionMailboxDetail({
   controller: ConnectionsController
   token?: string
   onReview: () => void
+  onAuthorize: () => void
   onRemoved: () => void
 }) {
   return (
@@ -46,12 +47,7 @@ export function ConnectionMailboxDetail({
             <GmailConnectionCard
               connection={gmail}
               busy={controller.busy}
-              onAuthorize={(id) =>
-                void controller.run(async () => {
-                  const url = await beginGmailAuthorization(id, token)
-                  window.location.assign(url)
-                })
-              }
+              onAuthorize={onAuthorize}
               onVerifyLegacy={(id) =>
                 void controller.run(() => verifyLegacyGmailConnection(id, token))
               }
