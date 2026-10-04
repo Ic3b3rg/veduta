@@ -1,4 +1,8 @@
-import { ServiceConnectionsSnapshotSchema, type ServiceConnectionsSnapshot } from '@veduta/protocol'
+import {
+  ServiceConnectionsSnapshotSchema,
+  type ServiceConnectionsSnapshot,
+  type CreateServiceConnectionAttemptRequest,
+} from '@veduta/protocol'
 import { deleteJson, getJson, postJson } from './api-http.ts'
 
 const base = '/api/service-connections'
@@ -6,6 +10,13 @@ const attemptPath = (id: string) => `${base}/attempts/${encodeURIComponent(id)}`
 
 export async function fetchServiceConnections(token?: string): Promise<ServiceConnectionsSnapshot> {
   return ServiceConnectionsSnapshotSchema.parse(await getJson(base, token))
+}
+
+export async function createServiceConnectionAttempt(
+  input: CreateServiceConnectionAttemptRequest,
+  token?: string,
+): Promise<ServiceConnectionsSnapshot> {
+  return ServiceConnectionsSnapshotSchema.parse(await postJson(`${base}/attempts`, input, token))
 }
 
 export async function authorizeGithubAttempt(
@@ -55,9 +66,14 @@ export async function confirmSpaceCapabilityGrant(
   account: string,
   scopes: string[],
   token?: string,
+  spaceIds?: string[],
 ): Promise<ServiceConnectionsSnapshot> {
   return ServiceConnectionsSnapshotSchema.parse(
-    await postJson(`${attemptPath(id)}/grant`, { account, scopes }, token),
+    await postJson(
+      `${attemptPath(id)}/grant`,
+      { account, scopes, ...(spaceIds ? { spaceIds } : {}) },
+      token,
+    ),
   )
 }
 

@@ -88,7 +88,7 @@ export class ChatTimelineCoordinator {
 
   resumeConnection(attemptId: string): void {
     const attempt = this.options.serviceConnections?.attempt(attemptId)
-    if (!attempt) return
+    if (!attempt || attempt.origin === 'management' || !attempt.turnId) return
     if (attempt.state !== 'ready') {
       const entry = this.options.timeline.updateConnectionStatus(
         attempt.turnId,

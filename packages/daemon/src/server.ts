@@ -521,12 +521,19 @@ export function buildServer(options: ServerOptions = {}) {
   })
   const serviceConnections = new ServiceConnections(store.spacesEngine.rootDir, {
     now,
-    onGrantChanged: (spaceId, summary) =>
+    onGrantChanged: (spaceId, summary, eventId) => {
+      if (
+        eventId &&
+        store.eventLog(spaceId).some((event) => event.payload?.['serviceGrantChangeId'] === eventId)
+      )
+        return
       store.spacesEngine.appendEvent(spaceId, {
         type: 'service.capability',
         text: summary,
         origin: 'trusted:system',
-      }),
+        ...(eventId ? { payload: { serviceGrantChangeId: eventId } } : {}),
+      })
+    },
     onCredentialRemoved: (ref) => vault?.delete(ref.slice('secret://vault/'.length)),
   })
   serviceConnections.onChange(() => {
@@ -1682,6 +1689,7 @@ export function buildServer(options: ServerOptions = {}) {
     gmail: gmailConnections,
     github: githubMcp,
     coordinator: chatTimelineCoordinator,
+    hasSpace: (id) => store.getSpace(id) !== undefined,
   })
 
   registerIngestionRoutes(app, { ingestion, lockout })

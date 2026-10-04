@@ -19,6 +19,9 @@ import { backupFile, writeJsonAtomic } from './config-backup.ts'
 import { readJsonFile } from './json-file.ts'
 
 const FILE_NAME = 'service-connections.json'
+const PendingGrantEvent = z
+  .object({ id: z.string().uuid(), spaceId: z.string().min(1), summary: z.string().max(400) })
+  .strict()
 const StoredConnection = ServiceConnectionSchema.extend({
   credentialRef: z
     .string()
@@ -31,6 +34,7 @@ const FileSchema = z
     attempts: z.array(ConnectionAttemptSchema),
     connections: z.array(StoredConnection),
     grants: z.array(SpaceCapabilityGrantSchema),
+    pendingEvents: z.array(PendingGrantEvent).default([]),
   })
   .strict()
 type StoredServiceConnection = z.infer<typeof StoredConnection>
@@ -51,13 +55,14 @@ export class ServiceConnections {
   private attempts: ConnectionAttempt[]
   private connections: StoredServiceConnection[]
   private grants: SpaceCapabilityGrant[]
+  private pendingEvents: z.infer<typeof PendingGrantEvent>[]
   private readonly listeners = new Set<() => void>()
 
   constructor(
     rootDir: string,
     options: {
       now?: () => Date
-      onGrantChanged?: (spaceId: string, summary: string) => void
+      onGrantChanged?: (spaceId: string, summary: string, eventId?: string) => void
       onCredentialRemoved?: (ref: string) => void
     } = {},
   ) {
@@ -71,13 +76,17 @@ export class ServiceConnections {
     this.attempts = stored.attempts
     this.connections = stored.connections
     this.grants = stored.grants
+    this.pendingEvents = stored.pendingEvents
     this.recover()
+    this.flushPendingEvents()
   }
 
-  private readonly onGrantChanged: ((spaceId: string, summary: string) => void) | undefined
+  private readonly onGrantChanged:
+    ((spaceId: string, summary: string, eventId?: string) => void) | undefined
   private readonly onCredentialRemoved: ((ref: string) => void) | undefined
 
   snapshot(): ServiceConnectionsSnapshot {
+    this.flushPendingEvents()
     return ServiceConnectionsSnapshotSchema.parse({
       attempts: this.attempts,
       connections: this.connections.map(({ credentialRef: _credentialRef, ...connection }) =>
@@ -102,15 +111,18 @@ export class ServiceConnections {
 
   createAttempt(input: {
     submissionId: string
-    turnId: string
-    spaceId: string
+    origin?: 'chat' | 'management'
+    turnId?: string
+    spaceId?: string
     requestSummary: string
     review: ConnectionReview
+    connectionId?: string
   }): ConnectionAttempt {
     const review = ConnectionReviewSchema.parse(input.review)
     const existing = this.attempts.find((attempt) => attempt.submissionId === input.submissionId)
     if (existing) {
       if (
+        existing.origin !== (input.origin ?? 'chat') ||
         existing.turnId !== input.turnId ||
         existing.spaceId !== input.spaceId ||
         existing.requestSummary !== input.requestSummary ||
@@ -119,14 +131,16 @@ export class ServiceConnections {
         throw new ServiceConnectionError(409, 'Connection attempt identity was reused')
       return existing
     }
-    if (this.attempts.some((attempt) => attempt.turnId === input.turnId))
+    if (input.turnId && this.attempts.some((attempt) => attempt.turnId === input.turnId))
       throw new ServiceConnectionError(409, 'Chat turn already has a Connection attempt')
     const at = this.now().toISOString()
     const attempt = ConnectionAttemptSchema.parse({
       id: randomUUID(),
       submissionId: input.submissionId,
+      origin: input.origin ?? 'chat',
       turnId: input.turnId,
       spaceId: input.spaceId,
+      ...(input.connectionId ? { connectionId: input.connectionId } : {}),
       requestSummary: input.requestSummary.trim().slice(0, 700),
       review,
       state: 'reviewing',
@@ -173,7 +187,12 @@ export class ServiceConnections {
     delete attempt.nextAction
     delete attempt.verifiedAccount
     delete attempt.verifiedScopes
-    delete attempt.connectionId
+    if (
+      !this.connections.some(
+        (connection) => connection.id === attempt.connectionId && connection.state !== 'removed',
+      )
+    )
+      delete attempt.connectionId
     attempt.updatedAt = this.now().toISOString()
     this.persist()
     return attempt
@@ -221,6 +240,8 @@ export class ServiceConnections {
       )
     }
     const at = this.now().toISOString()
+    const revokedSpaces = new Set<string>()
+    let previousCredentialRef: string | undefined
     let connection = this.connections.find((item) => item.id === input.connectionId)
     if (connection && connection.account.toLowerCase() !== input.account.toLowerCase()) {
       this.returnToReview(attempt, 'Connection account changed; review it again')
@@ -237,6 +258,7 @@ export class ServiceConnections {
           if (grant.connectionId === connection.id && grant.enabled) {
             grant.enabled = false
             grant.updatedAt = at
+            revokedSpaces.add(grant.spaceId)
           }
         }
         connection.authorizationRevision = randomUUID()
@@ -244,7 +266,10 @@ export class ServiceConnections {
       connection.state = 'ready'
       connection.scopes = input.scopes
       connection.updatedAt = at
-      if (input.credentialRef) connection.credentialRef = input.credentialRef
+      if (input.credentialRef) {
+        previousCredentialRef = connection.credentialRef
+        connection.credentialRef = input.credentialRef
+      }
       delete connection.reason
     } else {
       connection = StoredConnection.parse({
@@ -267,11 +292,76 @@ export class ServiceConnections {
     attempt.verifiedScopes = [...connection.scopes]
     attempt.state = 'ready'
     attempt.updatedAt = at
+    for (const spaceId of revokedSpaces)
+      this.pendingEvents.push({
+        id: randomUUID(),
+        spaceId,
+        summary: 'Service authorization changed; review Space access again',
+      })
     this.persist()
+    if (previousCredentialRef && previousCredentialRef !== input.credentialRef) {
+      try {
+        this.onCredentialRemoved?.(previousCredentialRef)
+      } catch {
+        console.warn('Previous service credential cleanup failed')
+      }
+    }
     return attempt
   }
 
-  grant(id: string, confirmedAccount: string, confirmedScopes: string[]): SpaceCapabilityGrant {
+  grant(
+    id: string,
+    confirmedAccount: string,
+    confirmedScopes: string[],
+    targetSpaceId?: string,
+  ): SpaceCapabilityGrant {
+    const attempt = this.requiredAttempt(id)
+    const spaceId = attempt.origin === 'management' ? targetSpaceId : attempt.spaceId
+    if (
+      !spaceId ||
+      (attempt.origin === 'chat' && targetSpaceId && targetSpaceId !== attempt.spaceId)
+    )
+      throw new ServiceConnectionError(400, 'Confirm the correct Space for this attempt')
+    this.flushPendingEvents()
+    if (this.pendingEvents.some((event) => event.spaceId === spaceId))
+      throw new ServiceConnectionError(
+        503,
+        'Space access is waiting for its Event log. Retry when Gateway storage is available.',
+      )
+    const connection = this.confirmVerifiedAccount(id, confirmedAccount, confirmedScopes)
+    const existing = this.grants.find(
+      (grant) =>
+        grant.spaceId === spaceId &&
+        grant.connectionId === connection.id &&
+        grant.authorizationRevision === connection.authorizationRevision &&
+        grant.enabled &&
+        JSON.stringify(grant.repository) === JSON.stringify(attempt.review.repository) &&
+        JSON.stringify(grant.actions) === JSON.stringify(attempt.review.actions),
+    )
+    if (existing) return existing
+    const at = this.now().toISOString()
+    const grant = SpaceCapabilityGrantSchema.parse({
+      id: randomUUID(),
+      spaceId,
+      connectionId: connection.id,
+      authorizationRevision: connection.authorizationRevision,
+      actions: attempt.review.actions,
+      ...(attempt.review.repository ? { repository: attempt.review.repository } : {}),
+      enabled: true,
+      createdAt: at,
+      updatedAt: at,
+    })
+    this.grants.push(grant)
+    this.persist()
+    this.onGrantChanged?.(grant.spaceId, `${connection.service} capability granted`)
+    return grant
+  }
+
+  confirmVerifiedAccount(
+    id: string,
+    confirmedAccount: string,
+    confirmedScopes: string[],
+  ): ServiceConnection {
     const attempt = this.requiredAttempt(id)
     if (attempt.state !== 'ready' || !attempt.connectionId || !attempt.verifiedAccount)
       throw new ServiceConnectionError(409, 'Connection attempt is not verified')
@@ -289,36 +379,12 @@ export class ServiceConnections {
         409,
         'Account or scopes changed; review the connection again',
       )
-    const existing = this.grants.find(
-      (grant) =>
-        grant.spaceId === attempt.spaceId &&
-        grant.connectionId === connection.id &&
-        grant.authorizationRevision === connection.authorizationRevision &&
-        grant.enabled &&
-        JSON.stringify(grant.repository) === JSON.stringify(attempt.review.repository) &&
-        JSON.stringify(grant.actions) === JSON.stringify(attempt.review.actions),
-    )
-    if (existing) return existing
-    const at = this.now().toISOString()
-    const grant = SpaceCapabilityGrantSchema.parse({
-      id: randomUUID(),
-      spaceId: attempt.spaceId,
-      connectionId: connection.id,
-      authorizationRevision: connection.authorizationRevision,
-      actions: attempt.review.actions,
-      ...(attempt.review.repository ? { repository: attempt.review.repository } : {}),
-      enabled: true,
-      createdAt: at,
-      updatedAt: at,
-    })
-    this.grants.push(grant)
-    this.persist()
-    this.onGrantChanged?.(grant.spaceId, `${connection.service} capability granted`)
-    return grant
+    return connection
   }
 
   claimContinuation(id: string): boolean {
     const attempt = this.requiredAttempt(id)
+    if (attempt.origin === 'management') return false
     if (attempt.state !== 'ready' || attempt.continuation !== 'unclaimed') return false
     if (!this.grantForAttempt(attempt)) return false
     attempt.continuation = 'claimed'
@@ -439,7 +505,7 @@ export class ServiceConnections {
   }
 
   private grantForAttempt(attempt: ConnectionAttempt): SpaceCapabilityGrant | undefined {
-    if (!attempt.connectionId) return undefined
+    if (!attempt.connectionId || attempt.origin === 'management') return undefined
     const connection = this.connections.find((item) => item.id === attempt.connectionId)
     if (!connection || connection.state !== 'ready') return undefined
     return this.grants.find(
@@ -488,14 +554,43 @@ export class ServiceConnections {
   }
 
   private persist(): void {
+    this.writeState()
+    this.flushPendingEvents()
+    for (const listener of this.listeners) {
+      try {
+        listener()
+      } catch {
+        console.warn('Service connection change notification failed')
+      }
+    }
+  }
+
+  private flushPendingEvents(): void {
+    if (!this.onGrantChanged) return
+    while (this.pendingEvents.length > 0) {
+      const event = this.pendingEvents[0]!
+      try {
+        this.onGrantChanged(event.spaceId, event.summary, event.id)
+        this.pendingEvents.shift()
+        this.writeState()
+      } catch {
+        if (!this.pendingEvents.some((item) => item.id === event.id))
+          this.pendingEvents.unshift(event)
+        console.warn('Service grant Event delivery is pending')
+        return
+      }
+    }
+  }
+
+  private writeState(): void {
     const file = FileSchema.parse({
       version: 1,
       attempts: this.attempts,
       connections: this.connections,
       grants: this.grants,
+      pendingEvents: this.pendingEvents,
     })
     backupFile(this.path)
     writeJsonAtomic(this.path, file)
-    for (const listener of this.listeners) listener()
   }
 }

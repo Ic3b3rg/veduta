@@ -1,3 +1,6 @@
+import { HimalayaConnectionFields } from './connection-mailbox-setup.tsx'
+import { Button } from '@veduta/catalog/ui/button'
+import { Input } from '@veduta/catalog/ui/input'
 import type {
   CreateHimalayaConnectionRequest,
   HimalayaConnection,
@@ -22,7 +25,7 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : 'Mailbox setup failed'
 }
 
-function ConnectionCard({
+export function HimalayaConnectionCard({
   connection,
   busy,
   onVerify,
@@ -79,15 +82,15 @@ function ConnectionCard({
         >
           <label>
             Connection name
-            <input name="name" required defaultValue={connection.name} />
+            <Input name="name" required defaultValue={connection.name} />
           </label>
           <label>
             Email address
-            <input name="address" type="email" required defaultValue={connection.address ?? ''} />
+            <Input name="address" type="email" required defaultValue={connection.address ?? ''} />
           </label>
           <label>
             SMTP server URL
-            <input
+            <Input
               name="smtpServer"
               type="url"
               placeholder="smtps://smtp.example.com:465"
@@ -96,37 +99,37 @@ function ConnectionCard({
           </label>
           <label>
             SMTP username
-            <input name="smtpUsername" required autoComplete="off" />
+            <Input name="smtpUsername" required autoComplete="off" />
           </label>
           <label>
             SMTP password
-            <input name="smtpPassword" type="password" required autoComplete="off" />
+            <Input name="smtpPassword" type="password" required autoComplete="off" />
           </label>
-          <button type="submit" disabled={busy}>
+          <Button type="submit" disabled={busy}>
             Complete saved IMAP connection
-          </button>
+          </Button>
         </form>
       )}
       <div className="gmail-connection-actions">
         {connection.state !== 'needs_smtp' && (
-          <button type="button" disabled={busy} onClick={() => onVerify(connection.id)}>
+          <Button type="button" disabled={busy} onClick={() => onVerify(connection.id)}>
             {connection.state === 'ready' ? 'Test again' : 'Test IMAP and SMTP'}
-          </button>
+          </Button>
         )}
         <label>
           Connection name
-          <input value={name} maxLength={100} onChange={(event) => setName(event.target.value)} />
+          <Input value={name} maxLength={100} onChange={(event) => setName(event.target.value)} />
         </label>
-        <button
+        <Button
           type="button"
           disabled={busy || !name.trim() || name.trim() === connection.name}
           onClick={() => onRename(connection.id, name.trim())}
         >
           Save name
-        </button>
-        <button type="button" disabled={busy} onClick={() => onRemove(connection.id)}>
+        </Button>
+        <Button type="button" disabled={busy} onClick={() => onRemove(connection.id)}>
           Remove
-        </button>
+        </Button>
       </div>
     </li>
   )
@@ -210,9 +213,9 @@ export function SettingsHimalayaConnections({
   return (
     <main className="model-connections-settings gmail-connections-settings">
       <header className="model-connections-settings-header">
-        <button type="button" onClick={onBack}>
+        <Button type="button" onClick={onBack}>
           Back
-        </button>
+        </Button>
         <h1>IMAP and SMTP connections</h1>
       </header>
       <p>Connect a Mailbox for requested work. Setup and testing do not list or fetch messages.</p>
@@ -229,7 +232,7 @@ export function SettingsHimalayaConnections({
           {snapshot?.connections.length ? (
             <ul className="gmail-connection-list">
               {snapshot.connections.map((connection) => (
-                <ConnectionCard
+                <HimalayaConnectionCard
                   key={connection.id}
                   connection={connection}
                   busy={busy}
@@ -258,49 +261,10 @@ export function SettingsHimalayaConnections({
               the local vault.
             </p>
             <form onSubmit={create} className="wizard-step-form">
-              <label htmlFor="himalaya-name">Connection name</label>
-              <input id="himalaya-name" name="name" required maxLength={100} />
-              <label htmlFor="himalaya-address">Email address</label>
-              <input id="himalaya-address" name="address" type="email" required />
-              <label htmlFor="himalaya-imap-server">IMAP server URL</label>
-              <input
-                id="himalaya-imap-server"
-                name="imapServer"
-                type="url"
-                placeholder="imaps://imap.example.com:993"
-                required
-              />
-              <label htmlFor="himalaya-imap-username">IMAP username</label>
-              <input id="himalaya-imap-username" name="imapUsername" required autoComplete="off" />
-              <label htmlFor="himalaya-imap-password">IMAP password</label>
-              <input
-                id="himalaya-imap-password"
-                name="imapPassword"
-                type="password"
-                required
-                autoComplete="off"
-              />
-              <label htmlFor="himalaya-smtp-server">SMTP server URL</label>
-              <input
-                id="himalaya-smtp-server"
-                name="smtpServer"
-                type="url"
-                placeholder="smtps://smtp.example.com:465"
-                required
-              />
-              <label htmlFor="himalaya-smtp-username">SMTP username</label>
-              <input id="himalaya-smtp-username" name="smtpUsername" required autoComplete="off" />
-              <label htmlFor="himalaya-smtp-password">SMTP password</label>
-              <input
-                id="himalaya-smtp-password"
-                name="smtpPassword"
-                type="password"
-                required
-                autoComplete="off"
-              />
-              <button type="submit" disabled={busy}>
+              <HimalayaConnectionFields />
+              <Button type="submit" disabled={busy}>
                 Add Mailbox
-              </button>
+              </Button>
             </form>
           </section>
           <section className="gmail-connection-add" aria-labelledby="himalaya-install-heading">
@@ -310,9 +274,9 @@ export function SettingsHimalayaConnections({
               connection reports that setup is needed, install it here and test the connection
               again.
             </p>
-            <button type="button" disabled={busy} onClick={() => void install()}>
+            <Button type="button" disabled={busy} onClick={() => void install()}>
               Install reviewed release
-            </button>
+            </Button>
           </section>
         </>
       )}

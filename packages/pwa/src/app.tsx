@@ -8,10 +8,7 @@ import { BrowserRouter } from 'react-router-dom'
 import { ApiResponseError, fetchOnboardingStatus, type SpaceWithSurfaces } from './api.ts'
 import { AuthGate } from './auth-gate.tsx'
 import { OnboardingWizard } from './onboarding-wizard.tsx'
-import { SettingsModelConnections } from './settings-model-connections.tsx'
-import { SettingsGmailConnections } from './settings-gmail-connections.tsx'
-import { SettingsHimalayaConnections } from './settings-himalaya-connections.tsx'
-import { SettingsServiceConnections } from './settings-service-connections.tsx'
+import { ConnectionsPage } from './connections-page.tsx'
 import { ClientRouteTable, clientPath, useClientRouting } from './client-router.tsx'
 import { AppShell, type AppRouteSelection } from './app-shell.tsx'
 import { homeBlockedByStatusFailure } from './onboarding-state.ts'
@@ -334,8 +331,6 @@ function RoutedApp() {
       focusChatToken={focusChatToken}
       focusChatOnRouteChange={focusChatOnRouteChange}
       onOpenModelConnections={() => navigate(clientPath.modelConnections)}
-      onOpenGmailConnections={() => navigate(clientPath.gmailConnections)}
-      onOpenHimalayaConnections={() => navigate(clientPath.himalayaConnections)}
       onOpenServiceConnections={() => navigate(clientPath.serviceConnections)}
       onRetrySpaces={runtime.retry}
       onInstallDone={() => {
@@ -372,21 +367,11 @@ function RoutedApp() {
       <ClientRouteTable
         appShell={appShell}
         modelConnections={
-          <SettingsModelConnections token={authToken} onBack={() => navigate(clientPath.home)} />
+          <ConnectionsPage token={authToken} spaces={spaces} initialSection="models" />
         }
-        gmailConnections={
-          <SettingsGmailConnections token={authToken} onBack={() => navigate(clientPath.home)} />
-        }
-        himalayaConnections={
-          <SettingsHimalayaConnections token={authToken} onBack={() => navigate(clientPath.home)} />
-        }
-        serviceConnections={
-          <SettingsServiceConnections
-            token={authToken}
-            spaces={spaces}
-            onBack={() => navigate(clientPath.home)}
-          />
-        }
+        gmailConnections={<ConnectionsPage token={authToken} spaces={spaces} />}
+        himalayaConnections={<ConnectionsPage token={authToken} spaces={spaces} />}
+        serviceConnections={<ConnectionsPage token={authToken} spaces={spaces} />}
       />
     </PwaRuntimeContext.Provider>
   )

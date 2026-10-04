@@ -265,6 +265,12 @@ Veduta-owned client and AgentRunner tools
 ([ADR-0033](docs/adr/0033-chat-initiated-service-connections.md),
 [ADR-0034](docs/adr/0034-veduta-owned-mcp-client.md)).
 
+The dedicated settings page reuses that same Connection attempt, Service connection and Space
+capability grant lifecycle. A management attempt has no Chat turn or initiating Space, never
+claims a continuation, and saves a verified account with no access or with explicitly selected
+Space grants. Compact account lists share a detail panel on desktop and a full-screen Sheet on
+mobile; Models, reviewed Extensions and Space access live in the same settings shell.
+
 ### 3.6 Workers and review
 
 Ephemeral Workers only for tasks that are (a) parallelizable and read-heavy, (b) worth 4-15x the tokens, (c) "investigate-and-report" with no implicit decisions. Detailed briefing (goal, format, tools, boundaries), iteration cap, explicit termination, schema-validated output. Adversarial review **in a separate context**, only on high-risk outputs before delivery into the Space.

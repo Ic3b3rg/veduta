@@ -129,7 +129,7 @@ A Gateway-wide, non-secret identity and protected authorization for one external
 _Avoid_: Model connection, Space credential, universal Mailbox connection
 
 **Connection attempt**:
-A durable setup workflow tied to one accepted Chat request and initiating Space. It carries the reviewed access request and truthful setup state; only verified readiness may resume that same job once.
+A durable setup workflow initiated from Chat or the dedicated settings page. A Chat attempt owns one accepted request and initiating Space; only verified readiness and an explicit grant may resume that same job once. A management attempt has no Chat job, and grants only the Spaces explicitly selected after verification. Both carry the reviewed access request and truthful setup state.
 _Avoid_: chat consent, successful connection before verification
 
 **Space capability grant**:

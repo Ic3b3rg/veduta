@@ -1,8 +1,25 @@
+@layer theme, base, components, utilities;
+
 @import 'tailwindcss/theme.css' layer(theme);
 @import 'tailwindcss/utilities.css' layer(utilities);
 
 @source '../../../catalog/src';
 @source '../';
+
+@layer base {
+  button[data-slot] {
+    border: 0 solid;
+    font: inherit;
+    background: transparent;
+    color: inherit;
+  }
+
+  input[data-slot],
+  select[data-slot] {
+    font: inherit;
+    color: inherit;
+  }
+}
 
 /* shadcn components and Veduta's composition Atoms share catalog-owned tokens. */
 :root {

@@ -228,9 +228,7 @@ describe('App routing', () => {
     await waitFor(() => expect(screen.getByLabelText('Spaces')).toBeDefined())
     fireEvent.click(await screen.findByRole('button', { name: 'Model connections' }))
 
-    expect(
-      await screen.findByRole('heading', { name: 'Model connections', level: 2 }),
-    ).toBeDefined()
+    expect(await screen.findByRole('heading', { name: 'Models', level: 1 })).toBeDefined()
     expect(location.pathname).toBe('/app/settings/models')
     expect(screen.queryByLabelText('Spaces')).toBeNull()
 
@@ -241,9 +239,7 @@ describe('App routing', () => {
 
     act(() => history.forward())
 
-    expect(
-      await screen.findByRole('heading', { name: 'Model connections', level: 2 }),
-    ).toBeDefined()
+    expect(await screen.findByRole('heading', { name: 'Models', level: 1 })).toBeDefined()
     expect(location.pathname).toBe('/app/settings/models')
   })
 
@@ -253,9 +249,7 @@ describe('App routing', () => {
 
     render(<App />)
 
-    expect(
-      await screen.findByRole('heading', { name: 'Model connections', level: 2 }),
-    ).toBeDefined()
+    expect(await screen.findByRole('heading', { name: 'Models', level: 1 })).toBeDefined()
     expect(screen.queryByLabelText('Spaces')).toBeNull()
     expect(location.pathname).toBe('/app/settings/models')
   })
@@ -552,9 +546,7 @@ describe('App routing', () => {
 
     navigateFromServiceWorker(serviceWorkerMessages, '/app/settings/models')
 
-    expect(
-      await screen.findByRole('heading', { name: 'Model connections', level: 2 }),
-    ).toBeDefined()
+    expect(await screen.findByRole('heading', { name: 'Models', level: 1 })).toBeDefined()
     expect(location.pathname).toBe('/app/settings/models')
   })
 

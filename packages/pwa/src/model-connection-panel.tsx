@@ -1,3 +1,6 @@
+import { NativeSelect } from '@veduta/catalog/ui/native-select'
+import { Button } from '@veduta/catalog/ui/button'
+import { Input } from '@veduta/catalog/ui/input'
 import type {
   AuthorizeModelConnectionRequest,
   CreateModelConnectionRequest,
@@ -118,7 +121,7 @@ export function ModelConnectionPanel({
 }
 
 /** Every method the registry knows about; an unavailable one is a disabled row with its exact reason and, when the daemon supplied one, a docs link -- never a login button, since there is nothing to authorize yet. */
-function MethodList({ methods }: { methods: ModelConnectionMethod[] }) {
+export function MethodList({ methods }: { methods: ModelConnectionMethod[] }) {
   return (
     <ul className="model-connection-method-list">
       {methods.map((method) => (
@@ -154,7 +157,7 @@ function MethodList({ methods }: { methods: ModelConnectionMethod[] }) {
 }
 
 /** Create a new connection for an available method: a password input for an api-key method, or a single "Start authorization" button for a device-code one -- the parent creates the record and then drives the device-code flow itself (`onCreate` here, `onAuthorize` on the resulting card). */
-function AddConnectionForm({
+export function AddConnectionForm({
   methods,
   busy,
   onCreate,
@@ -189,7 +192,7 @@ function AddConnectionForm({
   return (
     <div className="wizard-step-form model-connection-add-form">
       <label htmlFor="model-connection-method">Method</label>
-      <select
+      <NativeSelect
         id="model-connection-method"
         value={methodId}
         onChange={(e) => {
@@ -202,12 +205,12 @@ function AddConnectionForm({
             {method.providerDisplayName} · {method.methodDisplayName}
           </option>
         ))}
-      </select>
+      </NativeSelect>
 
       {isApiKey && (
         <>
           <label htmlFor="model-connection-api-key">API key</label>
-          <input
+          <Input
             id="model-connection-api-key"
             type="password"
             autoComplete="off"
@@ -218,16 +221,16 @@ function AddConnectionForm({
       )}
 
       <div className="wizard-actions">
-        <button type="button" disabled={busy || (isApiKey && trimmedKey === '')} onClick={submit}>
+        <Button type="button" disabled={busy || (isApiKey && trimmedKey === '')} onClick={submit}>
           {isApiKey ? 'Add connection' : 'Start authorization'}
-        </button>
+        </Button>
       </div>
     </div>
   )
 }
 
 /** One stored connection: its editable label, lifecycle copy and action, fallback toggle, Remove, and (while `waiting-for-user`) the device-code block. */
-function ConnectionCard({
+export function ConnectionCard({
   connection,
   method,
   busy,
@@ -264,7 +267,7 @@ function ConnectionCard({
 
   return (
     <div className="model-connection-card">
-      <input
+      <Input
         aria-label={`label for ${connection.label}`}
         value={connection.label}
         disabled={busy}
@@ -280,7 +283,7 @@ function ConnectionCard({
       {copy.action !== 'none' && (
         <div className="wizard-actions">
           {isApiKeyMethod && (
-            <input
+            <Input
               aria-label={`replacement key for ${connection.label}`}
               type="password"
               autoComplete="off"
@@ -288,21 +291,21 @@ function ConnectionCard({
               onChange={(e) => setReauthKey(e.target.value)}
             />
           )}
-          <button
+          <Button
             type="button"
             disabled={busy || (isApiKeyMethod && reauthKey.trim() === '')}
             onClick={runAction}
           >
             {connectionActionLabel(copy.action)}
-          </button>
+          </Button>
         </div>
       )}
 
       {connection.state === 'connected' && (
         <div className="wizard-actions">
-          <button type="button" disabled={busy} onClick={() => onRefreshCatalog(connection.id)}>
+          <Button type="button" disabled={busy} onClick={() => onRefreshCatalog(connection.id)}>
             Refresh models
-          </button>
+          </Button>
         </div>
       )}
 
@@ -322,21 +325,21 @@ function ConnectionCard({
             {challenge.verificationUrl}
           </a>
           <code>{challenge.userCode}</code>
-          <button
+          <Button
             type="button"
             onClick={() => void navigator.clipboard.writeText(challenge.userCode)}
           >
             Copy
-          </button>
+          </Button>
           <p>Waiting for you to finish signing in…</p>
           <p>{challengeCountdownLabel(challenge, now())}</p>
         </div>
       )}
 
       <div className="wizard-actions">
-        <button type="button" disabled={busy} onClick={() => onRemove(connection.id)}>
+        <Button type="button" disabled={busy} onClick={() => onRemove(connection.id)}>
           Remove
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -349,7 +352,7 @@ function connectionActionLabel(action: 'authorize' | 'reconnect' | 'retry'): str
 }
 
 /** The one visible routing control: which connection, and which model from that connection's own catalog -- `catalogOptions` is only ever computed for the currently selected connection, so switching the Connection select always narrows the Model select to that connection's own models. */
-function SelectionControls({
+export function SelectionControls({
   snapshot,
   busy,
   onVerify,
@@ -399,7 +402,7 @@ function SelectionControls({
   return (
     <div className="wizard-step-form model-connection-selection">
       <label htmlFor="model-connection-select">Connection</label>
-      <select
+      <NativeSelect
         id="model-connection-select"
         value={connectionId}
         onChange={(e) => {
@@ -412,10 +415,10 @@ function SelectionControls({
             {connectionSelectLabel(connection, snapshot.connections, snapshot.methods)}
           </option>
         ))}
-      </select>
+      </NativeSelect>
 
       <label htmlFor="model-select">Model</label>
-      <select id="model-select" value={modelId} onChange={(e) => setModelId(e.target.value)}>
+      <NativeSelect id="model-select" value={modelId} onChange={(e) => setModelId(e.target.value)}>
         <option value="" disabled>
           Choose a model
         </option>
@@ -424,17 +427,17 @@ function SelectionControls({
             {option.note !== undefined ? `${option.label} (${option.note})` : option.label}
           </option>
         ))}
-      </select>
+      </NativeSelect>
 
       <div className="wizard-actions">
-        <button
+        <Button
           type="button"
           disabled={busy || !canAct}
           onClick={() => onVerify(connectionId, modelId)}
         >
           Test model
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           disabled={busy || !canAct}
           onClick={() => {
@@ -451,7 +454,7 @@ function SelectionControls({
           }}
         >
           Use this model
-        </button>
+        </Button>
       </div>
     </div>
   )

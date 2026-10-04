@@ -115,7 +115,7 @@ export class GithubMcpService {
       }
       this.options.vault.set(credentialRef.slice('secret://vault/'.length), token)
       this.options.connections.verified(attemptId, {
-        connectionId: `svc-github-${randomUUID()}`,
+        connectionId: attempt.connectionId ?? `svc-github-${randomUUID()}`,
         account,
         scopes: attempt.review.scopes,
         mechanism: 'github-mcp-stdio',

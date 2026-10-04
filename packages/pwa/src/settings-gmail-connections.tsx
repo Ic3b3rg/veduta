@@ -1,3 +1,5 @@
+import { Button } from '@veduta/catalog/ui/button'
+import { Input } from '@veduta/catalog/ui/input'
 import {
   GMAIL_READ_SCOPE,
   type GmailConnection,
@@ -33,7 +35,7 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : 'Gmail connection request failed'
 }
 
-function ConnectionCard({
+export function GmailConnectionCard({
   connection,
   busy,
   onAuthorize,
@@ -61,27 +63,27 @@ function ConnectionCard({
       {connection.reason && <p role="status">{connection.reason}</p>}
       <div className="gmail-connection-actions">
         {connection.id === 'svc-gmail-legacy' && connection.state !== 'ready' && (
-          <button type="button" disabled={busy} onClick={() => onVerifyLegacy(connection.id)}>
+          <Button type="button" disabled={busy} onClick={() => onVerifyLegacy(connection.id)}>
             Verify saved account
-          </button>
+          </Button>
         )}
-        <button type="button" disabled={busy} onClick={() => onAuthorize(connection.id)}>
+        <Button type="button" disabled={busy} onClick={() => onAuthorize(connection.id)}>
           {connection.state === 'ready' ? 'Reconnect' : 'Authorize with Google'}
-        </button>
+        </Button>
         <label>
           Connection name
-          <input value={name} maxLength={80} onChange={(event) => setName(event.target.value)} />
+          <Input value={name} maxLength={80} onChange={(event) => setName(event.target.value)} />
         </label>
-        <button
+        <Button
           type="button"
           disabled={busy || !name.trim() || name.trim() === connection.name}
           onClick={() => onRename(connection.id, name.trim())}
         >
           Save name
-        </button>
-        <button type="button" disabled={busy} onClick={() => onRemove(connection.id)}>
+        </Button>
+        <Button type="button" disabled={busy} onClick={() => onRemove(connection.id)}>
           Remove
-        </button>
+        </Button>
       </div>
     </li>
   )
@@ -179,9 +181,9 @@ export function SettingsGmailConnections({
   return (
     <main className="model-connections-settings gmail-connections-settings">
       <header className="model-connections-settings-header">
-        <button type="button" onClick={onBack}>
+        <Button type="button" onClick={onBack}>
           Back
-        </button>
+        </Button>
         <h1>Gmail connections</h1>
       </header>
       <p>
@@ -199,7 +201,7 @@ export function SettingsGmailConnections({
           {snapshot?.connections.length ? (
             <ul className="gmail-connection-list">
               {snapshot.connections.map((connection) => (
-                <ConnectionCard
+                <GmailConnectionCard
                   key={connection.id}
                   connection={connection}
                   busy={busy}
@@ -230,7 +232,7 @@ export function SettingsGmailConnections({
             </p>
             <form onSubmit={create} className="wizard-step-form">
               <label htmlFor="gmail-name">Connection name</label>
-              <input
+              <Input
                 id="gmail-name"
                 required
                 maxLength={80}
@@ -238,7 +240,7 @@ export function SettingsGmailConnections({
                 onChange={(event) => setName(event.target.value)}
               />
               <label htmlFor="gmail-client-id">OAuth client ID</label>
-              <input
+              <Input
                 id="gmail-client-id"
                 required
                 value={clientId}
@@ -246,7 +248,7 @@ export function SettingsGmailConnections({
                 autoComplete="off"
               />
               <label htmlFor="gmail-client-secret">OAuth client secret</label>
-              <input
+              <Input
                 id="gmail-client-secret"
                 required
                 type="password"
@@ -258,9 +260,9 @@ export function SettingsGmailConnections({
                 Register <code>{window.location.origin}/app/settings/gmail</code> as an authorized
                 redirect URI for this OAuth client.
               </p>
-              <button type="submit" disabled={busy}>
+              <Button type="submit" disabled={busy}>
                 Add account
-              </button>
+              </Button>
             </form>
           </section>
         </>

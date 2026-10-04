@@ -6,6 +6,16 @@ export interface ServiceIntent {
   requestSummary: string
 }
 
+export function gmailConnectionReview(accountHint?: string): ConnectionReview {
+  return {
+    service: 'gmail',
+    ...(accountHint ? { accountHint } : {}),
+    scopes: [GMAIL_READ_SCOPE],
+    actions: ['search_mailbox'],
+    executionHost: 'Gateway native HTTPS (Google OAuth and Gmail API)',
+  }
+}
+
 export interface GithubIssueWrite {
   owner: string
   repo: string
@@ -52,13 +62,7 @@ export function boundedServiceIntent(text: string): ServiceIntent | undefined {
         text,
       )?.[1]
     return {
-      review: {
-        service: 'gmail',
-        ...(hint ? { accountHint: hint } : {}),
-        scopes: [GMAIL_READ_SCOPE],
-        actions: ['search_mailbox'],
-        executionHost: 'Gateway native HTTPS (Google OAuth and Gmail API)',
-      },
+      review: gmailConnectionReview(hint),
       requestSummary: text.trim().slice(0, 700),
     }
   }

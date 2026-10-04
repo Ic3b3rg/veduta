@@ -1,5 +1,6 @@
 import {
   CreateGmailConnectionRequestSchema,
+  CreateServiceConnectionAttemptRequestSchema,
   ServiceConnectionsSnapshotSchema,
   type ServiceConnectionsSnapshot,
 } from '@veduta/protocol'
@@ -10,8 +11,17 @@ import type { GithubMcpService } from './github-mcp-service.ts'
 import { rejectUnexpectedBody } from './fastify-validation.ts'
 import { ServiceConnectionError, type ServiceConnections } from './service-connections.ts'
 import type { ChatTimelineCoordinator } from './chat-timeline-coordinator.ts'
+import { githubConnectionReview } from './github-mcp-service.ts'
+import { gmailConnectionReview } from './service-intent.ts'
 
-const GithubToken = z.object({ token: z.string().min(20).max(300) }).strict()
+const GithubToken = z
+  .object({
+    token: z
+      .string()
+      .regex(/^github_pat_[A-Za-z0-9_]{20,}$/)
+      .max(300),
+  })
+  .strict()
 const GmailStart = z
   .object({
     redirectOrigin: z.string().url(),
@@ -29,13 +39,22 @@ const GmailCallback = z
   })
   .strict()
 const Grant = z
-  .object({ account: z.string().min(1).max(240), scopes: z.array(z.string()).min(1).max(8) })
+  .object({
+    account: z.string().min(1).max(240),
+    scopes: z.array(z.string()).min(1).max(8),
+    spaceIds: z.array(z.string().min(1)).max(100).optional(),
+  })
   .strict()
 
-async function guarded<T>(reply: FastifyReply, run: () => T | Promise<T>): Promise<T | undefined> {
+async function guarded<T>(
+  reply: FastifyReply,
+  run: () => T | Promise<T>,
+  onError?: () => void,
+): Promise<T | undefined> {
   try {
     return await run()
   } catch (error) {
+    onError?.()
     if (error instanceof ServiceConnectionError || error instanceof GmailConnectionError)
       reply.status(error.status).send({ error: error.message })
     else reply.status(500).send({ error: 'Service connection request failed' })
@@ -50,12 +69,81 @@ export function registerServiceConnectionRoutes(
     gmail: GmailConnections
     github: GithubMcpService
     coordinator: ChatTimelineCoordinator
+    hasSpace: (id: string) => boolean
   },
 ): void {
   const snapshot = (): ServiceConnectionsSnapshot =>
     ServiceConnectionsSnapshotSchema.parse(options.connections.snapshot())
 
   app.get('/api/service-connections', snapshot)
+
+  app.post('/api/service-connections/attempts', (request, reply) => {
+    const parsed = CreateServiceConnectionAttemptRequestSchema.safeParse(request.body)
+    if (!parsed.success)
+      return reply.status(400).send({ error: 'Invalid connection setup request' })
+    return guarded(reply, () => {
+      const input = parsed.data
+      const connection = input.connectionId
+        ? snapshot().connections.find(
+            (item) =>
+              item.id === input.connectionId &&
+              item.service === input.service &&
+              item.state !== 'removed',
+          )
+        : undefined
+      const nativeGmail =
+        input.service === 'gmail' && input.connectionId
+          ? options.gmail.snapshot().connections.find((item) => item.id === input.connectionId)
+          : undefined
+      if (input.connectionId && !connection && !nativeGmail)
+        throw new ServiceConnectionError(404, 'Service connection not found')
+      const account = connection?.account ?? nativeGmail?.accountEmail
+      const review =
+        input.service === 'github'
+          ? githubConnectionReview(
+              input.repository!.owner,
+              input.repository!.name,
+              account,
+              connection?.scopes.includes(
+                `GitHub Issues: write in ${input.repository!.owner}/${input.repository!.name}`,
+              )
+                ? 'write'
+                : 'read',
+            )
+          : gmailConnectionReview(account)
+      options.connections.createAttempt({
+        submissionId: input.submissionId,
+        origin: 'management',
+        requestSummary: account
+          ? `Review access for ${account}`
+          : `Connect ${input.service === 'github' ? 'GitHub' : 'Gmail'}`,
+        review,
+        ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+      })
+      return snapshot()
+    })
+  })
+
+  app.post('/api/service-connections/attempts/:id/use-connection', (request, reply) => {
+    const bodyError = rejectUnexpectedBody(reply, request.body)
+    if (bodyError) return bodyError
+    const { id } = request.params as { id: string }
+    return guarded(reply, () => {
+      const attempt = options.connections.attempt(id)
+      const connection = snapshot().connections.find((item) => item.id === attempt?.connectionId)
+      if (!attempt || attempt.origin !== 'management' || connection?.state !== 'ready')
+        throw new ServiceConnectionError(409, 'A verified connection is required')
+      options.connections.beginAuthorization(id)
+      options.connections.beginVerification(id)
+      options.connections.verified(id, {
+        connectionId: connection.id,
+        account: connection.account,
+        scopes: connection.scopes,
+        mechanism: connection.mechanism,
+      })
+      return snapshot()
+    })
+  })
 
   app.post('/api/service-connections/attempts/:id/github/authorize', (request, reply) => {
     const parsed = GithubToken.safeParse(request.body)
@@ -78,49 +166,75 @@ export function registerServiceConnectionRoutes(
     if (!parsed.success)
       return reply.status(400).send({ error: 'Invalid Gmail authorization request' })
     const { id } = request.params as { id: string }
-    return guarded(reply, async () => {
-      const attempt = options.connections.attempt(id)
-      if (!attempt || attempt.review.service !== 'gmail')
-        throw new ServiceConnectionError(404, 'Gmail Connection attempt not found')
-      const newConnection =
-        parsed.data.gmailConnectionId === undefined
-          ? CreateGmailConnectionRequestSchema.safeParse({
-              name: parsed.data.name,
-              clientId: parsed.data.clientId,
-              clientSecret: parsed.data.clientSecret,
-            })
-          : undefined
-      if (newConnection && !newConnection.success)
-        throw new ServiceConnectionError(400, 'Gmail OAuth client credentials are required')
-      options.connections.beginAuthorization(id)
-      const gmailConnectionId =
-        parsed.data.gmailConnectionId ??
-        options.gmail.create(newConnection!.data).connections.at(-1)?.id
-      if (!gmailConnectionId)
-        throw new ServiceConnectionError(409, 'Gmail connection could not be prepared')
-      options.connections.attachConnection(id, gmailConnectionId)
-      const existing = options.gmail
-        .snapshot()
-        .connections.find((connection) => connection.id === gmailConnectionId)
-      if (!existing) throw new ServiceConnectionError(404, 'Gmail connection not found')
-      if (existing.state === 'ready' && existing.accountEmail) {
-        options.connections.beginVerification(id)
-        const verified = await options.gmail.verifyAccount(gmailConnectionId)
-        options.connections.verified(id, {
-          connectionId: gmailConnectionId,
-          account: verified,
-          scopes: existing.scopes,
-          mechanism: 'gmail-oauth',
-        })
-        return { snapshot: snapshot() }
-      }
-      const authorization = options.gmail.beginAuthorization(
-        gmailConnectionId,
-        parsed.data.redirectOrigin,
-        '/app/connections',
-      )
-      return { snapshot: snapshot(), authorizationUrl: authorization.authorizationUrl }
-    })
+    return guarded(
+      reply,
+      async () => {
+        const attempt = options.connections.attempt(id)
+        if (!attempt || attempt.review.service !== 'gmail')
+          throw new ServiceConnectionError(404, 'Gmail Connection attempt not found')
+        const newConnection =
+          parsed.data.gmailConnectionId === undefined
+            ? CreateGmailConnectionRequestSchema.safeParse({
+                name: parsed.data.name,
+                clientId: parsed.data.clientId,
+                clientSecret: parsed.data.clientSecret,
+              })
+            : undefined
+        if (newConnection && !newConnection.success)
+          throw new ServiceConnectionError(400, 'Gmail OAuth client credentials are required')
+        if (
+          parsed.data.gmailConnectionId &&
+          snapshot().attempts.some(
+            (item) =>
+              item.id !== id &&
+              item.connectionId === parsed.data.gmailConnectionId &&
+              ['authorizing', 'verifying'].includes(item.state),
+          )
+        )
+          throw new ServiceConnectionError(
+            409,
+            'This Gmail account already has an authorization in progress',
+          )
+        options.connections.beginAuthorization(id)
+        const gmailConnectionId =
+          parsed.data.gmailConnectionId ??
+          options.gmail.create(newConnection!.data).connections.at(-1)?.id
+        if (!gmailConnectionId)
+          throw new ServiceConnectionError(409, 'Gmail connection could not be prepared')
+        options.connections.attachConnection(id, gmailConnectionId)
+        const existing = options.gmail
+          .snapshot()
+          .connections.find((connection) => connection.id === gmailConnectionId)
+        if (!existing) throw new ServiceConnectionError(404, 'Gmail connection not found')
+        if (existing.state === 'ready' && existing.accountEmail) {
+          options.connections.beginVerification(id)
+          const verified = await options.gmail.verifyAccount(gmailConnectionId)
+          options.connections.verified(id, {
+            connectionId: gmailConnectionId,
+            account: verified,
+            scopes: existing.scopes,
+            mechanism: 'gmail-oauth',
+          })
+          return { snapshot: snapshot() }
+        }
+        const authorization = options.gmail.beginAuthorization(
+          gmailConnectionId,
+          parsed.data.redirectOrigin,
+          '/app/connections',
+        )
+        return { snapshot: snapshot(), authorizationUrl: authorization.authorizationUrl }
+      },
+      () => {
+        const attempt = options.connections.attempt(id)
+        if (attempt && ['authorizing', 'verifying'].includes(attempt.state))
+          options.connections.fail(
+            id,
+            'failed',
+            'Gmail authorization did not finish. Return to review and try again.',
+          )
+        options.coordinator.resumeConnection(id)
+      },
+    )
   })
 
   app.post('/api/service-connections/gmail/callback', (request, reply) => {
@@ -128,9 +242,12 @@ export function registerServiceConnectionRoutes(
     if (!parsed.success) return reply.status(400).send({ error: 'Invalid Gmail callback' })
     return guarded(reply, async () => {
       const gmailId = parsed.data.state.split('.')[0]
-      const attempt = options.connections
+      const attempts = options.connections
         .snapshot()
-        .attempts.find((item) => item.review.service === 'gmail' && item.connectionId === gmailId)
+        .attempts.filter((item) => item.review.service === 'gmail' && item.connectionId === gmailId)
+      const attempt =
+        attempts.find((item) => ['authorizing', 'verifying'].includes(item.state)) ??
+        attempts.at(-1)
       if (!gmailId || !attempt)
         throw new ServiceConnectionError(409, 'Gmail callback has no attempt')
       if (attempt.state === 'ready') return snapshot()
@@ -178,7 +295,21 @@ export function registerServiceConnectionRoutes(
       return reply.status(400).send({ error: 'Invalid Space grant confirmation' })
     const { id } = request.params as { id: string }
     return guarded(reply, () => {
-      options.connections.grant(id, parsed.data.account, parsed.data.scopes)
+      const attempt = options.connections.attempt(id)
+      if (!attempt) throw new ServiceConnectionError(404, 'Connection attempt not found')
+      if (attempt.origin === 'management') {
+        if (!parsed.data.spaceIds)
+          throw new ServiceConnectionError(400, 'Confirm the selected Spaces')
+        if (parsed.data.spaceIds.some((spaceId) => !options.hasSpace(spaceId)))
+          throw new ServiceConnectionError(404, 'Space not found')
+        options.connections.confirmVerifiedAccount(id, parsed.data.account, parsed.data.scopes)
+        for (const spaceId of new Set(parsed.data.spaceIds))
+          options.connections.grant(id, parsed.data.account, parsed.data.scopes, spaceId)
+      } else {
+        if (parsed.data.spaceIds)
+          throw new ServiceConnectionError(400, 'Chat setup grants only its original Space')
+        options.connections.grant(id, parsed.data.account, parsed.data.scopes)
+      }
       options.coordinator.resumeConnection(id)
       return snapshot()
     })

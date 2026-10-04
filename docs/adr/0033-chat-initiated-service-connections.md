@@ -15,7 +15,7 @@ journey, not a universal Mailbox model or a general external-package installer.
 
 The Gateway owns three separate records:
 
-1. A `ConnectionAttempt` has a stable id, original Chat submission/turn id, initiating Space,
+1. A Chat-origin `ConnectionAttempt` has a stable id, original Chat submission/turn id, initiating Space,
    requested job, capability, chosen provider/account hint, reviewed scope, and lifecycle state.
    It is persisted before any authorization handoff and is idempotent for the original Chat
    submission. A new user request may start a new attempt; retrying the same submission cannot.
@@ -113,3 +113,26 @@ connections authorize external actions. A per-Space credential was rejected beca
 duplicate account identity and make revocation inconsistent across Spaces.
 
 Status: accepted
+
+## Amendment: dedicated connection settings
+
+The approved settings design in issue #181 adds a dedicated page with compact account lists,
+a detail panel on desktop and a full-screen, scrollable Sheet on mobile. Accounts and services,
+Model connections, reviewed Extensions and Space access share the sidebar, with a return to
+Veduta at its bottom. Model authorization continues to use its existing registry and controller.
+
+Adding a service account from this page creates a `management`-origin Connection attempt through
+the same protected lifecycle as Chat setup. Its submission id is idempotent, and its review is
+constructed by the Gateway from the declared service and exact repository. It has no Chat turn,
+initiating Space or scheduled job. After verification the user can save the account without a
+Space grant, or explicitly grant the reviewed actions to selected existing Spaces. Each grant
+change appends a Space Event. This origin never claims a continuation or calls AgentRunner.
+Existing records without an origin remain Chat attempts and retain their original continuation
+rules. The Chat grant endpoint rejects attempts to substitute or add Spaces.
+
+Existing verified accounts can be reviewed again to grant another Space without collecting a
+second credential or rotating their authorization revision. A disabled or expired connection
+requires protected reconnect and new grants. Legacy Gmail and IMAP/SMTP connections remain
+visible with their actual verification state; the page makes no provider-content request while
+listing accounts. Gmail uses the existing Google OAuth client setup and GitHub uses the reviewed
+fine-grained-token mechanism from ADR-0034. Provider OAuth expansion is separate work.

@@ -1,0 +1,238 @@
+// @vitest-environment jsdom
+import { ConnectionAttemptSchema, ServiceConnectionsSnapshotSchema } from '@veduta/protocol'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import { fromPartial } from '@total-typescript/shoehorn'
+import type { SpaceWithSurfaces } from './api.ts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ConnectionsPage } from './connections-page.tsx'
+
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
+const at = '2026-10-04T12:00:00.000Z'
+const attemptId = 'aa6849aa-d68e-46bb-89d7-d935d55c82ef'
+const response = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+
+function setup(mobile = false) {
+  let snapshot = ServiceConnectionsSnapshotSchema.parse({
+    attempts: [],
+    connections: [],
+    grants: [],
+  })
+  const requests: { path: string; body: unknown }[] = []
+  vi.stubGlobal('matchMedia', () => ({
+    matches: mobile,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }))
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init?: RequestInit) => {
+      const path = String(url)
+      if (init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>
+        requests.push({ path, body })
+        if (path === '/api/service-connections/attempts') {
+          snapshot = ServiceConnectionsSnapshotSchema.parse({
+            ...snapshot,
+            attempts: [
+              ConnectionAttemptSchema.parse({
+                id: attemptId,
+                submissionId: body['submissionId'],
+                origin: 'management',
+                requestSummary: 'Connect GitHub',
+                review: {
+                  service: 'github',
+                  scopes: ['GitHub Issues: read in example/disposable'],
+                  actions: ['list_issues'],
+                  repository: body['repository'],
+                  executionHost: 'Gateway local stdio',
+                  serverVersion: 'v1.12.2',
+                },
+                state: 'reviewing',
+                createdAt: at,
+                updatedAt: at,
+              }),
+            ],
+          })
+          return response(snapshot)
+        }
+        if (path.endsWith('/github/authorize'))
+          return response({ error: 'GitHub verification failed' }, 502)
+      }
+      if (path === '/api/service-connections') return response(snapshot)
+      if (path === '/api/gmail-connections' || path === '/api/himalaya-connections')
+        return response({ connections: [] })
+      throw new Error(`Unexpected request: ${path}`)
+    }),
+  )
+  return requests
+}
+
+describe('ConnectionsPage', () => {
+  it('uses a compact dedicated layout and reviews an account before authorization, with honest errors', async () => {
+    const requests = setup()
+    render(
+      <MemoryRouter initialEntries={['/app/connections']}>
+        <ConnectionsPage spaces={[]} />
+      </MemoryRouter>,
+    )
+    await screen.findByText('No accounts connected yet.')
+    expect(screen.queryByText('Overview')).toBeNull()
+    expect(screen.queryByText('Connections & integrations')).toBeNull()
+    expect(screen.getByRole('link', { name: '← Back to Veduta' }).getAttribute('href')).toBe('/')
+    expect(screen.queryByText('GitHub')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Add account' }))
+    fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'github' } })
+    fireEvent.change(screen.getByLabelText('Repository owner'), { target: { value: 'example' } })
+    fireEvent.change(screen.getByLabelText('Repository name'), { target: { value: 'disposable' } })
+    fireEvent.submit(document.getElementById('create-service')!)
+    const detail = await screen.findByRole('complementary', { name: 'GitHub setup details' })
+    expect(requests[0]?.body).toMatchObject({
+      service: 'github',
+      repository: { owner: 'example', name: 'disposable' },
+    })
+    expect(
+      (within(detail).getByRole('button', { name: 'Verify GitHub' }) as HTMLButtonElement).disabled,
+    ).toBe(true)
+    fireEvent.submit(document.getElementById(`authorize-${attemptId}`)!)
+    expect(requests).toHaveLength(1)
+    fireEvent.click(within(detail).getByRole('checkbox'))
+    fireEvent.change(within(detail).getByLabelText('Fine-grained GitHub token'), {
+      target: { value: 'github_pat_test_secret' },
+    })
+    fireEvent.submit(document.getElementById(`authorize-${attemptId}`)!)
+    await waitFor(() =>
+      expect(within(detail).getByRole('alert').textContent).toBe('GitHub verification failed'),
+    )
+    expect(
+      (within(detail).getByLabelText('Fine-grained GitHub token') as HTMLInputElement).value,
+    ).toBe('')
+    expect(screen.queryByRole('button', { name: 'Save access' })).toBeNull()
+  })
+
+  it('opens a modal Sheet on mobile and restores focus after Escape', async () => {
+    setup(true)
+    render(
+      <MemoryRouter initialEntries={['/app/connections']}>
+        <ConnectionsPage spaces={[]} />
+      </MemoryRouter>,
+    )
+    await screen.findByText('No accounts connected yet.')
+    const add = screen.getByRole('button', { name: 'Add account' })
+    add.focus()
+    fireEvent.click(add)
+    const dialog = await screen.findByRole('dialog', { name: 'Add account' })
+    expect(dialog.getAttribute('data-slot')).toBe('sheet-content')
+    expect(within(dialog).getByRole('button', { name: 'Review access' })).toBeDefined()
+    fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(add))
+  })
+
+  it('returns focus to the selected setup after a direct mobile load', async () => {
+    setup(true)
+    await fetch('/api/service-connections/attempts', {
+      method: 'POST',
+      body: JSON.stringify({
+        submissionId: 'ec4b68eb-0966-47f2-a1bf-60034875b3ab',
+        repository: { owner: 'example', name: 'disposable' },
+      }),
+    })
+    render(
+      <MemoryRouter initialEntries={[`/app/connections?attempt=${attemptId}`]}>
+        <ConnectionsPage spaces={[]} />
+      </MemoryRouter>,
+    )
+    const dialog = await screen.findByRole('dialog', { name: 'GitHub setup' })
+    fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    const account = screen.getByRole('button', { name: /GitHub setup.*reviewing/ })
+    await waitFor(() => expect(document.activeElement).toBe(account))
+  })
+
+  it('returns a Gmail OAuth callback to the original Chat grant and keeps it discoverable', async () => {
+    const connectionId = 'svc-gmail-callback-proof'
+    const review = {
+      service: 'gmail',
+      scopes: ['https://www.googleapis.com/auth/gmail.readonly'],
+      actions: ['search_mailbox'],
+      executionHost: 'Gateway native HTTPS',
+    }
+    let snapshot = ServiceConnectionsSnapshotSchema.parse({
+      attempts: [
+        {
+          id: attemptId,
+          submissionId: '8ad6d611-6ab5-4f79-98ca-c9d55eb0d016',
+          turnId: 'cht-original',
+          spaceId: 'spc-work',
+          requestSummary: 'Find unread mail in Work',
+          review,
+          state: 'authorizing',
+          connectionId,
+          createdAt: at,
+          updatedAt: at,
+        },
+      ],
+      connections: [],
+      grants: [],
+    })
+    const callback = vi.fn()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url) === '/api/service-connections/gmail/callback') {
+          callback()
+          snapshot = ServiceConnectionsSnapshotSchema.parse({
+            ...snapshot,
+            attempts: snapshot.attempts.map((item) => ({
+              ...item,
+              state: 'ready',
+              verifiedAccount: 'proof@example.com',
+              verifiedScopes: review.scopes,
+            })),
+            connections: [
+              {
+                id: connectionId,
+                service: 'gmail',
+                mechanism: 'gmail-oauth',
+                account: 'proof@example.com',
+                scopes: review.scopes,
+                executionHost: review.executionHost,
+                authorizationRevision: '9660fcc8-72a8-4c18-85f7-7d0b223df1dc',
+                state: 'ready',
+                createdAt: at,
+                updatedAt: at,
+              },
+            ],
+          })
+          return response(snapshot)
+        }
+        if (String(url) === '/api/service-connections') return response(snapshot)
+        return response({ connections: [] })
+      }),
+    )
+    window.history.replaceState(
+      null,
+      '',
+      `/app/connections?code=one-use-test-code&state=${connectionId}.test-nonce`,
+    )
+    render(
+      <MemoryRouter initialEntries={[window.location.pathname + window.location.search]}>
+        <ConnectionsPage
+          spaces={[fromPartial<SpaceWithSurfaces>({ id: 'spc-work', name: 'Work' })]}
+        />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('button', { name: 'Grant to Work and resume' })
+    expect(callback).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('complementary', { name: 'Gmail setup details' })).toBeDefined()
+    expect(screen.getByRole('button', { name: /Gmail setup.*ready/ })).toBeDefined()
+    expect(window.location.search).not.toContain('code=')
+    expect(window.location.search).not.toContain('state=')
+    window.history.replaceState(null, '', '/')
+  })
+})

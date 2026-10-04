@@ -58,8 +58,9 @@ export const ConnectionAttemptSchema = z
   .object({
     id: z.string().uuid(),
     submissionId: z.string().uuid(),
-    turnId: z.string().min(1),
-    spaceId: z.string().min(1),
+    origin: z.enum(['chat', 'management']).default('chat'),
+    turnId: z.string().min(1).optional(),
+    spaceId: z.string().min(1).optional(),
     requestSummary: z.string().min(1).max(700),
     review: ConnectionReviewSchema,
     state: ConnectionAttemptStateSchema,
@@ -73,7 +74,37 @@ export const ConnectionAttemptSchema = z
     updatedAt: z.string().datetime(),
   })
   .strict()
+  .superRefine((attempt, context) => {
+    if (attempt.origin === 'chat' && (!attempt.turnId || !attempt.spaceId))
+      context.addIssue({ code: 'custom', message: 'Chat attempts require a turn and Space' })
+    if (attempt.origin === 'management' && (attempt.turnId || attempt.spaceId))
+      context.addIssue({ code: 'custom', message: 'Management attempts do not own Chat work' })
+  })
 export type ConnectionAttempt = z.infer<typeof ConnectionAttemptSchema>
+
+export const CreateServiceConnectionAttemptRequestSchema = z
+  .object({
+    submissionId: z.string().uuid(),
+    service: ServiceKindSchema,
+    repository: z
+      .object({
+        owner: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/),
+        name: z.string().regex(/^[A-Za-z0-9_.-]{1,100}$/),
+      })
+      .strict()
+      .optional(),
+    connectionId: z.string().min(1).optional(),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.service === 'github' && !input.repository)
+      context.addIssue({ code: 'custom', message: 'GitHub requires an exact repository' })
+    if (input.service === 'gmail' && input.repository)
+      context.addIssue({ code: 'custom', message: 'Gmail does not use a repository' })
+  })
+export type CreateServiceConnectionAttemptRequest = z.infer<
+  typeof CreateServiceConnectionAttemptRequestSchema
+>
 
 export const ServiceConnectionSchema = z
   .object({

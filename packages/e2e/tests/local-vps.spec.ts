@@ -11,6 +11,7 @@ import { SpacesEngine } from '../../daemon/src/spaces-engine.ts'
 import { verifyLiveRuntime } from './live-runtime-journey.ts'
 import { expectCompleteGymPlan } from './gym-plan-journey.ts'
 import { verifySurfaceAuthoring } from './surface-authoring-journey.ts'
+import { verifyConnectionsSettings } from './connections-settings-journey.ts'
 import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stack.ts'
 
 /**
@@ -929,50 +930,48 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(page.locator('.chat-entry.user', { hasText: work })).toHaveCount(0)
     })
 
+    await test.step('dedicated settings support compact accounts, reload, another device and a full-screen mobile drawer', async () => {
+      await verifyConnectionsSettings(page, observerContext!.pages()[0]!)
+    })
+
     await test.step('shared Service connection review survives refresh and cancellation for GitHub and Gmail', async () => {
       const composer = page.getByRole('textbox', { name: 'Message Veduta' })
       await composer.fill('List open issues in example/disposable in Work Space')
       await composer.press('Enter')
-      await page.getByRole('button', { name: 'Service connections' }).click()
-      const github = page.locator('section[aria-label="Connection attempts"] article', {
-        has: page.getByRole('heading', { name: 'GitHub for Work' }),
-      })
+      await page.getByRole('button', { name: 'Connections', exact: true }).click()
+      await page.locator('.connection-list-item').filter({ hasText: 'GitHub setup' }).click()
+      const github = page.getByRole('complementary', { name: 'GitHub setup details' })
       await expect(github).toContainText('list_issues')
       await expect(github).toContainText('example/disposable')
+      await github.getByText('Technical details').click()
       await expect(github).toContainText('v1.12.2')
-      await expect(github.getByRole('button', { name: 'Verify GitHub connection' })).toBeDisabled()
+      await expect(github.getByRole('button', { name: 'Verify GitHub' })).toBeDisabled()
       await page.reload()
       await expect(github).toContainText('State: reviewing')
       const observerPage = observerContext!.pages()[0]!
       await observerPage.goto(page.url())
-      const observerGithub = observerPage.locator(
-        'section[aria-label="Connection attempts"] article',
-        {
-          has: observerPage.getByRole('heading', { name: 'GitHub for Work' }),
-        },
-      )
+      const observerGithub = observerPage.getByRole('complementary', {
+        name: 'GitHub setup details',
+      })
       await expect(observerGithub).toContainText('State: reviewing')
-      await github.getByRole('button', { name: 'Cancel this request' }).click()
-      await expect(github).toContainText('State: cancelled')
+      await github.getByRole('button', { name: 'Cancel setup' }).click()
+      await expect(github).toHaveCount(0)
       await expect(observerGithub).toContainText('State: cancelled')
 
-      await page.getByRole('button', { name: 'Back to Home' }).click()
+      await page.getByRole('link', { name: 'Back to Veduta' }).click()
       await composer.fill('Find unread emails since 2026-09-30 in Work Space')
       await composer.press('Enter')
-      await page.getByRole('button', { name: 'Service connections' }).click()
-      const gmail = page.locator('section[aria-label="Connection attempts"] article', {
-        has: page.getByRole('heading', { name: 'Gmail for Work' }),
-      })
+      await page.getByRole('button', { name: 'Connections', exact: true }).click()
+      await page.locator('.connection-list-item').filter({ hasText: 'Gmail setup' }).click()
+      const gmail = page.getByRole('complementary', { name: 'Gmail setup details' })
       await expect(gmail).toContainText('search_mailbox')
       await expect(gmail).toContainText('Gateway native HTTPS')
-      await expect(
-        gmail.getByRole('button', { name: 'Continue to Gmail authorization' }),
-      ).toBeDisabled()
+      await expect(gmail.getByRole('button', { name: 'Continue to Google' })).toBeDisabled()
       await page.reload()
       await expect(gmail).toContainText('State: reviewing')
-      await gmail.getByRole('button', { name: 'Cancel this request' }).click()
-      await expect(gmail).toContainText('State: cancelled')
-      await page.getByRole('button', { name: 'Back to Home' }).click()
+      await gmail.getByRole('button', { name: 'Cancel setup' }).click()
+      await expect(gmail).toHaveCount(0)
+      await page.getByRole('link', { name: 'Back to Veduta' }).click()
     })
 
     await test.step('login leg: clear the token, log back in with the SAME virtual authenticator', async () => {

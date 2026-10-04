@@ -62,8 +62,6 @@ interface AppShellProps {
   focusChatToken: string
   focusChatOnRouteChange: boolean
   onOpenModelConnections: () => void
-  onOpenGmailConnections: () => void
-  onOpenHimalayaConnections: () => void
   onOpenServiceConnections: () => void
   onRetrySpaces: () => void
   onInstallDone: () => void
@@ -124,8 +122,6 @@ export function AppShell({
   focusChatToken,
   focusChatOnRouteChange,
   onOpenModelConnections,
-  onOpenGmailConnections,
-  onOpenHimalayaConnections,
   onOpenServiceConnections,
   onRetrySpaces,
   onInstallDone,
@@ -169,14 +165,8 @@ export function AppShell({
           <button type="button" onClick={onOpenModelConnections}>
             Model connections
           </button>
-          <button type="button" onClick={onOpenGmailConnections}>
-            Gmail connections
-          </button>
-          <button type="button" onClick={onOpenHimalayaConnections}>
-            IMAP / SMTP connections
-          </button>
           <button type="button" onClick={onOpenServiceConnections}>
-            Service connections
+            Connections
           </button>
           <NotificationBell token={authToken} />
           {showInstallGuide && <InstallButton prompt={installPrompt} onDone={onInstallDone} />}

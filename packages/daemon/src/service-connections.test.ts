@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ServiceConnections } from './service-connections.ts'
 
 const roots: string[] = []
@@ -162,5 +162,127 @@ describe('one durable Service connection lifecycle', () => {
     expect(restarted.retryReview(attempt.id).state).toBe('reviewing')
     expect(restarted.cancel(attempt.id).state).toBe('cancelled')
     expect(restarted.snapshot().grants).toEqual([])
+  })
+
+  it('keeps identity through failed reconnect, records revocations and persists before credential cleanup', () => {
+    const { root, input } = setup()
+    const events: string[] = []
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const connections = new ServiceConnections(root, {
+      onGrantChanged: (spaceId, summary) => events.push(`${spaceId}: ${summary}`),
+      onCredentialRemoved: (ref) => {
+        expect(ref).toBe('secret://vault/old-credential')
+        const restarted = new ServiceConnections(root)
+        expect(restarted.credentialRef('svc-github-stable')).toBe('secret://vault/new-credential')
+        throw new Error('Credential cleanup unavailable')
+      },
+    })
+    try {
+      const first = connections.createAttempt(input)
+      connections.beginAuthorization(first.id)
+      connections.beginVerification(first.id)
+      const account = {
+        connectionId: 'svc-github-stable',
+        account: 'reviewed-user',
+        scopes: input.review.scopes,
+        mechanism: 'github-mcp-stdio' as const,
+        credentialRef: 'secret://vault/old-credential',
+      }
+      connections.verified(first.id, account)
+      connections.grant(first.id, account.account, account.scopes)
+      const reconnect = connections.createAttempt({
+        submissionId: 'c624f425-a1fa-461d-9ff7-2f2b79188858',
+        origin: 'management',
+        connectionId: account.connectionId,
+        requestSummary: 'Reconnect reviewed-user',
+        review: input.review,
+      })
+      connections.beginAuthorization(reconnect.id)
+      connections.fail(reconnect.id, 'failed', 'Network unavailable')
+      expect(connections.retryReview(reconnect.id).connectionId).toBe(account.connectionId)
+      connections.onChange(() => {
+        throw new Error('Observer unavailable')
+      })
+      connections.beginAuthorization(reconnect.id)
+      connections.beginVerification(reconnect.id)
+      expect(
+        connections.verified(reconnect.id, {
+          ...account,
+          credentialRef: 'secret://vault/new-credential',
+        }).state,
+      ).toBe('ready')
+      expect(connections.snapshot().connections).toHaveLength(1)
+      expect(connections.snapshot().grants[0]?.enabled).toBe(false)
+      expect(events).toEqual([
+        'spc-work: github capability granted',
+        'spc-work: Service authorization changed; review Space access again',
+      ])
+      expect(warning).toHaveBeenCalledWith('Previous service credential cleanup failed')
+      const restarted = new ServiceConnections(root)
+      expect(restarted.attempt(reconnect.id)?.connectionId).toBe(account.connectionId)
+      expect(restarted.attempt(reconnect.id)?.state).toBe('ready')
+    } finally {
+      warning.mockRestore()
+    }
+  })
+
+  it('recovers a failed revocation Event append without losing a committed replacement credential', () => {
+    const { root, input } = setup()
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const connections = new ServiceConnections(root, {
+      onGrantChanged: (_spaceId, summary) => {
+        if (summary.includes('authorization changed')) throw new Error('Event storage unavailable')
+      },
+    })
+    try {
+      const first = connections.createAttempt(input)
+      const account = {
+        connectionId: 'svc-github-event-proof',
+        account: 'reviewed-user',
+        scopes: input.review.scopes,
+        mechanism: 'github-mcp-stdio' as const,
+        credentialRef: 'secret://vault/old-event-proof',
+      }
+      connections.beginAuthorization(first.id)
+      connections.beginVerification(first.id)
+      connections.verified(first.id, account)
+      connections.grant(first.id, account.account, account.scopes)
+      const reconnect = connections.createAttempt({
+        submissionId: 'eeffb7b3-1b2e-4776-94c5-d87d63f7a73f',
+        origin: 'management',
+        connectionId: account.connectionId,
+        requestSummary: 'Reconnect',
+        review: input.review,
+      })
+      connections.beginAuthorization(reconnect.id)
+      connections.beginVerification(reconnect.id)
+      expect(
+        connections.verified(reconnect.id, {
+          ...account,
+          credentialRef: 'secret://vault/new-event-proof',
+        }).state,
+      ).toBe('ready')
+      expect(connections.credentialRef(account.connectionId)).toBe('secret://vault/new-event-proof')
+      expect(() =>
+        connections.grant(reconnect.id, account.account, account.scopes, input.spaceId),
+      ).toThrow('waiting for its Event log')
+      const events: { spaceId: string; summary: string; eventId: string | undefined }[] = []
+      const restarted = new ServiceConnections(root, {
+        onGrantChanged: (spaceId, summary, eventId) => events.push({ spaceId, summary, eventId }),
+      })
+      expect(restarted.credentialRef(account.connectionId)).toBe('secret://vault/new-event-proof')
+      expect(events).toHaveLength(1)
+      expect(events[0]?.spaceId).toBe(input.spaceId)
+      expect(events[0]?.eventId).toMatch(/^[a-f0-9-]{36}$/)
+      new ServiceConnections(root, {
+        onGrantChanged: (spaceId, summary, eventId) => events.push({ spaceId, summary, eventId }),
+      })
+      expect(events).toHaveLength(1)
+      expect(
+        restarted.grant(reconnect.id, account.account, account.scopes, input.spaceId).enabled,
+      ).toBe(true)
+    } finally {
+      warning.mockRestore()
+    }
   })
 })
