@@ -10,18 +10,28 @@ import { McpClientError, McpStdioClient } from './mcp-stdio-client.ts'
 import { reviewedGithubMcpLaunch } from './reviewed-github-mcp-launch.ts'
 import { defaultRedactor } from './redaction.ts'
 import { GithubMcpEffects } from './github-mcp-effects.ts'
-import { ServiceConnectionError, type ServiceConnections } from './service-connections.ts'
+import {
+  ServiceConnectionError,
+  githubRepositoryAllowed,
+  type ServiceConnections,
+} from './service-connections.ts'
 import type { SecretsVault } from './secrets-vault.ts'
+import {
+  GITHUB_MCP_SCHEMAS,
+  GITHUB_READ_PROFILE_HASH,
+  type GithubMcpMode,
+} from './github-mcp-review.ts'
+import { GithubApiReadError, readGithubJson } from './github-api-read.ts'
+import { readGithubPath, type GithubRevision } from './github-file-read.ts'
 
-const REVIEWED_READ_SCHEMA = '56536b79a8bd99d49767afbb6fea3dafad31b898094e88496b6d023a07fd9119'
-const REVIEWED_WRITE_SCHEMA = '97fade9d761e39e29714162058cbcc5a484d65372be703889dd86f9d062c811b'
 const SOURCE = 'https://github.com/github/github-mcp-server/releases/tag/v1.12.2'
 const Profile = z.object({ login: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/) })
 
 export type GithubMcpSession = Pick<
   McpStdioClient,
   'start' | 'discoverTools' | 'listOpenIssues' | 'createIssue' | 'stop'
->
+> &
+  Partial<Pick<McpStdioClient, 'readFile'>>
 
 export function githubConnectionReview(
   owner: string,
@@ -42,8 +52,23 @@ export function githubConnectionReview(
     serverSource: SOURCE,
     archiveSha256: artifact.archiveSha256,
     executableSha256: artifact.executableSha256,
-    toolSchemaSha256: mode === 'write' ? REVIEWED_WRITE_SCHEMA : REVIEWED_READ_SCHEMA,
+    toolSchemaSha256: GITHUB_MCP_SCHEMAS[mode].hash,
     repository: { owner, name },
+  }
+}
+
+export function githubReadConnectionReview(accountHint?: string): ConnectionReview {
+  const { repository: _repository, ...base } = githubConnectionReview(
+    'review',
+    'profile',
+    accountHint,
+  )
+  return {
+    ...base,
+    scopes: ['GitHub Metadata: read', 'GitHub Contents: read', 'GitHub Issues: read'],
+    actions: ['list_repositories', 'list_issues', 'read_files'],
+    repositoryScope: { mode: 'authorized' },
+    toolSchemaSha256: GITHUB_READ_PROFILE_HASH,
   }
 }
 
@@ -55,8 +80,8 @@ export class GithubMcpService {
       spaceId: string
       connectionId: string
       grantId: string
-      action: 'list_issues' | 'issue_write'
-      repository: { owner: string; name: string }
+      action: 'list_issues' | 'issue_write' | 'list_repositories' | 'read_files'
+      repository?: { owner: string; name: string }
     }
   >()
   private readonly dispose: () => void
@@ -72,7 +97,7 @@ export class GithubMcpService {
         executable: string
         cwd: string
         token: string
-        mode: 'read' | 'write'
+        mode: GithubMcpMode
       }) => GithubMcpSession
     },
   ) {
@@ -100,18 +125,25 @@ export class GithubMcpService {
       const executable = await (this.options.install ?? installReviewedGithubMcp)(
         this.options.rootDir,
       )
-      const mode = attempt.review.actions.includes('issue_write') ? 'write' : 'read'
-      const client = this.client(executable, token, mode)
-      try {
-        await client.start()
-        const tool = await client.discoverTools()
-        if (
-          tool.name !== (mode === 'write' ? 'issue_write' : 'list_issues') ||
-          tool.schemaSha256 !== attempt.review.toolSchemaSha256
-        )
-          throw new Error('Required GitHub tool schema changed')
-      } finally {
-        await client.stop()
+      const modes: GithubMcpMode[] = attempt.review.repositoryScope
+        ? ['read', 'files']
+        : [attempt.review.actions.includes('issue_write') ? 'write' : 'read']
+      if (
+        attempt.review.repositoryScope &&
+        attempt.review.toolSchemaSha256 !== GITHUB_READ_PROFILE_HASH
+      )
+        throw new Error('Required GitHub read profile changed')
+      for (const mode of modes) {
+        const client = this.client(executable, token, mode)
+        try {
+          await client.start()
+          const tool = await client.discoverTools()
+          const reviewed = GITHUB_MCP_SCHEMAS[mode]
+          if (tool.name !== reviewed.name || tool.schemaSha256 !== reviewed.hash)
+            throw new Error('Required GitHub tool schema changed')
+        } finally {
+          await client.stop()
+        }
       }
       this.options.vault.set(credentialRef.slice('secret://vault/'.length), token)
       this.options.connections.verified(attemptId, {
@@ -143,8 +175,187 @@ export class GithubMcpService {
     }
   }
 
+  async listRepositories(input: {
+    spaceId: string
+    accountHint?: string
+    connectionId?: string
+    owner?: string
+    page?: number
+    signal?: AbortSignal
+  }) {
+    const page = input.page ?? 1
+    if (!Number.isInteger(page) || page < 1 || page > 5)
+      throw new ServiceConnectionError(
+        400,
+        'Repository discovery is limited to five pages per request',
+      )
+    return this.authorizedRead(
+      { ...input, action: 'list_repositories' },
+      async (token, signal, grant) => {
+        const response = await readGithubJson(
+          token,
+          `/user/repos?per_page=20&page=${page}&sort=full_name&direction=asc`,
+          this.options.fetchFn ?? fetch,
+          signal,
+        )
+        const repositories = z
+          .array(
+            z.object({
+              name: z.string().regex(/^[A-Za-z0-9_.-]{1,100}$/),
+              owner: z.object({ login: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/) }),
+              private: z.boolean(),
+            }),
+          )
+          .max(20)
+          .parse(response.data)
+          .filter(
+            (repo) =>
+              (!input.owner || repo.owner.login.toLowerCase() === input.owner.toLowerCase()) &&
+              githubRepositoryAllowed(grant, { owner: repo.owner.login, name: repo.name }),
+          )
+          .map((repo) => ({
+            owner: repo.owner.login,
+            name: repo.name,
+            private: repo.private,
+            url: `https://github.com/${repo.owner.login}/${repo.name}`,
+          }))
+        return { repositories, hasMore: response.hasMore, page }
+      },
+    )
+  }
+
+  async readFile(input: {
+    spaceId: string
+    accountHint?: string
+    connectionId?: string
+    repository: { owner: string; name: string }
+    path: string
+    ref?: string
+    revision?: GithubRevision
+    signal?: AbortSignal
+  }) {
+    return this.authorizedRead({ ...input, action: 'read_files' }, (token, signal) =>
+      readGithubPath({
+        token,
+        owner: input.repository.owner,
+        repo: input.repository.name,
+        path: input.path,
+        ...(input.ref ? { ref: input.ref } : {}),
+        ...(input.revision ? { revision: input.revision } : {}),
+        fetchFn: this.options.fetchFn ?? fetch,
+        signal,
+        readFile: async (path, commit) => {
+          const executable = await (this.options.install ?? installReviewedGithubMcp)(
+            this.options.rootDir,
+            { signal },
+          )
+          const client = this.client(executable, token, 'files')
+          try {
+            await client.start()
+            const tool = await client.discoverTools()
+            if (
+              tool.name !== GITHUB_MCP_SCHEMAS.files.name ||
+              tool.schemaSha256 !== GITHUB_MCP_SCHEMAS.files.hash ||
+              !client.readFile
+            )
+              throw new McpClientError(
+                'schema_changed',
+                'The reviewed GitHub file capability is unavailable',
+              )
+            signal.throwIfAborted()
+            return await client.readFile(
+              input.repository.owner,
+              input.repository.name,
+              path,
+              commit,
+              signal,
+            )
+          } finally {
+            await client.stop()
+          }
+        },
+      }),
+    )
+  }
+
+  private async authorizedRead<T>(
+    input: {
+      spaceId: string
+      action: 'list_repositories' | 'read_files'
+      accountHint?: string
+      connectionId?: string
+      repository?: { owner: string; name: string }
+      signal?: AbortSignal
+    },
+    run: (token: string, signal: AbortSignal, grant: SpaceCapabilityGrant) => Promise<T>,
+  ) {
+    const query = {
+      spaceId: input.spaceId,
+      service: 'github' as const,
+      action: input.action,
+      ...(input.accountHint ? { accountHint: input.accountHint } : {}),
+      ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+      ...(input.repository ? { repository: input.repository } : {}),
+    }
+    const eligible = this.options.connections.eligible(query)
+    if (!eligible?.credentialRef || !this.options.vault)
+      throw new ServiceConnectionError(
+        403,
+        'GitHub read access is not granted for this Space and repository. Review Service connections.',
+      )
+    const token = this.options.vault.resolve(eligible.credentialRef)
+    if (!token) throw new ServiceConnectionError(409, 'GitHub connection needs reconnection')
+    const controller = new AbortController()
+    const abort = () => controller.abort()
+    if (input.signal?.aborted) controller.abort()
+    else input.signal?.addEventListener('abort', abort, { once: true })
+    this.active.set(controller, {
+      ...query,
+      connectionId: eligible.connection.id,
+      grantId: eligible.grant.id,
+    })
+    try {
+      controller.signal.throwIfAborted()
+      const result = await run(token, controller.signal, eligible.grant)
+      controller.signal.throwIfAborted()
+      const current = this.options.connections.eligible({
+        ...query,
+        connectionId: eligible.connection.id,
+      })
+      if (current?.grant.id !== eligible.grant.id)
+        throw new ServiceConnectionError(403, 'GitHub Space access changed during the read')
+      return {
+        ...result,
+        connection: current.connection,
+        grant: current.grant,
+        origin: `untrusted:github-mcp-${current.connection.id}` as const,
+      }
+    } catch (error) {
+      if (error instanceof GithubApiReadError && error.providerStatus === 401)
+        this.options.connections.recordReadFailure(
+          eligible.connection.id,
+          eligible.connection.authorizationRevision,
+          'needs_reconnect',
+          error.message,
+        )
+      else if (error instanceof McpClientError && error.kind === 'schema_changed')
+        this.options.connections.recordReadFailure(
+          eligible.connection.id,
+          eligible.connection.authorizationRevision,
+          'degraded',
+          'The reviewed GitHub tool schema changed. Review the connection before reading again.',
+        )
+      throw error
+    } finally {
+      this.active.delete(controller)
+      input.signal?.removeEventListener('abort', abort)
+    }
+  }
+
   async listOpenIssues(input: {
     spaceId: string
+    accountHint?: string
+    connectionId?: string
     repository: { owner: string; name: string }
     signal?: AbortSignal
   }): Promise<{
@@ -158,6 +369,8 @@ export class GithubMcpService {
       service: 'github',
       action: 'list_issues',
       repository: input.repository,
+      ...(input.accountHint ? { accountHint: input.accountHint } : {}),
+      ...(input.connectionId ? { connectionId: input.connectionId } : {}),
     })
     if (!eligible?.credentialRef || !this.options.vault)
       throw new ServiceConnectionError(403, 'GitHub is not granted for this Space and repository')
@@ -192,6 +405,7 @@ export class GithubMcpService {
           service: 'github',
           action: 'list_issues',
           repository: input.repository,
+          connectionId: eligible.connection.id,
         })
         if (!current || current.grant.id !== eligible.grant.id)
           throw new ServiceConnectionError(403, 'GitHub Space grant changed during the call')
@@ -264,7 +478,7 @@ export class GithubMcpService {
       try {
         await client.start()
         const tool = await client.discoverTools()
-        if (tool.name !== 'issue_write' || tool.schemaSha256 !== REVIEWED_WRITE_SCHEMA)
+        if (tool.name !== 'issue_write' || tool.schemaSha256 !== GITHUB_MCP_SCHEMAS.write.hash)
           throw new McpClientError('schema_changed', 'Required GitHub write capability changed')
         const current = this.options.connections.eligible({
           spaceId: input.spaceId,
@@ -311,7 +525,7 @@ export class GithubMcpService {
     for (const controller of this.active.keys()) controller.abort()
   }
 
-  private client(executable: string, token: string, mode: 'read' | 'write'): GithubMcpSession {
+  private client(executable: string, token: string, mode: GithubMcpMode): GithubMcpSession {
     const input = { executable, cwd: this.options.rootDir, token, mode }
     return (
       this.options.createClient?.(input) ??
@@ -387,7 +601,7 @@ export class GithubMcpService {
         service: 'github',
         action: call.action,
         connectionId: call.connectionId,
-        repository: call.repository,
+        ...(call.repository ? { repository: call.repository } : {}),
       })
       if (current?.grant.id !== call.grantId) controller.abort()
     }

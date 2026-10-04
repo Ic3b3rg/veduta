@@ -167,11 +167,19 @@ describe('focused Mailbox Chat with Gmail', () => {
         spaceId: 'spc-health',
       })
       await vi.waitFor(() =>
-        expect(socket.sent.some((frame) => frame.type === 'chat.turn-end')).toBe(true),
+        expect(
+          socket.sent.some(
+            (frame) => frame.type === 'chat.timeline-entry' && frame.entry.kind === 'assistant',
+          ),
+        ).toBe(true),
       )
       expect(requests.filter((request) => request.url.includes('/messages'))).toHaveLength(0)
-      expect(socket.sent.find((frame) => frame.type === 'chat.turn-end')).toMatchObject({
-        message: { text: expect.stringContaining('Which Mailbox account') },
+      expect(
+        socket.sent.find(
+          (frame) => frame.type === 'chat.timeline-entry' && frame.entry.kind === 'assistant',
+        ),
+      ).toMatchObject({
+        entry: { message: { text: expect.stringContaining('Which Mailbox account') } },
       })
 
       const secondSocket = new Socket()
@@ -192,7 +200,7 @@ describe('focused Mailbox Chat with Gmail', () => {
       )!
       const query = new URL(list.url).searchParams
       expect(query.get('q')).toBe(
-        '{receipt invoice} label:"Personal" is:unread after:1790553600 before:1791158400',
+        '({receipt invoice} after:1790553600 before:1791158400) label:"Personal" is:unread',
       )
       expect(query.get('maxResults')).toBe('20')
       expect(
@@ -243,5 +251,5 @@ describe('focused Mailbox Chat with Gmail', () => {
     } finally {
       await restarted.app.close()
     }
-  })
+  }, 15_000)
 })

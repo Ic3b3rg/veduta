@@ -284,6 +284,7 @@ async function startTurn(
 ): Promise<ActiveCodexTurn> {
   const threadStartRaw = await transport.request('thread/start', {
     model: request.modelId,
+    ephemeral: true,
     approvalPolicy: 'never',
     sandbox: 'read-only',
     config: { web_search: 'disabled', disabled_tools: true },

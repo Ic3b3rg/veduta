@@ -2,16 +2,13 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { GithubMcpEgressProxy } from './github-mcp-egress.ts'
+import { GITHUB_MCP_SCHEMAS, type GithubMcpMode } from './github-mcp-review.ts'
 
 const MODERN = '2026-07-28'
 const LEGACY = '2025-11-25'
 const MAX_FRAME_BYTES = 1024 * 1024
 const MAX_RESULT_BYTES = 64 * 1024
 const MAX_TOOLS = 32
-const REVIEWED_LIST_ISSUES_SCHEMA_SHA256 =
-  '56536b79a8bd99d49767afbb6fea3dafad31b898094e88496b6d023a07fd9119'
-const REVIEWED_ISSUE_WRITE_SCHEMA_SHA256 =
-  '97fade9d761e39e29714162058cbcc5a484d65372be703889dd86f9d062c811b'
 
 const Envelope = z.object({
   jsonrpc: z.literal('2.0'),
@@ -39,6 +36,29 @@ const ToolResult = z.object({
   isError: z.boolean().optional(),
   resultType: z.enum(['complete', 'input_required']).optional(),
 })
+const FileToolResult = z.object({
+  content: z
+    .array(
+      z.discriminatedUnion('type', [
+        z.object({ type: z.literal('text'), text: z.string() }),
+        z.object({
+          type: z.literal('resource'),
+          resource: z.object({
+            uri: z.string().max(2048),
+            text: z.string().optional(),
+            blob: z.string().optional(),
+            mimeType: z.string().optional(),
+          }),
+        }),
+        z.object({ type: z.literal('resource_link'), uri: z.string().max(2048) }),
+      ]),
+    )
+    .min(1)
+    .max(3),
+  isError: z.boolean().optional(),
+  resultType: z.enum(['complete', 'input_required']).optional(),
+})
+export type GithubMcpFile = { kind: 'text'; text: string } | { kind: 'binary' | 'too_large' }
 
 export class McpClientError extends Error {
   constructor(
@@ -79,7 +99,7 @@ export class McpStdioClient {
       executable: string
       cwd: string
       token: string
-      mode?: 'read' | 'write'
+      mode?: GithubMcpMode
       timeoutMs?: number
       launch?: (proxyPort: number) => { command: string; args: string[] }
     },
@@ -87,7 +107,7 @@ export class McpStdioClient {
 
   async start(): Promise<void> {
     if (this.child) throw new McpClientError('unsupported', 'MCP client already started')
-    if (this.options.launch) this.proxy = await GithubMcpEgressProxy.start()
+    if (this.options.launch) this.proxy = await GithubMcpEgressProxy.start(this.options.token)
     let launch: { command: string; args: string[] }
     try {
       launch = this.options.launch
@@ -103,18 +123,17 @@ export class McpStdioClient {
       [
         ...launch.args,
         'stdio',
-        this.options.mode === 'write' ? '--tools=issue_write' : '--tools=list_issues',
+        `--tools=${GITHUB_MCP_SCHEMAS[this.options.mode ?? 'read'].name}`,
         ...(this.options.mode === 'write' ? [] : ['--read-only']),
       ],
       {
         cwd: this.options.cwd,
         env: {
-          GITHUB_PERSONAL_ACCESS_TOKEN: this.options.token,
+          GITHUB_PERSONAL_ACCESS_TOKEN: this.proxy?.credential ?? this.options.token,
           TZ: 'UTC',
           ...(this.proxy
             ? {
-                HTTPS_PROXY: `http://127.0.0.1:${this.proxy.port}`,
-                HTTP_PROXY: `http://127.0.0.1:${this.proxy.port}`,
+                GITHUB_HOST: `http://127.0.0.1:${this.proxy.port}`,
               }
             : {}),
         },
@@ -170,7 +189,7 @@ export class McpStdioClient {
   }
 
   async discoverTools(): Promise<{
-    name: 'list_issues' | 'issue_write'
+    name: 'list_issues' | 'issue_write' | 'get_file_contents'
     schemaSha256: string
   }> {
     if (!this.protocol) throw new McpClientError('unavailable', 'MCP session is not ready')
@@ -199,17 +218,13 @@ export class McpStdioClient {
       cursor = response.data.nextCursor
       if (page === 7) throw new McpClientError('unsupported', 'MCP tool pages exceed the bound')
     }
-    const requiredName = this.options.mode === 'write' ? 'issue_write' : 'list_issues'
+    const reviewed = GITHUB_MCP_SCHEMAS[this.options.mode ?? 'read']
+    const requiredName = reviewed.name
     const tool = tools.find((candidate) => candidate.name === requiredName)
     if (!tool)
       throw new McpClientError('unsupported', `Required GitHub ${requiredName} tool is missing`)
     const hash = createHash('sha256').update(JSON.stringify(tool.inputSchema)).digest('hex')
-    if (
-      hash !==
-      (requiredName === 'issue_write'
-        ? REVIEWED_ISSUE_WRITE_SCHEMA_SHA256
-        : REVIEWED_LIST_ISSUES_SCHEMA_SHA256)
-    )
+    if (hash !== reviewed.hash)
       throw new McpClientError('schema_changed', `GitHub ${requiredName} schema changed`)
     this.toolSchemaHash = hash
     return { name: requiredName, schemaSha256: hash }
@@ -220,7 +235,7 @@ export class McpStdioClient {
     repo: string,
     signal?: AbortSignal,
   ): Promise<{ text: string; schemaSha256: string }> {
-    if (!this.protocol || !this.toolSchemaHash || this.options.mode === 'write')
+    if (!this.protocol || !this.toolSchemaHash || (this.options.mode ?? 'read') !== 'read')
       throw new McpClientError('unavailable', 'MCP tool is not verified')
     if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(owner) || !/^[A-Za-z0-9_.-]{1,100}$/.test(repo))
       throw new McpClientError('unsupported', 'Repository scope is invalid')
@@ -282,21 +297,54 @@ export class McpStdioClient {
     return { text, schemaSha256: this.toolSchemaHash }
   }
 
+  async readFile(
+    owner: string,
+    repo: string,
+    path: string,
+    commitSha: string,
+    signal?: AbortSignal,
+  ): Promise<GithubMcpFile> {
+    if (!this.protocol || !this.toolSchemaHash || this.options.mode !== 'files')
+      throw new McpClientError('unavailable', 'MCP file tool is not verified')
+    if (!/^[a-f0-9]{40}$/.test(commitSha))
+      throw new McpClientError('unsupported', 'A pinned commit is required')
+    const raw = await this.request(
+      'tools/call',
+      { name: 'get_file_contents', arguments: { owner, repo, path, sha: commitSha } },
+      this.protocol,
+      this.options.timeoutMs ?? 20_000,
+      signal,
+    )
+    if (Buffer.byteLength(JSON.stringify(raw)) > MAX_RESULT_BYTES)
+      throw new McpClientError('malformed', 'GitHub file exceeds the reviewed result limit')
+    const result = FileToolResult.safeParse(raw)
+    if (!result.success || result.data.resultType === 'input_required')
+      throw new McpClientError('unsupported', 'GitHub returned unsupported file content')
+    if (result.data.isError)
+      throw new McpClientError(
+        'tool_failed',
+        'GitHub could not read this file. Check the path, revision and Contents permission.',
+      )
+    const resources = result.data.content.filter((part) => part.type === 'resource')
+    if (resources.length === 1) {
+      const resource = resources[0]!.resource
+      if (resource.blob !== undefined) return { kind: 'binary' }
+      if (resource.text !== undefined) return { kind: 'text', text: resource.text }
+    }
+    if (result.data.content.some((part) => part.type === 'resource_link'))
+      return { kind: 'too_large' }
+    throw new McpClientError('malformed', 'GitHub returned no verifiable file content')
+  }
+
   async stop(): Promise<void> {
     this.stopped = true
     const child = this.child
-    if (!child) {
-      await this.proxy?.close()
-      this.proxy = undefined
-      return
-    }
     this.child = undefined
+    const closingProxy = this.proxy?.close()
+    this.proxy = undefined
     this.failAll(new McpClientError('cancelled', 'MCP session stopped'))
-    if (child.exitCode !== null) {
-      await this.proxy?.close()
-      this.proxy = undefined
-      return
-    }
+    await closingProxy
+    if (!child || child.exitCode !== null) return
     child.stdin.end()
     await Promise.race([
       new Promise<void>((resolve) => child.once('exit', () => resolve())),
@@ -308,8 +356,6 @@ export class McpStdioClient {
       new Promise<void>((resolve) => setTimeout(resolve, 500)),
     ])
     if (child.exitCode === null) child.kill('SIGKILL')
-    await this.proxy?.close()
-    this.proxy = undefined
   }
 
   private request(

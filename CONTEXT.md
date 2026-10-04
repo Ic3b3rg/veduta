@@ -136,6 +136,10 @@ _Avoid_: chat consent, successful connection before verification
 The enabled set of actions, tools, and resource scope through which one Space may use a Gateway-wide Service connection. Revoking it stops that Space's future use without deleting other Spaces' results or the account identity.
 _Avoid_: shared Space result, implicit account access
 
+**Service request**:
+The current user-initiated read operation resolved from trusted Chat evidence, including relevant clarifications, into its owning Space, service, account, resource scope and finite bounds. Setup, Skill selection and execution share it; it supplies no standing permission and every execution still needs a current Space capability grant.
+_Avoid_: authorization from model prose, historical task permission
+
 **Connection parity**:
 The product invariant that changing provider, model, or authorization method leaves the Agent's Veduta capabilities, workflows, and persistent outcomes unchanged. Only unavoidable connection properties such as authentication, catalog, price, latency, limits, and model quality may differ.
 _Avoid_: provider mode, text-only mode, degraded connection

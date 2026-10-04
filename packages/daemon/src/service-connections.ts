@@ -7,6 +7,8 @@ import {
   ServiceConnectionSchema,
   ServiceConnectionsSnapshotSchema,
   SpaceCapabilityGrantSchema,
+  GithubRepositoryScopeSchema,
+  type GithubRepositoryScope,
   type ConnectionAttempt,
   type ConnectionReview,
   type ServiceConnection,
@@ -46,6 +48,24 @@ export class ServiceConnectionError extends Error {
   ) {
     super(message)
   }
+}
+
+export function githubRepositoryAllowed(
+  grant: SpaceCapabilityGrant,
+  repository: { owner: string; name: string },
+): boolean {
+  if (grant.repositoryScope?.mode === 'authorized') return true
+  const repositories =
+    grant.repositoryScope?.mode === 'selected'
+      ? grant.repositoryScope.repositories
+      : grant.repository
+        ? [grant.repository]
+        : []
+  return repositories.some(
+    (item) =>
+      item.owner.toLowerCase() === repository.owner.toLowerCase() &&
+      item.name.toLowerCase() === repository.name.toLowerCase(),
+  )
 }
 
 /** Gateway-owned non-secret attempt, connection and Space-grant authority. */
@@ -318,6 +338,7 @@ export class ServiceConnections {
     confirmedAccount: string,
     confirmedScopes: string[],
     targetSpaceId?: string,
+    requestedRepositoryScope?: GithubRepositoryScope,
   ): SpaceCapabilityGrant {
     const attempt = this.requiredAttempt(id)
     const spaceId = attempt.origin === 'management' ? targetSpaceId : attempt.spaceId
@@ -333,6 +354,14 @@ export class ServiceConnections {
         'Space access is waiting for its Event log. Retry when Gateway storage is available.',
       )
     const connection = this.confirmVerifiedAccount(id, confirmedAccount, confirmedScopes)
+    if (requestedRepositoryScope && !attempt.review.repositoryScope)
+      throw new ServiceConnectionError(
+        400,
+        'This legacy grant requires a protected read-profile upgrade',
+      )
+    const repositoryScope = requestedRepositoryScope
+      ? GithubRepositoryScopeSchema.parse(requestedRepositoryScope)
+      : attempt.review.repositoryScope
     const existing = this.grants.find(
       (grant) =>
         grant.spaceId === spaceId &&
@@ -340,6 +369,7 @@ export class ServiceConnections {
         grant.authorizationRevision === connection.authorizationRevision &&
         grant.enabled &&
         JSON.stringify(grant.repository) === JSON.stringify(attempt.review.repository) &&
+        JSON.stringify(grant.repositoryScope) === JSON.stringify(repositoryScope) &&
         JSON.stringify(grant.actions) === JSON.stringify(attempt.review.actions),
     )
     if (existing) return existing
@@ -350,11 +380,25 @@ export class ServiceConnections {
       connectionId: connection.id,
       authorizationRevision: connection.authorizationRevision,
       actions: attempt.review.actions,
+      ...(repositoryScope ? { repositoryScope } : {}),
       ...(attempt.review.repository ? { repository: attempt.review.repository } : {}),
       enabled: true,
       createdAt: at,
       updatedAt: at,
     })
+    if (repositoryScope) {
+      for (const prior of this.grants) {
+        if (
+          prior.spaceId === spaceId &&
+          prior.connectionId === connection.id &&
+          prior.repositoryScope &&
+          prior.enabled
+        ) {
+          prior.enabled = false
+          prior.updatedAt = at
+        }
+      }
+    }
     this.grants.push(grant)
     this.persist()
     this.onGrantChanged?.(grant.spaceId, `${connection.service} capability granted`)
@@ -414,6 +458,7 @@ export class ServiceConnections {
     service: ServiceKind
     action: string
     connectionId?: string
+    accountHint?: string
     repository?: { owner: string; name: string }
   }):
     | { connection: ServiceConnection; grant: SpaceCapabilityGrant; credentialRef?: string }
@@ -426,11 +471,17 @@ export class ServiceConnections {
       )
         continue
       if (input.connectionId && grant.connectionId !== input.connectionId) continue
-      if (JSON.stringify(grant.repository) !== JSON.stringify(input.repository)) continue
+      if (input.service === 'github') {
+        if (input.repository && !githubRepositoryAllowed(grant, input.repository)) continue
+        if (!input.repository && (input.action !== 'list_repositories' || !grant.repositoryScope))
+          continue
+      } else if (JSON.stringify(grant.repository) !== JSON.stringify(input.repository)) continue
       const connection = this.connections.find((candidate) => candidate.id === grant.connectionId)
       if (
         !connection ||
         connection.service !== input.service ||
+        (input.accountHint !== undefined &&
+          connection.account.toLowerCase() !== input.accountHint.toLowerCase()) ||
         connection.state !== 'ready' ||
         connection.authorizationRevision !== grant.authorizationRevision
       )
@@ -493,6 +544,23 @@ export class ServiceConnections {
     this.persist()
     for (const grant of this.grants.filter((item) => item.connectionId === id && item.enabled))
       this.onGrantChanged?.(grant.spaceId, 'Service connection disabled')
+  }
+
+  recordReadFailure(
+    id: string,
+    authorizationRevision: string,
+    state: 'needs_reconnect' | 'degraded',
+    reason: string,
+  ): void {
+    const connection = this.requiredConnection(id)
+    if (connection.state !== 'ready' || connection.authorizationRevision !== authorizationRevision)
+      return
+    connection.state = state
+    connection.reason = reason.slice(0, 400)
+    connection.updatedAt = this.now().toISOString()
+    this.persist()
+    for (const grant of this.grants.filter((item) => item.connectionId === id && item.enabled))
+      this.onGrantChanged?.(grant.spaceId, `Service connection ${state}: ${connection.reason}`)
   }
 
   removeConnection(id: string): void {

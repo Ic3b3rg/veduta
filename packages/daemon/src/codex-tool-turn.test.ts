@@ -1489,6 +1489,7 @@ describe('stream', () => {
       params: {
         model: 'gpt-5-codex',
         approvalPolicy: 'never',
+        ephemeral: true,
         sandbox: 'read-only',
         config: { web_search: 'disabled', disabled_tools: true },
         dynamicTools: [],

@@ -1,3 +1,7 @@
+import { SYSTEM_SPACE_ID } from '@veduta/protocol'
+import { ServiceRequests } from './service-request.ts'
+import { parseChatDecisionIntent } from './chat-decision.ts'
+import { mockServiceRequest } from './mock-service-request.ts'
 import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
 import { UpdatePinningSchema, type ChatAcceptance, type ChatScope } from '@veduta/protocol'
@@ -155,6 +159,7 @@ export interface ServerOptions {
    */
   egress?: { enforce?: boolean; extraAllow?: readonly string[] }
   /** Injectable Google transport for passive Gmail connection tests. */
+  serviceRequestComplete?: (prompt: string) => Promise<string>
   gmailFetch?: typeof fetch
   /** Deterministic GitHub MCP verification and call transport for isolated integration tests. */
   githubMcp?: {
@@ -164,7 +169,7 @@ export interface ServerOptions {
       executable: string
       cwd: string
       token: string
-      mode: 'read' | 'write'
+      mode: 'read' | 'write' | 'files'
     }) => GithubMcpSession
   }
   /** Scripted CLI transport for Himalaya setup and mailbox integration tests. */
@@ -1031,6 +1036,68 @@ export function buildServer(options: ServerOptions = {}) {
     secrets,
     mockResponder: createMockChatResponder({ now, timeZone: memoryConfig.timezone, cwd: dataDir }),
   })
+  const serviceRequests = new ServiceRequests({
+    timeline: chatTimeline,
+    spaces: () => store.listSpaces().filter((space) => space.id !== SYSTEM_SPACE_ID),
+    githubAccounts: (spaceId, operation) =>
+      serviceConnections
+        .snapshot()
+        .connections.filter((connection) => {
+          if (connection.service !== 'github' || connection.state !== 'ready') return false
+          if (operation?.service !== 'github')
+            return serviceConnections
+              .snapshot()
+              .grants.some(
+                (grant) =>
+                  grant.spaceId === spaceId &&
+                  grant.connectionId === connection.id &&
+                  grant.enabled &&
+                  grant.authorizationRevision === connection.authorizationRevision,
+              )
+          return (
+            serviceConnections.eligible({
+              spaceId,
+              service: 'github',
+              action: operation.action,
+              connectionId: connection.id,
+              ...(operation.action === 'list_repositories'
+                ? {}
+                : { repository: { owner: operation.owner, name: operation.repo } }),
+            }) !== undefined
+          )
+        })
+        .map(({ id, account }) => ({ id, account })),
+    accounts: (spaceId) =>
+      gmailMailbox.accounts().filter((account) =>
+        serviceConnections.eligible({
+          spaceId,
+          service: 'gmail',
+          action: 'search_mailbox',
+          connectionId: account.id,
+        }),
+      ),
+    now,
+    timeZone: memoryConfig.timezone,
+    complete: (prompt, spaceId) =>
+      options.serviceRequestComplete?.(prompt) ??
+      router.execute(
+        { purpose: 'classification', origin: 'user', ...(spaceId ? { spaceId } : {}) },
+        async (model) => {
+          if (model.provider === 'mock')
+            return JSON.stringify(
+              mockServiceRequest(
+                prompt,
+                [...gmailMailbox.accounts(), ...himalayaMailbox.accounts()],
+                now(),
+                memoryConfig.timezone,
+              ),
+            )
+          const result = await completeToolless(bridge, model, prompt)
+          if (result.costUsd !== undefined) router.recordSpend(model, result.costUsd)
+          return result.text
+        },
+      ),
+  })
   const proactiveCompletions = createProactiveCompletions({ router, bridge })
   judgeCompletion = proactiveCompletions.judge
   // Issue #47's verify-then-commit selection flow and every adapter's
@@ -1324,17 +1391,21 @@ export function buildServer(options: ServerOptions = {}) {
 
   const gmailMailbox = new GmailMailbox(gmailConnections)
   const himalayaMailbox = new HimalayaMailbox(himalayaConnections)
-  const skills = new FirstPartySkills(undefined, (text) => {
-    const lower = text.toLowerCase()
-    const named = [...gmailMailbox.accounts(), ...himalayaMailbox.accounts()].filter(
-      (account) =>
-        lower.includes(account.address.toLowerCase()) ||
-        (account.name.length > 2 && lower.includes(account.name.toLowerCase())),
-    )
-    if (named.length === 1) return named[0]!.provider
-    const available = [...gmailMailbox.accounts(), ...himalayaMailbox.accounts()]
-    return available.length === 1 ? available[0]!.provider : undefined
-  })
+  const skills = new FirstPartySkills(
+    undefined,
+    (text) => {
+      const lower = text.toLowerCase()
+      const named = [...gmailMailbox.accounts(), ...himalayaMailbox.accounts()].filter(
+        (account) =>
+          lower.includes(account.address.toLowerCase()) ||
+          (account.name.length > 2 && lower.includes(account.name.toLowerCase())),
+      )
+      if (named.length === 1) return named[0]!.provider
+      const available = [...gmailMailbox.accounts(), ...himalayaMailbox.accounts()]
+      return available.length === 1 ? available[0]!.provider : undefined
+    },
+    serviceRequests.forContext,
+  )
   const mailboxReader = new MailboxSummaryReader(router, proactiveCompletions.reader)
 
   // The chat tool registry (issue #37, exact set per `chat-tool-registry.ts`'s
@@ -1367,16 +1438,18 @@ export function buildServer(options: ServerOptions = {}) {
                 }),
               ),
             search: (scope, signal) => {
-              if (
-                !serviceConnections.eligible({
-                  spaceId,
-                  service: 'gmail',
-                  action: 'search_mailbox',
-                  connectionId: scope.account.id,
-                })
-              )
-                throw new Error('Gmail is not granted for this Space')
-              return gmailMailbox.search(scope, signal)
+              const authorize = () => {
+                if (
+                  !serviceConnections.eligible({
+                    spaceId,
+                    service: 'gmail',
+                    action: 'search_mailbox',
+                    connectionId: scope.account.id,
+                  })
+                )
+                  throw new Error('Gmail is not granted for this Space')
+              }
+              return gmailMailbox.search(scope, signal, authorize)
             },
           },
           himalayaMailbox,
@@ -1385,9 +1458,16 @@ export function buildServer(options: ServerOptions = {}) {
         spaceId,
         timeZone: memoryConfig.timezone,
         now,
+        requestFor: serviceRequests.forContext,
       }),
     githubToolsFor: (spaceId) => [
-      ...createGithubMcpTools({ store, github: githubMcp, spaceId, now }),
+      ...createGithubMcpTools({
+        store,
+        github: githubMcp,
+        spaceId,
+        now,
+        requestFor: serviceRequests.forContext,
+      }),
       guardGithubIssueTool(wrappedGithubIssueTool, spaceId),
     ],
   })
@@ -1421,9 +1501,21 @@ export function buildServer(options: ServerOptions = {}) {
     pendingDecisions,
     skills,
     commandCwd: dataDir,
+    serviceRequestInstruction: (turnId) => serviceRequests.instruction(turnId),
+    serviceOperation: (turnId) => serviceRequests.operation(turnId),
   })
   const chatTimelineCoordinator = new ChatTimelineCoordinator({
     timeline: chatTimeline,
+    resolveServiceRequest: (turnId) => {
+      const user = chatTimeline.userEntry(turnId)
+      const scope = user?.scope
+      return (scope?.type === 'space' && scope.spaceId === SYSTEM_SPACE_ID) ||
+        (user &&
+          (parseChatDecisionIntent(user.message.text) ||
+            fullTextQueueId(user.message.text) !== undefined))
+        ? Promise.resolve({ status: 'none' })
+        : serviceRequests.prepare(turnId)
+    },
     hasSpace: (spaceId) => store.getSpace(spaceId) !== undefined,
     spaces: () => store.listSpaces(),
     serviceConnections,
@@ -1443,6 +1535,7 @@ export function buildServer(options: ServerOptions = {}) {
       })
     },
     publish: (entry) => gateway.broadcastChatTimelineEntry(entry),
+    send: (clientId, frame) => gateway.sendToClient(clientId, frame),
     refreshDecision: async (id) => {
       const snapshot = await pendingDecisions.list()
       const decision = snapshot.decisions.find((candidate) => candidate.id === id)

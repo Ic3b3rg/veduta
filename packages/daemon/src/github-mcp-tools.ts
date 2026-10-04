@@ -3,8 +3,10 @@ import { SurfaceSchema, type AtomNode } from '@veduta/protocol'
 import { z } from 'zod'
 import { defineTool, type ToolDef } from './agent-runner.ts'
 import type { GithubMcpService } from './github-mcp-service.ts'
-import { boundedServiceIntent } from './service-intent.ts'
+import type { ServiceRequestFor } from './service-request.ts'
 import type { Store } from './store.ts'
+import { createGithubRepositoryTools } from './github-repository-tools.ts'
+import { createGithubFileTools } from './github-file-tools.ts'
 
 interface IssueSummary {
   number: number
@@ -50,8 +52,11 @@ export function createGithubMcpTools(options: {
   github: GithubMcpService
   spaceId: string
   now: () => Date
+  requestFor?: ServiceRequestFor
 }): ToolDef[] {
   return [
+    ...createGithubRepositoryTools(options),
+    ...createGithubFileTools(options),
     defineTool({
       name: 'list_github_issues',
       description:
@@ -67,17 +72,20 @@ export function createGithubMcpTools(options: {
       async handler({ owner, repo }, context) {
         if (context.spaceId !== options.spaceId || !context.currentUserRequest)
           return { content: 'A current trusted request in the active Space is required.' }
-        const requested = boundedServiceIntent(context.currentUserRequest.text)?.review
+        const requested = options.requestFor?.(context)
         if (
           requested?.service !== 'github' ||
-          requested.repository?.owner !== owner ||
-          requested.repository?.name !== repo
+          requested.action !== 'list_issues' ||
+          requested.owner.toLowerCase() !== owner.toLowerCase() ||
+          requested.repo.toLowerCase() !== repo.toLowerCase()
         )
           return { content: 'The repository must match the current Chat request.' }
         const repository = { owner, name: repo }
         const read = await options.github.listOpenIssues({
           spaceId: options.spaceId,
           repository,
+          ...(requested.account ? { accountHint: requested.account } : {}),
+          ...(requested.connectionId ? { connectionId: requested.connectionId } : {}),
           ...(context.signal ? { signal: context.signal } : {}),
         })
         const issues = issueSummaries(read.text)

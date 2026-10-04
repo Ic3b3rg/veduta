@@ -9,13 +9,14 @@ export interface MailboxAccount {
 
 export interface MailboxScope {
   account: MailboxAccount
-  kind: 'receipts' | 'newsletters' | 'subject' | 'sender'
+  kind: 'receipts' | 'newsletters' | 'subject' | 'sender' | 'query'
   query: string
   sender?: string
   subject?: string
   folder: string
   unreadOnly: boolean
   limit: number
+  newest?: boolean
   window:
     | { kind: 'all' }
     | { kind: 'dates'; after: string; before: string; afterEpoch: number; beforeEpoch: number }
@@ -206,7 +207,9 @@ export function gmailQuery(scope: MailboxScope): string {
       ? `subject:"${scope.query}"`
       : scope.kind === 'sender'
         ? `from:${scope.query}`
-        : scope.query,
+        : scope.kind === 'query' && scope.query
+          ? `(${scope.query})`
+          : scope.query,
     ...(scope.kind !== 'sender' && scope.sender ? [`from:${scope.sender}`] : []),
     ...(scope.kind !== 'subject' && scope.subject ? [`subject:"${scope.subject}"`] : []),
     scope.folder === 'ALL'

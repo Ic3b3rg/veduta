@@ -2,18 +2,19 @@
 name: mailbox-assistant
 description: Resolve a bounded Mailbox request and present a short answer with a Mailbox Surface.
 metadata:
-  veduta.version: '1'
+  veduta.version: '2'
   veduta.tools: 'resolve_mailbox_scope,search_mailbox'
   veduta.intent: '(mail|gmail|inbox|newsletter|receipt|imap|smtp)'
 ---
 
 # Mailbox assistant
 
-Use this procedure for a current user request in a focused Space.
+Use this procedure for a current user request in its owning Space. A global Chat request must enter that Space first.
 
 1. Load this Skill and the relevant provider connector Skill.
 2. Call `resolve_mailbox_scope` before any provider message endpoint.
 3. If it asks for clarification, ask the user exactly that question. Stop the search.
+   A resolved latest-message request needs no sender, subject or category: default to the newest Inbox message. Honor an explicit account, folder, count or filter. Do not ask the user to repeat details already resolved by the Gateway.
 4. Check the resolved account, labels or folders, query, time window, read-state filter, and bound against the request. Do not broaden the scope.
 5. Call `search_mailbox` using the opaque scope id from the resolver. The Gateway reads a bounded set and returns validated Mail summaries only.
 6. Answer in a few sentences based on the returned summaries. Mention the account, resolved query, and last check. The same tool creates the query-labelled Mailbox Surface in the active Space.

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { parseDocument } from 'yaml'
 import { z } from 'zod'
 import { defineTool, type ToolDef } from './agent-runner.ts'
+import type { ServiceOperation, ServiceRequestFor } from './service-request.ts'
 
 const FIRST_PARTY_ROOT = fileURLToPath(new URL('../skills/', import.meta.url))
 const NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -123,29 +124,39 @@ export class FirstPartySkills {
   constructor(
     root = FIRST_PARTY_ROOT,
     private readonly providerForRequest?: (text: string) => string | undefined,
+    private readonly requestFor?: ServiceRequestFor,
   ) {
     this.skills = readdirSync(root, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => loadFirstPartySkill(join(root, entry.name)))
   }
 
-  applicable(text: string, toolNames: readonly string[]): FirstPartySkill[] {
+  applicable(
+    text: string,
+    toolNames: readonly string[],
+    operation?: ServiceOperation,
+  ): FirstPartySkill[] {
     const available = new Set(toolNames)
-    const provider = /\b(himalaya|imap|smtp)\b/i.test(text)
-      ? 'himalaya'
-      : /\bgmail\b/i.test(text)
-        ? 'gmail'
-        : this.providerForRequest?.(text)
+    const provider =
+      operation?.service ??
+      (/\b(himalaya|imap|smtp)\b/i.test(text)
+        ? 'himalaya'
+        : /\bgmail\b/i.test(text)
+          ? 'gmail'
+          : this.providerForRequest?.(text))
     return this.skills.filter(
       (skill) =>
         skill.requiredTools.every((tool) => available.has(tool)) &&
         (skill.provider === undefined || skill.provider === provider) &&
-        (skill.intent === '' || new RegExp(skill.intent, 'i').test(text)),
+        (skill.intent === '' ||
+          (operation?.action === 'search_mailbox' &&
+            ['mailbox-assistant', 'gmail-connector'].includes(skill.id)) ||
+          new RegExp(skill.intent, 'i').test(text)),
     )
   }
 
-  metadata(text: string, toolNames: readonly string[]): string {
-    const skills = this.applicable(text, toolNames)
+  metadata(text: string, toolNames: readonly string[], operation?: ServiceOperation): string {
+    const skills = this.applicable(text, toolNames, operation)
     if (skills.length === 0) return ''
     return [
       '# Applicable first-party Skills',
@@ -168,9 +179,11 @@ export class FirstPartySkills {
         level: 'L0',
         egressDomains: [],
         handler: ({ skillId }, context) => {
-          const skill = this.applicable(context.currentUserRequest?.text ?? '', toolNames).find(
-            (candidate) => candidate.id === skillId,
-          )
+          const skill = this.applicable(
+            context.currentUserRequest?.text ?? '',
+            toolNames,
+            this.requestFor?.(context),
+          ).find((candidate) => candidate.id === skillId)
           if (!skill) return { content: 'Skill is not applicable to this turn.' }
           loaded.add(skillId)
           return {

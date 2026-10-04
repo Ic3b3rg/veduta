@@ -2,6 +2,7 @@ import {
   CreateGmailConnectionRequestSchema,
   CreateServiceConnectionAttemptRequestSchema,
   ServiceConnectionsSnapshotSchema,
+  GrantServiceConnectionRequestSchema,
   type ServiceConnectionsSnapshot,
 } from '@veduta/protocol'
 import type { FastifyInstance, FastifyReply } from 'fastify'
@@ -11,7 +12,7 @@ import type { GithubMcpService } from './github-mcp-service.ts'
 import { rejectUnexpectedBody } from './fastify-validation.ts'
 import { ServiceConnectionError, type ServiceConnections } from './service-connections.ts'
 import type { ChatTimelineCoordinator } from './chat-timeline-coordinator.ts'
-import { githubConnectionReview } from './github-mcp-service.ts'
+import { githubConnectionReview, githubReadConnectionReview } from './github-mcp-service.ts'
 import { gmailConnectionReview } from './service-intent.ts'
 
 const GithubToken = z
@@ -36,13 +37,6 @@ const GmailCallback = z
     code: z.string().min(1).max(4096).optional(),
     state: z.string().min(1).max(512),
     error: z.string().max(100).optional(),
-  })
-  .strict()
-const Grant = z
-  .object({
-    account: z.string().min(1).max(240),
-    scopes: z.array(z.string()).min(1).max(8),
-    spaceIds: z.array(z.string().min(1)).max(100).optional(),
   })
   .strict()
 
@@ -100,16 +94,18 @@ export function registerServiceConnectionRoutes(
       const account = connection?.account ?? nativeGmail?.accountEmail
       const review =
         input.service === 'github'
-          ? githubConnectionReview(
-              input.repository!.owner,
-              input.repository!.name,
-              account,
-              connection?.scopes.includes(
-                `GitHub Issues: write in ${input.repository!.owner}/${input.repository!.name}`,
+          ? input.repository
+            ? githubConnectionReview(
+                input.repository!.owner,
+                input.repository!.name,
+                account,
+                connection?.scopes.includes(
+                  `GitHub Issues: write in ${input.repository!.owner}/${input.repository!.name}`,
+                )
+                  ? 'write'
+                  : 'read',
               )
-                ? 'write'
-                : 'read',
-            )
+            : githubReadConnectionReview(account)
           : gmailConnectionReview(account)
       options.connections.createAttempt({
         submissionId: input.submissionId,
@@ -313,13 +309,24 @@ export function registerServiceConnectionRoutes(
   })
 
   app.post('/api/service-connections/attempts/:id/grant', (request, reply) => {
-    const parsed = Grant.safeParse(request.body)
+    const parsed = GrantServiceConnectionRequestSchema.safeParse(request.body)
     if (!parsed.success)
       return reply.status(400).send({ error: 'Invalid Space grant confirmation' })
     const { id } = request.params as { id: string }
     return guarded(reply, () => {
       const attempt = options.connections.attempt(id)
       if (!attempt) throw new ServiceConnectionError(404, 'Connection attempt not found')
+      if (
+        parsed.data.repositoryScopes &&
+        (!attempt.review.repositoryScope ||
+          Object.keys(parsed.data.repositoryScopes).some(
+            (spaceId) => !(parsed.data.spaceIds ?? [attempt.spaceId]).includes(spaceId),
+          ))
+      )
+        throw new ServiceConnectionError(
+          400,
+          'Repository restrictions must belong to the reviewed Spaces and read profile',
+        )
       if (attempt.origin === 'management') {
         if (!parsed.data.spaceIds)
           throw new ServiceConnectionError(400, 'Confirm the selected Spaces')
@@ -327,11 +334,23 @@ export function registerServiceConnectionRoutes(
           throw new ServiceConnectionError(404, 'Space not found')
         options.connections.confirmVerifiedAccount(id, parsed.data.account, parsed.data.scopes)
         for (const spaceId of new Set(parsed.data.spaceIds))
-          options.connections.grant(id, parsed.data.account, parsed.data.scopes, spaceId)
+          options.connections.grant(
+            id,
+            parsed.data.account,
+            parsed.data.scopes,
+            spaceId,
+            parsed.data.repositoryScopes?.[spaceId],
+          )
       } else {
         if (parsed.data.spaceIds)
           throw new ServiceConnectionError(400, 'Chat setup grants only its original Space')
-        options.connections.grant(id, parsed.data.account, parsed.data.scopes)
+        options.connections.grant(
+          id,
+          parsed.data.account,
+          parsed.data.scopes,
+          undefined,
+          parsed.data.repositoryScopes?.[attempt.spaceId!],
+        )
       }
       options.coordinator.resumeConnection(id)
       return snapshot()

@@ -55,9 +55,19 @@ function setup(mobile = false, googleConfigured = false) {
                       }
                     : {
                         service: 'github',
-                        scopes: ['GitHub Issues: read in example/disposable'],
-                        actions: ['list_issues'],
-                        repository: body['repository'],
+                        scopes: body['repository']
+                          ? ['GitHub Issues: read in example/disposable']
+                          : [
+                              'GitHub Metadata: read',
+                              'GitHub Contents: read',
+                              'GitHub Issues: read',
+                            ],
+                        actions: body['repository']
+                          ? ['list_issues']
+                          : ['list_repositories', 'list_issues', 'read_files'],
+                        ...(body['repository']
+                          ? { repository: body['repository'] }
+                          : { repositoryScope: { mode: 'authorized' } }),
                         executionHost: 'Gateway local stdio',
                         serverVersion: 'v1.12.2',
                       },
@@ -204,13 +214,11 @@ describe('ConnectionsPage', () => {
     expect(screen.queryByText('GitHub')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Add account' }))
     fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'github' } })
-    fireEvent.change(screen.getByLabelText('Repository owner'), { target: { value: 'example' } })
-    fireEvent.change(screen.getByLabelText('Repository name'), { target: { value: 'disposable' } })
+    expect(screen.queryByLabelText('Repository owner')).toBeNull()
     fireEvent.submit(document.getElementById('create-service')!)
     const detail = await screen.findByRole('complementary', { name: 'GitHub setup details' })
     expect(requests[0]?.body).toMatchObject({
       service: 'github',
-      repository: { owner: 'example', name: 'disposable' },
     })
     expect(
       (within(detail).getByRole('button', { name: 'Verify GitHub' }) as HTMLButtonElement).disabled,
@@ -221,7 +229,7 @@ describe('ConnectionsPage', () => {
     const creationUrl = new URL(
       within(detail).getByRole('link', { name: 'Create a token for Veduta' }).getAttribute('href')!,
     )
-    expect(creationUrl.searchParams.get('target_name')).toBe('example')
+    expect(creationUrl.searchParams.get('contents')).toBe('read')
     expect(creationUrl.searchParams.get('issues')).toBe('read')
     fireEvent.change(within(detail).getByLabelText('Fine-grained GitHub token'), {
       target: { value: 'github_pat_' + 'x'.repeat(30) },

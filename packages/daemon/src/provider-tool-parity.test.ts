@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -29,12 +29,15 @@ import { defaultRoutingConfig, type SecretResolver } from './model-routing.ts'
 import { PiAgentRunner, PiJsonlSessionStore } from './pi-agent-runner.ts'
 import {
   createProviderBridge,
+  completeToolless,
   type ModelConnectionRuntime,
   type ProviderBridge,
 } from './pi-provider-bridge.ts'
 import { normalizeAgentEvents, normalizeSessionEntries } from './provider-parity-test-support.ts'
 import { Store } from './store.ts'
 import { piToolParameters } from './tool-parameters.ts'
+import { ChatTimeline } from './chat-timeline.ts'
+import { ServiceRequests, ServiceResolutionSchema } from './service-request.ts'
 
 const createdDirs: string[] = []
 
@@ -189,6 +192,99 @@ function createSequentialCodexProvider(): {
 }
 
 describe('AgentRunner dynamic-tool provider parity', () => {
+  it.each([
+    {
+      service: 'gmail',
+      action: 'search_mailbox',
+      limit: 1,
+      folder: 'INBOX',
+      query: '',
+      unreadOnly: false,
+      newest: true,
+    },
+    { service: 'github', action: 'list_repositories', owner: 'example' },
+    {
+      service: 'github',
+      action: 'read_files',
+      owner: 'example',
+      repo: 'disposable',
+      path: 'README.md',
+    },
+  ])(
+    'persists the same $action resolution through BYOK and tool-less subscription inference',
+    async (operation) => {
+      const expected = ServiceResolutionSchema.parse({
+        status: 'resolved',
+        spaceId: 'work',
+        operation,
+      })
+      const output = JSON.stringify(expected)
+      for (const method of ['byok', 'subscription']) {
+        const native = createFakeProvider()
+        native.setResponses([{ message: fakeText(output) }])
+        const subscription = createCodexBridge(
+          createFakeCodexTransport({
+            responses: {
+              'thread/start': fakeCodexThreadStartResponse(),
+              'turn/start': fakeCodexTurnStartResponse(),
+            },
+            notifications: [
+              {
+                method: 'item/agentMessage/delta',
+                params: {
+                  threadId: 'thread-1',
+                  turnId: 'turn-1',
+                  itemId: 'agent-1',
+                  delta: output,
+                },
+              },
+              {
+                method: 'turn/completed',
+                params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+              },
+            ],
+          }),
+        )
+        const timeline = new ChatTimeline(tempDir('veduta-resolution-parity-'))
+        try {
+          const { turnId } = timeline.accept({
+            submissionId: randomUUID(),
+            scope: { type: 'space', spaceId: 'work' },
+            text: 'Read the requested service resource',
+          })
+          const resolver = new ServiceRequests({
+            timeline,
+            spaces: () => [{ id: 'work', name: 'Work' }],
+            accounts: () => [],
+            now: () => new Date(),
+            timeZone: 'UTC',
+            complete: async (prompt) =>
+              (
+                await completeToolless(
+                  method === 'byok' ? native : subscription.bridge,
+                  method === 'byok'
+                    ? { provider: 'fake', modelId: 'fake-model', tier: 'triage' }
+                    : {
+                        provider: 'openai',
+                        modelId: 'gpt-5-codex',
+                        tier: 'triage',
+                        connectionId: 'codex-conn',
+                      },
+                  prompt,
+                )
+              ).text,
+          })
+          expect(await resolver.prepare(turnId)).toEqual(expected)
+          expect(timeline.serviceRequest(turnId)).toEqual(expected)
+          expect(await resolver.prepare(turnId)).toEqual(expected)
+          if (method === 'subscription') expect(subscription.transport.serverResponses).toEqual([])
+        } finally {
+          timeline.close()
+        }
+      }
+    },
+  )
+
   it('runs the same reviewed GitHub read ToolDef through BYOK and subscription inference', async () => {
     const prompt = 'List open issues in example/disposable'
     const input = { owner: 'example', repo: 'disposable' }
@@ -214,6 +310,7 @@ describe('AgentRunner dynamic-tool provider parity', () => {
         store,
         github,
         spaceId: space.id,
+        requestFor: () => ({ service: 'github', action: 'list_issues', ...input }),
         now: () => new Date('2026-10-01T12:00:00.000Z'),
       })
       const provider =

@@ -1,5 +1,4 @@
 import { Button } from '@veduta/catalog/ui/button'
-import { Input } from '@veduta/catalog/ui/input'
 import { NativeSelect } from '@veduta/catalog/ui/native-select'
 import { useRef, useState } from 'react'
 import type { ConnectionsController } from './connections-controller.ts'
@@ -18,8 +17,6 @@ export function ConnectionCreate({
   onMailbox: () => void
 }) {
   const [service, setService] = useState<'gmail' | 'github'>('gmail')
-  const [owner, setOwner] = useState('')
-  const [repository, setRepository] = useState('')
   const submissionId = useRef(crypto.randomUUID())
   const create = () =>
     void controller.run(async () => {
@@ -27,9 +24,6 @@ export function ConnectionCreate({
         {
           submissionId: submissionId.current,
           service,
-          ...(service === 'github'
-            ? { repository: { owner: owner.trim(), name: repository.trim() } }
-            : {}),
         },
         token,
       )
@@ -74,34 +68,12 @@ export function ConnectionCreate({
                 : 'A short guide will help you configure Google once for this installation.'}
             </p>
           ) : (
-            <>
-              <p className="connection-note">
-                Reviewed GitHub MCP Server · fine-grained token · one repository. Adding an account
-                installs the reviewed server only after you confirm.
-              </p>
-              <label>
-                Repository owner
-                <Input
-                  required
-                  maxLength={39}
-                  pattern="[A-Za-z0-9][A-Za-z0-9-]*"
-                  value={owner}
-                  onChange={(event) => setOwner(event.target.value)}
-                  placeholder="your-account"
-                />
-              </label>
-              <label>
-                Repository name
-                <Input
-                  required
-                  maxLength={100}
-                  pattern="[A-Za-z0-9_.-]+"
-                  value={repository}
-                  onChange={(event) => setRepository(event.target.value)}
-                  placeholder="your-repository"
-                />
-              </label>
-            </>
+            <p className="connection-note">
+              List repositories, read files and open issues using a fine-grained GitHub token. Each
+              Space can use all repositories authorized by that token, or a smaller selection. Setup
+              checks your account and installs the reviewed server after you confirm; repository
+              content is read only when requested.
+            </p>
           )}
         </form>
         <h3>Another email provider?</h3>

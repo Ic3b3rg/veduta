@@ -37,6 +37,11 @@ export function ConnectionGrantRow({
         </h3>
         <p>
           {grant.repository ? `${grant.repository.owner}/${grant.repository.name} · ` : ''}
+          {grant.repositoryScope?.mode === 'authorized'
+            ? 'All authorized repositories · '
+            : grant.repositoryScope?.mode === 'selected'
+              ? `${grant.repositoryScope.repositories.map((repo) => `${repo.owner}/${repo.name}`).join(', ')} · `
+              : ''}
           {grant.actions.join(', ')}
         </p>
         <p>

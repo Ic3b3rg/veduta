@@ -1,7 +1,9 @@
 import {
   ServiceConnectionsSnapshotSchema,
+  GrantServiceConnectionRequestSchema,
   type ServiceConnectionsSnapshot,
   type CreateServiceConnectionAttemptRequest,
+  type GithubRepositoryScope,
 } from '@veduta/protocol'
 import { deleteJson, getJson, postJson } from './api-http.ts'
 
@@ -67,11 +69,17 @@ export async function confirmSpaceCapabilityGrant(
   scopes: string[],
   token?: string,
   spaceIds?: string[],
+  repositoryScopes?: Record<string, GithubRepositoryScope>,
 ): Promise<ServiceConnectionsSnapshot> {
   return ServiceConnectionsSnapshotSchema.parse(
     await postJson(
       `${attemptPath(id)}/grant`,
-      { account, scopes, ...(spaceIds ? { spaceIds } : {}) },
+      GrantServiceConnectionRequestSchema.parse({
+        account,
+        scopes,
+        ...(spaceIds ? { spaceIds } : {}),
+        ...(repositoryScopes ? { repositoryScopes } : {}),
+      }),
       token,
     ),
   )

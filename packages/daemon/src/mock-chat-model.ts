@@ -1,3 +1,4 @@
+import { respondToResolvedService } from './mock-resolved-service-fixture.ts'
 import {
   SurfaceSchema,
   type JsonObject,
@@ -170,6 +171,8 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
     if (presentationResponse) return presentationResponse
     const himalayaSetupResponse = respondToMockHimalayaSetup(text, toolResultsAfter, options.cwd)
     if (himalayaSetupResponse) return himalayaSetupResponse
+    const serviceResponse = respondToResolvedService(context, toolResultsAfter)
+    if (serviceResponse) return serviceResponse
     const mailboxResponse = respondToMockMailbox(text, toolResultsAfter)
     if (mailboxResponse) return mailboxResponse
     const githubWriteResponse = respondToMockGithubWrite(text, toolResultsAfter)

@@ -275,6 +275,13 @@ export function ConnectionsServices({
                 spaces={spaces}
                 {...(token ? { token } : {})}
                 onReview={() => reviewConnection(connection)}
+                onUpgrade={() =>
+                  review({
+                    service: 'github',
+                    connectionId: connection.id,
+                    renewAuthorization: true,
+                  })
+                }
                 onRemoved={() => setSelection(null)}
               />
             )}

@@ -617,12 +617,18 @@ export class GmailConnections {
     return this.readOnlyRequest(id, url, signal)
   }
 
-  async getMessage(id: string, messageId: string, signal?: AbortSignal): Promise<unknown> {
+  async getMessage(
+    id: string,
+    messageId: string,
+    signal?: AbortSignal,
+    format: 'full' | 'metadata' = 'full',
+  ): Promise<unknown> {
     if (!/^[a-zA-Z0-9_-]+$/.test(messageId)) {
       throw new GmailConnectionError(400, 'Invalid Gmail message id')
     }
     const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}`)
-    url.searchParams.set('format', 'full')
+    url.searchParams.set('format', format)
+    if (format === 'metadata') url.searchParams.set('fields', 'id,internalDate,labelIds')
     return this.readOnlyRequest(id, url, signal)
   }
 
