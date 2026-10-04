@@ -3,11 +3,14 @@ import { App } from './app.tsx'
 import { installCatalogTokens } from './catalog-tokens.ts'
 import { CatalogShowcasePage } from './catalog-showcase.tsx'
 import { MotionShowcasePage } from './motion-showcase.tsx'
+import { ConnectionsPrototype } from './connections-prototype.tsx'
 
 installCatalogTokens()
 
 createRoot(document.getElementById('root')!).render(
-  location.pathname === '/showcase/motion' ? (
+  import.meta.env.DEV && location.pathname === '/app/prototype/connections' ? (
+    <ConnectionsPrototype />
+  ) : location.pathname === '/showcase/motion' ? (
     <MotionShowcasePage />
   ) : location.pathname === '/showcase/catalog' ? (
     <CatalogShowcasePage />

@@ -8,6 +8,7 @@
   },
   "packageManager": "pnpm@10.28.0",
   "scripts": {
+    "prototype:connections": "pnpm --filter @veduta/pwa dev --host 127.0.0.1 --port 5174 --strictPort",
     "dev": "pnpm --parallel --filter @veduta/daemon --filter @veduta/pwa run dev",
     "local-vps": "deploy/local-vps.sh",
     "build": "pnpm -r run build",
