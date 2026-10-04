@@ -95,24 +95,31 @@ export async function verifyLiveRuntime(
       await composer.fill(request)
       await composer.press('Enter')
       await expect(observer.locator('.chat-entry.user', { hasText: request })).toHaveCount(1)
-      await expect(observer.locator('.chat-entry.assistant').last()).toContainText('[mock]')
+      const reply = `[mock] You said: "${request}".`
+      await expect(
+        observer.locator('.chat-entry.assistant[data-chat-entry-id]', { hasText: reply }),
+      ).toHaveCount(1)
       await observer.evaluate(() => {
         localStorage.removeItem('veduta.chatHistory')
         localStorage.removeItem('veduta.chatQueue')
       })
       await observer.reload()
       await expect(observer.locator('.chat-entry.user', { hasText: request })).toHaveCount(1)
-      await expect(observer.locator('.chat-entry.assistant').last()).toContainText('[mock]')
+      await expect(
+        observer.locator('.chat-entry.assistant[data-chat-entry-id]', { hasText: reply }),
+      ).toHaveCount(1)
     })
     await test.step('a second Chat page remains reachable after reload on another device', async () => {
       const composer = primary.getByRole('textbox', { name: 'Message Veduta in Health' })
       for (let index = 0; index < 21; index += 1) {
         const request = `Timeline page proof ${index}`
-        const repliesBefore = await primary.locator('.chat-entry.assistant').count()
+        const replies = primary.locator('.chat-entry.assistant[data-chat-entry-id]')
+        const repliesBefore = await replies.count()
         await composer.fill(request)
         await composer.press('Enter')
         await expect(primary.locator('.chat-entry.user', { hasText: request })).toHaveCount(1)
-        await expect(primary.locator('.chat-entry.assistant')).toHaveCount(repliesBefore + 1)
+        await expect(replies.filter({ hasText: `[mock] You said: "${request}".` })).toHaveCount(1)
+        await expect(replies).toHaveCount(repliesBefore + 1)
       }
       await observer.reload()
       const loadOlder = observer.getByRole('button', { name: 'Load older messages' })
