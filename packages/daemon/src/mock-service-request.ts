@@ -35,6 +35,25 @@ export function mockServiceRequest(
       },
     }
   }
+  const unreadSince =
+    /^find unread emails since (\d{4}-\d{2}-\d{2})(?: in [a-z][a-z0-9 -]{0,49} space)?[.!]?$/i.exec(
+      text,
+    )
+  if (unreadSince && spaceId) {
+    return {
+      status: 'resolved',
+      spaceId,
+      operation: {
+        service: 'gmail',
+        action: 'search_mailbox',
+        query: `after:${unreadSince[1]!.replaceAll('-', '/')}`,
+        folder: 'INBOX',
+        unreadOnly: true,
+        limit: 20,
+        newest: false,
+      },
+    }
+  }
   if (
     /\b(receipts?|newsletters?|subject|messages?\s+from|unread\s+(?:emails?|mail|messages?))\b/i.test(
       text,

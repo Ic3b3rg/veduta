@@ -936,12 +936,16 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
 
     await test.step('shared Service connection review survives refresh and cancellation for GitHub and Gmail', async () => {
       const composer = page.getByRole('textbox', { name: 'Message Veduta' })
-      const reviews = page.getByRole('link', { name: 'Review service connection', exact: true })
-      const previousReviews = await reviews.count()
-      await composer.fill('List open issues in example/disposable in Work Space')
+      const githubRequest = 'List open issues in example/disposable in Work Space'
+      await composer.fill(githubRequest)
       await composer.press('Enter')
-      await expect(reviews).toHaveCount(previousReviews + 1)
-      await reviews.last().click()
+      const githubReview = page
+        .locator('.chat-entry.assistant', {
+          hasText: 'Review GitHub access in Service connections to continue this request.',
+        })
+        .getByRole('link', { name: 'Review service connection', exact: true })
+      await expect(githubReview).toBeVisible()
+      await githubReview.click()
       const github = page.getByRole('dialog', { name: 'GitHub setup', exact: true })
       await expect(github).toContainText('Read open issues')
       await expect(github).toContainText('example/disposable')
@@ -962,11 +966,16 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(observerGithub).toContainText('State: cancelled')
 
       await page.getByRole('link', { name: 'Back to Veduta' }).click()
-      const beforeGmail = await reviews.count()
-      await composer.fill('Find unread emails since 2026-09-30 in Work Space')
+      const gmailRequest = 'Find unread emails since 2026-09-30 in Work Space'
+      await composer.fill(gmailRequest)
       await composer.press('Enter')
-      await expect(reviews).toHaveCount(beforeGmail + 1)
-      await reviews.last().click()
+      const gmailReview = page
+        .locator('.chat-entry.assistant', {
+          hasText: 'Review Gmail access in Service connections to continue this request.',
+        })
+        .getByRole('link', { name: 'Review service connection', exact: true })
+      await expect(gmailReview).toBeVisible()
+      await gmailReview.click()
       const gmail = page.getByRole('dialog', { name: 'Gmail setup', exact: true })
       await expect(gmail).toContainText('Summarize mail')
       await expect(gmail).toContainText('Gateway native HTTPS')

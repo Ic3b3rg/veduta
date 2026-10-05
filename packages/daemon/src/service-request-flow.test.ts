@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { GatewayServerMessageSchema, type GatewayServerMessage } from '@veduta/protocol'
+import {
+  GatewayServerMessageSchema,
+  ServiceConnectionsSnapshotSchema,
+  type GatewayServerMessage,
+} from '@veduta/protocol'
 import { afterEach, expect, it, vi } from 'vitest'
 import { buildServer } from './server.ts'
 import { githubConnectionReview } from './github-mcp-service.ts'
@@ -26,6 +30,43 @@ class Socket {
     this.receiveFrame?.(JSON.stringify(frame))
   }
 }
+
+it('keeps the Loopback bounded unread-mail request eligible for protected setup', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'veduta-service-request-'))
+  roots.push(root)
+  process.env['VEDUTA_VAULT_KEY'] = 'service-request-fixture-key'
+  const gmailFetch = vi.fn<typeof fetch>(async () => {
+    throw new Error('Setup must not contact Gmail')
+  })
+  const server = buildServer({ dataDir: root, gmailFetch })
+  try {
+    await server.app.ready()
+    const work = server.store.spacesEngine.createSpace({ name: 'Work' })
+    const socket = new Socket()
+    server.gateway.connect(socket)
+    socket.receive({ type: 'hello', surfaceCursor: server.store.latestSurfaceCursor() })
+    socket.receive({
+      type: 'chat.send',
+      text: 'Find unread emails since 2026-09-30 in Work Space',
+      submissionId: randomUUID(),
+    })
+    await vi.waitFor(() =>
+      expect(JSON.stringify(socket.sent)).toContain('Review Gmail access in Service connections'),
+    )
+    const snapshot = ServiceConnectionsSnapshotSchema.parse(
+      (await server.app.inject({ method: 'GET', url: '/api/service-connections' })).json(),
+    )
+    expect(snapshot.attempts).toHaveLength(1)
+    expect(snapshot.attempts[0]).toMatchObject({
+      spaceId: work.id,
+      state: 'reviewing',
+      review: { service: 'gmail', actions: ['search_mailbox'] },
+    })
+    expect(gmailFetch).not.toHaveBeenCalled()
+  } finally {
+    await server.app.close()
+  }
+})
 
 it('keeps an Italian GitHub clarification through reconnect and executes the resolved request', async () => {
   const root = mkdtempSync(join(tmpdir(), 'veduta-service-request-'))
