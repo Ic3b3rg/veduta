@@ -49,6 +49,7 @@ import {
 import { isRecord, parseJson, toolCallMessage, toolResultText } from './mock-fixture-support.ts'
 import { mockWorkerReportForPrompt, mockWorkerReviewText } from './mock-worker-runner.ts'
 import { zonedParts } from './timezone.ts'
+import { respondToMockClawHubInspection } from './mock-clawhub-inspection-fixture.ts'
 
 /**
  * The Loopback profile's deterministic model (issue #37): this is the
@@ -132,6 +133,8 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
       return piFauxAssistantMessage(JSON.stringify(mockWorkerReportForPrompt(text)))
     }
     if (isFullTextPrompt(text)) return piFauxAssistantMessage(FULL_TEXT_REPLY)
+    const inspection = respondToMockClawHubInspection(text)
+    if (inspection) return inspection
     if (text === STRUCTURED_PLAN_REQUEST) return respondToStructuredPlan(toolResultsAfter)
     if (text === INVALID_AUTHORING_REQUEST) return respondToInvalidAuthoring(toolResultsAfter)
     if (text === COMPOSED_SURFACE_REQUEST)

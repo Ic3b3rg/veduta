@@ -1,0 +1,178 @@
+{
+  "skill": {
+    "slug": "self-improving-agent",
+    "displayName": "self-improving agent"
+  },
+  "version": {
+    "version": "4.0.2",
+    "createdAt": 1785999527780,
+    "changelog": "Minor fixes to install guidance as it has changed since the skill was made and the github references had typos.",
+    "changelogSource": "user",
+    "license": "MIT-0",
+    "files": [
+      {
+        "path": "CHANGELOG.md",
+        "size": 7598,
+        "sha256": "8d8e946a3e1482470068773fa62482af3440431b3aa400df23b8c781906ba934",
+        "contentType": "text/markdown"
+      },
+      {
+        "path": "references/uninstall.md",
+        "size": 1891,
+        "sha256": "c569a88473ac0187e0d9dde1686eb24efe4666d84af2a149b5fb8e99b7a99828",
+        "contentType": "text/markdown"
+      },
+      {
+        "path": "references/examples.md",
+        "size": 8287,
+        "sha256": "ba521451abf0f1cc774b061894c94689390dafa3ce3905f63d5fa6f860a5e3b8",
+        "contentType": "text/markdown"
+      },
+      {
+        "path": "references/openclaw-integration.md",
+        "size": 9814,
+        "sha256": "517a40ddec886f07cf66cb7c98e61ea464af953b505610722ed46a297741708a",
+        "contentType": "text/markdown"
+      },
+      {
+        "path": "hooks/openclaw/handler.test.js",
+        "size": 8921,
+        "sha256": "3047f4239bc3eadcb8f12cc3515f946e86b16cb482de82ae900e5b994c403e69",
+        "contentType": "text/javascript"
+      },
+      {
+        "path": "hooks/openclaw/handler.js",
+        "size": 13741,
+        "sha256": "b94261dce2de54ba6bd1d6aca48d9ef11236cbe7396bd37354daa218e0ceecf3",
+        "contentType": "text/javascript"
+      },
+      {
+        "path": "hooks/openclaw/HOOK.md",
+        "size": 2465,
+        "sha256": "2ae0820cc5cad75d9ecce8cfc6a9c4c8baafcb4c96f820bf85f3a0e7ff2364f5",
+        "contentType": "text/markdown"
+      },
+      {
+        "path": "hooks/openclaw/handler.ts",
+        "size": 14615,
+        "sha256": "35f8ccd18d6979b4bacfbf1841f4f0965193ed694e46fa6cee67994f3ac838ba",
+        "contentType": "application/octet-stream"
+      },
+      {
+        "path": "scripts/extract-skill.sh",
+        "size": 5293,
+        "sha256": "d9af3d6f2cde0eeb3c0a85b898828656c1c6d9d51f61ba38f9801030424f5147",
+        "contentType": "text/x-sh"
+      },
+      {
+        "path": "SKILL.md",
+        "size": 21361,
+        "sha256": "eff889950f23bb8a3de90cd617481bbf2557f9495f884bd5b1e9b7604a20817c",
+        "contentType": "text/markdown"
+      },
+      {
+        "path": "assets/FEATURE_REQUESTS.md",
+        "size": 84,
+        "sha256": "a6291573936034efaad57b43b6f57bdb35ed627f01ce9309b2c781da63563c37",
+        "contentType": "text/markdown"
+      },
+      {
+        "path": "assets/ERRORS.md",
+        "size": 75,
+        "sha256": "731f4a26fee7074d11e999920e5c3ca63b0e025b75a4d9966429ee88a2cb5988",
+        "contentType": "text/markdown"
+      },
+      {
+        "path": "assets/SKILL-TEMPLATE.md",
+        "size": 3407,
+        "sha256": "3ee008f80d53e0e576f7e747ac4c4e040ff659f02d3f5689a95524a3696e4881",
+        "contentType": "text/markdown"
+      },
+      {
+        "path": "assets/LEARNINGS.md",
+        "size": 1135,
+        "sha256": "58b31d4cda7d1f2a6fdaf1aff06f45288e6cb0161dd1ed1bf2152c7f8c3c88da",
+        "contentType": "text/markdown"
+      },
+      {
+        "path": "skill-card.md",
+        "size": 2633,
+        "sha256": "6f9beece207f7b423e9a20c1b804b664741ee8d76cc77ade7240766b32d4916d",
+        "contentType": "text/markdown"
+      }
+    ],
+    "security": {
+      "status": "suspicious",
+      "hasWarnings": true,
+      "checkedAt": 1789015140848,
+      "model": null,
+      "hasScanResult": true,
+      "sha256hash": "218a7912bee219cbd96bfe6ce20be9e4070b2715920664b70b4c22e07664ffae",
+      "virustotalUrl": "https://www.virustotal.com/gui/file/218a7912bee219cbd96bfe6ce20be9e4070b2715920664b70b4c22e07664ffae",
+      "scanners": {
+        "vt": {
+          "status": "clean",
+          "verdict": null,
+          "normalizedStatus": "clean",
+          "analysis": null,
+          "source": "engines",
+          "checkedAt": 1786003606986
+        },
+        "skillspector": {
+          "status": "suspicious",
+          "normalizedStatus": "suspicious",
+          "score": 100,
+          "severity": "CRITICAL",
+          "recommendation": "DO_NOT_INSTALL",
+          "issueCount": 11,
+          "checkedAt": 1789015140848
+        },
+        "llm": {
+          "status": "suspicious",
+          "verdict": "suspicious",
+          "normalizedStatus": "suspicious",
+          "confidence": "high",
+          "summary": "This skill is mostly purpose-aligned, but its optional hook can automatically read session transcripts and persist excerpts with insufficient path scoping and only best-effort redaction.",
+          "dimensions": [
+            {
+              "detail": "The hook's transcript path resolution accepts sessionFile directly and builds fallback paths from unsanitized sessionId, so manipulated hook metadata could cause reads outside the intended workspace sessions directory before writing matching excerpts to .learnings/ERRORS.md.",
+              "label": "Credentials",
+              "name": "environment_proportionality",
+              "rating": "concern"
+            },
+            {
+              "detail": "Installation is documented through OpenClaw, ClawHub CLI, or manual copy; the hook is separately enabled. The uninstall guide includes raw recursive deletion commands, but frames learnings as user data to review first.",
+              "label": "Install Mechanism",
+              "name": "install_mechanism",
+              "rating": "note"
+            },
+            {
+              "detail": "The skill discloses cross-session sharing and transcript sweeping, but automatic logging triggers and promotion into AGENTS.md, TOOLS.md, and SOUL.md can persist user- or transcript-derived guidance that affects future sessions without a clear confirmation step for each promotion.",
+              "label": "Instruction Scope",
+              "name": "instruction_scope",
+              "rating": "concern"
+            },
+            {
+              "detail": "The hook appends transcript-derived excerpts indefinitely to .learnings/ERRORS.md when the directory exists. Excerpts are capped and redacted, but redaction is blocklist-based and may miss sensitive data.",
+              "label": "Persistence & Privilege",
+              "name": "persistence_privilege",
+              "rating": "concern"
+            },
+            {
+              "detail": "The stated purpose of capturing errors, corrections, and learnings matches the .learnings files, workspace-memory promotion workflow, optional hook, and skill-extraction helper.",
+              "label": "Purpose & Capability",
+              "name": "purpose_capability",
+              "rating": "note"
+            }
+          ],
+          "guidance": "Install only if you want persistent learning logs. Keep .learnings out of version control, review entries before promoting them into AGENTS.md, TOOLS.md, or SOUL.md, and enable the optional hook only in workspaces where session transcripts may be scanned and retained. Treat uninstall deletion commands carefully because .learnings is user data.",
+          "findings": "[LP3] expected: Filesystem writes, shell setup commands, hook enablement, and OpenClaw session tools are coherent with a learning-capture skill, though users should understand the optional hook and workspace persistence before enabling them.\n[TP4] expected: The manifest describes learning, error, and correction capture, and the body does disclose hook-based reminders, transcript sweeping, promotion, and skill extraction; this is broader than a simple logger but not hidden.\n[SDI-1] expected: Promotion into workspace guidance and new skills is an intended feature, but it should be treated as persistent agent-behavior influence and reviewed before applying.\n[SDI-2] expected: Cross-session tools are mentioned for sharing learnings and are explicitly limited to trusted environments and user-directed sharing, so this is purpose-aligned with caution rather than standalone malicious behavior.\n[SQP-1] expected: The broad correction and feature-request triggers support the skill's logging goal, but they may capture casual remarks as durable notes if an agent applies them too aggressively.\n[SQP-2] expected: Persisting short transcript-derived error excerpts is disclosed and limited, but it remains a privacy concern because the write can occur automatically after opt-in setup.\n[RA2] expected: Appending to ERRORS.md is expected for this skill and gated on .learnings existing, but there is no retention limit and the file may contain sensitive operational details.\n[TM1] expected: The recursive removal commands are uninstall instructions rather than active skill behavior, but users should verify paths and archive .learnings before deleting.\n[T05] unexpected: The static path-scope finding is supported by handler.js and handler.ts: sessionFile is trusted directly and sessionId is not restricted before fs.readFile scans the resolved path.\n[T09] unexpected: The redaction finding is supported by the hook code: transcript lines matching error patterns are persisted after regex-based redaction and truncation, which reduces but does not eliminate sensitive-data retention risk.",
+          "agenticRiskFindings": null,
+          "riskSummary": null,
+          "model": null,
+          "checkedAt": 1789015140848
+        }
+      }
+    }
+  }
+}

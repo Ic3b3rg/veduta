@@ -12,6 +12,8 @@ import type { Store } from './store.ts'
 import { createSystemChatTools } from './system-chat-tools.ts'
 import { templateTools, type TemplateEngine } from './template-engine.ts'
 import { inheritTrustWrapper, isTrustWrapped } from './trust-layer.ts'
+import { createClawHubInspectionTool } from './clawhub-inspection.ts'
+import type { CatalogInspectionOptions } from './clawhub-catalog.ts'
 
 /**
  * Everything `chatToolRegistry` needs to build focused and scoped-global
@@ -31,6 +33,7 @@ export interface ChatToolRegistryDeps {
   skills?: FirstPartySkills
   generalExecutionTool?: ToolDef
   himalayaInstallTool?: ToolDef
+  clawHubInspection?: CatalogInspectionOptions
 }
 
 /**
@@ -78,21 +81,27 @@ export function chatToolRegistry(
 
   return (spaceId, hooks) => {
     if (spaceId === undefined) {
-      return createGlobalChatTools({
-        store: deps.store,
-        focusedToolsFor: (targetSpaceId) =>
-          observePendingDecisionResults(
-            focusedToolsFor(targetSpaceId),
-            hooks,
-            deps.pendingDecisions,
-          ),
-        ...(hooks === undefined ? {} : { hooks }),
-      })
+      return [
+        ...createGlobalChatTools({
+          store: deps.store,
+          focusedToolsFor: (targetSpaceId) =>
+            observePendingDecisionResults(
+              focusedToolsFor(targetSpaceId),
+              hooks,
+              deps.pendingDecisions,
+            ),
+          ...(hooks === undefined ? {} : { hooks }),
+        }),
+        createClawHubInspectionTool(deps.clawHubInspection),
+      ]
     }
     if (spaceId === SYSTEM_SPACE_ID) {
       return createSystemChatTools({ store: deps.store, scheduler: deps.scheduler })
     }
-    return observePendingDecisionResults(focusedToolsFor(spaceId), hooks, deps.pendingDecisions)
+    return [
+      ...observePendingDecisionResults(focusedToolsFor(spaceId), hooks, deps.pendingDecisions),
+      createClawHubInspectionTool(deps.clawHubInspection),
+    ]
   }
 }
 
