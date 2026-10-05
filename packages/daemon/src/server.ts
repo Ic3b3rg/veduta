@@ -145,6 +145,8 @@ import { workerToolRegistry } from './worker-tool-registry.ts'
 import { UsageSurfaceManager } from './usage-surface.ts'
 
 export interface ServerOptions {
+  /** Read-only catalog transport for pinned inspection fixtures. */
+  clawHubFetch?: typeof fetch
   pwaDistDir?: string
   dataDir?: string
   auth?: ServerAuthOptions
@@ -1421,6 +1423,7 @@ export function buildServer(options: ServerOptions = {}) {
     spawnWorkerTool,
     pendingDecisions,
     skills,
+    ...(options.clawHubFetch ? { clawHubInspection: { fetchFn: options.clawHubFetch } } : {}),
     generalExecutionTool: createGeneralExecutionTool(store, trust, options.commandRun),
     himalayaInstallTool: createHimalayaInstallTool(himalayaConnections, store, trust),
     mailboxToolsFor: (spaceId) =>
@@ -1826,7 +1829,9 @@ export function buildServer(options: ServerOptions = {}) {
     )
       ? { googleHosts: ['oauth2.googleapis.com', 'www.googleapis.com', 'gmail.googleapis.com'] }
       : {}),
-    toolDomains: [...outboundTools, githubIssue].flatMap(({ tool }) => tool.egressDomains),
+    toolDomains: [...outboundTools, githubIssue]
+      .flatMap(({ tool }) => tool.egressDomains)
+      .concat('clawhub.ai'),
     ...(extraAllowHosts.length > 0 ? { extraAllow: extraAllowHosts } : {}),
     // The loopback (mock) profile and the test suite talk to loopback
     // constantly; the VPS and Local VPS profiles must not trust it specially.

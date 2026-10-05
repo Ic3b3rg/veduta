@@ -1,0 +1,100 @@
+{
+  "skill": {
+    "slug": "obsidian",
+    "displayName": "Obsidian"
+  },
+  "version": {
+    "version": "1.0.0",
+    "createdAt": 1767545362143,
+    "changelog": "",
+    "changelogSource": null,
+    "license": null,
+    "files": [
+      {
+        "path": "SKILL.md",
+        "size": 2334,
+        "sha256": "dc45b522a0f08fa11762b330b5355ccaca789bd645b0c450fe75026f69d728b2",
+        "contentType": "text/markdown"
+      },
+      {
+        "path": "skill-card.md",
+        "size": 1565,
+        "sha256": "eb2a6bdbebb689b4210a6af87e5ea5948faff85edef93affb0315ec18310e823",
+        "contentType": "text/markdown"
+      }
+    ],
+    "security": {
+      "status": "clean",
+      "hasWarnings": true,
+      "checkedAt": 1789013599054,
+      "model": null,
+      "hasScanResult": true,
+      "sha256hash": "d63ecd4da632c06a47844f50fbca5164ae3ef5e3aa3f13f618c2165ac759f444",
+      "virustotalUrl": "https://www.virustotal.com/gui/file/d63ecd4da632c06a47844f50fbca5164ae3ef5e3aa3f13f618c2165ac759f444",
+      "scanners": {
+        "vt": {
+          "status": "suspicious",
+          "verdict": "suspicious",
+          "normalizedStatus": "suspicious",
+          "analysis": "Type: OpenClaw Skill\nName: obsidian\nVersion: 1.0.0\n\nThe skill is classified as suspicious due to its reliance on installing a third-party command-line tool (`obsidian-cli`) from a custom Homebrew tap (`yakitrak/yakitrak`) as specified in `SKILL.md`. This introduces a supply chain risk, as the integrity of the `obsidian-cli` tool depends on the `yakitrak` maintainer. Additionally, `SKILL.md` explicitly instructs the AI agent to read a local configuration file (`~/Library/Application Support/obsidian/obsidian.json`), which, while necessary for the stated purpose, represents a direct instruction for file system access, a high-risk capability. There is no clear evidence of intentional malicious behavior like data exfiltration or persistence.",
+          "source": "palm",
+          "checkedAt": 1779159618780
+        },
+        "skillspector": {
+          "status": "clean",
+          "normalizedStatus": "clean",
+          "score": 0,
+          "severity": "LOW",
+          "recommendation": "SAFE",
+          "issueCount": 0,
+          "checkedAt": 1789013599054
+        },
+        "llm": {
+          "status": "clean",
+          "verdict": "benign",
+          "normalizedStatus": "clean",
+          "confidence": "high",
+          "summary": "This skill is a straightforward Obsidian helper, with a visible third-party CLI install that users should trust-check before use.",
+          "dimensions": [
+            {
+              "detail": "The skill reads the Obsidian vault registry and works within user vault files; this is proportionate for Obsidian automation and it explicitly warns not to guess vaults or usually touch .obsidian configuration.",
+              "label": "Credentials",
+              "name": "environment_proportionality",
+              "rating": "ok"
+            },
+            {
+              "detail": "The artifact declares installation of obsidian-cli from the third-party Homebrew tap yakitrak/yakitrak without a pinned version or digest, creating a supply-chain trust consideration, but the install is disclosed and purpose-aligned.",
+              "label": "Install Mechanism",
+              "name": "install_mechanism",
+              "rating": "note"
+            },
+            {
+              "detail": "Instructions are scoped to locating Obsidian vaults, using obsidian-cli, and editing Markdown notes; no hidden role changes, prompt hijacking, unrelated data collection, or automatic execution instructions were found.",
+              "label": "Instruction Scope",
+              "name": "instruction_scope",
+              "rating": "ok"
+            },
+            {
+              "detail": "No persistence, background services, privilege escalation, credential harvesting, or tool wrapping were found; the only persistent change described is setting obsidian-cli's default vault when the user chooses to do so.",
+              "label": "Persistence & Privilege",
+              "name": "persistence_privilege",
+              "rating": "ok"
+            },
+            {
+              "detail": "The skill's capabilities are aligned with managing Obsidian Markdown vaults, including search, create, move, rename, delete, and direct note edits; delete and move are sensitive but clearly part of the stated vault-management purpose.",
+              "label": "Purpose & Capability",
+              "name": "purpose_capability",
+              "rating": "note"
+            }
+          ],
+          "guidance": "Install only if you are comfortable trusting the yakitrak/yakitrak Homebrew tap and the obsidian-cli tool with access to your Obsidian vault files. Review commands that move or delete notes before running them, especially in work or synced vaults.",
+          "findings": "[T08] expected: The Homebrew dependency warning is supported by the artifact: obsidian-cli is installed from a mutable third-party tap. This is a real supply-chain consideration, but it is visible in metadata, coherent with the skill purpose, and not evidence of malicious behavior by itself.",
+          "agenticRiskFindings": null,
+          "riskSummary": null,
+          "model": null,
+          "checkedAt": 1789013599054
+        }
+      }
+    }
+  }
+}

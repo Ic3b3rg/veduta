@@ -159,6 +159,20 @@ function toolContext(toolCallId: string): ToolContext {
 }
 
 describe('chatToolRegistry', () => {
+  it('offers read-only package inspection globally without a Space target', () => {
+    const { deps, dispose } = buildDeps()
+    try {
+      const tools = chatToolRegistry(deps)(undefined)
+      const inspection = tools.find((tool) => tool.name === 'inspect_clawhub_skill')
+      expect(inspection, 'a pasted package identity must be inspectable from Home').toBeDefined()
+      expect(inspection?.level).toBe('R0')
+      expect(inspection?.egressDomains).toEqual(['clawhub.ai'])
+      expect(inspection?.schema.safeParse({ source: '@steipete/obsidian' }).success).toBe(true)
+    } finally {
+      dispose()
+    }
+  })
+
   it('offers only explicit safe status reads to a System-scoped turn', () => {
     const { deps, dispose } = buildDeps()
     try {
@@ -174,7 +188,9 @@ describe('chatToolRegistry', () => {
     const { deps, dispose } = buildDeps()
     try {
       const tools = chatToolRegistry(deps)(undefined)
-      expect(tools.map((tool) => tool.name).sort()).toEqual(EXPECTED_GLOBAL_TOOL_NAMES)
+      expect(tools.map((tool) => tool.name).sort()).toEqual(
+        [...EXPECTED_GLOBAL_TOOL_NAMES, 'inspect_clawhub_skill'].sort(),
+      )
       expect(new Set(tools.map((tool) => tool.name)).size).toBe(tools.length)
     } finally {
       dispose()
@@ -197,7 +213,9 @@ describe('chatToolRegistry', () => {
     const { deps, dispose } = buildDeps()
     try {
       const tools = chatToolRegistry(deps)(ACTIVE_SPACE_ID)
-      expect(tools.map((tool) => tool.name).sort()).toEqual(EXPECTED_SPACE_TOOL_NAMES)
+      expect(tools.map((tool) => tool.name).sort()).toEqual(
+        [...EXPECTED_SPACE_TOOL_NAMES, 'inspect_clawhub_skill'].sort(),
+      )
       expect(
         createMemoryTools(deps.store.spacesEngine, {
           activeSpaceId: ACTIVE_SPACE_ID,
