@@ -37,6 +37,25 @@ must go through **Review broader read access** in Connections before repository/
 Empty mailboxes and expired provider authorization are additional recovery cases. Use the same
 journeys with a native API-key Model connection and a ChatGPT Model connection where available.
 
+## Follow-up real-provider evidence — 2026-10-05
+
+The reporter updated the configured GitHub fine-grained PAT's Repository permissions. A fresh
+read with that same saved credential returned HTTP 200 for the reporter-designated private
+repository. Production `GithubMcpService` listed its root and read a text file through the pinned
+official MCP executable, with content integrity checked against a pinned commit. Discovery
+returned 37 repositories, including 18 private repositories and the requested repository; no next
+page remained. Before the permission update, the same repository returned 404 and discovery
+contained only 19 public repositories. No private source contents or credentials are recorded here.
+
+A fresh production `GmailMailbox` read selected the newest Inbox message by provider timestamp,
+fetched its body, and confirmed identical labels afterward, including its unread state. Both checks
+used private temporary copies of the configured Service connections and encrypted credentials;
+the original configuration hashes stayed unchanged, and all temporary copies were removed.
+
+These follow-up checks exercised real providers and Veduta's production service implementations.
+They did not repeat the full Chat conversation: the configured Model connection currently reported
+expired authorization. The earlier real-model Chat evidence below remains a separate observation.
+
 ## Recorded evidence — 2026-10-04
 
 The automated seam is accepted Gateway Chat through the actual tool registry, controlled provider

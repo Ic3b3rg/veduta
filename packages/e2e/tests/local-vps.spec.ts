@@ -936,11 +936,13 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
 
     await test.step('shared Service connection review survives refresh and cancellation for GitHub and Gmail', async () => {
       const composer = page.getByRole('textbox', { name: 'Message Veduta' })
+      const reviews = page.getByRole('link', { name: 'Review service connection', exact: true })
+      const previousReviews = await reviews.count()
       await composer.fill('List open issues in example/disposable in Work Space')
       await composer.press('Enter')
-      await page.getByRole('button', { name: 'Connections', exact: true }).click()
-      await page.locator('.connection-list-item').filter({ hasText: 'GitHub setup' }).click()
-      const github = page.getByRole('complementary', { name: 'GitHub setup details' })
+      await expect(reviews).toHaveCount(previousReviews + 1)
+      await reviews.last().click()
+      const github = page.getByRole('dialog', { name: 'GitHub setup', exact: true })
       await expect(github).toContainText('list_issues')
       await expect(github).toContainText('example/disposable')
       await github.getByText('Technical details').click()
@@ -950,8 +952,9 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(github).toContainText('State: reviewing')
       const observerPage = observerContext!.pages()[0]!
       await observerPage.goto(page.url())
-      const observerGithub = observerPage.getByRole('complementary', {
-        name: 'GitHub setup details',
+      const observerGithub = observerPage.getByRole('dialog', {
+        name: 'GitHub setup',
+        exact: true,
       })
       await expect(observerGithub).toContainText('State: reviewing')
       await github.getByRole('button', { name: 'Cancel setup' }).click()
@@ -959,11 +962,12 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(observerGithub).toContainText('State: cancelled')
 
       await page.getByRole('link', { name: 'Back to Veduta' }).click()
+      const beforeGmail = await reviews.count()
       await composer.fill('Find unread emails since 2026-09-30 in Work Space')
       await composer.press('Enter')
-      await page.getByRole('button', { name: 'Connections', exact: true }).click()
-      await page.locator('.connection-list-item').filter({ hasText: 'Gmail setup' }).click()
-      const gmail = page.getByRole('complementary', { name: 'Gmail setup details' })
+      await expect(reviews).toHaveCount(beforeGmail + 1)
+      await reviews.last().click()
+      const gmail = page.getByRole('dialog', { name: 'Gmail setup', exact: true })
       await expect(gmail).toContainText('search_mailbox')
       await expect(gmail).toContainText('Gateway native HTTPS')
       await expect(gmail.getByRole('button', { name: 'Continue to Google' })).toBeEnabled()

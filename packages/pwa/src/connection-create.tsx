@@ -58,6 +58,7 @@ export function ConnectionCreate({
           <label>
             Service
             <NativeSelect
+              aria-label="Service"
               value={service}
               onChange={(event) => {
                 const value = event.target.value
