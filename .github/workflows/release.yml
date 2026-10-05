@@ -40,6 +40,10 @@ jobs:
       # that fails this is not released at all. `pnpm build` here also produces
       # packages/pwa/dist, which the assembly step below reuses as-is.
       - name: Full gate
+        # Keep the same test concurrency as ci.yml on shared runners.
+        env:
+          VITEST_MAX_THREADS: 1
+          VITEST_MAX_FORKS: 1
         run: |
           set -euo pipefail
           pnpm lint
