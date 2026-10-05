@@ -15,14 +15,14 @@ import { ModelConnectionError } from './model-connection-adapter.ts'
  */
 
 /** The exact upstream version this build supports (issue #47: an exact pin, not a `major.minor`, because required fields, method semantics, and item-type guards are hand-transcribed from this version even though inert unknown response fields are tolerated). */
-export const CODEX_PINNED_VERSION = '0.146.1'
+export const CODEX_PINNED_VERSION = '0.160.0'
 
 /** Hosts the spawned child reaches on its own — the daemon's egress dispatcher cannot intercept a subprocess's sockets (`docs/SECURITY.md` §3.4). Allowed only while at least one Codex connection exists (`server.ts`'s egress wiring). */
 export const CODEX_EGRESS_HOSTS = ['auth.openai.com', 'chatgpt.com', 'api.openai.com'] as const
 
 /** The exact reason `model-connection-codex.ts`'s `availability()` reports when no binary is configured — shared with `codex-app-server.ts`'s own production transport factory so a caller that skips the availability check still fails with the same actionable message rather than a bare `ENOENT`. */
 export const CODEX_BINARY_MISSING_REASON =
-  'the Codex app-server binary is not installed: run deploy/codex-setup.sh on the instance (or set VEDUTA_CODEX_BIN to a pinned @openai/codex 0.146.1 binary) — see docs/SECURITY.md'
+  'the Codex app-server binary is not installed: run deploy/codex-setup.sh on the instance (or set VEDUTA_CODEX_BIN to a pinned @openai/codex 0.160.0 binary) — see docs/SECURITY.md'
 
 export type CodexRequestId = string | number
 

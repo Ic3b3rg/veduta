@@ -36,7 +36,7 @@ import { resolveInstalledVersion } from './version.ts'
 /**
  * The ChatGPT/Codex Model connection method (issue #47,
  * `docs/adr/0014-subscription-inference-boundary.md` amendment): a
- * device-code login against the pinned `codex app-server` 0.146.1 child
+ * device-code login against the pinned `codex app-server` 0.160.0 child
  * process, `model/list` for the catalog, `account/logout` to disconnect.
  * Every verb but `availability()` reaches the connection's own pooled
  * transport through `ctx.codexTransport` (wired by

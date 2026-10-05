@@ -182,7 +182,7 @@ if [ ! -e "$DATA_DIR/codex/bin/codex" ] && [ -z "${VEDUTA_CODEX_BIN:-}" ] && [ -
   # Default-yes (Hermes's dev-script convention for an optional dependency,
   # docs/references/12-hermes-installer-provisioning.md: setup-hermes.sh:280) -- empty input
   # (just pressing Enter) accepts; only an explicit n/no declines.
-  printf 'Enable the ChatGPT subscription connection method (installs the pinned @openai/codex 0.146.1 into the data dir)? [Y/n] ' >&2
+  printf 'Enable the ChatGPT subscription connection method (installs the pinned @openai/codex 0.160.0 into the data dir)? [Y/n] ' >&2
   IFS= read -r codex_setup_answer
   case "$codex_setup_answer" in
     n | N | no | No | NO)

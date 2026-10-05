@@ -5,7 +5,7 @@ import { z } from 'zod'
  * Hand-written zod schemas for the Codex app-server JSON-RPC messages
  * Veduta consumes (issue #47,
  * `docs/adr/0014-subscription-inference-boundary.md` amendment). Every
- * shape here is **transcribed** from the pinned `@openai/codex` version
+ * shape here is **transcribed** from the original `@openai/codex` version
  * `0.146.1` (source commit `9d00bb0`), per the research in
  * `docs/references/11-model-connections-manual-smoke.md`, the dynamic-tool
  * capture in `docs/references/13-codex-dynamic-tools-0.146.1.md`, and the
@@ -22,6 +22,9 @@ import { z } from 'zod'
  * `turn/completed`. Each schema below whose doc comment says "observed" or
  * "CONFIRMED" was corrected against that live output; every field still
  * marked `transcription note` remains research-only.
+ * The consumed protocol was revalidated against 0.160.0 on 2026-10-04,
+ * including authenticated catalog discovery and a complete dynamic-tool turn:
+ * `docs/references/codex-0.160-compatibility.md`.
  *
  * Required response and notification fields are the fail-closed contract:
  * an absent or mistyped required field becomes a typed `CodexProtocolError`.
@@ -55,7 +58,7 @@ export function parseCodexResponse<Schema extends z.ZodTypeAny>(
   if (!parsed.success) {
     throw new CodexProtocolError(
       method,
-      `the Codex app-server's response to "${method}" did not match the pinned 0.146.1 protocol: ${parsed.error.message}`,
+      `the Codex app-server's response to "${method}" did not match the pinned protocol: ${parsed.error.message}`,
     )
   }
   return parsed.data

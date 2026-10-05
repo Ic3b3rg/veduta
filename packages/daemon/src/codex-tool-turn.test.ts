@@ -1465,7 +1465,7 @@ describe('stream', () => {
     expect(transport.requests.map((request) => request.method)).toEqual(['thread/start'])
   })
 
-  it('uses the capability-compatible 0.146.1 thread/start and turn/start params', async () => {
+  it('uses the capability-compatible pinned thread/start and turn/start params', async () => {
     const transport = createFakeCodexTransport({
       responses: {
         'thread/start': { thread: { id: 'thread-1' } },

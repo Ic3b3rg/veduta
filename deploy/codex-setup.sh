@@ -23,7 +23,7 @@ set -euo pipefail
 
 # --- Defaults ---------------------------------------------------------------------------
 
-CODEX_PINNED_VERSION='0.146.1' # must match packages/daemon/src/codex-app-server.ts's CODEX_PINNED_VERSION
+CODEX_PINNED_VERSION='0.160.0' # must match packages/daemon/src/codex-app-server.ts's CODEX_PINNED_VERSION
 CODEX_PACKAGE="@openai/codex@$CODEX_PINNED_VERSION"
 
 DEFAULT_DATA_DIR="$HOME/.veduta-local-vps/data"

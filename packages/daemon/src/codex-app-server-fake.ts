@@ -1,4 +1,5 @@
 import {
+  CODEX_PINNED_VERSION,
   createNotificationHub,
   createServerRequestHub,
   type CodexRequestId,
@@ -34,14 +35,15 @@ import { ModelConnectionError } from './model-connection-adapter.ts'
  * live subscription, the same as the real transport's own `close()`.
  *
  * The response factories below centralize the observed envelopes and their
- * load-bearing parsed fields from the pinned 0.146.1 binary. Their comments
+ * load-bearing parsed fields originally captured from the 0.146.1 binary
+ * and revalidated with 0.160.0 (docs/references/codex-0.160-compatibility.md). Their comments
  * distinguish directly observed fields from optional transcription-only
  * fields. Tests use these factories instead of repeating obsolete top-level
  * ids or other guessed protocol objects.
  */
 
 /** Complete `initialize` result observed from the pinned binary, with only the embedded version varied for pin-mismatch tests. */
-export function fakeCodexInitializeResponse(version = '0.146.1'): InitializeResponse {
+export function fakeCodexInitializeResponse(version = CODEX_PINNED_VERSION): InitializeResponse {
   return {
     userAgent: `veduta/${version} (Mac OS 26.5.1; arm64) unknown (veduta; 0.0.0)`,
     codexHome: '/home/user/.codex',
