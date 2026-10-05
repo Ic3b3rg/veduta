@@ -1,4 +1,5 @@
 import { Button } from '@veduta/catalog/ui/button'
+import { ItemGroup } from '@veduta/catalog/ui/item'
 import type { ServiceConnection } from '@veduta/protocol'
 import type { SpaceWithSurfaces } from './api.ts'
 import type { ConnectionsController } from './connections-controller.ts'
@@ -56,16 +57,18 @@ export function ConnectionServiceDetail({
         {grants.filter((grant) => isSpaceGrantActive(grant, connection)).length === 0 && (
           <p>This account has no enabled Space access.</p>
         )}
-        {grants.map((grant) => (
-          <ConnectionGrantRow
-            key={grant.id}
-            grant={grant}
-            connection={connection}
-            spaceName={spaces.find((space) => space.id === grant.spaceId)?.name ?? grant.spaceId}
-            controller={controller}
-            {...(token ? { token } : {})}
-          />
-        ))}
+        <ItemGroup>
+          {grants.map((grant) => (
+            <ConnectionGrantRow
+              key={grant.id}
+              grant={grant}
+              connection={connection}
+              spaceName={spaces.find((space) => space.id === grant.spaceId)?.name ?? grant.spaceId}
+              controller={controller}
+              {...(token ? { token } : {})}
+            />
+          ))}
+        </ItemGroup>
         <p className="connection-note">
           The Agent uses this connection only for requested work in authorized Spaces.
         </p>

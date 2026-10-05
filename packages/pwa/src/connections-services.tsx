@@ -49,6 +49,7 @@ export function ConnectionsServices({
     for (const key of [
       'attempt',
       'detail',
+      'service',
       'code',
       'state',
       'error',
@@ -238,6 +239,7 @@ export function ConnectionsServices({
             {selection?.kind === 'new' && (
               <ConnectionCreate
                 controller={controller}
+                initialService={params.get('service') === 'github' ? 'github' : 'gmail'}
                 {...(token ? { token } : {})}
                 onAttempt={(id) => setSelection({ kind: 'attempt', id })}
                 onMailbox={() => setSelection({ kind: 'mailbox-setup', id: '' })}

@@ -10,13 +10,15 @@ export function ConnectionCreate({
   token,
   onAttempt,
   onMailbox,
+  initialService = 'gmail',
 }: {
   controller: ConnectionsController
   token?: string
   onAttempt: (id: string) => void
   onMailbox: () => void
+  initialService?: 'gmail' | 'github'
 }) {
-  const [service, setService] = useState<'gmail' | 'github' | 'mailbox'>('gmail')
+  const [service, setService] = useState<'gmail' | 'github' | 'mailbox'>(initialService)
   const submissionId = useRef(crypto.randomUUID())
   const create = async () => {
     if (controller.busy) return

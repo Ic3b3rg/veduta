@@ -1,4 +1,5 @@
 import type { ConnectionReview as Review } from '@veduta/protocol'
+import { serviceActionLabel } from './service-action-label.ts'
 
 export function ConnectionReview({ review }: { review: Review }) {
   return (
@@ -14,20 +15,7 @@ export function ConnectionReview({ review }: { review: Review }) {
         </div>
         <div>
           <dt>Allowed actions</dt>
-          <dd>
-            {review.actions
-              .map(
-                (action) =>
-                  ({
-                    list_repositories: 'List repositories',
-                    list_issues: 'Read open issues',
-                    read_files: 'Read directories and text files',
-                    search_mailbox: 'Summarize mail',
-                    issue_write: 'Create an issue after approval',
-                  })[action] ?? action,
-              )
-              .join(', ')}
-          </dd>
+          <dd>{review.actions.map(serviceActionLabel).join(', ')}</dd>
         </div>
         {review.repository && (
           <div>
