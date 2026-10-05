@@ -436,14 +436,17 @@ backup schedule (§4 above). Both are pruned only after a successful update, nev
 posture Syncthing and Tailscale ship with -- but it must never be able to repoint its own
 update channel or swap the root of trust. A fork gets its own update channel with zero source
 patches via the installer's `--update-feed`/`--update-root-key` flags. The feed URL defaults to
-this project's own `feed/stable.json`; the root key has **no default** -- no upstream root key
-has been published yet (that is the one-time ceremony in
-[RELEASING.md](../RELEASING.md) §(a), which this issue's implementation does not itself run).
+this project's own `feed/stable.json`; the root key has **no default** and must be supplied
+explicitly. The upstream [root public key](../docs/keys/root.pub),
+[signing public key](../docs/keys/signing.pub), and
+[root signature over the signing key](../docs/keys/signing.pub.minisig) are published in this
+repository. The [README installation command](../README.md#install-on-a-vps) downloads and
+pins that root key; [RELEASING.md](../RELEASING.md) documents how to verify the full chain.
 An install with no `--update-root-key` writes no `/etc/veduta/update.json` at all and prints a
 clearly marked notice at the end of the run saying so, with the exact rerun command
-(`--update-root-key @/path/to/root.pub`, `@file` reads the key from a file) that pins it once a
-key exists. This is a deliberate honesty choice: a fabricated placeholder key would pin trust to
-a key nobody holds, which is worse than leaving self-update unconfigured.
+(`--update-root-key @/path/to/root.pub`, `@file` reads the key from a file) that pins it.
+On an existing installation, omit `--ref` from that recovery rerun to retain its checkout;
+apply new releases through the Updates Surface so the updater performs any data migration.
 
 A release that fails its health check leaves its supervised daemon's output behind at
 `/var/lib/veduta/updates/state/logs/<version>.log` -- preserved across the rollback, specifically

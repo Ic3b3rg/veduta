@@ -13,6 +13,12 @@ builds and attests releases but **never holds either private key** — signing a
 promotion are local maintainer steps, run with [deploy/release.sh](deploy/release.sh) against
 the real `minisign` CLI.
 
+The current public verification material is committed under `docs/keys/`:
+[root.pub](docs/keys/root.pub), [signing.pub](docs/keys/signing.pub), and
+[signing.pub.minisig](docs/keys/signing.pub.minisig). The root key ID is
+`2C2CF066DB4483DE`; these files contain no private keys. The installer still requires an
+explicit `--update-root-key` argument, supplied by the [README quick start](README.md#install-on-a-vps).
+
 ## Prerequisites
 
 - [`minisign`](https://jedisct1.github.io/minisign/) (`brew install minisign` /
