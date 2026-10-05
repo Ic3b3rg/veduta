@@ -1,17 +1,27 @@
 import { Badge } from '@veduta/catalog/ui/badge'
 import { Button } from '@veduta/catalog/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@veduta/catalog/ui/sheet'
+import {
+  Sidebar,
+  SidebarHeader,
+  SidebarContent,
+  SidebarFooter,
+  SidebarMenu,
+  SidebarMenuItem,
+  SidebarMenuButton,
+} from '@veduta/catalog/ui/sidebar'
+import { ArrowLeft, Blocks, Cable, KeyRound, Sparkles, type LucideIcon } from 'lucide-react'
 import { useEffect, useState, type ReactNode, type RefObject } from 'react'
 import { Link } from 'react-router-dom'
 import { clientPath } from './client-router.tsx'
 
 export type ConnectionsSection = 'services' | 'models' | 'extensions' | 'access'
 
-const sections: { id: ConnectionsSection; label: string; icon: string }[] = [
-  { id: 'services', label: 'Accounts & services', icon: '◎' },
-  { id: 'models', label: 'Models', icon: '✧' },
-  { id: 'extensions', label: 'Extensions', icon: '◇' },
-  { id: 'access', label: 'Space access', icon: '⊞' },
+const sections: { id: ConnectionsSection; label: string; icon: LucideIcon }[] = [
+  { id: 'services', label: 'Accounts & services', icon: Cable },
+  { id: 'models', label: 'Models', icon: Sparkles },
+  { id: 'extensions', label: 'Extensions', icon: Blocks },
+  { id: 'access', label: 'Space access', icon: KeyRound },
 ]
 
 export function ConnectionsLayout({
@@ -23,24 +33,43 @@ export function ConnectionsLayout({
 }) {
   return (
     <div className="connections-page">
-      <aside className="connections-sidebar">
-        <nav aria-label="Settings">
-          {sections.map((item) => (
-            <Button key={item.id} asChild variant="ghost" className="connections-nav-item">
-              <Link
-                to={`${clientPath.serviceConnections}?section=${item.id}`}
-                aria-current={section === item.id ? 'page' : undefined}
-              >
-                <span aria-hidden="true">{item.icon}</span>
-                {item.label}
-              </Link>
-            </Button>
-          ))}
-        </nav>
-        <Button asChild variant="ghost" className="connections-back">
-          <Link to={clientPath.home}>← Back to Veduta</Link>
-        </Button>
-      </aside>
+      <Sidebar className="connections-sidebar">
+        <SidebarHeader className="px-5 pt-6 pb-4">
+          <span className="text-sm font-semibold">Connections</span>
+          <span className="text-xs text-muted-foreground">Manage your Veduta</span>
+        </SidebarHeader>
+        <SidebarContent>
+          <nav aria-label="Settings">
+            <SidebarMenu className="connections-navigation">
+              {sections.map(({ id, label, icon: Icon }) => (
+                <SidebarMenuItem key={id}>
+                  <SidebarMenuButton asChild isActive={section === id}>
+                    <Link
+                      to={`${clientPath.serviceConnections}?section=${id}`}
+                      aria-current={section === id ? 'page' : undefined}
+                    >
+                      <Icon aria-hidden="true" />
+                      <span>{label}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </nav>
+        </SidebarContent>
+        <SidebarFooter className="border-t border-border">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild>
+                <Link to={clientPath.home}>
+                  <ArrowLeft aria-hidden="true" />
+                  <span>Back to Veduta</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+      </Sidebar>
       <main className="connections-content">{children}</main>
     </div>
   )

@@ -8,7 +8,7 @@ import { BrowserRouter } from 'react-router-dom'
 import { ApiResponseError, fetchOnboardingStatus, type SpaceWithSurfaces } from './api.ts'
 import { AuthGate } from './auth-gate.tsx'
 import { OnboardingWizard } from './onboarding-wizard.tsx'
-import { ConnectionsPage } from './connections-page.tsx'
+import { ConnectionsRoute } from './connections-route.tsx'
 import { ClientRouteTable, clientPath, useClientRouting } from './client-router.tsx'
 import { AppShell, type AppRouteSelection } from './app-shell.tsx'
 import { homeBlockedByStatusFailure } from './onboarding-state.ts'
@@ -367,11 +367,11 @@ function RoutedApp() {
       <ClientRouteTable
         appShell={appShell}
         modelConnections={
-          <ConnectionsPage token={authToken} spaces={spaces} initialSection="models" />
+          <ConnectionsRoute token={authToken} spaces={spaces} initialSection="models" />
         }
-        gmailConnections={<ConnectionsPage token={authToken} spaces={spaces} />}
-        himalayaConnections={<ConnectionsPage token={authToken} spaces={spaces} />}
-        serviceConnections={<ConnectionsPage token={authToken} spaces={spaces} />}
+        gmailConnections={<ConnectionsRoute token={authToken} spaces={spaces} />}
+        himalayaConnections={<ConnectionsRoute token={authToken} spaces={spaces} />}
+        serviceConnections={<ConnectionsRoute token={authToken} spaces={spaces} />}
       />
     </PwaRuntimeContext.Provider>
   )

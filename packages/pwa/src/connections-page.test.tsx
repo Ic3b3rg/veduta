@@ -247,7 +247,7 @@ describe('ConnectionsPage', () => {
     await screen.findByText('No accounts connected yet.')
     expect(screen.queryByText('Overview')).toBeNull()
     expect(screen.queryByText('Connections & integrations')).toBeNull()
-    expect(screen.getByRole('link', { name: '← Back to Veduta' }).getAttribute('href')).toBe('/')
+    expect(screen.getByRole('link', { name: 'Back to Veduta' }).getAttribute('href')).toBe('/')
     expect(screen.queryByText('GitHub')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Add account' }))
     fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'github' } })
