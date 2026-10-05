@@ -57,8 +57,9 @@ The durable boundaries live in
 [ADR-0014](docs/adr/0014-subscription-inference-boundary.md) and
 [ADR-0016](docs/adr/0016-primary-agent-connections-author-surfaces.md); see the
 [security contract](docs/SECURITY.md) and the
-[pinned protocol capture](docs/references/13-codex-dynamic-tools-0.146.1.md) for operational and
-protocol details.
+[original protocol capture](docs/references/13-codex-dynamic-tools-0.146.1.md) and
+[Codex 0.160.0 compatibility check](docs/references/codex-0.160-compatibility.md) for operational
+and protocol details.
 
 ## Development
 

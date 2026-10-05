@@ -366,7 +366,7 @@ describe('availability', () => {
     expect(result).toEqual({
       available: false,
       reason:
-        'the Codex app-server binary is not installed: run deploy/codex-setup.sh on the instance (or set VEDUTA_CODEX_BIN to a pinned @openai/codex 0.146.1 binary) — see docs/SECURITY.md',
+        'the Codex app-server binary is not installed: run deploy/codex-setup.sh on the instance (or set VEDUTA_CODEX_BIN to a pinned @openai/codex 0.160.0 binary) — see docs/SECURITY.md',
     })
   })
 
@@ -395,7 +395,7 @@ describe('availability', () => {
     expect(result).toEqual({
       available: false,
       reason:
-        'the installed Codex binary reports version 0.147.0; Veduta supports exactly 0.146.1 — install the pinned version',
+        'the installed Codex binary reports version 0.147.0; Veduta supports exactly 0.160.0 — install the pinned version',
     })
   })
 
@@ -418,7 +418,7 @@ describe('availability', () => {
     expect(result).toEqual({
       available: false,
       reason:
-        'the installed Codex binary\'s initialize response reported no recognizable version in its userAgent ("codex-unknown-build"); Veduta supports exactly 0.146.1 — install the pinned version',
+        'the installed Codex binary\'s initialize response reported no recognizable version in its userAgent ("codex-unknown-build"); Veduta supports exactly 0.160.0 — install the pinned version',
     })
   })
 

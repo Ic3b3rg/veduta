@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
@@ -8,16 +8,20 @@ import { describe, expect, it } from 'vitest'
 import {
   defineTool,
   disabledContextPolicy,
+  MemorySessionStore,
   type ContextPolicy,
+  type ModelRef,
   type SessionContextFilter,
   type SessionEntry,
   type SessionMessage,
 } from './agent-runner.ts'
+import { createFakeProvider, fakeText } from './fake-provider.ts'
 import {
   applyOriginEntries,
   branchMessagesForPrompt,
   originEntryData,
   piMessageTokens,
+  PiAgentRunner,
   PiJsonlSessionStore,
   toPiAgentTool,
   transformPiContext,
@@ -29,6 +33,86 @@ import {
   type RawSessionEntry,
 } from './pi-agent-runner.ts'
 import { TurnTaintAccumulator, type Origin } from './taint.ts'
+
+describe('PiAgentRunner session recovery', () => {
+  it('resumes conversation history through the selected connection after the previous one was removed', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'veduta-runner-connection-recovery-'))
+    try {
+      const sessionStore = new PiJsonlSessionStore({ cwd: root, sessionsRoot: root })
+      const previous: ModelRef = {
+        provider: 'fake',
+        modelId: 'fake-model',
+        tier: 'reasoning',
+        connectionId: 'removed-connection',
+      }
+      await sessionStore.append('global', { type: 'model-change', model: previous })
+      await sessionStore.append('global', {
+        type: 'message',
+        message: { role: 'user', content: 'Remember my earlier request.' },
+      })
+      const selected: ModelRef = { ...previous, connectionId: 'selected-connection' }
+      const provider = createFakeProvider()
+      provider.setResponses([
+        {
+          factory: (context) => {
+            expect(context.messages).toMatchObject([
+              { role: 'user', content: 'Remember my earlier request.' },
+              { role: 'user', content: 'Continue the conversation.' },
+            ])
+            return fakeText('Conversation continued.')
+          },
+        },
+      ])
+      const runner = new PiAgentRunner({
+        sessionStore,
+        resolveModel: (model) => {
+          if (model.connectionId !== selected.connectionId) {
+            throw new Error(`Model connection "${model.connectionId}" is not available`)
+          }
+          return provider.resolveModel(model)
+        },
+        getApiKey: provider.getApiKey,
+        streamFn: provider.streamFn,
+      })
+
+      await runner.start('global')
+      await runner.prompt('Continue the conversation.', { model: selected })
+
+      const branch = await sessionStore.load('global')
+      expect(branch.model).toEqual(selected)
+      expect(branch.messages.map((message) => message.content)).toEqual([
+        'Remember my earlier request.',
+        'Continue the conversation.',
+        'Conversation continued.',
+      ])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('still rejects a prompt through an unavailable connection', async () => {
+    const sessionStore = new MemorySessionStore()
+    const runner = new PiAgentRunner({
+      sessionStore,
+      resolveModel: () => {
+        throw new Error('Model connection is not available')
+      },
+    })
+    await runner.start('global')
+
+    await expect(
+      runner.prompt('Continue the conversation.', {
+        model: {
+          provider: 'fake',
+          modelId: 'fake-model',
+          tier: 'reasoning',
+          connectionId: 'removed-connection',
+        },
+      }),
+    ).rejects.toThrow('Model connection is not available')
+    expect((await sessionStore.load('global')).messages).toEqual([])
+  })
+})
 
 /**
  * `applyOriginEntries` and `originEntryData` are the pure halves of the

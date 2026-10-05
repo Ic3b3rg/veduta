@@ -30,12 +30,17 @@ these turn-local refusals; genuine authentication, refresh, and transport failur
 **Issue 047 narrows the boundary to inference-only adapters and places each initial adapter against it.**
 A Model connection adapter supplies inference and nothing else; Veduta's Agent loop keeps tools, trust decisions, Event log writes and Surface changes for every connection method.
 
-- **ChatGPT** is a Gateway-managed adapter that spawns the exactly-pinned `codex app-server` 0.146.1 child process over stdio JSON-RPC, uses managed device-code login, `model/list` for the catalog and `account/logout` for disconnect, and runs one `thread/start`+`turn/start` per model call — no thread reuse and no resume. It opts into the pinned experimental API and carries only the turn's allowed Veduta `ToolDef`s through `dynamicTools`; every Codex-native tool remains disabled, no provider approval is ever granted, and capability, version, correlation, or schema drift fails the turn closed. Codex owns its credential store inside a per-connection `CODEX_HOME` under the data directory; encryption at rest for that directory is a deployment concern, not a vault integration, and OS-level sandboxing of the child is out of scope for issue 047.
+- **ChatGPT** is a Gateway-managed adapter that spawns the exactly-pinned `codex app-server` 0.160.0 child process over stdio JSON-RPC, uses managed device-code login, `model/list` for the catalog and `account/logout` for disconnect, and runs one `thread/start`+`turn/start` per model call — no thread reuse and no resume. It opts into the pinned experimental API and carries only the turn's allowed Veduta `ToolDef`s through `dynamicTools`; every Codex-native tool remains disabled, no provider approval is ever granted, and capability, version, correlation, or schema drift fails the turn closed. Codex owns its credential store inside a per-connection `CODEX_HOME` under the data directory; encryption at rest for that directory is a deployment concern, not a vault integration, and OS-level sandboxing of the child is out of scope for issue 047.
 - **Claude subscription** ships as a registry adapter that is unavailable with the exact reason: Anthropic prohibits a third-party product from offering Claude.ai login or routing subscription credentials without prior approval; no `setup-token` workaround is normalized into product UX. Anthropic API keys stay fully supported.
 - **BYOK** becomes one Model connection method behind the same contract, and the connection id travels beside the canonical provider on the routed `ModelRef` — pi-ai's `PiModel.provider` is never rewritten.
 - The visible routing control is one connection select plus one model select; the internal triage tier follows the same selection rather than exposing a second picker.
 - Failover is permitted only to a `connected` connection the user explicitly enabled for fallback, is surfaced in chat and recorded in the usage log; the mock provider is automatic on Loopback, available on Local VPS only through an explicit development control, and never on a VPS — including any mock candidate a hand-edited `routing.json` may contain.
 
 [ADR-0016](0016-primary-agent-connections-author-surfaces.md) defines the eligibility rule: a Model connection must satisfy the complete AgentRunner tool contract before it can power the primary Agent.
+
+The 2026-10-04 upgrade to Codex 0.160.0 preserves the exact-version boundary and existing
+protocol schemas after a real authenticated catalog and dynamic-tool round trip. The older
+0.146.1 client received a version-filtered catalog without the current 6.x models; refreshing
+that catalog could not expose them. See [the compatibility check](../references/codex-0.160-compatibility.md).
 
 Status: accepted

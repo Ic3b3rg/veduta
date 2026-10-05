@@ -136,7 +136,7 @@ Record the outcome (date, provider, model) in the issue or deployment notes when
 
 ## ChatGPT subscription (Codex)
 
-The ChatGPT subscription Model connection (issue #47) needs a pinned `@openai/codex` 0.146.1
+The ChatGPT subscription Model connection (issue #47) needs a pinned `@openai/codex` 0.160.0
 binary at `<data dir>/codex/bin/codex` (or `VEDUTA_CODEX_BIN`) -- the daemon refuses any other
 version. `pnpm local-vps` offers to provision it interactively the first time it runs against a
 fresh data dir with no binary present and no `VEDUTA_CODEX_BIN` set: answer the one `[Y/n]`

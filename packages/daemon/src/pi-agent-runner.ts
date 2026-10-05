@@ -297,9 +297,9 @@ export class PiAgentRunner implements AgentRunner {
     this.currentModel = branch.model
     this.turnError = undefined
     this.turnErrorNonRetryable = false
+    // Resolve the next prompt's selected model before rebuilding the Agent;
+    // the restored branch may reference a Model connection that was removed.
     this.agent = undefined
-    if (this.currentModel)
-      this.agent = this.createAgent(branch, this.currentModel, [], this.defaultContextPolicy)
   }
 
   async prompt(input: string, options: AgentPromptOptions = {}): Promise<void> {
