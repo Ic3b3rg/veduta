@@ -173,6 +173,9 @@ importers:
       '@veduta/protocol':
         specifier: workspace:*
         version: link:../protocol
+      lucide-react:
+        specifier: ^1.48.0
+        version: 1.48.0(react@19.2.7)
       react:
         specifier: ^19.1.0
         version: 19.2.7
