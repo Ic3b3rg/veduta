@@ -498,7 +498,7 @@ export class GithubMcpService {
           input.body,
           controller.signal,
         )
-        const number = issueNumberFromMcpResult(result.text)
+        const number = issueNumberFromMcpResult(result.text, input.repository)
         if (number === undefined)
           throw new Error('GitHub issue outcome is unknown; inspect the repository before retrying')
         await this.verifyCreatedIssue(
@@ -608,7 +608,10 @@ export class GithubMcpService {
   }
 }
 
-function issueNumberFromMcpResult(text: string): number | undefined {
+function issueNumberFromMcpResult(
+  text: string,
+  repository: { owner: string; name: string },
+): number | undefined {
   let value: unknown
   try {
     value = JSON.parse(text)
@@ -625,12 +628,18 @@ function issueNumberFromMcpResult(text: string): number | undefined {
       return undefined
     }
     const record = item as Record<string, unknown>
+    const number = record['number']
     if (
-      typeof record['number'] === 'number' &&
-      Number.isSafeInteger(record['number']) &&
-      record['number'] > 0
+      number !== undefined &&
+      !(typeof number === 'number' && Number.isSafeInteger(number) && number > 0)
     )
-      return record['number']
+      return undefined
+    if (record['url'] !== undefined) {
+      const fromUrl = issueNumberFromGithubUrl(record['url'], repository)
+      if (fromUrl === undefined || (number !== undefined && number !== fromUrl)) return undefined
+      return fromUrl
+    }
+    if (typeof number === 'number') return number
     for (const child of Object.values(record).slice(0, 20)) {
       const number = find(child, depth + 1)
       if (number !== undefined) return number
@@ -638,4 +647,32 @@ function issueNumberFromMcpResult(text: string): number | undefined {
     return undefined
   }
   return find(value, 0)
+}
+
+function issueNumberFromGithubUrl(
+  value: unknown,
+  repository: { owner: string; name: string },
+): number | undefined {
+  if (typeof value !== 'string') return undefined
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return undefined
+  }
+  if (url.href !== value || url.username || url.password || url.search || url.hash) return undefined
+  let path: string
+  if (url.origin === 'https://github.com') path = url.pathname
+  else if (url.origin === 'https://api.github.com' && url.pathname.startsWith('/repos/'))
+    path = url.pathname.slice('/repos'.length)
+  else return undefined
+  const match = path.match(/^\/([^/]+)\/([^/]+)\/issues\/([1-9][0-9]*)$/)
+  if (
+    !match ||
+    match[1]?.toLowerCase() !== repository.owner.toLowerCase() ||
+    match[2]?.toLowerCase() !== repository.name.toLowerCase()
+  )
+    return undefined
+  const number = Number(match[3])
+  return Number.isSafeInteger(number) ? number : undefined
 }
