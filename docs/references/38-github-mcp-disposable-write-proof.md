@@ -6,7 +6,7 @@ Boundary: [ADR-0033](../adr/0033-chat-initiated-service-connections.md),
 [ADR-0035](../adr/0035-conversational-service-requests.md).
 Observed: 2026-10-05, Darwin arm64.
 
-## Result
+## Initial permission-denied attempt
 
 The reporter authorized one disposable test issue in `Ic3b3rg/poppy-review-proof`, followed by
 removal. The configured account could read that repository, but its saved fine-grained PAT could
@@ -20,7 +20,7 @@ the real GitHub MCP request returned:
 - An authenticated repository read found no uniquely tagged test issue. There was no remote
   artifact to delete or close.
 
-Issue #180 remains incomplete: successful real creation, exact title/body read-back, numeric issue
+At that point, issue #180 remained incomplete: successful real creation, exact title/body read-back, numeric issue
 identity, write-result persistence, confirmed-write retry, and deletion of the created test issue
 were not proved. Repository account roles do not establish the PAT's Issues write permission.
 No further write was attempted after the specific permission denial was established.
@@ -115,7 +115,9 @@ vault key, auth state, Spaces, grants, Surfaces, Events, and MCP executable were
 temporary data roots. No original or pre-existing repository issue was touched. No commit,
 push, PR, or Veduta issue-tracker mutation was performed by this scoped proof.
 
-## Remaining user proof
+## Initial follow-up checklist
+
+The initial follow-up checklist, fulfilled by the corrected proof below, was:
 
 After the reporter grants **Issues: Read and write** for the disposable repository and completes
 protected reconnect, repeat the exact bounded write journey from its review. Approve the prepared
@@ -123,3 +125,95 @@ L1 decision once, verify the returned numeric issue and exact title/body/source,
 Space Surface and Event after reload and Gateway restart, and repeat the same decision resolution
 to establish no second write. Remove only that uniquely tagged issue and verify its absence.
 Keep that successful proof separate from the denied attempt and from controlled-inference evidence.
+
+## Updated-permission retry: response defect reproduced
+
+The reporter subsequently granted Issues read/write and authorized a retry. The collaborative
+T3 browser exercised the exact reviewed write profile, real account verification, the explicit
+Space grant, and a separate L1 Pending decision. The disposable instance used a controlled
+authenticated QA session and mock inference; this retry does not claim a real passkey sign-in
+or real-model interpretation. The MCP process and GitHub responses were real.
+
+Approval at 18:24:14 UTC created uniquely tagged issue **#3** in the authorized repository, with
+the exact title/body and creator `Ic3b3rg`. Veduta nevertheless recorded a failed decision with
+`GitHub issue outcome is unknown; inspect the repository before retrying`. Its effect remained
+`started`; no issue-created Event or result Surface appeared. Repeating the terminal decision
+after Gateway restart returned the existing failed outcome and produced no duplicate issue.
+
+The original MCP frame was not captured. The
+[pinned upstream CreateIssue implementation](https://github.com/github/github-mcp-server/blob/85598ba6e1256f7ebf4867b95d63b833c4549264/pkg/github/issues.go)
+constructs a minimal response containing a string database `id` and the issue's HTML `url`.
+The existing decoder recognized only a numeric `number` field. A source-grounded service
+regression reproduced the exact observed error; this is documented as
+[bug #223](https://github.com/Ic3b3rg/veduta/issues/223), rather than inferred permission failure.
+
+The guarded cleanup deleted only issue #3. A subsequent native read returned **HTTP 410 Gone**,
+and an all-issues read returned HTTP 200 with zero issues or matching markers. The temporary
+Gateway, data root, browser session and one-use loopback bootstrap endpoint were removed.
+All 11,932 original installation file hashes stayed unchanged, and a credential scan of the
+30 disposable textual files found no PAT occurrence. The original Gateway was not restarted.
+
+## Corrected real-service proof
+
+The localized fix for [#223](https://github.com/Ic3b3rg/veduta/issues/223) resolves a canonical
+issue URL only inside the reviewed repository and then reads the exact approved title and body
+back from GitHub before confirming the effect. A database `id` is never treated as an issue number.
+Foreign, malformed, noncanonical, conflicting, and unsafe identities remain uncertain and cannot
+trigger an automatic second write.
+
+The corrected retry used the collaborative T3 browser and the real pinned MCP executable.
+A passive observer captured the actual creation response: string `id`, string `url`, and no
+`number` field. The URL identified **issue #4** in `Ic3b3rg/poppy-review-proof`. Native read-back
+verified the numeric identity, exact approved title and body, and creator `Ic3b3rg`.
+The unique marker was `veduta-180-2026-10-05T18-35-51-772Z-224fc3ef`.
+
+The browser reviewed the exact write profile, verified the account, explicitly granted only the
+owning Space, and separately approved one L1 Pending decision. Before approval, no write effect
+existed. After approval, the PWA displayed an executed decision and a validated, source-linked
+GitHub issue Surface. The effect was confirmed with numeric identity 4, and the Space contained
+exactly one `github.issue.created` Event. The other Space had no GitHub grants or results.
+
+Reload and two disposable Gateway restarts preserved the write result and its Event. Repeating
+the terminal decision returned the executed outcome; retrying the confirmed effect reused identity 4. The repository still contained only the one uniquely tagged issue, and no second creation Event
+appeared. Disabling Space access rejected a fresh write before dispatch and preserved the result.
+Same-account reconnect retained the connection identity but restored no grant automatically.
+Only an explicit grant restored access to the reviewed repository and action.
+
+After an explicit read-profile reconnect and grant, a new T3 Chat request listed issue #4 with
+its canonical source. Its protocol-validated read Surface and matching Event persisted through
+reload and the second restart. The read Surface hash remained
+`2faf6d6d86d527a16efa9dfe3901d72a959ba7a2b1db69f804d2ff4c2a1ad56d`.
+Another Space and `Ic3b3rg/veduta` remained outside the reviewed grants.
+
+An earlier fresh UI read returned the generic failure `The GitHub issue read failed`.
+Its provider cause was not captured and remains unclassified. A bounded subsequent direct
+production-service MCP read returned HTTP 200 with an empty issue list; that diagnostic was not
+a UI proof. The later explicit browser reconnect and successful Chat read are separate recovery
+evidence. No repeatable product defect was diagnosed from the initial generic failure.
+
+This retry used controlled inference and a disposable authenticated session seeded only in the
+copied AuthStore through a one-use loopback bootstrap. Protected production routes and session
+verification were exercised, but this retry does not prove a real passkey sign-in or real-model
+interpretation. Existing real-model journeys and deterministic provider-parity tests are separate
+evidence. Linux activation remains owned by #196. Network uncertainty was not deliberately induced;
+the regression tests cover uncertain effects without claiming a real provider-side rollback.
+
+The guarded cleanup deleted only issue #4. A saved-credential native read returned **HTTP 410 Gone**;
+an all-issues read contained no issue #4 or matching title/marker. The disposable Gateway, private data
+root, bootstrap material, and browser QA session were removed. All 11,932 original installation
+file hashes matched, including protected configuration, grants, credentials, and vault material.
+A scan of 30 disposable textual files found zero PAT occurrences. The original Gateway was not
+restarted or mutated. Neither the QA harness nor credentials are committed.
+
+## Fix validation
+
+The official minimal response first reproduced the unknown-outcome error in a failing regression.
+After the fix, focused service, effect, route, stdio, and provider-parity tests passed. The route
+fixture now uses the actual upstream `{id, url}` shape. Rejection cases cover database ids without
+URLs, conflicting identities, foreign repositories and hosts, malformed paths, unsafe numbers,
+and noncanonical URL forms. Existing read-back validation and no-replay behavior remain intact.
+
+The coordinating run's full `pnpm check` passed: lint, formatting, type checking, all **3,897**
+package tests, and build. Two independent code reviews found no actionable implementation findings.
+The successful real-service proof above establishes the localized fix's runtime behavior; it does
+not imply deployment to the untouched original Gateway.

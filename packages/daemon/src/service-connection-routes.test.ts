@@ -64,7 +64,10 @@ describe('Chat to reviewed GitHub MCP connection', () => {
           createIssue: async (owner, repo, title, body) => {
             activity.push(`write:${owner}/${repo}:${title}:${body}`)
             return {
-              text: JSON.stringify({ number: 44 }),
+              text: JSON.stringify({
+                id: '9812345678',
+                url: 'https://github.com/example/disposable/issues/44',
+              }),
               schemaSha256: '97fade9d761e39e29714162058cbcc5a484d65372be703889dd86f9d062c811b',
             }
           },

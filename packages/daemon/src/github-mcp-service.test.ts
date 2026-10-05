@@ -12,7 +12,50 @@ afterEach(() => {
 })
 
 describe('GitHub MCP verification and Space scope', () => {
-  it('requires a write grant, confirms one approved creation, and refuses an uncertain replay', async () => {
+  it.each([
+    { name: 'numeric issue response', response: { number: 52 }, accepted: true },
+    {
+      name: 'reviewed server minimal response',
+      response: { id: '9812345678', url: 'https://github.com/example/disposable/issues/52' },
+      accepted: true,
+    },
+    {
+      name: 'numeric REST response',
+      response: { number: 52, url: 'https://api.github.com/repos/example/disposable/issues/52' },
+      accepted: true,
+    },
+    {
+      name: 'database id without issue URL',
+      response: { id: '9812345678' },
+      accepted: false,
+    },
+    {
+      name: 'conflicting numeric identity',
+      response: { number: 52, url: 'https://github.com/example/disposable/issues/53' },
+      accepted: false,
+    },
+    ...[
+      'https://github.com/other/disposable/issues/52',
+      'https://github.com/example/other/issues/52',
+      'https://evil.test/example/disposable/issues/52',
+      'https://github.com.evil.test/example/disposable/issues/52',
+      'https://user@github.com/example/disposable/issues/52',
+      'http://github.com/example/disposable/issues/52',
+      'https://github.com/example/disposable/pull/52',
+      'https://github.com/example/disposable/issues/0',
+      'https://github.com/example/disposable/issues/01',
+      'https://github.com/example/disposable/issues/9007199254740992',
+      'https://github.com/example/disposable/issues/52?foo=1',
+      'https://github.com/example/disposable/issues/52#comment',
+      'https://github.com/example/disposable/issues/52/',
+      ' https://github.com/example/disposable/issues/52',
+      'https://github.com/other/../example/disposable/issues/52',
+    ].map((url) => ({
+      name: `unapproved URL ${url}`,
+      response: { id: '9812345678', url },
+      accepted: false,
+    })),
+  ])('handles $name without replaying the write', async ({ response, accepted }) => {
     const root = mkdtempSync(join(tmpdir(), 'veduta-github-write-'))
     roots.push(root)
     const vault = SecretsVault.open(root, Buffer.from('test-only-vault-key'))
@@ -26,17 +69,28 @@ describe('GitHub MCP verification and Space scope', () => {
       review,
     })
     const writes: string[] = []
+    const readbacks: string[] = []
     let failNext = false
+    let mismatchReadback = false
     const service = new GithubMcpService({
       rootDir: root,
       connections,
       vault,
-      fetchFn: async (url) =>
-        String(url).endsWith('/user')
-          ? new Response(JSON.stringify({ login: 'reviewed-user' }), { status: 200 })
-          : new Response(JSON.stringify({ number: 52, title: 'Test title', body: 'Test body' }), {
-              status: 200,
-            }),
+      fetchFn: async (url) => {
+        if (String(url).endsWith('/user'))
+          return new Response(JSON.stringify({ login: 'reviewed-user' }), { status: 200 })
+        readbacks.push(String(url))
+        return new Response(
+          JSON.stringify({
+            number: 52,
+            title: mismatchReadback ? 'Different title' : 'Test title',
+            body: 'Test body',
+          }),
+          {
+            status: 200,
+          },
+        )
+      },
       install: async () => '/reviewed/github-mcp-server',
       createClient: ({ mode }) => ({
         start: async () => {},
@@ -50,7 +104,7 @@ describe('GitHub MCP verification and Space scope', () => {
         createIssue: async (owner, repo) => {
           writes.push(`${owner}/${repo}`)
           if (failNext) throw new Error('Connection lost after sending the write')
-          return { text: JSON.stringify({ number: 52 }), schemaSha256: review.toolSchemaSha256! }
+          return { text: JSON.stringify(response), schemaSha256: review.toolSchemaSha256! }
         },
         stop: async () => {},
       }),
@@ -72,9 +126,17 @@ describe('GitHub MCP verification and Space scope', () => {
         verified.verifiedAccount!,
         verified.verifiedScopes!,
       )
+      if (!accepted) {
+        await expect(service.createIssue(first)).rejects.toThrow('outcome is unknown')
+        await expect(service.createIssue(first)).rejects.toThrow('outcome is unknown')
+        expect(writes).toEqual(['example/disposable'])
+        expect(readbacks).toEqual([])
+        return
+      }
       expect((await service.createIssue(first)).number).toBe(52)
       expect((await service.createIssue(first)).number).toBe(52)
       expect(writes).toEqual(['example/disposable'])
+      expect(readbacks).toEqual(['https://api.github.com/repos/example/disposable/issues/52'])
       await expect(service.createIssue({ ...first, spaceId: 'spc-health' })).rejects.toThrow(
         'not granted',
       )
@@ -83,6 +145,14 @@ describe('GitHub MCP verification and Space scope', () => {
       await expect(service.createIssue(uncertain)).rejects.toThrow('Connection lost')
       await expect(service.createIssue(uncertain)).rejects.toThrow('outcome is unknown')
       expect(writes).toHaveLength(2)
+      failNext = false
+      mismatchReadback = true
+      const mismatch = { ...first, effectId: '686a3826-dd8c-4d12-90b1-491e79f6d6d1' }
+      await expect(service.createIssue(mismatch)).rejects.toThrow(
+        'did not match the approved content',
+      )
+      await expect(service.createIssue(mismatch)).rejects.toThrow('outcome is unknown')
+      expect(writes).toHaveLength(3)
       connections.disableGrant(grant.id)
       await expect(service.createIssue(first)).rejects.toThrow('not granted')
     } finally {
