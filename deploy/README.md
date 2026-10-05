@@ -269,6 +269,10 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now veduta.service
 ```
 
+Both manual and installer-managed units use `Restart=always`: completing onboarding deliberately
+exits the daemon with status `0` to reload its saved configuration. Failures and self-update requests
+also restart under this policy. An explicit `systemctl stop veduta` still stops the service.
+
 Check it came up and watch for the first-boot passkey pairing code (docs/SECURITY.md §6 --
 passkey/WebAuthn only, no passwords):
 
