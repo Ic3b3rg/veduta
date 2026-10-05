@@ -359,21 +359,32 @@ export class GmailConnections {
     return { authorizationUrl: url.toString() }
   }
 
-  async completeAuthorization(
-    id: string,
-    code: string,
-    state: string,
-  ): Promise<GmailConnectionsSnapshot> {
+  assertAuthorizationState(id: string, state: string): void {
+    // A stale nonce must not change the current attempt. A matching expired nonce belongs
+    // to that attempt and follows completeAuthorization's normal failure/retry path.
+    this.requiredAuthorization(id, state, true)
+  }
+
+  private requiredAuthorization(id: string, state: string, allowExpired = false) {
     const record = this.find(id)
     const authorization = record.authorization
     if (
       record.state !== 'authorizing' ||
       !authorization ||
-      this.now().toISOString() > authorization.expiresAt ||
+      (!allowExpired && this.now().toISOString() > authorization.expiresAt) ||
       !safeEqual(hash(state), authorization.stateHash)
     ) {
       throw new GmailConnectionError(409, 'Gmail authorization expired or did not match')
     }
+    return { record, authorization }
+  }
+
+  async completeAuthorization(
+    id: string,
+    code: string,
+    state: string,
+  ): Promise<GmailConnectionsSnapshot> {
+    const { record, authorization } = this.requiredAuthorization(id, state)
     const verifier = this.resolve(authorization.verifierRef, 'Gmail OAuth verifier')
     const clientId = this.resolve(record.clientIdRef, 'Gmail OAuth client ID')
     const clientSecret = this.resolve(record.clientSecretRef, 'Gmail OAuth client secret')
@@ -476,15 +487,7 @@ export class GmailConnections {
     state: string,
     reason: 'access_denied' | 'other',
   ): GmailConnectionsSnapshot {
-    const record = this.find(id)
-    const authorization = record.authorization
-    if (
-      record.state !== 'authorizing' ||
-      !authorization ||
-      !safeEqual(hash(state), authorization.stateHash)
-    ) {
-      throw new GmailConnectionError(409, 'Gmail authorization expired or did not match')
-    }
+    const { record, authorization } = this.requiredAuthorization(id, state, true)
     this.options.vault?.delete(authorization.verifierRef.slice('secret://vault/'.length))
     delete record.authorization
     record.state = 'failed'

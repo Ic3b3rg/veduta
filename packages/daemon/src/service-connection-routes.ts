@@ -174,6 +174,24 @@ export function registerServiceConnectionRoutes(
         const attempt = options.connections.attempt(id)
         if (!attempt || attempt.review.service !== 'gmail')
           throw new ServiceConnectionError(404, 'Gmail Connection attempt not found')
+        if (attempt.connectionId && parsed.data.gmailConnectionId !== attempt.connectionId)
+          throw new ServiceConnectionError(
+            409,
+            'This setup already uses an account. Cancel it to connect another account.',
+          )
+        if (
+          parsed.data.gmailConnectionId &&
+          snapshot().attempts.some(
+            (item) => item.id !== id && item.createdConnectionId === parsed.data.gmailConnectionId,
+          ) &&
+          !snapshot().connections.some(
+            (item) => item.id === parsed.data.gmailConnectionId && item.state !== 'removed',
+          )
+        )
+          throw new ServiceConnectionError(
+            409,
+            'Finish the original setup before reusing this account',
+          )
         const newConnection =
           parsed.data.gmailConnectionId === undefined
             ? CreateGmailConnectionRequestSchema.safeParse({
@@ -214,7 +232,7 @@ export function registerServiceConnectionRoutes(
           options.gmail.create(newConnection!.data).connections.at(-1)?.id
         if (!gmailConnectionId)
           throw new ServiceConnectionError(409, 'Gmail connection could not be prepared')
-        options.connections.attachConnection(id, gmailConnectionId)
+        options.connections.attachConnection(id, gmailConnectionId, !parsed.data.gmailConnectionId)
         const existing = options.gmail
           .snapshot()
           .connections.find((connection) => connection.id === gmailConnectionId)
@@ -264,6 +282,9 @@ export function registerServiceConnectionRoutes(
       if (!gmailId || !attempt)
         throw new ServiceConnectionError(409, 'Gmail callback has no attempt')
       if (attempt.state === 'ready') return snapshot()
+      if (!['authorizing', 'verifying'].includes(attempt.state))
+        throw new ServiceConnectionError(409, 'Gmail authorization is no longer in progress')
+      options.gmail.assertAuthorizationState(gmailId, parsed.data.state)
       if (parsed.data.error) {
         options.gmail.failAuthorization(
           gmailId,
@@ -362,7 +383,14 @@ export function registerServiceConnectionRoutes(
     if (bodyError) return bodyError
     const { id } = request.params as { id: string }
     return guarded(reply, () => {
-      options.connections.cancel(id)
+      const attempt = options.connections.cancel(id)
+      if (
+        attempt.review.service === 'gmail' &&
+        attempt.createdConnectionId &&
+        !snapshot().connections.some((item) => item.id === attempt.createdConnectionId) &&
+        options.gmail.snapshot().connections.some((item) => item.id === attempt.createdConnectionId)
+      )
+        options.gmail.remove(attempt.createdConnectionId)
       options.coordinator.resumeConnection(id)
       return snapshot()
     })

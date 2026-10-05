@@ -95,6 +95,7 @@ export const ConnectionAttemptSchema = z
     reason: z.string().max(400).optional(),
     nextAction: z.string().max(200).optional(),
     connectionId: z.string().min(1).optional(),
+    createdConnectionId: z.string().min(1).optional(),
     renewAuthorization: z.literal(true).optional(),
     verifiedAccount: z.string().max(240).optional(),
     verifiedScopes: z.array(z.string()).optional(),

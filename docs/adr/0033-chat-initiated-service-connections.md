@@ -161,3 +161,31 @@ required. Provider consent remains Google's authority for its scopes. One final 
 shows the exact verified account and granted scopes, then saves only the explicitly chosen Space
 grants. Management may save without grants, and Chat continuation retains its existing at-most-once
 pre-effect contract. Subsequent task-effect Approvals remain independent of connection setup.
+
+## Amendment: account addition stays in one modal
+
+The account-management refinement of issues #181 and #200 presents **Add account** as one modal
+journey on desktop and a full-screen Sheet on mobile. Gmail, GitHub and other email providers are
+choices in the same selector; only the selected provider's explanation and fields appear. Review,
+authorization, errors, retry and final Space-access confirmation stay in that modal. Successful
+confirmation closes it and returns to the account list. Action errors clear when starting another
+account; loading failures remain visible where they can be acted on.
+
+Connection attempts remain durable Gateway workflow records for OAuth callbacks, refresh, restart,
+idempotency and Chat continuation. They are not a second user-managed list alongside accounts.
+Historical failures and attempts referring to removed accounts do not reappear as setup cards.
+Chat keeps its original deep link to authenticated review. Dismissing a Chat review does not cancel
+its requested job; explicit cancellation retains the existing continuation rules.
+
+Closing an unfinished management modal cancels that attempt, including failed or unsupported
+authorization, without requiring a retry first. A failed cancellation stays visible in the modal.
+Closing after successful account verification leaves the verified account available without
+granting any additional Space access. No cancellation removes a previously connected account or
+changes its existing Space grants.
+
+When Gmail authorization creates a native account record, the Gateway records that ownership on
+the attempt. Retry retains this same account. Explicit retry of an unverified account may adopt
+an updated installation OAuth client; verified accounts retain their original client binding.
+Cancellation removes only a native record created by this attempt that has not become a verified Service connection;
+installation-wide Google configuration is preserved. A late callback cannot revive a cancelled
+attempt. Older records without ownership metadata are not inferred to be disposable.

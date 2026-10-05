@@ -188,13 +188,14 @@ export class ServiceConnections {
     return attempt
   }
 
-  attachConnection(id: string, connectionId: string): void {
+  attachConnection(id: string, connectionId: string, created = false): void {
     const attempt = this.requiredAttempt(id)
     if (attempt.state !== 'authorizing')
       throw new ServiceConnectionError(409, 'Connection attempt is not authorizing')
     if (attempt.connectionId && attempt.connectionId !== connectionId)
       throw new ServiceConnectionError(409, 'Connection attempt already uses another account')
     attempt.connectionId = connectionId
+    if (created) attempt.createdConnectionId = connectionId
     attempt.updatedAt = this.now().toISOString()
     this.persist()
   }
@@ -212,6 +213,7 @@ export class ServiceConnections {
     delete attempt.verifiedScopes
     if (
       !attempt.renewAuthorization &&
+      !attempt.createdConnectionId &&
       !this.connections.some(
         (connection) => connection.id === attempt.connectionId && connection.state !== 'removed',
       )
@@ -505,11 +507,20 @@ export class ServiceConnections {
     if (attempt.continuation !== 'unclaimed')
       throw new ServiceConnectionError(409, 'Connection task has already resumed')
     if (attempt.state === 'cancelled') return attempt
-    if (attempt.state === 'failed' || attempt.state === 'unsupported')
+    if (
+      attempt.origin !== 'management' &&
+      (attempt.state === 'failed' || attempt.state === 'unsupported')
+    )
       throw new ServiceConnectionError(409, 'Connection attempt is already terminal')
     attempt.state = 'cancelled'
-    attempt.reason = 'Connection setup was cancelled; the requested task was not run.'
-    attempt.nextAction = 'Start a new Chat request when ready.'
+    attempt.reason =
+      attempt.origin === 'management'
+        ? 'Account setup was cancelled.'
+        : 'Connection setup was cancelled; the requested task was not run.'
+    attempt.nextAction =
+      attempt.origin === 'management'
+        ? 'Use Add account when ready.'
+        : 'Start a new Chat request when ready.'
     attempt.updatedAt = this.now().toISOString()
     this.persist()
     return attempt
@@ -517,7 +528,7 @@ export class ServiceConnections {
 
   fail(id: string, state: 'failed' | 'unsupported' | 'needs_reconnect', reason: string): void {
     const attempt = this.requiredAttempt(id)
-    if (attempt.continuation !== 'unclaimed') return
+    if (attempt.continuation !== 'unclaimed' || attempt.state === 'cancelled') return
     attempt.state = state
     attempt.reason = reason.slice(0, 400)
     attempt.nextAction =

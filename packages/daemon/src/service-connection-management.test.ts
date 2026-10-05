@@ -16,6 +16,157 @@ afterEach(() => {
 })
 
 describe('connections page shared service lifecycle', () => {
+  it.each([false, true])(
+    'retries Gmail in place and cancels only a newly created account (existing: %s)',
+    async (existing) => {
+      const root = mkdtempSync(join(tmpdir(), 'veduta-cancel-account-'))
+      roots.push(root)
+      process.env['VEDUTA_VAULT_KEY'] = 'cancel-account-test-key'
+      let providerCalls = 0
+      let now = new Date('2026-10-05T12:00:00.000Z')
+      const server = buildServer({
+        dataDir: root,
+        now: () => now,
+        gmailFetch: async () => {
+          providerCalls++
+          throw new Error('Cancellation must not contact Google')
+        },
+      })
+      try {
+        await server.app.ready()
+        const post = (url: string, payload: Record<string, unknown>) =>
+          server.app.inject({ method: 'POST', url, payload })
+        await post('/api/gmail-connections/oauth-client', {
+          clientId: 'client',
+          clientSecret: 'secret',
+        })
+        const mailbox = async () =>
+          GmailConnectionsSnapshotSchema.parse(
+            (await server.app.inject({ method: 'GET', url: '/api/gmail-connections' })).json(),
+          )
+        const previousId = existing
+          ? GmailConnectionsSnapshotSchema.parse(
+              (await post('/api/gmail-connections', { name: 'Existing account' })).json(),
+            ).connections[0]!.id
+          : undefined
+        const created = await post('/api/service-connections/attempts', {
+          submissionId: 'a44c94d5-bd42-4a1f-86ea-e88587ab818b',
+          service: 'gmail',
+          ...(previousId ? { connectionId: previousId, renewAuthorization: true } : {}),
+        })
+        const attempt = ServiceConnectionsSnapshotSchema.parse(created.json()).attempts[0]!
+        const started = await post(
+          `/api/service-connections/attempts/${attempt.id}/gmail/authorize`,
+          {
+            redirectOrigin: 'http://localhost:5173',
+            ...(previousId ? { gmailConnectionId: previousId } : { name: 'New account' }),
+          },
+        )
+        expect(started.statusCode).toBe(200)
+        const state = new URL(started.json().authorizationUrl).searchParams.get('state')!
+        const id = state.split('.')[0]!
+        expect(
+          (await post('/api/service-connections/gmail/callback', { state, error: 'access_denied' }))
+            .statusCode,
+        ).toBe(200)
+        expect(
+          (await post(`/api/service-connections/attempts/${attempt.id}/retry`, {})).statusCode,
+        ).toBe(200)
+        expect(server.serviceConnections.attempt(attempt.id)?.connectionId).toBe(id)
+        expect(
+          (
+            await post(`/api/service-connections/attempts/${attempt.id}/gmail/authorize`, {
+              redirectOrigin: 'http://localhost:5173',
+              name: 'Accidental replacement',
+            })
+          ).statusCode,
+        ).toBe(409)
+        expect((await mailbox()).connections.map((item) => item.id)).toEqual([id])
+        expect(server.serviceConnections.attempt(attempt.id)?.state).toBe('reviewing')
+        if (!existing) {
+          const other = await post('/api/service-connections/attempts', {
+            submissionId: 'b26cd277-a4b4-4a91-9e20-3b90b493f1bb',
+            service: 'gmail',
+          })
+          const otherId = ServiceConnectionsSnapshotSchema.parse(other.json()).attempts.at(-1)!.id
+          expect(
+            (
+              await post(`/api/service-connections/attempts/${otherId}/gmail/authorize`, {
+                redirectOrigin: 'http://localhost:5173',
+                gmailConnectionId: id,
+              })
+            ).statusCode,
+          ).toBe(409)
+          expect(server.serviceConnections.attempt(otherId)?.state).toBe('reviewing')
+        }
+        const retried = await post(
+          `/api/service-connections/attempts/${attempt.id}/gmail/authorize`,
+          {
+            redirectOrigin: 'http://localhost:5173',
+            gmailConnectionId: id,
+          },
+        )
+        expect(retried.statusCode).toBe(200)
+        const retryState = new URL(retried.json().authorizationUrl).searchParams.get('state')!
+        expect(
+          (await post('/api/service-connections/gmail/callback', { state, code: 'stale-code' }))
+            .statusCode,
+        ).toBe(409)
+        expect(server.serviceConnections.attempt(attempt.id)?.state).toBe('authorizing')
+        expect(
+          (
+            await post('/api/service-connections/gmail/callback', {
+              state: retryState,
+              error: 'access_denied',
+            })
+          ).statusCode,
+        ).toBe(200)
+        expect(
+          (await post(`/api/service-connections/attempts/${attempt.id}/retry`, {})).statusCode,
+        ).toBe(200)
+        const expiring = await post(
+          `/api/service-connections/attempts/${attempt.id}/gmail/authorize`,
+          {
+            redirectOrigin: 'http://localhost:5173',
+            gmailConnectionId: id,
+          },
+        )
+        const expiringState = new URL(expiring.json().authorizationUrl).searchParams.get('state')!
+        now = new Date('2026-10-05T12:11:00.000Z')
+        expect(
+          (
+            await post('/api/service-connections/gmail/callback', {
+              state: expiringState,
+              code: 'expired-code',
+            })
+          ).statusCode,
+        ).toBe(409)
+        expect(server.serviceConnections.attempt(attempt.id)?.state).toBe('failed')
+        expect((await mailbox()).connections).toHaveLength(1)
+        expect(
+          (await post(`/api/service-connections/attempts/${attempt.id}/cancel`, {})).statusCode,
+        ).toBe(200)
+        expect((await mailbox()).connections.map((item) => item.id)).toEqual(
+          previousId ? [previousId] : [],
+        )
+        expect(
+          (
+            await post('/api/service-connections/gmail/callback', {
+              state: retryState,
+              error: 'access_denied',
+            })
+          ).statusCode,
+        ).toBe(409)
+        expect(server.serviceConnections.attempt(attempt.id)?.state).toBe('cancelled')
+        expect(server.serviceConnections.snapshot().grants).toEqual([])
+        expect((await mailbox()).oauthClient?.configured).toBe(true)
+        expect(providerCalls).toBe(0)
+      } finally {
+        await server.app.close()
+      }
+    },
+  )
+
   it('uses installation Google configuration in the existing durable authorization and grant flow', async () => {
     const root = mkdtempSync(join(tmpdir(), 'veduta-management-gmail-'))
     roots.push(root)
