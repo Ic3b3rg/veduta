@@ -1,5 +1,9 @@
 # Veduta-owned MCP client behind AgentRunner
 
+The initial single-repository profile below is extended by
+[ADR-0035](0035-conversational-service-requests.md) for optional Space restrictions, authorized
+repository discovery and bounded file reads. Existing grants are not broadened automatically.
+
 Issue #179 selects the first MCP profile for external reach. The Gateway owns MCP transport,
 credentials, discovery, tool selection, authorization, execution, cancellation, and Trace.
 `AgentRunner` receives only Veduta `ToolDef`s. A Model connection provides inference only:
@@ -62,9 +66,13 @@ artifact and exact inventory.
 
 The Darwin arm64 runtime launches that executable through the host's `sandbox-exec` with a policy
 that denies reads of the Gateway data root and the user's home except for the exact reviewed
-executable. A per-session loopback CONNECT proxy accepts only `api.github.com:443`; the child
-process's network sandbox permits only that proxy port. The Gateway supplies the PAT and proxy
-address in an otherwise minimal child environment. A profile without a verified process boundary
+executable.
+A per-session loopback HTTP relay maps only the pinned server's REST and GraphQL paths to
+`https://api.github.com`, with normal Gateway TLS verification, no redirects, bounded bodies and
+deadlines. The child process's network sandbox permits only that relay port. Its minimal environment
+contains a random session credential and the local API host; the real PAT stays in the Gateway.
+See [ADR-0035](0035-conversational-service-requests.md) for the transport correction and proof.
+A profile without a verified process boundary
 must fail closed before MCP discovery. The Linux archive is pinned and inventoried, but Linux
 activation remains Unsupported until its process and egress boundary has its own runtime proof.
 

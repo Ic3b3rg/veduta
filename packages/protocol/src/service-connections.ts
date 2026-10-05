@@ -3,6 +3,33 @@ import { z } from 'zod'
 export const ServiceKindSchema = z.enum(['gmail', 'github'])
 export type ServiceKind = z.infer<typeof ServiceKindSchema>
 
+export const GithubRepositorySchema = z
+  .object({
+    owner: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/),
+    name: z.string().regex(/^[A-Za-z0-9_.-]{1,100}$/),
+  })
+  .strict()
+export const GithubRepositoryScopeSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('authorized') }).strict(),
+  z
+    .object({
+      mode: z.literal('selected'),
+      repositories: z.array(GithubRepositorySchema).min(1).max(50),
+    })
+    .strict(),
+])
+export type GithubRepositoryScope = z.infer<typeof GithubRepositoryScopeSchema>
+
+export const GrantServiceConnectionRequestSchema = z
+  .object({
+    account: z.string().min(1).max(240),
+    scopes: z.array(z.string()).min(1).max(8),
+    spaceIds: z.array(z.string().min(1)).max(100).optional(),
+    repositoryScopes: z.record(GithubRepositoryScopeSchema).optional(),
+  })
+  .strict()
+export type GrantServiceConnectionRequest = z.infer<typeof GrantServiceConnectionRequestSchema>
+
 export const ConnectionAttemptStateSchema = z.enum([
   'draft',
   'reviewing',
@@ -46,6 +73,7 @@ export const ConnectionReviewSchema = z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
+    repositoryScope: GithubRepositoryScopeSchema.optional(),
     repository: z
       .object({ owner: z.string().min(1), name: z.string().min(1) })
       .strict()
@@ -67,6 +95,7 @@ export const ConnectionAttemptSchema = z
     reason: z.string().max(400).optional(),
     nextAction: z.string().max(200).optional(),
     connectionId: z.string().min(1).optional(),
+    createdConnectionId: z.string().min(1).optional(),
     renewAuthorization: z.literal(true).optional(),
     verifiedAccount: z.string().max(240).optional(),
     verifiedScopes: z.array(z.string()).optional(),
@@ -99,8 +128,6 @@ export const CreateServiceConnectionAttemptRequestSchema = z
   })
   .strict()
   .superRefine((input, context) => {
-    if (input.service === 'github' && !input.repository)
-      context.addIssue({ code: 'custom', message: 'GitHub requires an exact repository' })
     if (input.service === 'gmail' && input.repository)
       context.addIssue({ code: 'custom', message: 'Gmail does not use a repository' })
     if (input.renewAuthorization && !input.connectionId)
@@ -134,6 +161,7 @@ export const SpaceCapabilityGrantSchema = z
     connectionId: z.string().min(1),
     authorizationRevision: z.string().uuid(),
     actions: z.array(z.string().min(1)).min(1),
+    repositoryScope: GithubRepositoryScopeSchema.optional(),
     repository: z
       .object({ owner: z.string().min(1), name: z.string().min(1) })
       .strict()

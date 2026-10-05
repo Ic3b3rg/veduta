@@ -265,6 +265,13 @@ Veduta-owned client and AgentRunner tools
 ([ADR-0033](docs/adr/0033-chat-initiated-service-connections.md),
 [ADR-0034](docs/adr/0034-veduta-owned-mcp-client.md)).
 
+Setup, Skill selection and service execution share one schema-validated Service request resolved
+from current user Chat evidence and relevant clarifications. Latest Gmail summaries default to
+one newest Inbox message and preserve unread state. The expanded GitHub read profile discovers
+authorized repositories and reads bounded files at a pinned revision; optional Space restrictions
+intersect provider access, while legacy grants remain narrow
+([ADR-0035](docs/adr/0035-conversational-service-requests.md)).
+
 The dedicated settings page reuses that same Connection attempt, Service connection and Space
 capability grant lifecycle. A management attempt has no Chat turn or initiating Space, never
 claims a continuation, and saves a verified account with no access or with explicitly selected

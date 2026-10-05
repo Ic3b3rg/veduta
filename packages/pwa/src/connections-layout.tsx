@@ -111,12 +111,18 @@ export function ConnectionDetail({
   children,
   onClose,
   opener,
+  fallbackOpener,
+  modal = false,
+  busy = false,
 }: {
   title: string
   description: string
   children: ReactNode
   onClose: () => void
   opener: RefObject<HTMLElement | null>
+  fallbackOpener?: RefObject<HTMLElement | null>
+  modal?: boolean
+  busy?: boolean
 }) {
   const mobile = useMobileDetail()
   const header = (
@@ -125,25 +131,35 @@ export function ConnectionDetail({
         <h2>{title}</h2>
         <p>{description}</p>
       </div>
-      <Button variant="ghost" size="icon" aria-label="Close details" onClick={onClose}>
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label="Close details"
+        disabled={busy}
+        onClick={onClose}
+      >
         ×
       </Button>
     </header>
   )
-  if (mobile)
+  if (mobile || modal)
     return (
       <Sheet
         open
         onOpenChange={(open) => {
-          if (!open) onClose()
+          if (!open && !busy) onClose()
         }}
       >
         <SheetContent
-          className="connection-drawer"
+          className={mobile ? 'connection-drawer' : 'connection-drawer connection-modal'}
           showCloseButton={false}
           onCloseAutoFocus={(event) => {
             event.preventDefault()
-            opener.current?.focus()
+            const target =
+              opener.current?.isConnected && !opener.current.matches(':disabled')
+                ? opener.current
+                : fallbackOpener?.current
+            target?.focus()
           }}
         >
           <SheetTitle className="sr-only">{title}</SheetTitle>

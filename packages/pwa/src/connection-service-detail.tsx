@@ -12,6 +12,7 @@ export function ConnectionServiceDetail({
   spaces,
   token,
   onReview,
+  onUpgrade,
   onRemoved,
 }: {
   connection: ServiceConnection
@@ -19,6 +20,7 @@ export function ConnectionServiceDetail({
   spaces: SpaceWithSurfaces[]
   token?: string
   onReview: () => void
+  onUpgrade: () => void
   onRemoved: () => void
 }) {
   const grants =
@@ -91,6 +93,12 @@ export function ConnectionServiceDetail({
             Reconnect
           </Button>
         )}
+        {connection.service === 'github' &&
+          !connection.scopes.includes('GitHub Contents: read') && (
+            <Button variant="outline" disabled={controller.busy} onClick={onUpgrade}>
+              Enable repository discovery and files
+            </Button>
+          )}
         <Button
           variant="outline"
           disabled={controller.busy}

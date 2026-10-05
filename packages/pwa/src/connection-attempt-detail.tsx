@@ -1,6 +1,6 @@
 import { Button } from '@veduta/catalog/ui/button'
 import { Checkbox } from '@veduta/catalog/ui/checkbox'
-import type { ConnectionAttempt } from '@veduta/protocol'
+import type { ConnectionAttempt, GithubRepositoryScope } from '@veduta/protocol'
 import { useState } from 'react'
 import type { SpaceWithSurfaces } from './api.ts'
 import type { ConnectionsController } from './connections-controller.ts'
@@ -8,6 +8,12 @@ import { ConnectionDetailBody, ConnectionDetailFooter } from './connections-layo
 import { ConnectionAuthorizationForm } from './connection-authorization-form.tsx'
 import { ConnectionReview } from './connection-review.tsx'
 import { confirmSpaceCapabilityGrant, serviceConnectionAction } from './service-connections-api.ts'
+import {
+  GithubSpaceScope,
+  githubScopeChoice,
+  parseGithubScope,
+  type GithubScopeChoice,
+} from './github-space-scope.tsx'
 
 export function ConnectionAttemptDetail({
   attempt,
@@ -24,7 +30,11 @@ export function ConnectionAttemptDetail({
 }) {
   const [canAuthorize, setCanAuthorize] = useState(false)
   const [spaceIds, setSpaceIds] = useState<string[]>([])
+  const [choices, setChoices] = useState<Record<string, GithubScopeChoice>>({})
+  const [scopeError, setScopeError] = useState('')
   const { busy, error, services, gmail } = controller
+  const failure =
+    error ?? (['failed', 'unsupported'].includes(attempt.state) ? attempt.reason : undefined)
   const space = spaces.find((item) => item.id === attempt.spaceId)
   const existing = services?.connections.find((item) => item.id === attempt.connectionId)
   const granted =
@@ -34,12 +44,36 @@ export function ConnectionAttemptDetail({
         grant.enabled &&
         grant.spaceId === attempt.spaceId &&
         grant.connectionId === attempt.connectionId &&
+        attempt.review.actions.every((action) => grant.actions.includes(action)) &&
+        JSON.stringify(grant.repository) === JSON.stringify(attempt.review.repository) &&
         grant.authorizationRevision === existing?.authorizationRevision,
     )
   const action = (name: string) =>
     void controller.run(() => serviceConnectionAction(`attempts/${attempt.id}/${name}`, token))
+  const choiceFor = (id: string) =>
+    choices[id] ??
+    githubScopeChoice(
+      services?.grants.find(
+        (grant) =>
+          grant.enabled && grant.spaceId === id && grant.connectionId === attempt.connectionId,
+      )?.repositoryScope,
+    )
   const confirm = async () => {
     if (!attempt.verifiedAccount) return
+    const repositoryScopes: Record<string, GithubRepositoryScope> = {}
+    if (attempt.review.repositoryScope) {
+      for (const id of attempt.origin === 'management' ? spaceIds : [attempt.spaceId!]) {
+        const scope = parseGithubScope(choiceFor(id))
+        if (!scope) {
+          setScopeError(
+            'Enter between 1 and 50 valid owner/repository names for each restricted Space.',
+          )
+          return
+        }
+        repositoryScopes[id] = scope
+      }
+    }
+    setScopeError('')
     const succeeded = await controller.run(() =>
       confirmSpaceCapabilityGrant(
         attempt.id,
@@ -47,6 +81,7 @@ export function ConnectionAttemptDetail({
         attempt.verifiedScopes ?? [],
         token,
         attempt.origin === 'management' ? spaceIds : undefined,
+        attempt.review.repositoryScope ? repositoryScopes : undefined,
       ),
     )
     if (succeeded) onDone(attempt.connectionId)
@@ -54,9 +89,14 @@ export function ConnectionAttemptDetail({
   return (
     <>
       <ConnectionDetailBody>
-        {error && (
+        {failure && (
           <p role="alert" className="connections-alert">
-            {error}
+            {failure}
+          </p>
+        )}
+        {scopeError && (
+          <p role="alert" className="connections-alert">
+            {scopeError}
           </p>
         )}
         <p role="status">
@@ -69,7 +109,7 @@ export function ConnectionAttemptDetail({
             Space: <strong>{space?.name ?? attempt.spaceId}</strong>
           </p>
         )}
-        {attempt.reason && <p role="status">{attempt.reason}</p>}
+        {attempt.reason && !failure && <p role="status">{attempt.reason}</p>}
         {attempt.nextAction && <p>{attempt.nextAction}</p>}
         <ConnectionReview review={attempt.review} />
         {attempt.state === 'reviewing' && (
@@ -77,7 +117,17 @@ export function ConnectionAttemptDetail({
             onValidityChange={setCanAuthorize}
             attempt={attempt}
             existing={existing}
-            gmailAccounts={gmail?.connections ?? []}
+            gmailAccounts={
+              gmail?.connections.filter(
+                (account) =>
+                  !services?.attempts.some(
+                    (item) => item.id !== attempt.id && item.createdConnectionId === account.id,
+                  ) ||
+                  services?.connections.some(
+                    (item) => item.id === account.id && item.state !== 'removed',
+                  ),
+              ) ?? []
+            }
             controller={controller}
             {...(token ? { token } : {})}
           />
@@ -130,6 +180,24 @@ export function ConnectionAttemptDetail({
                 once.
               </p>
             )}
+            {!granted &&
+              attempt.review.repositoryScope &&
+              spaces
+                .filter((item) =>
+                  attempt.origin === 'management'
+                    ? spaceIds.includes(item.id)
+                    : item.id === attempt.spaceId,
+                )
+                .map((item) => (
+                  <GithubSpaceScope
+                    key={item.id}
+                    name={item.name}
+                    value={choiceFor(item.id)}
+                    onChange={(value) =>
+                      setChoices((current) => ({ ...current, [item.id]: value }))
+                    }
+                  />
+                ))}
           </>
         )}
         {attempt.state === 'cancelled' && <p role="status">Connection setup cancelled.</p>}
@@ -158,22 +226,25 @@ export function ConnectionAttemptDetail({
               : 'Save access'}
           </Button>
         )}
-        {!['cancelled', 'ready', 'failed', 'unsupported'].includes(attempt.state) && (
-          <Button
-            variant="outline"
-            disabled={busy}
-            onClick={async () => {
-              if (
-                await controller.run(() =>
-                  serviceConnectionAction(`attempts/${attempt.id}/cancel`, token),
+        {attempt.state !== 'cancelled' &&
+          attempt.state !== 'ready' &&
+          (attempt.origin === 'management' ||
+            !['failed', 'unsupported'].includes(attempt.state)) && (
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={async () => {
+                if (
+                  await controller.run(() =>
+                    serviceConnectionAction(`attempts/${attempt.id}/cancel`, token),
+                  )
                 )
-              )
-                onDone()
-            }}
-          >
-            Cancel setup
-          </Button>
-        )}
+                  onDone()
+              }}
+            >
+              Cancel setup
+            </Button>
+          )}
         {granted && (
           <Button variant="outline" onClick={() => onDone(attempt.connectionId)}>
             Done

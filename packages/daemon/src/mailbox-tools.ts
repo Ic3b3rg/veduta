@@ -11,6 +11,7 @@ import {
 } from './mailbox-scope.ts'
 import type { MailboxSummaryReader, MailSummary } from './mailbox-summary-reader.ts'
 import type { Store } from './store.ts'
+import type { ServiceRequestFor } from './service-request.ts'
 
 export interface MailboxProvider {
   accounts(): MailboxAccount[]
@@ -24,6 +25,7 @@ export interface MailboxToolsOptions {
   spaceId: string
   timeZone: string
   now: () => Date
+  requestFor?: ServiceRequestFor
 }
 
 function resultSurface(
@@ -67,7 +69,7 @@ function resultSurface(
 }
 
 export function createMailboxTools(options: MailboxToolsOptions): ToolDef[] {
-  const resolved = new Map<string, MailboxScope>()
+  const resolved = new Map<string, { scope: MailboxScope; request: string }>()
   return [
     defineTool({
       name: 'resolve_mailbox_scope',
@@ -80,15 +82,58 @@ export function createMailboxTools(options: MailboxToolsOptions): ToolDef[] {
         if (context.currentUserRequest === undefined || context.spaceId !== options.spaceId) {
           return { content: 'A current trusted request in the active Space is required.' }
         }
-        const resolution = resolveMailboxScope(
-          context.currentUserRequest.text,
-          options.providers.flatMap((provider) => provider.accounts()),
-          options.now(),
-          options.timeZone,
+        const operation = options.requestFor?.(context)
+        const accounts = options.providers.flatMap((provider) => provider.accounts())
+        const candidates = accounts.filter(
+          (account) =>
+            account.provider === 'gmail' &&
+            (operation?.action !== 'search_mailbox' ||
+              operation.account === undefined ||
+              [account.id, account.name, account.address].some(
+                (value) => value.toLowerCase() === operation.account!.toLowerCase(),
+              )),
         )
+        const resolution =
+          operation?.action === 'search_mailbox'
+            ? candidates.length === 1
+              ? {
+                  status: 'resolved' as const,
+                  scope: {
+                    account: candidates[0]!,
+                    kind: 'query' as const,
+                    query: operation.query,
+                    folder: operation.folder,
+                    unreadOnly: operation.unreadOnly,
+                    limit: operation.limit,
+                    newest: operation.newest,
+                    window: { kind: 'all' as const },
+                  },
+                }
+              : {
+                  status: 'clarify' as const,
+                  question:
+                    candidates.length === 0
+                      ? 'The requested Gmail account is not granted for this Space. Review Service connections.'
+                      : `Which Mailbox account should I use: ${candidates.map((account) => account.address).join(', ')}?`,
+                }
+            : resolveMailboxScope(
+                context.currentUserRequest.text,
+                options.requestFor
+                  ? accounts.filter((account) => account.provider === 'himalaya')
+                  : accounts,
+                options.now(),
+                options.timeZone,
+              )
         if (resolution.status === 'clarify') return { content: resolution.question }
         const scopeId = randomUUID()
-        resolved.set(scopeId, resolution.scope)
+        resolved.set(scopeId, {
+          scope: resolution.scope,
+          request: JSON.stringify([
+            context.initiatingTurn?.turnId,
+            context.currentUserRequest.text,
+            operation,
+          ]),
+        })
         const scope = resolution.scope
         return {
           content: JSON.stringify({
@@ -114,9 +159,19 @@ export function createMailboxTools(options: MailboxToolsOptions): ToolDef[] {
         if (context.currentUserRequest === undefined || context.spaceId !== options.spaceId) {
           return { content: 'A current trusted request in the active Space is required.' }
         }
-        const scope = resolved.get(scopeId)
-        if (!scope) return { content: 'Resolve the Mailbox scope in this turn first.' }
+        const sealed = resolved.get(scopeId)
+        if (
+          !sealed ||
+          sealed.request !==
+            JSON.stringify([
+              context.initiatingTurn?.turnId,
+              context.currentUserRequest.text,
+              options.requestFor?.(context),
+            ])
+        )
+          return { content: 'Resolve the Mailbox scope in this turn first.' }
         resolved.delete(scopeId)
+        const { scope } = sealed
         const provider = options.providers.find((candidate) =>
           candidate.accounts().some((account) => account.id === scope.account.id),
         )
@@ -126,6 +181,11 @@ export function createMailboxTools(options: MailboxToolsOptions): ToolDef[] {
         for (const message of raw.slice(0, scope.limit)) {
           summaries.push(await options.reader.extract(options.spaceId, message))
         }
+        context.signal?.throwIfAborted()
+        if (!provider.accounts().some((account) => account.id === scope.account.id))
+          throw new Error(
+            'Mailbox access changed before the summary could be saved. Review Service connections.',
+          )
         const checkedAt = options.now().toISOString()
         const surface = resultSurface(scope, summaries, options.spaceId, checkedAt)
         const origin = `untrusted:${scope.account.provider}` as const

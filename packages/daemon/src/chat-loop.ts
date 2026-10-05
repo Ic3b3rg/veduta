@@ -10,6 +10,7 @@ import {
 } from '@veduta/protocol'
 import type { SessionContextFilter, SessionMessage, SessionStore, ToolDef } from './agent-runner.ts'
 import type { FirstPartySkills } from './skill-catalog.ts'
+import type { ServiceOperation } from './service-request.ts'
 import { parseChatDecisionIntent, respondToChatDecisionIntent } from './chat-decision.ts'
 import type { PwaChatInput } from './gateway.ts'
 import type { ModelRouter } from './model-routing.ts'
@@ -155,6 +156,8 @@ export interface ChatLoopOptions {
   timeZone?: string
   skills?: FirstPartySkills
   commandCwd?: string
+  serviceRequestInstruction?: (turnId: string) => string
+  serviceOperation?: (turnId: string) => ServiceOperation | undefined
 }
 
 export interface ChatLoop {
@@ -420,16 +423,18 @@ export function createChatLoop(options: ChatLoopOptions): ChatLoop {
       const { systemPrompt: baseSystemPrompt, contextOrigins } = buildContext(spaceId)
       const turnTools = options.toolsFor(spaceId, turnHooks)
       const skillMetadata =
-        spaceId === undefined || spaceId === SYSTEM_SPACE_ID
+        spaceId === SYSTEM_SPACE_ID
           ? ''
           : (options.skills?.metadata(
               event.text,
               turnTools.map((tool) => tool.name),
+              options.serviceOperation?.(turnId),
             ) ?? '')
       const commandWorkspace = options.commandCwd
         ? `# Command execution\nUse ${JSON.stringify(options.commandCwd)} as the explicit working directory for Gateway-owned CLI work unless the user requested another directory.`
         : ''
-      const systemPrompt = [baseSystemPrompt, skillMetadata, commandWorkspace]
+      const resolvedRequest = options.serviceRequestInstruction?.(turnId) ?? ''
+      const systemPrompt = [baseSystemPrompt, skillMetadata, commandWorkspace, resolvedRequest]
         .filter(Boolean)
         .join('\n\n')
       // An authoring-capable turn can emit a false success before its first tool

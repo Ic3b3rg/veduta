@@ -70,7 +70,7 @@ test('Gmail token rejection shows safe recovery across authenticated tabs, reloa
     await page.goto(`${origin}/app/connections`)
     await page.getByRole('button', { name: 'Add account', exact: true }).click()
     await page.getByRole('button', { name: 'Review access', exact: true }).click()
-    const details = page.getByRole('complementary', { name: 'Gmail setup details' })
+    const details = page.getByRole('dialog', { name: 'Gmail setup', exact: true })
     await details.getByLabel('Connection name', { exact: true }).fill('Disposable Gmail failure')
     await details.getByLabel('Google OAuth client ID').fill('disposable-client')
     await details.getByLabel('Google OAuth client secret').fill('disposable-secret')
@@ -95,9 +95,9 @@ test('Gmail token rejection shows safe recovery across authenticated tabs, reloa
     await expect(details).toContainText('invalid_client')
     const observer = await context.newPage()
     await observer.goto(page.url())
-    await expect(
-      observer.getByRole('complementary', { name: 'Gmail setup details' }),
-    ).toContainText('full Client secret')
+    await expect(observer.getByRole('dialog', { name: 'Gmail setup', exact: true })).toContainText(
+      'full Client secret',
+    )
 
     await server.app.close()
     server = boot()
@@ -107,8 +107,7 @@ test('Gmail token rejection shows safe recovery across authenticated tabs, reloa
     expect(server.serviceConnections.snapshot().grants).toEqual([])
     expect(providerRequests).toEqual(['https://oauth2.googleapis.com/token'])
 
-    await page.getByRole('button', { name: /Disposable Gmail failure.*failed/ }).click()
-    await page.getByRole('button', { name: 'Authorize with Google' }).click()
+    await details.getByRole('button', { name: 'Return to review' }).click()
     await expect(details).toContainText('State: reviewing')
     await details.getByRole('button', { name: 'Continue to Google' }).click()
     await page.waitForURL('https://accounts.google.com/o/oauth2/v2/auth?**')

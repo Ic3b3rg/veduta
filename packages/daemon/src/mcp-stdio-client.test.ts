@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto'
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { GithubMcpEgressProxy } from './github-mcp-egress.ts'
 import { McpStdioClient } from './mcp-stdio-client.ts'
 
 const roots: string[] = []
@@ -61,6 +62,39 @@ process.stdin.on('data', (chunk) => {
 }
 
 describe('reviewed GitHub MCP stdio client', () => {
+  it('closes authenticated network access immediately when stopping the child', async () => {
+    const { root, executable } = fakeServer()
+    const start = GithubMcpEgressProxy.start
+    let relay: GithubMcpEgressProxy | undefined
+    let upstreamCalls = 0
+    const factory = vi.spyOn(GithubMcpEgressProxy, 'start').mockImplementation(async (token) => {
+      relay = await start(token, async () => {
+        upstreamCalls++
+        return new Response('{}')
+      })
+      return relay
+    })
+    const client = new McpStdioClient({
+      executable,
+      cwd: root,
+      token: 'test-token',
+      launch: () => ({ command: executable, args: [] }),
+    })
+    try {
+      await client.start()
+      const url = `http://127.0.0.1:${relay!.port}/api/v3/user`
+      const headers = { authorization: `Bearer ${relay!.credential}` }
+      expect((await fetch(url, { headers })).status).toBe(200)
+      const stopping = client.stop()
+      await expect(fetch(url, { headers })).rejects.toThrow()
+      await stopping
+      expect(upstreamCalls).toBe(1)
+    } finally {
+      await client.stop()
+      factory.mockRestore()
+    }
+  })
+
   it('selects only the reviewed issue_write tool and fixes method to create', async () => {
     const { root, executable } = fakeServer({ write: true })
     const client = new McpStdioClient({ executable, cwd: root, token: 'test-token', mode: 'write' })

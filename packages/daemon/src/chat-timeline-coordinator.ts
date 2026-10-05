@@ -9,7 +9,13 @@ import type {
 import type { PwaChatInput } from './gateway.ts'
 import type { ChatTimeline } from './chat-timeline.ts'
 import type { ServiceConnections } from './service-connections.ts'
-import { boundedServiceIntent, targetSpaceForServiceRequest } from './service-intent.ts'
+import {
+  boundedServiceIntent,
+  targetSpaceForServiceRequest,
+  serviceIntentForOperation,
+  parseGithubIssueWrite,
+} from './service-intent.ts'
+import type { ServiceResolution } from './service-request.ts'
 
 /** Owns Chat acceptance and dispatch. The Agent loop never decides whether a turn is replayed. */
 export class ChatTimelineCoordinator {
@@ -24,9 +30,11 @@ export class ChatTimelineCoordinator {
       hasSpace: (spaceId: string) => boolean
       runTurn: (event: PwaChatInput) => Promise<void>
       publish: (entry: ChatTimelineEntry) => void
+      send?: (clientId: string, frame: GatewayServerMessage) => void
       refreshDecision?: (
         id: string,
       ) => Promise<{ decision: PendingDecision; revision: number } | undefined>
+      resolveServiceRequest?: (turnId: string) => Promise<ServiceResolution>
       serviceConnections?: ServiceConnections
       spaces?: () => { id: string; name: string; slug: string }[]
     },
@@ -221,13 +229,34 @@ export class ChatTimelineCoordinator {
         const serviceConnections = this.options.serviceConnections
         let attempt = serviceConnections?.attemptForTurn(accepted.turnId)
         if (serviceConnections && !attempt) {
-          const intent = boundedServiceIntent(requestText)
+          const resolution = await this.options.resolveServiceRequest?.(accepted.turnId)
+          if (resolution?.status === 'clarify') {
+            const entry = this.options.timeline.complete(accepted.turnId, {
+              role: 'assistant',
+              text: resolution.question,
+            })
+            const user = this.options.timeline.userEntry(accepted.turnId)
+            if (user) this.options.publish(user)
+            if (entry) this.options.publish(entry)
+            this.clients.delete(accepted.turnId)
+            this.subscribers.delete(accepted.turnId)
+            continue
+          }
+          const intent =
+            resolution?.status === 'resolved'
+              ? serviceIntentForOperation(resolution.operation, requestText)
+              : resolution === undefined || parseGithubIssueWrite(requestText)
+                ? boundedServiceIntent(requestText)
+                : undefined
           if (intent) {
-            const targetSpaceId = targetSpaceForServiceRequest(
-              requestText,
-              scope.type === 'space' ? scope.spaceId : undefined,
-              this.options.spaces?.() ?? [],
-            )
+            const targetSpaceId =
+              resolution?.status === 'resolved'
+                ? resolution.spaceId
+                : targetSpaceForServiceRequest(
+                    requestText,
+                    scope.type === 'space' ? scope.spaceId : undefined,
+                    this.options.spaces?.() ?? [],
+                  )
             if (!targetSpaceId) {
               const result = this.options.timeline.complete(accepted.turnId, {
                 role: 'assistant',
@@ -243,8 +272,26 @@ export class ChatTimelineCoordinator {
             const eligible = serviceConnections.eligible({
               spaceId: targetSpaceId,
               service: intent.review.service,
-              action: intent.review.actions[0]!,
-              ...(intent.review.repository ? { repository: intent.review.repository } : {}),
+              action:
+                resolution?.status === 'resolved'
+                  ? resolution.operation.action
+                  : intent.review.actions[0]!,
+              ...(intent.review.accountHint ? { accountHint: intent.review.accountHint } : {}),
+              ...(resolution?.status === 'resolved' &&
+              resolution.operation.service === 'github' &&
+              resolution.operation.connectionId
+                ? { connectionId: resolution.operation.connectionId }
+                : {}),
+              ...(resolution?.status === 'resolved' && resolution.operation.action === 'read_files'
+                ? {
+                    repository: {
+                      owner: resolution.operation.owner,
+                      name: resolution.operation.repo,
+                    },
+                  }
+                : intent.review.repository
+                  ? { repository: intent.review.repository }
+                  : {}),
             })
             if (!eligible) {
               attempt = serviceConnections.createAttempt({
@@ -253,6 +300,11 @@ export class ChatTimelineCoordinator {
                 spaceId: targetSpaceId,
                 requestSummary: intent.requestSummary,
                 review: intent.review,
+                ...(resolution?.status === 'resolved' &&
+                resolution.operation.service === 'github' &&
+                resolution.operation.connectionId
+                  ? { connectionId: resolution.operation.connectionId }
+                  : {}),
               })
               const entry = this.options.timeline.waitForConnection(
                 accepted.turnId,
@@ -328,6 +380,15 @@ export class ChatTimelineCoordinator {
     const user = this.options.timeline.userEntry(turnId)
     if (user) this.options.publish(user)
     this.options.publish(entry)
+    const clientId = this.clients.get(turnId)
+    if (clientId)
+      this.options.send?.(clientId, {
+        type: 'chat.turn-error',
+        turnId,
+        error: entry.message.text,
+      })
+    this.clients.delete(turnId)
+    this.subscribers.delete(turnId)
   }
 }
 

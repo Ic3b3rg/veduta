@@ -10,7 +10,10 @@ import { ConnectionCreate } from './connection-create.tsx'
 import { ConnectionMailboxDetail } from './connection-mailbox-detail.tsx'
 import { ConnectionMailboxSetup } from './connection-mailbox-setup.tsx'
 import { ConnectionServiceDetail } from './connection-service-detail.tsx'
-import { createServiceConnectionAttempt } from './service-connections-api.ts'
+import {
+  createServiceConnectionAttempt,
+  serviceConnectionAction,
+} from './service-connections-api.ts'
 
 type Selection = {
   kind: 'new' | 'mailbox-setup' | 'attempt' | 'service' | 'gmail' | 'himalaya'
@@ -41,7 +44,8 @@ export function ConnectionsServices({
       ? { kind, id }
       : null
   const setSelection = (next: Selection | null) => {
-    const query = new URLSearchParams(window.location.search)
+    controller.clearError()
+    const query = new URLSearchParams(location.search)
     for (const key of [
       'attempt',
       'detail',
@@ -58,6 +62,7 @@ export function ConnectionsServices({
     navigate(`${location.pathname}${query.size ? `?${query}` : ''}`, { replace: true })
   }
   const opener = useRef<HTMLElement | null>(null)
+  const addButton = useRef<HTMLButtonElement | null>(null)
   const { services, gmail, himalaya, busy, error } = controller
   const open = (kind: Selection['kind'], id = '') => {
     opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -81,26 +86,31 @@ export function ConnectionsServices({
       : undefined
   const connections = services?.connections.filter((item) => item.state !== 'removed') ?? []
   const legacyGmail =
-    gmail?.connections.filter(
-      (item) => !connections.some((connection) => connection.id === item.id),
-    ) ?? []
-  const attempts =
-    services?.attempts.filter(
-      (item) =>
-        !['cancelled'].includes(item.state) &&
-        !(
-          item.state === 'ready' &&
-          (item.origin === 'management' || item.continuation !== 'unclaimed') &&
-          connections.some((connection) => connection.id === item.connectionId)
-        ),
-    ) ?? []
-  const review = (input: Omit<CreateServiceConnectionAttemptRequest, 'submissionId'>) =>
-    void controller.run(async () => {
+    gmail?.connections
+      .filter((item) => !connections.some((connection) => connection.id === item.id))
+      .filter(
+        (item) => !services?.attempts.some((attempt) => attempt.createdConnectionId === item.id),
+      ) ?? []
+  const close = async () => {
+    if (busy) return
+    if (
+      attempt?.origin === 'management' &&
+      attempt.state !== 'ready' &&
+      !(await controller.run(() => serviceConnectionAction(`attempts/${attempt.id}/cancel`, token)))
+    )
+      return
+    setSelection(null)
+  }
+  const review = async (input: Omit<CreateServiceConnectionAttemptRequest, 'submissionId'>) => {
+    let attemptId: string | undefined
+    const succeeded = await controller.run(async () => {
       const submissionId = crypto.randomUUID()
       const snapshot = await createServiceConnectionAttempt({ ...input, submissionId }, token)
       const created = snapshot.attempts.find((item) => item.submissionId === submissionId)
-      if (created) setSelection({ kind: 'attempt', id: created.id })
+      attemptId = created?.id
     })
+    if (succeeded && attemptId) setSelection({ kind: 'attempt', id: attemptId })
+  }
   const reviewConnection = (connection: ServiceConnection) => {
     const previousReview = services?.attempts
       .filter((item) => item.connectionId === connection.id)
@@ -132,11 +142,11 @@ export function ConnectionsServices({
           <h1>Accounts & services</h1>
           <p>Connected accounts and the Spaces that can use them.</p>
         </div>
-        <Button disabled={!services || busy} onClick={() => open('new')}>
+        <Button ref={addButton} disabled={!services || busy} onClick={() => open('new')}>
           Add account
         </Button>
       </header>
-      {error && (
+      {error && !hasDetail && (
         <p className="connections-alert" role="alert">
           {error}
         </p>
@@ -147,29 +157,6 @@ export function ConnectionsServices({
       {!services && !error && <p role="status">Loading connections…</p>}
       <div className="connections-workspace">
         <div className="connections-list">
-          {attempts.length > 0 && (
-            <>
-              <h2 className="connections-group-title">Setup requests</h2>
-              <div className="connections-grid">
-                {attempts.map((item) => (
-                  <ConnectionListItem
-                    key={item.id}
-                    title={`${item.review.service === 'gmail' ? 'Gmail' : 'GitHub'} setup`}
-                    subtitle={
-                      item.origin === 'chat'
-                        ? (spaces.find((space) => space.id === item.spaceId)?.name ??
-                          'Chat request')
-                        : (item.review.accountHint ?? 'Account setup')
-                    }
-                    state={item.state}
-                    selected={selection?.kind === 'attempt' && selection.id === item.id}
-                    returnFocusRef={opener}
-                    onClick={() => open('attempt', item.id)}
-                  />
-                ))}
-              </div>
-            </>
-          )}
           <h2 className="connections-group-title">Your accounts</h2>
           <div className="connections-grid">
             {connections.map((item) => (
@@ -240,8 +227,13 @@ export function ConnectionsServices({
                   ? 'Gmail, GitHub or another mail provider.'
                   : 'Account settings and access.'
             }
-            onClose={() => setSelection(null)}
+            onClose={() => void close()}
             opener={opener}
+            fallbackOpener={addButton}
+            modal={
+              selection?.kind === 'new' || selection?.kind === 'mailbox-setup' || Boolean(attempt)
+            }
+            busy={busy}
           >
             {selection?.kind === 'new' && (
               <ConnectionCreate
@@ -255,7 +247,7 @@ export function ConnectionsServices({
               <ConnectionMailboxSetup
                 controller={controller}
                 {...(token ? { token } : {})}
-                onCreated={(id) => setSelection({ kind: 'himalaya', id })}
+                onCreated={() => setSelection(null)}
               />
             )}
             {attempt && (
@@ -265,7 +257,7 @@ export function ConnectionsServices({
                 spaces={spaces}
                 controller={controller}
                 {...(token ? { token } : {})}
-                onDone={(id) => setSelection(id ? { kind: 'service', id } : null)}
+                onDone={() => setSelection(null)}
               />
             )}
             {connection && (
@@ -275,6 +267,13 @@ export function ConnectionsServices({
                 spaces={spaces}
                 {...(token ? { token } : {})}
                 onReview={() => reviewConnection(connection)}
+                onUpgrade={() =>
+                  review({
+                    service: 'github',
+                    connectionId: connection.id,
+                    renewAuthorization: true,
+                  })
+                }
                 onRemoved={() => setSelection(null)}
               />
             )}

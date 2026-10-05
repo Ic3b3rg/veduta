@@ -1,5 +1,6 @@
+import type { ServiceOperation } from './service-request.ts'
 import { GMAIL_READ_SCOPE, type ConnectionReview } from '@veduta/protocol'
-import { githubConnectionReview } from './github-mcp-service.ts'
+import { githubConnectionReview, githubReadConnectionReview } from './github-mcp-service.ts'
 
 export interface ServiceIntent {
   review: ConnectionReview
@@ -87,4 +88,19 @@ export function targetSpaceForServiceRequest(
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+export function serviceIntentForOperation(
+  operation: ServiceOperation,
+  text: string,
+): ServiceIntent {
+  return {
+    requestSummary: text.trim().slice(0, 700),
+    review:
+      operation.service === 'gmail'
+        ? gmailConnectionReview(operation.account)
+        : operation.action === 'list_issues'
+          ? githubConnectionReview(operation.owner, operation.repo, operation.account)
+          : githubReadConnectionReview(operation.account),
+  }
 }

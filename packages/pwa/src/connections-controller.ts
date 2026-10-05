@@ -118,12 +118,14 @@ export function useConnectionsController(token?: string) {
   })
 
   const acknowledgeCallback = useCallback(() => setCallbackAttemptId(undefined), [])
+  const clearError = useCallback(() => setError(null), [])
   return {
     services,
     gmail,
     himalaya,
     busy,
     error: error ?? loadError,
+    clearError,
     run,
     refresh,
     callbackAttemptId,

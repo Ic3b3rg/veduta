@@ -1,5 +1,6 @@
 import type { JsonObject } from '@veduta/protocol'
 import { z } from 'zod'
+import { zodToJsonSchema } from 'zod-to-json-schema'
 import type { ModelRef } from './agent-runner.ts'
 import type { ExternalEvent, ReaderHandoff } from './external-event.ts'
 import { stripForbiddenUnicode } from './forbidden-unicode.ts'
@@ -43,6 +44,10 @@ export const ReaderOutputSchema = z
   .strict()
 
 export type ReaderOutput = z.infer<typeof ReaderOutputSchema>
+
+export const READER_OUTPUT_JSON_SCHEMA = JSON.stringify(
+  zodToJsonSchema(ReaderOutputSchema, { $refStrategy: 'none' }),
+)
 
 export type SanitizeOutcome = { ok: true; output: ReaderOutput } | { ok: false; reason: string }
 
@@ -163,7 +168,7 @@ function delimitedField(name: string, value: string): string {
 
 /** Builds the reader's prompt: fixed header, then each untrusted field in its own delimited block. */
 export function buildReaderPrompt(event: ExternalEvent, body?: string): string {
-  const parts = [PROMPT_HEADER]
+  const parts = [PROMPT_HEADER, `Schema: ${READER_OUTPUT_JSON_SCHEMA}`]
   if (event.sender !== undefined) parts.push(delimitedField('sender', event.sender))
   if (event.subject !== undefined) parts.push(delimitedField('subject', event.subject))
   if (body !== undefined) parts.push(delimitedField('body', body))

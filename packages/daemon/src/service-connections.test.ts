@@ -33,6 +33,27 @@ function setup() {
 }
 
 describe('one durable Service connection lifecycle', () => {
+  it.each(['failed', 'unsupported'] as const)(
+    'dismisses a %s account addition without retrying authorization',
+    (state) => {
+      const { root, connections, input } = setup()
+      const attempt = connections.createAttempt({
+        submissionId: input.submissionId,
+        origin: 'management',
+        requestSummary: 'Connect GitHub',
+        review: input.review,
+      })
+      connections.beginAuthorization(attempt.id)
+      connections.fail(attempt.id, state, 'Verification failed')
+      expect(connections.cancel(attempt.id).state).toBe('cancelled')
+      const restarted = new ServiceConnections(root)
+      expect(restarted.attempt(attempt.id)?.state).toBe('cancelled')
+      expect(restarted.snapshot().connections).toEqual([])
+      expect(restarted.snapshot().grants).toEqual([])
+      expect(restarted.claimContinuation(attempt.id)).toBe(false)
+    },
+  )
+
   it('keeps an existing Space grant when the same Gmail account is verified for a second Space', () => {
     const { connections } = setup()
     const review = {

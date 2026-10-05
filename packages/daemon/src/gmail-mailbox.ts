@@ -12,7 +12,11 @@ export interface RawMail {
 }
 
 const ListSchema = z.object({
-  messages: z.array(z.object({ id: z.string().regex(/^[a-zA-Z0-9_-]+$/) })).optional(),
+  messages: z
+    .array(z.object({ id: z.string().regex(/^[a-zA-Z0-9_-]+$/) }))
+    .max(20)
+    .optional(),
+  nextPageToken: z.string().optional(),
 })
 
 interface MessagePart {
@@ -77,18 +81,27 @@ export class GmailMailbox {
       }))
   }
 
-  async search(scope: MailboxScope, signal?: AbortSignal): Promise<RawMail[]> {
+  async search(
+    scope: MailboxScope,
+    signal?: AbortSignal,
+    authorize: () => void = () => {},
+  ): Promise<RawMail[]> {
     if (scope.account.provider !== 'gmail') throw new Error('Mailbox provider mismatch')
+    authorize()
     const list = ListSchema.parse(
       await this.connections.listMessageIds(
         scope.account.id,
         gmailQuery(scope),
-        scope.limit,
+        scope.newest ? 20 : scope.limit,
         signal,
       ),
     )
+    const ids = scope.newest
+      ? await this.newestIds(scope, list, signal, authorize)
+      : (list.messages ?? []).slice(0, scope.limit)
     const result: RawMail[] = []
-    for (const { id } of (list.messages ?? []).slice(0, scope.limit)) {
+    for (const { id } of ids) {
+      authorize()
       const message = FullSchema.parse(
         await this.connections.getMessage(scope.account.id, id, signal),
       )
@@ -104,6 +117,65 @@ export class GmailMailbox {
           : { receivedAt: new Date(Number(message.internalDate)).toISOString() }),
       })
     }
+    authorize()
     return result
+  }
+
+  private async newestIds(
+    scope: MailboxScope,
+    initial: z.infer<typeof ListSchema>,
+    signal: AbortSignal | undefined,
+    authorize: () => void,
+  ): Promise<{ id: string }[]> {
+    // Gmail documents internalDate as Inbox order, but messages.list has no sort contract.
+    // Find a complete recent interval before comparing metadata; never trust its first result.
+    let list = initial
+    let after = 0
+    let lower = 0
+    let upper = Math.floor(Date.now() / 1000) + 1
+    for (
+      let probe = 0;
+      list.nextPageToken || (after > 0 && (list.messages?.length ?? 0) < scope.limit);
+      probe++
+    ) {
+      if (probe >= 32 || upper - lower <= 1)
+        throw new Error(
+          'The newest messages could not be established within the read limit. Choose a narrower folder or time window.',
+        )
+      if (after > 0) {
+        if (list.nextPageToken) lower = after
+        else upper = after
+      }
+      after = probe === 0 ? Math.max(1, upper - 86_400) : Math.floor((lower + upper) / 2)
+      authorize()
+      signal?.throwIfAborted()
+      list = ListSchema.parse(
+        await this.connections.listMessageIds(
+          scope.account.id,
+          [gmailQuery(scope) ? `(${gmailQuery(scope)})` : '', `after:${after}`]
+            .filter(Boolean)
+            .join(' '),
+          20,
+          signal,
+        ),
+      )
+    }
+    const metadata: { id: string; received: number }[] = []
+    for (const { id } of list.messages ?? []) {
+      authorize()
+      signal?.throwIfAborted()
+      const message = FullSchema.parse(
+        await this.connections.getMessage(scope.account.id, id, signal, 'metadata'),
+      )
+      const received = Number(message.internalDate)
+      if (message.id !== id || !Number.isSafeInteger(received) || received < after * 1000)
+        throw new Error(
+          'Gmail did not provide a valid received timestamp for newest-message selection',
+        )
+      metadata.push({ id, received })
+    }
+    return metadata
+      .sort((a, b) => b.received - a.received || a.id.localeCompare(b.id))
+      .slice(0, scope.limit)
   }
 }

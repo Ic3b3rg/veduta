@@ -14,13 +14,35 @@ export function ConnectionReview({ review }: { review: Review }) {
         </div>
         <div>
           <dt>Allowed actions</dt>
-          <dd>{review.actions.join(', ')}</dd>
+          <dd>
+            {review.actions
+              .map(
+                (action) =>
+                  ({
+                    list_repositories: 'List repositories',
+                    list_issues: 'Read open issues',
+                    read_files: 'Read directories and text files',
+                    search_mailbox: 'Summarize mail',
+                    issue_write: 'Create an issue after approval',
+                  })[action] ?? action,
+              )
+              .join(', ')}
+          </dd>
         </div>
         {review.repository && (
           <div>
             <dt>Repository</dt>
             <dd>
               {review.repository.owner}/{review.repository.name}
+            </dd>
+          </div>
+        )}
+        {review.repositoryScope && (
+          <div>
+            <dt>Repository access</dt>
+            <dd>
+              All repositories authorized by the connection, with optional restrictions for each
+              Space.
             </dd>
           </div>
         )}

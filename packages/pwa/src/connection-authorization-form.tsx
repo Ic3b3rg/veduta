@@ -108,7 +108,11 @@ export function ConnectionAuthorizationForm({
           {gmailAccounts.length > 0 && (
             <label>
               Gmail account
-              <NativeSelect value={gmailId} onChange={(event) => setGmailId(event.target.value)}>
+              <NativeSelect
+                value={gmailId}
+                disabled={Boolean(attempt.connectionId)}
+                onChange={(event) => setGmailId(event.target.value)}
+              >
                 <option value="">Connect a new account</option>
                 {gmailAccounts.map((account) => (
                   <option key={account.id} value={account.id}>

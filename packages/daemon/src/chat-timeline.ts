@@ -79,11 +79,30 @@ export class ChatTimeline {
         on chat_entries (scope_key, position desc);
       create unique index if not exists chat_entries_terminal
         on chat_entries (turn_id, kind) where kind in ('assistant', 'error');
+      create table if not exists chat_service_requests (
+        turn_id text primary key references chat_turns(id),
+        resolution_json text not null
+      );
       create table if not exists chat_decision_revisions (
         decision_id text primary key references chat_entries(decision_id),
         source_revision integer not null
       );
     `)
+  }
+
+  serviceRequest(turnId: string): unknown {
+    const row = this.db
+      .prepare('select resolution_json from chat_service_requests where turn_id = ?')
+      .get(turnId)
+    return row ? JSON.parse(requiredString(row, 'resolution_json')) : undefined
+  }
+
+  recordServiceRequest(turnId: string, resolution: unknown): void {
+    this.db
+      .prepare(
+        'insert into chat_service_requests (turn_id, resolution_json) values (?, ?) on conflict(turn_id) do nothing',
+      )
+      .run(turnId, JSON.stringify(resolution))
   }
 
   close(): void {

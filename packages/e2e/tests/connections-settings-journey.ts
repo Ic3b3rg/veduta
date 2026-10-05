@@ -17,7 +17,8 @@ export async function verifyConnectionsSettings(page: Page, observerPage: Page):
   await page.getByRole('button', { name: 'Close details' }).click()
   await page.getByRole('link', { name: 'Accounts & services', exact: true }).click()
   await page.getByRole('button', { name: 'Add account', exact: true }).click()
-  await page.getByRole('button', { name: 'Connect IMAP and SMTP' }).click()
+  await page.getByLabel('Service', { exact: true }).selectOption('mailbox')
+  await page.getByRole('button', { name: 'Continue', exact: true }).click()
   await page.getByLabel('Connection name', { exact: true }).fill('Disposable settings mailbox')
   await page.getByLabel('Email address', { exact: true }).fill('settings-proof@example.invalid')
   await page.getByLabel('IMAP server URL').fill('imaps://example.invalid:993')
@@ -32,6 +33,8 @@ export async function verifyConnectionsSettings(page: Page, observerPage: Page):
     .filter({ hasText: 'Disposable settings mailbox' })
   await expect(account).toContainText('needs verification')
   expect((await account.boundingBox())!.height).toBeLessThan(140)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await account.click()
   await page.reload()
   await expect(
     page.getByRole('complementary', { name: 'Disposable settings mailbox details' }),
@@ -97,7 +100,7 @@ export async function verifyConnectionsSettings(page: Page, observerPage: Page):
   await expect(gmailDrawer).toContainText('Gmail authorization was declined.')
   await expect(gmailDrawer.getByRole('button', { name: 'Save access' })).toHaveCount(0)
   expect(page.url()).not.toContain('state=')
-  await expect(gmailDrawer.getByRole('button', { name: 'Cancel setup' })).toHaveCount(0)
+  await expect(gmailDrawer.getByRole('button', { name: 'Cancel setup' })).toBeVisible()
   await gmailDrawer.getByRole('button', { name: 'Return to review' }).click()
   await expect(gmailDrawer).toContainText('State: reviewing')
   await gmailDrawer.getByRole('button', { name: 'Cancel setup' }).click()
@@ -111,18 +114,13 @@ export async function verifyConnectionsSettings(page: Page, observerPage: Page):
   await expect(gmailDrawer).toContainText('Google OAuth is configured for this installation.')
   await observerPage.goto(page.url())
   await expect(
-    observerPage.getByRole('complementary', { name: 'Gmail setup details' }),
+    observerPage.getByRole('dialog', { name: 'Gmail setup', exact: true }),
   ).toContainText('Google OAuth is configured for this installation.')
   await gmailDrawer.getByRole('button', { name: 'Cancel setup' }).click()
   const disposableGmail = page
     .locator('.connection-list-item')
     .filter({ hasText: 'Disposable settings Gmail' })
-  await disposableGmail.click()
-  page.once('dialog', (dialog) => void dialog.accept())
-  await page
-    .getByRole('dialog', { name: 'Disposable settings Gmail' })
-    .getByRole('button', { name: 'Remove', exact: true })
-    .click()
+  // Cancelling setup removes only the temporary native account created by that attempt.
   await expect(disposableGmail).toHaveCount(0)
 
   await account.click()

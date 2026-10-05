@@ -305,6 +305,17 @@ button.connection-list-item[aria-pressed='true'] {
   font-family: var(--catalog-font-family);
   font-size: 0.875rem;
 }
+.connection-modal[data-slot='sheet-content'] {
+  inset: 0;
+  margin: auto;
+  width: min(560px, calc(100vw - 48px));
+  height: fit-content;
+  max-height: calc(100dvh - 48px);
+  overflow: hidden;
+  border: 1px solid var(--catalog-color-border);
+  border-radius: 12px;
+  animation: none;
+}
 .connections-page [data-slot='button'],
 .connection-drawer [data-slot='button'] {
   font-family: inherit;
