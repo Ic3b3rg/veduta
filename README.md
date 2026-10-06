@@ -108,7 +108,7 @@ cd veduta
 corepack enable
 corepack prepare pnpm@10.28.0 --activate
 pnpm install --frozen-lockfile
-pnpm local-vps
+pnpm local-vps --base-dir ~/.veduta-v0.0.6
 ```
 
 Open the printed **`http://localhost:8788/setup?code=…`** link. Use `localhost` throughout:
@@ -117,13 +117,14 @@ connect a real provider or select the **built-in mock provider** checkbox for a 
 If you want ChatGPT, accept the terminal's first-run offer to provision Codex; you can also
 [provision it later](deploy/local-vps.md#chatgpt-subscription-codex).
 
-Keep the terminal running. **Ctrl-C** stops Veduta; `pnpm local-vps` starts it again with the
-same data in `~/.veduta-local-vps`. This profile does not configure the public update feed.
+Keep the terminal running. **Ctrl-C** stops Veduta; run
+`pnpm local-vps --base-dir ~/.veduta-v0.0.6` again to resume with the same data. This separate
+directory leaves any earlier local trial untouched. This profile does not configure the public update feed.
 See the [Local VPS guide](deploy/local-vps.md) for ports, separate data directories, and recovery.
 
 ## Updates
 
-For an existing VPS installation, use the signed updater:
+For a VPS installed with this guide, use the signed updater:
 
 1. Open the **System Space**, find **Updates**, and choose **Check now**.
 2. Read the offered version and release notes, then choose **Apply update**.
@@ -131,8 +132,7 @@ For an existing VPS installation, use the signed updater:
 
 The updater verifies the release, backs up your data before migration, and checks the new
 version before reporting success. A failed activation automatically restores the previous
-version and its data. Version `0.0.6` includes a data migration from `0.0.5`; use this update
-path for an existing installation rather than switching its source checkout.
+version and its data.
 
 A fresh source installation reports the baseline version `0.0.0` until its first signed
 update. Applying the offered `0.0.6` release installs the versioned build. If Updates is
