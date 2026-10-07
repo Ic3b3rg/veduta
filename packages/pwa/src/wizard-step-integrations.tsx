@@ -41,7 +41,8 @@ export function WizardStepIntegrations({
   error?: string | undefined
 }) {
   const [calendar, setCalendar] = useState<CalendarForm>(() => initialCalendar(status))
-  const privateAccess = status.domain.accessMode === 'tunnel'
+  const privateAccess =
+    status.domain.accessMode === 'tunnel' || status.domain.accessMode === 'tailnet'
 
   const calendarValid = !calendar.enabled || calendar.clientId.trim() !== ''
   const canSave = !privateAccess && calendar.enabled && calendarValid

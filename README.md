@@ -28,15 +28,14 @@ Use a Linux VPS with Ubuntu, systemd, SSH access, `sudo`, and `curl`, and a brow
 supports **passkeys**. Choose **x86-64** for the complete signed-update path; ARM64 update
 runtime support is tracked in [issue #44](https://github.com/Ic3b3rg/veduta/issues/44).
 
-You can choose how to open Veduta during installation:
+For **private access from your computer and phone**, install [Tailscale](https://tailscale.com/download)
+on both devices and sign in with the same personal account. Enable **Device approval** in
+[Tailscale's device settings](https://login.tailscale.com/admin/settings/device-management)
+and approve your devices in [Machines](https://login.tailscale.com/admin/machines). Keep this
+personal network limited to the people and devices you want to allow.
 
-- **Tunnel access:** no domain needed. Open Veduta on your computer through the SSH command
-  the installer provides. The application stays private on the server. This path does not
-  provide phone access.
-- **Public access:** use your own domain and a certificate contact email. Point its DNS
-  A/AAAA records to the VPS and allow TCP ports 80 and 443. You can then use computer and phone.
-
-Both paths run the same production service and require a passkey. You will connect a
+You do not need to buy a domain, edit DNS records, or open public web ports. Tailscale supplies
+the private HTTPS address; Veduta still requires a passkey. You will connect a
 [Model connection](#model-connections) in the browser after installation.
 
 ### 2. Run the installer on the VPS
@@ -46,13 +45,19 @@ Log in over SSH and paste this command **on the VPS**:
 ```sh
 curl -fsSLo veduta-install.sh \
   https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.sh &&
-sudo env SSH_CONNECTION="$SSH_CONNECTION" bash veduta-install.sh
+sudo env SSH_CONNECTION="$SSH_CONNECTION" bash veduta-install.sh --access tailnet
 ```
 
 This guide follows the current source installer. The published `v0.0.6` installer only
-supports Public access; do not substitute that tag when trying Tunnel access.
+supports Public access; do not substitute that tag when trying private access.
 
-Accept the detected defaults or edit them, then confirm the plan. The installer sets up the
+Confirm the plan and let the installer install Tailscale if needed. Open its login link using
+the same account, approve the VPS in **Machines**, and confirm that Device approval is enabled.
+If Tailscale asks to enable HTTPS, follow its link once and return to the terminal.
+The `*.ts.net` certificate hostname is visible in public certificate logs; access to Veduta
+and its traffic stays private. The installer explains this before enabling HTTPS.
+
+The installer sets up the
 pinned Node.js and pnpm versions, the encrypted vault, signed updates, and the systemd service.
 You do not need to copy a signing key. Optional ChatGPT subscription support is installed too.
 
@@ -62,12 +67,9 @@ recovery action and a log location. `--preview` shows the plan without making ch
 
 ### 3. Open the setup link
 
-For **Tunnel access**, copy the exact SSH command printed under **Run this on your computer,
-not on the VPS** into a terminal on your computer. Keep it running and open the localhost link.
-If the computer says the port is occupied, close its old SSH forward or use `sudo veduta access`
-on the VPS to choose another stable port. Keep the same address for your passkey.
-
-For **Public access**, open the HTTPS link or scan the QR code with your phone.
+Keep Tailscale connected on your computer or phone. Open the printed **HTTPS link**, or scan
+the QR code with your phone. This same address works on both devices, including away from home.
+An unapproved device cannot reach it. The installer checks private HTTPS before printing it.
 
 1. Choose **Register passkey** and complete your browser's prompt. The installer confirms
    registration and you continue in the browser. The setup link expires after 60 minutes.
@@ -83,6 +85,19 @@ If you close the installer or the setup link expires, run **`sudo veduta setup`*
 It recovers your link without rebuilding Veduta. Closing the setup wait does not stop the service.
 Use **`sudo veduta access`** to repair or change access later; a new address requires a new
 passkey, and a failed change restores the previous access without replacing application data.
+
+### Other access options
+
+Use `--access tunnel` for computer-only access through the exact SSH command printed by the
+installer. Keep that forward running and use its localhost URL. Use `--access public` if you
+want your own domain, with DNS pointing to the VPS, ports 80/443, and a certificate contact email.
+All modes use the same production service and mandatory passkeys. Without `--access`, the
+guided installer preselects Tailnet when already connected to Tailscale, otherwise Tunnel.
+
+If private access stops working, reconnect Tailscale and check device approval. Recover from
+SSH with `sudo veduta access` → **Repair**; after a changed Tailscale hostname, choose **Update
+access** and register a new passkey. See [long-term operation](deploy/README.md#tailnet-access)
+for device removal, key expiry, and the privacy boundary.
 
 Bookmark your address. On a phone using Public access, choose **Add to Home Screen** or
 **Install app** when available. The VPS keeps running when you close the browser.
@@ -154,7 +169,8 @@ The signing and verification procedure is public in [RELEASING.md](RELEASING.md)
 
 | What you see                     | What to do                                                                                                                                                  |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The installer only prints a plan | Run it from an interactive SSH terminal, or supply `--apply`, `--domain`, and `--email`. Remove `--preview` when ready to install.                          |
+| The installer only prints a plan | Run the downloaded file from an interactive SSH terminal. Remove `--preview` when ready to install.                                                         |
+| The private link does not open   | Connect Tailscale on the device, check that it and the VPS are approved, then use `sudo veduta access` → Repair over SSH.                                   |
 | HTTPS setup does not complete    | Check the domain's A/AAAA records and access to ports 80/443. Follow the installer's retry command after correcting them.                                   |
 | Setup was interrupted            | Reopen the setup page; the wizard resumes saved progress. If the installer failed, use the exact rerun command it printed.                                  |
 | A local passkey fails            | Open the printed `http://localhost:8788` URL, using the same origin where the passkey was registered.                                                       |

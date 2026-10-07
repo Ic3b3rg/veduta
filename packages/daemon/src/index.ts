@@ -130,16 +130,16 @@ async function startVps(): Promise<void> {
   const auth = buildProductionAuth({ rpID: domain, origin, authStatePath, bootstrapCode })
 
   const dataDirOption = process.env.VEDUTA_DATA_DIR ? { dataDir: process.env.VEDUTA_DATA_DIR } : {}
-  if (access.mode === 'tunnel') {
+  if (access.mode !== 'public') {
     const { app } = buildServer({
       ...dataDirOption,
       auth: { mode: 'production', store: auth, allowedOrigins: [origin] },
       egress: { enforce: true },
       profile: 'vps',
-      onboarding: { domain, tlsActive: false, access, env: process.env },
+      onboarding: { domain, tlsActive: access.mode === 'tailnet', access, env: process.env },
     })
     await app.listen({ port: access.port, host: access.host })
-    console.log(`veduta daemon (production profile) -> ${origin} (Tunnel access)`)
+    console.log(`veduta daemon (production profile) -> ${origin} (${access.mode} access)`)
     return
   }
   const email = requireEnv('VEDUTA_ACME_EMAIL')

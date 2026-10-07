@@ -1,6 +1,6 @@
 /** Production access is independent of the execution profile (ADR-0015). */
 export interface VpsAccess {
-  mode: 'public' | 'tunnel'
+  mode: 'public' | 'tunnel' | 'tailnet'
   host: '0.0.0.0' | '127.0.0.1'
   port: number
   origin: string
@@ -11,14 +11,26 @@ export type VpsAccessStatus = Pick<VpsAccess, 'mode' | 'origin'> & { pending?: b
 
 export function resolveVpsAccess(env: NodeJS.ProcessEnv): VpsAccess {
   const mode = env['VEDUTA_ACCESS'] ?? 'public'
-  if (mode !== 'public' && mode !== 'tunnel') {
-    throw new Error(`unknown VEDUTA_ACCESS: ${mode} (expected tunnel or public)`)
+  if (mode !== 'public' && mode !== 'tunnel' && mode !== 'tailnet') {
+    throw new Error(`unknown VEDUTA_ACCESS: ${mode} (expected tunnel, tailnet, or public)`)
   }
-  if (mode === 'tunnel') {
+  if (mode !== 'public') {
     if (env['VEDUTA_PUBLIC_DOMAIN']) {
-      throw new Error('Tunnel access is incompatible with VEDUTA_PUBLIC_DOMAIN')
+      throw new Error('Private access is incompatible with VEDUTA_PUBLIC_DOMAIN')
     }
     const port = parsePort(env['PORT'] ?? '8788', 'PORT')
+    if (mode === 'tailnet') {
+      const value = env['VEDUTA_TAILNET_ORIGIN'] ?? ''
+      const url = new URL(value)
+      if (
+        url.protocol !== 'https:' ||
+        url.origin !== value ||
+        !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.[a-z0-9-]+\.ts\.net$/.test(url.hostname)
+      ) {
+        throw new Error('Tailnet access requires a canonical HTTPS *.ts.net origin')
+      }
+      return { mode, host: '127.0.0.1', port, origin: url.origin, rpID: url.hostname }
+    }
     return { mode, host: '127.0.0.1', port, origin: `http://localhost:${port}`, rpID: 'localhost' }
   }
   const domain = env['VEDUTA_PUBLIC_DOMAIN']

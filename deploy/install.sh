@@ -61,6 +61,11 @@ JSON_OUTPUT=false
 SETUP_ONLY=false
 MANAGE_ACCESS=false
 EDIT_ACCESS=false
+TAILNET_HTTPS_PORT=""
+CURRENT_TAILNET_PORT=""
+TAILSCALE_INSTALL_CONSENT=false
+TAILNET_DEVICE_APPROVAL=false
+TAILNET_CERTIFICATE_CONSENT=false
 INSTALLER_STATE=planning
 REPLY=""
 ORIGIN=""
@@ -211,13 +216,17 @@ escape_json_multiline() {
 parse_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
-      --access|--port|--ssh-target|--ssh-port|--domain|--email|--repo|--ref|--data-dir|--update-feed|--update-root-key)
+      --access|--port|--tailnet-port|--ssh-target|--ssh-port|--domain|--email|--repo|--ref|--data-dir|--update-feed|--update-root-key)
         if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" = --* ]]; then
           printf 'error: %s requires a value\n' "$1" >&2; exit 64
         fi ;;
     esac
     case "$1" in
       --access) ACCESS="${2:-}"; shift 2 ;;
+      --tailnet-port) TAILNET_HTTPS_PORT="${2:-}"; shift 2 ;;
+      --install-tailscale) TAILSCALE_INSTALL_CONSENT=true; shift ;;
+      --device-approval-confirmed) TAILNET_DEVICE_APPROVAL=true; shift ;;
+      --accept-certificate-name) TAILNET_CERTIFICATE_CONSENT=true; shift ;;
       --port) ACCESS_PORT="${2:-}"; shift 2 ;;
       --ssh-target) SSH_TARGET="${2:-}"; shift 2 ;;
       --ssh-port) SSH_PORT="${2:-}"; shift 2 ;;
@@ -287,8 +296,12 @@ Download, then run on your VPS:
   curl -fsSLo veduta-install.sh $INSTALL_URL && sudo env SSH_CONNECTION="\$SSH_CONNECTION" bash veduta-install.sh
 
 Options:
-  --access tunnel|public  Browser access (guided default: tunnel)
-  --port <port>           Stable Tunnel port at both ends (default: 8788)
+  --access tunnel|tailnet|public  Tailnet when connected; otherwise Tunnel
+  --port <port>           Loopback port; also the Tunnel client port (default: 8788)
+  --tailnet-port <port>   Private HTTPS port (default: 443, or installed value)
+  --install-tailscale     Allow installation from Tailscale's official repository
+  --device-approval-confirmed  Confirm Device approval is enabled in your account
+  --accept-certificate-name    Accept the public HTTPS certificate hostname disclosure
   --ssh-target user@host  SSH destination for the computer handoff
   --ssh-port <port>       SSH server port (default: detected, or 22)
   --domain <domain>       Required for Public access
@@ -379,6 +392,10 @@ compute_rerun_cmd() {
   local -a flags=()
   [ -z "$ACCESS" ] || flags+=(--access "$ACCESS")
   [ -z "$ACCESS_PORT" ] || flags+=(--port "$ACCESS_PORT")
+  [ -z "$TAILNET_HTTPS_PORT" ] || flags+=(--tailnet-port "$TAILNET_HTTPS_PORT")
+  [ "$TAILSCALE_INSTALL_CONSENT" != true ] || flags+=(--install-tailscale)
+  [ "$TAILNET_DEVICE_APPROVAL" != true ] || flags+=(--device-approval-confirmed)
+  [ "$TAILNET_CERTIFICATE_CONSENT" != true ] || flags+=(--accept-certificate-name)
   [ -z "$SSH_TARGET" ] || flags+=(--ssh-target "$SSH_TARGET")
   [ -z "$SSH_PORT" ] || flags+=(--ssh-port "$SSH_PORT")
   [ "$REPO" = "$DEFAULT_REPO" ] || flags+=(--repo "$REPO")
@@ -445,6 +462,7 @@ determine_mode() {
   fi
 
   if [ "$EXPLICIT_APPLY" = "true" ]; then
+    if [ "$ACCESS" = tailnet ]; then PREVIEW_MODE=false; return 0; fi
     if [ "${ACCESS:-tunnel}" = public ] && [ -n "$DOMAIN" ] && [ -n "$EMAIL" ]; then
       PREVIEW_MODE=false
       return 0
@@ -496,6 +514,8 @@ so this run is preview-only: nothing is written, downloaded, or installed. Below
 what an apply run would do. Download the script to a file and run it with sudo while logged
 in over SSH. Unattended Tunnel access needs --apply --access tunnel --ssh-target user@host;
 Public access needs --apply --access public --domain <domain> --email <email>.
+Tailnet access needs an already connected node, --access tailnet,
+--device-approval-confirmed and --accept-certificate-name with --apply.
 EOF
   printf '\n' >&2
   printf '  user/group:      veduta:veduta (system account, no login shell)\n' >&2
@@ -521,7 +541,7 @@ EOF
     printf '  codex binary:    provisioned into %s/codex via deploy/codex-setup.sh (best-effort, never fails the build stage)\n' "$DATA_DIR" >&2
   fi
   printf '\n' >&2
-  printf 'flags: --access --port --ssh-target --ssh-port --domain --email --repo --ref --data-dir --update-feed --update-root-key --apply --preview --json --skip-codex --help\n' >&2
+  printf 'flags: --access --port --tailnet-port --install-tailscale --device-approval-confirmed --accept-certificate-name --ssh-target --ssh-port --domain --email --repo --ref --data-dir --update-feed --update-root-key --apply --preview --json --skip-codex --help\n' >&2
   printf 'stage protocol: preview or --json only; schema: @veduta/protocol InstallerStageEventSchema\n' >&2
 }
 
@@ -530,6 +550,8 @@ run_preview() {
   print_preview_summary
   if [ "${ACCESS:-tunnel}" = tunnel ]; then
     printf '  access:          Tunnel access: no domain required\n' >&2
+  elif [ "$ACCESS" = tailnet ]; then
+    printf '  access:          Tailnet access: private HTTPS for approved computer and phone devices; no domain required\n' >&2
   else
     printf '  access:          Public access: domain and HTTPS required\n' >&2
   fi
@@ -554,9 +576,9 @@ prompt_tty() {
 }
 
 validate_access_args() {
-  case "$ACCESS" in ''|tunnel|public) ;; *) printf 'error: --access must be tunnel or public\n' >&2; exit 1 ;; esac
+  case "$ACCESS" in ''|tunnel|tailnet|public) ;; *) printf 'error: --access must be tunnel, tailnet, or public\n' >&2; exit 1 ;; esac
   local value
-  for value in "$ACCESS_PORT" "$SSH_PORT"; do
+  for value in "$ACCESS_PORT" "$SSH_PORT" "$TAILNET_HTTPS_PORT"; do
     if [ -n "$value" ]; then
       case "$value" in *[!0-9]*) printf 'error: port must be an integer\n' >&2; exit 1 ;; esac
       if [ "${#value}" -gt 5 ] || [ "$value" -lt 1 ] || [ "$value" -gt 65535 ]; then
@@ -577,10 +599,14 @@ validate_access_args() {
 
 choose_access() {
   local current_domain="" current_email="" current_data_dir="" default_access=tunnel
+  if command -v tailscale >/dev/null 2>&1 && tailscale status --json --peers=false 2>/dev/null |
+    grep '"BackendState"[[:space:]]*:[[:space:]]*"Running"' >/dev/null; then default_access=tailnet; fi
   if [ -f "$ACCESS_CONFIG" ]; then
     CURRENT_ACCESS=$(jq -er '.mode' "$ACCESS_CONFIG")
     CURRENT_ORIGIN=$(jq -er '.origin' "$ACCESS_CONFIG")
     CURRENT_PORT=$(jq -er '.port' "$ACCESS_CONFIG")
+    CURRENT_TAILNET_PORT=$(jq -r '.tailnetPort // 443' "$ACCESS_CONFIG")
+    if [ "$CURRENT_ACCESS" = tailnet ]; then TAILNET_HTTPS_PORT=${TAILNET_HTTPS_PORT:-$CURRENT_TAILNET_PORT}; fi
     current_domain=$(jq -r '.domain // ""' "$ACCESS_CONFIG")
     current_email=$(jq -r '.email // ""' "$ACCESS_CONFIG")
     SSH_TARGET=${SSH_TARGET:-$(jq -r '.sshTarget // ""' "$ACCESS_CONFIG")}
@@ -600,7 +626,6 @@ choose_access() {
     fi
   fi
   if [ "$EXISTING_ACCESS" = true ]; then
-    default_access="$CURRENT_ACCESS"
     if [ "$SETUP_ONLY" != true ] && [ "$EXPLICIT_APPLY" != true ]; then
       printf '\nVeduta is installed at %s\n  1) Repair\n  2) Update access\n  3) Exit\n' "$CURRENT_ORIGIN" >&2
       prompt_tty 'Choose' 1
@@ -621,7 +646,7 @@ choose_access() {
     if [ "$EXPLICIT_APPLY" = true ]; then
       ACCESS=tunnel
     else
-      printf '\nHow will you open Veduta?\n  tunnel) Tunnel access — no domain required (computer via SSH)\n  public) Public access — domain and HTTPS certificate required\n' >&2
+      printf '\nHow will you open Veduta?\n  tunnel) Tunnel access — no domain required (computer via SSH)\n  tailnet) Private on all your devices — Tailscale\n  public) Public access — domain and HTTPS certificate required\n' >&2
       prompt_tty 'Access' "$default_access"
       ACCESS="$REPLY"
     fi
@@ -645,19 +670,32 @@ choose_access() {
     DOMAIN=""; EMAIL=""
     choose_tunnel_handoff
     ORIGIN="http://localhost:$ACCESS_PORT"
+  elif [ "$ACCESS" = tailnet ]; then
+    DOMAIN=""; EMAIL=""; SSH_PORT=${SSH_PORT:-22}
+    choose_loopback_port
+    if [ "$CURRENT_ACCESS" = tailnet ]; then ORIGIN="$CURRENT_ORIGIN"; fi
+    printf '\nTailscale keeps Veduta private to devices authorized in your tailnet. Passkeys are still required.\nThe *.ts.net certificate hostname appears in public Certificate Transparency logs; the service and traffic stay private.\n' >&2
+    if ! command -v tailscale >/dev/null 2>&1 && [ "$TAILSCALE_INSTALL_CONSENT" != true ]; then
+      if [ "$EXPLICIT_APPLY" = true ]; then printf 'error: pass --install-tailscale to authorize installation, or use guided setup.\n' >&2; return 1; fi
+      prompt_tty 'Install Tailscale on this VPS?' Y
+      case "$REPLY" in y|Y|yes|YES) TAILSCALE_INSTALL_CONSENT=true ;; *) return 1 ;; esac
+    fi
+    if [ "$EXPLICIT_APPLY" = true ] && [ "$TAILNET_CERTIFICATE_CONSENT" != true ]; then
+      printf 'error: unattended setup needs --accept-certificate-name for the disclosure above.\n' >&2; return 1
+    fi
   fi
   validate_access_args
   validate_data_dir
-  if [ "$EXISTING_ACCESS" = true ] && [ "$ORIGIN" != "$CURRENT_ORIGIN" ]; then
+  if [ "$EXISTING_ACCESS" = true ] && { [ "$ACCESS" != "$CURRENT_ACCESS" ] || [ "$ORIGIN" != "$CURRENT_ORIGIN" ]; }; then
     ACCESS_CHANGE=true
     SETUP_ONLY=true
   fi
   if [ "$MANAGE_ACCESS" = true ]; then SETUP_ONLY=true; fi
-  if [ "$SETUP_ONLY" = true ] && [ ! -f /usr/local/lib/veduta/access-transaction.sh ]; then
-    printf 'error: this installation predates guided access. Run sudo bash veduta-install.sh --ref main and choose Repair, keeping its current Public access; then run sudo veduta access.\n' >&2
+  if [ "$SETUP_ONLY" = true ] && { [ ! -f /usr/local/lib/veduta/access-transaction.sh ] || [ ! -f /usr/local/lib/veduta/tailnet-access.sh ] || [ ! -f /usr/local/lib/veduta/tailnet-backend-private.mjs ]; }; then
+    printf 'error: this installation predates the current guided access. Run sudo bash veduta-install.sh --ref main and choose Repair with its current access first; then run sudo veduta access.\n' >&2
     return 1
   fi
-  printf '\nPlan: %s access at %s\n  Production service, mandatory passkeys, data in %s.\n' "$ACCESS" "$ORIGIN" "$DATA_DIR" >&2
+  printf '\nPlan: %s access at %s\n  Production service, mandatory passkeys, data in %s.\n' "$ACCESS" "${ORIGIN:-an address assigned after Tailscale sign-in}" "$DATA_DIR" >&2
   if [ "$ACCESS_CHANGE" = true ]; then
     printf '  Register a new passkey at the new address to commit the change. Failure restores the old access.\n' >&2
   fi
@@ -693,7 +731,16 @@ choose_tunnel_handoff() {
     return 1
   fi
   validate_access_args
-  if [ "$CURRENT_ACCESS" != tunnel ] || [ "$ACCESS_PORT" != "$CURRENT_PORT" ]; then
+  choose_loopback_port
+
+  verify_ssh_forwarding
+  banner=$(timeout 5 bash -c 'exec 3<>/dev/tcp/"$1"/"$2"; IFS= read -r line <&3; printf "%s" "$line"' _ "${SSH_TARGET#*@}" "$SSH_PORT") || true
+  case "$banner" in SSH-*) ;; *) printf 'error: SSH is not reachable at %s port %s. Check the destination and rerun with --ssh-target and --ssh-port.\n' "$SSH_TARGET" "$SSH_PORT" >&2; return 1 ;; esac
+}
+
+choose_loopback_port() {
+  local free_port
+  if { [ "$CURRENT_ACCESS" != tunnel ] && [ "$CURRENT_ACCESS" != tailnet ]; } || [ "$ACCESS_PORT" != "$CURRENT_PORT" ]; then
     if port_in_use "$ACCESS_PORT"; then
       ss -ltnp "sport = :$ACCESS_PORT" >&2
       free_port=$((10#$ACCESS_PORT + 1))
@@ -707,9 +754,6 @@ choose_tunnel_handoff() {
       if port_in_use "$ACCESS_PORT"; then printf 'error: chosen port is occupied\n' >&2; return 1; fi
     fi
   fi
-  verify_ssh_forwarding
-  banner=$(timeout 5 bash -c 'exec 3<>/dev/tcp/"$1"/"$2"; IFS= read -r line <&3; printf "%s" "$line"' _ "${SSH_TARGET#*@}" "$SSH_PORT") || true
-  case "$banner" in SSH-*) ;; *) printf 'error: SSH is not reachable at %s port %s. Check the destination and rerun with --ssh-target and --ssh-port.\n' "$SSH_TARGET" "$SSH_PORT" >&2; return 1 ;; esac
 }
 
 verify_ssh_forwarding() {
@@ -1095,7 +1139,9 @@ checkout_stage() {
     RESOLVED_SHA=$(git -C /opt/veduta rev-parse FETCH_HEAD)
   fi
   # Check compatibility before removing dependencies or replacing runnable files.
-  if ! git -C /opt/veduta cat-file -e "$RESOLVED_SHA:deploy/access-transaction.sh" 2>/dev/null; then
+  if ! git -C /opt/veduta cat-file -e "$RESOLVED_SHA:deploy/access-transaction.sh" 2>/dev/null ||
+     ! git -C /opt/veduta cat-file -e "$RESOLVED_SHA:deploy/tailnet-access.sh" 2>/dev/null ||
+     ! git -C /opt/veduta cat-file -e "$RESOLVED_SHA:deploy/tailnet-backend-private.mjs" 2>/dev/null; then
     printf 'error: this ref predates guided access. Existing runnable files were retained. Rerun with --ref main to explicitly select the current source installer.\n' >&2
     fail_stage 1
   fi
@@ -1319,6 +1365,7 @@ first_boot_stage() {
   if [ "$SERVICE_NAME" = veduta ]; then run systemctl enable veduta; fi
   run systemctl restart "$SERVICE_NAME"
   wait_for_gateway
+  if [ "$ACCESS" = tailnet ]; then tailnet_verify; fi
   if [ "$ACCESS" = public ]; then
     # Unlike the local readiness probe, this verifies DNS and the trusted certificate.
     curl -fsS --connect-timeout 5 --max-time 15 "$ORIGIN/api/auth/status" | jq -e '.mode == "production"' >/dev/null
@@ -1326,6 +1373,9 @@ first_boot_stage() {
 }
 
 print_handoff() {
+  if [ "$ACCESS" = tailnet ]; then
+    printf '\nUse this link on your computer and phone with Tailscale connected to the same personal account.\nApprove each device in Tailscale before opening Veduta; devices outside your tailnet cannot reach it.\n' >&2
+  fi
   if [ "$ACCESS" = tunnel ]; then
     printf '\nRun this on your computer, not on the VPS. Keep that terminal open:\n' >&2
     printf '  ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -L 127.0.0.1:%s:127.0.0.1:%s -p %s %s\n' \
@@ -1486,6 +1536,8 @@ run_apply() {
   run install -d -o root -g root -m 0755 /usr/local/lib/veduta
   run install -o root -g root -m 0755 /opt/veduta/deploy/install.sh /usr/local/lib/veduta/install.sh
   run install -o root -g root -m 0644 /opt/veduta/deploy/access-transaction.sh /usr/local/lib/veduta/access-transaction.sh
+  run install -o root -g root -m 0644 /opt/veduta/deploy/tailnet-access.sh /usr/local/lib/veduta/tailnet-access.sh
+  run install -o root -g root -m 0644 /opt/veduta/deploy/tailnet-backend-private.mjs /usr/local/lib/veduta/tailnet-backend-private.mjs
   run install -o root -g root -m 0755 /opt/veduta/deploy/veduta /usr/local/bin/veduta
   else
     local skipped_stage
@@ -1494,7 +1546,10 @@ run_apply() {
     done
   fi
   . /usr/local/lib/veduta/access-transaction.sh
+  . /usr/local/lib/veduta/tailnet-access.sh
+  if [ "$ACCESS" = tailnet ]; then tailnet_prepare; fi
   access_prepare
+  tailnet_stage_route
   run_stage first-boot first_boot_stage
   run_stage pairing pairing_stage
   access_commit

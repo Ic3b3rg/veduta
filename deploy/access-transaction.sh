@@ -39,12 +39,15 @@ access_prepare() {
   jq -n --arg mode "$ACCESS" --arg origin "$ORIGIN" --arg port "$ACCESS_PORT" \
     --arg sshTarget "$SSH_TARGET" --arg sshPort "$SSH_PORT" --arg domain "$DOMAIN" \
     --arg email "$EMAIL" --arg dataDir "$DATA_DIR" --arg authState "$auth_state" --arg acmeDir "$acme_dir" \
+    --arg tailnetPort "${TAILNET_HTTPS_PORT:-443}" --arg tailnetId "${TAILNET_ID:-}" --arg approval "${TAILNET_DEVICE_APPROVAL:-false}" \
     '{mode:$mode, origin:$origin, port:($port|tonumber), sshTarget:$sshTarget,
-      sshPort:($sshPort|tonumber), domain:$domain, email:$email, dataDir:$dataDir, authState:$authState, acmeDir:$acmeDir}' \
+      sshPort:($sshPort|tonumber), domain:$domain, email:$email, dataDir:$dataDir, authState:$authState, acmeDir:$acmeDir,
+      tailnetPort:($tailnetPort|tonumber), tailnetId:$tailnetId, deviceApprovalConfirmed:($approval == "true")}' \
     >"$ACCESS_GENERATION/config.json"
   {
     printf 'VEDUTA_PROFILE=vps\nVEDUTA_ACCESS=%s\nPORT=%s\n' "$ACCESS" "$ACCESS_PORT"
     printf 'VEDUTA_PUBLIC_DOMAIN=%s\nVEDUTA_ACME_EMAIL=%s\n' "$DOMAIN" "$EMAIL"
+    if [ "$ACCESS" = tailnet ]; then printf 'VEDUTA_TAILNET_ORIGIN=%s\n' "$ORIGIN"; fi
     if [ -n "$acme_dir" ]; then printf 'VEDUTA_ACME_DIR=%s\n' "$acme_dir"; fi
     printf 'VEDUTA_DATA_DIR=%s\nVEDUTA_AUTH_STATE=%s\nVEDUTA_BOOTSTRAP_CODE=%s\n' "$DATA_DIR" "$auth_state" "$BOOTSTRAP_CODE"
   } >"$ACCESS_GENERATION/environment"
@@ -88,7 +91,14 @@ access_install_dropin() {
 }
 
 access_commit() {
-  if [ "$ACCESS_TRANSACTION" != true ]; then return 0; fi
+  if [ "$ACCESS_TRANSACTION" != true ]; then
+    if declare -F tailnet_commit >/dev/null; then tailnet_commit || return 1; fi
+    return 0
+  fi
+  # Ensure a boot-persistent private route exists before the atomic origin swap.
+  # A power loss before the swap keeps the old usable origin; after it, the
+  # already verified passkey and persistent route serve the new origin.
+  if declare -F tailnet_persist_candidate >/dev/null; then tailnet_persist_candidate || return 1; fi
   access_activate "$ACCESS_GENERATION"
   access_install_dropin
   systemctl daemon-reload
@@ -97,6 +107,7 @@ access_commit() {
   systemctl restart veduta
   wait_for_gateway
   auth_status | jq -e '.mode == "production" and .passkeyRegistered == true' >/dev/null
+  if declare -F tailnet_commit >/dev/null; then tailnet_commit || return 1; fi
   ACCESS_COMMITTED=true
   ACCESS_TRANSACTION=false
   rm -f /run/systemd/system/veduta-access-test.service
@@ -122,6 +133,8 @@ access_restore_configuration() {
 
 access_abort() {
   if [ "$ACCESS_TRANSACTION" != true ] || [ "$ACCESS_COMMITTED" = true ]; then return 0; fi
+  local route_restored=true
+  if declare -F tailnet_abort >/dev/null; then tailnet_abort || route_restored=false; fi
   if ! access_restore_configuration; then
     printf 'error: could not restore the previous access configuration. Candidate files retained. Inspect: sudo journalctl -u veduta -u veduta-access-test -n 50; then run sudo veduta access\n' >&2
     return 1
@@ -135,6 +148,10 @@ access_abort() {
   if ! ACCESS="$CURRENT_ACCESS" ACCESS_PORT="$CURRENT_PORT" ORIGIN="$CURRENT_ORIGIN" \
     DOMAIN="${previous_domain%%:*}" SERVICE_NAME=veduta wait_for_gateway; then
     printf 'error: previous configuration restored but the Gateway is not ready. Recovery files retained; run sudo veduta setup.\n' >&2
+    return 1
+  fi
+  if [ "$route_restored" != true ]; then
+    printf 'error: previous Gateway restored, but Serve needs repair. Recovery files retained; run sudo veduta access.\n' >&2
     return 1
   fi
   rm -f /run/systemd/system/veduta-access-test.service

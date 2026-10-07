@@ -99,7 +99,8 @@ The ordinary browser suite skips this test. Never use the fixture with a persona
 
 Tunnel access is for a computer running an SSH forward; it does not provide the requested
 private phone link. [Issue #49](https://github.com/Ic3b3rg/veduta/issues/49) owns Tailscale Serve,
-its login, authorized-device verification, and phone testing. Public HTTPS lab verification
+its login, authorized-device verification, and phone testing; its current evidence and remaining
+checks are in the [Tailnet report](41-tailnet-installer-verification.md). Public HTTPS lab verification
 must not be presented as a public-domain deployment on the real VPS. The browser smoke stops at the working onboarding wizard; it does not claim a full personal
 Model-connection onboarding journey. Existing onboarding route and UI suites cover the retained
 steps. No personal Model connection was added during installer checks. The current stable `0.0.6` artifact predates

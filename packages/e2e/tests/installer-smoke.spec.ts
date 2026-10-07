@@ -3,8 +3,12 @@ import { expect, test } from '@playwright/test'
 // Opt-in against a clean, operator-provided installation while its terminal is
 // waiting for the first passkey. Never targets a real server in the normal suite.
 const setupUrl = process.env['VEDUTA_INSTALLER_SMOKE_URL']
-const accessLabel =
-  process.env['VEDUTA_INSTALLER_SMOKE_MODE'] === 'public' ? 'HTTPS active' : 'Private · SSH'
+const accessLabels: Record<string, string> = {
+  public: 'HTTPS active',
+  tailnet: 'Private · Tailscale',
+  tunnel: 'Private · SSH',
+}
+const accessLabel = accessLabels[process.env['VEDUTA_INSTALLER_SMOKE_MODE'] ?? 'tunnel']!
 test.use({ ignoreHTTPSErrors: process.env['VEDUTA_INSTALLER_SMOKE_TEST_CA'] === '1' })
 test.skip(!setupUrl, 'Set VEDUTA_INSTALLER_SMOKE_URL for the installer smoke journey')
 

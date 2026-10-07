@@ -191,6 +191,39 @@ describe('guided installer access (issue #48)', () => {
     expect(result.stderr).not.toContain('Restored the previous access')
   })
 
+  it('restores the old Gateway even when Serve rollback needs administrator repair', () => {
+    const result = plan(`
+      source deploy/access-transaction.sh
+      ACCESS_TRANSACTION=true
+      ACCESS_GENERATION=/candidate
+      CURRENT_ACCESS=tunnel
+      CURRENT_ORIGIN=http://localhost:8788
+      CURRENT_PORT=8788
+      tailnet_abort() { return 1; }
+      access_restore_configuration() { printf 'config-restored '; }
+      systemctl() { printf 'service:%s ' "$*"; }
+      wait_for_gateway() { printf 'gateway-ready '; }
+      rm() { printf 'unexpected-delete'; }
+      access_abort || printf 'rollback-needs-repair'
+    `)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('config-restored')
+    expect(result.stdout).toContain('service:restart veduta')
+    expect(result.stdout).toContain('gateway-ready')
+    expect(result.stdout).not.toContain('unexpected-delete')
+    expect(result.stderr).toContain('previous Gateway restored, but Serve needs repair')
+  })
+
+  it('does not report fresh setup success when private route verification fails', () => {
+    const result = plan(`
+      source deploy/access-transaction.sh
+      tailnet_commit() { return 1; }
+      if access_commit; then printf 'unexpected-success'; else printf 'verification-failed'; fi
+    `)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('verification-failed')
+  })
+
   it('preserves the installed origin and configuration when planning a repair', () => {
     const dir = mkdtempSync(join(tmpdir(), 'veduta-access-plan-'))
     scratch.push(dir)
@@ -239,6 +272,25 @@ describe('guided installer access (issue #48)', () => {
       repair_command: 'sudo bash deploy/install.sh',
     })
     expect(result.stderr).toContain('no domain required')
+  })
+
+  it('previews private Tailnet access and retains its explicit confirmations for retry', () => {
+    const result = runInstaller([
+      '--preview',
+      '--access',
+      'tailnet',
+      '--tailnet-port',
+      '8443',
+      '--device-approval-confirmed',
+      '--accept-certificate-name',
+    ])
+    expect(result.status).toBe(0)
+    const event = JSON.parse(result.stdout)
+    expect(event.access_mode).toBe('tailnet')
+    expect(event.repair_command).toContain('--device-approval-confirmed')
+    expect(event.repair_command).toContain('--accept-certificate-name')
+    expect(result.stderr).toContain('Tailnet access: private HTTPS')
+    expect(result.stderr).not.toContain('Public access: domain and HTTPS required')
   })
 
   it('previews explicit Public access without mutating the host', () => {

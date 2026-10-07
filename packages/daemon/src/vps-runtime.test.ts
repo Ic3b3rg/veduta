@@ -33,72 +33,85 @@ async function freePort() {
   return port
 }
 
-it('serves Tunnel access with production auth and keeps bootstrap state across restart', async () => {
-  const dataDir = await mkdtemp(join(tmpdir(), 'veduta-tunnel-runtime-'))
-  dirs.push(dataDir)
-  const port = await freePort()
-  const origin = `http://localhost:${port}`
-  async function boot() {
-    const child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
-      cwd: join(root, 'packages/daemon'),
-      env: {
-        ...process.env,
-        VEDUTA_PROFILE: 'vps',
-        VEDUTA_ACCESS: 'tunnel',
-        VEDUTA_PUBLIC_DOMAIN: '',
-        VEDUTA_DATA_DIR: dataDir,
-        VEDUTA_AUTH_STATE: join(dataDir, 'auth.json'),
-        PORT: String(port),
-        VEDUTA_BOOTSTRAP_CODE: 'tunnel-test-bootstrap',
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    children.push(child)
-    let output = ''
-    child.stdout?.on('data', (data: Buffer) => {
-      output += data.toString()
-    })
-    child.stderr?.on('data', (data: Buffer) => {
-      output += data.toString()
-    })
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error(`Gateway did not boot: ${output}`))
-      }, 15000)
-      const inspect = () => {
-        if (output.includes('veduta daemon (production profile)')) {
-          clearTimeout(timer)
-          resolve()
-        }
-      }
-      child.stdout?.on('data', inspect)
-      child.once('exit', () => {
-        clearTimeout(timer)
-        reject(new Error(`Gateway exited: ${output}`))
+it.each(['tunnel', 'tailnet'])(
+  'serves %s access with production auth and keeps bootstrap state across restart',
+  async (mode) => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-tunnel-runtime-'))
+    dirs.push(dataDir)
+    const port = await freePort()
+    const origin = mode === 'tailnet' ? 'https://veduta.tail123.ts.net' : `http://localhost:${port}`
+    async function boot() {
+      const child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
+        cwd: join(root, 'packages/daemon'),
+        env: {
+          ...process.env,
+          VEDUTA_PROFILE: 'vps',
+          VEDUTA_ACCESS: mode,
+          VEDUTA_TAILNET_ORIGIN: mode === 'tailnet' ? origin : '',
+          VEDUTA_PUBLIC_DOMAIN: '',
+          VEDUTA_DATA_DIR: dataDir,
+          VEDUTA_AUTH_STATE: join(dataDir, 'auth.json'),
+          PORT: String(port),
+          VEDUTA_BOOTSTRAP_CODE: 'tunnel-test-bootstrap',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
       })
-    })
-    return child
-  }
-  let child = await boot()
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const status = await fetch(`http://127.0.0.1:${port}/api/auth/status`).then((r) => r.json())
-    expect(status).toEqual({
-      mode: 'production',
-      passkeyRegistered: false,
-      bootstrapRequired: true,
-    })
-    expect((await fetch(`http://127.0.0.1:${port}/api/spaces`)).status).toBe(401)
-    const options = await fetch(`${origin}/api/auth/register/options`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Origin: origin },
-      body: JSON.stringify({ oneTimeCode: 'tunnel-test-bootstrap', deviceName: 'Test computer' }),
-    })
-    expect(options.status).toBe(200)
-    expect(await options.json()).toMatchObject({ options: { rp: { id: 'localhost' } } })
-    if (attempt === 0) {
-      child.kill('SIGTERM')
-      await once(child, 'exit')
-      child = await boot()
+      children.push(child)
+      let output = ''
+      child.stdout?.on('data', (data: Buffer) => {
+        output += data.toString()
+      })
+      child.stderr?.on('data', (data: Buffer) => {
+        output += data.toString()
+      })
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          reject(new Error(`Gateway did not boot: ${output}`))
+        }, 15000)
+        const inspect = () => {
+          if (output.includes('veduta daemon (production profile)')) {
+            clearTimeout(timer)
+            resolve()
+          }
+        }
+        child.stdout?.on('data', inspect)
+        child.once('exit', () => {
+          clearTimeout(timer)
+          reject(new Error(`Gateway exited: ${output}`))
+        })
+      })
+      return child
     }
-  }
-}, 40000)
+    let child = await boot()
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const status = await fetch(`http://127.0.0.1:${port}/api/auth/status`).then((r) => r.json())
+      expect(status).toEqual({
+        mode: 'production',
+        passkeyRegistered: false,
+        bootstrapRequired: true,
+      })
+      expect(
+        (
+          await fetch(`http://127.0.0.1:${port}/api/spaces`, {
+            headers: { 'Tailscale-User-Login': 'owner@example.com' },
+          })
+        ).status,
+      ).toBe(401)
+      const options = await fetch(`http://127.0.0.1:${port}/api/auth/register/options`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: origin },
+        body: JSON.stringify({ oneTimeCode: 'tunnel-test-bootstrap', deviceName: 'Test computer' }),
+      })
+      expect(options.status).toBe(200)
+      expect(await options.json()).toMatchObject({
+        options: { rp: { id: mode === 'tailnet' ? 'veduta.tail123.ts.net' : 'localhost' } },
+      })
+      if (attempt === 0) {
+        child.kill('SIGTERM')
+        await once(child, 'exit')
+        child = await boot()
+      }
+    }
+  },
+  40000,
+)

@@ -22,13 +22,21 @@ export function WizardStepDomain({
       <p>
         Address: <strong>{status.domain.origin ?? domain ?? 'this computer'}</strong>{' '}
         <span className="status-pill online">
-          {status.domain.accessMode === 'tunnel'
-            ? 'Private · SSH'
-            : status.domain.tlsActive
-              ? 'HTTPS active'
-              : 'Local access'}
+          {status.domain.accessMode === 'tailnet'
+            ? 'Private · Tailscale'
+            : status.domain.accessMode === 'tunnel'
+              ? 'Private · SSH'
+              : status.domain.tlsActive
+                ? 'HTTPS active'
+                : 'Local access'}
         </span>
       </p>
+      {status.domain.accessMode === 'tailnet' && (
+        <p>
+          Open this same address on your computer and phone with Tailscale connected to your private
+          network. Approve each device in Tailscale first, then sign in with your Veduta passkey.
+        </p>
+      )}
       {status.domain.accessMode === 'tunnel' && (
         <p>
           Open Veduta on your computer while the SSH connection is running. No public domain is

@@ -3,6 +3,33 @@ import { resolveProfile } from './profile.ts'
 import { resolveVpsAccess } from './vps-access.ts'
 
 describe('production browser access (ADR-0015, issue #48)', () => {
+  it('keeps Tailnet access on loopback with a strict HTTPS origin and RP ID', () => {
+    expect(
+      resolveVpsAccess({
+        VEDUTA_ACCESS: 'tailnet',
+        VEDUTA_TAILNET_ORIGIN: 'https://veduta.tail123.ts.net:8443',
+        PORT: '8788',
+      }),
+    ).toEqual({
+      mode: 'tailnet',
+      host: '127.0.0.1',
+      port: 8788,
+      origin: 'https://veduta.tail123.ts.net:8443',
+      rpID: 'veduta.tail123.ts.net',
+    })
+  })
+
+  it.each([
+    'http://veduta.tail123.ts.net',
+    'https://example.com',
+    'https://user@veduta.tail123.ts.net',
+    'https://veduta.tail123.ts.net/path',
+    'https://veduta.tail123.ts.net?query=1',
+  ])('rejects an unsafe Tailnet origin: %s', (origin) => {
+    expect(() =>
+      resolveVpsAccess({ VEDUTA_ACCESS: 'tailnet', VEDUTA_TAILNET_ORIGIN: origin }),
+    ).toThrow()
+  })
   it('runs Tunnel access as the VPS profile with a stable localhost origin', () => {
     const env = { VEDUTA_PROFILE: 'vps', VEDUTA_ACCESS: 'tunnel' }
     expect(resolveProfile(env)).toEqual({ profile: 'vps' })
