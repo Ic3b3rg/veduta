@@ -67,6 +67,22 @@ function run(script: string, fixture: Record<string, unknown> = {}) {
 }
 
 describe('Tailscale CLI access boundary (issue #49)', () => {
+  it('waits for initial HTTPS certificate readiness instead of aborting the access change', () => {
+    const result = run('tailnet_stage_route; tailnet_verify', { httpsPending: 1 })
+    expect(result.status).toBe(0)
+    expect(result.state.calls.filter((call: string[]) => call[0] === 'curl')).toHaveLength(2)
+    expect(result.stderr).toContain('Waiting for private HTTPS')
+  })
+
+  it('stops retrying an unreachable HTTPS endpoint after the bounded attempt count', () => {
+    const result = run('sleep() { :; }; tailnet_stage_route; tailnet_verify', {
+      httpsPending: 99,
+    })
+    expect(result.status).not.toBe(0)
+    expect(result.state.calls.filter((call: string[]) => call[0] === 'curl')).toHaveLength(12)
+    expect(result.stderr).toContain('valid certificate')
+  })
+
   it.each(['NeedsLogin', 'NeedsMachineAuth', 'Stopped'])(
     'fails closed when the node is %s',
     (BackendState) => {

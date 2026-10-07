@@ -23,6 +23,10 @@ def save():
 
 save()
 if command == 'curl':
+    if state.get('httpsPending', 0) > 0:
+        state['httpsPending'] -= 1
+        save()
+        sys.exit(28)
     if state.get('certificateFailure'):
         sys.exit(60)
     print(json.dumps({'mode': 'production', 'passkeyRegistered': True}))

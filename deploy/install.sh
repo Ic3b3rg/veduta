@@ -1400,7 +1400,7 @@ pairing_stage() {
   write_stage_file true
   printf '\nWaiting for passkey registration. Continue in your browser.\n' >&2
   if [ "$ACCESS_CHANGE" = true ]; then
-    printf 'You have 15 minutes. Ctrl+C restores the previous access.\n' >&2
+    printf 'Temporary access has a 15-minute total deadline, including connection and certificate checks. Ctrl+C restores the previous access.\n' >&2
   else
     printf 'Ctrl+C leaves Veduta running. Resume later with: sudo veduta setup\n' >&2
   fi

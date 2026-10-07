@@ -189,7 +189,7 @@ tailnet_stage_route() {
 }
 
 tailnet_verify() {
-  local expected="$TAILNET_HOST" status
+  local expected="$TAILNET_HOST" status response result attempt
   tailnet_connected_host || return 1
   if [ "$TAILNET_HOST" != "$expected" ]; then private_access_error 'The Tailscale hostname changed during setup.'; return 1; fi
   status=$(tailscale status --json --peers=false) || return 1
@@ -201,10 +201,28 @@ tailnet_verify() {
     private_access_error 'Veduta must have its own private HTTPS Serve route, without Funnel.'; return 1
   fi
   tailnet_assert_backend_private || return 1
-  # Certificate chain, hostname, DNS, Serve proxy and real production Gateway in one request.
-  if ! curl -fsS --connect-timeout 5 --max-time 20 "$ORIGIN/api/auth/status" | jq -e '.mode == "production"' >/dev/null; then
-    private_access_error 'Private HTTPS could not reach the Gateway with a valid certificate. Check Tailscale DNS/HTTPS and retry.'; return 1
-  fi
+  # The first Serve request can race ACME issuance. Retry only transient transport
+  # failures, with a bounded wait; never bypass certificate validation.
+  for ((attempt = 1; attempt <= 12; attempt++)); do
+    if response=$(curl -fsS --connect-timeout 10 --max-time 20 "$ORIGIN/api/auth/status" 2>&1); then
+      if printf '%s' "$response" | jq -e '.mode == "production"' >/dev/null; then
+        tailnet_assert_hostname "$expected" || return 1
+        tailnet_route_matches "$TAILNET_HOST" "$TAILNET_HTTPS_PORT" "$ACCESS_PORT" || return 1
+        tailnet_assert_backend_private || return 1
+        return 0
+      fi
+      break
+    else
+      result=$?
+    fi
+    case "$result" in 7|28|35|52|56) ;; *) break ;; esac
+    if [ "$attempt" -eq 12 ]; then break; fi
+    if [ "$attempt" -eq 1 ]; then printf 'Waiting for private HTTPS and its initial certificate...\n' >&2; fi
+    tailnet_assert_hostname "$expected" || return 1
+    tailnet_route_matches "$TAILNET_HOST" "$TAILNET_HTTPS_PORT" "$ACCESS_PORT" || return 1
+    sleep 2
+  done
+  private_access_error 'Private HTTPS could not reach the Gateway with a valid certificate. Check Tailscale DNS/HTTPS and retry.'
 }
 
 tailnet_stop_candidate() {
