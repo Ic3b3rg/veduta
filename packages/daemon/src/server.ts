@@ -1,3 +1,4 @@
+import type { VpsAccessStatus } from './vps-access.ts'
 import { SYSTEM_SPACE_ID } from '@veduta/protocol'
 import { ServiceRequests } from './service-request.ts'
 import { parseChatDecisionIntent } from './chat-decision.ts'
@@ -219,6 +220,7 @@ export interface ServerOptions {
   onboarding?: {
     domain?: string
     tlsActive?: boolean
+    access?: VpsAccessStatus
     scheduleExit?: () => void
     env?: NodeJS.ProcessEnv
   }
@@ -1753,6 +1755,7 @@ export function buildServer(options: ServerOptions = {}) {
     profile,
     domain: onboardingOptions.domain ?? null,
     tlsActive: onboardingOptions.tlsActive ?? false,
+    ...(onboardingOptions.access ? { access: onboardingOptions.access } : {}),
     vault,
     vaultKeyMaterial,
     spacesEngine: store.spacesEngine,

@@ -252,7 +252,9 @@ export class AuthStore {
   }): Promise<{ ceremonyId: string; options: PasskeyOptions }> {
     const codeHash = hashSecret(input.oneTimeCode)
     this.assertValidOneTimeCode(codeHash)
-    const userId = this.nextId('usr')
+    // Independent user handles keep a staged localhost origin from replacing
+    // the old resident credential before an access change commits (ADR-0015).
+    const userId = base64Url(this.randomBytes(32))
     const options = await this.options.passkeys.generateRegistrationOptions({
       userId,
       userName: 'veduta-owner',

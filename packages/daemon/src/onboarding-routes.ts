@@ -1,3 +1,4 @@
+import type { VpsAccessStatus } from './vps-access.ts'
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import {
   FinishResponseSchema,
@@ -49,6 +50,7 @@ export interface OnboardingRoutesDeps {
   profile: 'loopback' | 'local-vps' | 'vps'
   domain: string | null
   tlsActive: boolean
+  access?: VpsAccessStatus
   vault: SecretsVault | undefined
   /**
    * The vault key material `server.ts`'s `openVaultAndSecrets` already
@@ -85,6 +87,7 @@ function currentStatus(deps: OnboardingRoutesDeps): OnboardingStatus {
     rootDir: deps.rootDir,
     profile: deps.profile,
     domain: deps.domain,
+    ...(deps.access ? { access: deps.access } : {}),
     tlsActive: deps.tlsActive,
     listSpaces: () => deps.spacesEngine.listSpaces(),
     env: deps.env,
@@ -272,7 +275,12 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingR
     if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues })
     try {
       applyIntegrations(
-        { rootDir: deps.rootDir, vault: deps.vault, domain: deps.domain },
+        {
+          rootDir: deps.rootDir,
+          vault: deps.vault,
+          domain: deps.domain,
+          ...(deps.access ? { publicWebhooks: deps.access.mode === 'public' } : {}),
+        },
         parsed.data,
       )
     } catch (error) {

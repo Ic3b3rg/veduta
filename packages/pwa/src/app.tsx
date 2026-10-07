@@ -65,6 +65,8 @@ function RoutedApp() {
   const [onboardingStatus, setOnboardingStatus] = useState<OnboardingStatus | null>(null)
   const [onboardingLoad, setOnboardingLoad] = useState<'loading' | 'ready' | 'error'>('loading')
   const [onboardingRetryToken, setOnboardingRetryToken] = useState(0)
+  const waitingForAccess = useRef(false)
+  const hasOnboardingStatus = useRef(false)
   const [installPrompt, setInstallPrompt] = useState<BrowserInstallPromptEvent | null>(null)
   const [showInstallGuide, setShowInstallGuide] = useState(
     () => !isStandalone() && localStorage.getItem(INSTALL_DISMISSED_KEY) !== '1',
@@ -72,6 +74,8 @@ function RoutedApp() {
   const setError = runtime.reportError
   const resetUnauthorizedSession = useCallback(() => {
     runtime.authenticate(undefined)
+    waitingForAccess.current = false
+    hasOnboardingStatus.current = false
     setOnboardingStatus(null)
     setOnboardingLoad('loading')
   }, [runtime])
@@ -175,24 +179,40 @@ function RoutedApp() {
   useEffect(() => {
     if (authMode === undefined) return
     if (authMode === 'production' && !authToken) return
+    if (!gatewayOnline && hasOnboardingStatus.current && !waitingForAccess.current) return
 
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
     const load = async () => {
-      setOnboardingLoad('loading')
       try {
         const status = await fetchOnboardingStatus(authToken)
+        if (cancelled) return
+        waitingForAccess.current = status.domain?.pending === true
+        hasOnboardingStatus.current = true
         setOnboardingStatus(status)
         setOnboardingLoad('ready')
+        if (waitingForAccess.current) timer = setTimeout(() => void load(), 1000)
       } catch (e) {
+        if (cancelled) return
         if (e instanceof ApiResponseError && e.status === 401) {
           resetUnauthorizedSession()
           return
         }
+        if (waitingForAccess.current) {
+          timer = setTimeout(() => void load(), 1000)
+          return
+        }
+        hasOnboardingStatus.current = false
         console.warn('failed to fetch onboarding status:', e)
         setOnboardingLoad('error')
       }
     }
     void load()
-  }, [authMode, authToken, onboardingRetryToken, resetUnauthorizedSession])
+    return () => {
+      cancelled = true
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }, [authMode, authToken, onboardingRetryToken, resetUnauthorizedSession, gatewayOnline])
 
   // A push notification click (public/service-worker.js) posts this message
   // to an already-open client instead of always opening a new tab.
@@ -237,7 +257,16 @@ function RoutedApp() {
   // below can decide whether it applies). This branch is reachable only in
   // contexts where the wizard could be required — the effect above only sets
   // 'loading' after auth resolves to loopback, or to production with a token.
-  if (onboardingLoad === 'loading' && !(authMode === undefined && error !== null)) {
+  if (onboardingStatus?.domain?.pending) {
+    return (
+      <main className="wizard-shell">
+        <p role="status">Saving your new access…</p>
+        <p>Veduta will reconnect automatically.</p>
+      </main>
+    )
+  }
+
+  if (onboardingLoad === 'loading' && !(authMode === undefined && error !== null && !authToken)) {
     return (
       <main className="wizard-shell">
         <p>Loading…</p>
@@ -266,7 +295,13 @@ function RoutedApp() {
             Veduta could not read its setup status, so Home is not being shown. Check the daemon and
             try again.
           </p>
-          <button type="button" onClick={() => setOnboardingRetryToken((value) => value + 1)}>
+          <button
+            type="button"
+            onClick={() => {
+              setOnboardingLoad('loading')
+              setOnboardingRetryToken((value) => value + 1)
+            }}
+          >
             Retry
           </button>
         </div>

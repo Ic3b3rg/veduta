@@ -18,6 +18,7 @@ export interface IntegrationsDeps {
   rootDir: string
   vault: SecretsVault | undefined
   domain: string | null
+  publicWebhooks?: boolean
   /** Injectable for tests; defaults to a random 24-byte base64url token. */
   randomToken?: () => string
 }
@@ -148,6 +149,12 @@ export function applyIntegrations(deps: IntegrationsDeps, request: IntegrationsA
       steps: { ...config.steps, integrations: 'skipped' },
     })
     return
+  }
+
+  if (request.calendar && deps.publicWebhooks === false) {
+    throw new OnboardingStepError(
+      'Calendar push updates require Public access. Skip this optional step for private access.',
+    )
   }
 
   if (!config.firstSpace) {

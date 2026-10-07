@@ -159,6 +159,23 @@ function setup(initialStorage: Record<string, string> = {}) {
 afterEach(() => vi.useRealTimers())
 
 describe('PWA live-state runtime', () => {
+  it('recovers without a page refresh when the first request lands during a service restart', async () => {
+    vi.useFakeTimers()
+    const { runtime, fetchAuthStatus, connections } = setup({ 'veduta.authToken': 'vdt_test' })
+    fetchAuthStatus.mockRejectedValueOnce(new Error('restarting')).mockResolvedValue({
+      mode: 'production',
+      bootstrapRequired: false,
+      passkeyRegistered: true,
+    })
+    await runtime.start()
+    expect(runtime.getSnapshot().authStatus).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(runtime.getSnapshot().authStatus?.mode).toBe('production')
+    expect(connections).toHaveLength(1)
+    runtime.stop()
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(fetchAuthStatus).toHaveBeenCalledTimes(2)
+  })
   it('owns one lifecycle and publishes immutable snapshots without React', async () => {
     const { runtime, connections, close } = setup()
     const listener = vi.fn()

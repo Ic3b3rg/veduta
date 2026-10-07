@@ -94,6 +94,22 @@ describe('ONBOARDING_STEP_ORDER', () => {
 })
 
 describe('buildOnboardingStatus: required matrix', () => {
+  it('reports the installed private origin independently of the VPS profile', () => {
+    const status = buildOnboardingStatus(
+      baseDeps(freshRoot(), {
+        profile: 'vps',
+        domain: 'localhost',
+        access: { mode: 'tunnel', origin: 'http://localhost:8789' },
+      }),
+    )
+    expect(status.domain).toEqual({
+      domain: 'localhost',
+      tlsActive: false,
+      accessMode: 'tunnel',
+      origin: 'http://localhost:8789',
+    })
+    expect(status.required).toBe(true)
+  })
   it('vps profile, incomplete wizard -> required', () => {
     const dir = freshRoot()
     const status = buildOnboardingStatus(baseDeps(dir, { profile: 'vps' }))

@@ -1,49 +1,9 @@
 #!/usr/bin/env bash
-# Veduta installer -- automates deploy/README.md §1-3 (user/group/directory layout, the
-# secrets vault keyfile, and the systemd unit) plus Node install, checkout, build, first boot,
-# and passkey pairing. See issue #19 for the contract this automates.
-#
-# Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.sh | sudo bash
-#   sudo bash deploy/install.sh [--domain <d>] [--email <e>] [--repo <url>] [--ref <tag|sha>]
-#                                [--data-dir <path>] [--apply] [--preview] [--help]
-#
-# Streams: a machine-readable JSON stage-protocol line (schema: InstallerStageEventSchema in
-# @veduta/protocol) is written to stdout after every stage transition. Every human-readable
-# message goes to stderr. Nothing on stdout is meant to be read by a human.
-#
-# Modes: interactive (a controlling tty is attached -- prompts read from /dev/tty, not stdin,
-# because `curl | sudo bash` consumes stdin as the script itself); unattended apply (--apply
-# with --domain and --email, no tty required); otherwise PREVIEW ONLY -- the full stage plan is
-# printed (all stages "pending", needs_user_input true) and the script exits 0 having made no
-# filesystem or network mutation. Preview safety is structural: every mutating command in every
-# stage function is routed through the `run()` (or `run_quiet()`) wrapper below, which in
-# preview mode only echoes the command to stderr; in addition, preview mode never calls the
-# stage functions at all (see `run_preview`), so this is a belt-and-suspenders guarantee, not
-# just a convention.
-#
-# Stage ids (stable, referenced by the PWA onboarding wizard and by tests): preflight,
-# legacy-detect, deps, user-layout, checkout, build, vault-keyfile, systemd-unit, first-boot,
-# pairing. Node installation (which needs the exact version pinned by the checked-out repo's
-# .node-version) is folded into the "build" stage rather than added as its own "node" stage id,
-# so the ids stay exactly the ten enumerated above; reordering stage ids is fine as long as they
-# stay stable and documented. Provisioning the pinned Codex binary the ChatGPT subscription
-# Model connection needs (issue #47/#48) is folded into "build" the same way, right after the
-# pnpm build succeeds -- see provision_codex below and
-# docs/references/12-hermes-installer-provisioning.md for the guided-provisioning pattern (silent
-# by default, skippable with --skip-codex, a failure here is a warning, never fatal) it copies.
-#
-# Supply-chain trust root: the repository is cloned over GitHub TLS and pinned to a concrete
-# commit SHA (resolved with `git rev-parse` and hard-reset to, even when --ref names a branch or
-# tag); the Node.js tarball is fetched over TLS from nodejs.org and verified against its
-# published SHASUMS256.txt with sha256sum. Full release-signature verification (a GPG keyring
-# for signed Veduta releases) is the SECURITY.md §6 "signed updates" follow-up and is
-# deliberately out of scope here.
-#
-# This script must remain parseable by bash 3.2 (macOS's system bash) because the preview code
-# path is exercised there by packages/daemon/src/installer-protocol.test.ts. That means no
-# associative arrays, no `${var,,}` case conversion, and no other bash-4-only syntax anywhere in
-# the file, not just in the preview path -- bash parses the whole script up front.
+# Guided production installer (issues #19 and #48, ADR-0015).
+# Download this file before invoking sudo: interactive pipes can lose their
+# terminal under sudo-rs. Preview never calls a stage or mutates the host.
+# Human progress goes to stderr; --json opts into the stage protocol on stdout.
+# Bash 3.2 syntax is retained for read-only previews on macOS.
 
 set -Eeuo pipefail
 
@@ -74,7 +34,7 @@ STAGE_TITLES=(
   "Provision the secrets vault keyfile"
   "Install the systemd unit"
   "Enable the service and wait for readiness"
-  "Print the pairing URL and QR code"
+  "Register the first passkey"
 )
 STAGE_STATUS=(pending pending pending pending pending pending pending pending pending pending)
 
@@ -93,6 +53,25 @@ SKIP_CODEX=false
 SHOW_HELP=false
 PREVIEW_MODE=false
 RERUN_CMD=""
+ACCESS=""
+ACCESS_PORT=""
+SSH_TARGET=""
+SSH_PORT=""
+JSON_OUTPUT=false
+SETUP_ONLY=false
+MANAGE_ACCESS=false
+EDIT_ACCESS=false
+INSTALLER_STATE=planning
+REPLY=""
+ORIGIN=""
+EXISTING_ACCESS=false
+ACCESS_CHANGE=false
+ACCESS_CONFIG=/etc/veduta/access.json
+CURRENT_ACCESS=""
+CURRENT_ORIGIN=""
+CURRENT_PORT=""
+SERVICE_NAME=veduta
+INSTALL_LOG=""
 
 ADMIN_HOME=""
 ADMIN_HOME_KNOWN=false
@@ -150,13 +129,18 @@ stages_json_fragment() {
 }
 
 event_json() {
-  local needs="$1"
-  printf '{"protocol_version":1,"stages":%s,"needs_user_input":%s}' "$(stages_json_fragment)" "$needs"
+  local needs="$1" repair="$RERUN_CMD"
+  case "$CURRENT_STAGE" in first-boot|pairing) repair='sudo veduta setup' ;; esac
+  if [ "$SETUP_ONLY" = true ]; then repair='sudo veduta setup'; fi
+  printf '{"protocol_version":1,"stages":%s,"needs_user_input":%s,"access_mode":"%s","state":"%s","repair_command":"%s"}' \
+    "$(stages_json_fragment)" "$needs" "${ACCESS:-tunnel}" "$INSTALLER_STATE" "$(escape_json_multiline "$repair")"
 }
 
 emit_event() {
-  event_json "$1"
-  printf '\n'
+  if [ "$JSON_OUTPUT" = true ] || [ "$PREVIEW_MODE" = true ]; then
+    event_json "$1"
+    printf '\n'
+  fi
 }
 
 # `<dataDir>/installer-stages.json` -- the PWA onboarding wizard's installer summary.
@@ -187,7 +171,13 @@ run() {
     printf '[preview] would run: %s\n' "$*" >&2
     return 0
   fi
-  "$@" 1>&2
+  if [ -z "$INSTALL_LOG" ]; then "$@" 1>&2; return; fi
+  local code
+  if "$@" >>"$INSTALL_LOG" 2>&1; then return 0; else code=$?; fi
+  printf 'Command failed. Recent log output:\n' >&2
+  tail -n 20 "$INSTALL_LOG" >&2
+  printf 'Full log: sudo less %s\n' "$INSTALL_LOG" >&2
+  return "$code"
 }
 
 # For commands whose own stdout carries secret material (writing the vault keyfile, the
@@ -221,6 +211,19 @@ escape_json_multiline() {
 parse_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
+      --access|--port|--ssh-target|--ssh-port|--domain|--email|--repo|--ref|--data-dir|--update-feed|--update-root-key)
+        if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" = --* ]]; then
+          printf 'error: %s requires a value\n' "$1" >&2; exit 64
+        fi ;;
+    esac
+    case "$1" in
+      --access) ACCESS="${2:-}"; shift 2 ;;
+      --port) ACCESS_PORT="${2:-}"; shift 2 ;;
+      --ssh-target) SSH_TARGET="${2:-}"; shift 2 ;;
+      --ssh-port) SSH_PORT="${2:-}"; shift 2 ;;
+      --json) JSON_OUTPUT=true; shift ;;
+      --setup) SETUP_ONLY=true; shift ;;
+      --manage-access) MANAGE_ACCESS=true; shift ;;
       --domain)
         DOMAIN="${2:-}"
         shift 2
@@ -280,46 +283,31 @@ print_help() {
   cat >&2 <<EOF
 Veduta installer
 
-Usage:
-  curl -fsSL $INSTALL_URL | sudo bash
-  sudo bash deploy/install.sh [options]
+Download, then run on your VPS:
+  curl -fsSLo veduta-install.sh $INSTALL_URL && sudo env SSH_CONNECTION="\$SSH_CONNECTION" bash veduta-install.sh
 
 Options:
-  --domain <domain>   Public domain (A/AAAA record pointing at this VPS)
-  --email <email>     ACME contact email
-  --repo <git url>    Repository to clone (default: $DEFAULT_REPO)
-  --ref <tag|sha>     Git ref to check out (default: main, resolved to a commit SHA)
-  --data-dir <path>   Daemon data directory (default: $DEFAULT_DATA_DIR)
-  --update-feed <url> Signed self-update feed URL (default: $DEFAULT_UPDATE_FEED)
+  --access tunnel|public  Browser access (guided default: tunnel)
+  --port <port>           Stable Tunnel port at both ends (default: 8788)
+  --ssh-target user@host  SSH destination for the computer handoff
+  --ssh-port <port>       SSH server port (default: detected, or 22)
+  --domain <domain>       Required for Public access
+  --email <email>         Certificate contact for Public access
+  --repo <url>            Source repository (default: $DEFAULT_REPO)
+  --ref <tag|sha>         Pin a source ref (default: main on a fresh install)
+  --data-dir <path>       Persistent data (default: $DEFAULT_DATA_DIR)
+  --update-feed <url>     Signed update feed (default: $DEFAULT_UPDATE_FEED)
   --update-root-key <key|@file>
-                      Minisign root public key pinning the update feed above -- either the key
-                      text itself, or @/path/to/file to read it from a file. Omit to leave
-                      signed updates unconfigured (no /etc/veduta/update.json is written); this
-                      installer never fabricates a placeholder key. See the "signed self-update"
-                      notice this script prints at the end of a run without one, and
-                      RELEASING.md for how the upstream key is published.
-  --apply             Run unattended (requires --domain and --email when no tty is attached)
-  --preview           Force preview mode: print the stage plan, make no changes, exit 0
-  --skip-codex        Skip provisioning the pinned Codex binary (ChatGPT subscription Model
-                      connection, issue #47) during the build stage. Default: provision it --
-                      a failure there is a warning, never fatal to the install (see
-                      docs/references/12-hermes-installer-provisioning.md); enable it later with
-                      deploy/codex-setup.sh --data-dir <data-dir> --yes.
-  --help              Show this help
+                         Explicit trust anchor; upstream fresh installs use docs/keys/root.pub
+  --apply                Confirm the plan without prompts; provide all mode-specific values
+  --preview              Show the plan without changing the host
+  --json                 Emit stage events on stdout (preview always emits JSON)
+  --skip-codex            Skip the optional ChatGPT subscription connection binary
+  --help                 Show this help
 
-Modes:
-  Interactive  -- a controlling tty is attached: prompts for any missing --domain/--email.
-  Unattended   -- --apply --domain <d> --email <e>, no tty needed: fully automated.
-  Preview      -- no tty and no --apply (or explicit --preview): prints the full stage plan
-                  on stdout and a human summary on stderr, then exits 0 having made no changes.
-
-Stage protocol (stdout only, one JSON line per stage transition):
-  {"protocol_version":1,"stages":[{"id","title","status"},...],"needs_user_input":bool}
-  Schema: InstallerStageEventSchema in @veduta/protocol. Every human-readable message is
-  written to stderr instead.
-
-Reruns: with an existing /opt/veduta checkout and no explicit --ref, the installer reuses the
-currently checked-out commit instead of re-resolving 'main' -- pass --ref main to upgrade.
+Without a terminal or --apply, only a preview is produced.
+After installation: sudo veduta setup (recover pairing); sudo veduta access (change access).
+An access change requires a new passkey and restores the previous access on failure.
 EOF
 }
 
@@ -335,6 +323,10 @@ EOF
 readonly DATA_DIR_ALLOWED_PARENTS="/var/lib /srv /opt /var/local"
 
 validate_data_dir() {
+  if ! [[ "$DATA_DIR" =~ ^/[a-zA-Z0-9_./-]+$ ]]; then
+    printf 'error: --data-dir may contain only letters, digits, /, ., _, and -\n' >&2
+    exit 1
+  fi
   case "$DATA_DIR" in
     /*) ;;
     *)
@@ -384,44 +376,26 @@ validate_data_dir() {
 # --- Recovery command (used by every "how do I retry" hint) -------------------------------
 
 compute_rerun_cmd() {
-  # $0 is literally "bash" under `curl | sudo bash`, so a hint like `sudo bash $0` would
-  # render as the nonsensical `sudo bash bash`. Prefer the actual script path when $0 names a
-  # real, readable file (a local checkout); otherwise fall back to the canonical curl-pipe
-  # invocation. Either way, carry forward whatever flags this run was actually given.
-  local flags=""
-  if [ "$REPO" != "$DEFAULT_REPO" ]; then
-    flags="$flags --repo $REPO"
-  fi
-  if [ -n "$REF" ]; then
-    flags="$flags --ref $REF"
-  fi
-  if [ "$DATA_DIR" != "$DEFAULT_DATA_DIR" ]; then
-    flags="$flags --data-dir $DATA_DIR"
-  fi
-  if [ "$UPDATE_FEED" != "$DEFAULT_UPDATE_FEED" ]; then
-    flags="$flags --update-feed $UPDATE_FEED"
-  fi
-  if [ -n "$UPDATE_ROOT_KEY" ]; then
-    flags="$flags --update-root-key $UPDATE_ROOT_KEY"
-  fi
-  if [ -n "$DOMAIN" ]; then
-    flags="$flags --domain $DOMAIN"
-  fi
-  if [ -n "$EMAIL" ]; then
-    flags="$flags --email $EMAIL"
-  fi
-  if [ "$EXPLICIT_APPLY" = "true" ]; then
-    flags="$flags --apply"
-  fi
-  if [ "$SKIP_CODEX" = "true" ]; then
-    flags="$flags --skip-codex"
-  fi
-
-  if [ -n "${0:-}" ] && [ -f "$0" ] && [ -r "$0" ]; then
-    printf 'sudo bash %s%s' "$0" "$flags"
+  local -a flags=()
+  [ -z "$ACCESS" ] || flags+=(--access "$ACCESS")
+  [ -z "$ACCESS_PORT" ] || flags+=(--port "$ACCESS_PORT")
+  [ -z "$SSH_TARGET" ] || flags+=(--ssh-target "$SSH_TARGET")
+  [ -z "$SSH_PORT" ] || flags+=(--ssh-port "$SSH_PORT")
+  [ "$REPO" = "$DEFAULT_REPO" ] || flags+=(--repo "$REPO")
+  [ -z "$REF" ] || flags+=(--ref "$REF")
+  [ "$DATA_DIR" = "$DEFAULT_DATA_DIR" ] || flags+=(--data-dir "$DATA_DIR")
+  [ "$UPDATE_FEED" = "$DEFAULT_UPDATE_FEED" ] || flags+=(--update-feed "$UPDATE_FEED")
+  [ -z "$UPDATE_ROOT_KEY" ] || flags+=(--update-root-key "$UPDATE_ROOT_KEY")
+  [ -z "$DOMAIN" ] || flags+=(--domain "$DOMAIN")
+  [ -z "$EMAIL" ] || flags+=(--email "$EMAIL")
+  [ "$EXPLICIT_APPLY" != true ] || flags+=(--apply)
+  [ "$SKIP_CODEX" != true ] || flags+=(--skip-codex)
+  if [ -f "${0:-}" ] && [ -r "$0" ]; then
+    printf 'sudo bash %q' "$0"
   else
-    printf 'curl -fsSL %s | sudo bash -s --%s' "$INSTALL_URL" "$flags"
+    printf 'curl -fsSLo veduta-install.sh %q && sudo bash veduta-install.sh' "$INSTALL_URL"
   fi
+  if [ "${#flags[@]}" -gt 0 ]; then printf ' %q' "${flags[@]}"; fi
 }
 
 # --- --update-root-key `@file` support ----------------------------------------------------
@@ -461,16 +435,25 @@ determine_mode() {
   fi
 
   if has_tty; then
+    if [ ! -t 0 ] && [ "$EXPLICIT_APPLY" != true ]; then
+      printf 'error: for interactive setup, download the installer to a file before running sudo.\n' >&2
+      printf '  %s\n' "$RERUN_CMD" >&2
+      exit 1
+    fi
     PREVIEW_MODE=false
     return 0
   fi
 
   if [ "$EXPLICIT_APPLY" = "true" ]; then
-    if [ -n "$DOMAIN" ] && [ -n "$EMAIL" ]; then
+    if [ "${ACCESS:-tunnel}" = public ] && [ -n "$DOMAIN" ] && [ -n "$EMAIL" ]; then
       PREVIEW_MODE=false
       return 0
     fi
-    printf 'error: --apply without a controlling tty requires --domain and --email\n' >&2
+    if [ "${ACCESS:-tunnel}" = tunnel ] && [ -n "$SSH_TARGET" ]; then
+      PREVIEW_MODE=false
+      return 0
+    fi
+    printf 'error: unattended setup requires --access tunnel --ssh-target user@host, or --access public --domain host --email address\n' >&2
     exit 1
   fi
 
@@ -510,9 +493,9 @@ Veduta installer -- PREVIEW MODE (no changes made)
 
 No controlling tty was found and --apply was not given (or --preview was passed explicitly),
 so this run is preview-only: nothing is written, downloaded, or installed. Below is exactly
-what an apply run would do -- run this again from an interactive terminal (curl | sudo bash
-while logged in over SSH), or with `--apply --domain <domain> --email <email>` for an
-unattended run.
+what an apply run would do. Download the script to a file and run it with sudo while logged
+in over SSH. Unattended Tunnel access needs --apply --access tunnel --ssh-target user@host;
+Public access needs --apply --access public --domain <domain> --email <email>.
 EOF
   printf '\n' >&2
   printf '  user/group:      veduta:veduta (system account, no login shell)\n' >&2
@@ -523,8 +506,10 @@ EOF
   printf '  update home:     /var/lib/veduta/updates/{releases,runtimes,bin,state,backups,tmp} (veduta:veduta 0700)\n' >&2
   if [ -n "$UPDATE_ROOT_KEY" ]; then
     printf '  update pinning:  %s (root:root 0644) -- feed %s\n' "$UPDATE_PINNING_PATH" "$UPDATE_FEED" >&2
+  elif [ "$REPO" = "$DEFAULT_REPO" ] && [ "$UPDATE_FEED" = "$DEFAULT_UPDATE_FEED" ]; then
+    printf '  update pinning:  bundled upstream public root on fresh installs; existing pinning preserved\n' >&2
   else
-    printf '  update pinning:  skipped (no --update-root-key given) -- signed self-update stays unconfigured\n' >&2
+    printf '  update pinning:  custom source requires --update-root-key; existing pinning preserved\n' >&2
   fi
   printf '  systemd unit:    /etc/systemd/system/veduta.service + veduta.service.d/{override,bootstrap}.conf\n' >&2
   printf '  supervisor:      /var/lib/veduta/updates/bin/veduta-run (veduta:veduta 0755), ExecStart wraps through it\n' >&2
@@ -536,12 +521,18 @@ EOF
     printf '  codex binary:    provisioned into %s/codex via deploy/codex-setup.sh (best-effort, never fails the build stage)\n' "$DATA_DIR" >&2
   fi
   printf '\n' >&2
-  printf 'flags: --domain --email --repo --ref --data-dir --update-feed --update-root-key --apply --preview --skip-codex --help\n' >&2
-  printf 'stage protocol: one JSON line per stage transition on stdout (schema: @veduta/protocol InstallerStageEventSchema)\n' >&2
+  printf 'flags: --access --port --ssh-target --ssh-port --domain --email --repo --ref --data-dir --update-feed --update-root-key --apply --preview --json --skip-codex --help\n' >&2
+  printf 'stage protocol: preview or --json only; schema: @veduta/protocol InstallerStageEventSchema\n' >&2
 }
 
 run_preview() {
+  INSTALLER_STATE=preview
   print_preview_summary
+  if [ "${ACCESS:-tunnel}" = tunnel ]; then
+    printf '  access:          Tunnel access: no domain required\n' >&2
+  else
+    printf '  access:          Public access: domain and HTTPS required\n' >&2
+  fi
   emit_event true
 }
 
@@ -549,17 +540,193 @@ run_preview() {
 # as the script source, so stdin cannot double as a prompt channel) --------------------------
 
 prompt_tty() {
-  local label="$1" default="${2:-}" answer
+  local label="$1" default="${2:-}"
+  INSTALLER_STATE=waiting-input
+  emit_event true
   if [ -n "$default" ]; then
     printf '%s [%s]: ' "$label" "$default" >/dev/tty
   else
     printf '%s: ' "$label" >/dev/tty
   fi
-  IFS= read -r answer </dev/tty
-  if [ -z "$answer" ]; then
-    printf '%s' "$default"
-  else
-    printf '%s' "$answer"
+  IFS= read -r REPLY </dev/tty || return 1
+  REPLY="${REPLY:-$default}"
+  INSTALLER_STATE=planning
+}
+
+validate_access_args() {
+  case "$ACCESS" in ''|tunnel|public) ;; *) printf 'error: --access must be tunnel or public\n' >&2; exit 1 ;; esac
+  local value
+  for value in "$ACCESS_PORT" "$SSH_PORT"; do
+    if [ -n "$value" ]; then
+      case "$value" in *[!0-9]*) printf 'error: port must be an integer\n' >&2; exit 1 ;; esac
+      if [ "${#value}" -gt 5 ] || [ "$value" -lt 1 ] || [ "$value" -gt 65535 ]; then
+        printf 'error: port must be between 1 and 65535\n' >&2; exit 1
+      fi
+    fi
+  done
+  if [ -n "$SSH_TARGET" ] && ! [[ "$SSH_TARGET" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]*@[a-zA-Z0-9][a-zA-Z0-9.:-]*$ ]]; then
+    printf 'error: --ssh-target must be user@host without shell options\n' >&2; exit 1
+  fi
+  if [ -n "$DOMAIN" ] && ! [[ "$DOMAIN" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z][a-zA-Z0-9.-]*$ ]]; then
+    printf 'error: --domain must be a DNS name without a scheme, port, or path\n' >&2; exit 1
+  fi
+  if [ -n "$EMAIL" ] && ! [[ "$EMAIL" =~ ^[a-zA-Z0-9._+%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]+$ ]]; then
+    printf 'error: --email must be a certificate contact email\n' >&2; exit 1
+  fi
+}
+
+choose_access() {
+  local current_domain="" current_email="" current_data_dir="" default_access=tunnel
+  if [ -f "$ACCESS_CONFIG" ]; then
+    CURRENT_ACCESS=$(jq -er '.mode' "$ACCESS_CONFIG")
+    CURRENT_ORIGIN=$(jq -er '.origin' "$ACCESS_CONFIG")
+    CURRENT_PORT=$(jq -er '.port' "$ACCESS_CONFIG")
+    current_domain=$(jq -r '.domain // ""' "$ACCESS_CONFIG")
+    current_email=$(jq -r '.email // ""' "$ACCESS_CONFIG")
+    SSH_TARGET=${SSH_TARGET:-$(jq -r '.sshTarget // ""' "$ACCESS_CONFIG")}
+    SSH_PORT=${SSH_PORT:-$(jq -r '.sshPort // 22' "$ACCESS_CONFIG")}
+    DATA_DIR=$(jq -er '.dataDir' "$ACCESS_CONFIG")
+    EXISTING_ACCESS=true
+  elif [ -f /etc/systemd/system/veduta.service.d/override.conf ]; then
+    current_domain=$(sed -n 's/^Environment=VEDUTA_PUBLIC_DOMAIN=//p' /etc/systemd/system/veduta.service.d/override.conf | head -n1)
+    current_email=$(sed -n 's/^Environment=VEDUTA_ACME_EMAIL=//p' /etc/systemd/system/veduta.service.d/override.conf | head -n1)
+    current_data_dir=$(sed -n 's/^Environment=VEDUTA_DATA_DIR=//p' /etc/systemd/system/veduta.service.d/override.conf | head -n1)
+    DATA_DIR=${current_data_dir:-$DATA_DIR}
+    if [ -n "$current_domain" ]; then
+      CURRENT_ACCESS=public
+      CURRENT_ORIGIN="https://$current_domain"
+      CURRENT_PORT=8788
+      EXISTING_ACCESS=true
+    fi
+  fi
+  if [ "$EXISTING_ACCESS" = true ]; then
+    default_access="$CURRENT_ACCESS"
+    if [ "$SETUP_ONLY" != true ] && [ "$EXPLICIT_APPLY" != true ]; then
+      printf '\nVeduta is installed at %s\n  1) Repair\n  2) Update access\n  3) Exit\n' "$CURRENT_ORIGIN" >&2
+      prompt_tty 'Choose' 1
+      case "$REPLY" in
+        1) ACCESS=${ACCESS:-$CURRENT_ACCESS}; SETUP_ONLY=$MANAGE_ACCESS ;;
+        2) SETUP_ONLY=true; EDIT_ACCESS=true ;;
+        3) exit 0 ;;
+        *) printf 'error: choose 1, 2, or 3\n' >&2; return 1 ;;
+      esac
+    elif [ "$SETUP_ONLY" = true ]; then
+      ACCESS=${ACCESS:-$CURRENT_ACCESS}
+    fi
+  elif [ "$SETUP_ONLY" = true ]; then
+    printf 'error: no installed access configuration. Run the installer first.\n' >&2
+    return 1
+  fi
+  if [ -z "$ACCESS" ]; then
+    if [ "$EXPLICIT_APPLY" = true ]; then
+      ACCESS=tunnel
+    else
+      printf '\nHow will you open Veduta?\n  tunnel) Tunnel access — no domain required (computer via SSH)\n  public) Public access — domain and HTTPS certificate required\n' >&2
+      prompt_tty 'Access' "$default_access"
+      ACCESS="$REPLY"
+    fi
+  fi
+  ACCESS_PORT=${ACCESS_PORT:-${CURRENT_PORT:-8788}}
+  if [ "$ACCESS" = public ]; then
+    SSH_PORT=${SSH_PORT:-22}
+    DOMAIN=${DOMAIN:-$current_domain}
+    EMAIL=${EMAIL:-$current_email}
+    if { [ -z "$DOMAIN" ] || [ "$EDIT_ACCESS" = true ]; } && [ "$EXPLICIT_APPLY" != true ]; then
+      prompt_tty 'Public domain' "$current_domain"; DOMAIN="$REPLY"
+    fi
+    if { [ -z "$EMAIL" ] || [ "$EDIT_ACCESS" = true ]; } && [ "$EXPLICIT_APPLY" != true ]; then
+      prompt_tty 'Certificate contact email' "$current_email"; EMAIL="$REPLY"
+    fi
+    if [ -z "$DOMAIN" ] || [ -z "$EMAIL" ]; then
+      printf 'error: Public access needs --domain and --email\n' >&2; return 1
+    fi
+    ORIGIN="https://$DOMAIN"
+  elif [ "$ACCESS" = tunnel ]; then
+    DOMAIN=""; EMAIL=""
+    choose_tunnel_handoff
+    ORIGIN="http://localhost:$ACCESS_PORT"
+  fi
+  validate_access_args
+  validate_data_dir
+  if [ "$EXISTING_ACCESS" = true ] && [ "$ORIGIN" != "$CURRENT_ORIGIN" ]; then
+    ACCESS_CHANGE=true
+    SETUP_ONLY=true
+  fi
+  if [ "$MANAGE_ACCESS" = true ]; then SETUP_ONLY=true; fi
+  if [ "$SETUP_ONLY" = true ] && [ ! -f /usr/local/lib/veduta/access-transaction.sh ]; then
+    printf 'error: this installation predates guided access. Run sudo bash veduta-install.sh --ref main and choose Repair, keeping its current Public access; then run sudo veduta access.\n' >&2
+    return 1
+  fi
+  printf '\nPlan: %s access at %s\n  Production service, mandatory passkeys, data in %s.\n' "$ACCESS" "$ORIGIN" "$DATA_DIR" >&2
+  if [ "$ACCESS_CHANGE" = true ]; then
+    printf '  Register a new passkey at the new address to commit the change. Failure restores the old access.\n' >&2
+  fi
+  if [ "$EXPLICIT_APPLY" != true ]; then
+    prompt_tty 'Continue?' Y
+    case "$REPLY" in y|Y|yes|YES) ;; *) printf 'Cancelled; no changes made.\n' >&2; exit 0 ;; esac
+  fi
+}
+
+port_in_use() {
+  ss -H -ltn "sport = :$1" | grep . >/dev/null
+}
+
+choose_tunnel_handoff() {
+  local detected_host="" detected_port=22 free_port banner
+  if [ -n "${SSH_CONNECTION:-}" ]; then
+    detected_host=$(printf '%s' "$SSH_CONNECTION" | awk '{print $3}')
+    detected_port=$(printf '%s' "$SSH_CONNECTION" | awk '{print $4}')
+  fi
+  if [ -z "$SSH_TARGET" ] && [ -n "$detected_host" ]; then
+    SSH_TARGET="${SUDO_USER:-root}@$detected_host"
+  fi
+  SSH_PORT=${SSH_PORT:-$detected_port}
+  if [ "$EXPLICIT_APPLY" != true ] && { [ "$SETUP_ONLY" != true ] || [ "$EDIT_ACCESS" = true ] || [ -z "$SSH_TARGET" ]; }; then
+    prompt_tty 'SSH destination (used from your computer)' "$SSH_TARGET"; SSH_TARGET="$REPLY"
+    prompt_tty 'SSH port' "$SSH_PORT"; SSH_PORT="$REPLY"
+  fi
+  if [ "$EXPLICIT_APPLY" != true ] && [ "$EDIT_ACCESS" = true ]; then
+    prompt_tty 'Veduta browser port' "$ACCESS_PORT"; ACCESS_PORT="$REPLY"
+  fi
+  if [ -z "$SSH_TARGET" ]; then
+    printf 'error: no SSH destination. Run again with --access tunnel --ssh-target user@host.\n' >&2
+    return 1
+  fi
+  validate_access_args
+  if [ "$CURRENT_ACCESS" != tunnel ] || [ "$ACCESS_PORT" != "$CURRENT_PORT" ]; then
+    if port_in_use "$ACCESS_PORT"; then
+      ss -ltnp "sport = :$ACCESS_PORT" >&2
+      free_port=$((10#$ACCESS_PORT + 1))
+      while [ "$free_port" -le 65535 ] && port_in_use "$free_port"; do free_port=$((free_port + 1)); done
+      if [ "$EXPLICIT_APPLY" = true ] || [ "$free_port" -gt 65535 ]; then
+        printf 'error: port %s is occupied; choose a free port with --port.\n' "$ACCESS_PORT" >&2; return 1
+      fi
+      prompt_tty 'Port is occupied. Choose a free port for Veduta' "$free_port"
+      ACCESS_PORT="$REPLY"
+      validate_access_args
+      if port_in_use "$ACCESS_PORT"; then printf 'error: chosen port is occupied\n' >&2; return 1; fi
+    fi
+  fi
+  verify_ssh_forwarding
+  banner=$(timeout 5 bash -c 'exec 3<>/dev/tcp/"$1"/"$2"; IFS= read -r line <&3; printf "%s" "$line"' _ "${SSH_TARGET#*@}" "$SSH_PORT") || true
+  case "$banner" in SSH-*) ;; *) printf 'error: SSH is not reachable at %s port %s. Check the destination and rerun with --ssh-target and --ssh-port.\n' "$SSH_TARGET" "$SSH_PORT" >&2; return 1 ;; esac
+}
+
+verify_ssh_forwarding() {
+  local context="user=${SSH_TARGET%@*}" policy permitted=false destination
+  if [ -n "${SSH_CONNECTION:-}" ]; then
+    context="$context,$(printf '%s' "$SSH_CONNECTION" | awk '{printf "addr=%s,host=%s,laddr=%s,lport=%s", $1,$1,$3,$4}')"
+  fi
+  if command -v sshd >/dev/null 2>&1; then policy=$(sshd -T -C "$context") || return 1; else policy=""; fi
+  if printf '%s\n' "$policy" | grep -E '^allowtcpforwarding (yes|local)$' >/dev/null &&
+     printf '%s\n' "$policy" | grep '^disableforwarding no$' >/dev/null; then
+    for destination in $(printf '%s\n' "$policy" | sed -n 's/^permitopen //p'); do
+      case "$destination" in any|"127.0.0.1:$ACCESS_PORT"|"127.0.0.1:*"|"*:$ACCESS_PORT"|"*:*") permitted=true ;; esac
+    done
+  fi
+  if [ "$permitted" != true ]; then
+    printf 'error: SSH policy does not permit this local forward. Inspect and correct it with: sudo sshd -T -C %q\n' "$context" >&2
+    return 1
   fi
 }
 
@@ -603,27 +770,7 @@ preflight_stage() {
     ADMIN_HOME_KNOWN=false
   fi
 
-  # Domain/email are collected here, in preflight, rather than in the systemd-unit stage --
-  # asking up front means the operator isn't babysitting the multi-minute deps/build phase
-  # just to answer a prompt that could have been asked before any of it started. An existing
-  # override.conf's values (a rerun against an already-configured host) become the prompt
-  # defaults, parsed before prompting.
-  local override_conf=/etc/systemd/system/veduta.service.d/override.conf
-  local current_domain="" current_email=""
-  if [ -f "$override_conf" ]; then
-    current_domain=$(grep -o 'VEDUTA_PUBLIC_DOMAIN=[^[:space:]]*' "$override_conf" | head -n1 | cut -d= -f2- || true)
-    current_email=$(grep -o 'VEDUTA_ACME_EMAIL=[^[:space:]]*' "$override_conf" | head -n1 | cut -d= -f2- || true)
-  fi
-  if [ -z "$DOMAIN" ]; then
-    DOMAIN=$(prompt_tty "Public domain (A/AAAA record pointing at this VPS)" "$current_domain")
-  fi
-  if [ -z "$EMAIL" ]; then
-    EMAIL=$(prompt_tty "ACME contact email" "$current_email")
-  fi
-  if [ -z "$DOMAIN" ] || [ -z "$EMAIL" ]; then
-    printf 'error: a domain and an email are required (via --domain/--email or the prompts above)\n' >&2
-    fail_stage 1
-  fi
+  choose_access
 }
 
 # True (exit 0) when $1 exists and is NOT itself a symlink (security review): the guard
@@ -875,7 +1022,7 @@ stage_legacy_memory() {
 
 deps_stage() {
   run apt-get update
-  run apt-get install -y git curl ca-certificates qrencode xz-utils
+  run env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y git curl ca-certificates qrencode xz-utils jq iproute2
 }
 
 # Root-owned trust anchors for the signed self-update feed (issue #43,
@@ -935,26 +1082,24 @@ user_layout_stage() {
 checkout_stage() {
   local ref="${REF:-main}"
   if [ -d /opt/veduta/.git ]; then
-    # Honor a changed --repo on a rerun -- otherwise the fetch below silently keeps talking
-    # to whatever origin the very first install pointed at.
     run git -C /opt/veduta remote set-url origin "$REPO"
-    run git -C /opt/veduta clean -fdx
-
     if [ -z "$REF" ]; then
-      # A rerun with no explicit --ref pins to whatever commit is already checked out.
-      # `main` moves; a recovery rerun (retrying a failed later stage) must not silently
-      # advance the code out from under the operator. Pass --ref explicitly to upgrade.
       RESOLVED_SHA=$(git -C /opt/veduta rev-parse HEAD)
-      printf 'existing checkout found and no --ref given -- pinning to the current commit %s (pass --ref to upgrade)\n' "$RESOLVED_SHA" >&2
-      run git -C /opt/veduta reset --hard "$RESOLVED_SHA"
-      return 0
+      printf 'Repair keeps the installed commit %s (pass --ref to select another source).\n' "$RESOLVED_SHA" >&2
     fi
   else
     run git clone --no-checkout "$REPO" /opt/veduta
   fi
-
-  run git -C /opt/veduta fetch origin "$ref"
-  RESOLVED_SHA=$(git -C /opt/veduta rev-parse FETCH_HEAD)
+  if [ -z "$RESOLVED_SHA" ]; then
+    run git -C /opt/veduta fetch origin "$ref"
+    RESOLVED_SHA=$(git -C /opt/veduta rev-parse FETCH_HEAD)
+  fi
+  # Check compatibility before removing dependencies or replacing runnable files.
+  if ! git -C /opt/veduta cat-file -e "$RESOLVED_SHA:deploy/access-transaction.sh" 2>/dev/null; then
+    printf 'error: this ref predates guided access. Existing runnable files were retained. Rerun with --ref main to explicitly select the current source installer.\n' >&2
+    fail_stage 1
+  fi
+  run git -C /opt/veduta clean -fdx
   run git -C /opt/veduta reset --hard "$RESOLVED_SHA"
   printf 'checked out %s @ %s -> commit %s\n' "$REPO" "$ref" "$RESOLVED_SHA" >&2
 }
@@ -1149,64 +1294,80 @@ systemd_unit_stage() {
   run systemctl daemon-reload
 }
 
-first_boot_stage() {
-  run systemctl enable veduta
-  # `restart` (not `enable --now`) so a rerun against an already-running service also picks
-  # up a regenerated bootstrap.conf / changed override.conf, not just a fresh install.
-  run systemctl restart veduta
-
-  local tries=0
-  while [ "$tries" -lt 30 ]; do
-    if systemctl is-active --quiet veduta; then
-      break
-    fi
-    tries=$((tries + 1))
-    sleep 2
-  done
-  if ! systemctl is-active --quiet veduta; then
-    printf 'error: veduta.service did not become active\n' >&2
-    fail_stage 1
+auth_status() {
+  if [ "$ACCESS" = public ]; then
+    curl -fsSk --connect-timeout 3 --max-time 5 --resolve "${DOMAIN}:443:127.0.0.1" "$ORIGIN/api/auth/status"
+  else
+    curl -fsS --connect-timeout 3 --max-time 5 "http://127.0.0.1:$ACCESS_PORT/api/auth/status"
   fi
+}
 
-  # /api/health is auth-protected on the VPS profile and plain localhost HTTP gets a 308
-  # redirect (ACME challenge server), so the public, unauthenticated /api/auth/status is the
-  # only endpoint that can be polled here. ACME issuance can take a while, hence the long wait.
-  local waited=0 max_wait=180 ready=false
-  while [ "$waited" -lt "$max_wait" ]; do
-    if curl -fsk --resolve "${DOMAIN}:443:127.0.0.1" "https://${DOMAIN}/api/auth/status" >/dev/null 2>&1; then
-      ready=true
-      break
+wait_for_gateway() {
+  local waited=0
+  while [ "$waited" -lt 180 ]; do
+    if systemctl is-active --quiet "$SERVICE_NAME" && auth_status 2>/dev/null | jq -e '.mode == "production"' >/dev/null 2>&1; then
+      return 0
     fi
-    sleep 5
-    waited=$((waited + 5))
+    sleep 2
+    waited=$((waited + 2))
   done
-  if [ "$ready" != "true" ]; then
-    printf 'error: timed out waiting for https://%s/api/auth/status (ACME issuance can take a few minutes)\n' "$DOMAIN" >&2
-    fail_stage 1
+  printf 'error: Gateway not ready. Inspect: sudo journalctl -u %s -n 50\n' "$SERVICE_NAME" >&2
+  return 1
+}
+
+first_boot_stage() {
+  if [ "$SERVICE_NAME" = veduta ]; then run systemctl enable veduta; fi
+  run systemctl restart "$SERVICE_NAME"
+  wait_for_gateway
+  if [ "$ACCESS" = public ]; then
+    # Unlike the local readiness probe, this verifies DNS and the trusted certificate.
+    curl -fsS --connect-timeout 5 --max-time 15 "$ORIGIN/api/auth/status" | jq -e '.mode == "production"' >/dev/null
+  fi
+}
+
+print_handoff() {
+  if [ "$ACCESS" = tunnel ]; then
+    printf '\nRun this on your computer, not on the VPS. Keep that terminal open:\n' >&2
+    printf '  ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -L 127.0.0.1:%s:127.0.0.1:%s -p %s %s\n' \
+      "$ACCESS_PORT" "$ACCESS_PORT" "$SSH_PORT" "$SSH_TARGET" >&2
+    printf 'If your computer reports "Address already in use", close the existing forward or run sudo veduta access on the VPS to choose another stable port.\n' >&2
   fi
 }
 
 pairing_stage() {
-  local url="https://${DOMAIN}/setup?code=${BOOTSTRAP_CODE}"
-
-  # If a passkey is already registered (a rerun after pairing already completed), there is
-  # nothing left to pair -- note it on stderr, mark this stage `skipped` in the protocol, and
-  # print no QR/URL (a stale-but-still-valid-looking code would be misleading).
-  local status_body
-  status_body=$(curl -fsk --resolve "${DOMAIN}:443:127.0.0.1" "https://${DOMAIN}/api/auth/status" 2>/dev/null || true)
-  if printf '%s' "$status_body" | grep -q '"passkeyRegistered":true'; then
-    printf 'a passkey is already registered for %s -- pairing is already done, skipping the QR code\n' "$DOMAIN" >&2
-    set_stage_status pairing skipped
+  print_handoff
+  if auth_status | jq -e '.passkeyRegistered == true' >/dev/null; then
+    printf '\nOpen Veduta: %s\nA passkey is already registered.\n' "$ORIGIN" >&2
     return 0
   fi
-
-  printf '\nsetup URL (the code expires in 60 minutes):\n  %s\n\n' "$url" >&2
-  if command -v qrencode >/dev/null 2>&1; then
+  local url="$ORIGIN/setup?code=$BOOTSTRAP_CODE" waited=0
+  printf '\nOpen this setup link (expires in 60 minutes):\n  %s\n' "$url" >&2
+  if [ "$ACCESS" != tunnel ] && command -v qrencode >/dev/null 2>&1; then
     qrencode -t ANSIUTF8 "$url" >&2
-  else
-    printf '(qrencode not found -- install it for a scannable QR code: sudo apt-get install -y qrencode)\n' >&2
   fi
-  printf '\nif the code expires before you pair:\n  sudo systemctl restart veduta\n  sudo journalctl -u veduta | grep first-boot\n' >&2
+  INSTALLER_STATE=waiting-passkey
+  emit_event true
+  write_stage_file true
+  printf '\nWaiting for passkey registration. Continue in your browser.\n' >&2
+  if [ "$ACCESS_CHANGE" = true ]; then
+    printf 'You have 15 minutes. Ctrl+C restores the previous access.\n' >&2
+  else
+    printf 'Ctrl+C leaves Veduta running. Resume later with: sudo veduta setup\n' >&2
+  fi
+  while [ "$waited" -lt 3600 ]; do
+    if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+      printf 'error: the setup service stopped; run sudo veduta setup to recover.\n' >&2
+      return 1
+    fi
+    if auth_status 2>/dev/null | jq -e '.mode == "production" and .passkeyRegistered == true' >/dev/null 2>&1; then
+      printf 'Passkey registered. Continue onboarding in Veduta.\n' >&2
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  printf 'Setup link expired. Get a new one with: sudo veduta setup\n' >&2
+  return 1
 }
 
 # --- Failure handling -----------------------------------------------------------------------
@@ -1225,7 +1386,7 @@ print_recovery_hint() {
       printf 'inspect the logs, then rerun:\n  sudo journalctl -u veduta -n 50\n  %s\n' "$RERUN_CMD" >&2
       ;;
     pairing)
-      printf 'the service is already up -- rerun to reprint the QR code:\n  %s\n' "$RERUN_CMD" >&2
+      printf 'recover your setup link without reinstalling:\n  sudo veduta setup\n' >&2
       ;;
     *)
       printf 'rerun:\n  %s\n' "$RERUN_CMD" >&2
@@ -1237,6 +1398,7 @@ print_recovery_hint() {
 # current stage failed, emit the failure event, print the recovery hint, and best-effort
 # persist the final stage snapshot.
 emit_failure_event() {
+  INSTALLER_STATE=failed
   if [ -n "$CURRENT_STAGE" ]; then
     set_stage_status "$CURRENT_STAGE" "failed"
   fi
@@ -1252,6 +1414,7 @@ emit_failure_event() {
 # never see these and the failed-stage event would never be emitted.
 fail_stage() {
   trap - ERR INT TERM
+  if declare -F access_abort >/dev/null; then access_abort || true; fi
   emit_failure_event
   exit "${1:-1}"
 }
@@ -1259,18 +1422,21 @@ fail_stage() {
 on_error() {
   local exit_code=$?
   trap - ERR INT TERM
+  if declare -F access_abort >/dev/null; then access_abort || true; fi
   emit_failure_event
   exit "$exit_code"
 }
 
 on_interrupt() {
   trap - ERR INT TERM
+  if declare -F access_abort >/dev/null; then access_abort || true; fi
   emit_failure_event
   exit 130
 }
 
 on_terminate() {
   trap - ERR INT TERM
+  if declare -F access_abort >/dev/null; then access_abort || true; fi
   emit_failure_event
   exit 143
 }
@@ -1281,6 +1447,14 @@ run_stage() {
   local id="$1" fn="$2"
   CURRENT_STAGE="$id"
   set_stage_status "$id" "running"
+  INSTALLER_STATE=running
+  local i
+  for ((i = 0; i < ${#STAGE_IDS[@]}; i++)); do
+    if [ "${STAGE_IDS[$i]}" = "$id" ]; then
+      printf '\n[%s/%s] %s\n' "$((i + 1))" "${#STAGE_IDS[@]}" "${STAGE_TITLES[$i]}" >&2
+      break
+    fi
+  done
   emit_event false
   "$fn"
   if [ "$(stage_status "$id")" != "skipped" ]; then
@@ -1295,22 +1469,47 @@ run_apply() {
   trap on_terminate TERM
 
   run_stage preflight preflight_stage
+  RERUN_CMD=$(compute_rerun_cmd)
+  INSTALL_LOG=$(mktemp /var/log/veduta-install.XXXXXX.log)
+  if [ "$SETUP_ONLY" != true ]; then
   run_stage legacy-detect legacy_detect_stage
   run_stage deps deps_stage
   run_stage user-layout user_layout_stage
   run_stage checkout checkout_stage
+  if [ -z "$UPDATE_ROOT_KEY" ] && [ ! -e "$UPDATE_PINNING_PATH" ] && [ "$REPO" = "$DEFAULT_REPO" ] && [ "$UPDATE_FEED" = "$DEFAULT_UPDATE_FEED" ]; then
+    UPDATE_ROOT_KEY=$(cat /opt/veduta/docs/keys/root.pub)
+    write_update_pinning
+  fi
   run_stage build build_stage
   run_stage vault-keyfile vault_keyfile_stage
   run_stage systemd-unit systemd_unit_stage
+  run install -d -o root -g root -m 0755 /usr/local/lib/veduta
+  run install -o root -g root -m 0755 /opt/veduta/deploy/install.sh /usr/local/lib/veduta/install.sh
+  run install -o root -g root -m 0644 /opt/veduta/deploy/access-transaction.sh /usr/local/lib/veduta/access-transaction.sh
+  run install -o root -g root -m 0755 /opt/veduta/deploy/veduta /usr/local/bin/veduta
+  else
+    local skipped_stage
+    for skipped_stage in legacy-detect deps user-layout checkout build vault-keyfile systemd-unit; do
+      set_stage_status "$skipped_stage" skipped
+    done
+  fi
+  . /usr/local/lib/veduta/access-transaction.sh
+  access_prepare
   run_stage first-boot first_boot_stage
   run_stage pairing pairing_stage
-
+  access_commit
+  INSTALLER_STATE=complete
+  emit_event false
   write_stage_file false
   trap - ERR INT TERM
 
-  printf '\nresolved commit: %s\n' "$RESOLVED_SHA" >&2
-  printf 'done -- veduta is running at https://%s\n' "$DOMAIN" >&2
-  print_update_pinning_notice
+  if [ -n "$RESOLVED_SHA" ]; then printf '\nresolved commit: %s\n' "$RESOLVED_SHA" >&2; fi
+  printf 'done -- veduta is running at %s\n' "$ORIGIN" >&2
+  if [ -f "$UPDATE_PINNING_PATH" ]; then
+    printf "Signed updates are configured.\n" >&2
+  else
+    print_update_pinning_notice
+  fi
 }
 
 # Printed last, deliberately -- not buried mid-stage next to write_update_pinning's own one-line
@@ -1362,6 +1561,7 @@ main() {
     exit 0
   fi
   validate_data_dir
+  validate_access_args
   RERUN_CMD=$(compute_rerun_cmd)
   resolve_update_root_key
   determine_mode
@@ -1369,7 +1569,12 @@ main() {
     run_preview
     exit 0
   fi
+  # One root-owned installer owns access changes at a time.
+  if [ "$(id -u)" -eq 0 ]; then
+    exec 9>/run/lock/veduta-setup.lock
+    if ! flock -n 9; then printf 'error: another Veduta setup is running\n' >&2; exit 1; fi
+  fi
   run_apply
 }
 
-main "$@"
+if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then main "$@"; fi

@@ -45,6 +45,26 @@ function testDeps(
 }
 
 describe('applyIntegrations', () => {
+  it('refuses a public Calendar callback on private access before saving credentials', () => {
+    const dir = freshRoot()
+    withFirstSpace(dir)
+    const vault = SecretsVault.open(dir, KEY_MATERIAL)
+    expect(() =>
+      applyIntegrations(
+        { ...testDeps(dir, vault), publicWebhooks: false },
+        {
+          calendar: {
+            clientId: 'client',
+            clientSecret: 'secret',
+            refreshToken: 'refresh',
+            calendarId: 'primary',
+          },
+        },
+      ),
+    ).toThrow(/Public access/)
+    expect(vault.has('calendar-client-secret')).toBe(false)
+    expect(loadIngestionConfig(dir).sources).toEqual({})
+  })
   it('skip marks the step skipped and touches neither vault nor ingestion.json', () => {
     const dir = freshRoot()
     withFirstSpace(dir)

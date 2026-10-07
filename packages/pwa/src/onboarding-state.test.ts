@@ -216,8 +216,8 @@ describe('WIZARD_STEP_META completeness', () => {
     }
   })
 
-  it('domain copy states the exact systemd drop-in command', () => {
-    expect(WIZARD_STEP_META.domain.description).toContain('systemctl edit veduta')
+  it('browser access copy explains the passkey protection', () => {
+    expect(WIZARD_STEP_META.domain.description).toContain('passkey')
   })
 
   it("model-connection copy states that Veduta keeps the Agent loop and data on the user's server", () => {

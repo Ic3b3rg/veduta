@@ -1,3 +1,4 @@
+import type { VpsAccessStatus } from './vps-access.ts'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -143,6 +144,7 @@ export interface OnboardingStatusDeps {
   profile: 'loopback' | 'local-vps' | 'vps'
   domain: string | null
   tlsActive: boolean
+  access?: VpsAccessStatus
   vault?: SecretsVault
   listSpaces(): Space[]
   env: NodeJS.ProcessEnv
@@ -224,7 +226,17 @@ export function buildOnboardingStatus(deps: OnboardingStatusDeps): OnboardingSta
     steps,
     legacy,
     ...(installer === undefined ? {} : { installer }),
-    domain: { domain: deps.domain, tlsActive: deps.tlsActive },
+    domain: {
+      domain: deps.domain,
+      tlsActive: deps.tlsActive,
+      ...(deps.access
+        ? {
+            accessMode: deps.access.mode,
+            origin: deps.access.origin,
+            ...(deps.access.pending !== undefined ? { pending: deps.access.pending } : {}),
+          }
+        : {}),
+    },
     // The `model-connection` step's resume state (issue #47, replacing the
     // old `byok`/`models` fields): a plain count and booleans, computed
     // directly from `connections.json` — no injected dependency, the same

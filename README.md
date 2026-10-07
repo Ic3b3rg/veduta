@@ -24,61 +24,68 @@ and a browser; the Local VPS profile lets you try the core journey on your own c
 
 ### 1. Before you begin
 
-Have these ready:
+Use a Linux VPS with Ubuntu, systemd, SSH access, `sudo`, and `curl`, and a browser that
+supports **passkeys**. Choose **x86-64** for the complete signed-update path; ARM64 update
+runtime support is tracked in [issue #44](https://github.com/Ic3b3rg/veduta/issues/44).
 
-- A clean **Ubuntu 22.04 or 24.04** VPS with systemd, SSH access, `sudo`, and `curl`.
-  Choose **x86-64** for the complete signed-update path. The installer also accepts ARM64,
-  but signed Node runtime downloads on ARM64 remain limited by
-  [issue #44](https://github.com/Ic3b3rg/veduta/issues/44).
-- A domain such as `veduta.example.com`, with its DNS A record pointing to the VPS. If you
-  publish an AAAA record, it must reach the same VPS over IPv6. TCP ports **80 and 443** must
-  be available and reachable for HTTPS setup and browser access.
-- An email address for the HTTPS certificate and a browser that supports **passkeys**.
-- A [Model connection](#model-connections): a ChatGPT subscription or an Anthropic, OpenAI,
-  or OpenRouter API key. You connect it in the browser during setup.
+You can choose how to open Veduta during installation:
 
-The current installer uses **Public access**. Guided private access is tracked separately in
-[issue #48](https://github.com/Ic3b3rg/veduta/issues/48) (SSH Tunnel) and
-[issue #49](https://github.com/Ic3b3rg/veduta/issues/49) (Tailnet). To try Veduta without a domain
-now, use the [Local VPS profile](#try-it-on-your-computer).
+- **Tunnel access:** no domain needed. Open Veduta on your computer through the SSH command
+  the installer provides. The application stays private on the server. This path does not
+  provide phone access.
+- **Public access:** use your own domain and a certificate contact email. Point its DNS
+  A/AAAA records to the VPS and allow TCP ports 80 and 443. You can then use computer and phone.
+
+Both paths run the same production service and require a passkey. You will connect a
+[Model connection](#model-connections) in the browser after installation.
 
 ### 2. Run the installer on the VPS
 
-Log in to the VPS over SSH, then run these commands **on the VPS**. They install the
-`v0.0.6` source and pin the [public root key](docs/keys/root.pub) for future signed updates:
+Log in over SSH and paste this command **on the VPS**:
 
 ```sh
-curl -fsSLo veduta-root.pub \
-  https://raw.githubusercontent.com/Ic3b3rg/veduta/v0.0.6/docs/keys/root.pub &&
-curl -fsSL https://raw.githubusercontent.com/Ic3b3rg/veduta/v0.0.6/deploy/install.sh | \
-  sudo bash -s -- --ref v0.0.6 --update-root-key "@$PWD/veduta-root.pub"
+curl -fsSLo veduta-install.sh \
+  https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.sh &&
+sudo env SSH_CONNECTION="$SSH_CONNECTION" bash veduta-install.sh
 ```
 
-Enter your domain and certificate email when prompted. The installer installs the pinned
-Node.js and pnpm versions, builds Veduta, creates its service account and encrypted vault,
-starts the systemd service, and prints a setup link and QR code. It also provisions the
-pinned Codex binary used by the ChatGPT subscription Model connection.
+This guide follows the current source installer. The published `v0.0.6` installer only
+supports Public access; do not substitute that tag when trying Tunnel access.
 
-The root key is public; no signing secret is needed to install Veduta. Keep the
-`--update-root-key` option: omitting it on a fresh install leaves signed updates unconfigured.
-For a plan with no installation changes, add `--preview` to the command. An unattended run
-also needs `--apply --domain veduta.example.com --email you@example.com`; without a terminal
-or `--apply`, the installer only previews the plan.
+Accept the detected defaults or edit them, then confirm the plan. The installer sets up the
+pinned Node.js and pnpm versions, the encrypted vault, signed updates, and the systemd service.
+You do not need to copy a signing key. Optional ChatGPT subscription support is installed too.
 
-### 3. Finish setup in your browser
+Download the script before running it: piping an interactive installer into `sudo` can leave
+its prompts unresponsive on Ubuntu with `sudo-rs`. If a stage fails, the installer prints the
+recovery action and a log location. `--preview` shows the plan without making changes.
 
-1. Open the setup link, or scan the QR code, and choose **Register passkey**. Complete your
-   browser's passkey prompt. The initial setup code expires after 60 minutes.
-2. If an OpenClaw or Hermes installation was detected, review the optional migration preview
-   before applying it. Otherwise, continue with a fresh setup.
-3. Confirm the domain, then add your **Model connection** and select its models. Authorize
-   ChatGPT through the displayed provider flow, or enter a supported API key in the form.
-4. Create your first **Space**; Health is a useful starting point for the example below.
-5. Configure optional integrations or choose **Skip**, then **Finish**. Veduta restarts and
-   the wizard waits for Home to become available.
+### 3. Open the setup link
 
-Bookmark your HTTPS address. On a phone, use your browser's **Add to Home Screen** or
-**Install app** action when available. The VPS keeps running when you close the browser.
+For **Tunnel access**, copy the exact SSH command printed under **Run this on your computer,
+not on the VPS** into a terminal on your computer. Keep it running and open the localhost link.
+If the computer says the port is occupied, close its old SSH forward or use `sudo veduta access`
+on the VPS to choose another stable port. Keep the same address for your passkey.
+
+For **Public access**, open the HTTPS link or scan the QR code with your phone.
+
+1. Choose **Register passkey** and complete your browser's prompt. The installer confirms
+   registration and you continue in the browser. The setup link expires after 60 minutes.
+2. Review an optional OpenClaw or Hermes import if one was detected, or start fresh.
+3. Confirm **Browser access**, add your **Model connection**, and select its models.
+4. Create your first **Space**.
+5. Configure optional integrations or choose **Skip**, then **Finish**.
+
+Calendar push updates require a public callback, so that optional step is unavailable on
+private access. Saved connection details are preserved when access changes.
+
+If you close the installer or the setup link expires, run **`sudo veduta setup`** on the VPS.
+It recovers your link without rebuilding Veduta. Closing the setup wait does not stop the service.
+Use **`sudo veduta access`** to repair or change access later; a new address requires a new
+passkey, and a failed change restores the previous access without replacing application data.
+
+Bookmark your address. On a phone using Public access, choose **Add to Home Screen** or
+**Install app** when available. The VPS keeps running when you close the browser.
 
 ## Your first Surface
 
@@ -135,9 +142,10 @@ version before reporting success. A failed activation automatically restores the
 version and its data.
 
 A fresh source installation reports the baseline version `0.0.0` until its first signed
-update. Applying the offered `0.0.6` release installs the versioned build. If Updates is
-unconfigured, follow the [update setup guide](deploy/README.md#updates); the installation
-command above already supplies the root key.
+update. This installer change requires a newer release than `0.0.6`; do not apply `0.0.6` to a
+private source installation, since that release only supports Public access. If Updates is
+unconfigured, follow the [update setup guide](deploy/README.md#updates); fresh upstream
+installations automatically pin the bundled public root key.
 
 Published builds and notes are in [GitHub Releases](https://github.com/Ic3b3rg/veduta/releases).
 The signing and verification procedure is public in [RELEASING.md](RELEASING.md).

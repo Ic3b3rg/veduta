@@ -12,6 +12,24 @@ import {
 const now = new Date('2026-07-03T12:00:00.000Z')
 
 describe('AuthStore passkey setup', () => {
+  it('uses independent passkey user handles for a staged origin and the previous installation', async () => {
+    const handles: string[] = []
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const relyingParty = new FakePasskeyRelyingParty()
+      const passkeys: PasskeyRelyingParty = {
+        generateRegistrationOptions: async (input) => {
+          handles.push(input.userId)
+          return relyingParty.generateRegistrationOptions()
+        },
+        generateAuthenticationOptions: () => relyingParty.generateAuthenticationOptions(),
+        verifyRegistrationResponse: (input) => relyingParty.verifyRegistrationResponse(input),
+        verifyAuthenticationResponse: (input) => relyingParty.verifyAuthenticationResponse(input),
+      }
+      const auth = new AuthStore({ mode: 'production', bootstrapCode: 'test-code', passkeys })
+      await auth.startPasskeyRegistration({ oneTimeCode: 'test-code', deviceName: 'Test device' })
+    }
+    expect(handles[0]).not.toBe(handles[1])
+  })
   it('registers the first passkey with the one-time bootstrap code and consumes the code', async () => {
     const passkeys = new FakePasskeyRelyingParty()
     const auth = new AuthStore({

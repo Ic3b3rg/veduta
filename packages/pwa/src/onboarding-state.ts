@@ -30,11 +30,8 @@ export const WIZARD_STEP_META: Record<OnboardingStepId, OnboardingStepMeta> = {
       'are never imported here; that stays a CLI-only, explicit step.',
   },
   domain: {
-    title: 'Domain',
-    description:
-      'Confirm the domain and TLS certificate detected for this installation. To change the ' +
-      'domain later: sudo systemctl edit veduta, override VEDUTA_PUBLIC_DOMAIN in the drop-in, ' +
-      'then sudo systemctl restart veduta.',
+    title: 'Browser access',
+    description: 'Confirm how you open Veduta. Your passkey protects access to your personal data.',
   },
   'model-connection': {
     title: 'Model connection',

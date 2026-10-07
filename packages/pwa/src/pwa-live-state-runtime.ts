@@ -210,10 +210,16 @@ export class PwaLiveStateRuntime {
     this.actions.start()
     this.agentActions.start()
     const epoch = ++this.epoch
+    await this.boot(epoch)
+  }
+
+  private async boot(epoch: number): Promise<void> {
     try {
       const status = await this.api.fetchAuthStatus()
       if (!this.active(epoch)) return
       this.authStatus = status
+      this.error = null
+      this.reconnectDelay = 1000
       this.publish()
       if (status.mode === 'production' && !this.token) return
       await this.refreshSpaces()
@@ -229,6 +235,13 @@ export class PwaLiveStateRuntime {
             ? 'Offline: showing cached Home'
             : undefined,
       )
+      if (this.active(epoch) && this.reconnectTimer === undefined) {
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = undefined
+          if (this.active(epoch)) void this.boot(epoch)
+        }, this.reconnectDelay)
+        this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000)
+      }
     }
   }
 

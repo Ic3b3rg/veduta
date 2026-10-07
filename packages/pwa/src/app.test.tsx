@@ -1881,6 +1881,36 @@ describe('App', () => {
     )
   })
 
+  it('waits for an access change through a restart and resumes without another page refresh', async () => {
+    localStorage.setItem(AUTH_TOKEN_KEY, 'a-stored-token')
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus())
+    vi.mocked(fetchSpaces).mockResolvedValue({ spaces: [], surfaceCursor: 0 })
+    vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
+    vi.mocked(fetchOnboardingStatus)
+      .mockResolvedValueOnce(
+        fromPartial<OnboardingStatus>({
+          required: false,
+          completed: true,
+          domain: { pending: true },
+        }),
+      )
+      .mockRejectedValueOnce(new Error('service is restarting'))
+      .mockResolvedValue(
+        fromPartial<OnboardingStatus>({
+          required: false,
+          completed: true,
+          domain: { pending: false },
+        }),
+      )
+    render(<App />)
+    expect(await screen.findByText('Saving your new access…')).toBeDefined()
+    expect(screen.queryByLabelText('Spaces')).toBeNull()
+    expect(
+      await screen.findByRole('button', { name: 'Model connections' }, { timeout: 5000 }),
+    ).toBeDefined()
+    expect(screen.queryByText('Saving your new access…')).toBeNull()
+  })
+
   it('renders the status-unavailable screen instead of Home when the onboarding status fetch fails on a production session', async () => {
     localStorage.setItem(AUTH_TOKEN_KEY, 'a-stored-token')
     vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus())
