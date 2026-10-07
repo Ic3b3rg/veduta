@@ -62,6 +62,19 @@ Tailscale 1.102.5 was installed from the official distribution, and interactive 
 an authentication link. It timed out without enrollment; the last observed state was
 `NeedsLogin`. No private key, auth key, or account password was requested or copied.
 
+The production installer then rebuilt the VPS from the reviewed and pushed source commit
+`8c8719530fe6b8e4e0e9abeff80eee13923cb43d`, preserving its existing Tunnel access. The checkout
+now has the upstream GitHub remote and no uncommitted changes. The service restarted with
+production authentication. SHA-256 checks of the active passkey store, vault key, update
+pinning, and onboarding state all matched their pre-upgrade values.
+
+A real administrative Tailnet change without enrollment exited with the expected login and
+approval recovery instructions before replacing access configuration. The previous Tunnel
+service stayed active, all four hashes still matched, and socket inspection still showed the
+Gateway only on `127.0.0.1:8789`, with no public application listener. This verifies the
+unenrolled error path, not successful Tailnet activation. Disposable Docker lab containers,
+their network, generated test results, and the custom lab image were removed afterward.
+
 **Real Tailnet acceptance is pending.** A CLI fixture, loopback origin test, or Public ACME lab
 does not establish real Tailnet HTTPS, phone access, QR usability, or reboot persistence.
 Issue #49 must remain open until that evidence is recorded. Do not label this branch as a
