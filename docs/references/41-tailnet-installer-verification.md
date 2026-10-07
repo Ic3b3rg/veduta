@@ -134,9 +134,30 @@ pairing during unfinished onboarding, a linking URL in an already authenticated 
 choosing an existing passkey without getting stuck on the linking screen. UI tests also cover
 manual/focus refresh after enrollment and stale reads arriving after revocation.
 
+### Deployment and reboot after the correction
+
+The VPS was upgraded from `8c8719530fe6b8e4e0e9abeff80eee13923cb43d` to the reviewed and
+pushed commit `ecd1f411421be231a9ce322c188457af112435cf`. The frozen-lockfile install and
+production build passed. The installed access helpers match that source. SHA-256 comparisons
+before and after deployment preserved the active passkey store, vault key, update pinning,
+completed onboarding state, and configured Model connections. The existing Connected devices
+System Surface also acquired the management link through the normal persisted tree update.
+
+A full VPS reboot then changed the kernel boot ID. Veduta and Tailscale returned automatically;
+a trusted HTTPS request from the owner's Mac reached the same address and confirmed production
+authentication with the existing passkey still registered. The active access generation,
+persistent Serve configuration, and all five preservation hashes remained unchanged. Socket
+inspection showed the Gateway on `127.0.0.1:8789` and HTTPS only on the Tailscale IPv4/IPv6
+addresses. No Funnel or foreground Serve route was configured. The deployed source checkout
+was clean at the verified commit. The temporary VPS verification files, candidate helper and
+upgrade backups were removed after these checks. The browser fixture removed its disposable
+data root and credentials; generated browser test results were also removed.
+
 **Real Tailnet acceptance remains pending** for successful phone authentication, QR usability,
-and reboot persistence. Issue #49 stays open until that evidence is recorded. This branch is
-not a published release; do not apply the old `0.0.6` artifact to a private source installation.
+and the phone's repeat sign-in. The owner has been given the new **Connections → Devices →
+Link a device** journey; only that personal passkey ceremony can confirm the physical device.
+Issue #49 stays open until the remaining evidence is recorded. This branch is not a published
+release; do not apply the old `0.0.6` artifact to a private source installation.
 
 ## Real-tailnet smoke to complete
 
