@@ -292,6 +292,10 @@ export class AuthStore {
       throw new AuthStoreError('invalid-passkey', 'passkey registration failed verification')
     }
 
+    // WebAuthn verification is asynchronous: the code may expire, be consumed
+    // by another ceremony, or lose its authorizing device while it runs.
+    this.assertValidOneTimeCode(ceremony.codeHash)
+
     const existing = this.state.passkeys.find((passkey) => passkey.id === verification.passkey?.id)
     if (existing && !existing.revokedAt) {
       throw new AuthStoreError('invalid-passkey', 'passkey is already registered')
@@ -486,7 +490,13 @@ export class AuthStore {
       return
     }
     const pairing = this.pairingCodes.get(codeHash)
-    if (pairing && !pairing.usedAt && !isPast(pairing.expiresAt, this.now)) return
+    if (
+      pairing &&
+      !pairing.usedAt &&
+      !isPast(pairing.expiresAt, this.now) &&
+      this.activeDevice(pairing.createdByDeviceId)
+    )
+      return
     throw new AuthStoreError('invalid-code', 'one-time code is invalid or expired')
   }
 

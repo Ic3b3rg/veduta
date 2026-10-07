@@ -5,6 +5,67 @@
   font-size: 0.875rem;
 }
 
+.devices-toolbar,
+.device-access-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-block: 16px;
+}
+
+.devices-toolbar p {
+  flex: 1 1 260px;
+  color: var(--catalog-color-text-muted);
+}
+
+.device-access-card,
+.device-pairing {
+  padding: 20px;
+  background: var(--catalog-color-surface-raised);
+  border: 1px solid var(--catalog-color-border);
+  border-radius: 12px;
+}
+
+.device-access-card h2,
+.device-pairing h2 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.device-access-card p {
+  margin-block: 10px;
+  color: var(--catalog-color-text-muted);
+}
+
+.device-pairing {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+
+.device-pairing-qr {
+  max-width: 100%;
+}
+
+.device-pairing-qr svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.device-pairing-instructions {
+  display: grid;
+  gap: 12px;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.device-pairing-instructions input {
+  min-width: 0;
+  width: 100%;
+}
+
 .connections-sidebar {
   border-right: 1px solid var(--catalog-color-border);
   width: 14rem;

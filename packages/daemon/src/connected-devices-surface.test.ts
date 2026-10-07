@@ -31,6 +31,9 @@ describe('ConnectedDevicesSurfaceManager', () => {
       },
     })
     expect(store.isSurfaceDaemonOwned(CONNECTED_DEVICES_SURFACE_ID)).toBe(true)
+    expect(JSON.stringify(store.getSurface(CONNECTED_DEVICES_SURFACE_ID)?.tree)).toContain(
+      '[Link a device or revoke access](/app/connections?section=devices)',
+    )
     expect(JSON.stringify(store.getSurface(CONNECTED_DEVICES_SURFACE_ID))).not.toContain(
       'credential-phone',
     )

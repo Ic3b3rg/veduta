@@ -8,6 +8,7 @@ import { ConnectionsServices } from './connections-services.tsx'
 import { ConnectionsModels } from './connections-models.tsx'
 import { ConnectionsAccess } from './connections-access.tsx'
 import { ConnectionsExtensions } from './connections-extensions.tsx'
+import { ConnectionsDevices } from './connections-devices.tsx'
 import './styles/connections-page.css'
 
 export function ConnectionsPage({
@@ -22,7 +23,11 @@ export function ConnectionsPage({
   const location = useLocation()
   const value = new URLSearchParams(location.search).get('section')
   const section =
-    value === 'models' || value === 'extensions' || value === 'access' || value === 'services'
+    value === 'models' ||
+    value === 'extensions' ||
+    value === 'access' ||
+    value === 'services' ||
+    value === 'devices'
       ? value
       : initialSection
   const controller = useConnectionsController(token)
@@ -49,6 +54,7 @@ export function ConnectionsPage({
         <ConnectionsAccess controller={controller} spaces={spaces} {...(token ? { token } : {})} />
       )}
       {section === 'extensions' && <ConnectionsExtensions />}
+      {section === 'devices' && <ConnectionsDevices token={token} />}
     </ConnectionsLayout>
   )
 }

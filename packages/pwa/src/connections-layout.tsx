@@ -10,18 +10,27 @@ import {
   SidebarMenuItem,
   SidebarMenuButton,
 } from '@veduta/catalog/ui/sidebar'
-import { ArrowLeft, Blocks, Cable, KeyRound, Sparkles, type LucideIcon } from 'lucide-react'
+import {
+  ArrowLeft,
+  Blocks,
+  Cable,
+  KeyRound,
+  MonitorSmartphone,
+  Sparkles,
+  type LucideIcon,
+} from 'lucide-react'
 import { useEffect, useState, type ReactNode, type RefObject } from 'react'
 import { Link } from 'react-router-dom'
 import { clientPath } from './client-router.tsx'
 
-export type ConnectionsSection = 'services' | 'models' | 'extensions' | 'access'
+export type ConnectionsSection = 'services' | 'models' | 'extensions' | 'access' | 'devices'
 
 const sections: { id: ConnectionsSection; label: string; icon: LucideIcon }[] = [
   { id: 'services', label: 'Accounts & services', icon: Cable },
   { id: 'models', label: 'Models', icon: Sparkles },
   { id: 'extensions', label: 'Extensions', icon: Blocks },
   { id: 'access', label: 'Space access', icon: KeyRound },
+  { id: 'devices', label: 'Devices', icon: MonitorSmartphone },
 ]
 
 export function ConnectionsLayout({

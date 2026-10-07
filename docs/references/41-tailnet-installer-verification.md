@@ -2,7 +2,7 @@
 
 This report covers [issue #49](https://github.com/Ic3b3rg/veduta/issues/49), building on the
 [production installer evidence](40-private-vps-installer-verification.md) for issue #48.
-Checks were performed on October 7, 2026, on `feat/private-vps-install`.
+Checks were performed on October 7–8, 2026, on `feat/private-vps-install`.
 
 ## Implemented boundary
 
@@ -44,9 +44,10 @@ stale route as administrator before Update access. Unrelated routes are never re
   hostname removal, sibling rollback failure, commit ordering, and misleading preview output.
   Regression tests cover the fixes.
 
-The final `pnpm check` passed lint, formatting, typechecks, all **3,960 package tests**, and
-builds. Both review axes found no remaining blocker in the fixes; real-device acceptance is
-still pending. Public backend checks use standard URL normalization, including equivalent
+After the certificate-readiness and multi-device corrections, `pnpm check` passed lint,
+formatting, typechecks, all **3,976 package tests**, and builds. Both review axes found no
+remaining blocker in the fixes; real-device acceptance is still pending. Public backend checks
+use standard URL normalization, including equivalent
 loopback spellings and effective default ports. Run `pnpm check` to repeat these checks.
 The opt-in browser
 test in `packages/e2e/tests/installer-smoke.spec.ts` supports
@@ -75,10 +76,67 @@ Gateway only on `127.0.0.1:8789`, with no public application listener. This veri
 unenrolled error path, not successful Tailnet activation. Disposable Docker lab containers,
 their network, generated test results, and the custom lab image were removed afterward.
 
-**Real Tailnet acceptance is pending.** A CLI fixture, loopback origin test, or Public ACME lab
-does not establish real Tailnet HTTPS, phone access, QR usability, or reboot persistence.
-Issue #49 must remain open until that evidence is recorded. Do not label this branch as a
-published release or apply the old `0.0.6` artifact to a private source installation.
+### Enrollment and first HTTPS activation
+
+The owner subsequently completed enrollment, confirmed Device approval and VPS approval,
+and enabled Serve/HTTPS. The first real activation exposed a certificate-readiness race:
+the installer used one curl request with a five-second connection deadline while Tailscale
+was issuing the first certificate. It aborted the temporary route before issuance completed.
+The old Tunnel service and its configuration were restored. Tailscale obtained the certificate
+about 45 seconds after its initial request, confirming that immediate reachability was not a
+valid first-certificate readiness assumption.
+
+The verifier now retries a bounded set of transient connection/TLS-handshake failures up to
+12 times (20 seconds per request, two seconds between attempts), retaining ordinary certificate
+validation. Invalid certificates fail immediately. Success still rechecks the production auth
+status, hostname, private Serve route and absence of any public proxy to the backend. Regression
+tests cover transient recovery and exhaustion. The prompt describes the 15-minute candidate
+lifetime as a total deadline, including certificate checks.
+
+With that fix staged on the VPS, activation completed. The owner registered a real passkey on
+the computer and finished onboarding. Serve persisted the HTTPS route; no foreground candidate
+or Funnel route remained. The Gateway listened only on IPv4 loopback, while HTTPS listened on
+the Tailscale addresses. A trusted HTTPS request from the Mac returned production auth status
+with a registered passkey. A TLS request forced to the public VPS IP timed out before connecting.
+The old auth store, vault key, and update pinning hashes remained unchanged. Onboarding changed
+because the owner completed the wizard, so its earlier hash is no longer an appropriate
+preservation comparison.
+
+The owner's Android/Brave screenshot confirms that the phone also reaches the private PWA.
+Google Password Manager reports **No passkeys available**: network reachability succeeded but
+the phone has no usable credential. Investigation found that the authenticated pairing APIs
+existed while the PWA had no linking/revocation controls, and AuthGate hid registration after
+any first passkey, even for an additional-device pairing URL. Existing browser tests paired
+secondary devices through direct API calls, bypassing that missing user journey.
+
+### Multi-device correction
+
+The protected PWA now exposes **Connections → Devices**, with a generic Markdown handoff from
+the existing Connected devices System Surface and an entry during onboarding. The authenticated
+owner generates a ten-minute QR/link; the receiving device registers its own passkey. The code
+is checked again after asynchronous WebAuthn verification so consumption, expiry, and issuer
+revocation cannot be bypassed by an already-started ceremony. Concurrent verification admits
+only one registration. The current credential is identified in the management flow and cannot
+be accidentally revoked there; other credentials require an explicit confirmation. The UI
+explains that revocation also covers synced copies of the same passkey.
+
+The browser regression in `packages/e2e/tests/device-pairing.spec.ts` uses a fresh Local VPS
+installation and two isolated Chromium contexts with independent virtual authenticators. It
+passes through the actual UI to issue a link, register the second passkey, view the same Space,
+reload, sign in again, revoke only the second access, observe the live return to sign-in, and
+reject reuse of the pairing link while retaining the first access. These virtual credentials
+and the disposable data root are removed by the fixture; this is not a physical-phone claim.
+
+That browser test also exposed a late onboarding restart callback that navigated to Home after
+the wizard had already unmounted. A failing regression reproduced it; cancelling work when the
+wizard leaves prevents navigation from interrupting the new Devices flow. App-level tests cover
+pairing during unfinished onboarding, a linking URL in an already authenticated browser, and
+choosing an existing passkey without getting stuck on the linking screen. UI tests also cover
+manual/focus refresh after enrollment and stale reads arriving after revocation.
+
+**Real Tailnet acceptance remains pending** for successful phone authentication, QR usability,
+and reboot persistence. Issue #49 stays open until that evidence is recorded. This branch is
+not a published release; do not apply the old `0.0.6` artifact to a private source installation.
 
 ## Real-tailnet smoke to complete
 
@@ -88,8 +146,9 @@ published release or apply the old `0.0.6` artifact to a private source installa
 2. With Tailscale connected on an approved computer, open the printed setup link, register a
    passkey, and continue in the PWA. Confirm **Private · Tailscale** and the exact address.
    Reload, sign out, and sign in again.
-3. Scan the QR from an approved phone on mobile data. Use the same HTTPS address and a synced
-   passkey or browser-supported cross-device authentication. Repeat after closing the browser.
+3. On the authenticated computer, open **Connections → Devices → Link a device**. Scan that
+   new QR from an approved phone on mobile data and register a separate passkey. Use the same
+   HTTPS address from both devices. Repeat after closing the browser and signing in again.
    From a fresh browser on a device outside the tailnet, confirm the endpoint is unreachable.
 4. Inspect the Gateway listener and Serve status: loopback only, no Funnel on any path to the
    backend. Reboot the VPS; repeat computer/phone sign-in and verify the address is unchanged.

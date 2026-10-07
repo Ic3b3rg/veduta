@@ -4,7 +4,7 @@ import {
   type SurfaceMoveDirection,
 } from '@veduta/protocol'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BrowserRouter } from 'react-router-dom'
+import { BrowserRouter, useLocation } from 'react-router-dom'
 import { ApiResponseError, fetchOnboardingStatus, type SpaceWithSurfaces } from './api.ts'
 import { AuthGate } from './auth-gate.tsx'
 import { OnboardingWizard } from './onboarding-wizard.tsx'
@@ -32,6 +32,9 @@ export function App() {
 }
 
 function RoutedApp() {
+  const location = useLocation()
+  const linkingDevice =
+    location.pathname === clientPath.setup && new URLSearchParams(location.search).has('code')
   const {
     navigate,
     locationKey,
@@ -238,7 +241,7 @@ function RoutedApp() {
     void syncPush(authToken ?? null)
   }, [authToken])
 
-  if (authMode === 'production' && !authToken) {
+  if (authMode === 'production' && (!authToken || linkingDevice)) {
     return (
       <AuthGate
         bootstrapRequired={bootstrapRequired}
@@ -248,6 +251,7 @@ function RoutedApp() {
           runtime.authenticate(token)
         }}
         onError={setError}
+        {...(authToken ? { onCancel: () => navigate(clientPath.home, { replace: true }) } : {})}
       />
     )
   }
@@ -310,6 +314,12 @@ function RoutedApp() {
   }
 
   if (onboardingStatus?.required && !onboardingStatus.completed) {
+    if (
+      location.pathname === clientPath.serviceConnections &&
+      new URLSearchParams(location.search).get('section') === 'devices'
+    ) {
+      return <ConnectionsRoute token={authToken} spaces={spaces} initialSection="devices" />
+    }
     return (
       <OnboardingWizard
         status={onboardingStatus}

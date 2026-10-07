@@ -100,7 +100,10 @@ through `sudo veduta access` rather than silently using a different WebAuthn ori
    but cannot verify that global policy; Veduta records your confirmation for this tailnet.
 4. Enable HTTPS through Tailscale's link if prompted. The certificate hostname is published in
    Certificate Transparency logs. The web service remains reachable only within your tailnet.
-5. Open the HTTPS link or QR with Tailscale connected, register a passkey, and continue in the PWA.
+5. Open the HTTPS link or QR with Tailscale connected, register the first passkey, and continue in the PWA.
+   To add another device afterward, use **Connections → Devices → Link a device** from the
+   authenticated PWA. Its short-lived QR lets the new device register its own passkey; the original
+   installer code is already consumed. The Devices controls can revoke another registered access.
 
 The Gateway listens only on `127.0.0.1`. [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve)
 provides HTTPS; Veduta never enables Funnel and never treats Tailscale identity headers as a

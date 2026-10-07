@@ -875,7 +875,10 @@ describe('production auth boundary', () => {
       headers: { authorization: `Bearer ${token}` },
     })
     expect(devices.statusCode).toBe(200)
-    expect(devices.json()).toMatchObject({ devices: [{ name: 'Silvio iPhone' }] })
+    expect(devices.json()).toMatchObject({
+      devices: [{ name: 'Silvio iPhone' }],
+      currentDeviceId: auth.verifySession(token)?.device.id,
+    })
   })
 
   it('discovers, reads, and patches Meals through the real focused-Space loop with the Local VPS mock candidate', async () => {

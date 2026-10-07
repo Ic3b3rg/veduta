@@ -81,6 +81,24 @@ An unapproved device cannot reach it. The installer checks private HTTPS before 
 Calendar push updates require a public callback, so that optional step is unavailable on
 private access. Saved connection details are preserved when access changes.
 
+### 4. Link your other devices
+
+On the computer or phone where you are already signed in, open **Connections → Devices →
+Link a device**. Scan its QR code with your other phone, or open the displayed link on another
+computer. Keep Tailscale connected there, then choose **Register passkey**. The link is single-use
+and expires after 10 minutes. Each device can create its own passkey; no shared password manager
+is required. The original installer link is only for the first device.
+During initial setup, **Link another device** opens the same protected flow. You can also reach
+it from **System → Connected devices → Link a device or revoke access**.
+
+Both devices now use the same private address and share your Spaces. **Devices** also lets you
+revoke another access without revoking the one you are using. Each entry represents a registered
+passkey: if your password manager syncs that passkey, revoking it signs out all browsers using it.
+Tailscale device approval remains a separate network permission.
+
+If a phone says **No passkeys available**, link it using this flow. Repeatedly choosing
+**Sign in with passkey** cannot create a missing passkey.
+
 If you close the installer or the setup link expires, run **`sudo veduta setup`** on the VPS.
 It recovers your link without rebuilding Veduta. Closing the setup wait does not stop the service.
 Use **`sudo veduta access`** to repair or change access later; a new address requires a new

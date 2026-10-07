@@ -20,6 +20,7 @@ export * from './atom-template.ts'
 export * from './layout-atoms.ts'
 export {
   AuthDeviceSchema,
+  AuthDevicesSchema,
   AuthModeSchema,
   AuthSessionSchema,
   AuthSessionTokenSchema,
@@ -28,6 +29,7 @@ export {
   PairingCodeSchema,
   WebAuthnOptionsEnvelopeSchema,
   type AuthDevice,
+  type AuthDevices,
   type AuthMode,
   type AuthSession,
   type AuthStatus,

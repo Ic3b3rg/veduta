@@ -19,7 +19,10 @@ import { AUTH_TOKEN_KEY } from './pwa-storage.ts'
 
 vi.mock('./api.ts', async (importOriginal) => {
   const { createAppApiMock } = await import('./app-test-support.ts')
-  return createAppApiMock(await importOriginal<typeof ApiModule>())
+  return {
+    ...createAppApiMock(await importOriginal<typeof ApiModule>()),
+    loginWithPasskey: vi.fn(),
+  }
 })
 
 import { App } from './app.tsx'
@@ -33,6 +36,7 @@ import {
   fetchSpaces,
   finishOnboarding,
   invokeSurfaceAction,
+  loginWithPasskey,
   openAutomationOutcomeNotification,
   type SpaceWithSurfaces,
 } from './api.ts'
@@ -181,6 +185,62 @@ async function expectFocusedHealthRoute(path: string, surfaceSelected: boolean):
 }
 
 describe('App routing', () => {
+  it('leaves a linking URL after choosing to sign in with an existing passkey', async () => {
+    window.history.replaceState({}, '', '/setup?code=additional-passkey')
+    mockReadyApp()
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus())
+    vi.mocked(loginWithPasskey).mockResolvedValue({
+      token: 'vdt_existing_session',
+      device: {
+        id: 'existing',
+        name: 'Computer',
+        credentialId: 'existing-key',
+        createdAt: '2026-10-08T00:00:00.000Z',
+      },
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Use an existing passkey' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in with passkey' }))
+    expect(await screen.findByRole('main', { name: 'Home' })).toBeDefined()
+    expect(location.search).toBe('')
+  })
+  it('allows device linking during onboarding without releasing the Home gate', async () => {
+    window.history.replaceState({}, '', '/app/connections?section=devices')
+    localStorage.setItem(AUTH_TOKEN_KEY, 'onboarding-token')
+    mockReadyApp()
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus())
+    vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+      fromPartial<OnboardingStatus>({
+        required: true,
+        completed: false,
+        profile: 'vps',
+        currentStep: 'finish',
+        steps: [{ id: 'finish', status: 'pending' }],
+      }),
+    )
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Devices' })).toBeDefined()
+    expect(screen.queryByRole('main', { name: 'Home' })).toBeNull()
+    fireEvent.click(screen.getByRole('link', { name: 'Back to Veduta' }))
+    expect(await screen.findByRole('heading', { name: 'Set up Veduta' })).toBeDefined()
+    expect(screen.getByRole('link', { name: 'Link another device' }).getAttribute('href')).toBe(
+      '/app/connections?section=devices',
+    )
+  })
+
+  it('offers the linking ceremony to an authenticated browser and preserves its session on cancel', async () => {
+    window.history.replaceState({}, '', '/setup?code=additional-passkey')
+    localStorage.setItem(AUTH_TOKEN_KEY, 'existing-token')
+    mockReadyApp()
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus())
+    render(<App />)
+    expect(await screen.findByRole('button', { name: 'Register passkey' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Keep my current access' }))
+    expect(await screen.findByRole('main', { name: 'Home' })).toBeDefined()
+    expect(localStorage.getItem(AUTH_TOKEN_KEY)).toBe('existing-token')
+    expect(location.search).toBe('')
+  })
+
   it('navigates from setup to Home when onboarding completes', async () => {
     window.history.replaceState({}, '', '/setup')
     localStorage.setItem(AUTH_TOKEN_KEY, 'onboarding-token')
