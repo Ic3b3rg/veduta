@@ -13,9 +13,13 @@ On Ubuntu with systemd, SSH, sudo, and curl, run this in your SSH session:
 
 ```sh
 curl -fsSLo veduta-install.sh \
-  https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.sh &&
-sudo env SSH_CONNECTION="$SSH_CONNECTION" bash veduta-install.sh
+  https://raw.githubusercontent.com/Ic3b3rg/veduta/ecd1f411421be231a9ce322c188457af112435cf/deploy/install.sh &&
+sudo env SSH_CONNECTION="$SSH_CONNECTION" bash veduta-install.sh \
+  --ref ecd1f411421be231a9ce322c188457af112435cf
 ```
+
+The download and `--ref` pin the tested source snapshot; the private-access changes are not
+yet on `main` or in a published release. Keep both references aligned.
 
 Enter accepts the displayed defaults. Tailnet is preselected on a connected Tailscale host;
 otherwise Tunnel is preselected. Public access is never selected implicitly. To go directly
@@ -98,8 +102,15 @@ through `sudo veduta access` rather than silently using a different WebAuthn ori
    link and approve the VPS. No auth key or passphrase belongs in an installer argument.
 3. Confirm account-wide Device approval. The local CLI reports whether this node is connected,
    but cannot verify that global policy; Veduta records your confirmation for this tailnet.
-4. Enable HTTPS through Tailscale's link if prompted. The certificate hostname is published in
-   Certificate Transparency logs. The web service remains reachable only within your tailnet.
+4. If HTTPS is not enabled, `tailscale serve` prints a browser activation URL such as
+   `https://login.tailscale.com/f/serve?node=...`. Open the exact URL printed on this VPS and
+   approve Serve/HTTPS with your personal account. The node identifier is supplied by Tailscale;
+   never hardcode one in shared instructions. Leave public Funnel access disabled if offered.
+   Keep the installer running: it resumes after approval and waits for a valid HTTPS response,
+   including initial certificate issuance. If the wait has expired, complete approval and use
+   the installer's retry command. An already-enabled tailnet skips this browser prompt.
+   The certificate hostname is published in Certificate Transparency logs; the web service
+   remains reachable only within your tailnet. See the [step-by-step guide](../README.md#2-run-the-installer-on-the-vps).
 5. Open the HTTPS link or QR with Tailscale connected, register the first passkey, and continue in the PWA.
    To add another device afterward, use **Connections → Devices → Link a device** from the
    authenticated PWA. Its short-lived QR lets the new device register its own passkey; the original

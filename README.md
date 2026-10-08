@@ -44,16 +44,37 @@ Log in over SSH and paste this command **on the VPS**:
 
 ```sh
 curl -fsSLo veduta-install.sh \
-  https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.sh &&
-sudo env SSH_CONNECTION="$SSH_CONNECTION" bash veduta-install.sh --access tailnet
+  https://raw.githubusercontent.com/Ic3b3rg/veduta/ecd1f411421be231a9ce322c188457af112435cf/deploy/install.sh &&
+sudo env SSH_CONNECTION="$SSH_CONNECTION" bash veduta-install.sh \
+  --ref ecd1f411421be231a9ce322c188457af112435cf --access tailnet
 ```
 
-This guide follows the current source installer. The published `v0.0.6` installer only
-supports Public access; do not substitute that tag when trying private access.
+This command pins the source version tested on a real VPS with computer and phone access.
+These changes are not yet on `main` or in a published release. The published `v0.0.6`
+installer only supports Public access; keep the download URL and `--ref` as shown above.
 
-Confirm the plan and let the installer install Tailscale if needed. Open its login link using
-the same account, approve the VPS in **Machines**, and confirm that Device approval is enabled.
-If Tailscale asks to enable HTTPS, follow its link once and return to the terminal.
+Confirm the plan and let the installer install Tailscale if needed. It will guide you through
+these account steps; keep the SSH terminal open while using the browser:
+
+1. **Connect the VPS.** Open the Tailscale login link printed in the terminal and sign in with
+   the same personal account used on your computer and phone.
+2. **Approve the VPS.** Open [Machines](https://login.tailscale.com/admin/machines) and approve
+   the VPS if it is waiting for approval. Confirm in the installer that **Device approval** is
+   enabled in your account.
+3. **Enable private HTTPS if asked.** Tailscale prints a separate activation link, shaped like
+   `https://login.tailscale.com/f/serve?node=...`. Open the **exact link from your terminal** and
+   approve Serve/HTTPS in the browser. The `node` value identifies your VPS: it is supplied
+   automatically, so you do not need to find or edit it. Another person's link will not do.
+   If the page offers public Funnel access, leave it disabled; Veduta uses private Serve.
+4. **Return to the terminal and wait.** The installer continues automatically after approval
+   and checks HTTPS before printing Veduta's setup link. Issuing the first certificate can
+   take a little time. If the installer has already timed out, follow the retry command it
+   printed after completing approval.
+
+The account confirmations happen in Tailscale's browser pages; no Tailscale API key is needed.
+The installer handles the VPS configuration, Serve route and HTTPS verification. When HTTPS
+is already enabled, Tailscale skips that activation prompt. See the official
+[Tailscale Serve guide](https://tailscale.com/docs/features/tailscale-serve).
 The `*.ts.net` certificate hostname is visible in public certificate logs; access to Veduta
 and its traffic stays private. The installer explains this before enabling HTTPS.
 
@@ -185,15 +206,16 @@ The signing and verification procedure is public in [RELEASING.md](RELEASING.md)
 
 ## Troubleshooting
 
-| What you see                     | What to do                                                                                                                                                  |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The installer only prints a plan | Run the downloaded file from an interactive SSH terminal. Remove `--preview` when ready to install.                                                         |
-| The private link does not open   | Connect Tailscale on the device, check that it and the VPS are approved, then use `sudo veduta access` → Repair over SSH.                                   |
-| HTTPS setup does not complete    | Check the domain's A/AAAA records and access to ports 80/443. Follow the installer's retry command after correcting them.                                   |
-| Setup was interrupted            | Reopen the setup page; the wizard resumes saved progress. If the installer failed, use the exact rerun command it printed.                                  |
-| A local passkey fails            | Open the printed `http://localhost:8788` URL, using the same origin where the passkey was registered.                                                       |
-| ChatGPT is unavailable           | Run the Codex provisioning command printed by the installer. For a local run, follow the [Local VPS guide](deploy/local-vps.md#chatgpt-subscription-codex). |
-| An update fails                  | Read the Updates Surface's reason. Veduta keeps or restores the previous release; inspect the service logs if it does not return.                           |
+| What you see                          | What to do                                                                                                                                                               |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The installer only prints a plan      | Run the downloaded file from an interactive SSH terminal. Remove `--preview` when ready to install.                                                                      |
+| The private link does not open        | Connect Tailscale on the device, check that it and the VPS are approved, then use `sudo veduta access` → Repair over SSH.                                                |
+| Private HTTPS is waiting for approval | Open the `login.tailscale.com/f/serve?node=...` link printed by your installer, approve Serve/HTTPS, and return to the terminal. If it timed out, use its retry command. |
+| Public HTTPS setup does not complete  | Check the domain's A/AAAA records and access to ports 80/443. Follow the installer's retry command after correcting them.                                                |
+| Setup was interrupted                 | Reopen the setup page; the wizard resumes saved progress. If the installer failed, use the exact rerun command it printed.                                               |
+| A local passkey fails                 | Open the printed `http://localhost:8788` URL, using the same origin where the passkey was registered.                                                                    |
+| ChatGPT is unavailable                | Run the Codex provisioning command printed by the installer. For a local run, follow the [Local VPS guide](deploy/local-vps.md#chatgpt-subscription-codex).              |
+| An update fails                       | Read the Updates Surface's reason. Veduta keeps or restores the previous release; inspect the service logs if it does not return.                                        |
 
 On the VPS, inspect the service with:
 
