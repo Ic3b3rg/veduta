@@ -153,11 +153,15 @@ was clean at the verified commit. The temporary VPS verification files, candidat
 upgrade backups were removed after these checks. The browser fixture removed its disposable
 data root and credentials; generated browser test results were also removed.
 
-**Real Tailnet acceptance remains pending** for successful phone authentication, QR usability,
-and the phone's repeat sign-in. The owner has been given the new **Connections → Devices →
-Link a device** journey; only that personal passkey ceremony can confirm the physical device.
-Issue #49 stays open until the remaining evidence is recorded. This branch is not a published
-release; do not apply the old `0.0.6` artifact to a private source installation.
+The owner subsequently confirmed that the **Connections → Devices → Link a device** journey
+worked on the physical phone: registration completed and Veduta remained accessible after
+reloading. This confirms real desktop/phone access on the same private HTTPS origin after the
+VPS reboot, in addition to the automated independent-passkey test.
+
+An explicit fresh phone sign-in after signing out and a browser attempt from outside the
+tailnet have not yet been reported. Issue #49 remains open for the remaining acceptance work.
+This branch is not a published release; do not apply the old `0.0.6` artifact to a private
+source installation.
 
 ## Real-tailnet smoke to complete
 
