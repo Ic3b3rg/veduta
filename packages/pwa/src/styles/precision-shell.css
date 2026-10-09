@@ -1,0 +1,303 @@
+/* Shell composition for issue #163. Shared materials remain catalog recipes; legacy
+   Surface and Chat composition migrate separately under #164 and #165. */
+.app-shell.precision-tool {
+  padding: var(--catalog-space-lg) var(--catalog-space-xl)
+    max(232px, calc(var(--chat-dock-height, 0px) + var(--catalog-space-xl)));
+}
+
+.precision-tool .topbar {
+  background: var(--catalog-color-surface);
+  border: 0;
+  border-bottom: 1px solid var(--catalog-color-border);
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--catalog-space-md);
+  justify-content: space-between;
+  max-width: 1320px;
+  padding: var(--catalog-space-sm) 0 var(--catalog-space-md);
+  margin-bottom: var(--catalog-space-lg);
+  top: 0;
+}
+
+.product-wordmark {
+  color: var(--catalog-color-text);
+  font-size: var(--catalog-font-lg);
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  margin: 0 auto 0 0;
+}
+
+.precision-tool .topbar-actions {
+  gap: var(--catalog-space-xs);
+  flex: 0 1 auto;
+  min-width: 0;
+  justify-content: end;
+}
+
+.precision-tool .topbar-actions .utility-control {
+  width: var(--catalog-control-height);
+  height: var(--catalog-control-height);
+  min-height: var(--catalog-control-height);
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+.precision-tool .utility-control svg {
+  width: var(--catalog-space-lg);
+  height: var(--catalog-space-lg);
+}
+
+.precision-tool .notif-guide {
+  background: var(--catalog-color-surface-raised);
+  border-color: var(--catalog-color-border);
+  border-radius: var(--catalog-radius-md);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.precision-tool .shell-layout {
+  gap: var(--catalog-space-xl);
+  grid-template-columns: 180px minmax(0, 1fr);
+  max-width: 1320px;
+}
+
+.space-navigation {
+  min-width: 0;
+  position: sticky;
+  top: 76px;
+}
+
+.precision-tool .space-rail {
+  grid-auto-flow: row;
+  grid-auto-columns: auto;
+  position: static;
+  background: var(--catalog-color-surface);
+  border: 0;
+  border-right: 1px solid var(--catalog-color-border);
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  padding: 0 var(--catalog-space-md) 0 0;
+  max-height: calc(100dvh - 100px);
+  overflow-y: auto;
+}
+
+.precision-tool .space-rail .space-button {
+  height: auto;
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--catalog-radius-sm);
+  gap: var(--catalog-space-sm);
+  justify-content: space-between;
+  padding: var(--catalog-space-sm);
+  min-width: 0;
+  text-align: left;
+  font-weight: 500;
+  box-shadow: none;
+  transform: none;
+}
+
+.precision-tool .space-rail .space-button.selected {
+  background: var(--catalog-color-surface-raised);
+  border-left-color: var(--catalog-color-accent);
+  color: var(--catalog-color-text);
+}
+
+.space-navigation-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.space-picker {
+  display: none;
+}
+
+.precision-tool .shell-main {
+  gap: var(--catalog-space-lg);
+}
+
+.precision-tool .space-breadcrumb {
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+
+.precision-tool .space-breadcrumb a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--catalog-control-height);
+}
+
+.precision-tool .space-heading {
+  min-height: 0;
+  align-items: start;
+  gap: var(--catalog-space-sm);
+  padding: 0 0 var(--catalog-space-md);
+  border-bottom: 1px solid var(--catalog-color-border);
+}
+
+.precision-tool .space-heading > div {
+  min-width: 0;
+}
+
+.precision-tool .space-heading h2 {
+  font-size: var(--catalog-font-xl);
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+}
+
+.precision-tool .space-heading .badge-group {
+  flex-wrap: wrap;
+}
+
+.precision-tool .status-pill,
+.precision-tool .space-badge,
+.precision-tool .attention-badge,
+.precision-tool .home-space-group-heading > span,
+.precision-tool .space-card-pending-decisions strong {
+  border-radius: var(--catalog-radius-sm);
+  min-height: var(--catalog-space-xl);
+  padding: var(--catalog-space-xs) var(--catalog-space-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.precision-tool .route-recovery,
+.precision-tool .home-state-panel,
+.precision-tool .first-space-invitation,
+.precision-tool .home-space-group.secondary .space-card,
+.precision-tool .space-card {
+  background: var(--catalog-color-surface-raised);
+  border-color: var(--catalog-color-border);
+  border-radius: var(--catalog-radius-md);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transform: none;
+  padding: var(--catalog-space-lg);
+}
+
+.precision-tool .home-space-groups {
+  gap: var(--catalog-space-xl);
+}
+
+.precision-tool .home-space-group-heading h2 {
+  font-size: var(--catalog-font-lg);
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+
+.precision-tool .space-card {
+  min-height: 0;
+  gap: var(--catalog-space-md);
+  transition: border-color var(--catalog-motion-fast);
+}
+
+.precision-tool .space-card:hover {
+  border-color: var(--catalog-color-accent);
+}
+
+.precision-tool .space-card-heading h3 {
+  font-size: var(--catalog-font-lg);
+  line-height: 1.3;
+}
+
+.precision-tool .space-card-description:empty {
+  display: none;
+}
+
+.precision-tool .space-card-metadata {
+  padding: var(--catalog-space-sm) 0;
+  gap: var(--catalog-space-md);
+}
+
+.precision-tool .space-card-signals {
+  gap: var(--catalog-space-xs);
+}
+
+.precision-tool .space-card-attention,
+.precision-tool .space-card-pending-decisions {
+  min-height: var(--catalog-space-xl);
+}
+
+@media (max-width: 880px) {
+  .app-shell.precision-tool {
+    padding: var(--catalog-space-sm) var(--catalog-space-sm)
+      max(224px, calc(var(--chat-dock-height, 0px) + var(--catalog-space-lg)));
+  }
+
+  .precision-tool .topbar {
+    position: static;
+    gap: var(--catalog-space-sm);
+  }
+
+  .precision-tool .topbar > .chat-model-selects {
+    order: 1;
+    flex-basis: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-width: none;
+  }
+
+  .precision-tool .topbar > .chat-model-selects select {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .precision-tool .shell-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--catalog-space-md);
+  }
+
+  .space-navigation {
+    position: static;
+  }
+
+  .precision-tool .space-rail {
+    display: none;
+  }
+
+  .space-picker {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: var(--catalog-space-sm);
+    font-size: var(--catalog-font-sm);
+    color: var(--catalog-color-text-muted);
+  }
+
+  .precision-tool .space-picker select {
+    padding-right: 36px;
+  }
+
+  .precision-tool .space-heading {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .precision-tool .space-heading h2 {
+    font-size: var(--catalog-font-lg);
+  }
+}
+
+@media (pointer: coarse) {
+  .precision-tool .chat-model-selects select,
+  .precision-tool .topbar-actions .utility-control,
+  .precision-tool .space-breadcrumb a {
+    min-width: var(--catalog-control-touch-target);
+    min-height: var(--catalog-control-touch-target);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .precision-tool .space-card {
+    transition: none;
+  }
+}

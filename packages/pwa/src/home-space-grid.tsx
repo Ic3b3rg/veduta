@@ -123,7 +123,7 @@ function SpaceCard({
 }) {
   const { now } = usePresentation()
   return (
-    <Link className="space-card" to={clientPath.space(space.slug)}>
+    <Link className="space-card recipe-surface" to={clientPath.space(space.slug)}>
       <div className="space-card-heading">
         <h3>{space.name}</h3>
         <span aria-hidden="true">→</span>

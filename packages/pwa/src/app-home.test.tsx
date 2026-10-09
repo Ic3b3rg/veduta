@@ -147,6 +147,23 @@ describe('App Home', () => {
         .querySelector('time')
         ?.getAttribute('datetime'),
     ).toBe('2026-08-21T09:00:00.000Z')
+
+    const selector = screen.getByRole('combobox', { name: 'Change Space' })
+    expect(selector).toHaveProperty('value', '')
+    fireEvent.change(selector, { target: { value: 'spc-health' } })
+    await screen.findByRole('main', { name: 'Health Space' })
+    expect(window.location.pathname).toBe('/app/space/health')
+    expect(selector).toHaveProperty('value', 'spc-health')
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: 'Breadcrumb' })).getByRole('link', {
+        name: 'Home',
+      }),
+    )
+    await screen.findByRole('main', { name: 'Home' })
+    expect(selector).toHaveProperty('value', '')
+    fireEvent.change(selector, { target: { value: 'spc-health' } })
+    fireEvent.change(selector, { target: { value: '' } })
+    expect(window.location.pathname).toBe('/')
   })
 
   it('keeps a protocol-valid cached Home visible when the Gateway is offline', async () => {

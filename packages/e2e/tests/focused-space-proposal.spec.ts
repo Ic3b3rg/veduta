@@ -46,7 +46,7 @@ test('focused Chat proposes, rejects and accepts a new Space without leaving the
   if (!proposal) throw new Error('The focused proposal was not persisted')
   await chat.getByRole('button', { name: 'Accept Create Space “Lavoro”' }).tap()
   await expect(
-    page.getByRole('complementary', { name: 'Spaces' }).getByRole('button', { name: /Lavoro/ }),
+    page.getByRole('combobox', { name: 'Change Space' }).getByRole('option', { name: 'Lavoro' }),
   ).toHaveCount(1)
   await expect(chat.getByText('Accepted: Create Space “Lavoro”.', { exact: true })).toBeVisible()
   const accepted = await readSurfaceSnapshot(page, origin)
