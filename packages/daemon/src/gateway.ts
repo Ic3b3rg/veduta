@@ -67,6 +67,7 @@ export class GatewayHub {
   private clients = new Map<string, GatewayClientSession>()
   private disposeAuthListener: (() => void) | undefined
   private disposeSurfaceEventListener: () => void
+  private disposeFactsListener: () => void
   private pendingSystemNotices: string[] = []
 
   constructor(
@@ -109,6 +110,9 @@ export class GatewayHub {
     // frame.
     this.disposeSurfaceEventListener = this.store.onSurfaceEvent((event) => {
       this.broadcast(surfaceEventFrame(event))
+    })
+    this.disposeFactsListener = this.store.spacesEngine.onMemoryWrite(({ spaceId, kind }) => {
+      if (kind === 'fact') this.broadcast({ type: 'space.facts-changed', spaceId })
     })
   }
 
@@ -340,6 +344,7 @@ export class GatewayHub {
   dispose(): void {
     this.disposeAuthListener?.()
     this.disposeSurfaceEventListener()
+    this.disposeFactsListener()
   }
 
   private connectClient(

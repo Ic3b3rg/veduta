@@ -15,6 +15,8 @@ export function respondToMockAgentAction(text: string, results: ToolResult[]) {
     !isRecord(request['payload'])
   )
     return undefined
+  if (request['actionName'] === 'edit_facts')
+    return piFauxAssistantMessage('Which fact would you like to correct, and what should it say?')
   const fail = request['actionName'] === 'fail_demo'
   if (
     !(request['actionName'] === 'complete_demo' || fail) ||

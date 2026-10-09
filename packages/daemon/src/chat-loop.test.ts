@@ -25,6 +25,7 @@ import {
   fakeUsage,
 } from './fake-provider.ts'
 import { ModelRouter, SpendingCapError, type RoutingConfig } from './model-routing.ts'
+import { createMemoryTools } from './memory-tools.ts'
 import { PiJsonlSessionStore } from './pi-agent-runner.ts'
 import { PendingDecisionService, type PendingDecisionAdapter } from './pending-decision-service.ts'
 import { Store } from './store.ts'
@@ -232,8 +233,10 @@ function chatEvent(overrides: Partial<PwaChatInput> & { text: string }): PwaChat
 
 function globalSurfaceChatLoop(harness: Harness): ChatLoop {
   const templateEngine = new TemplateEngine({ store: harness.store })
-  const focusedToolsFor = (spaceId: string) =>
-    createFocusedSurfaceTools({ store: harness.store, templateEngine, spaceId })
+  const focusedToolsFor = (spaceId: string) => [
+    ...createFocusedSurfaceTools({ store: harness.store, templateEngine, spaceId }),
+    ...createMemoryTools(harness.store.spacesEngine, { activeSpaceId: spaceId }),
+  ]
   return createChatLoop({
     store: harness.store,
     router: harness.router,
@@ -332,6 +335,113 @@ describe('createChatLoop', () => {
         .eventLog('spc-health')
         .filter((event) => event.type === 'turn' && event.payload?.['role'] === 'user'),
     ).toHaveLength(0)
+  })
+
+  it('clarifies Edit facts without authoring its projection, then preserves a correction through the Curator', async () => {
+    const h = harness()
+    const spaceId = 'spc-health'
+    h.store.spacesEngine.writeFact(spaceId, 'I dislike celery', 'untrusted:template')
+    const facts = h.store.spacesEngine.factsSurface(spaceId)
+    const before = h.store.spacesEngine.readFacts(spaceId)
+    expect(() => h.store.readAuthorableSurface(spaceId, facts.id)).toThrow(
+      'Surface is not available for authoring in this Space',
+    )
+    const queued = h.store.invokeSurfaceAction(facts.id, { nodeId: 'edit', name: 'edit_facts' })
+    if (queued.path !== 'agent') throw new Error('Edit facts must use the shared Agent path')
+    const loop = globalSurfaceChatLoop(h)
+    let actionRequest = ''
+    h.fake.setResponses([
+      {
+        factory: (context) => {
+          actionRequest = JSON.stringify(context.messages.at(-1))
+          return fakeText('Which fact would you like to correct, and what should it say?')
+        },
+      },
+    ])
+    try {
+      const outcome = await loop.handleAgentAction(queued.turn)
+      expect(outcome).toMatchObject({
+        message: { text: 'Which fact would you like to correct, and what should it say?' },
+      })
+      expect(actionRequest).not.toContain('Read the current Surface before acting.')
+      expect(actionRequest).toContain('read_surface')
+      expect(actionRequest).toContain('write_fact')
+      expect(actionRequest).toContain('Ask what to change')
+      expect(h.store.spacesEngine.readFacts(spaceId)).toEqual(before)
+
+      h.fake.setResponses([
+        {
+          factory: (context) => {
+            expect(context.systemPrompt).toContain('I dislike celery')
+            return fakeToolCall('write_fact', {
+              fact: 'I like celery now',
+              supersedes: 'I dislike celery',
+            })
+          },
+        },
+        { message: fakeText('Updated your preference to: I like celery now.') },
+      ])
+      await loop.handleChatMessage(
+        chatEvent({ spaceId, text: 'Change "I dislike celery" to "I like celery now".' }),
+      )
+      const corrected = h.store.spacesEngine.readFacts(spaceId)
+      expect(corrected.active).toContainEqual(
+        expect.objectContaining({ text: 'I like celery now', origin: 'untrusted:template' }),
+      )
+      expect(corrected.active).not.toContainEqual(
+        expect.objectContaining({ text: 'I dislike celery' }),
+      )
+      expect(corrected.superseded).toContainEqual(
+        expect.objectContaining({ text: 'I dislike celery', origin: 'untrusted:template' }),
+      )
+      expect(JSON.stringify(h.store.getSurface(facts.id)?.tree)).toContain('I like celery now')
+      expect(h.store.eventLog(spaceId).filter((event) => event.type === 'fact.write')).toHaveLength(
+        2,
+      )
+      expect(() => h.store.readAuthorableSurface(spaceId, facts.id)).toThrow(
+        'Surface is not available for authoring in this Space',
+      )
+    } finally {
+      await loop.stop()
+    }
+  })
+
+  it('does not publish a failed FACTS correction as saved, even when another fact is saved', async () => {
+    const h = harness()
+    const spaceId = 'spc-health'
+    const loop = globalSurfaceChatLoop(h)
+    h.store.spacesEngine.writeFact(spaceId, 'I dislike celery', 'trusted:user')
+    h.fake.setResponses([
+      {
+        message: fakeToolCall('write_fact', {
+          fact: 'I like celery now',
+          supersedes: 'A fact that does not exist',
+        }),
+      },
+      { message: fakeToolCall('write_fact', { fact: 'I prefer tea' }) },
+      { message: fakeText('Your celery preference was corrected successfully.') },
+    ])
+    try {
+      await loop.handleChatMessage(
+        chatEvent({
+          spaceId,
+          text: 'Correct my celery preference and remember that I prefer tea.',
+        }),
+      )
+      const terminal = h.frames.filter(({ frame }) => frame.type === 'chat.turn-end').at(-1)?.frame
+      expect(terminal).toMatchObject({
+        message: { text: expect.stringContaining('A FACTS change was not saved:') },
+      })
+      expect(JSON.stringify(h.frames)).not.toContain(
+        'Your celery preference was corrected successfully.',
+      )
+      const facts = h.store.readFacts(spaceId)
+      expect(facts.active.map((fact) => fact.text)).toEqual(['I dislike celery', 'I prefer tea'])
+      expect(facts.superseded).toHaveLength(0)
+      expect(h.store.eventLog(spaceId).at(-1)?.text).toContain('A FACTS change was not saved:')
+    } finally {
+      await loop.stop()
+    }
   })
 
   it('reports an interrupted Agent action honestly after a tool has executed, without executing it again', async () => {

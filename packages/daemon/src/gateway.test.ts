@@ -11,6 +11,35 @@ import { GatewayHub, type GatewayAuth, type GatewaySocket, type PwaChatInput } f
 import { Store } from './store.ts'
 
 describe('GatewayHub Surface sync', () => {
+  it('invalidates projected FACTS on every committed write without inventing a Surface cursor', () => {
+    const store = new Store()
+    const gateway = new GatewayHub(store)
+    try {
+      const first = new FakeGatewaySocket()
+      const second = new FakeGatewaySocket()
+      const unauthenticated = new FakeGatewaySocket()
+      for (const socket of [first, second, unauthenticated]) gateway.connect(socket)
+      const cursor = store.latestSurfaceCursor()
+      first.receive({ type: 'hello', surfaceCursor: cursor })
+      second.receive({ type: 'hello', surfaceCursor: cursor })
+      store.spacesEngine.writeFact('spc-health', 'I dislike celery', 'trusted:user')
+      expect(first.sent.at(-1)).toEqual({ type: 'space.facts-changed', spaceId: 'spc-health' })
+      expect(second.sent.at(-1)).toEqual(first.sent.at(-1))
+      expect(unauthenticated.sent).toHaveLength(0)
+      expect(store.latestSurfaceCursor()).toBe(cursor)
+      const count = first.sent.length
+      store.spacesEngine.writeFact('spc-health', 'I dislike celery', 'trusted:user')
+      expect(first.sent).toHaveLength(count)
+      gateway.dispose()
+      store.spacesEngine.writeFact('spc-health', 'I like celery now', 'trusted:user')
+      expect(first.sent).toHaveLength(count)
+      unauthenticated.close()
+    } finally {
+      gateway.dispose()
+      store.close()
+    }
+  })
+
   it('fans out presentation metadata and replays a missed change without a snapshot reload', () => {
     const store = new Store({ now: fixedNow })
     const gateway = new GatewayHub(store)
