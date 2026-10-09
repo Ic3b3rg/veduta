@@ -570,6 +570,14 @@
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
 }
 
+.surface-group-heading {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--catalog-color-text-muted);
+  font-size: var(--catalog-font-sm);
+  font-weight: 600;
+}
+
 .surface-card {
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   background: var(--glass-panel);

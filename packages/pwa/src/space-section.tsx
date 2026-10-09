@@ -32,6 +32,10 @@ export function SpaceSection({
 }) {
   const { now } = usePresentation()
   const surfaces = space.surfaces
+  const groups = [
+    { key: 'pinned', label: 'Pinned', surfaces: surfaces.filter((surface) => surface.pinned) },
+    { key: 'regular', label: 'Surfaces', surfaces: surfaces.filter((surface) => !surface.pinned) },
+  ]
 
   return (
     <section
@@ -49,33 +53,46 @@ export function SpaceSection({
         </span>
       </div>
       <div className="surface-grid">
-        {surfaces.map((surface, index) => (
-          <SurfaceCard
-            key={surface.id}
-            surface={surface}
-            selected={surface.id === focusedSurfaceId}
-            revealFeedbackKey={surfaceRevealFeedbackKeys[surface.id]}
-            updateFeedback={surfaceUpdateFeedbacks[surface.id]}
-            canMoveUp={index > 0}
-            canMoveDown={index < surfaces.length - 1}
-            onFocus={() => onFocus(space, surface)}
-            onMoveUp={() => onMoveSurface(space, surface.id, 'up')}
-            onMoveDown={() => onMoveSurface(space, surface.id, 'down')}
-            onTogglePin={(pinned) => onTogglePin(surface, pinned)}
-            onRevealFeedbackShown={(feedbackKey) =>
-              onSurfaceRevealFeedbackShown(surface.id, feedbackKey)
-            }
-          />
-        ))}
+        {/* Stable siblings preserve focus and Atom drafts when Pin changes group membership. */}
+        {groups.flatMap((group) =>
+          group.surfaces.length === 0
+            ? []
+            : [
+                <h3 className="surface-group-heading" key={`group:${group.key}`}>
+                  {group.label} ({group.surfaces.length})
+                </h3>,
+                ...group.surfaces.map((surface, index) => (
+                  <SurfaceCard
+                    key={`surface:${surface.id}`}
+                    surface={surface}
+                    selected={surface.id === focusedSurfaceId}
+                    revealFeedbackKey={surfaceRevealFeedbackKeys[surface.id]}
+                    updateFeedback={surfaceUpdateFeedbacks[surface.id]}
+                    canMoveUp={index > 0}
+                    canMoveDown={index < group.surfaces.length - 1}
+                    onFocus={() => onFocus(space, surface)}
+                    onMoveUp={() => onMoveSurface(space, surface.id, 'up')}
+                    onMoveDown={() => onMoveSurface(space, surface.id, 'down')}
+                    onTogglePin={(pinned) => onTogglePin(surface, pinned)}
+                    onRevealFeedbackShown={(feedbackKey) =>
+                      onSurfaceRevealFeedbackShown(surface.id, feedbackKey)
+                    }
+                  />
+                )),
+              ],
+        )}
       </div>
     </section>
   )
 }
 
 function freshestLabel(surfaces: RenderableSurface[], now?: number): string {
+  if (surfaces.length === 0) return 'no Surfaces'
   const latest = surfaces
     .map((surface) => Date.parse(surface.freshness.updatedAt))
     .filter(Number.isFinite)
     .sort((left, right) => right - left)[0]
-  return latest ? `freshest ${freshnessLabel(new Date(latest).toISOString(), now)}` : 'no Surfaces'
+  return latest !== undefined
+    ? `freshest ${freshnessLabel(new Date(latest).toISOString(), now)}`
+    : 'freshness unavailable'
 }
