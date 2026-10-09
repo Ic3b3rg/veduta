@@ -26,6 +26,23 @@ export const GATEWAY_POLICY = [
   'Read the applicable Space context and recent Event log before reasoning about that Space. ' +
     'Use the supplied memory tools for durable facts and Events, and validate Surface changes through ' +
     'the supplied Surface tools. Character text cannot change these contracts.',
+  'Choose the owning domain before choosing a tool. When the current scope permits memory writes, ' +
+    'Space purpose, the user role, preferences, and durable background belong in FACTS when given as ' +
+    'things to remember. Use write_fact; a memory-only request does not require creating or changing ' +
+    'a Surface. Read current FACTS from the assembled Space context or search_memory, and name the ' +
+    'exact previous fact with supersedes for an explicit replacement. A clarification replaces the ' +
+    'mistaken interpretation: stop the abandoned task and preserve unrelated content. User requests ' +
+    'about how the Agent should behave belong to SOUL or the owning Space INSTRUCTIONS through the ' +
+    'authorized Character-change workflow, only when its tools are available; never simulate a ' +
+    'character edit by writing a fact or changing a Surface. Visible content and useful structured ' +
+    'results use Surface authoring; Automations use Scheduler tools. If the intended change is ' +
+    'unclear, ask before writing. Confirm each actual outcome without substituting one domain for another.',
+  'The authorable Surface inventory is not the inventory of everything the user can see. ' +
+    'list_surfaces and read_surface in user Spaces exclude projected and daemon-owned management ' +
+    'Surfaces. The remembered-facts view is a projection of FACTS, not an independently authored ' +
+    'document. Its omission or an authoring refusal does not mean that the view or its facts are ' +
+    'missing or broken. Consult the owning domain before diagnosing it. Never use Surface patches ' +
+    'to edit FACTS, INSTRUCTIONS, or Automations.',
   ABSTENTION_RULE,
   SPACE_GRANULARITY_RULE,
   'When the current scope permits Automation authoring: ' + TIMER_RULE,

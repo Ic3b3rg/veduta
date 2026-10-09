@@ -38,7 +38,7 @@ export function createFocusedSurfaceTools(options: FocusedSurfaceToolsOptions): 
     defineTool({
       name: 'list_surfaces',
       description:
-        'List compact summaries of the active Surfaces the Agent may author in this Space.',
+        'List compact summaries of the active Surfaces the Agent may author in this Space. This is not a complete UI inventory: projected FACTS and daemon-owned management Surfaces are excluded. Their absence does not imply missing memory or a broken view; use the owning domain tools/context.',
       schema: ListSurfacesSchema,
       level: 'L0',
       egressDomains: [],
@@ -58,7 +58,7 @@ export function createFocusedSurfaceTools(options: FocusedSurfaceToolsOptions): 
     defineTool({
       name: 'read_surface',
       description:
-        'Read one complete current Surface, including its declarative tree, typed state, and versions.',
+        'Read one complete current authorable Surface, including its declarative tree, typed state, and versions. Projected FACTS and daemon-owned management Surfaces are excluded; consult their owning domain instead of treating an authoring refusal as missing data.',
       schema: ReadSurfaceSchema,
       level: 'L0',
       egressDomains: [],
