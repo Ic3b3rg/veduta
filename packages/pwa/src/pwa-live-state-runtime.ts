@@ -149,6 +149,7 @@ export class PwaLiveStateRuntime {
   private queuedChat: QueuedChat[]
   private refetch: Promise<void> | undefined
   private refetchGeneration = 0
+  private refetchRequested = false
   private eventBuffer: SurfaceStreamEvent[] = []
   private surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback> = {}
   private readonly surfaceOrderStatuses = new Map<string, SurfaceOrderStatus>()
@@ -270,6 +271,7 @@ export class PwaLiveStateRuntime {
     this.connectionGeneration += 1
     this.refetchGeneration += 1
     this.refetch = undefined
+    this.refetchRequested = false
     this.eventBuffer = []
     this.actions.stop()
     this.agentActions.stop()
@@ -494,6 +496,7 @@ export class PwaLiveStateRuntime {
       onApprovalCard: receive,
       onPresence: receive,
       onSpaceAttention: receive,
+      onSpaceFactsChanged: receive,
       onError: (message) => {
         if (!this.active(epoch) || generation !== this.connectionGeneration) return
         if (
@@ -596,6 +599,10 @@ export class PwaLiveStateRuntime {
       case 'automation-outcome-notification.lifecycle':
         this.notifications.accept(frame)
         break
+      case 'space.facts-changed':
+        this.refetchRequested = true
+        void this.refreshSpaces()
+        break
       case 'space.attention':
         this.surfaces.attention(frame)
         this.saveSurfaces()
@@ -655,6 +662,7 @@ export class PwaLiveStateRuntime {
   async refreshSpaces(): Promise<void> {
     if (!this.started) return
     if (this.refetch !== undefined) return this.refetch
+    this.refetchRequested = false
     const epoch = this.epoch
     const generation = ++this.refetchGeneration
     const refresh = async () => {
@@ -698,6 +706,7 @@ export class PwaLiveStateRuntime {
         if (this.active(epoch) && generation === this.refetchGeneration) {
           this.refetch = undefined
           this.publish()
+          if (this.refetchRequested) void this.refreshSpaces()
         }
       }
     }

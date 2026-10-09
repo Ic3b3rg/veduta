@@ -159,6 +159,23 @@ function setup(initialStorage: Record<string, string> = {}) {
 afterEach(() => vi.useRealTimers())
 
 describe('PWA live-state runtime', () => {
+  it('refetches a FACTS projection again if another write arrives during the snapshot request', async () => {
+    const { runtime, connections, fetchSpaces } = setup()
+    await runtime.start()
+    const connection = connections[0]!
+    const first = deferred<SurfaceSnapshot>()
+    fetchSpaces.mockReturnValueOnce(first.promise).mockResolvedValueOnce(snapshot(2))
+    connection.onSpaceFactsChanged?.({ type: 'space.facts-changed', spaceId: 'spc-test' })
+    await vi.waitFor(() => expect(fetchSpaces).toHaveBeenCalledTimes(2))
+    connection.onSpaceFactsChanged?.({ type: 'space.facts-changed', spaceId: 'spc-test' })
+    connection.onSpaceFactsChanged?.({ type: 'space.facts-changed', spaceId: 'spc-test' })
+    first.resolve(snapshot(1))
+    await vi.waitFor(() => expect(fetchSpaces).toHaveBeenCalledTimes(3))
+    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['value']).toBe(2)
+    expect(runtime.getSnapshot().surfaceCursor).toBe(0)
+    runtime.stop()
+  })
+
   it('recovers without a page refresh when the first request lands during a service restart', async () => {
     vi.useFakeTimers()
     const { runtime, fetchAuthStatus, connections } = setup({ 'veduta.authToken': 'vdt_test' })

@@ -450,7 +450,8 @@ function topicKey(text: string): string {
     .join(' ')
 }
 
-function normalizeFactText(text: string): string {
+/** Shared Curator comparison identity for matching a requested fact to its canonical result. */
+export function normalizeFactText(text: string): string {
   return wordsIn(text).join(' ')
 }
 

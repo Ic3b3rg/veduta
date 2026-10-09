@@ -947,8 +947,8 @@ export class SpacesEngine {
 
   /**
    * Notifies observers after a write already landed on disk. An observer's
-   * failure is logged and swallowed, never propagated: the only subscriber is
-   * the disposable memory index (issue #21), and by the
+   * failure is logged and swallowed, never propagated: subscribers refresh
+   * the disposable memory index and notify clients of changed FACTS, and by the
    * time this runs the Event log or `FACTS.md` write has committed. Letting a
    * full disk or a corrupt index throw from here would report a *failed*
    * mutation for something that actually succeeded, and every caller —
