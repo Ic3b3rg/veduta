@@ -112,6 +112,56 @@ function order(pinned: boolean, cursor = 1): SurfaceOrder {
 }
 
 describe('Surface ordering commands', () => {
+  it.each(['failed', 'unchanged', 'Unpin'] as const)(
+    'does not reveal a %s direct command',
+    async (outcome) => {
+      const { runtime, first, pinSurface } = await setup(outcome === 'Unpin')
+      if (outcome === 'failed') pinSurface.mockRejectedValue(new Error('Pin refused'))
+      else
+        pinSurface.mockResolvedValue({
+          changed: outcome !== 'unchanged',
+          surface: { ...first, pinned: outcome === 'unchanged' },
+          order: order(outcome === 'unchanged'),
+        })
+      await runtime.togglePin(first)
+      expect(runtime.getSnapshot().presentationEvents).toEqual([])
+    },
+  )
+
+  it('reveals only an effective directly requested Pin after its authoritative order is available', async () => {
+    const { runtime, first, pinSurface, fetchSpaces } = await setup()
+    const snapshot = deferred<SurfaceSnapshot>()
+    fetchSpaces.mockReturnValue(snapshot.promise)
+    const created = { ...first, id: 'srf-created', pinned: false }
+    const pinned = { ...first, pinned: true }
+    const confirmedOrder = {
+      ...order(true, 2),
+      regularSurfaceIds: ['srf-created', 'srf-second'],
+    }
+    pinSurface.mockResolvedValue({ changed: true, surface: pinned, order: confirmedOrder })
+    await runtime.togglePin(first)
+    expect(runtime.getSnapshot().presentationEvents).toEqual([])
+    expect(runtime.getSnapshot().surfaceOrderStatuses[first.id]?.state).toBe('pending')
+    snapshot.resolve({
+      surfaceCursor: 2,
+      spaces: [
+        {
+          ...runtime.getSnapshot().spaces[0]!,
+          surfaces: [pinned, created, { ...first, id: 'srf-second' }],
+        },
+      ],
+    })
+    await runtime.refreshSpaces()
+    expect(runtime.getSnapshot().presentationEvents).toMatchObject([
+      { frame: { type: 'surface.direct-pin', surfaceId: first.id, spaceId: first.spaceId } },
+    ])
+    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.id).toBe(first.id)
+    await runtime.refreshSpaces()
+    expect(runtime.getSnapshot().presentationEvents).toHaveLength(1)
+    runtime.stop()
+    expect(runtime.getSnapshot().presentationEvents).toEqual([])
+  })
+
   it.each(
     ['Pin', 'Unpin', 'Move'].flatMap((action) =>
       ['srf-first', '__proto__'].map((id) => ({ action, id })),
@@ -188,6 +238,9 @@ describe('Surface ordering commands', () => {
       expect(runtime.getSnapshot().spaces[0]?.surfaces).toHaveLength(2)
       expect(runtime.getSnapshot().spaces[0]?.surfaces[0]).toEqual(confirmed)
       expect(runtime.getSnapshot().surfaceOrderStatuses[first.id]).toBeUndefined()
+      expect(runtime.getSnapshot().presentationEvents).toMatchObject([
+        { frame: { type: 'surface.direct-pin', surfaceId: first.id } },
+      ])
     },
   )
 

@@ -586,6 +586,11 @@
   overflow-wrap: anywhere;
 }
 
+.surface-toolbar button[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .surface-order-status.failed {
   color: var(--catalog-color-danger);
 }

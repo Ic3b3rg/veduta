@@ -19,6 +19,7 @@ import {
 } from './pwa-storage.ts'
 import { syncPush } from './push.ts'
 import { useSurfaceCreationFeedback } from './surface-creation-feedback.ts'
+import { useSurfacePinFeedback } from './surface-pin-feedback.ts'
 import { usePendingDecisionPresentation } from './use-pending-decision-presentation.ts'
 import { PwaRuntimeContext, useLiveState } from './use-live-state.ts'
 import './app.css'
@@ -120,9 +121,14 @@ function RoutedApp() {
   const pendingDecisions = snapshot.pendingDecisions.filter(
     (decision) => !dismissedDecisionIds.has(decision.id),
   )
+  const {
+    keys: pinRevealKeys,
+    register: registerDirectPin,
+    acknowledge: acknowledgeDirectPin,
+  } = useSurfacePinFeedback(locationKey, focusedSpaceId)
   const surfaceRevealFeedbackKeys = useMemo(
-    () => ({ ...surfaceCreationFeedbackKeys, ...pendingDecisionRevealKeys }),
-    [surfaceCreationFeedbackKeys, pendingDecisionRevealKeys],
+    () => ({ ...surfaceCreationFeedbackKeys, ...pendingDecisionRevealKeys, ...pinRevealKeys }),
+    [surfaceCreationFeedbackKeys, pendingDecisionRevealKeys, pinRevealKeys],
   )
   const presentedSequence = useRef(0)
   useEffect(() => {
@@ -130,11 +136,13 @@ function RoutedApp() {
       if (event.sequence <= presentedSequence.current) continue
       presentedSequence.current = event.sequence
       const pendingTurns = new Set(event.pendingTurnIds)
-      if (event.frame.type === 'surface.created')
+      if (event.frame.type === 'surface.direct-pin') {
+        registerDirectPin(event.frame.surfaceId, event.frame.spaceId, event.sequence)
+      } else if (event.frame.type === 'surface.created')
         registerLiveCreation(event.frame, event.clientId, pendingTurns)
       else registerLiveTurn(event.frame, event.clientId, pendingTurns)
     }
-  }, [snapshot.presentationEvents, registerLiveCreation, registerLiveTurn])
+  }, [snapshot.presentationEvents, registerLiveCreation, registerLiveTurn, registerDirectPin])
   useEffect(() => {
     if (!gatewayOnline) cancelPendingDecisionReveals()
   }, [gatewayOnline, cancelPendingDecisionReveals])
@@ -387,6 +395,7 @@ function RoutedApp() {
       onTogglePin={(surface) => void runtime.togglePin(surface)}
       onSurfaceRevealFeedbackShown={(surfaceId, feedbackKey) => {
         shownSurfaceRevealKeysRef.current.add(feedbackKey)
+        acknowledgeDirectPin(surfaceId, feedbackKey)
         const creationFeedbackKey = surfaceCreationFeedbackKeys[surfaceId]
         if (creationFeedbackKey !== undefined) {
           acknowledgeSurfaceCreationFeedback(surfaceId, creationFeedbackKey)

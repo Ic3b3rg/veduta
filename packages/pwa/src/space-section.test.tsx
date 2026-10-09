@@ -48,24 +48,20 @@ describe('Space Surface groups', () => {
       screen.getAllByRole('button', { name: /^Focus / }).map((b) => b.getAttribute('aria-label')),
     ).toEqual(['Focus Z pinned', 'Focus A pinned', 'Focus Y regular', 'Focus B managed'])
     for (const title of ['Z pinned', 'Y regular']) {
-      expect(screen.getByRole('button', { name: `Move ${title} up` })).toHaveProperty(
-        'disabled',
-        true,
-      )
-      expect(screen.getByRole('button', { name: `Move ${title} down` })).toHaveProperty(
-        'disabled',
-        false,
-      )
+      expect(
+        screen.getByRole('button', { name: `Move ${title} up` }).getAttribute('aria-disabled'),
+      ).toBe('true')
+      expect(
+        screen.getByRole('button', { name: `Move ${title} down` }).getAttribute('aria-disabled'),
+      ).toBe('false')
     }
     for (const title of ['A pinned', 'B managed']) {
-      expect(screen.getByRole('button', { name: `Move ${title} down` })).toHaveProperty(
-        'disabled',
-        true,
-      )
-      expect(screen.getByRole('button', { name: `Move ${title} up` })).toHaveProperty(
-        'disabled',
-        false,
-      )
+      expect(
+        screen.getByRole('button', { name: `Move ${title} down` }).getAttribute('aria-disabled'),
+      ).toBe('true')
+      expect(
+        screen.getByRole('button', { name: `Move ${title} up` }).getAttribute('aria-disabled'),
+      ).toBe('false')
     }
     fireEvent.click(screen.getByRole('button', { name: 'Move Z pinned down' }))
     expect(handlers.onMoveSurface).toHaveBeenCalledWith(handlers.space, 'srf-z', 'down')
@@ -82,8 +78,12 @@ describe('Space Surface groups', () => {
       screen.queryByRole('heading', { name: pinned ? /^Surfaces \(/ : /^Pinned \(/ }),
     ).toBeNull()
     expect(screen.getAllByRole('article')).toHaveLength(1)
-    expect(screen.getByRole('button', { name: 'Move Only up' })).toHaveProperty('disabled', true)
-    expect(screen.getByRole('button', { name: 'Move Only down' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Move Only up' }).getAttribute('aria-disabled')).toBe(
+      'true',
+    )
+    expect(
+      screen.getByRole('button', { name: 'Move Only down' }).getAttribute('aria-disabled'),
+    ).toBe('true')
     expect(screen.queryByText('no Surfaces')).toBeNull()
   })
 

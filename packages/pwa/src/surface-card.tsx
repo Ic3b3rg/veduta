@@ -9,7 +9,7 @@ import {
   type RenderableSurface,
   type SurfaceRelativeTimeStatus,
 } from '@veduta/protocol'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react'
 import { freshnessLabel } from './api.ts'
 import type { SurfaceUpdateFeedback } from './surface-motion.ts'
 import { useCatalogTheme } from './theme.ts'
@@ -59,7 +59,7 @@ export function SurfaceCard({
   const cardRef = useRef<HTMLElement>(null)
   const handledRevealFeedbackRef = useRef<string | undefined>(undefined)
   const revealedWhileSelectedRef = useRef(false)
-  const [revealHighlighted, setRevealHighlighted] = useState(false)
+  const [highlightKey, setHighlightKey] = useState<string>()
   const relativeTime = useRelativeTimeStatus(surface, presentation.now)
   const automationOutcomes = AutomationOutcomeStatusesSchema.safeParse(
     surface.state[AUTOMATION_OUTCOMES_STATE_KEY],
@@ -87,15 +87,19 @@ export function SurfaceCard({
     handledRevealFeedbackRef.current = revealFeedbackKey
     if (selected) revealedWhileSelectedRef.current = true
     scrollSurfaceCardIntoView(card)
-    setRevealHighlighted(true)
+    setHighlightKey(revealFeedbackKey)
     onRevealFeedbackShown(revealFeedbackKey)
   }, [onRevealFeedbackShown, revealFeedbackKey, selected])
 
   useEffect(() => {
-    if (!revealHighlighted) return
-    const timeout = window.setTimeout(() => setRevealHighlighted(false), 2_000)
+    if (highlightKey === undefined) return
+    for (const animation of cardRef.current?.getAnimations?.() ?? []) {
+      if ('animationName' in animation && animation.animationName === 'surface-reveal-highlight')
+        animation.currentTime = 0
+    }
+    const timeout = window.setTimeout(() => setHighlightKey(undefined), 2_000)
     return () => window.clearTimeout(timeout)
-  }, [revealHighlighted])
+  }, [highlightKey])
   const dispatch = useCallback(
     (node: KnownRenderableAtomNode, actionName: string, value?: JsonValue) => {
       if (!runtime) return Promise.reject(new Error('Surface actions are unavailable'))
@@ -117,7 +121,7 @@ export function SurfaceCard({
         surface.presentation === 'full' ? 'surface-presentation-full' : '',
         selected ? 'selected' : '',
         surface.pinned ? 'pinned' : '',
-        revealHighlighted ? 'surface-reveal-highlight' : '',
+        highlightKey !== undefined ? 'surface-reveal-highlight' : '',
         relativeTime?.status === 'expired' ? 'relative-time-expired' : '',
       ]
         .filter(Boolean)
@@ -135,25 +139,25 @@ export function SurfaceCard({
           Focus
         </button>
         <div className="surface-order">
-          <button
+          <SurfaceOrderButton
             type="button"
             onClick={onMoveUp}
             disabled={!canMoveUp || orderingUnavailable}
             aria-label={`Move ${surface.title} up`}
           >
             Up
-          </button>
-          <button
+          </SurfaceOrderButton>
+          <SurfaceOrderButton
             type="button"
             onClick={onMoveDown}
             disabled={!canMoveDown || orderingUnavailable}
             aria-label={`Move ${surface.title} down`}
           >
             Down
-          </button>
+          </SurfaceOrderButton>
         </div>
         {surface.pinnable && (
-          <button
+          <SurfaceOrderButton
             type="button"
             className="surface-pin"
             disabled={orderingUnavailable}
@@ -162,7 +166,7 @@ export function SurfaceCard({
             aria-label={`${surface.pinned ? 'Pinned' : 'Pin'} ${surface.title}`}
           >
             {surface.pinned ? 'Pinned' : 'Pin'}
-          </button>
+          </SurfaceOrderButton>
         )}
       </div>
       {orderStatus?.state === 'failed' ? (
@@ -216,6 +220,20 @@ export function SurfaceCard({
         {surface.freshness.updatedBy}
       </div>
     </article>
+  )
+}
+
+/** Keep the active control focused while an ordering request becomes unavailable. */
+function SurfaceOrderButton({ disabled, onClick, ...props }: ComponentProps<'button'>) {
+  return (
+    <button
+      {...props}
+      aria-disabled={disabled}
+      tabIndex={disabled ? -1 : undefined}
+      onClick={(event) => {
+        if (!disabled) onClick?.(event)
+      }}
+    />
   )
 }
 

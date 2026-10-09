@@ -67,10 +67,14 @@ it('exposes Surface-scoped pending, failure, offline refusal and explicit reconn
   fireEvent.click(pin)
   fireEvent.click(pin)
   expect(pinSurface).toHaveBeenCalledOnce()
-  expect(pin).toHaveProperty('disabled', true)
+  expect(pin.getAttribute('aria-disabled')).toBe('true')
   expect(pin.getAttribute('aria-pressed')).toBe('false')
-  expect(screen.getByRole('button', { name: 'Move First down' })).toHaveProperty('disabled', true)
-  expect(screen.getByRole('button', { name: 'Pin Second' })).toHaveProperty('disabled', false)
+  expect(
+    screen.getByRole('button', { name: 'Move First down' }).getAttribute('aria-disabled'),
+  ).toBe('true')
+  expect(screen.getByRole('button', { name: 'Pin Second' }).getAttribute('aria-disabled')).toBe(
+    'false',
+  )
   expect(screen.getByRole('button', { name: 'Focus First' })).toHaveProperty('disabled', false)
   expect(screen.getByText('Pin "First" in progress…').getAttribute('role')).toBe('status')
   expect(screen.queryByRole('heading', { name: /^Pinned \(/ })).toBeNull()
@@ -79,11 +83,13 @@ it('exposes Surface-scoped pending, failure, offline refusal and explicit reconn
     await Promise.resolve()
   })
   expect(screen.getByRole('alert').textContent).toBe('Pin "First" failed: request refused')
-  expect(pin).toHaveProperty('disabled', false)
+  expect(pin.getAttribute('aria-disabled')).toBe('false')
   expect(screen.queryByRole('heading', { name: /^Pinned \(/ })).toBeNull()
   act(() => vi.mocked(connectGateway).mock.calls[0]![0].onClose())
-  expect(pin).toHaveProperty('disabled', true)
-  expect(screen.getByRole('button', { name: 'Pin Second' })).toHaveProperty('disabled', true)
+  expect(pin.getAttribute('aria-disabled')).toBe('true')
+  expect(screen.getByRole('button', { name: 'Pin Second' }).getAttribute('aria-disabled')).toBe(
+    'true',
+  )
   expect(screen.getByText('Pin and Move are unavailable while offline.').getAttribute('role')).toBe(
     'status',
   )
@@ -91,7 +97,7 @@ it('exposes Surface-scoped pending, failure, offline refusal and explicit reconn
   expect(pinSurface).toHaveBeenCalledOnce()
   await waitFor(() => expect(connectGateway).toHaveBeenCalledTimes(2), { timeout: 3000 })
   act(() => vi.mocked(connectGateway).mock.calls[1]![0].onHello(0, 'client-order'))
-  expect(pin).toHaveProperty('disabled', false)
+  expect(pin.getAttribute('aria-disabled')).toBe('false')
   expect(pinSurface).toHaveBeenCalledOnce()
   vi.mocked(pinSurface).mockResolvedValue({
     changed: true,
@@ -105,6 +111,10 @@ it('exposes Surface-scoped pending, failure, offline refusal and explicit reconn
   })
   fireEvent.click(pin)
   await screen.findByRole('heading', { name: 'Pinned (1)' })
+  await waitFor(() =>
+    expect(pin.closest('article')?.classList.contains('surface-reveal-highlight')).toBe(true),
+  )
+  expect(window.location.pathname).toBe('/app/space/health')
   expect(pinSurface).toHaveBeenCalledTimes(2)
   expect(screen.queryByRole('alert')).toBeNull()
   expect(

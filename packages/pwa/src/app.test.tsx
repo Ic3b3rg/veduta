@@ -341,14 +341,12 @@ describe('App', () => {
     act(() => vi.mocked(connectGateway).mock.calls[0]![0].onHello(10, 'client-order'))
     expect(await screen.findByRole('heading', { name: 'Pinned (1)' })).toBeDefined()
     expect(screen.getByRole('heading', { name: 'Surfaces (2)' })).toBeDefined()
-    expect(screen.getByRole('button', { name: 'Move Reference down' })).toHaveProperty(
-      'disabled',
-      true,
-    )
-    expect(screen.getByRole('button', { name: 'Move Gateway first up' })).toHaveProperty(
-      'disabled',
-      true,
-    )
+    expect(
+      screen.getByRole('button', { name: 'Move Reference down' }).getAttribute('aria-disabled'),
+    ).toBe('true')
+    expect(
+      screen.getByRole('button', { name: 'Move Gateway first up' }).getAttribute('aria-disabled'),
+    ).toBe('true')
     fireEvent.click(screen.getByRole('button', { name: 'Move Gateway first down' }))
     expect(moveSurface).toHaveBeenCalledOnce()
     const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]

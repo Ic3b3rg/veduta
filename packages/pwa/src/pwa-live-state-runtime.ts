@@ -52,10 +52,14 @@ export interface SurfaceOrderStatus {
 interface SurfaceOrderConfirmation {
   order: SurfaceOrder
   surface?: RenderableSurface
+  directPin?: boolean
 }
-export type LivePresentationEvent = {
+export type PwaPresentationEvent = {
   sequence: number
-  frame: Extract<RenderableGatewayServerMessage, { type: 'surface.created' }> | ChatTurnFrame
+  frame:
+    | Extract<RenderableGatewayServerMessage, { type: 'surface.created' }>
+    | ChatTurnFrame
+    | { type: 'surface.direct-pin'; surfaceId: string; spaceId: string }
   clientId: string | undefined
   pendingTurnIds: string[]
 }
@@ -84,7 +88,7 @@ export interface PwaLiveStateSnapshot {
   readonly actionStatuses: Record<string, ActionStatuses>
   readonly surfaceOrderStatuses: Record<string, SurfaceOrderStatus>
   readonly surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback>
-  readonly presentationEvents: LivePresentationEvent[]
+  readonly presentationEvents: PwaPresentationEvent[]
   readonly connectionGeneration: number
 }
 
@@ -151,7 +155,7 @@ export class PwaLiveStateRuntime {
   // Accepted receipts only; these are never persisted or retried as commands.
   private readonly surfaceOrderConfirmations = new Map<string, SurfaceOrderConfirmation>()
   private feedbackSequence = 0
-  private presentationEvents: LivePresentationEvent[] = []
+  private presentationEvents: PwaPresentationEvent[] = []
 
   constructor(options: PwaLiveStateRuntimeOptions = {}) {
     this.api = options.api ?? defaultApi
@@ -271,6 +275,7 @@ export class PwaLiveStateRuntime {
     this.agentActions.stop()
     this.surfaceOrderStatuses.clear()
     this.surfaceOrderConfirmations.clear()
+    this.presentationEvents = []
     this.turns = new Map()
     this.presence = []
     if (this.reconnectTimer !== undefined) clearTimeout(this.reconnectTimer)
@@ -607,7 +612,7 @@ export class PwaLiveStateRuntime {
     this.publish()
   }
 
-  private present(frame: LivePresentationEvent['frame']): void {
+  private present(frame: PwaPresentationEvent['frame']): void {
     this.presentationEvents = [
       ...this.presentationEvents,
       {
@@ -902,7 +907,10 @@ export class PwaLiveStateRuntime {
     return this.changeSurfaceOrder(
       surface.id,
       `${surface.pinned ? 'Unpin' : 'Pin'} "${surface.title}"`,
-      () => this.api.pinSurface(surface.id, !surface.pinned, this.token),
+      async () => {
+        const result = await this.api.pinSurface(surface.id, !surface.pinned, this.token)
+        return { ...result, directPin: !surface.pinned && result.changed }
+      },
     )
   }
 
@@ -977,6 +985,9 @@ export class PwaLiveStateRuntime {
       if (!this.surfaces.confirmOrder(result.order, result.surface)) continue
       this.surfaceOrderConfirmations.delete(surfaceId)
       this.surfaceOrderStatuses.delete(surfaceId)
+      if (result.directPin && this.findSurface(surfaceId)?.pinned) {
+        this.present({ type: 'surface.direct-pin', surfaceId, spaceId: result.order.spaceId })
+      }
     }
   }
 

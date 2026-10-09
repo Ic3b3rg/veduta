@@ -68,6 +68,23 @@ describe('SurfaceCard relative-time validity', () => {
 })
 
 describe('SurfaceCard material hierarchy', () => {
+  it('gives each distinct reveal a full highlight interval without replaying acknowledged feedback', () => {
+    const props = surfaceCardProps(formSurface())
+    const { rerender } = render(<SurfaceCard {...props} revealFeedbackKey="pin:1" />)
+    const card = screen.getByRole('article')
+    act(() => vi.advanceTimersByTime(1_900))
+    rerender(<SurfaceCard {...props} revealFeedbackKey="pin:2" />)
+    rerender(<SurfaceCard {...props} />)
+    act(() => vi.advanceTimersByTime(1_800))
+    expect(card.classList.contains('surface-reveal-highlight')).toBe(true)
+    expect(props.onRevealFeedbackShown).toHaveBeenCalledTimes(2)
+    act(() => vi.advanceTimersByTime(200))
+    expect(card.classList.contains('surface-reveal-highlight')).toBe(false)
+    rerender(<SurfaceCard {...props} revealFeedbackKey="pin:2" />)
+    expect(card.classList.contains('surface-reveal-highlight')).toBe(false)
+    expect(props.onRevealFeedbackShown).toHaveBeenCalledTimes(2)
+  })
+
   it('renders full presentation independently of Pin and Atom content', () => {
     const props = surfaceCardProps(formSurface())
     const { container, rerender } = render(<SurfaceCard {...props} />)
