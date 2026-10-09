@@ -13,7 +13,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { freshnessLabel } from './api.ts'
 import type { SurfaceUpdateFeedback } from './surface-motion.ts'
 import { useCatalogTheme } from './theme.ts'
-import { useActionConfirmations, useActionStatuses, usePwaRuntime } from './use-live-state.ts'
+import {
+  useActionConfirmations,
+  useActionStatuses,
+  usePwaRuntime,
+  useSurfaceOrderStatus,
+  useGatewayOnline,
+} from './use-live-state.ts'
 import { usePresentation } from './presentation-context.ts'
 
 export function SurfaceCard({
@@ -46,6 +52,10 @@ export function SurfaceCard({
   const runtime = usePwaRuntime()
   const actionConfirmations = useActionConfirmations(surface.id)
   const actionStatuses = useActionStatuses(surface.id)
+  const orderStatus = useSurfaceOrderStatus(surface.id)
+  const gatewayOnline = useGatewayOnline()
+  const orderingPending = orderStatus?.state === 'pending'
+  const orderingUnavailable = orderingPending || !gatewayOnline
   const cardRef = useRef<HTMLElement>(null)
   const handledRevealFeedbackRef = useRef<string | undefined>(undefined)
   const revealedWhileSelectedRef = useRef(false)
@@ -114,7 +124,7 @@ export function SurfaceCard({
         .join(' ')}
       data-presentation={surface.presentation}
     >
-      <div className="surface-toolbar">
+      <div className="surface-toolbar" aria-busy={orderingPending}>
         <button
           type="button"
           className="surface-focus"
@@ -128,7 +138,7 @@ export function SurfaceCard({
           <button
             type="button"
             onClick={onMoveUp}
-            disabled={!canMoveUp}
+            disabled={!canMoveUp || orderingUnavailable}
             aria-label={`Move ${surface.title} up`}
           >
             Up
@@ -136,7 +146,7 @@ export function SurfaceCard({
           <button
             type="button"
             onClick={onMoveDown}
-            disabled={!canMoveDown}
+            disabled={!canMoveDown || orderingUnavailable}
             aria-label={`Move ${surface.title} down`}
           >
             Down
@@ -146,6 +156,7 @@ export function SurfaceCard({
           <button
             type="button"
             className="surface-pin"
+            disabled={orderingUnavailable}
             onClick={() => onTogglePin(!surface.pinned)}
             aria-pressed={surface.pinned}
             aria-label={`${surface.pinned ? 'Pinned' : 'Pin'} ${surface.title}`}
@@ -154,6 +165,19 @@ export function SurfaceCard({
           </button>
         )}
       </div>
+      {orderStatus?.state === 'failed' ? (
+        <p className="surface-order-status failed" role="alert">
+          {orderStatus.message}
+        </p>
+      ) : !gatewayOnline ? (
+        <p className="surface-order-status" role="status">
+          Pin and Move are unavailable while offline.
+        </p>
+      ) : orderingPending ? (
+        <p className="surface-order-status" role="status">
+          {orderStatus.message}
+        </p>
+      ) : null}
       {relativeTime?.status === 'expired' && (
         <div className="relative-time-notice expired" role="status">
           This relative-time view expired. Values below are preserved but are not current.

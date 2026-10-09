@@ -578,6 +578,18 @@
   font-weight: 600;
 }
 
+.surface-order-status {
+  margin: 0;
+  padding: var(--catalog-space-sm) var(--catalog-space-md);
+  color: var(--catalog-color-text-muted);
+  font-size: var(--catalog-font-sm);
+  overflow-wrap: anywhere;
+}
+
+.surface-order-status.failed {
+  color: var(--catalog-color-danger);
+}
+
 .surface-card {
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   background: var(--glass-panel);

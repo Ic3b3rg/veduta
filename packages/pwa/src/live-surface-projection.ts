@@ -171,15 +171,8 @@ export class LiveSurfaceProjection {
       cursor <= (this.pinCursors.get(surface.id) ?? -1)
     )
       return false
-    let found = false
-    this.spaces = this.spaces.map((space) => ({
-      ...space,
-      surfaces: space.surfaces.map((current) => {
-        if (current.id !== surface.id) return current
-        found = true
-        return cursor === undefined ? surface : this.mergeConfirmed(surface, cursor, current)
-      }),
-    }))
+    const { spaces, found } = this.withConfirmedSurface(surface, cursor)
+    this.spaces = spaces
     if (found && cursor !== undefined) {
       this.patchCursors.set(surface.id, Math.max(cursor, this.patchCursors.get(surface.id) ?? -1))
       this.presentationCursors.set(
@@ -191,14 +184,32 @@ export class LiveSurfaceProjection {
     return found
   }
 
-  confirmOrder(order: SurfaceOrder, surface?: RenderableSurface): boolean {
-    if (order.cursor < (this.orderCursors.get(order.spaceId) ?? -1)) return true
-    if (surface) this.confirmSurface(surface, order.cursor)
-    const result = applySurfaceOrderToSpaces(this.spaces, order)
+  confirmOrder(order: SurfaceOrder, input?: RenderableSurface): boolean {
+    if (order.cursor <= (this.orderCursors.get(order.spaceId) ?? -1)) return true
+    const surface = input && RenderableSurfaceSchema.parse(input)
+    const candidate = surface
+      ? this.withConfirmedSurface(surface, order.cursor).spaces
+      : this.spaces
+    const result = applySurfaceOrderToSpaces(candidate, order)
     if (!result.applied) return false
+    // Membership and order become visible together, only after both can be applied.
+    if (surface) this.confirmSurface(surface, order.cursor)
     this.spaces = result.spaces
     this.orderCursors.set(order.spaceId, order.cursor)
     return true
+  }
+
+  private withConfirmedSurface(surface: RenderableSurface, cursor?: number) {
+    let found = false
+    const spaces = this.spaces.map((space) => ({
+      ...space,
+      surfaces: space.surfaces.map((current) => {
+        if (current.id !== surface.id) return current
+        found = true
+        return cursor === undefined ? surface : this.mergeConfirmed(surface, cursor, current)
+      }),
+    }))
+    return { spaces, found }
   }
 
   attention(frame: { spaceId: string; count: number; revision: number }): void {

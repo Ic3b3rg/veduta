@@ -338,6 +338,7 @@ describe('App', () => {
 
     render(<App />)
     await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+    act(() => vi.mocked(connectGateway).mock.calls[0]![0].onHello(10, 'client-order'))
     expect(await screen.findByRole('heading', { name: 'Pinned (1)' })).toBeDefined()
     expect(screen.getByRole('heading', { name: 'Surfaces (2)' })).toBeDefined()
     expect(screen.getByRole('button', { name: 'Move Reference down' })).toHaveProperty(
@@ -349,6 +350,7 @@ describe('App', () => {
       true,
     )
     fireEvent.click(screen.getByRole('button', { name: 'Move Gateway first down' }))
+    expect(moveSurface).toHaveBeenCalledOnce()
     const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
     if (!handlers) throw new Error('Gateway handlers were not registered')
 
