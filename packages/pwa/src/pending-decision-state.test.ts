@@ -140,6 +140,7 @@ describe('Pending-decision PWA state', () => {
     expect(latestPendingDecisionFeedback(entries)).toEqual({
       id: resolving.id,
       state: 'resolving',
+      tone: 'pending',
       text: 'In progress: Send message to alice@example.com.',
     })
     expect(latestPendingDecisionFeedback([originalMessage])).toBeUndefined()

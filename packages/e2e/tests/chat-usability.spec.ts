@@ -53,7 +53,7 @@ test('mobile Chat preserves navigation focus, multiline drafts and readable repl
     size: getComputedStyle(element).fontSize,
     transform: getComputedStyle(element).textTransform,
   }))
-  expect(emphasis).toEqual({ size: '14px', transform: 'none' })
+  expect(emphasis).toEqual({ size: '15px', transform: 'none' })
   await page.screenshot({ path: testInfo.outputPath('mobile-chat.png'), fullPage: true })
 
   await page.reload()

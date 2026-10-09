@@ -204,7 +204,8 @@ export function AppShell({
 
           {pendingDecisionFeedback && (
             <p
-              className={`pending-decision-feedback ${pendingDecisionFeedback.state}`}
+              className={`pending-decision-feedback recipe-status ${pendingDecisionFeedback.state}`}
+              data-tone={pendingDecisionFeedback.tone}
               role="status"
               data-decision-feedback-id={pendingDecisionFeedback.id}
             >
@@ -290,6 +291,7 @@ export function AppShell({
           </div>
 
           <ChatBar
+            gatewayOnline={gatewayOnline}
             entries={chatEntries}
             timelineEntries={chatTimelineEntries}
             hasOlder={chatHasOlder}

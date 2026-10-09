@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { fromPartial } from '@total-typescript/shoehorn'
+import type { PendingDecision, PendingDecisionOutcome } from '@veduta/protocol'
 import type { ComponentProps } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -43,6 +44,45 @@ function mobile() {
     ),
   )
 }
+
+it.each<{ outcome: PendingDecisionOutcome; label: string; tone: string }>([
+  { outcome: 'accepted', label: 'Accepted', tone: 'success' },
+  { outcome: 'executed', label: 'Executed', tone: 'success' },
+  { outcome: 'applied', label: 'Applied', tone: 'success' },
+  { outcome: 'rejected', label: 'Rejected', tone: 'muted' },
+  { outcome: 'failed', label: 'Failed', tone: 'danger' },
+  { outcome: 'refused', label: 'Refused', tone: 'danger' },
+  { outcome: 'rolled-back', label: 'Rolled back', tone: 'danger' },
+  { outcome: 'expired', label: 'Expired', tone: 'warning' },
+  { outcome: 'stale', label: 'Stale', tone: 'warning' },
+  { outcome: 'indeterminate', label: 'Indeterminate', tone: 'warning' },
+])(
+  'presents $outcome as labelled $tone feedback without resolution controls',
+  ({ outcome, label, tone }) => {
+    const input = props()
+    input.entries = [
+      {
+        role: 'assistant',
+        text: 'Decision result',
+        pendingDecisions: [
+          fromPartial<PendingDecision>({
+            id: 'approval:result',
+            summary: 'Send appointment',
+            state: 'terminal',
+            outcome,
+          }),
+        ],
+      },
+    ]
+    render(
+      <MemoryRouter>
+        <ChatBar {...input} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText(label).getAttribute('data-tone')).toBe(tone)
+    expect(screen.queryByRole('button', { name: /Approve|Reject/ })).toBeNull()
+  },
+)
 
 it('mobile Enter does not submit a draft', () => {
   mobile()

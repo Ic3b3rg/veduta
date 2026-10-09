@@ -3,6 +3,7 @@ import { structuredMarkdown } from '@veduta/catalog'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Card } from '@veduta/catalog/ui/card'
+import { Button } from '@veduta/catalog/ui/button'
 import {
   InputGroup,
   InputGroupAddon,
@@ -13,8 +14,10 @@ import type { SpaceWithSurfaces } from './api.ts'
 import { clientPath } from './client-router.tsx'
 import { PendingDecisionControls } from './pending-decision-notifications.tsx'
 import type { QueuedChat } from './pwa-storage.ts'
+import { pendingDecisionStatus } from './pending-decision-status.ts'
 
 export function ChatBar({
+  gatewayOnline = true,
   entries,
   timelineEntries,
   hasOlder,
@@ -34,6 +37,7 @@ export function ChatBar({
   onRetryInterrupted,
   onRetryQueued,
 }: {
+  gatewayOnline?: boolean
   entries: ChatMessage[]
   timelineEntries: ChatTimelineEntry[]
   hasOlder: boolean
@@ -63,7 +67,6 @@ export function ChatBar({
   const [isAtBottom, setIsAtBottom] = useState(true)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
-  const dockRef = useRef<HTMLElement>(null)
   const followsLatestRef = useRef(true)
   const logGeometryRef = useRef({ scrollHeight: 0, clientHeight: 0, clientWidth: 0, scrollTop: 0 })
 
@@ -109,27 +112,6 @@ export function ChatBar({
     return () => observer.disconnect()
   }, [entries, streamingEntries, queuedChat, timelineEntries, hasOlder, loadingOlder, updateScroll])
 
-  useEffect(() => {
-    const dock = dockRef.current
-    const shell = dock?.closest<HTMLElement>('.app-shell')
-    if (!dock || !shell || typeof ResizeObserver === 'undefined') return
-
-    const updateSpacing = () => {
-      shell.style.setProperty(
-        '--chat-dock-height',
-        `${Math.ceil(dock.getBoundingClientRect().height)}px`,
-      )
-    }
-    const observer = new ResizeObserver(updateSpacing)
-    observer.observe(dock)
-    updateSpacing()
-
-    return () => {
-      observer.disconnect()
-      shell.style.removeProperty('--chat-dock-height')
-    }
-  }, [])
-
   const scrollToLatest = () => {
     const log = logRef.current
     if (!log) return
@@ -145,7 +127,12 @@ export function ChatBar({
   }
 
   return (
-    <footer ref={dockRef} className="chat-dock" aria-label="Global chat">
+    <footer className="chat-dock" aria-label="Global chat">
+      {!gatewayOnline && (
+        <span className="chat-status recipe-status" data-tone="muted" role="status">
+          Offline
+        </span>
+      )}
       <div className="chat-log-frame">
         <div
           ref={logRef}
@@ -157,9 +144,14 @@ export function ChatBar({
           onScroll={() => updateScroll(false)}
         >
           {hasOlder && (
-            <button type="button" disabled={loadingOlder} onClick={onLoadOlder}>
+            <Button
+              className="recipe-control"
+              type="button"
+              disabled={loadingOlder}
+              onClick={onLoadOlder}
+            >
               {loadingOlder ? 'Loading older messages…' : 'Load older messages'}
-            </button>
+            </Button>
           )}
           {entries.map((entry, index) => {
             const timelineEntry = timelineEntries[index]
@@ -176,6 +168,7 @@ export function ChatBar({
                 className={`chat-entry ${entry.role}`}
                 data-chat-entry-id={timelineEntry?.id}
                 data-decision-feedback-id={entry.decisionFeedbackId}
+                data-chat-state={timelineEntry?.kind === 'error' ? 'error' : undefined}
               >
                 <strong>{entry.role === 'user' ? 'you' : 'veduta'}</strong>
                 {entry.role === 'assistant' ? (
@@ -185,14 +178,17 @@ export function ChatBar({
                 )}
                 {timelineEntry?.kind === 'user' && timelineEntry.turnState === 'interrupted' && (
                   <div>
-                    <span>Interrupted. Completion is unknown.</span>
-                    <button
+                    <span className="recipe-status" data-tone="warning">
+                      Interrupted. Completion is unknown.
+                    </span>
+                    <Button
+                      className="recipe-control"
                       type="button"
                       disabled={Boolean(retried)}
                       onClick={() => onRetryInterrupted(timelineEntry.turnId)}
                     >
                       {retried ? 'Retry requested' : 'Retry'}
-                    </button>
+                    </Button>
                   </div>
                 )}
                 {timelineEntry?.kind === 'user' &&
@@ -200,7 +196,7 @@ export function ChatBar({
                     (timelineEntry.turnState === 'running' &&
                       !streamingEntries.some((turn) => turn.turnId === timelineEntry.turnId)) ||
                     timelineEntry.turnState === 'waiting_connection') && (
-                    <small>
+                    <small className="recipe-status" data-tone="pending">
                       {timelineEntry.turnState === 'accepted'
                         ? 'Queued'
                         : timelineEntry.turnState === 'waiting_connection'
@@ -237,6 +233,7 @@ export function ChatBar({
                   <section className="chat-pending-decisions" aria-label="Pending decisions">
                     {visibleDecisions.map((decision) => {
                       const reviewPath = pendingDecisionReviewPaths.get(decision.id)
+                      const status = pendingDecisionStatus(decision)
                       return (
                         <article key={decision.id} className="chat-pending-decision">
                           <span>{decision.summary}</span>
@@ -249,10 +246,11 @@ export function ChatBar({
                               onDismiss={onDismissPendingDecision}
                             />
                           ) : (
-                            <span className="chat-pending-decision-outcome">
-                              {decision.state === 'resolving'
-                                ? 'Resolving…'
-                                : sentenceCase(decision.outcome ?? 'resolved')}
+                            <span
+                              className="chat-pending-decision-outcome recipe-status"
+                              data-tone={status.tone}
+                            >
+                              {status.label}
                             </span>
                           )}
                         </article>
@@ -267,11 +265,20 @@ export function ChatBar({
             <Card key={queued.id} className="chat-entry user" aria-label="Chat submission waiting">
               <strong>you</strong>
               <span className="chat-message">{queued.text}</span>
-              <small>{queued.status === 'rejected' ? 'Not accepted' : 'Waiting for Gateway'}</small>
+              <small
+                className="recipe-status"
+                data-tone={queued.status === 'rejected' ? 'danger' : 'pending'}
+              >
+                {queued.status === 'rejected' ? 'Not accepted' : 'Waiting for Gateway'}
+              </small>
               {queued.status === 'rejected' && (
-                <button type="button" onClick={() => onRetryQueued(queued.id)}>
+                <Button
+                  className="recipe-control"
+                  type="button"
+                  onClick={() => onRetryQueued(queued.id)}
+                >
                   Retry submission
-                </button>
+                </Button>
               )}
             </Card>
           ))}
@@ -286,16 +293,17 @@ export function ChatBar({
           ))}
         </div>
         {!isAtBottom && (
-          <button
+          <Button
             type="button"
-            className="chat-scroll-to-bottom"
+            className="chat-scroll-to-bottom recipe-control"
             aria-label="Scroll to latest message"
+            title="Scroll to latest message"
             onClick={scrollToLatest}
           >
             <svg aria-hidden="true" viewBox="0 0 24 24">
               <path d="M12 5v14m0 0 6-6m-6 6-6-6" />
             </svg>
-          </button>
+          </Button>
         )}
       </div>
       <form
@@ -331,6 +339,7 @@ export function ChatBar({
               variant="outline"
               size="icon-sm"
               aria-label="Send message"
+              title="Send message"
               disabled={!text.trim()}
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
@@ -351,8 +360,4 @@ function usesTouchComposer(): boolean {
 function isChatLogAtBottom(log: HTMLElement): boolean {
   // scrollTop can be fractional even though scrollHeight and clientHeight are rounded.
   return log.scrollHeight - log.clientHeight - log.scrollTop < 1
-}
-
-function sentenceCase(value: string): string {
-  return `${value.charAt(0).toUpperCase()}${value.slice(1).replaceAll('-', ' ')}`
 }

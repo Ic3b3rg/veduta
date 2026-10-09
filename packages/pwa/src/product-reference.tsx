@@ -175,6 +175,7 @@ export function ProductReferencePage() {
               </ReferenceRegion>
               <ReferenceRegion name="Chat">
                 <ChatBar
+                  gatewayOnline={state !== 'offline'}
                   entries={messages}
                   timelineEntries={timeline}
                   hasOlder={false}

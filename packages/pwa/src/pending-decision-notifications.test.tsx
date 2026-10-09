@@ -4,11 +4,36 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  PendingDecisionControls,
   PendingDecisionStrip,
   type PendingDecisionNotification,
 } from './pending-decision-notifications.tsx'
 
 afterEach(cleanup)
+
+it('announces a resolution in progress while keeping action names stable and disabled', () => {
+  render(
+    <MemoryRouter>
+      <PendingDecisionControls
+        decision={decision('approval:effect-1', 'Send the signed contract')}
+        resolving
+        onResolve={vi.fn()}
+        onDismiss={vi.fn()}
+      />
+    </MemoryRouter>,
+  )
+  expect(screen.getByRole('status').textContent).toBe('Resolving…')
+  expect(
+    screen
+      .getByRole('button', { name: 'Approve Send the signed contract' })
+      .hasAttribute('disabled'),
+  ).toBe(true)
+  expect(
+    screen
+      .getByRole('button', { name: 'Reject Send the signed contract' })
+      .hasAttribute('disabled'),
+  ).toBe(true)
+})
 
 describe('PendingDecisionStrip', () => {
   it('expands one accessible global summary into exact quick actions and safe Review links', () => {

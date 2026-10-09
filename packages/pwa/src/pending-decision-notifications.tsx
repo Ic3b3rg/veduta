@@ -1,6 +1,7 @@
 import type { PendingDecision, PendingDecisionResolution } from '@veduta/protocol'
 import { useId, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { Button } from '@veduta/catalog/ui/button'
 import type { PendingDecisionNotification } from './pending-decision-presentation.ts'
 
 export type { PendingDecisionNotification } from './pending-decision-presentation.ts'
@@ -25,16 +26,16 @@ export function PendingDecisionStrip({
   const label = pendingDecisionCountLabel(notifications.length)
   return (
     <section className="pending-decision-strip" aria-label="Pending decisions">
-      <button
+      <Button
         type="button"
-        className="pending-decision-strip-toggle"
+        className="pending-decision-strip-toggle recipe-control"
         aria-expanded={expanded}
         aria-controls={contentId}
         onClick={() => setExpanded((current) => !current)}
       >
         <span>{label}</span>
         <span aria-hidden="true">{expanded ? '−' : '+'}</span>
-      </button>
+      </Button>
       {expanded && (
         <PendingDecisionList
           id={contentId}
@@ -88,8 +89,15 @@ export function PendingDecisionControls({
 }) {
   return (
     <div className="pending-decision-actions">
+      {resolving && (
+        <span className="recipe-status" data-tone="pending" role="status">
+          Resolving…
+        </span>
+      )}
       {decision.allowedResolutions.map((resolution) => (
-        <button
+        <Button
+          className="recipe-control"
+          data-variant={resolution === 'reject' ? 'secondary' : 'primary'}
           key={resolution}
           type="button"
           disabled={resolving}
@@ -97,24 +105,25 @@ export function PendingDecisionControls({
           onClick={() => void onResolve(decision.id, resolution)}
         >
           {resolutionLabel(resolution)}
-        </button>
+        </Button>
       ))}
       {reviewPath === undefined ? (
         <span className="pending-decision-review-unavailable">
           Review is available when its Decision Surface arrives.
         </span>
       ) : (
-        <Link to={reviewPath} aria-label={`Review ${decision.summary}`}>
+        <Link className="recipe-control" to={reviewPath} aria-label={`Review ${decision.summary}`}>
           Review
         </Link>
       )}
-      <button
+      <Button
+        className="recipe-control"
         type="button"
         aria-label={`Dismiss ${decision.summary}`}
         onClick={() => onDismiss(decision.id)}
       >
         Dismiss
-      </button>
+      </Button>
     </div>
   )
 }

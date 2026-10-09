@@ -1,0 +1,253 @@
+/* #165: durable content and Chat have separate scroll regions. No floating
+   material is needed: the composer remains in flow and cannot cover decisions. */
+.app-shell.precision-tool {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--catalog-space-md) var(--catalog-space-xl)
+    max(var(--catalog-space-sm), env(safe-area-inset-bottom));
+}
+
+.app-shell.precision-tool > .topbar {
+  flex: 0 0 auto;
+  position: relative;
+  width: 100%;
+  margin-bottom: var(--catalog-space-md);
+}
+
+.app-shell.precision-tool > .shell-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  width: 100%;
+  align-items: stretch;
+}
+
+.app-shell.precision-tool .shell-main {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scroll-padding: var(--catalog-space-md);
+  padding: var(--catalog-space-xs);
+  align-content: start;
+  grid-auto-rows: max-content;
+}
+
+.app-shell.precision-tool .space-navigation {
+  min-height: 0;
+  overflow-y: auto;
+  position: static;
+}
+
+.app-shell.precision-tool .space-rail {
+  max-height: none;
+}
+
+.app-shell.precision-tool > .error,
+.app-shell.precision-tool > .pending-decision-feedback {
+  flex: 0 1 auto;
+  overflow-y: auto;
+  max-height: 15dvh;
+  margin-bottom: var(--catalog-space-sm);
+}
+
+.precision-tool .chat-dock {
+  background: var(--catalog-color-surface);
+  border: 0;
+  border-top: 1px solid var(--catalog-color-border);
+  border-radius: 0;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  flex: 0 0 auto;
+  position: static;
+  transform: none;
+  width: min(760px, 100%);
+  margin: var(--catalog-space-sm) auto 0;
+  padding: var(--catalog-space-sm) 0 0;
+  min-width: 0;
+  z-index: auto;
+}
+
+.precision-tool .chat-log-frame {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--catalog-space-xs);
+  margin-bottom: var(--catalog-space-sm);
+}
+
+.precision-tool .chat-log {
+  min-width: 0;
+  gap: var(--catalog-space-xs);
+  max-height: min(144px, 20dvh);
+  scroll-padding: var(--catalog-space-sm);
+}
+
+.precision-tool .chat-entry {
+  border: 0;
+  border-radius: var(--catalog-radius-sm);
+  box-shadow: none;
+  padding: var(--catalog-space-sm);
+  gap: var(--catalog-space-xs);
+  max-width: 100%;
+}
+
+.precision-tool .chat-entry.assistant {
+  background: var(--catalog-color-surface);
+}
+
+.precision-tool .chat-entry.user {
+  background: var(--catalog-color-surface-raised);
+  max-width: 92%;
+}
+
+.precision-tool .chat-entry[data-chat-state='error'] {
+  border-left: 2px solid var(--catalog-color-danger);
+}
+
+.precision-tool .chat-entry[data-chat-state='error'] .chat-message {
+  color: var(--catalog-color-danger);
+}
+
+.precision-tool .chat-message {
+  font-size: var(--catalog-font-md);
+  line-height: 1.5;
+}
+
+.precision-tool .chat-compose [data-slot='input-group'] {
+  background: var(--catalog-color-surface-raised);
+  border-radius: var(--catalog-radius-sm);
+  padding-top: 0;
+}
+
+.precision-tool .chat-compose [data-slot='input-group-control'] {
+  min-height: var(--catalog-control-touch-target);
+  max-height: min(112px, 20dvh);
+  padding: var(--catalog-space-sm) var(--catalog-space-md);
+  /* Keep 16px type in the editable field to avoid browser zoom on touch focus. */
+  font-size: 16px;
+}
+
+.precision-tool .chat-compose [data-slot='input-group-addon'] {
+  padding: 0 var(--catalog-space-xs);
+}
+
+.precision-tool .chat-compose [data-slot='button'] {
+  width: var(--catalog-control-height);
+  height: var(--catalog-control-height);
+  border-radius: var(--catalog-radius-sm);
+  margin: var(--catalog-space-xs) 0;
+}
+
+.precision-tool .chat-scroll-to-bottom {
+  position: static;
+  border-radius: var(--catalog-radius-sm);
+  box-shadow: none;
+}
+
+.precision-tool .chat-status {
+  margin-bottom: var(--catalog-space-xs);
+}
+
+.precision-tool .pending-decision-strip,
+.precision-tool .space-pending-decisions,
+.precision-tool .automation-outcome-notifications,
+.precision-tool .pending-decision-notification,
+.precision-tool .automation-outcome-notification,
+.precision-tool .chat-pending-decision,
+.precision-tool .pending-decision-feedback {
+  background: var(--catalog-color-surface-raised);
+  border-radius: var(--catalog-radius-sm);
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  overflow-wrap: anywhere;
+}
+
+.precision-tool .pending-decision-strip,
+.precision-tool .space-pending-decisions {
+  border-color: var(--catalog-color-border);
+  border-left: 2px solid var(--catalog-color-accent);
+}
+
+.precision-tool .pending-decision-strip-toggle,
+.precision-tool .space-pending-decisions-heading {
+  background: var(--catalog-color-surface-raised);
+  color: var(--catalog-color-text);
+  padding: var(--catalog-space-sm) var(--catalog-space-md);
+}
+
+.precision-tool .pending-decision-actions .recipe-control,
+.precision-tool .automation-outcome-notification-actions .recipe-control {
+  height: auto;
+  text-align: center;
+}
+
+.precision-tool .pending-decision-feedback {
+  display: block;
+  border-left-width: 2px;
+}
+
+@media (pointer: coarse) {
+  .precision-tool .chat-compose [data-slot='button'] {
+    width: var(--catalog-control-touch-target);
+    height: var(--catalog-control-touch-target);
+    margin: 0;
+  }
+
+  .precision-tool .chat-compose [data-slot='button']::before {
+    border-radius: var(--catalog-radius-sm);
+  }
+
+  .precision-tool .chat-scroll-to-bottom {
+    min-width: var(--catalog-control-touch-target);
+    min-height: var(--catalog-control-touch-target);
+  }
+
+  .precision-tool .chat-result-links a,
+  .precision-tool .chat-entry > a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--catalog-control-touch-target);
+  }
+}
+
+@media (max-width: 880px) {
+  .app-shell.precision-tool {
+    padding: var(--catalog-space-sm) var(--catalog-space-sm)
+      max(var(--catalog-space-sm), env(safe-area-inset-bottom));
+  }
+
+  .app-shell.precision-tool > .shell-layout {
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: var(--catalog-space-sm);
+  }
+
+  .precision-tool .chat-log {
+    max-height: min(112px, 18dvh);
+  }
+}
+
+@media (max-height: 480px) {
+  .app-shell.precision-tool > .topbar {
+    padding: 0;
+    margin-bottom: var(--catalog-space-xs);
+  }
+
+  .precision-tool .chat-log {
+    max-height: max(64px, 10dvh);
+  }
+
+  .precision-tool .chat-compose [data-slot='input-group-control'] {
+    max-height: 64px;
+  }
+
+  /* Model management remains reachable through the named utility control when
+     a keyboard or short landscape viewport leaves little vertical space. */
+  .app-shell.precision-tool .topbar > .chat-model-selects {
+    display: none;
+  }
+}
