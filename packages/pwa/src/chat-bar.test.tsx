@@ -141,6 +141,30 @@ describe('ChatBar', () => {
     expect(conversation.scrollTop).toBe(40)
   })
 
+  it('keeps following when a layout change emits scroll before its resize notification', () => {
+    renderChatBar([{ role: 'assistant', text: 'latest reply' }], [])
+    const conversation = screen.getByRole('log', { name: 'Conversation' })
+    expect(conversation.scrollTop).toBe(200)
+    scrollHeights.set(conversation, 400)
+
+    fireEvent.scroll(conversation)
+
+    expect(conversation.scrollTop).toBe(300)
+    expect(screen.queryByRole('button', { name: 'Scroll to latest message' })).toBeNull()
+  })
+
+  it('preserves an upward scroll even when the log geometry changes in the same frame', () => {
+    renderChatBar([{ role: 'assistant', text: 'latest reply' }], [])
+    const conversation = screen.getByRole('log', { name: 'Conversation' })
+    scrollHeights.set(conversation, 400)
+    conversation.scrollTop = 150
+
+    fireEvent.scroll(conversation)
+
+    expect(conversation.scrollTop).toBe(150)
+    expect(screen.getByRole('button', { name: 'Scroll to latest message' })).toBeDefined()
+  })
+
   it('honors even a one-pixel upward scroll before more streamed text arrives', () => {
     const entries: ChatMessage[] = []
     const view = renderChatBar(entries, [{ turnId: 'turn-1', text: 'partial' }])
@@ -320,9 +344,7 @@ describe('ChatBar', () => {
       ],
     )
 
-    const texts = [...container.querySelectorAll('.chat-entry > span')].map(
-      (span) => span.textContent,
-    )
+    const texts = [...container.querySelectorAll('.chat-message')].map((span) => span.textContent)
     expect(texts).toEqual(['hello', 'hi there', 'streaming a', 'streaming b'])
 
     const streamingRows = container.querySelectorAll('.chat-entry.streaming')

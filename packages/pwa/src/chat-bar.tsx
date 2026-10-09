@@ -1,5 +1,6 @@
 import type { ChatMessage, ChatTimelineEntry, PendingDecisionResolution } from '@veduta/protocol'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { structuredMarkdown } from '@veduta/catalog'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Card } from '@veduta/catalog/ui/card'
 import {
@@ -64,15 +65,49 @@ export function ChatBar({
   const logRef = useRef<HTMLDivElement>(null)
   const dockRef = useRef<HTMLElement>(null)
   const followsLatestRef = useRef(true)
+  const logGeometryRef = useRef({ scrollHeight: 0, clientHeight: 0, clientWidth: 0, scrollTop: 0 })
+
+  const updateScroll = useCallback((preserveFollowing: boolean) => {
+    const log = logRef.current
+    if (!log) return
+    const geometry = {
+      scrollHeight: log.scrollHeight,
+      clientHeight: log.clientHeight,
+      clientWidth: log.clientWidth,
+    }
+    const previous = logGeometryRef.current
+    const resized =
+      geometry.scrollHeight !== previous.scrollHeight ||
+      geometry.clientHeight !== previous.clientHeight ||
+      geometry.clientWidth !== previous.clientWidth
+    const maximum = Math.max(0, geometry.scrollHeight - geometry.clientHeight)
+    const movedUp = log.scrollTop <= Math.min(previous.scrollTop, maximum) - 1
+    // Resize can emit scroll before ResizeObserver. Keep following unless the reader moved up;
+    // clamping to a smaller maximum after content shrinks is not an upward reading gesture.
+    if (followsLatestRef.current && !movedUp && (preserveFollowing || resized)) {
+      log.scrollTop = log.scrollHeight
+    }
+    logGeometryRef.current = { ...geometry, scrollTop: log.scrollTop }
+    const atBottom = isChatLogAtBottom(log)
+    followsLatestRef.current = atBottom
+    setIsAtBottom(atBottom)
+  }, [])
 
   useEffect(() => {
-    if (focusOnRouteChange) inputRef.current?.focus()
+    if (focusOnRouteChange && !usesTouchComposer()) inputRef.current?.focus()
   }, [focusOnRouteChange, focusToken])
 
   useLayoutEffect(() => {
     const log = logRef.current
-    if (log && followsLatestRef.current) log.scrollTop = log.scrollHeight
-  }, [entries, streamingEntries])
+    if (!log) return
+    const updateGeometry = () => updateScroll(true)
+    updateGeometry()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(updateGeometry)
+    observer.observe(log)
+    for (const entry of log.children) observer.observe(entry)
+    return () => observer.disconnect()
+  }, [entries, streamingEntries, queuedChat, timelineEntries, hasOlder, loadingOlder, updateScroll])
 
   useEffect(() => {
     const dock = dockRef.current
@@ -119,12 +154,7 @@ export function ChatBar({
           aria-label="Conversation"
           aria-live="polite"
           aria-relevant="additions text"
-          onScroll={(event) => {
-            const log = event.currentTarget
-            const nextIsAtBottom = log.scrollHeight - log.scrollTop <= log.clientHeight
-            followsLatestRef.current = nextIsAtBottom
-            setIsAtBottom(nextIsAtBottom)
-          }}
+          onScroll={() => updateScroll(false)}
         >
           {hasOlder && (
             <button type="button" disabled={loadingOlder} onClick={onLoadOlder}>
@@ -148,7 +178,11 @@ export function ChatBar({
                 data-decision-feedback-id={entry.decisionFeedbackId}
               >
                 <strong>{entry.role === 'user' ? 'you' : 'veduta'}</strong>
-                <span>{entry.text}</span>
+                {entry.role === 'assistant' ? (
+                  <div className="chat-message">{structuredMarkdown(entry.text)}</div>
+                ) : (
+                  <span className="chat-message">{entry.text}</span>
+                )}
                 {timelineEntry?.kind === 'user' && timelineEntry.turnState === 'interrupted' && (
                   <div>
                     <span>Interrupted. Completion is unknown.</span>
@@ -163,7 +197,8 @@ export function ChatBar({
                 )}
                 {timelineEntry?.kind === 'user' &&
                   (timelineEntry.turnState === 'accepted' ||
-                    timelineEntry.turnState === 'running' ||
+                    (timelineEntry.turnState === 'running' &&
+                      !streamingEntries.some((turn) => turn.turnId === timelineEntry.turnId)) ||
                     timelineEntry.turnState === 'waiting_connection') && (
                     <small>
                       {timelineEntry.turnState === 'accepted'
@@ -231,7 +266,7 @@ export function ChatBar({
           {queuedChat.map((queued) => (
             <Card key={queued.id} className="chat-entry user" aria-label="Chat submission waiting">
               <strong>you</strong>
-              <span>{queued.text}</span>
+              <span className="chat-message">{queued.text}</span>
               <small>{queued.status === 'rejected' ? 'Not accepted' : 'Waiting for Gateway'}</small>
               {queued.status === 'rejected' && (
                 <button type="button" onClick={() => onRetryQueued(queued.id)}>
@@ -243,10 +278,10 @@ export function ChatBar({
           {streamingEntries.map((turn) => (
             <Card key={`streaming-${turn.turnId}`} className="chat-entry assistant streaming">
               <strong>veduta</strong>
-              <span>
-                {turn.text}
+              <div className="chat-message">
+                {structuredMarkdown(turn.text)}
                 <span className="chat-streaming-cursor" data-testid="chat-streaming-cursor" />
-              </span>
+              </div>
             </Card>
           ))}
         </div>
@@ -279,7 +314,12 @@ export function ChatBar({
             value={text}
             onChange={(event) => setText(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+              if (
+                event.key === 'Enter' &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing &&
+                !usesTouchComposer()
+              ) {
                 event.preventDefault()
                 send()
               }
@@ -302,6 +342,15 @@ export function ChatBar({
       </form>
     </footer>
   )
+}
+
+function usesTouchComposer(): boolean {
+  return window.matchMedia?.('(pointer: coarse)').matches ?? false
+}
+
+function isChatLogAtBottom(log: HTMLElement): boolean {
+  // scrollTop can be fractional even though scrollHeight and clientHeight are rounded.
+  return log.scrollHeight - log.clientHeight - log.scrollTop < 1
 }
 
 function sentenceCase(value: string): string {
