@@ -166,11 +166,17 @@ unrecognized prose; the persistent migration and importer transition remain sepa
 
 `spaces/<name>/`: `FACTS.md` (bi-temporal facts in three states — active, `## Dormant`, `## Superseded`), append-only Event log (recent portion in context, long tail via hybrid search with a time-aware index), `INSTRUCTIONS.md`, Surfaces and Automations. Global: `USER.md`, `SOUL.md`. Files are the truth; the SQLite FTS5 index is disposable and rebuildable with one command, and every hit dereferences the original record ([ADR-0006](docs/adr/0006-file-based-memory.md), [ADR-0011](docs/adr/0011-disposable-hybrid-index.md)). The nightly **Reflection** is the offline compaction pass: it distills the day's log, consolidates FACTS through the Curator, and demotes still-valid facts to dormant to keep the injected set bounded — a visible Automation, never a silent cleanup. Lifecycle: the Agent _proposes_ creation (one-tap confirmation), granularity = life area (goals are Surfaces, not Spaces), archival never deletion. A Space's memory is visible and editable as a Surface ("what I know about you here").
 
-Declared Actions on projected management Surfaces use the owning domain tools. FACTS corrections
-go through the Curator, never through authorable-Surface readers or patches. Committed FACTS
+Focused/global Chat and declared Actions share one owning-domain policy: durable Space purpose,
+user role and background use FACTS; visible content uses Surface authoring; character changes keep
+their separate authorization. A clarification replaces an abandoned interpretation. Projected
+management Surfaces use the owning domain tools; an authorable-only inventory is not a complete UI
+inventory. FACTS corrections go through the Curator, never through Surface readers or patches. Committed FACTS
 writes notify authenticated clients to refetch their canonical Space snapshots; these notifications
 carry no Surface mutation or cursor and reconnect recovers missed updates. Chat preserves failed
-correction feedback even when an unrelated fact is saved in the same turn.
+correction feedback even when an unrelated fact is saved in the same turn. One shared write-outcome
+projection composes canonical FACTS and Surface confirmations alongside Pending decisions, so one
+operation cannot hide another. It never substitutes model prose for a confirmed write and only
+describes current facts as current; see [issue 230](https://github.com/Ic3b3rg/veduta/issues/230).
 
 ### 3.4 Surface engine
 

@@ -365,7 +365,7 @@ describe('createChatLoop', () => {
       })
       expect(actionRequest).not.toContain('Read the current Surface before acting.')
       expect(actionRequest).toContain('read_surface')
-      expect(actionRequest).toContain('write_fact')
+      expect(actionRequest).toContain('shared owning-domain policy')
       expect(actionRequest).toContain('Ask what to change')
       expect(h.store.spacesEngine.readFacts(spaceId)).toEqual(before)
 
@@ -443,6 +443,135 @@ describe('createChatLoop', () => {
       await loop.stop()
     }
   })
+
+  it.each(['focused', 'global', 'action'] as const)(
+    'reports committed memory alongside a Surface change in %s turns',
+    async (scope) => {
+      const h = harness()
+      const spaceId = 'spc-health'
+      const turn = queueTestAgentAction(h.store)
+      const loop = globalSurfaceChatLoop(h)
+      const fact = 'This Space tracks Veduta bugs for the owner of the project.'
+      const target = scope === 'global' ? { spaceId } : {}
+      h.fake.setResponses([
+        ...(scope === 'global' ? [{ message: fakeToolCall('enter_space', { spaceId }) }] : []),
+        { message: fakeToolCall('write_fact', { ...target, fact }) },
+        {
+          message: fakeToolCall('patch_state', {
+            ...target,
+            surfaceId: turn.surfaceId,
+            operations: [{ target: 'state', op: 'replace', path: '/result', value: 'Restored' }],
+          }),
+        },
+        { message: fakeText('Incorrect model claim: no memory was saved.') },
+      ])
+      try {
+        if (scope === 'action') await loop.handleAgentAction(turn)
+        else
+          await loop.handleChatMessage(
+            chatEvent({
+              ...(scope === 'focused' ? { spaceId } : {}),
+              text: 'No intendevo come cose che devi sapere per questo spazio',
+            }),
+          )
+        expect(h.store.readFacts(spaceId).active.map((entry) => entry.text)).toContain(fact)
+        expect(h.store.getSurface(turn.surfaceId)?.state['result']).toBe('Restored')
+        const terminal = h.frames
+          .filter(({ frame }) => frame.type === 'chat.turn-end')
+          .at(-1)?.frame
+        expect(terminal).toMatchObject({
+          message: { text: expect.stringContaining(`Remembered in “Health”: ${fact}`) },
+        })
+        expect(terminal).toMatchObject({
+          message: { text: expect.stringContaining('Saved Surface') },
+        })
+        expect(h.store.eventLog(spaceId).at(-1)?.text).toContain(fact)
+        expect(JSON.stringify(h.frames)).not.toContain('Incorrect model claim')
+      } finally {
+        await loop.stop()
+      }
+    },
+  )
+
+  it('keeps memory confirmation beside a pending Space proposal', async () => {
+    const h = harness()
+    const loop = globalSurfaceChatLoop(h)
+    const fact = 'This Space is for recovery notes.'
+    h.fake.setResponses([
+      { message: fakeToolCall('enter_space', { spaceId: 'spc-health' }) },
+      { message: fakeToolCall('write_fact', { spaceId: 'spc-health', fact }) },
+      { message: fakeToolCall('propose_space', { name: 'Travel', reason: 'Plan upcoming trips' }) },
+      { message: fakeText('Travel is already created and all changes are done.') },
+    ])
+    try {
+      await loop.handleChatMessage(
+        chatEvent({ text: 'Remember Health is for recovery notes, and create Travel.' }),
+      )
+      const terminal = h.frames.filter(({ frame }) => frame.type === 'chat.turn-end').at(-1)?.frame
+      expect(terminal).toMatchObject({
+        message: {
+          text: expect.stringContaining('Awaiting your decision:'),
+          pendingDecisions: [expect.objectContaining({ kind: 'space-proposal', state: 'pending' })],
+        },
+      })
+      expect(terminal).toMatchObject({ message: { text: expect.stringContaining(fact) } })
+      expect(h.store.listSpaces().some((space) => space.name === 'Travel')).toBe(false)
+      expect(JSON.stringify(h.frames)).not.toContain('Travel is already created')
+    } finally {
+      await loop.stop()
+    }
+  })
+
+  it.each(['focused', 'global', 'action'] as const)(
+    'keeps committed writes visible when a %s provider fails afterwards',
+    async (scope) => {
+      const h = harness()
+      const turn = queueTestAgentAction(h.store)
+      const loop = globalSurfaceChatLoop(h)
+      const target = scope === 'global' ? { spaceId: turn.spaceId } : {}
+      h.fake.setResponses([
+        ...(scope === 'global' ? [{ message: fakeToolCall('enter_space', target) }] : []),
+        {
+          message: fakeToolCall('write_fact', {
+            ...target,
+            fact: 'This Space belongs to the project owner.',
+          }),
+        },
+        {
+          message: fakeToolCall('patch_state', {
+            ...target,
+            surfaceId: turn.surfaceId,
+            operations: [{ target: 'state', op: 'replace', path: '/result', value: 'Saved' }],
+          }),
+        },
+        { message: fakeFailure(500) },
+      ])
+      try {
+        if (scope === 'action') await loop.handleAgentAction(turn)
+        else
+          await loop.handleChatMessage(
+            chatEvent({
+              ...(scope === 'focused' ? { spaceId: turn.spaceId } : {}),
+              text: 'Remember my role and update the content.',
+            }),
+          )
+        expect(h.frames.at(-1)?.frame).toMatchObject({
+          type: 'chat.turn-error',
+          error: expect.stringContaining(
+            'Remembered in “Health”: This Space belongs to the project owner.',
+          ),
+        })
+        expect(h.frames.at(-1)?.frame).toMatchObject({
+          error: expect.stringContaining('Saved Surface'),
+        })
+        expect(
+          h.store.eventLog(turn.spaceId).filter((event) => event.type === 'fact.write'),
+        ).toHaveLength(1)
+      } finally {
+        await loop.stop()
+      }
+    },
+  )
 
   it('reports an interrupted Agent action honestly after a tool has executed, without executing it again', async () => {
     const h = harness({ reasoningCandidates: 2 })

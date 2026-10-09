@@ -1,14 +1,137 @@
 import { describe, expect, it } from 'vitest'
-import { FactWriteFailures } from './fact-write-failures.ts'
-import { curateFact } from './facts.ts'
+import { FactWriteConfirmation } from './fact-write-confirmation.ts'
+import { curateFact, emptyFactsDocument, type FactsDocument } from './facts.ts'
 
-function tracker(focusedSpaceId?: string) {
-  return new FactWriteFailures((target) =>
-    target === 'health' ? 'spc-health' : (target ?? focusedSpaceId),
-  )
+function tracker(focusedSpaceId?: string, readFacts: () => FactsDocument = emptyFactsDocument) {
+  return new FactWriteConfirmation({
+    resolveSpaceId: (target) => (target === 'health' ? 'spc-health' : (target ?? focusedSpaceId)),
+    readSpace: () => ({ name: 'Health', facts: readFacts() }),
+  })
 }
 
 describe('FACTS write failure feedback', () => {
+  it.each([
+    { operation: ['add'], persisted: true },
+    { operation: 'bogus', persisted: false },
+    { operation: 'add', persisted: false },
+  ])(
+    'keeps a rejected write failed until its recovery is valid and persisted ($operation / $persisted)',
+    ({ operation, persisted }) => {
+      const fact = 'I prefer tea'
+      const facts = curateFact(emptyFactsDocument(), fact, '2026-10-09').document
+      const confirmation = tracker('spc-health', () => (persisted ? facts : emptyFactsDocument()))
+      confirmation.observe({
+        type: 'tool-start',
+        toolCallId: 'failed',
+        toolName: 'write_fact',
+        input: { fact },
+      })
+      confirmation.observe({
+        type: 'tool-result',
+        toolCallId: 'failed',
+        toolName: 'write_fact',
+        content: 'Disk write rejected',
+        details: undefined,
+        isError: true,
+      })
+      confirmation.observe({
+        type: 'tool-start',
+        toolCallId: 'retry',
+        toolName: 'write_fact',
+        input: { fact },
+      })
+      confirmation.observe({
+        type: 'tool-result',
+        toolCallId: 'retry',
+        toolName: 'write_fact',
+        content: 'Saved',
+        details: { operation, fact: { text: fact } },
+        isError: false,
+      })
+      expect(confirmation.failure()).toContain('Disk write rejected')
+      expect(confirmation.feedback()).not.toContain('Remembered in')
+    },
+  )
+  it('confirms current canonical facts with their Space, never a missing or superseded value', () => {
+    let document: FactsDocument = emptyFactsDocument()
+    const confirmation = new FactWriteConfirmation({
+      resolveSpaceId: () => 'spc-health',
+      readSpace: () => ({ name: 'Health', facts: document }),
+    })
+    const write = (id: string, fact: string, supersedes?: string) => {
+      const result = curateFact(
+        document,
+        fact,
+        '2026-10-09',
+        undefined,
+        supersedes ? { supersedes } : undefined,
+      )
+      confirmation.observe({
+        type: 'tool-start',
+        toolCallId: id,
+        toolName: 'write_fact',
+        input: { fact },
+      })
+      confirmation.observe({
+        type: 'tool-result',
+        toolCallId: id,
+        toolName: 'write_fact',
+        content: 'Unverified model-facing content',
+        details: result,
+        isError: false,
+      })
+      return result.document
+    }
+    const added = write('add', 'Breakfast at 7')
+    expect(confirmation.feedback()).toBe('A FACTS write is not confirmed.')
+    document = added
+    expect(confirmation.feedback()).toBe('Remembered in “Health”: Breakfast at 7')
+    document = write('replace', 'Breakfast at 8', 'Breakfast at 7')
+    expect(confirmation.feedback()).toContain('Remembered in “Health”: Breakfast at 8')
+    expect(confirmation.feedback()).not.toContain('Breakfast at 7')
+    expect(confirmation.feedback()).not.toContain('Unverified model-facing content')
+  })
+
+  it('keeps malformed successes unconfirmed and distinguishes already remembered facts', () => {
+    const facts = curateFact(emptyFactsDocument(), 'I prefer tea', '2026-10-09').document
+    const confirmation = new FactWriteConfirmation({
+      resolveSpaceId: () => 'spc-health',
+      readSpace: () => ({ name: 'Health', facts }),
+    })
+    confirmation.observe({
+      type: 'tool-start',
+      toolCallId: 'bad',
+      toolName: 'write_fact',
+      input: { fact: 'I prefer tea' },
+    })
+    confirmation.observe({
+      type: 'tool-result',
+      toolCallId: 'bad',
+      toolName: 'write_fact',
+      content: 'Saved',
+      details: undefined,
+      isError: false,
+    })
+    expect(confirmation.feedback()).toBe('A FACTS write is not confirmed.')
+    confirmation.reset()
+    const result = curateFact(facts, 'I prefer tea', '2026-10-09')
+    confirmation.observe({
+      type: 'tool-start',
+      toolCallId: 'noop',
+      toolName: 'write_fact',
+      input: { fact: 'I prefer tea' },
+    })
+    confirmation.observe({
+      type: 'tool-result',
+      toolCallId: 'noop',
+      toolName: 'write_fact',
+      content: 'Saved',
+      details: result,
+      isError: false,
+    })
+    expect(confirmation.feedback()).toBe('Already remembered in “Health”: I prefer tea')
+  })
+
   it.each([
     { first: 'I like celery now', retry: 'I like celery now' },
     { first: 'I like  celery now', retry: 'I like celery now' },
@@ -16,7 +139,10 @@ describe('FACTS write failure feedback', () => {
   ])(
     'recovers the same canonical fact after correcting its supersedes target ($first → $retry)',
     ({ first, retry }) => {
-      const failures = tracker('spc-health')
+      const failures = tracker(
+        'spc-health',
+        () => curateFact(emptyFactsDocument(), retry, '2026-10-09').document,
+      )
       failures.observe({
         type: 'tool-start',
         toolCallId: 'first',
@@ -132,7 +258,8 @@ describe('FACTS write failure feedback', () => {
   })
 
   it('recognizes the same Space by slug and id when a canonical replacement recovers the failure', () => {
-    const failures = tracker()
+    let persisted = emptyFactsDocument()
+    const failures = tracker(undefined, () => persisted)
     const fact = 'Breakfast at 8'
     failures.observe({
       type: 'tool-start',
@@ -161,6 +288,7 @@ describe('FACTS write failure feedback', () => {
       undefined,
       { supersedes: 'Breakfast at 7' },
     )
+    persisted = corrected.document
     failures.observe({
       type: 'tool-result',
       toolCallId: 'second',
