@@ -4,6 +4,7 @@ import { AttentionBadge } from './attention-badge.tsx'
 import { clientPath } from './client-router.tsx'
 import { homeSpaceGroups, type HomeSpaceSummary } from './home-state.ts'
 import { freshnessLabel } from './time-labels.ts'
+import { usePresentation } from './presentation-context.ts'
 
 export type HomeSpacesLoadState = 'loading' | 'ready' | 'error'
 
@@ -120,6 +121,7 @@ function SpaceCard({
   space: HomeSpaceSummary
   pendingDecisionCount: number
 }) {
+  const { now } = usePresentation()
   return (
     <Link className="space-card" to={clientPath.space(space.slug)}>
       <div className="space-card-heading">
@@ -142,7 +144,7 @@ function SpaceCard({
             <strong>No Surface updates</strong>
           ) : (
             <time dateTime={space.freshestUpdatedAt}>
-              {freshnessLabel(space.freshestUpdatedAt)}
+              {freshnessLabel(space.freshestUpdatedAt, now)}
             </time>
           )}
         </p>

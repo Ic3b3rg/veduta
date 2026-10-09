@@ -9,6 +9,7 @@ interface AtomMotionOptions {
   tokens: CatalogTokens
   regionUpdateKey: string | undefined
   contentUpdateKey: string | undefined
+  reducedMotion: boolean
 }
 
 interface MotionContentSnapshot {
@@ -37,6 +38,7 @@ export function useAtomMotion({
   tokens,
   regionUpdateKey,
   contentUpdateKey,
+  reducedMotion,
 }: AtomMotionOptions): void {
   const entranceRef = useRef({ atomId, siblingIndex, shouldAnimateEntrance, tokens })
   const previousUpdateRef = useRef<PreviousUpdate | undefined>(undefined)
@@ -44,7 +46,7 @@ export function useAtomMotion({
 
   useLayoutEffect(() => {
     const entrance = entranceRef.current
-    if (!entrance.shouldAnimateEntrance(entrance.atomId)) return
+    if (reducedMotion || !entrance.shouldAnimateEntrance(entrance.atomId)) return
 
     const element = motionElement(motionId)
     if (!canAnimate(element)) return
@@ -54,13 +56,14 @@ export function useAtomMotion({
       entranceTiming(entrance.tokens, entrance.siblingIndex),
     )
     return () => animation.cancel()
-  }, [motionId])
+  }, [motionId, reducedMotion])
 
   useLayoutEffect(() => {
     return () => cancelAnimations(activeAnimationsRef.current)
   }, [])
 
   useLayoutEffect(() => {
+    if (reducedMotion) cancelAnimations(activeAnimationsRef.current)
     const element = motionElement(motionId)
     if (!element) return
 
@@ -77,7 +80,7 @@ export function useAtomMotion({
 
     cancelAnimations(activeAnimationsRef.current)
     activeAnimationsRef.current = []
-    if (!canAnimate(element)) return
+    if (reducedMotion || !canAnimate(element)) return
 
     activeAnimationsRef.current = startUpdateAnimations({
       element,

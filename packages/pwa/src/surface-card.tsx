@@ -14,6 +14,7 @@ import { freshnessLabel } from './api.ts'
 import type { SurfaceUpdateFeedback } from './surface-motion.ts'
 import { useCatalogTheme } from './theme.ts'
 import { useActionConfirmations, useActionStatuses, usePwaRuntime } from './use-live-state.ts'
+import { usePresentation } from './presentation-context.ts'
 
 export function SurfaceCard({
   surface,
@@ -41,6 +42,7 @@ export function SurfaceCard({
   onRevealFeedbackShown: (feedbackKey: string) => void
 }) {
   const theme = useCatalogTheme()
+  const presentation = usePresentation()
   const runtime = usePwaRuntime()
   const actionConfirmations = useActionConfirmations(surface.id)
   const actionStatuses = useActionStatuses(surface.id)
@@ -48,7 +50,7 @@ export function SurfaceCard({
   const handledRevealFeedbackRef = useRef<string | undefined>(undefined)
   const revealedWhileSelectedRef = useRef(false)
   const [revealHighlighted, setRevealHighlighted] = useState(false)
-  const relativeTime = useRelativeTimeStatus(surface)
+  const relativeTime = useRelativeTimeStatus(surface, presentation.now)
   const automationOutcomes = AutomationOutcomeStatusesSchema.safeParse(
     surface.state[AUTOMATION_OUTCOMES_STATE_KEY],
   )
@@ -176,11 +178,18 @@ export function SurfaceCard({
           actionStatuses,
           acknowledgeAction,
           theme,
-          ...(updateFeedback ? { motion: { update: updateFeedback } } : {}),
+          ...(presentation.now === undefined ? {} : { now: presentation.now }),
+          motion: {
+            ...(updateFeedback ? { update: updateFeedback } : {}),
+            ...(presentation.reducedMotion === undefined
+              ? {}
+              : { reduced: presentation.reducedMotion }),
+          },
         })}
       </div>
       <div className="freshness">
-        updated {freshnessLabel(surface.freshness.updatedAt)} by {surface.freshness.updatedBy}
+        updated {freshnessLabel(surface.freshness.updatedAt, presentation.now)} by{' '}
+        {surface.freshness.updatedBy}
       </div>
     </article>
   )
@@ -247,13 +256,16 @@ function scrollSurfaceCardIntoView(card: HTMLElement): void {
 const MAX_TIMEOUT_MS = 2_147_483_647
 
 /** Re-evaluates a cached Surface at its next validity boundary, even if no Gateway event arrives. */
-function useRelativeTimeStatus(surface: RenderableSurface): SurfaceRelativeTimeStatus | undefined {
+function useRelativeTimeStatus(
+  surface: RenderableSurface,
+  fixedNow?: number,
+): SurfaceRelativeTimeStatus | undefined {
   const startsAt = surface.validity?.startsAt
   const expiresAt = surface.validity?.expiresAt
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
-    if (startsAt === undefined || expiresAt === undefined) return
+    if (fixedNow !== undefined || startsAt === undefined || expiresAt === undefined) return
     const startsAtMs = Date.parse(startsAt)
     const expiresAtMs = Date.parse(expiresAt)
     let timeout: number | undefined
@@ -274,7 +286,7 @@ function useRelativeTimeStatus(surface: RenderableSurface): SurfaceRelativeTimeS
     return () => {
       if (timeout !== undefined) window.clearTimeout(timeout)
     }
-  }, [expiresAt, startsAt])
+  }, [expiresAt, startsAt, fixedNow])
 
-  return surfaceRelativeTimeStatus(surface, new Date(now))
+  return surfaceRelativeTimeStatus(surface, new Date(fixedNow ?? now))
 }

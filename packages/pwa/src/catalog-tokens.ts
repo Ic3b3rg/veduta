@@ -1,4 +1,4 @@
-import { catalogCssText } from '@veduta/catalog'
+import { catalogCssText, precisionToolCssText } from '@veduta/catalog'
 
 // The catalog design-system tokens are injected at runtime so the shell's
 // shared variables cannot drift from catalogTokens (issue 024,
@@ -11,5 +11,5 @@ export function installCatalogTokens(): void {
     style.setAttribute('data-catalog-tokens', '')
     document.head.appendChild(style)
   }
-  style.textContent = catalogCssText()
+  style.textContent = catalogCssText() + precisionToolCssText()
 }

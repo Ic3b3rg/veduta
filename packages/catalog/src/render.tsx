@@ -203,6 +203,8 @@ function motionNodePropsEqual(previous: MotionNodeProps, next: MotionNodeProps):
   )
     return false
   if (previous.ctx.theme !== next.ctx.theme) return false
+  if (previous.ctx.now !== next.ctx.now) return false
+  if (previous.ctx.motion?.reduced !== next.ctx.motion?.reduced) return false
   if (!valuesEqual(previous.node, next.node)) return false
   if (!boundStateEqual(previous.node, previous.ctx.state, next.ctx.state)) return false
   if (!actionFeedbackEqual(previous.node, previous.ctx, next.ctx)) return false
@@ -304,6 +306,7 @@ function MotionAtom({
     tokens: tokensFor(ctx.theme),
     regionUpdateKey,
     contentUpdateKey,
+    reducedMotion: ctx.motion?.reduced ?? false,
   })
 
   const rendered =

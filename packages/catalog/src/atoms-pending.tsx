@@ -29,22 +29,36 @@ export function PendingAtom({ node, ctx }: AtomProps<'Pending'>): ReactNode {
   if (parsed.data.startedAt === undefined) {
     return <PendingFallback label={parsed.data.label} tokens={tokens} />
   }
-
   return (
     <div style={{ minWidth: 0, width: '100%' }}>
-      <PendingSlot key={pendingSlotKey(parsed.data)} props={parsed.data} tokens={tokens} />
+      <PendingSlot
+        key={pendingSlotKey(parsed.data)}
+        props={parsed.data}
+        tokens={tokens}
+        now={ctx.now}
+      />
     </div>
   )
 }
 
-function PendingSlot({ props, tokens }: { props: PendingAtomProps; tokens: CatalogTokens }) {
-  const [timedOut, setTimedOut] = useState(() => pendingTimeRemaining(props) === 0)
+function PendingSlot({
+  props,
+  tokens,
+  now,
+}: {
+  props: PendingAtomProps
+  tokens: CatalogTokens
+  now: number | undefined
+}) {
+  const [liveTimedOut, setTimedOut] = useState(() => pendingTimeRemaining(props, now) === 0)
+  const timedOut = now === undefined ? liveTimedOut : pendingTimeRemaining(props, now) === 0
 
   useEffect(() => {
+    if (now !== undefined) return
     const remainingMs = pendingTimeRemaining(props)
     const timeout = globalThis.setTimeout(() => setTimedOut(true), remainingMs)
     return () => globalThis.clearTimeout(timeout)
-  }, [props])
+  }, [props, now])
 
   if (timedOut) return <PendingFallback label={props.label} tokens={tokens} />
   return skeletonFor(props, tokens)
@@ -55,10 +69,10 @@ function pendingSlotKey(props: PendingAtomProps): string {
   return `${props.variant}:${props.label ?? ''}:${props.startedAt ?? ''}:${props.timeoutMs ?? ''}:${size ?? ''}`
 }
 
-function pendingTimeRemaining(props: PendingAtomProps): number {
+function pendingTimeRemaining(props: PendingAtomProps, now = Date.now()): number {
   if (props.startedAt === undefined) return 0
   const timeoutMs = props.timeoutMs ?? DEFAULT_PENDING_SLOT_TIMEOUT_MS
-  const elapsedMs = Math.max(0, Date.now() - Date.parse(props.startedAt))
+  const elapsedMs = Math.max(0, now - Date.parse(props.startedAt))
   return Math.max(0, timeoutMs - elapsedMs)
 }
 

@@ -1,0 +1,94 @@
+.product-reference {
+  min-height: 100vh;
+  padding: var(--catalog-space-xl);
+}
+
+.reference-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--catalog-space-lg);
+  margin-bottom: var(--catalog-space-xl);
+}
+
+.reference-heading h1,
+.reference-region > h2 {
+  margin: 0;
+}
+.reference-heading p {
+  margin: var(--catalog-space-sm) 0;
+}
+.reference-kicker {
+  color: var(--catalog-color-accent);
+  font-size: var(--catalog-font-sm);
+}
+.reference-heading label {
+  display: grid;
+  gap: var(--catalog-space-sm);
+}
+.reference-grid {
+  display: grid;
+  align-items: start;
+  gap: var(--catalog-space-xl);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.reference-region {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.reference-region > h2 {
+  margin-bottom: var(--catalog-space-lg);
+  font-size: var(--catalog-font-lg);
+}
+.reference-region .home-space-grid,
+.reference-region .surface-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.reference-region .chat-dock {
+  position: static;
+  width: 100%;
+  transform: none;
+  margin: 0;
+  padding: 0;
+}
+.reference-region .chat-log {
+  max-height: 280px;
+}
+.reference-recipes {
+  display: grid;
+  gap: var(--catalog-space-lg);
+}
+.reference-actions,
+.reference-statuses,
+.reference-recipes .recipe-menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--catalog-space-sm);
+}
+.reference-actions {
+  margin-top: var(--catalog-space-md);
+}
+.reference-overlay {
+  width: min(100%, 420px);
+}
+.product-reference[data-reference-state='reduced-motion'] *,
+.product-reference[data-reference-state='reduced-motion'] *::before,
+.product-reference[data-reference-state='reduced-motion'] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+
+@media (max-width: 880px) {
+  .product-reference {
+    padding: var(--catalog-space-sm);
+  }
+  .reference-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--catalog-space-md);
+  }
+  .reference-region.recipe-surface {
+    padding: var(--catalog-space-sm);
+  }
+}
