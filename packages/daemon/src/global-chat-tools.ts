@@ -1,12 +1,7 @@
 import { z } from 'zod'
-import {
-  formatPendingDecisionId,
-  type ChatResultTarget,
-  type PendingDecision,
-  type Space,
-} from '@veduta/protocol'
+import type { ChatResultTarget, PendingDecision, Space } from '@veduta/protocol'
 import { defineTool, type ToolContext, type ToolDef, type ToolResult } from './agent-runner.ts'
-import { SpacePendingDecisionAdapter } from './space-pending-decision.ts'
+import { createSpaceProposalTool } from './space-proposal-tool.ts'
 import type { Store } from './store.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { effectiveToolWriteOrigin, type Origin } from './taint.ts'
@@ -18,10 +13,6 @@ const GlobalSpaceTargetSchema = z.object({
 })
 
 const EnterSpaceSchema = GlobalSpaceTargetSchema
-const ProposeSpaceSchema = z.object({
-  name: z.string().trim().min(1).max(100),
-  reason: z.string().trim().min(1).max(1000),
-})
 
 const SCHEMA_SPACE_ID = '__global-chat-schema__'
 
@@ -88,26 +79,7 @@ export function createGlobalChatTools(options: GlobalChatToolsOptions): ToolDef[
         return { content, details: { space }, origins }
       },
     }),
-    defineTool({
-      name: 'propose_space',
-      description:
-        'Create a pending one-tap Space proposal when no active Space fits. This never creates the Space or any Surface; only the user can accept it.',
-      schema: ProposeSpaceSchema,
-      level: 'L0',
-      egressDomains: [],
-      handler(input) {
-        const proposal = options.store.spacesEngine.proposeSpace(input)
-        const decision = new SpacePendingDecisionAdapter(options.store.spacesEngine).get(
-          formatPendingDecisionId('space-proposal', proposal.id),
-        )
-        if (!decision) throw new Error(`pending Space proposal is unavailable: ${proposal.id}`)
-        options.hooks?.onPendingDecision?.(decision)
-        return {
-          content: `proposed Space "${proposal.name}" for user confirmation (${proposal.id})`,
-          details: { proposal, decision },
-        }
-      },
-    }),
+    createSpaceProposalTool(options.store.spacesEngine, options.hooks?.onPendingDecision),
     ...schemaTools.map((tool) => scopeFocusedTool(tool, cachedOptions, enteredSpaceIds)),
   ]
 }

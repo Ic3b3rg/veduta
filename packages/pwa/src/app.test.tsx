@@ -1212,82 +1212,102 @@ describe('App', () => {
     expect(scrollIntoView).not.toHaveBeenCalled()
   })
 
-  it('accepts a chat Space proposal through the common decision API without changing route', async () => {
-    const handlers = await renderConnectedEmptyHealth('pwa-proposal')
-    const pending: PendingDecision = {
-      id: 'space-proposal:proposal-travel',
-      kind: 'space-proposal',
-      summary: 'Create Space “Travel”',
-      scope: { type: 'global' },
-      allowedResolutions: ['accept', 'reject'],
-      state: 'pending',
-      createdAt: '2026-08-25T10:00:00.000Z',
-    }
-    const accepted: PendingDecision = {
-      ...pending,
-      state: 'terminal',
-      outcome: 'accepted',
-      decisionAt: '2026-08-25T10:01:00.000Z',
-      resolvedAt: '2026-08-25T10:01:00.000Z',
-      resolvedBy: 'trusted:user',
-    }
-    vi.mocked(resolvePendingDecision).mockResolvedValue({
-      decision: accepted,
-      replayed: false,
-    })
-    vi.mocked(fetchSpaces).mockResolvedValueOnce({
-      surfaceCursor: 0,
-      spaces: [
-        {
-          id: 'spc-health',
-          slug: 'health',
-          name: 'Health',
-          archived: false,
-          attention: 0,
-          attentionRevision: 0,
-          surfaces: [],
-        },
-        {
-          id: 'spc-travel',
-          slug: 'travel',
-          name: 'Travel',
-          archived: false,
-          attention: 0,
-          attentionRevision: 0,
-          surfaces: [],
-        },
-      ],
-    })
-
-    act(() => {
-      handlers.onChatTurnStart({ type: 'chat.turn-start', turnId: 'turn-proposal' })
-      handlers.onChatTurnEnd({
-        type: 'chat.turn-end',
-        turnId: 'turn-proposal',
-        message: {
-          role: 'assistant',
-          text: 'Travel needs its own Space.',
-          pendingDecisions: [pending],
-        },
+  it.each(['global', 'space'] as const)(
+    'accepts a %s Chat Space proposal without changing route or focus',
+    async (scopeType) => {
+      const handlers = await renderConnectedEmptyHealth('pwa-proposal')
+      const scope: ChatScope =
+        scopeType === 'space' ? { type: 'space', spaceId: 'spc-health' } : { type: 'global' }
+      if (scopeType === 'space') {
+        fireEvent.click(screen.getByRole('link', { name: /Health/ }))
+        await screen.findByRole('textbox', { name: 'Message Veduta in Health' })
+      }
+      const route = location.pathname
+      const pending: PendingDecision = {
+        id: 'space-proposal:proposal-travel',
+        kind: 'space-proposal',
+        summary: 'Create Space “Travel”',
+        scope: { type: 'global' },
+        allowedResolutions: ['accept', 'reject'],
+        state: 'pending',
+        createdAt: '2026-08-25T10:00:00.000Z',
+      }
+      const accepted: PendingDecision = {
+        ...pending,
+        state: 'terminal',
+        outcome: 'accepted',
+        decisionAt: '2026-08-25T10:01:00.000Z',
+        resolvedAt: '2026-08-25T10:01:00.000Z',
+        resolvedBy: 'trusted:user',
+      }
+      vi.mocked(resolvePendingDecision).mockResolvedValue({
+        decision: accepted,
+        replayed: false,
       })
-      emitTimelineDecision(handlers, 'turn-proposal', pending)
-    })
+      vi.mocked(fetchSpaces).mockResolvedValueOnce({
+        surfaceCursor: 0,
+        spaces: [
+          {
+            id: 'spc-health',
+            slug: 'health',
+            name: 'Health',
+            archived: false,
+            attention: 0,
+            attentionRevision: 0,
+            surfaces: [],
+          },
+          {
+            id: 'spc-travel',
+            slug: 'travel',
+            name: 'Travel',
+            archived: false,
+            attention: 0,
+            attentionRevision: 0,
+            surfaces: [],
+          },
+        ],
+      })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Accept Create Space “Travel”' }))
+      act(() => {
+        handlers.onChatTurnStart({
+          type: 'chat.turn-start',
+          turnId: 'turn-proposal',
+          ...(scope.type === 'space' ? { spaceId: scope.spaceId } : {}),
+        })
+        handlers.onChatTurnEnd({
+          type: 'chat.turn-end',
+          ...(scope.type === 'space' ? { spaceId: scope.spaceId } : {}),
+          turnId: 'turn-proposal',
+          message: {
+            role: 'assistant',
+            text: 'Travel needs its own Space.',
+            pendingDecisions: [pending],
+          },
+        })
+        emitTimelineDecision(handlers, 'turn-proposal', pending, 1, scope)
+      })
 
-    await waitFor(() =>
-      expect(resolvePendingDecision).toHaveBeenCalledWith(
-        'space-proposal:proposal-travel',
-        'accept',
-        undefined,
-      ),
-    )
-    act(() => emitTimelineDecision(handlers, 'turn-proposal', accepted, 2))
-    expect(await screen.findByRole('button', { name: /Travel/ })).toBeDefined()
-    expect(screen.getAllByText('Accepted: Create Space “Travel”.')).toHaveLength(2)
-    expect(screen.queryByRole('button', { name: 'Accept Create Space “Travel”' })).toBeNull()
-    expect(location.pathname).toBe('/')
-  })
+      fireEvent.click(screen.getByRole('button', { name: 'Accept Create Space “Travel”' }))
+
+      await waitFor(() =>
+        expect(resolvePendingDecision).toHaveBeenCalledWith(
+          'space-proposal:proposal-travel',
+          'accept',
+          undefined,
+        ),
+      )
+      act(() => emitTimelineDecision(handlers, 'turn-proposal', accepted, 2, scope))
+      expect(await screen.findByRole('button', { name: /Travel/ })).toBeDefined()
+      expect(screen.getAllByText('Accepted: Create Space “Travel”.')).toHaveLength(2)
+      expect(screen.queryByRole('button', { name: 'Accept Create Space “Travel”' })).toBeNull()
+      expect(location.pathname).toBe(route)
+      expect(
+        screen.getByRole('textbox', {
+          name: scopeType === 'space' ? 'Message Veduta in Health' : 'Message Veduta',
+        }),
+      ).toBeDefined()
+    },
+  )
 
   it('places Pending decisions globally and only in the Space proven by their Decision Surface', async () => {
     const handlers = await renderConnectedEmptyHealth('pwa-placement')

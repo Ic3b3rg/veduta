@@ -14,6 +14,7 @@ import { templateTools, type TemplateEngine } from './template-engine.ts'
 import { inheritTrustWrapper, isTrustWrapped } from './trust-layer.ts'
 import { createClawHubInspectionTool } from './clawhub-inspection.ts'
 import type { CatalogInspectionOptions } from './clawhub-catalog.ts'
+import { createSpaceProposalTool } from './space-proposal-tool.ts'
 
 /**
  * Everything `chatToolRegistry` needs to build focused and scoped-global
@@ -100,6 +101,7 @@ export function chatToolRegistry(
     }
     return [
       ...observePendingDecisionResults(focusedToolsFor(spaceId), hooks, deps.pendingDecisions),
+      createSpaceProposalTool(deps.store.spacesEngine, hooks?.onPendingDecision),
       createClawHubInspectionTool(deps.clawHubInspection),
     ]
   }

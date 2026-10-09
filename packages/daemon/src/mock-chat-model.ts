@@ -25,6 +25,7 @@ import {
 } from './relative-time-surface.ts'
 import { respondToMockAutomation } from './mock-automation-fixture.ts'
 import { respondToMockAgentAction } from './mock-agent-action-fixture.ts'
+import { respondToMockSpaceProposal } from './mock-space-proposal-fixture.ts'
 import {
   mockWeightTrackerInput,
   respondToMockWeightMeasurement,
@@ -133,6 +134,8 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
       return piFauxAssistantMessage(JSON.stringify(mockWorkerReportForPrompt(text)))
     }
     if (isFullTextPrompt(text)) return piFauxAssistantMessage(FULL_TEXT_REPLY)
+    const spaceProposal = respondToMockSpaceProposal(text, toolResultsAfter)
+    if (spaceProposal) return spaceProposal
     const inspection = respondToMockClawHubInspection(text)
     if (inspection) return inspection
     if (text === STRUCTURED_PLAN_REQUEST) return respondToStructuredPlan(toolResultsAfter)
