@@ -124,7 +124,7 @@ export function createControlSurface(baseDir: string): void {
           priority: 'low',
           cadence: 'daily',
           date: '2026-10-01',
-          optionalDate: '',
+          optionalDate: '2024-02-28',
         },
         freshness: { updatedAt: new Date().toISOString(), updatedBy: 'agent' },
         tree: {

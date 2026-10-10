@@ -3,6 +3,7 @@ import { AtomNodeSchema, inputSetPlan, literalSetPlan, type JsonValue } from '@v
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderNode } from './render.tsx'
+import { formatSurfaceValue } from './surface-value.tsx'
 
 afterEach(cleanup)
 
@@ -61,11 +62,20 @@ function owningControl(type: (typeof cases)[number]['type']) {
   )
 }
 
-function choose(type: (typeof cases)[number]['type'], value: JsonValue) {
+async function choose(type: (typeof cases)[number]['type'], value: JsonValue) {
   if (type === 'Button' || type === 'Checkbox') fireEvent.click(owningControl(type))
   else if (type === 'RadioGroup')
     fireEvent.click(screen.getByRole('radio', { name: value === 'first' ? 'First' : 'Second' }))
-  else fireEvent.change(owningControl(type), { target: { value } })
+  else if (type === 'DatePicker') {
+    const trigger = owningControl(type)
+    fireEvent.click(trigger)
+    if (trigger.hasAttribute('disabled')) return
+    const date = new Date(`${String(value)}T12:00:00`)
+    const label = `${date.toLocaleDateString('en-US', { month: 'long' })} ${date.getDate()}(?:st|nd|rd|th), ${date.getFullYear()}`
+    fireEvent.click(
+      await screen.findByRole('button', { name: new RegExp(label) }, { timeout: 5000 }),
+    )
+  } else fireEvent.change(owningControl(type), { target: { value } })
 }
 
 describe('operable selection and action controls', () => {
@@ -81,7 +91,7 @@ describe('operable selection and action controls', () => {
       })
       const dispatch = vi.fn(() => pending)
       render(renderNode(node, { state: { value: before }, dispatch }))
-      choose(type, next)
+      await choose(type, next)
       expect(dispatch).toHaveBeenCalledTimes(1)
       const actionName = node.actions![0]!.name
       expect(dispatch.mock.calls[0]).toEqual(
@@ -91,8 +101,9 @@ describe('operable selection and action controls', () => {
       expect(screen.getByRole('status').textContent).toContain('Working')
       if (type === 'Checkbox')
         expect(owningControl(type).getAttribute('aria-checked')).toBe('false')
-      if (type === 'Select' || type === 'DatePicker')
-        expect(owningControl(type)).toHaveProperty('value', before)
+      if (type === 'Select') expect(owningControl(type)).toHaveProperty('value', before)
+      if (type === 'DatePicker')
+        expect(owningControl(type).textContent).toBe(formatSurfaceValue(before, 'date').text)
       if (type === 'RadioGroup')
         expect(screen.getByRole('radio', { name: 'First' }).getAttribute('aria-checked')).toBe(
           'true',
@@ -107,7 +118,7 @@ describe('operable selection and action controls', () => {
       expect(owningControl(type).getAttribute('aria-invalid')).toBe('true')
       expect(owningControl(type).getAttribute('aria-busy')).not.toBe('true')
       expect(screen.queryByRole('status')).toBeNull()
-      choose(type, next)
+      await choose(type, next)
       expect(dispatch).toHaveBeenCalledTimes(2)
       await act(async () => {})
     },
@@ -126,7 +137,7 @@ describe('operable selection and action controls', () => {
       const view = render(
         renderNode(node, { state: { value: before }, dispatch, acknowledgeAction }),
       )
-      choose(type, next)
+      await choose(type, next)
       await act(async () => {})
       expect(screen.getByRole('alert').textContent).toBe('Offline')
       view.rerender(
@@ -149,7 +160,7 @@ describe('operable selection and action controls', () => {
       await act(async () => {})
       expect(screen.queryByRole('alert')).toBeNull()
       expect(acknowledgeAction).toHaveBeenCalledWith('control', action.name, 'confirmed')
-      choose(type, type === 'Button' ? next : before)
+      await choose(type, type === 'Button' ? next : before)
       await act(async () => {})
       expect(dispatch).toHaveBeenCalledTimes(2)
     },
@@ -157,14 +168,14 @@ describe('operable selection and action controls', () => {
 
   it.each(cases)(
     '$type exposes a labelled disabled control without dispatch',
-    ({ type, before, next }) => {
+    async ({ type, before, next }) => {
       const dispatch = vi.fn()
       render(renderNode(control(type, true), { state: { value: before }, dispatch }))
       const element = owningControl(type)
       if (type === 'RadioGroup')
         expect(screen.getByRole('radio', { name: 'Second' })).toHaveProperty('disabled', true)
       else expect(element).toHaveProperty('disabled', true)
-      choose(type, next)
+      await choose(type, next)
       expect(dispatch).not.toHaveBeenCalled()
     },
   )

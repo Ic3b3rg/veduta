@@ -6,7 +6,7 @@ import { tokensFor } from './design-system.ts'
 import type { AtomProps } from './types.ts'
 import { Button } from './ui/button.tsx'
 import { Checkbox } from './ui/checkbox.tsx'
-import { Input } from './ui/input.tsx'
+import { DatePicker } from './ui/date-picker.tsx'
 import { Label } from './ui/label.tsx'
 import { NativeSelect } from './ui/native-select.tsx'
 import { RadioGroup, RadioGroupItem } from './ui/radio-group.tsx'
@@ -89,15 +89,14 @@ function ActionControl({
           {label}
         </span>
         {node.type === 'DatePicker' ? (
-          <Input
+          <DatePicker
             {...motionContent('value')}
             {...attributes}
             aria-label={label}
-            type="date"
-            required={node.props?.['allowEmpty'] !== true}
+            allowEmpty={node.props?.['allowEmpty'] === true}
             disabled={disabled}
             value={text(value)}
-            onChange={(event) => void dispatch(event.currentTarget.value)}
+            onValueChange={(next) => void dispatch(next)}
           />
         ) : (
           <NativeSelect

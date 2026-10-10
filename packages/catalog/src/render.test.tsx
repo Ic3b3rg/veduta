@@ -1152,7 +1152,7 @@ describe('renderNode', () => {
     expect(dark.container.querySelector('[data-veduta-theme="dark"]')).not.toBeNull()
   })
 
-  it('gives interactive Atoms accessible controls and dispatches declared actions', () => {
+  it('gives interactive Atoms accessible controls and dispatches declared actions', async () => {
     const dispatch = vi.fn()
     render(
       renderNode(catalogShowcaseSurface.tree, {
@@ -1162,7 +1162,10 @@ describe('renderNode', () => {
     )
 
     fireEvent.click(screen.getByRole('checkbox', { name: /milk/i }))
-    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-07-04' } })
+    fireEvent.click(screen.getByLabelText('Date'))
+    fireEvent.click(
+      await screen.findByRole('button', { name: /July 4th, 2026/ }, { timeout: 5000 }),
+    )
     fireEvent.change(screen.getByLabelText('Priority'), { target: { value: 'high' } })
     fireEvent.click(screen.getByRole('radio', { name: /weekly/i }))
     fireEvent.change(screen.getByLabelText('Title input'), { target: { value: 'Updated' } })

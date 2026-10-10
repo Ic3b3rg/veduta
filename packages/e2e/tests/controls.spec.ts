@@ -96,7 +96,7 @@ test('all five control families remain accessible and canonical across two sessi
             .getByRole('radiogroup', { name: 'Cadence', exact: true })
             .getByRole('radio', { name: 'Daily', exact: true }),
         ).toBeChecked()
-        await expect(controls.getByLabel('Date', { exact: true })).toHaveValue('2026-10-01')
+        await expect(controls.getByLabel('Date', { exact: true })).toHaveText('Oct 1, 2026')
       }
     })
 
@@ -219,15 +219,21 @@ test('all five control families remain accessible and canonical across two sessi
       await confirm(observerWire, 'cadence-control', { value: 'daily' })
     })
 
-    await test.step('DatePicker normalizes calendar input and supports native keyboard editing and explicit empty dates', async () => {
+    await test.step('DatePicker shares the shadcn calendar, keyboard navigation and explicit empty dates', async () => {
       const date = card(page).getByLabel('Date', { exact: true })
       await date.click()
-      await date.fill('2026-10-02')
+      await page.getByRole('button', { name: /Friday, October 2nd, 2026/ }).click()
       for (const client of clients)
-        await expect(card(client).getByLabel('Date', { exact: true })).toHaveValue('2026-10-02')
+        await expect(card(client).getByLabel('Date', { exact: true })).toHaveText('Oct 2, 2026')
       await confirm(primaryWire, 'date-control', { value: '2026-10-02' })
       const prior = observerWire.requests.length
-      await card(observer.page).getByLabel('Date', { exact: true }).press('ArrowUp', { delay: 50 })
+      await card(observer.page).getByLabel('Date', { exact: true }).press('Enter')
+      await expect(
+        observer.page.getByRole('button', { name: /Friday, October 2nd, 2026/ }),
+      ).toBeFocused()
+      await observer.page.keyboard.press('ArrowRight')
+      await observer.page.keyboard.press('Enter')
+      await expect(card(observer.page).getByLabel('Date', { exact: true })).toBeFocused()
       await expect.poll(() => observerWire.requests.length).toBe(prior + 1)
       const keyboardDate = latest(observerWire.requests).invocation.inputs['value']
       expect(isControlDate(keyboardDate)).toBe(true)
@@ -235,18 +241,24 @@ test('all five control families remain accessible and canonical across two sessi
         throw new Error('DatePicker must submit a calendar string')
       expect(keyboardDate).not.toBe('2026-10-02')
       for (const client of clients)
-        await expect(card(client).getByLabel('Date', { exact: true })).toHaveValue(keyboardDate)
+        await expect(card(client).getByLabel('Date', { exact: true })).toHaveText(
+          new Date(`${keyboardDate}T12:00:00`).toLocaleDateString('en-US', { dateStyle: 'medium' }),
+        )
       await confirm(observerWire, 'date-control', { value: keyboardDate })
 
-      await card(page).getByLabel('Optional date', { exact: true }).fill('2024-02-29')
+      await card(page).getByLabel('Optional date', { exact: true }).click()
+      await page.getByRole('button', { name: /February 29th, 2024/ }).click()
       for (const client of clients)
-        await expect(card(client).getByLabel('Optional date', { exact: true })).toHaveValue(
-          '2024-02-29',
+        await expect(card(client).getByLabel('Optional date', { exact: true })).toHaveText(
+          'Feb 29, 2024',
         )
       await confirm(primaryWire, 'optional-date-control', { value: '2024-02-29' })
-      await card(observer.page).getByLabel('Optional date', { exact: true }).fill('')
+      await card(observer.page).getByLabel('Optional date', { exact: true }).click()
+      await observer.page.getByRole('button', { name: 'Clear date', exact: true }).click()
       for (const client of clients)
-        await expect(card(client).getByLabel('Optional date', { exact: true })).toHaveValue('')
+        await expect(card(client).getByLabel('Optional date', { exact: true })).toHaveText(
+          'Choose date',
+        )
       await confirm(observerWire, 'optional-date-control', { value: '' })
     })
 
@@ -269,10 +281,14 @@ test('all five control families remain accessible and canonical across two sessi
             .getByRole('radiogroup', { name: 'Cadence', exact: true })
             .getByRole('radio', { name: 'Daily', exact: true }),
         ).toBeChecked()
-        await expect(card(client).getByLabel('Date', { exact: true })).toHaveValue(
-          String(canonical.state['date']),
+        await expect(card(client).getByLabel('Date', { exact: true })).toHaveText(
+          new Date(`${String(canonical.state['date'])}T12:00:00`).toLocaleDateString('en-US', {
+            dateStyle: 'medium',
+          }),
         )
-        await expect(card(client).getByLabel('Optional date', { exact: true })).toHaveValue('')
+        await expect(card(client).getByLabel('Optional date', { exact: true })).toHaveText(
+          'Choose date',
+        )
         expect((await readSurface(client, origin, CONTROL_SURFACE_ID)).state).toEqual(
           canonical.state,
         )
