@@ -44,7 +44,8 @@ Status: accepted (issue #43 is the implementation)
    `/opt/veduta/bin/veduta-run` (outside `releases/`, so a broken release can't break its own
    rescuer): if an update marker exists it runs the whole transaction, then `exec`s the daemon
    from `current/`. The daemon requests an update by writing the marker and exiting with a
-   dedicated nonzero code — `Restart=on-failure` restarts it into the wrapper. Same
+   dedicated nonzero code — `Restart=always` restarts it into the wrapper and also covers
+   onboarding's deliberate clean exit (issue #36). An explicit service stop still stops it. Same
    monitor-process pattern as Syncthing and the HA Supervisor (ref. 08), same exit-code idiom
    as the onboarding wizard, no new privileges, one unit. The wrapper updates _itself_ last,
    only after a successful health check.

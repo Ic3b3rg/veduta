@@ -43,7 +43,9 @@ WorkingDirectory=/var/lib/veduta
 # invokes `node`/`tsx` differs.
 ExecStart=/usr/bin/node /opt/veduta/packages/daemon/dist/index.js
 
-Restart=on-failure
+# Onboarding deliberately exits 0 to reload configuration. Restart both that clean
+# exit and failures, matching deploy/install.sh. An explicit systemctl stop still stops it.
+Restart=always
 RestartSec=5
 
 # --- Configuration -----------------------------------------------------------------------
