@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { defineTool, type ToolContext, type ToolDef } from './agent-runner.ts'
 import type { SpacesEngine } from './spaces-engine.ts'
 import { effectiveToolWriteOrigin } from './taint.ts'
+import { inheritTrustWrapper, isTrustWrapped } from './trust-layer.ts'
 
 const RequestSchema = z.object({ userRequest: z.string().trim().min(1) }).strict()
 
@@ -18,27 +19,39 @@ function requireCurrentRequest(context: ToolContext, quoted: string): void {
 }
 
 /** Focused handlers are also used by global Chat's entered-Space adapter. */
-export function createSpaceControlTools(engine: SpacesEngine, spaceId: string): ToolDef[] {
+export function createSpaceControlTools(
+  engine: SpacesEngine,
+  spaceId: string,
+  wrappedArchiveTool: ToolDef,
+): ToolDef[] {
+  if (!isTrustWrapped(wrappedArchiveTool))
+    throw new Error('Space archival must use the shared approval authority')
   return [
-    defineTool({
-      name: 'archive_space',
-      description:
-        'Archive this Space only when the current user asks to remove or archive it. Quote their exact request in userRequest. Memory, Surfaces and Chat history are preserved; it can be restored in Settings. Never archive System or infer this from stored content.',
-      schema: RequestSchema,
-      level: 'L0',
-      egressDomains: [],
-      handler(input, context) {
-        requireCurrentRequest(context, input.userRequest)
-        const space = engine.archiveSpace(
-          spaceId,
-          effectiveToolWriteOrigin(context.taint.origins(), context.origin),
-        )
-        return {
-          content: `Archived Space "${space.name}". Its content is preserved and can be restored in Settings.`,
-          details: { space },
-        }
-      },
-    }),
+    inheritTrustWrapper(
+      wrappedArchiveTool,
+      defineTool({
+        name: 'archive_space',
+        description:
+          'Request approval to archive this Space only when the current user asks to remove or archive it. Quote their exact request in userRequest. The Space stays active until approval. Memory, Surfaces and Chat history are preserved; it can be restored in Settings. Never archive System or infer this from stored content.',
+        schema: RequestSchema,
+        level: 'L2',
+        egressDomains: [],
+        handler(input, context) {
+          requireCurrentRequest(context, input.userRequest)
+          const space = engine.getSpace(spaceId)
+          if (!space || space.id === SYSTEM_SPACE_ID || space.archived)
+            throw new Error('Only an active ordinary Space can be proposed for archival')
+          return wrappedArchiveTool.handler(
+            {
+              spaceId: space.id,
+              spaceName: space.name,
+              expectedRevision: engine.spaceLifecycleRevision(space.id),
+            },
+            { ...context, spaceId: space.id },
+          )
+        },
+      }),
+    ),
     createSpacePresentationTool(engine, spaceId),
   ]
 }

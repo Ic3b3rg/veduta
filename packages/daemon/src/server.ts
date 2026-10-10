@@ -128,6 +128,7 @@ import { registerAuthRoutes, registerRequestAuth, type ServerAuthOptions } from 
 import { registerSpaceSurfaceRoutes } from './space-surface-routes.ts'
 import { SpaceSettingsService } from './space-settings.ts'
 import { registerSpaceSettingsRoutes } from './space-settings-routes.ts'
+import { registerSpaceArchiveTool } from './space-archive-tool.ts'
 import { SpacePendingDecisionAdapter } from './space-pending-decision.ts'
 import { createSpawnWorkerTool } from './spawn-worker-tool.ts'
 import { registerStaticRoutes } from './static-routes.ts'
@@ -788,6 +789,7 @@ export function buildServer(options: ServerOptions = {}) {
   const outboundTools = createOutboundTools(outboundTransport)
   for (const { tool, meta } of outboundTools) trust.register(tool, meta)
   const wrappedOutboundTools = trust.wrapTools(outboundTools.map(({ tool }) => tool))
+  const wrappedArchiveSpaceTool = registerSpaceArchiveTool(store.spacesEngine, trust)
   const githubIssue = createGithubIssueTool({ store, github: githubMcp, now })
   trust.register(githubIssue.tool, githubIssue.meta)
   const wrappedGithubIssueTool = trust.wrapTools([githubIssue.tool])[0]!
@@ -1421,6 +1423,7 @@ export function buildServer(options: ServerOptions = {}) {
   const chatToolRegistry = buildChatToolRegistry({
     store,
     wrappedOutboundTools,
+    wrappedArchiveSpaceTool,
     memoryRetrieval,
     templateEngine,
     scheduler,

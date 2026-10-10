@@ -14,7 +14,7 @@ import { defineTool, type ToolContext, type ToolDef } from './agent-runner.ts'
 import type { PwaChatInput } from './gateway.ts'
 import { createChatLoop, type ChatLoop } from './chat-loop.ts'
 import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
-import { createSpaceControlTools } from './space-controls.ts'
+import { createSpacePresentationTool } from './space-controls.ts'
 import { createGlobalChatTools, type GlobalChatTurnHooks } from './global-chat-tools.ts'
 import {
   createFakeProvider,
@@ -236,7 +236,7 @@ function globalSurfaceChatLoop(harness: Harness): ChatLoop {
   const templateEngine = new TemplateEngine({ store: harness.store })
   const focusedToolsFor = (spaceId: string) => [
     ...createFocusedSurfaceTools({ store: harness.store, templateEngine, spaceId }),
-    ...createSpaceControlTools(harness.store.spacesEngine, spaceId),
+    createSpacePresentationTool(harness.store.spacesEngine, spaceId),
     ...createMemoryTools(harness.store.spacesEngine, { activeSpaceId: spaceId }),
   ]
   return createChatLoop({
@@ -773,7 +773,7 @@ describe('createChatLoop', () => {
   )
 
   it.each(['focused', 'global'])(
-    'changes Space columns and archives/restores through the real %s registry',
+    'changes Space columns through the real %s registry',
     async (scope) => {
       const h = harness()
       const loop = globalSurfaceChatLoop(h)
@@ -796,34 +796,6 @@ describe('createChatLoop', () => {
           chatEvent({ text: request, ...(scope === 'focused' ? { spaceId: 'spc-health' } : {}) }),
         )
         expect(h.store.getSpace('spc-health')?.presentation).toBe('two-columns')
-        h.fake.setResponses([
-          ...enter,
-          { message: fakeToolCall('archive_space', { ...target, userRequest: 'Archive Health' }) },
-          { message: fakeText('Archived Health; its content is preserved.') },
-        ])
-        await loop.handleChatMessage(
-          chatEvent({
-            text: 'Archive Health',
-            ...(scope === 'focused' ? { spaceId: 'spc-health' } : {}),
-          }),
-        )
-        expect(h.store.getSpace('spc-health')?.archived).toBe(true)
-        expect(h.store.getSurface('srf-groceries')).toBeDefined()
-        h.fake.setResponses([
-          { message: fakeToolCall('list_archived_spaces', {}) },
-          {
-            message: fakeToolCall('restore_space', {
-              spaceId: 'spc-health',
-              userRequest: 'Restore Health',
-            }),
-          },
-          { message: fakeText('Restored Health.') },
-        ])
-        await loop.handleChatMessage(chatEvent({ text: 'Restore Health' }))
-        expect(h.store.getSpace('spc-health')).toMatchObject({
-          archived: false,
-          presentation: 'two-columns',
-        })
       } finally {
         await loop.stop()
       }

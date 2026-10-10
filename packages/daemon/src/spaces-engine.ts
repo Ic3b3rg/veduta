@@ -32,6 +32,7 @@ import {
   SurfaceTemplateIdSchema,
   SurfaceTemplateSchema,
   type Space,
+  type JsonObject,
   type Surface,
   type SurfaceTemplate,
 } from '@veduta/protocol'
@@ -304,9 +305,49 @@ export class SpacesEngine {
     return this.proposals.resolve(proposalId, resolution, actor)
   }
 
-  archiveSpace(spaceId: string, origin: Origin = 'trusted:user'): Space {
+  /** Content changes do not invalidate a lifecycle review; archive/restore and renames do. */
+  spaceLifecycleRevision(spaceId: string): string {
+    this.reconcileSettings(spaceId)
+    const { id, name, slug, archived } = this.requireSpace(spaceId)
+    return createHash('sha256')
+      .update(
+        JSON.stringify({
+          id,
+          name,
+          slug,
+          archived,
+          events: this.readAllEvents(spaceId).filter((event) => event.type === 'lifecycle'),
+        }),
+      )
+      .digest('hex')
+  }
+
+  archiveSpace(
+    spaceId: string,
+    origin: Origin = 'trusted:user',
+    approval?: { effectId: string; expectedRevision: string },
+  ): Space {
     this.assertOrdinarySpaceLifecycle(spaceId, 'archive')
-    return this.updateSpace(spaceId, { archived: true }, 'Archived Space', origin)
+    this.reconcileSettings(spaceId)
+    if (approval) {
+      // The receipt shares the recoverable metadata/Event commit. Recovery cannot undo a later restore.
+      const applied = this.readAllEvents(spaceId).some(
+        (event) =>
+          event.type === 'lifecycle' &&
+          event.origin === 'trusted:system' &&
+          event.payload?.['archiveApprovalId'] === approval.effectId,
+      )
+      if (applied) return this.requireSpace(spaceId)
+      if (this.spaceLifecycleRevision(spaceId) !== approval.expectedRevision)
+        throw new Error('Space lifecycle changed. Request a new archival approval.')
+    }
+    return this.updateSpace(
+      spaceId,
+      { archived: true },
+      'Archived Space',
+      origin,
+      approval ? { archiveApprovalId: approval.effectId } : undefined,
+    )
   }
 
   restoreSpace(spaceId: string, origin: Origin = 'trusted:user'): Space {
@@ -1131,6 +1172,7 @@ export class SpacesEngine {
     patch: Pick<Space, 'archived'>,
     eventText: string,
     origin: Origin = 'trusted:user',
+    payload?: JsonObject,
   ): Space {
     this.reconcileSettings(spaceId)
     const space = this.requireSpace(spaceId)
@@ -1143,6 +1185,7 @@ export class SpacesEngine {
         type: 'lifecycle',
         text: eventText,
         origin,
+        ...(payload === undefined ? {} : { payload }),
       },
     )
     return updated

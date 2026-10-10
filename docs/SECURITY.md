@@ -17,9 +17,16 @@
 
 ## 2. Trust levels (action capabilities)
 
-- **L0 — free**: everything that stays inside the daemon (surfaces, memory, jobs, notifications to the user). Never requires confirmation.
+- **L0 — free**: ordinary internal content work (surfaces, memory, jobs, notifications to the user). Destructive actions and explicitly protected lifecycle operations are excluded even when their effects stay inside the daemon.
 - **L1 — approval-first**: the Agent prepares an outbound action (email, messages to third parties, transactions) and presents an **approval card**: content already prepared, _editable_, with explicit approval. Typed product tools block execution until resolution. Official Skills must follow the same sequence when using general execution, but an arbitrary command is not claimed to be structurally unbypassable. The user can loosen this per type/recipient through a revocable allowlist.
 - **L2 — never automatic**, not even with an allowlist: money above a configured threshold, mass deletions, credential management. Typed product tools enforce this structurally; official Skills must not perform an L2 command through general execution, whose semantics the runtime cannot prove.
+
+Space archival from Chat is also L2 ([issue 238](https://github.com/Ic3b3rg/veduta/issues/238)).
+Although recoverable, it requires a separate explicit approval identifying the Space and describing
+preservation and restoration. The current request only prepares that approval. Focused and global
+Chat use the same registered handler and durable Pending decision; System is excluded, and
+archiving/restoring the Space invalidates older pending reviews. Settings retains its explicit
+Archive / Confirm archive interaction. Permanent Space deletion is not supported.
 
 ## 3. Defenses on external content (the hardened measures)
 

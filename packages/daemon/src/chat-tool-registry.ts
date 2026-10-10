@@ -25,6 +25,7 @@ import { createSpaceControlTools, createSpaceRestoreTools } from './space-contro
 export interface ChatToolRegistryDeps {
   store: Store
   wrappedOutboundTools: ToolDef[]
+  wrappedArchiveSpaceTool: ToolDef
   memoryRetrieval: MemoryRetrieval
   templateEngine: TemplateEngine
   scheduler: Scheduler
@@ -68,7 +69,7 @@ export function chatToolRegistry(
     const primaryTools = [
       ...deps.wrappedOutboundTools,
       ...surfaceTools,
-      ...createSpaceControlTools(deps.store.spacesEngine, spaceId),
+      ...createSpaceControlTools(deps.store.spacesEngine, spaceId, deps.wrappedArchiveSpaceTool),
       ...createMemoryTools(deps.store.spacesEngine, {
         activeSpaceId: spaceId,
         retrieval: deps.memoryRetrieval,

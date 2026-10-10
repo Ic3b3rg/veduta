@@ -11,6 +11,12 @@ Rationale: the event-driven architecture brings attacker-controlled content (ema
 Status: accepted; universal execution-enforcement claims refined by
 [ADR-0026](0026-skills-may-drive-general-tool-execution.md)
 
+The owner-approved follow-up in [issue 238](https://github.com/Ic3b3rg/veduta/issues/238) classifies
+Space archival from Chat as L2 even though content remains recoverable. Its initial request creates
+a durable approval; only explicit resolution archives the reviewed Space. Internal location alone
+does not make a destructive or explicitly protected lifecycle operation L0. Settings already
+requires a separate confirmation; permanent Space deletion remains unsupported.
+
 ## Consequences
 
 - Allowlists apply only to actions born from direct user requests: automated flows over external content always carry one extra thread of friction. A deliberate choice.
