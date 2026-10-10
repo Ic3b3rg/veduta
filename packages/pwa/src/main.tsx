@@ -4,11 +4,16 @@ import { installCatalogTokens } from './catalog-tokens.ts'
 import { CatalogShowcasePage } from './catalog-showcase.tsx'
 import { MotionShowcasePage } from './motion-showcase.tsx'
 import { ProductReferencePage } from './product-reference.tsx'
+import { FamiliarChatPrototype } from './familiar-chat-prototype.tsx'
 
 installCatalogTokens()
 
 createRoot(document.getElementById('root')!).render(
-  location.pathname === '/showcase/reference' ? (
+  import.meta.env.DEV &&
+    location.pathname === '/app/space/health' &&
+    new URLSearchParams(location.search).get('prototype') === 'familiar-chat' ? (
+    <FamiliarChatPrototype />
+  ) : location.pathname === '/showcase/reference' ? (
     <ProductReferencePage />
   ) : location.pathname === '/showcase/motion' ? (
     <MotionShowcasePage />
