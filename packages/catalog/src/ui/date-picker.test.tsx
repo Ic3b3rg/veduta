@@ -60,6 +60,22 @@ it('clears only when allowed and places its calendar within the owning presentat
   portal.remove()
 })
 
+it('keeps a calendar-only day selectable even when the device timezone skipped that civil day', async () => {
+  vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['en-US'])
+  const change = vi.fn()
+  render(<DatePicker aria-label="Date" value="2011-12-30" onValueChange={change} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Date' }))
+  const selected = await screen.findByRole(
+    'button',
+    { name: /Friday, December 30th, 2011/ },
+    { timeout: 5000 },
+  )
+  expect(selected.closest('[role="gridcell"]')?.getAttribute('aria-selected')).toBe('true')
+  expect(screen.getAllByRole('button', { name: /Saturday, December 31st, 2011/ })).toHaveLength(1)
+  fireEvent.click(selected)
+  expect(change).toHaveBeenCalledExactlyOnceWith('2011-12-30')
+})
+
 it('keeps date and time drafts controlled and exposes disabled controls', async () => {
   const change = vi.fn()
   render(

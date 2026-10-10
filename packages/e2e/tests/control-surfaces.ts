@@ -35,7 +35,7 @@ function selection(
 }
 
 /** Generic declarations in a fresh test root, never production domain Templates. */
-export function createControlSurface(baseDir: string): void {
+export function createControlSurface(baseDir: string, date = '2026-10-01'): void {
   const rows: ActionValueSpec = {
     type: 'array',
     items: {
@@ -123,7 +123,7 @@ export function createControlSurface(baseDir: string): void {
           enabled: false,
           priority: 'low',
           cadence: 'daily',
-          date: '2026-10-01',
+          date,
           optionalDate: '2024-02-28',
         },
         freshness: { updatedAt: new Date().toISOString(), updatedBy: 'agent' },

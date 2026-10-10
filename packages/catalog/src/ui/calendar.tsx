@@ -30,7 +30,7 @@ function Calendar({
       locale={locale}
       showOutsideDays={showOutsideDays}
       className={cn(
-        'group/calendar bg-background p-3 [--cell-size:--spacing(9)] pointer-fine:sm:[--cell-size:--spacing(10)] pointer-coarse:[--cell-size:var(--catalog-control-touch-target,2.75rem)] pointer-coarse:p-1 [[data-slot=card-content]_&]:bg-transparent [[data-slot=popover-content]_&]:bg-transparent',
+        'group/calendar bg-background p-3 [--cell-size:var(--catalog-control-height,2rem)] pointer-coarse:[--cell-size:var(--catalog-control-touch-target,2.75rem)] pointer-coarse:p-1 [[data-slot=card-content]_&]:bg-transparent [[data-slot=popover-content]_&]:bg-transparent',
         String.raw`rtl:**:[.rdp-button\_next>svg]:rotate-180`,
         String.raw`rtl:**:[.rdp-button\_previous>svg]:rotate-180`,
         className,
@@ -128,6 +128,8 @@ function Calendar({
           return <ChevronDownIcon className={cn('size-4', className)} {...props} />
         },
         DayButton: CalendarDayButton,
+        PreviousMonthButton: CalendarNavigationButton,
+        NextMonthButton: CalendarNavigationButton,
         WeekNumber: ({ children, ...props }) => {
           return (
             <td {...props}>
@@ -142,6 +144,10 @@ function Calendar({
       {...props}
     />
   )
+}
+
+function CalendarNavigationButton(props: React.ComponentProps<'button'>) {
+  return <button {...props} type="button" title={props['aria-label']} />
 }
 
 function CalendarDayButton({

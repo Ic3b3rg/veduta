@@ -1,6 +1,6 @@
 import { expect, test } from './surface-contracts-fixture.ts'
 import { createDatePickerFixtures } from './date-picker-fixture.ts'
-import { CONTROL_SURFACE_TITLE } from './control-surfaces.ts'
+import { CONTROL_SURFACE_TITLE, createControlSurface } from './control-surfaces.ts'
 
 for (const settings of [
   {
@@ -40,10 +40,20 @@ for (const settings of [
       const date = card.getByRole('button', { name: 'Date', exact: true })
       await date.click()
       await expect(page.getByRole('grid')).toBeVisible()
+      const nextMonth = page.getByRole('button', {
+        name: settings.locale === 'it-IT' ? /mese successivo/i : /Next Month/,
+      })
+      await expect(nextMonth).toHaveAttribute(
+        'title',
+        (await nextMonth.getAttribute('aria-label'))!,
+      )
       if (settings.locale === 'it-IT') {
         const target = await page.getByRole('button', { name: settings.day }).boundingBox()
         expect(target!.width).toBeGreaterThanOrEqual(44)
         expect(target!.height).toBeGreaterThanOrEqual(44)
+      } else {
+        const target = await page.getByRole('button', { name: settings.day }).boundingBox()
+        expect(target!.height).toBe(32)
       }
       await page.screenshot({ path: testInfo.outputPath('surface-calendar.png') })
       const calendar = page.locator('[data-slot="popover-content"]')
@@ -127,3 +137,31 @@ for (const settings of [
     })
   })
 }
+
+test.describe('calendar-only dates in a timezone with a skipped civil day', () => {
+  test.use({ locale: 'en-US', timezoneId: 'Pacific/Apia' })
+  test('preserves December 30, 2011 through selection and refresh', async ({
+    page,
+    surfaceStack,
+  }) => {
+    createControlSurface(surfaceStack.baseDir, '2011-12-30')
+    await page.reload()
+    const card = page.locator('article.surface-card').filter({
+      has: page.getByRole('button', { name: `Focus ${CONTROL_SURFACE_TITLE}`, exact: true }),
+    })
+    const date = card.getByRole('button', { name: 'Date', exact: true })
+    await expect(date).toHaveText('Dec 30, 2011')
+    await date.click()
+    const day = page.getByRole('button', { name: /Friday, December 30th, 2011/ })
+    await expect(day).toBeVisible()
+    await expect(page.getByRole('gridcell', { selected: true })).toContainText('30')
+    await expect(page.getByRole('button', { name: /Saturday, December 31st, 2011/ })).toHaveCount(1)
+    await page.getByRole('button', { name: /Thursday, December 29th, 2011/ }).click()
+    await expect(date).toHaveText('Dec 29, 2011')
+    await date.click()
+    await day.click()
+    await expect(date).toHaveText('Dec 30, 2011')
+    await page.reload()
+    await expect(date).toHaveText('Dec 30, 2011')
+  })
+})

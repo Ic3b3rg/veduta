@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState, type ComponentProps } from
 import { CalendarIcon } from 'lucide-react'
 import { cn } from 'cn'
 import { isControlDate } from '@veduta/protocol'
+import { UTCDate } from '@date-fns/utc'
 import { formatSurfaceValue } from '../surface-value.tsx'
 import { Button } from './button.tsx'
 import { Popover, PopoverContent, PopoverTrigger } from './popover.tsx'
@@ -10,6 +11,10 @@ import { Popover, PopoverContent, PopoverTrigger } from './popover.tsx'
 const Calendar = lazy(() =>
   import('./calendar.tsx').then((module) => ({ default: module.Calendar })),
 )
+
+const calendarDates = {
+  newDate: (year: number, month: number, day: number) => new UTCDate(year, month, day),
+}
 
 type DatePickerProps = Omit<
   ComponentProps<typeof Button>,
@@ -37,13 +42,14 @@ export function DatePicker({
     restoreFocus.current = false
     if (document.activeElement === document.body) trigger.current?.focus()
   }, [disabled])
-  const selected = isControlDate(value) ? new Date(`${value}T12:00:00`) : undefined
+  // UTC calendar arithmetic preserves date-only values even across skipped civil days.
+  const selected = isControlDate(value) ? new UTCDate(`${value}T12:00:00Z`) : undefined
+  const now = new Date()
+  const today = new UTCDate(now.getFullYear(), now.getMonth(), now.getDate(), 12)
   const label = props['aria-label'] ?? 'Choose date'
   function choose(date: Date | undefined) {
     if (disabled || (!date && !allowEmpty)) return
-    const next = date
-      ? `${String(date.getFullYear()).padStart(4, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-      : ''
+    const next = date ? date.toISOString().slice(0, 10) : ''
     if (isControlDate(next, allowEmpty)) onValueChange(next)
     setOpen(false)
   }
@@ -88,6 +94,8 @@ export function DatePicker({
         >
           <Calendar
             mode="single"
+            dateLib={calendarDates}
+            today={today}
             selected={selected}
             {...(selected ? { defaultMonth: selected } : {})}
             onSelect={choose}
