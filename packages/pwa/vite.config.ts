@@ -7,7 +7,7 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
-    port: 5173,
+    port: process.env['VEDUTA_CHAT_PROTOTYPE'] === '1' ? 5184 : 5173,
     proxy: {
       '/api': 'http://127.0.0.1:8787',
       '/ws': { target: 'ws://127.0.0.1:8787', ws: true },

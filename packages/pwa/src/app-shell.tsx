@@ -7,13 +7,14 @@ import type {
   RenderableSurface,
   SurfaceMoveDirection,
 } from '@veduta/protocol'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useState } from 'react'
 import { Button } from '@veduta/catalog/ui/button'
 import { PortalContainerContext } from '@veduta/catalog/ui/portal-container'
 import { Settings2, SlidersHorizontal } from 'lucide-react'
 import type { SpaceWithSurfaces } from './api.ts'
 import { ChatBar } from './chat-bar.tsx'
+import { ChatReadingPrototype, PrototypeModelPicker } from './chat-reading-prototype.tsx'
 import { ChatModelSelects } from './chat-model-selects.tsx'
 import { clientPath } from './client-router.tsx'
 import { HomeSpaceGrid, type HomeSpacesLoadState } from './home-space-grid.tsx'
@@ -144,6 +145,13 @@ export function AppShell({
   onRetryQueuedChat,
 }: AppShellProps) {
   const presentation = usePresentation()
+  const [prototypeParams] = useSearchParams()
+  const chatPrototype = import.meta.env.DEV && prototypeParams.get('prototype') === 'chat'
+  const [prototypeExpanded, setPrototypeExpanded] = useState(false)
+  const [prototypeModelSelection, setPrototypeModelSelection] = useState({
+    connection: 'ChatGPT subscription',
+    model: 'Reasoning model',
+  })
   const [portalContainer, setPortalContainer] = useState<HTMLElement | null>(null)
   const focusedSpace = route.kind === 'space' ? route.space : undefined
   const focusedSurfaceId = route.kind === 'space' ? route.surfaceId : undefined
@@ -166,13 +174,24 @@ export function AppShell({
           ref={setPortalContainer}
           className="app-shell precision-tool"
           data-gateway-online={gatewayOnline}
+          data-chat-prototype={
+            chatPrototype ? (prototypeParams.get('variant') === 'B' ? 'B' : 'A') : undefined
+          }
+          data-prototype-expanded={chatPrototype && prototypeExpanded ? 'true' : undefined}
         >
           <a className="skip-link" href="#main-content">
             Skip to {mainContentName} content
           </a>
           <header className="topbar">
             <h1 className="product-wordmark">Veduta</h1>
-            <ChatModelSelects token={authToken} />
+            {chatPrototype ? (
+              <PrototypeModelPicker
+                selection={prototypeModelSelection}
+                onChange={setPrototypeModelSelection}
+              />
+            ) : (
+              <ChatModelSelects token={authToken} />
+            )}
             <div className="topbar-actions" aria-live="polite">
               {queuedCount > 0 && <span className="status-pill pending">{queuedCount} queued</span>}
               <Button
@@ -290,27 +309,37 @@ export function AppShell({
             </main>
           </div>
 
-          <ChatBar
-            gatewayOnline={gatewayOnline}
-            entries={chatEntries}
-            timelineEntries={chatTimelineEntries}
-            hasOlder={chatHasOlder}
-            loadingOlder={chatLoadingOlder}
-            queuedChat={queuedChat}
-            streamingEntries={streamingEntries}
-            focusedSpace={focusedSpace}
-            focusToken={focusChatToken}
-            focusOnRouteChange={focusChatOnRouteChange}
-            pendingDecisionReviewPaths={pendingDecisionPresentation.reviewPaths}
-            dismissedDecisionIds={dismissedDecisionIds}
-            resolvingDecisionIds={resolvingDecisionIds}
-            onResolvePendingDecision={onResolvePendingDecision}
-            onDismissPendingDecision={onDismissPendingDecision}
-            onSend={onSend}
-            onLoadOlder={onLoadOlderChat}
-            onRetryInterrupted={onRetryInterruptedChat}
-            onRetryQueued={onRetryQueuedChat}
-          />
+          {chatPrototype ? (
+            <ChatReadingPrototype
+              spaceName={focusedSpace?.name ?? 'Home'}
+              expanded={prototypeExpanded}
+              onExpandedChange={setPrototypeExpanded}
+              modelSelection={prototypeModelSelection}
+              onModelSelectionChange={setPrototypeModelSelection}
+            />
+          ) : (
+            <ChatBar
+              gatewayOnline={gatewayOnline}
+              entries={chatEntries}
+              timelineEntries={chatTimelineEntries}
+              hasOlder={chatHasOlder}
+              loadingOlder={chatLoadingOlder}
+              queuedChat={queuedChat}
+              streamingEntries={streamingEntries}
+              focusedSpace={focusedSpace}
+              focusToken={focusChatToken}
+              focusOnRouteChange={focusChatOnRouteChange}
+              pendingDecisionReviewPaths={pendingDecisionPresentation.reviewPaths}
+              dismissedDecisionIds={dismissedDecisionIds}
+              resolvingDecisionIds={resolvingDecisionIds}
+              onResolvePendingDecision={onResolvePendingDecision}
+              onDismissPendingDecision={onDismissPendingDecision}
+              onSend={onSend}
+              onLoadOlder={onLoadOlderChat}
+              onRetryInterrupted={onRetryInterruptedChat}
+              onRetryQueued={onRetryQueuedChat}
+            />
+          )}
         </div>
       </PortalContainerContext.Provider>
     </PresentationContext.Provider>
