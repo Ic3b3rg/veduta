@@ -590,9 +590,9 @@ test('generic fast Action batches converge across retries, concurrent devices, r
       await primaryWire.disconnect()
       await page.route('**/api/spaces', (route) => route.abort('internetdisconnected'))
       await page.reload()
-      await expect(page.locator('.app-shell > [role="alert"]')).toContainText(
-        /fetch|network|offline/i,
-      )
+      await expect(
+        page.getByRole('main', { name: 'Health Space' }).getByRole('alert'),
+      ).toContainText(/fetch|network|offline/i)
       for (const [title, surface, key] of [
         ['Item collection', items, 'items'],
         ['Measurement log', measurement, 'records'],

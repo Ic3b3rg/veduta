@@ -231,7 +231,7 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
         .getByRole('complementary', { name: 'Spaces' })
         .getByRole('button', { name: 'Health' })
         .click()
-      await expect(page.getByRole('heading', { name: 'Health' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'Health', exact: true })).toBeVisible()
       await expect(page.getByRole('button', { name: 'Focus Meals' })).toBeVisible()
       await expect(page.getByRole('button', { name: 'Focus Groceries' })).toBeVisible()
 

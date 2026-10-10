@@ -22,12 +22,14 @@ vi.mock('./api.ts', async (importOriginal) => {
   return {
     ...createAppApiMock(await importOriginal<typeof ApiModule>()),
     loginWithPasskey: vi.fn(),
+    confirmDomainStep: vi.fn(),
   }
 })
 
 import { App } from './app.tsx'
 import {
   connectGateway,
+  confirmDomainStep,
   fetchAutomationOutcomeNotifications,
   fetchAuthStatus,
   fetchChatTimeline,
@@ -267,6 +269,89 @@ describe('App routing', () => {
 
     await waitFor(() => expect(location.pathname).toBe('/'))
     expect(await screen.findByLabelText('Spaces')).toBeDefined()
+  })
+
+  it.each(['status', 'error'] as const)(
+    'keeps confirmed onboarding progress when an earlier reconnect read returns a late %s',
+    async (outcome) => {
+      localStorage.setItem(AUTH_TOKEN_KEY, 'onboarding-token')
+      mockReadyApp()
+      vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus())
+      vi.mocked(fetchModelConnections).mockResolvedValue({
+        ...modelConnectionsSnapshot(),
+        mockControlAvailable: true,
+      })
+      const initial = fromPartial<OnboardingStatus>({
+        profile: 'local-vps',
+        required: true,
+        completed: false,
+        currentStep: 'domain',
+        domain: { tlsActive: false },
+        steps: [
+          { id: 'domain', status: 'pending' },
+          { id: 'model-connection', status: 'pending' },
+        ],
+      })
+      const confirmed: OnboardingStatus = {
+        ...initial,
+        currentStep: 'model-connection',
+        steps: [
+          { id: 'domain', status: 'completed' },
+          { id: 'model-connection', status: 'pending' },
+        ],
+      }
+      let resolveStatus!: (status: OnboardingStatus) => void
+      let rejectStatus!: (error: Error) => void
+      const delayed = new Promise<OnboardingStatus>((resolve, reject) => {
+        resolveStatus = resolve
+        rejectStatus = reject
+      })
+      vi.mocked(fetchOnboardingStatus).mockResolvedValueOnce(initial).mockReturnValueOnce(delayed)
+      vi.mocked(confirmDomainStep).mockResolvedValue(confirmed)
+      render(<App />)
+      expect(await screen.findByText('Step 1 of 2: Browser access')).toBeDefined()
+      await waitFor(() => expect(connectGateway).toHaveBeenCalled())
+      act(() => vi.mocked(connectGateway).mock.calls[0]![0].onHello(0, 'onboarding-client'))
+      await waitFor(() => expect(fetchOnboardingStatus).toHaveBeenCalledTimes(2))
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+      expect(await screen.findByLabelText(/built-in mock provider/i)).toBeDefined()
+      await act(async () => {
+        if (outcome === 'status') resolveStatus(initial)
+        else rejectStatus(new Error('old status read failed'))
+      })
+      expect(screen.getByText('Step 2 of 2: Model connection')).toBeDefined()
+      expect(screen.getByLabelText(/built-in mock provider/i)).toBeDefined()
+      expect(screen.queryByRole('alert')).toBeNull()
+    },
+  )
+
+  it('keeps Home open when a pre-completion reconnect read returns after finishing onboarding', async () => {
+    localStorage.setItem(AUTH_TOKEN_KEY, 'onboarding-token')
+    mockReadyApp()
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus())
+    const initial = fromPartial<OnboardingStatus>({
+      profile: 'vps',
+      required: true,
+      completed: false,
+      currentStep: 'finish',
+      steps: [{ id: 'finish', status: 'pending' }],
+    })
+    let resolveStatus!: (status: OnboardingStatus) => void
+    const delayed = new Promise<OnboardingStatus>((resolve) => {
+      resolveStatus = resolve
+    })
+    vi.mocked(fetchOnboardingStatus).mockResolvedValueOnce(initial).mockReturnValueOnce(delayed)
+    vi.mocked(finishOnboarding).mockResolvedValue({ restartRequired: false, restarting: false })
+    render(<App />)
+    expect(await screen.findByRole('button', { name: 'Finish' })).toBeDefined()
+    await waitFor(() => expect(connectGateway).toHaveBeenCalled())
+    act(() => vi.mocked(connectGateway).mock.calls[0]![0].onHello(0, 'onboarding-client'))
+    await waitFor(() => expect(fetchOnboardingStatus).toHaveBeenCalledTimes(2))
+    fireEvent.click(screen.getByRole('button', { name: 'Finish' }))
+    expect(await screen.findByRole('main', { name: 'Home' })).toBeDefined()
+    await act(async () => resolveStatus(initial))
+    expect(screen.getByRole('main', { name: 'Home' })).toBeDefined()
+    expect(screen.queryByRole('heading', { name: 'Set up Veduta' })).toBeNull()
   })
 
   it('redirects completed setup sessions to Home', async () => {

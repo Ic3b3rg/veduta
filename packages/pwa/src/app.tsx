@@ -77,6 +77,7 @@ function RoutedApp() {
   const [onboardingRetryToken, setOnboardingRetryToken] = useState(0)
   const waitingForAccess = useRef(false)
   const hasOnboardingStatus = useRef(false)
+  const onboardingStatusRevision = useRef(0)
   const [installPrompt, setInstallPrompt] = useState<BrowserInstallPromptEvent | null>(null)
   const [showInstallGuide, setShowInstallGuide] = useState(
     () => !isStandalone() && localStorage.getItem(INSTALL_DISMISSED_KEY) !== '1',
@@ -84,6 +85,7 @@ function RoutedApp() {
   const setError = runtime.reportError
   const resetUnauthorizedSession = useCallback(() => {
     runtime.authenticate(undefined)
+    onboardingStatusRevision.current += 1
     waitingForAccess.current = false
     hasOnboardingStatus.current = false
     setOnboardingStatus(null)
@@ -194,16 +196,17 @@ function RoutedApp() {
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const load = async () => {
+      const revision = onboardingStatusRevision.current
       try {
         const status = await fetchOnboardingStatus(authToken)
-        if (cancelled) return
+        if (cancelled || revision !== onboardingStatusRevision.current) return
         waitingForAccess.current = status.domain?.pending === true
         hasOnboardingStatus.current = true
         setOnboardingStatus(status)
         setOnboardingLoad('ready')
         if (waitingForAccess.current) timer = setTimeout(() => void load(), 1000)
       } catch (e) {
-        if (cancelled) return
+        if (cancelled || revision !== onboardingStatusRevision.current) return
         if (e instanceof ApiResponseError && e.status === 401) {
           resetUnauthorizedSession()
           return
@@ -331,8 +334,16 @@ function RoutedApp() {
       <OnboardingWizard
         status={onboardingStatus}
         token={authToken}
-        onStatus={setOnboardingStatus}
+        onStatus={(status) => {
+          // A confirmed step supersedes reads started before its receipt (#237).
+          onboardingStatusRevision.current += 1
+          waitingForAccess.current = status.domain?.pending === true
+          hasOnboardingStatus.current = true
+          setOnboardingStatus(status)
+          setOnboardingLoad('ready')
+        }}
         onCompleted={() => {
+          onboardingStatusRevision.current += 1
           setOnboardingStatus((prev) =>
             prev ? { ...prev, required: false, completed: true } : prev,
           )
