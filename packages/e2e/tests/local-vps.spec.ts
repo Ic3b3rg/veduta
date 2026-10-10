@@ -885,16 +885,18 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       const request = 'show progressive surface demo'
       const composer = page.getByRole('textbox', { name: 'Message Veduta in Health' })
       const users = page.locator('.chat-entry.user', { hasText: request })
+      const streaming = page.locator('.chat-entry.streaming')
       await composer.fill(request)
       await composer.press('Enter')
-      await expect(users.last()).toContainText('Running')
+      await expect(streaming).toHaveCount(1)
+      await expect(users.last()).not.toContainText('Running')
       await page.reload()
-      await expect(users.last()).toContainText('Running')
-      await expect(users.last().getByText('Running')).toHaveCount(0, { timeout: 20_000 })
+      await expect(streaming).toHaveCount(1)
+      await expect(streaming).toHaveCount(0, { timeout: 20_000 })
 
       await composer.fill(request)
       await composer.press('Enter')
-      await expect(users.last()).toContainText('Running')
+      await expect(streaming).toHaveCount(1)
       const countBeforeRetry = await users.count()
       const restart = {
         port: stack!.port,
@@ -909,7 +911,8 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(users.last()).toContainText('Interrupted. Completion is unknown.')
       await users.last().getByRole('button', { name: 'Retry' }).click()
       await expect(users).toHaveCount(countBeforeRetry + 1)
-      await expect(users.last().getByText('Running')).toHaveCount(0, { timeout: 20_000 })
+      await expect(streaming).toHaveCount(1)
+      await expect(streaming).toHaveCount(0, { timeout: 20_000 })
     })
 
     await test.step('global, Health, and Work Chat timelines stay separate through navigation and reload', async () => {

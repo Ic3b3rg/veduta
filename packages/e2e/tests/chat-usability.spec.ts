@@ -3,6 +3,42 @@ import { expect, test } from './surface-contracts-fixture.ts'
 
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
 
+test('restores the latest turn position when reopening a short reply', async ({
+  page,
+  surfaceStack,
+}) => {
+  expect(surfaceStack.origin).toBeTruthy()
+  await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'true')
+  await openChat(page)
+  const composer = page.getByRole('textbox', { name: 'Message Veduta in Health' })
+  const conversation = page.getByRole('log', { name: 'Conversation' })
+  const send = page.getByRole('button', { name: 'Send message' })
+  await composer.fill('Earlier notes\n'.repeat(40))
+  await send.tap()
+  await expect(conversation.locator('.chat-entry.assistant')).toHaveCount(1)
+  await composer.fill('Keep this reply short.')
+  await send.tap()
+  await expect(conversation.locator('.chat-entry.assistant')).toHaveCount(2)
+  const userPosition = () =>
+    conversation
+      .locator('.chat-entry.user')
+      .last()
+      .evaluate((entry) => {
+        const log = entry.closest('.chat-log')!
+        return entry.getBoundingClientRect().top - log.getBoundingClientRect().top
+      })
+  expect(await userPosition()).toBeGreaterThanOrEqual(0)
+  expect(await userPosition()).toBeLessThan(40)
+  await conversation.evaluate((log) => {
+    log.scrollTop -= 80
+  })
+  await expect(page.getByRole('button', { name: 'Scroll to latest message' })).toBeVisible()
+  const before = await userPosition()
+  await closeChat(page)
+  await openChat(page)
+  expect(Math.abs((await userPosition()) - before)).toBeLessThanOrEqual(1)
+})
+
 test('mobile Chat preserves navigation focus, multiline drafts and readable replies after reload', async ({
   page,
   surfaceStack,

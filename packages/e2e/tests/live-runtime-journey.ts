@@ -171,7 +171,7 @@ export async function verifyLiveRuntime(
     })
     await test.step('malformed and unresolvable updates remain visible and recover confirmed state', async () => {
       liveSocket?.send('{malformed')
-      await expect(observer.locator('.app-shell > [role="alert"]')).toContainText(
+      await expect(observer.locator('.shell-notice[role="alert"]')).toContainText(
         'Malformed Gateway frame',
       )
       await expect(observerMilk).toHaveAttribute('aria-checked', original ?? 'false')
@@ -192,7 +192,7 @@ export async function verifyLiveRuntime(
           },
         }),
       )
-      await expect(observer.locator('.app-shell > [role="alert"]')).toContainText(
+      await expect(observer.locator('.shell-notice[role="alert"]')).toContainText(
         'Surface update could not be applied',
       )
       await expect(observerMilk).toHaveAttribute('aria-checked', original ?? 'false')

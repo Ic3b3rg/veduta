@@ -57,6 +57,14 @@ metadata remains subordinate. Align numerical values with tabular numerals where
 Shared controls are 32 px high and retain a 44-by-44 px target on coarse pointers. Visual density
 must never shrink touch targets or remove a focus indicator.
 
+The owner-reviewed Chat composition in [#228](https://github.com/Ic3b3rg/veduta/issues/228) has
+deliberate shell-only exceptions. Conversation text uses 16 px with a 1.7 line height for long
+replies; the composer also uses 16 px to avoid mobile input zoom. Its 14 px vertical inset and
+20 px outer spacing separate writing from reading. The composer and model modal use a 12 px
+radius; modal fields use 20 px spacing. The model trigger is 36 px high, send/latest controls
+are 40 px circles, and the launcher is 48 px. Coarse-pointer controls retain at least 44 px
+targets. These choices apply to Chat presentation, not to Surface data or the catalog defaults.
+
 At 320 px, prefer one main reading column and disclose secondary detail. At 1440 px, use width for
 parallel context without stretching reading lines or inflating empty cards. Long titles, translated
 copy, dates and controls must wrap intentionally. Chat and overlays must not conceal approvals or

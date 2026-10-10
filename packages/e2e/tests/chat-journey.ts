@@ -13,5 +13,6 @@ export async function closeChat(page: Page): Promise<void> {
   if (await close.isVisible()) {
     await close.click()
     await expect(page.getByRole('button', { name: 'Open Chat', exact: true })).toBeFocused()
+    await expect(page.locator('.chat-sheet')).toHaveCount(0)
   }
 }

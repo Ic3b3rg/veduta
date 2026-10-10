@@ -100,13 +100,11 @@ export function ChatBar({
         olderPageAnchor.current = undefined
         followsLatestRef.current = false
       }
-      const users = log.querySelectorAll<HTMLElement>('.chat-entry.user')
-      const latestUser = users.item(users.length - 1)
-      if (view.getSnapshot().anchorLatestTurn && latestUser && spacerRef.current) {
-        const contentAfterUser =
-          spacerRef.current.getBoundingClientRect().top - latestUser.getBoundingClientRect().top
-        spacerRef.current.style.height = `${Math.max(0, log.clientHeight - contentAfterUser - 48)}px`
-      }
+      const latestUser = resizeReadingSpace(
+        log,
+        spacerRef.current,
+        view.getSnapshot().anchorLatestTurn,
+      )
       if (
         anchorNextUserRef.current !== undefined &&
         latestUser &&
@@ -150,9 +148,14 @@ export function ChatBar({
   useLayoutEffect(() => {
     const saved = view.getSnapshot()
     olderPageAnchor.current = undefined
+    anchorNextUserRef.current = undefined
     followsLatestRef.current = saved.followsLatest
     logGeometryRef.current = { scrollHeight: 0, clientHeight: 0, clientWidth: 0, scrollTop: 0 }
-    if (logRef.current && saved.scrollTop !== undefined) logRef.current.scrollTop = saved.scrollTop
+    const log = logRef.current
+    if (log) {
+      resizeReadingSpace(log, spacerRef.current, saved.anchorLatestTurn)
+      if (saved.scrollTop !== undefined) log.scrollTop = saved.scrollTop
+    }
   }, [view])
 
   useEffect(() => {
@@ -448,4 +451,17 @@ function usesTouchComposer(): boolean {
 function isChatLogAtBottom(log: HTMLElement): boolean {
   // scrollTop can be fractional even though scrollHeight and clientHeight are rounded.
   return log.scrollHeight - log.clientHeight - log.scrollTop < 1
+}
+
+/** Size the current scope before restoring a position that may depend on this space. */
+function resizeReadingSpace(log: HTMLElement, spacer: HTMLElement | null, active: boolean) {
+  const users = log.querySelectorAll<HTMLElement>('.chat-entry.user')
+  const latestUser = users.item(users.length - 1)
+  if (spacer) {
+    const contentAfterUser = latestUser
+      ? spacer.getBoundingClientRect().top - latestUser.getBoundingClientRect().top
+      : 0
+    spacer.style.height = `${active && latestUser ? Math.max(0, log.clientHeight - contentAfterUser - 48) : 0}px`
+  }
+  return latestUser
 }
