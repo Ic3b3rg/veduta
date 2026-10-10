@@ -13,10 +13,11 @@ export function respondToMockSpaceControls(
   results: ToolResult[],
 ): PiAssistantMessage | undefined {
   const focused = text === 'imposta lo spazio a due colonne'
-  const archive = text === 'Archive Health'
+  const focusedArchive = text === 'Archive this Space'
+  const archive = text === 'Archive Health' || focusedArchive
   const restore = text === 'Restore Health'
   if (!focused && !archive && !restore) return undefined
-  if (archive && !results.some((result) => result.toolName === 'enter_space')) {
+  if (archive && !focusedArchive && !results.some((result) => result.toolName === 'enter_space')) {
     return toolCallMessage(
       'enter_space',
       { spaceId: 'health' },
@@ -33,14 +34,16 @@ export function respondToMockSpaceControls(
     name,
     {
       userRequest: text,
-      ...(focused
-        ? { presentation: 'two-columns' }
-        : { spaceId: restore ? 'spc-health' : 'health' }),
+      ...(focusedArchive
+        ? {}
+        : focused
+          ? { presentation: 'two-columns' }
+          : { spaceId: restore ? 'spc-health' : 'health' }),
     },
     focused
       ? 'Arranging this Space in two columns.'
       : archive
-        ? 'Archiving Health with its content preserved.'
+        ? 'Requesting approval to archive this Space with its content preserved.'
         : 'Restoring Health.',
   )
 }

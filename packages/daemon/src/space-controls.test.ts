@@ -8,19 +8,41 @@ import type { ToolContext } from './agent-runner.ts'
 import { createSpaceControlTools } from './space-controls.ts'
 import { SpacesEngine } from './spaces-engine.ts'
 import { TurnTaintAccumulator } from './taint.ts'
+import { TrustLayer } from './trust-layer.ts'
+import { registerSpaceArchiveTool } from './space-archive-tool.ts'
 
 const roots: string[] = []
-afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })))
+const trusts: TrustLayer[] = []
+afterEach(() => {
+  trusts.splice(0).forEach((trust) => trust.dispose())
+  roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true }))
+})
 function setup() {
   const rootDir = mkdtempSync(join(tmpdir(), 'veduta-space-controls-'))
   roots.push(rootDir)
   const engine = new SpacesEngine({ rootDir })
   const space = engine.createSpace({ name: 'Health' })
-  return { rootDir, engine, space }
+  const trust = new TrustLayer({
+    rootDir,
+    approvalCardPort: {
+      create: (approval) => ({ surfaceId: `srf-${approval.id}` }),
+      readEditedFields: () => ({}),
+      patchValidationError: () => {},
+      archive: () => {},
+    },
+    onApprovalCard: () => {},
+    appendOutcomeEvent: () => {},
+  })
+  trusts.push(trust)
+  const archiveTool = registerSpaceArchiveTool(engine, trust)
+  return { rootDir, engine, space, trust, archiveTool }
 }
 function context(text: string): ToolContext {
   return fromPartial<ToolContext>({
     origin: 'trusted:user',
+    origins: ['trusted:user'],
+    toolCallId: 'archive-call',
+    contextHash: 'test-space-archival',
     taint: new TurnTaintAccumulator(['trusted:user']),
     trigger: { kind: 'chat' },
     initiatingTurn: { clientId: 'test', turnId: 'turn-1' },
@@ -42,14 +64,16 @@ describe('shared Space controls', () => {
     ).toHaveLength(1)
   })
 
-  it('archives through the focused tool without deleting facts and restores the same Space', async () => {
-    const { engine, space } = setup()
+  it('archives only after approval without deleting facts and restores the same Space', async () => {
+    const { engine, space, trust, archiveTool } = setup()
     engine.writeFact(space.id, 'I walk every morning')
     const request = 'Remove this Space'
-    const archive = createSpaceControlTools(engine, space.id).find(
+    const archive = createSpaceControlTools(engine, space.id, archiveTool).find(
       (tool) => tool.name === 'archive_space',
     )!
     await archive.handler({ userRequest: request }, context(request))
+    expect(engine.getSpace(space.id)?.archived).toBe(false)
+    await trust.resolvePrepared(trust.listPending()[0]!.approval.id, 'approve')
     expect(engine.listSpaces()).toEqual([])
     engine.restoreSpace(space.id)
     expect(engine.readFacts(space.id).active[0]?.text).toBe('I walk every morning')
@@ -67,9 +91,9 @@ describe('shared Space controls', () => {
   })
 
   it('refuses invented user authorization and protects the System lifecycle', async () => {
-    const { engine, space } = setup()
+    const { engine, space, archiveTool } = setup()
     engine.ensureSystemSpace({ name: 'System', slug: 'system' })
-    const archive = createSpaceControlTools(engine, space.id).find(
+    const archive = createSpaceControlTools(engine, space.id, archiveTool).find(
       (tool) => tool.name === 'archive_space',
     )!
     await expect(async () =>
@@ -78,5 +102,29 @@ describe('shared Space controls', () => {
     expect(engine.getSpace(space.id)?.archived).toBe(false)
     expect(() => engine.archiveSpace(SYSTEM_SPACE_ID)).toThrow()
     expect(() => engine.restoreSpace(SYSTEM_SPACE_ID)).toThrow()
+    const systemArchive = createSpaceControlTools(engine, SYSTEM_SPACE_ID, archiveTool)[0]!
+    await expect(async () =>
+      systemArchive.handler({ userRequest: 'archive' }, context('archive')),
+    ).rejects.toThrow('active ordinary Space')
+    const missingArchive = createSpaceControlTools(engine, 'missing', archiveTool)[0]!
+    await expect(async () =>
+      missingArchive.handler({ userRequest: 'archive' }, context('archive')),
+    ).rejects.toThrow('active ordinary Space')
+  })
+
+  it('does not repeat an approved archival during recovery after a later restore', async () => {
+    const { engine, rootDir, space, trust, archiveTool } = setup()
+    const expectedRevision = engine.spaceLifecycleRevision(space.id)
+    const archive = createSpaceControlTools(engine, space.id, archiveTool)[0]!
+    await archive.handler({ userRequest: 'archive' }, context('archive'))
+    const effectId = trust.listPending()[0]!.approval.id
+    await trust.resolvePrepared(effectId, 'approve')
+    engine.restoreSpace(space.id)
+    const reopened = new SpacesEngine({ rootDir })
+    reopened.archiveSpace(space.id, 'trusted:system', { effectId, expectedRevision })
+    expect(reopened.getSpace(space.id)?.archived).toBe(false)
+    expect(
+      reopened.readRecent(space.id).filter((event) => event.text === 'Archived Space'),
+    ).toHaveLength(1)
   })
 })

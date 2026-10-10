@@ -21,6 +21,7 @@ import { TemplateEngine } from './template-engine.ts'
 import { piToolParameters } from './tool-parameters.ts'
 import type { ApprovalCardPort } from './trust-contracts.ts'
 import { TrustLayer } from './trust-layer.ts'
+import { registerSpaceArchiveTool } from './space-archive-tool.ts'
 import { WorkerPool } from './worker.ts'
 
 /**
@@ -121,6 +122,7 @@ function buildRealRegistry(): { tools: ToolDef[]; dispose: () => void } {
   const tools = chatToolRegistry({
     store,
     wrappedOutboundTools,
+    wrappedArchiveSpaceTool: registerSpaceArchiveTool(store.spacesEngine, trust),
     memoryRetrieval,
     templateEngine,
     scheduler,

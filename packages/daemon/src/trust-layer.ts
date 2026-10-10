@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { type ApprovalCard, ApprovalCardSchema } from '@veduta/protocol'
 import type { z } from 'zod'
 import type { ToolContext, ToolDef, ToolResult, TriggerRef } from './agent-runner.ts'
+import { ToolRecoveryPendingError } from './tool-recovery.ts'
 import { effectiveOrigin, hasUntrusted, type Origin, TurnTaintAccumulator } from './taint.ts'
 import { TrustAllowlist } from './trust-allowlist.ts'
 import {
@@ -858,7 +859,8 @@ export class TrustLayer {
    * in the `action.outcome` audit row's `outcome`), plus the outcome audit
    * row (unique per effectId). Never throws — callers decide whether to
    * surface the error (the immediate `allow` path rethrows; `resolve()` and
-   * recovery do not, since nothing is awaiting them).
+   * recovery do not, since nothing is awaiting them). A ToolRecoveryPendingError
+   * leaves the effect executing: durable domain recovery still owns its outcome.
    */
   private async executeAndFinalize(
     effectId: string,
@@ -874,6 +876,10 @@ export class TrustLayer {
     try {
       result = await entry.tool.handler(input, context)
     } catch (error) {
+      if (error instanceof ToolRecoveryPendingError) {
+        this.notifyChange()
+        return { outcome: 'error', detail: error.message }
+      }
       outcome = 'error'
       detail = error instanceof Error ? error.message : String(error)
     }

@@ -23,6 +23,7 @@ import { TemplateEngine } from './template-engine.ts'
 import { piToolParameters } from './tool-parameters.ts'
 import type { ApprovalCardPort, PendingApproval } from './trust-contracts.ts'
 import { TrustLayer } from './trust-layer.ts'
+import { registerSpaceArchiveTool } from './space-archive-tool.ts'
 import { WorkerPool } from './worker.ts'
 
 /**
@@ -98,6 +99,7 @@ function buildDeps(): { deps: ChatToolRegistryDeps; dispose: () => void } {
     deps: {
       store,
       wrappedOutboundTools: trust.wrapTools(outboundRegistrations.map(({ tool }) => tool)),
+      wrappedArchiveSpaceTool: registerSpaceArchiveTool(store.spacesEngine, trust),
       memoryRetrieval,
       templateEngine: new TemplateEngine({ store }),
       scheduler,
