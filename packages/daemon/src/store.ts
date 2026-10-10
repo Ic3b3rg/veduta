@@ -94,7 +94,10 @@ export class Store {
       rootDir: this.spacesEngine.rootDir,
       now: this.now,
       timeZone,
-      seed: persistedSurfaces.length > 0 ? persistedSurfaces : seed.surfaces,
+      seed:
+        persistedSurfaces.length > 0
+          ? persistedSurfaces
+          : seed.surfaces.filter((surface) => Boolean(this.spacesEngine.getSpace(surface.spaceId))),
       hasSpace: (spaceId) => Boolean(this.spacesEngine.getSpace(spaceId)),
       surfaceCommits: options.surfaceCommitTransport?.(this.spacesEngine) ?? this.spacesEngine,
     })
