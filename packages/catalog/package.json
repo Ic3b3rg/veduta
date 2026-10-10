@@ -17,11 +17,13 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
+    "@date-fns/utc": "2.1.1",
     "@veduta/protocol": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.4.0",
     "lucide-react": "^1.48.0",
     "radix-ui": "^1.6.7",
+    "react-day-picker": "10.0.2",
     "recharts": "3.8.0"
   },
   "peerDependencies": {

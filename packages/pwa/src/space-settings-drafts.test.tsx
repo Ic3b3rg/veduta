@@ -130,3 +130,54 @@ it('preserves an Automation draft and its original revision through live updates
     }),
   )
 })
+
+it('composes an Automation instant with the shared calendar and rejects partial drafts', async () => {
+  const automation: SettingsAutomation = {
+    id: 8,
+    kind: 'timer',
+    description: 'Reminder',
+    enabled: true,
+    status: 'armed',
+    fireAt: '2030-07-08T09:00:00.000Z',
+    timezone: 'UTC',
+    managed: false,
+    revision: 'before',
+    history: [],
+  }
+  const save = vi.fn<SaveSpaceSettings>().mockResolvedValue(undefined)
+  render(
+    <AutomationSettingsEditor
+      automation={automation}
+      spaceId="spc-health"
+      save={save}
+      busy={false}
+    />,
+  )
+  fireEvent.click(screen.getByText('Edit Automation'))
+  fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:30' } })
+  expect(screen.getByRole('button', { name: 'Save Automation' })).toHaveProperty('disabled', true)
+  expect(screen.getByRole('status').textContent).toContain('Choose a valid date and time')
+  fireEvent.click(screen.getByRole('button', { name: 'Date' }))
+  const grid = await screen.findByRole('grid', {}, { timeout: 5000 })
+  const offered = grid.querySelector<HTMLButtonElement>('button:not([disabled])')!
+  const accessibleDate = offered.getAttribute('aria-label')!
+  fireEvent.click(offered)
+  expect(save).not.toHaveBeenCalled()
+  expect(screen.getByRole('button', { name: 'Save Automation' })).toHaveProperty('disabled', false)
+  fireEvent.click(screen.getByRole('button', { name: 'Save Automation' }))
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+  const mutation = save.mock.calls[0]![0]
+  expect(mutation).toMatchObject({
+    action: 'automation',
+    automationId: 8,
+    change: { expectedRevision: 'before' },
+  })
+  if (mutation.action !== 'automation' || !mutation.change.fireAt)
+    throw new Error('Missing instant')
+  const stored = new Date(mutation.change.fireAt)
+  expect([stored.getHours(), stored.getMinutes()]).toEqual([9, 30])
+  expect(accessibleDate).toContain(String(stored.getFullYear()))
+  expect(screen.getByLabelText('Time')).toHaveProperty('value', '09:30')
+  fireEvent.click(screen.getByRole('button', { name: 'Keep current time' }))
+  expect(screen.getByRole('button', { name: 'Save Automation' })).toHaveProperty('disabled', true)
+})

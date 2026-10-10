@@ -5,6 +5,11 @@ import {
   type CatalogTheme,
 } from '@veduta/catalog'
 import { Input } from '@veduta/catalog/ui/input'
+import {
+  DateTimePicker,
+  localDateTimeToIso,
+  type LocalDateTime,
+} from '@veduta/catalog/ui/date-time-picker'
 import { Textarea } from '@veduta/catalog/ui/textarea'
 import {
   SYSTEM_SPACE_ID,
@@ -107,9 +112,12 @@ export function AutomationSettingsEditor({
   const [repeat, setRepeat] = useState('keep')
   const [time, setTime] = useState('09:00')
   const [day, setDay] = useState('1')
-  const [fireAt, setFireAt] = useState('')
+  const [fireAt, setFireAt] = useState<LocalDateTime>({ date: '', time: '' })
   const [sourceRevision, setSourceRevision] = useState(automation.revision)
-  const dirty = description !== base.description || repeat !== 'keep' || fireAt !== ''
+  const changingTime = fireAt.date !== '' || fireAt.time !== ''
+  const fireAtIso = localDateTimeToIso(fireAt)
+  const invalidTime = changingTime && !fireAtIso
+  const dirty = description !== base.description || repeat !== 'keep' || changingTime
   if (sourceRevision !== automation.revision) {
     setSourceRevision(automation.revision)
     if (!dirty) {
@@ -129,7 +137,7 @@ export function AutomationSettingsEditor({
           ? '0 * * * *'
           : `${Number(minute)} ${Number(hour)} * * ${repeat === 'weekdays' ? '1-5' : repeat === 'weekly' ? day : '*'}`
     }
-    if (fireAt) result.fireAt = new Date(fireAt).toISOString()
+    if (fireAtIso) result.fireAt = fireAtIso
     return result
   }
   return (
@@ -166,6 +174,7 @@ export function AutomationSettingsEditor({
           <form
             onSubmit={(event) => {
               event.preventDefault()
+              if (invalidTime) return
               void save({
                 action: 'automation',
                 automationId: automation.id,
@@ -176,7 +185,7 @@ export function AutomationSettingsEditor({
                 setDescription(next.description)
                 setBase({ description: next.description, revision: next.revision })
                 setRepeat('keep')
-                setFireAt('')
+                setFireAt({ date: '', time: '' })
               })
             }}
           >
@@ -241,17 +250,29 @@ export function AutomationSettingsEditor({
                 )}
               </>
             ) : (
-              <label>
-                New time (this device's timezone)
-                <Input
-                  type="datetime-local"
+              <>
+                <DateTimePicker
+                  label={`New date and time (${Intl.DateTimeFormat().resolvedOptions().timeZone})`}
                   value={fireAt}
-                  onChange={(event) => setFireAt(event.target.value)}
+                  onValueChange={setFireAt}
                   disabled={busy}
                 />
-              </label>
+                {invalidTime && (
+                  <p role="status">Choose a valid date and time in this device's timezone.</p>
+                )}
+                {changingTime && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => setFireAt({ date: '', time: '' })}
+                  >
+                    Keep current time
+                  </Button>
+                )}
+              </>
             )}
-            <Button type="submit" disabled={busy || !dirty}>
+            <Button type="submit" disabled={busy || !dirty || invalidTime}>
               Save Automation
             </Button>
           </form>
