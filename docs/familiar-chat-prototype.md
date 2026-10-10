@@ -4,7 +4,8 @@ Throwaway proposal for [#228](https://github.com/Ic3b3rg/veduta/issues/228), fol
 [research 42](references/42-generative-ui-chat-interaction.md). The earlier A/B prototypes were
 rejected. This branch demonstrates one composition requested in the subsequent discussion:
 a persistent right-hand Chat on desktop and a full-screen mobile Sheet reached through a
-labelled Chat button. It is a design probe, not production implementation or an accepted decision.
+Chat icon button. The owner accepted this composition on 10 October 2026 and requested an
+icon-only mobile button. This remains a design prototype, not production implementation.
 
 ## Run and try
 
@@ -17,7 +18,8 @@ Open <http://localhost:5185/app/space/health?prototype=familiar-chat> on the sam
 The server binds to loopback. `localhost` on a phone refers to the phone, not the development Mac.
 Use the shared browser's phone viewport to inspect this local version.
 
-1. On desktop, read the Chat beside the Health Space. At widths below 960 px, choose **Chat**.
+1. On desktop, read the Chat beside the Health Space. At widths below 960 px, tap the speech-bubble
+   button, whose accessible name and tooltip are **Open Chat**.
    Opening the Sheet focuses its heading, not the composer.
 2. Choose **Explain the plan** for a long Markdown response. Scroll up while it arrives; the
    reading position should stay where you left it. **Go to latest message** resumes following.
@@ -50,5 +52,5 @@ Use the shared browser's phone viewport to inspect this local version.
 - Reload deliberately resets the demo. Production Chat remains Gateway-owned and durable.
   Do not promote these simulated state transitions into the application runtime.
 
-This branch is retained as review evidence. No Chat layout is authorized for main or the VPS
-until the owner has tried and accepted the direction.
+This branch is retained as evidence of the accepted direction. Production work must integrate
+the real Gateway-owned Chat and Pending decision lifecycles rather than ship the simulated state.

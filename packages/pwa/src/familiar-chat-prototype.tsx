@@ -358,9 +358,10 @@ function PrototypeScene({ onReset }: { onReset: () => void }) {
                 data-variant="primary"
                 onClick={() => setChatOpen(true)}
                 aria-label="Open Chat"
+                title="Open Chat"
               >
                 <MessageSquare aria-hidden="true" />
-                Chat{generating && <span className="familiar-unread" />}
+                {generating && <span className="familiar-unread" aria-hidden="true" />}
               </Button>
             </div>
           )}

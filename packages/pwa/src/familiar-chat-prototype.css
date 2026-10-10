@@ -695,8 +695,10 @@
     box-shadow: 0 3px 16px #0004;
   }
   .precision-tool.familiar-prototype .familiar-chat-launcher {
+    position: relative;
     border-radius: 24px;
-    padding: 0 20px;
+    padding: 0;
+    width: 48px;
     height: 48px;
   }
   .precision-tool.familiar-prototype .familiar-review-access {
@@ -707,6 +709,9 @@
     background: var(--catalog-color-surface-raised);
   }
   .familiar-unread {
+    position: absolute;
+    top: 8px;
+    right: 8px;
     width: 6px;
     height: 6px;
     border-radius: 50%;
