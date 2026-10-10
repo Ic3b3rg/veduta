@@ -13,13 +13,13 @@ On Ubuntu with systemd, SSH, sudo, and curl, run this in your SSH session:
 
 ```sh
 curl -fsSLo veduta-install.sh \
-  https://raw.githubusercontent.com/Ic3b3rg/veduta/ecd1f411421be231a9ce322c188457af112435cf/deploy/install.sh &&
+  https://raw.githubusercontent.com/Ic3b3rg/veduta/a53c80ce49eff69d2c058af1ff642528f3e0a812/deploy/install.sh &&
 sudo env SSH_CONNECTION="$SSH_CONNECTION" bash veduta-install.sh \
-  --ref ecd1f411421be231a9ce322c188457af112435cf
+  --ref a53c80ce49eff69d2c058af1ff642528f3e0a812
 ```
 
-The download and `--ref` pin the tested source snapshot; the private-access changes are not
-yet on `main` or in a published release. Keep both references aligned.
+The download and `--ref` pin the reviewed source snapshot used by this guide. These changes
+are on `main`, ahead of the published `v0.0.6` release. Keep both references aligned.
 
 Enter accepts the displayed defaults. Tailnet is preselected on a connected Tailscale host;
 otherwise Tunnel is preselected. Public access is never selected implicitly. To go directly

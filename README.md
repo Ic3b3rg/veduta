@@ -44,14 +44,14 @@ Log in over SSH and paste this command **on the VPS**:
 
 ```sh
 curl -fsSLo veduta-install.sh \
-  https://raw.githubusercontent.com/Ic3b3rg/veduta/ecd1f411421be231a9ce322c188457af112435cf/deploy/install.sh &&
+  https://raw.githubusercontent.com/Ic3b3rg/veduta/a53c80ce49eff69d2c058af1ff642528f3e0a812/deploy/install.sh &&
 sudo env SSH_CONNECTION="$SSH_CONNECTION" bash veduta-install.sh \
-  --ref ecd1f411421be231a9ce322c188457af112435cf --access tailnet
+  --ref a53c80ce49eff69d2c058af1ff642528f3e0a812 --access tailnet
 ```
 
-This command pins the source version tested on a real VPS with computer and phone access.
-These changes are not yet on `main` or in a published release. The published `v0.0.6`
-installer only supports Public access; keep the download URL and `--ref` as shown above.
+This command pins the reviewed source snapshot used by this guide. The private-access and UI
+improvements are on `main`, ahead of the published `v0.0.6` release. That release only supports
+Public access; keep the download URL and `--ref` aligned as shown above.
 
 Confirm the plan and let the installer install Tailscale if needed. It will guide you through
 these account steps; keep the SSH terminal open while using the browser:
@@ -165,7 +165,7 @@ Surfaces; the preference is shared across devices, with one column on small scre
 ask Chat, **“Arrange this Space in two columns.”** Full-presentation Surfaces still occupy a row.
 
 Choose **Archive Space** to remove a Space from Home while preserving its content. Restore it
-from the same settings later, or ask global Chat to restore it. System can change columns but
+from the same settings later, or ask Chat from Home or another Space to restore it. System can change columns but
 cannot be archived.
 
 Open **Connections → Automations** to enable, disable or reschedule Nightly Reflection and inspect
@@ -184,12 +184,13 @@ public DNS or a VPS. Install Git, **Node.js 24.11.1** (the version in `.node-ver
 Corepack first, then:
 
 ```sh
-git clone --branch v0.0.6 --depth 1 https://github.com/Ic3b3rg/veduta.git
+git clone https://github.com/Ic3b3rg/veduta.git
 cd veduta
+git checkout a53c80ce49eff69d2c058af1ff642528f3e0a812
 corepack enable
 corepack prepare pnpm@10.28.0 --activate
 pnpm install --frozen-lockfile
-pnpm local-vps --base-dir ~/.veduta-v0.0.6
+pnpm local-vps --base-dir ~/.veduta-preview
 ```
 
 Open the printed **`http://localhost:8788/setup?code=…`** link. Use `localhost` throughout:
@@ -199,7 +200,7 @@ If you want ChatGPT, accept the terminal's first-run offer to provision Codex; y
 [provision it later](deploy/local-vps.md#chatgpt-subscription-codex).
 
 Keep the terminal running. **Ctrl-C** stops Veduta; run
-`pnpm local-vps --base-dir ~/.veduta-v0.0.6` again to resume with the same data. This separate
+`pnpm local-vps --base-dir ~/.veduta-preview` again to resume with the same data. This separate
 directory leaves any earlier local trial untouched. This profile does not configure the public update feed.
 See the [Local VPS guide](deploy/local-vps.md) for ports, separate data directories, and recovery.
 
