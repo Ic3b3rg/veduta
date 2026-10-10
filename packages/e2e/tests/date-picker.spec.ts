@@ -47,6 +47,8 @@ for (const settings of [
         'title',
         (await nextMonth.getAttribute('aria-label'))!,
       )
+      expect((await nextMonth.boundingBox())!.height).toBe(settings.locale === 'it-IT' ? 44 : 32)
+      expect((await date.boundingBox())!.height).toBe(settings.locale === 'it-IT' ? 44 : 32)
       if (settings.locale === 'it-IT') {
         const target = await page.getByRole('button', { name: settings.day }).boundingBox()
         expect(target!.width).toBeGreaterThanOrEqual(44)

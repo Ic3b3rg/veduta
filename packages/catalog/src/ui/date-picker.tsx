@@ -57,6 +57,7 @@ export function DatePicker({
     <Popover open={open && !disabled} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
+          size="sm"
           {...props}
           ref={trigger}
           type="button"
@@ -108,6 +109,7 @@ export function DatePicker({
             <Button
               type="button"
               variant="ghost"
+              size="sm"
               className="w-full pointer-coarse:min-h-[var(--catalog-control-touch-target,2.75rem)]"
               disabled={!selected}
               onClick={() => choose(undefined)}
