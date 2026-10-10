@@ -173,6 +173,24 @@ describe('primaryRoutableConnections', () => {
 })
 
 describe('lifecycleCopy', () => {
+  it.each(['usage-limit', 'rate-limit'] as const)(
+    'shows actionable %s feedback without reconnecting a connected account',
+    (kind) => {
+      const message = 'Wait, then send a new message or use Test model in Model connections.'
+      const copy = lifecycleCopy({
+        ...anthropicApiKey,
+        method: 'chatgpt-codex',
+        provider: 'openai',
+        inferenceIssue: { kind, message, observedAt: '2026-10-10T10:00:00.000Z' },
+      })
+      expect(copy).toEqual({
+        title: kind === 'usage-limit' ? 'Subscription usage limit' : 'Temporarily rate limited',
+        detail: message,
+        action: 'none',
+      })
+    },
+  )
+
   it('offers a reconnect action for a revoked connection', () => {
     const revoked: ModelConnection = {
       ...anthropicApiKey,

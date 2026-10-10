@@ -427,6 +427,14 @@ export function gatewayServerMessageSchema<
         presence: z.array(PresenceEntrySchema),
       }),
       z.object({
+        type: z.literal('space.facts-changed'),
+        spaceId: z.string().min(1),
+      }),
+      z.object({
+        type: z.literal('space.changed'),
+        spaceId: z.string().min(1),
+      }),
+      z.object({
         type: z.literal('space.attention'),
         spaceId: z.string().min(1),
         count: z.number().int().min(0),

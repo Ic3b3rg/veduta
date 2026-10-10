@@ -25,6 +25,8 @@ import {
 } from './relative-time-surface.ts'
 import { respondToMockAutomation } from './mock-automation-fixture.ts'
 import { respondToMockAgentAction } from './mock-agent-action-fixture.ts'
+import { respondToMockFacts } from './mock-facts-fixture.ts'
+import { respondToMockSpaceProposal } from './mock-space-proposal-fixture.ts'
 import {
   mockWeightTrackerInput,
   respondToMockWeightMeasurement,
@@ -36,6 +38,7 @@ import {
   INVALID_AUTHORING_REQUEST,
 } from './mock-invalid-authoring-fixture.ts'
 import { respondToMockSurfacePresentation } from './mock-surface-presentation-fixture.ts'
+import { respondToMockSpaceControls } from './mock-space-controls-fixture.ts'
 import { respondToMockMailbox } from './mock-mailbox-fixture.ts'
 import {
   respondToMockGithubIssues,
@@ -133,6 +136,8 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
       return piFauxAssistantMessage(JSON.stringify(mockWorkerReportForPrompt(text)))
     }
     if (isFullTextPrompt(text)) return piFauxAssistantMessage(FULL_TEXT_REPLY)
+    const spaceProposal = respondToMockSpaceProposal(text, toolResultsAfter)
+    if (spaceProposal) return spaceProposal
     const inspection = respondToMockClawHubInspection(text)
     if (inspection) return inspection
     if (text === STRUCTURED_PLAN_REQUEST) return respondToStructuredPlan(toolResultsAfter)
@@ -168,8 +173,12 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
     }
     const agentActionResponse = respondToMockAgentAction(text, toolResultsAfter)
     if (agentActionResponse) return agentActionResponse
+    const factsResponse = respondToMockFacts(text, toolResultsAfter)
+    if (factsResponse) return factsResponse
     const automationResponse = respondToMockAutomation(text, toolResultsAfter)
     if (automationResponse) return automationResponse
+    const spaceControls = respondToMockSpaceControls(text, toolResultsAfter)
+    if (spaceControls) return spaceControls
     const presentationResponse = respondToMockSurfacePresentation(text, toolResultsAfter)
     if (presentationResponse) return presentationResponse
     const himalayaSetupResponse = respondToMockHimalayaSetup(text, toolResultsAfter, options.cwd)

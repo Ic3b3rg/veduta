@@ -3,6 +3,7 @@ import { freshnessLabel, type SpaceWithSurfaces } from './api.ts'
 import { AttentionBadge } from './attention-badge.tsx'
 import { SurfaceCard } from './surface-card.tsx'
 import type { SurfaceUpdateFeedback } from './surface-motion.ts'
+import { usePresentation } from './presentation-context.ts'
 
 export function SpaceSection({
   space,
@@ -29,6 +30,7 @@ export function SpaceSection({
   onTogglePin: (surface: RenderableSurface, pinned: boolean) => void
   onSurfaceRevealFeedbackShown: (surfaceId: string, feedbackKey: string) => void
 }) {
+  const { now } = usePresentation()
   const surfaces = space.surfaces
 
   return (
@@ -39,14 +41,14 @@ export function SpaceSection({
       <div className="space-heading">
         <div>
           <h2 id={`${space.id}-title`}>{space.name}</h2>
-          <p>{freshestLabel(surfaces)}</p>
+          <p>{freshestLabel(surfaces, now)}</p>
         </div>
         <span className="badge-group">
           <AttentionBadge count={space.attention} />
           <span className="space-badge">{surfaces.length} Surfaces</span>
         </span>
       </div>
-      <div className="surface-grid">
+      <div className="surface-grid" data-presentation={space.presentation ?? 'auto'}>
         {surfaces.map((surface, index) => (
           <SurfaceCard
             key={surface.id}
@@ -70,10 +72,10 @@ export function SpaceSection({
   )
 }
 
-function freshestLabel(surfaces: RenderableSurface[]): string {
+function freshestLabel(surfaces: RenderableSurface[], now?: number): string {
   const latest = surfaces
     .map((surface) => Date.parse(surface.freshness.updatedAt))
     .filter(Number.isFinite)
     .sort((left, right) => right - left)[0]
-  return latest ? `freshest ${freshnessLabel(new Date(latest).toISOString())}` : 'no Surfaces'
+  return latest ? `freshest ${freshnessLabel(new Date(latest).toISOString(), now)}` : 'no Surfaces'
 }

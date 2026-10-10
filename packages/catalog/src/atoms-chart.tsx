@@ -8,6 +8,7 @@ import { tokensFor } from './design-system.ts'
 import type { AtomProps } from './types.ts'
 import { Card } from './ui/card.tsx'
 import { ChartContainer } from './ui/chart.tsx'
+import { formatSurfaceValue, SurfaceValue } from './surface-value.tsx'
 
 export function ChartAtom({ node, ctx }: AtomProps<'Chart'>): ReactNode {
   const props = ChartAtomPropsSchema.safeParse(node.props)
@@ -16,7 +17,7 @@ export function ChartAtom({ node, ctx }: AtomProps<'Chart'>): ReactNode {
   if (!series.success) return <UnknownAtom node={node} ctx={ctx} />
 
   const tokens = tokensFor(ctx.theme)
-  const { type, label, xLabel, yLabel, emptyText } = props.data
+  const { type, label, xLabel, yLabel, emptyText, xFormat } = props.data
   const points = series.data
   // Finite values can span a range whose subtraction overflows. Scale only geometry;
   // visible and accessible point text always keeps the canonical numbers.
@@ -26,11 +27,15 @@ export function ChartAtom({ node, ctx }: AtomProps<'Chart'>): ReactNode {
   const description =
     points.length === 0
       ? emptyText
-      : `${xLabel}; ${yLabel}. ${points.map((point) => `${point.label}: ${point.value}`).join(', ')}`
+      : `${xLabel}; ${yLabel}. ${points.map((point) => `${formatSurfaceValue(point.label, xFormat).accessible}: ${point.value}`).join(', ')}`
   const axes = (
     <>
       <CartesianGrid vertical={false} stroke="var(--catalog-color-border)" />
-      <XAxis dataKey="label" tick={{ fill: tokens.color.textMuted }} />
+      <XAxis
+        dataKey="label"
+        tick={{ fill: tokens.color.textMuted }}
+        tickFormatter={(value: string) => formatSurfaceValue(value, xFormat, { axis: true }).text}
+      />
       <YAxis
         domain={[minimum, 1]}
         tick={{ fill: tokens.color.textMuted }}
@@ -88,7 +93,8 @@ export function ChartAtom({ node, ctx }: AtomProps<'Chart'>): ReactNode {
                 {...motionContent(`point:${point.label}`)}
                 style={{ ...labelStyle(tokens), color: tokens.color.text }}
               >
-                <span>{point.label}</span>: <strong>{point.value}</strong>
+                <SurfaceValue value={point.label} format={xFormat} />:{' '}
+                <strong>{point.value}</strong>
               </span>
             ))}
           </div>

@@ -4,7 +4,7 @@ import {
   type SurfaceMoveDirection,
 } from '@veduta/protocol'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BrowserRouter } from 'react-router-dom'
+import { BrowserRouter, Navigate, useLocation } from 'react-router-dom'
 import { ApiResponseError, fetchOnboardingStatus, type SpaceWithSurfaces } from './api.ts'
 import { AuthGate } from './auth-gate.tsx'
 import { OnboardingWizard } from './onboarding-wizard.tsx'
@@ -32,6 +32,9 @@ export function App() {
 }
 
 function RoutedApp() {
+  const location = useLocation()
+  const linkingDevice =
+    location.pathname === clientPath.setup && new URLSearchParams(location.search).has('code')
   const {
     navigate,
     locationKey,
@@ -41,7 +44,6 @@ function RoutedApp() {
   } = useClientRouting()
   const { runtime, snapshot } = useLiveState()
   const {
-    spaces,
     homeSpacesLoadState,
     error,
     authToken,
@@ -51,6 +53,14 @@ function RoutedApp() {
     surfaceUpdateFeedbacks,
     automationOutcomeNotifications,
   } = snapshot
+  const spaces = useMemo(
+    () =>
+      snapshot.spaces.map((space) => ({
+        ...space,
+        surfaces: space.surfaces.filter((surface) => !surface.management),
+      })),
+    [snapshot.spaces],
+  )
   const authMode = snapshot.authStatus?.mode
   const bootstrapRequired = snapshot.authStatus?.bootstrapRequired ?? false
   const passkeyRegistered = snapshot.authStatus?.passkeyRegistered ?? false
@@ -65,6 +75,9 @@ function RoutedApp() {
   const [onboardingStatus, setOnboardingStatus] = useState<OnboardingStatus | null>(null)
   const [onboardingLoad, setOnboardingLoad] = useState<'loading' | 'ready' | 'error'>('loading')
   const [onboardingRetryToken, setOnboardingRetryToken] = useState(0)
+  const waitingForAccess = useRef(false)
+  const hasOnboardingStatus = useRef(false)
+  const onboardingStatusRevision = useRef(0)
   const [installPrompt, setInstallPrompt] = useState<BrowserInstallPromptEvent | null>(null)
   const [showInstallGuide, setShowInstallGuide] = useState(
     () => !isStandalone() && localStorage.getItem(INSTALL_DISMISSED_KEY) !== '1',
@@ -72,6 +85,9 @@ function RoutedApp() {
   const setError = runtime.reportError
   const resetUnauthorizedSession = useCallback(() => {
     runtime.authenticate(undefined)
+    onboardingStatusRevision.current += 1
+    waitingForAccess.current = false
+    hasOnboardingStatus.current = false
     setOnboardingStatus(null)
     setOnboardingLoad('loading')
   }, [runtime])
@@ -175,24 +191,41 @@ function RoutedApp() {
   useEffect(() => {
     if (authMode === undefined) return
     if (authMode === 'production' && !authToken) return
+    if (!gatewayOnline && hasOnboardingStatus.current && !waitingForAccess.current) return
 
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
     const load = async () => {
-      setOnboardingLoad('loading')
+      const revision = onboardingStatusRevision.current
       try {
         const status = await fetchOnboardingStatus(authToken)
+        if (cancelled || revision !== onboardingStatusRevision.current) return
+        waitingForAccess.current = status.domain?.pending === true
+        hasOnboardingStatus.current = true
         setOnboardingStatus(status)
         setOnboardingLoad('ready')
+        if (waitingForAccess.current) timer = setTimeout(() => void load(), 1000)
       } catch (e) {
+        if (cancelled || revision !== onboardingStatusRevision.current) return
         if (e instanceof ApiResponseError && e.status === 401) {
           resetUnauthorizedSession()
           return
         }
+        if (waitingForAccess.current) {
+          timer = setTimeout(() => void load(), 1000)
+          return
+        }
+        hasOnboardingStatus.current = false
         console.warn('failed to fetch onboarding status:', e)
         setOnboardingLoad('error')
       }
     }
     void load()
-  }, [authMode, authToken, onboardingRetryToken, resetUnauthorizedSession])
+    return () => {
+      cancelled = true
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }, [authMode, authToken, onboardingRetryToken, resetUnauthorizedSession, gatewayOnline])
 
   // A push notification click (public/service-worker.js) posts this message
   // to an already-open client instead of always opening a new tab.
@@ -218,7 +251,7 @@ function RoutedApp() {
     void syncPush(authToken ?? null)
   }, [authToken])
 
-  if (authMode === 'production' && !authToken) {
+  if (authMode === 'production' && (!authToken || linkingDevice)) {
     return (
       <AuthGate
         bootstrapRequired={bootstrapRequired}
@@ -228,6 +261,7 @@ function RoutedApp() {
           runtime.authenticate(token)
         }}
         onError={setError}
+        {...(authToken ? { onCancel: () => navigate(clientPath.home, { replace: true }) } : {})}
       />
     )
   }
@@ -237,7 +271,16 @@ function RoutedApp() {
   // below can decide whether it applies). This branch is reachable only in
   // contexts where the wizard could be required — the effect above only sets
   // 'loading' after auth resolves to loopback, or to production with a token.
-  if (onboardingLoad === 'loading' && !(authMode === undefined && error !== null)) {
+  if (onboardingStatus?.domain?.pending) {
+    return (
+      <main className="wizard-shell">
+        <p role="status">Saving your new access…</p>
+        <p>Veduta will reconnect automatically.</p>
+      </main>
+    )
+  }
+
+  if (onboardingLoad === 'loading' && !(authMode === undefined && error !== null && !authToken)) {
     return (
       <main className="wizard-shell">
         <p>Loading…</p>
@@ -266,7 +309,13 @@ function RoutedApp() {
             Veduta could not read its setup status, so Home is not being shown. Check the daemon and
             try again.
           </p>
-          <button type="button" onClick={() => setOnboardingRetryToken((value) => value + 1)}>
+          <button
+            type="button"
+            onClick={() => {
+              setOnboardingLoad('loading')
+              setOnboardingRetryToken((value) => value + 1)
+            }}
+          >
             Retry
           </button>
         </div>
@@ -275,12 +324,26 @@ function RoutedApp() {
   }
 
   if (onboardingStatus?.required && !onboardingStatus.completed) {
+    if (
+      location.pathname === clientPath.serviceConnections &&
+      new URLSearchParams(location.search).get('section') === 'devices'
+    ) {
+      return <ConnectionsRoute token={authToken} spaces={spaces} initialSection="devices" />
+    }
     return (
       <OnboardingWizard
         status={onboardingStatus}
         token={authToken}
-        onStatus={setOnboardingStatus}
+        onStatus={(status) => {
+          // A confirmed step supersedes reads started before its receipt (#237).
+          onboardingStatusRevision.current += 1
+          waitingForAccess.current = status.domain?.pending === true
+          hasOnboardingStatus.current = true
+          setOnboardingStatus(status)
+          setOnboardingLoad('ready')
+        }}
         onCompleted={() => {
+          onboardingStatusRevision.current += 1
           setOnboardingStatus((prev) =>
             prev ? { ...prev, required: false, completed: true } : prev,
           )
@@ -301,6 +364,20 @@ function RoutedApp() {
           surfaceId: focusedSurfaceId,
         }
 
+  const managementSpace = snapshot.spaces.find((space) => space.slug === focusedSpaceSlug)
+  const managementSurface = managementSpace?.surfaces.find(
+    (surface) => surface.id === focusedSurfaceId && surface.management,
+  )
+  if (managementSpace && managementSurface) {
+    const section = managementSurface.management === 'memory' ? 'spaces' : 'automations'
+    return (
+      <Navigate
+        replace
+        to={`${clientPath.serviceConnections}?section=${section}&space=${encodeURIComponent(managementSpace.id)}`}
+      />
+    )
+  }
+
   const appShell = (
     <AppShell
       authToken={authToken}
@@ -309,6 +386,7 @@ function RoutedApp() {
       installPrompt={installPrompt}
       showInstallGuide={showInstallGuide}
       error={error}
+      onDismissError={() => runtime.reportError(null)}
       spaces={spaces}
       homeSpacesLoadState={homeSpacesLoadState}
       route={appRouteSelection}

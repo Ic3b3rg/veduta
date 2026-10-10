@@ -3,11 +3,9 @@ import {
   applySurfacePatch,
   type AtomNode,
   type ChatTurnCorrelation,
-  type PatchOperation,
   type Surface,
 } from '@veduta/protocol'
 import {
-  DECISION_ERROR_CAPTION_NODE_ID,
   DECISION_ERROR_CAPTION_PATH,
   decisionButtonNode,
   decisionErrorCaptionNode,
@@ -20,7 +18,14 @@ import { SurfaceActionError } from './fast-action.ts'
 import type { FastActionPreflightContext } from './surface-engine.ts'
 import type { TreeProposal } from './surface-engine.ts'
 import { effectiveOrigin, neutralizeDelimiters } from './taint.ts'
-import { walkAtomTree } from './templates.ts'
+import {
+  TREE_REVIEW_FORMAT,
+  TREE_REVIEW_FORMAT_KEY,
+  TREE_REVIEW_READY_KEY,
+  TREE_REVIEW_SUMMARY_KEY,
+  treeProposalFallbackSummary,
+  treeProposalPreview,
+} from './tree-proposal-preview.ts'
 
 /**
  * The Tree proposal preview Surface (issue 022: a pinned Surface turns an
@@ -31,29 +36,8 @@ import { walkAtomTree } from './templates.ts'
  * fast-path clicks (`TreeProposalSurfaceManager`).
  */
 
-/** Caps applied to every string this module renders that is not a fixed enum value (see below). */
+/** Bounds compact target metadata and Event text; complete review content is never truncated. */
 const TARGET_FIELD_MAX_CHARS = 200
-const OPERATIONS_PREVIEW_MAX_CHARS = 4000
-
-/**
- * Cap on each per-node prop value rendered into an operation's subtree
- * summary (`summarizeNode`): a node's `label`/`text`/
- * `title`/`placeholder` is exactly the substantive content the preview must
- * show, and exactly as attacker-influenceable as the target's own title —
- * the whole summary still sits inside `OPERATIONS_PREVIEW_MAX_CHARS`, but a
- * single oversized prop must not be able to push every sibling node's
- * summary out of that cap by itself.
- */
-const NODE_SUMMARY_PROP_MAX_CHARS = 80
-
-/**
- * The prop keys whose value is meaningful to preview when present. The Atom
- * catalog's `props` are deliberately untyped per Atom
- * (`packages/protocol/src/atom.ts`), so this is the same small,
- * human-visible set across every type rather than a per-type allowlist.
- */
-const SUMMARY_PROP_KEYS = ['label', 'text', 'title', 'placeholder'] as const
-
 const TREE_PROPOSAL_SURFACE_PREFIX = 'srf-tree-proposal-'
 
 /**
@@ -79,6 +63,34 @@ const STALE_PROPOSAL_MESSAGE =
 const APPLY_FAILED_MESSAGE =
   'applying this change failed; the proposed change was not applied to the Surface'
 
+function treeProposalDecisions(unavailable: boolean): AtomNode {
+  return {
+    id: 'decisions',
+    type: 'Col',
+    children: [
+      {
+        id: 'consequences',
+        type: 'Text',
+        props: {
+          text: unavailable
+            ? 'Accept is unavailable. Reject keeps the Surface unchanged and discards this proposal. Ask for a fresh proposal to make a change.'
+            : 'Accept applies these changes once, in the order shown. Reject keeps the Surface unchanged and discards this proposal. Live data continues updating; values below were captured when this review was prepared.',
+        },
+      },
+      {
+        id: 'decision-buttons',
+        type: 'Row',
+        children: [
+          ...(unavailable
+            ? []
+            : [decisionButtonNode('decision-accept', 'Accept', DECISION_ACCEPT_KEY)]),
+          decisionButtonNode('decision-reject', 'Reject', DECISION_REJECT_KEY),
+        ],
+      },
+    ],
+  }
+}
+
 export function treeProposalSurfaceId(proposalId: number): string {
   return `${TREE_PROPOSAL_SURFACE_PREFIX}${proposalId}`
 }
@@ -98,115 +110,86 @@ export function treeProposalIdFromSurfaceId(surfaceId: string): number | undefin
   return Number(raw)
 }
 
-/**
- * Composes the preview Surface for one recorded Tree proposal. Everything
- * derived from the target Surface's title/id, or from the proposed
- * operations' JSON-pointer paths, is delimiter-neutralized
- * (`neutralizeDelimiters`, taint.ts) and truncated: a proposal can
- * originate in a tainted turn (the Agent proposed it), so none of that text
- * is trusted. The Atom *types* the preview lists come from the fixed
- * `atomTypes` enum (`@veduta/protocol`), never from free-form props, so they
- * need no neutralization of their own. Protocol-validated
- * (`SurfaceSchema.parse`) before the caller persists it.
- */
-export function buildTreeProposalSurface(proposal: TreeProposal, target: Surface): Surface {
-  const targetTitle = truncate(neutralizeDelimiters(target.title), TARGET_FIELD_MAX_CHARS)
-  const targetId = truncate(neutralizeDelimiters(target.id), TARGET_FIELD_MAX_CHARS)
-  const previewText = truncate(
-    proposal.operations.map((operation) => operationPreviewLine(operation)).join('\n'),
-    OPERATIONS_PREVIEW_MAX_CHARS,
+/** Builds a read-only comparison only from the proposal's exact target tree version. */
+export function buildTreeProposalSurface(
+  proposal: TreeProposal,
+  target: Surface | undefined,
+  currentTreeVersion: number | undefined,
+): Surface {
+  const targetTitle = truncate(
+    neutralizeDelimiters(target?.title ?? proposal.surfaceId),
+    TARGET_FIELD_MAX_CHARS,
   )
-
+  const targetId = truncate(neutralizeDelimiters(proposal.surfaceId), TARGET_FIELD_MAX_CHARS)
+  const unavailable = treeProposalReviewUnavailableMessage(proposal, target, currentTreeVersion)
+  const preview = unavailable || !target ? undefined : treeProposalPreview(proposal, target)
+  const summary =
+    preview?.summary ?? treeProposalFallbackSummary(proposal, target?.title ?? proposal.surfaceId)
   const children: AtomNode[] = [
-    { id: 'title', type: 'Title', props: { text: `Proposed layout change: ${targetTitle}` } },
+    { id: 'title', type: 'Title', props: { text: `Proposed change: ${targetTitle}` } },
     {
       id: 'meta',
       type: 'Caption',
       props: {
-        text: `Surface ${targetId} · expected tree version ${proposal.expectedTreeVersion}`,
+        text: `Surface ${targetId} · review of tree version ${proposal.expectedTreeVersion} · proposal ${proposal.id}`,
       },
     },
-    { id: 'preview', type: 'Markdown', props: { text: previewText } },
-    // Fixed at index 3 (`DECISION_ERROR_CAPTION_PATH`) so the refusal message can be
-    // patched in place without needing to search the tree for it.
-    { id: DECISION_ERROR_CAPTION_NODE_ID, type: 'Caption', props: { text: '' } },
-    {
-      id: 'decisions',
-      type: 'Row',
-      children: [
-        decisionButtonNode('decision-accept', 'Accept', DECISION_ACCEPT_KEY),
-        decisionButtonNode('decision-reject', 'Reject', DECISION_REJECT_KEY),
-      ],
-    },
+    { id: 'preview', type: 'Text', props: { text: `Summary: ${summary}` } },
+    // Kept at DECISION_ERROR_CAPTION_PATH for the existing refusal projection.
+    decisionErrorCaptionNode(unavailable ?? 'No changes have been applied.'),
+    treeProposalDecisions(unavailable !== undefined),
+    ...(preview
+      ? [
+          {
+            id: 'details-label',
+            type: 'Caption' as const,
+            props: {
+              text: 'Complete details · expand each change to read all content, data bindings and declared actions. This review cannot run the proposed actions or load external images.',
+            },
+          },
+          ...preview.details,
+        ]
+      : []),
   ]
 
   return SurfaceSchema.parse({
     id: treeProposalSurfaceId(proposal.id),
     spaceId: proposal.spaceId,
-    title: `Proposed layout change: ${targetTitle}`,
+    title: `Proposed change: ${targetTitle}`,
+    presentation: 'full',
     tree: { id: 'root', type: 'Box', children },
-    state: { [DECISION_ACCEPT_KEY]: false, [DECISION_REJECT_KEY]: false },
+    state: {
+      [DECISION_ACCEPT_KEY]: false,
+      [DECISION_REJECT_KEY]: false,
+      [TREE_REVIEW_SUMMARY_KEY]: summary,
+      [TREE_REVIEW_FORMAT_KEY]: TREE_REVIEW_FORMAT,
+      [TREE_REVIEW_READY_KEY]: preview !== undefined,
+    },
     freshness: { updatedAt: proposal.createdAt, updatedBy: 'job' },
   })
 }
 
-/**
- * One preview line per proposed operation: the op, its path, and — for
- * `add`/`replace` — a bounded, neutralized summary of the new subtree
- * (`summarizeSubtree`). Listing only the Atom types a
- * new subtree introduces made a proposal that replaces a Button's action, or
- * a Markdown node's text, indistinguishable from an unrelated replacement of
- * the same shape — the user must be able to see what actually changed to
- * decide on it (`issue #22`).
- */
-function operationPreviewLine(operation: PatchOperation): string {
-  if (operation.target !== 'tree') {
-    // A Tree proposal only ever stores tree-target operations
-    // (`SurfaceEngine.patchTree` calls `assertPatchTarget(operations,
-    // 'tree')` before ever recording one) — this branch exists only so the
-    // function is total over `PatchOperation`, not because it is reachable.
-    return `${operation.op} ${neutralizeDelimiters(operation.path)}`
+/** Shared live applicability check for the Decision Surface and every Pending-decision channel. */
+export function treeProposalReviewUnavailableMessage(
+  proposal: TreeProposal,
+  target: Surface | undefined,
+  currentTreeVersion: number | undefined,
+): string | undefined {
+  if (!target)
+    return 'Review unavailable: the target Surface is no longer available. This proposal cannot be applied.'
+  if (
+    target.id !== proposal.surfaceId ||
+    target.spaceId !== proposal.spaceId ||
+    currentTreeVersion !== proposal.expectedTreeVersion
+  ) {
+    return 'Review unavailable: the target no longer matches the reviewed tree version. This proposal cannot be applied; request a fresh proposal.'
   }
-  if (operation.op === 'move') {
-    return `move ${neutralizeDelimiters(operation.from)} -> ${neutralizeDelimiters(operation.path)}`
+  try {
+    applySurfacePatch(target, { surfaceId: proposal.surfaceId, operations: proposal.operations })
+  } catch {
+    return 'Review unavailable: the proposed change no longer validates against the Surface data. Nothing has been applied.'
   }
-  const path = neutralizeDelimiters(operation.path)
-  if (operation.op === 'remove') return `remove ${path}`
-  return `${operation.op} ${path} (adds ${summarizeSubtree(operation.value)})`
-}
-
-/**
- * A bounded, neutralized, per-node summary of `root`'s subtree, in document
- * order (root first): each node's type, id, `binding` when present, the
- * human-visible props it declares (`SUMMARY_PROP_KEYS`), and every declared
- * action's name/path(/stateKey) — the substantive content a preview needs,
- * not merely the Atom type.
- */
-function summarizeSubtree(root: AtomNode): string {
-  const lines: string[] = []
-  walkAtomTree(root, (node) => lines.push(summarizeNode(node)))
-  return lines.join('; ')
-}
-
-function summarizeNode(node: AtomNode): string {
-  const parts = [node.type, `id=${neutralizeDelimiters(node.id)}`]
-  if (node.binding !== undefined) {
-    parts.push(`binding=${neutralizeDelimiters(node.binding)}`)
-  }
-  for (const key of SUMMARY_PROP_KEYS) {
-    const props: Record<string, unknown> | undefined = node.props
-    const value = props?.[key]
-    if (typeof value !== 'string') continue
-    parts.push(`${key}="${truncate(neutralizeDelimiters(value), NODE_SUMMARY_PROP_MAX_CHARS)}"`)
-  }
-  for (const action of node.actions ?? []) {
-    const stateKey =
-      action.path === 'fast'
-        ? `(${Object.keys(action.plan.targets).map(neutralizeDelimiters).join(',')})`
-        : ''
-    parts.push(`action=${neutralizeDelimiters(action.name)}@${action.path}${stateKey}`)
-  }
-  return parts.join(' ')
+  return undefined
 }
 
 function truncate(value: string, max: number): string {
@@ -252,6 +235,7 @@ export class TreeProposalSurfaceManager {
   private readonly unsubscribeProposal: () => void
   private readonly unsubscribeFastMutation: () => void
   private readonly unsubscribePreflight: () => void
+  private readonly unsubscribeSurface: () => void
 
   constructor(options: TreeProposalSurfaceManagerOptions) {
     this.store = options.store
@@ -267,6 +251,18 @@ export class TreeProposalSurfaceManager {
     this.unsubscribeFastMutation = this.store.onFastActionOutcome('tree-proposals', (outcome) =>
       this.project(outcome),
     )
+    this.unsubscribeSurface = this.store.onSurfaceEvent((notice) => {
+      const surfaceId =
+        notice.kind === 'patch'
+          ? notice.event.patch.surfaceId
+          : notice.kind === 'archived'
+            ? notice.event.surfaceId
+            : undefined
+      if (surfaceId === undefined) return
+      for (const proposal of this.store.listTreeProposals({ surfaceId, status: 'pending' })) {
+        this.refreshReviewAvailability(proposal)
+      }
+    })
   }
 
   /**
@@ -276,9 +272,9 @@ export class TreeProposalSurfaceManager {
    * exists at the deterministic id. A card Surface that survived a daemon
    * restart on disk is already fully clickable —
    * `project`/`resolve` resolve against the store directly, not
-   * against anything `start()` builds — so this only ever needs to recreate
-   * a card that is missing entirely (e.g. the daemon crashed between
-   * recording the proposal and creating its card). If a Surface already
+   * against anything `start()` builds. Recovery recreates missing cards,
+   * upgrades legacy previews against an exact version, and refreshes unavailable
+   * notices without changing the prepared comparison. If a Surface already
    * occupies the canonical id and is not daemon-owned, this refuses to
    * adopt it as the proposal's card: an impostor (planted by the Agent, or
    * a legitimate unrelated Surface that merely collided with the id) must
@@ -301,6 +297,11 @@ export class TreeProposalSurfaceManager {
                 `for pending proposal #${proposal.id} — leaving it pending without a clickable card`,
             ),
           )
+        } else if (existing.state[TREE_REVIEW_FORMAT_KEY] !== TREE_REVIEW_FORMAT) {
+          // Upgrade a legacy projection only after the same exact-version check as a new review.
+          this.replaceReview(proposal)
+        } else {
+          this.refreshReviewAvailability(proposal)
         }
         continue
       }
@@ -341,6 +342,7 @@ export class TreeProposalSurfaceManager {
     this.unsubscribeProposal()
     this.unsubscribeFastMutation()
     this.unsubscribePreflight()
+    this.unsubscribeSurface()
   }
 
   /** Test/shutdown hook: resolves once every enqueued resolution has settled. */
@@ -371,17 +373,12 @@ export class TreeProposalSurfaceManager {
    */
   private createCard(proposal: TreeProposal, initiatingTurn?: ChatTurnCorrelation): void {
     const target = this.store.getSurface(proposal.surfaceId)
-    if (!target) {
-      this.onError(
-        new Error(
-          `tree proposal: unknown target Surface "${proposal.surfaceId}" for proposal ` +
-            `#${proposal.id} — leaving it pending without a clickable card`,
-        ),
-      )
-      return
-    }
     try {
-      const surface = buildTreeProposalSurface(proposal, target)
+      const surface = buildTreeProposalSurface(
+        proposal,
+        target,
+        this.store.getSurfaceVersion(proposal.surfaceId)?.treeVersion,
+      )
       // Daemon-owned (the same structural-defense contract as approval
       // cards): the Agent must never be able to rewrite this card's preview
       // or pre-set its `decision.*` state after the human has read it.
@@ -390,6 +387,77 @@ export class TreeProposalSurfaceManager {
         daemonOwned: true,
         ...(initiatingTurn === undefined ? {} : { initiatingTurn }),
       })
+    } catch (error) {
+      this.onError(error)
+    }
+  }
+
+  private refreshReviewAvailability(proposal: TreeProposal): void {
+    const surfaceId = treeProposalSurfaceId(proposal.id)
+    const card = this.store.getSurface(surfaceId)
+    if (!card || !this.store.isSurfaceDaemonOwned(surfaceId)) return
+    const unavailable = treeProposalReviewUnavailableMessage(
+      proposal,
+      this.store.getSurface(proposal.surfaceId),
+      this.store.getSurfaceVersion(proposal.surfaceId)?.treeVersion,
+    )
+    if (!unavailable && card.state[TREE_REVIEW_READY_KEY] !== true) {
+      this.replaceReview(proposal)
+      return
+    }
+    const error = card.tree.children?.[3]
+    const previous = error?.type === 'Caption' ? error.props?.text : undefined
+    const message = unavailable ?? 'No changes have been applied.'
+    const decisions = treeProposalDecisions(unavailable !== undefined)
+    const currentDecisions = card.tree.children?.[4]
+    const showsAcceptance =
+      currentDecisions?.children?.[1]?.children?.some((node) => node.id === 'decision-accept') ??
+      false
+    if (
+      previous === message &&
+      showsAcceptance === (unavailable === undefined) &&
+      JSON.stringify(currentDecisions?.children?.[0]) === JSON.stringify(decisions.children?.[0])
+    )
+      return
+    try {
+      this.refuseAccept(surfaceId, message, {
+        resetDecision: false,
+        unavailable: unavailable !== undefined,
+      })
+    } catch (error) {
+      this.onError(error)
+    }
+  }
+
+  private replaceReview(proposal: TreeProposal): void {
+    const surfaceId = treeProposalSurfaceId(proposal.id)
+    const version = this.store.getSurfaceVersion(surfaceId)
+    if (!version) return
+    try {
+      const review = buildTreeProposalSurface(
+        proposal,
+        this.store.getSurface(proposal.surfaceId),
+        this.store.getSurfaceVersion(proposal.surfaceId)?.treeVersion,
+      )
+      this.store.patchTree(
+        surfaceId,
+        [{ target: 'tree', op: 'replace', path: '', value: review.tree }],
+        {
+          expectedTreeVersion: version.treeVersion,
+          updatedBy: 'job',
+          origin: 'trusted:system',
+        },
+      )
+      this.store.patchState(
+        surfaceId,
+        [TREE_REVIEW_FORMAT_KEY, TREE_REVIEW_SUMMARY_KEY, TREE_REVIEW_READY_KEY].map((key) => ({
+          target: 'state' as const,
+          op: 'add' as const,
+          path: `/${key}`,
+          value: review.state[key]!,
+        })),
+        { updatedBy: 'job', origin: 'trusted:system' },
+      )
     } catch (error) {
       this.onError(error)
     }
@@ -506,7 +574,10 @@ export class TreeProposalSurfaceManager {
       if (!stale) {
         return { proposal: this.store.getTreeProposal(proposalId) ?? proposal }
       }
-      this.refuseAccept(cardSurfaceId, STALE_PROPOSAL_MESSAGE, { resetDecision: true })
+      this.refuseAccept(cardSurfaceId, STALE_PROPOSAL_MESSAGE, {
+        resetDecision: true,
+        unavailable: true,
+      })
       this.store.spacesEngine.appendEvent(proposal.spaceId, {
         type: 'surface.tree_proposal_stale',
         text: `Refused a stale tree change for Surface "${targetId}"`,
@@ -554,7 +625,15 @@ export class TreeProposalSurfaceManager {
       // restored.
       this.onError(error)
       this.store.reopenTreeProposal(proposalId)
-      this.refuseAccept(cardSurfaceId, APPLY_FAILED_MESSAGE, { resetDecision: true })
+      this.refuseAccept(cardSurfaceId, APPLY_FAILED_MESSAGE, {
+        resetDecision: true,
+        unavailable:
+          treeProposalReviewUnavailableMessage(
+            proposal,
+            this.store.getSurface(proposal.surfaceId),
+            this.store.getSurfaceVersion(proposal.surfaceId)?.treeVersion,
+          ) !== undefined,
+      })
       return {
         proposal: this.store.getTreeProposal(proposalId) ?? proposal,
         refusal: 'failed',
@@ -571,11 +650,11 @@ export class TreeProposalSurfaceManager {
     return { proposal: this.store.getTreeProposal(proposalId) ?? claimed }
   }
 
-  /** Patches the card's refusal Caption, optionally resetting the Accept decision key back to `false`. */
+  /** Refreshes availability controls without rewriting the comparison the user already reviewed. */
   private refuseAccept(
     surfaceId: string,
     message: string,
-    options: { resetDecision: boolean },
+    options: { resetDecision: boolean; unavailable: boolean },
   ): void {
     const version = this.store.getSurfaceVersion(surfaceId)
     if (!version) return // archived/unknown — nothing to patch
@@ -587,6 +666,12 @@ export class TreeProposalSurfaceManager {
           op: 'replace',
           path: DECISION_ERROR_CAPTION_PATH,
           value: decisionErrorCaptionNode(message),
+        },
+        {
+          target: 'tree',
+          op: 'replace',
+          path: '/children/4',
+          value: treeProposalDecisions(options.unavailable),
         },
       ],
       { expectedTreeVersion: version.treeVersion, updatedBy: 'job', origin: 'trusted:system' },

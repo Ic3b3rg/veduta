@@ -1,3 +1,4 @@
+import type { VpsAccessStatus } from './vps-access.ts'
 import { SYSTEM_SPACE_ID } from '@veduta/protocol'
 import { ServiceRequests } from './service-request.ts'
 import { parseChatDecisionIntent } from './chat-decision.ts'
@@ -125,6 +126,8 @@ import {
 import { WatchManager } from './watch-renewal.ts'
 import { registerAuthRoutes, registerRequestAuth, type ServerAuthOptions } from './server-auth.ts'
 import { registerSpaceSurfaceRoutes } from './space-surface-routes.ts'
+import { SpaceSettingsService } from './space-settings.ts'
+import { registerSpaceSettingsRoutes } from './space-settings-routes.ts'
 import { SpacePendingDecisionAdapter } from './space-pending-decision.ts'
 import { createSpawnWorkerTool } from './spawn-worker-tool.ts'
 import { registerStaticRoutes } from './static-routes.ts'
@@ -219,6 +222,7 @@ export interface ServerOptions {
   onboarding?: {
     domain?: string
     tlsActive?: boolean
+    access?: VpsAccessStatus
     scheduleExit?: () => void
     env?: NodeJS.ProcessEnv
   }
@@ -1736,6 +1740,10 @@ export function buildServer(options: ServerOptions = {}) {
     templateEngine,
     executeAgentAction: (turn) => agentActions.execute(turn),
   })
+  registerSpaceSettingsRoutes(
+    app,
+    new SpaceSettingsService({ store, scheduler, reflection, memoryConfig }),
+  )
   registerPushRoutes(app, { auth, pushStore, vapid })
   registerPendingDecisionRoutes(app, { service: pendingDecisions })
   registerChatTimelineRoutes(app, {
@@ -1753,6 +1761,7 @@ export function buildServer(options: ServerOptions = {}) {
     profile,
     domain: onboardingOptions.domain ?? null,
     tlsActive: onboardingOptions.tlsActive ?? false,
+    ...(onboardingOptions.access ? { access: onboardingOptions.access } : {}),
     vault,
     vaultKeyMaterial,
     spacesEngine: store.spacesEngine,

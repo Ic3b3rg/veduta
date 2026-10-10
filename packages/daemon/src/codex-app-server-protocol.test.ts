@@ -259,7 +259,10 @@ describe('the inference-seam schemas (issue #47)', () => {
     expect(parsed).toEqual({
       threadId: 'thread-1',
       turnId: 'turn-1',
-      error: { message: 'Selected model is at capacity. Please try a different model.' },
+      error: {
+        message: 'Selected model is at capacity. Please try a different model.',
+        codexErrorInfo: null,
+      },
       willRetry: false,
     })
   })

@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { Button } from '@veduta/catalog/ui/button'
+import { Bell } from 'lucide-react'
 import {
   detectPushPlatform,
   IOS_FALLBACK_COPY,
@@ -75,13 +77,15 @@ export function NotificationBell({ token }: { token: string | undefined }) {
 
     return (
       <div className="notif-bell">
-        <button
-          type="button"
-          className="notif-bell-button"
+        <Button
+          className="notif-bell-button recipe-control utility-control"
+          aria-label="Enable notifications"
+          title="Enable notifications"
+          aria-expanded={showGuide}
           onClick={() => setShowGuide((prev) => !prev)}
         >
-          Enable notifications
-        </button>
+          <Bell aria-hidden="true" />
+        </Button>
         {showGuide && (
           <div
             className="notif-guide"
@@ -114,9 +118,14 @@ export function NotificationBell({ token }: { token: string | undefined }) {
 
   return (
     <div className="notif-bell">
-      <button type="button" className="notif-bell-button" onClick={() => void onEnable()}>
-        Enable notifications
-      </button>
+      <Button
+        className="notif-bell-button recipe-control utility-control"
+        aria-label="Enable notifications"
+        title="Enable notifications"
+        onClick={() => void onEnable()}
+      >
+        <Bell aria-hidden="true" />
+      </Button>
       {status === 'denied' && (
         <p className="notif-bell-note">Notifications are blocked in the browser settings.</p>
       )}

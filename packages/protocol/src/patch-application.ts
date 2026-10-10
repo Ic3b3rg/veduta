@@ -10,23 +10,49 @@ export function applyPatchOperations<T extends { id: string; state: unknown; tre
   surface: T,
   patch: { surfaceId: string; operations: readonly PatchApplicationOperation[] },
   validate: (value: unknown) => T,
+  inspect?: (before: unknown, after: unknown) => void,
 ): T {
   if (surface.id !== patch.surfaceId) {
     throw new Error(`patch for ${patch.surfaceId} cannot be applied to Surface ${surface.id}`)
   }
   const next = clonePlain(surface)
   for (const operation of patch.operations) {
+    const before = inspect ? operationValueBefore(next, operation) : undefined
     if (
       operation.target === 'tree' &&
       operation.path === '' &&
       (operation.op === 'add' || operation.op === 'replace')
     ) {
       next.tree = clonePlain(operation.value)
+      inspect?.(before, clonePlain(operation.value))
       continue
     }
     applyOperation(operation.target === 'state' ? next.state : next.tree, operation)
+    if (inspect) {
+      const after =
+        operation.op === 'remove'
+          ? undefined
+          : operation.op === 'move'
+            ? before
+            : clonePlain(operation.value)
+      inspect(before, after)
+    }
   }
   return validate(next)
+}
+
+function operationValueBefore(
+  surface: { tree: unknown; state: unknown },
+  operation: PatchApplicationOperation,
+): unknown {
+  const root = operation.target === 'tree' ? surface.tree : surface.state
+  const path = operation.op === 'move' ? operation.from : operation.path
+  if (path === '') return clonePlain(root)
+  const { container, key } = parentAtPath(root, path)
+  // Array additions insert; object additions replace an existing member when present.
+  if (operation.op === 'add' && Array.isArray(container)) return undefined
+  const value = Array.isArray(container) ? container[indexFor(container, key)] : container[key]
+  return value === undefined ? undefined : clonePlain(value)
 }
 
 function applyOperation(target: unknown, operation: PatchApplicationOperation): void {

@@ -403,12 +403,14 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose model' }))
     const connectionSelect = await screen.findByRole<HTMLSelectElement>('combobox', {
       name: 'Connection',
     })
     const modelSelect = screen.getByRole<HTMLSelectElement>('combobox', { name: 'Model' })
     expect(connectionSelect.value).toBe(CHATGPT_CONNECTION_ID)
     expect(modelSelect.value).toBe(CHATGPT_MODEL_ID)
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
     const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
     if (!handlers) throw new Error('Gateway handlers were not registered')
 
@@ -1212,82 +1214,102 @@ describe('App', () => {
     expect(scrollIntoView).not.toHaveBeenCalled()
   })
 
-  it('accepts a chat Space proposal through the common decision API without changing route', async () => {
-    const handlers = await renderConnectedEmptyHealth('pwa-proposal')
-    const pending: PendingDecision = {
-      id: 'space-proposal:proposal-travel',
-      kind: 'space-proposal',
-      summary: 'Create Space “Travel”',
-      scope: { type: 'global' },
-      allowedResolutions: ['accept', 'reject'],
-      state: 'pending',
-      createdAt: '2026-08-25T10:00:00.000Z',
-    }
-    const accepted: PendingDecision = {
-      ...pending,
-      state: 'terminal',
-      outcome: 'accepted',
-      decisionAt: '2026-08-25T10:01:00.000Z',
-      resolvedAt: '2026-08-25T10:01:00.000Z',
-      resolvedBy: 'trusted:user',
-    }
-    vi.mocked(resolvePendingDecision).mockResolvedValue({
-      decision: accepted,
-      replayed: false,
-    })
-    vi.mocked(fetchSpaces).mockResolvedValueOnce({
-      surfaceCursor: 0,
-      spaces: [
-        {
-          id: 'spc-health',
-          slug: 'health',
-          name: 'Health',
-          archived: false,
-          attention: 0,
-          attentionRevision: 0,
-          surfaces: [],
-        },
-        {
-          id: 'spc-travel',
-          slug: 'travel',
-          name: 'Travel',
-          archived: false,
-          attention: 0,
-          attentionRevision: 0,
-          surfaces: [],
-        },
-      ],
-    })
-
-    act(() => {
-      handlers.onChatTurnStart({ type: 'chat.turn-start', turnId: 'turn-proposal' })
-      handlers.onChatTurnEnd({
-        type: 'chat.turn-end',
-        turnId: 'turn-proposal',
-        message: {
-          role: 'assistant',
-          text: 'Travel needs its own Space.',
-          pendingDecisions: [pending],
-        },
+  it.each(['global', 'space'] as const)(
+    'accepts a %s Chat Space proposal without changing route or focus',
+    async (scopeType) => {
+      const handlers = await renderConnectedEmptyHealth('pwa-proposal')
+      const scope: ChatScope =
+        scopeType === 'space' ? { type: 'space', spaceId: 'spc-health' } : { type: 'global' }
+      if (scopeType === 'space') {
+        fireEvent.click(screen.getByRole('link', { name: /Health/ }))
+        await screen.findByRole('textbox', { name: 'Message Veduta in Health' })
+      }
+      const route = location.pathname
+      const pending: PendingDecision = {
+        id: 'space-proposal:proposal-travel',
+        kind: 'space-proposal',
+        summary: 'Create Space “Travel”',
+        scope: { type: 'global' },
+        allowedResolutions: ['accept', 'reject'],
+        state: 'pending',
+        createdAt: '2026-08-25T10:00:00.000Z',
+      }
+      const accepted: PendingDecision = {
+        ...pending,
+        state: 'terminal',
+        outcome: 'accepted',
+        decisionAt: '2026-08-25T10:01:00.000Z',
+        resolvedAt: new Date().toISOString(),
+        resolvedBy: 'trusted:user',
+      }
+      vi.mocked(resolvePendingDecision).mockResolvedValue({
+        decision: accepted,
+        replayed: false,
       })
-      emitTimelineDecision(handlers, 'turn-proposal', pending)
-    })
+      vi.mocked(fetchSpaces).mockResolvedValueOnce({
+        surfaceCursor: 0,
+        spaces: [
+          {
+            id: 'spc-health',
+            slug: 'health',
+            name: 'Health',
+            archived: false,
+            attention: 0,
+            attentionRevision: 0,
+            surfaces: [],
+          },
+          {
+            id: 'spc-travel',
+            slug: 'travel',
+            name: 'Travel',
+            archived: false,
+            attention: 0,
+            attentionRevision: 0,
+            surfaces: [],
+          },
+        ],
+      })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Accept Create Space “Travel”' }))
+      act(() => {
+        handlers.onChatTurnStart({
+          type: 'chat.turn-start',
+          turnId: 'turn-proposal',
+          ...(scope.type === 'space' ? { spaceId: scope.spaceId } : {}),
+        })
+        handlers.onChatTurnEnd({
+          type: 'chat.turn-end',
+          ...(scope.type === 'space' ? { spaceId: scope.spaceId } : {}),
+          turnId: 'turn-proposal',
+          message: {
+            role: 'assistant',
+            text: 'Travel needs its own Space.',
+            pendingDecisions: [pending],
+          },
+        })
+        emitTimelineDecision(handlers, 'turn-proposal', pending, 1, scope)
+      })
 
-    await waitFor(() =>
-      expect(resolvePendingDecision).toHaveBeenCalledWith(
-        'space-proposal:proposal-travel',
-        'accept',
-        undefined,
-      ),
-    )
-    act(() => emitTimelineDecision(handlers, 'turn-proposal', accepted, 2))
-    expect(await screen.findByRole('button', { name: /Travel/ })).toBeDefined()
-    expect(screen.getAllByText('Accepted: Create Space “Travel”.')).toHaveLength(2)
-    expect(screen.queryByRole('button', { name: 'Accept Create Space “Travel”' })).toBeNull()
-    expect(location.pathname).toBe('/')
-  })
+      fireEvent.click(screen.getByRole('button', { name: 'Accept Create Space “Travel”' }))
+
+      await waitFor(() =>
+        expect(resolvePendingDecision).toHaveBeenCalledWith(
+          'space-proposal:proposal-travel',
+          'accept',
+          undefined,
+        ),
+      )
+      act(() => emitTimelineDecision(handlers, 'turn-proposal', accepted, 2, scope))
+      expect(await screen.findByRole('button', { name: /Travel/ })).toBeDefined()
+      expect(screen.getAllByText('Accepted: Create Space “Travel”.')).toHaveLength(2)
+      expect(screen.queryByRole('button', { name: 'Accept Create Space “Travel”' })).toBeNull()
+      expect(location.pathname).toBe(route)
+      expect(
+        screen.getByRole('textbox', {
+          name: scopeType === 'space' ? 'Message Veduta in Health' : 'Message Veduta',
+        }),
+      ).toBeDefined()
+    },
+  )
 
   it('places Pending decisions globally and only in the Space proven by their Decision Surface', async () => {
     const handlers = await renderConnectedEmptyHealth('pwa-placement')
@@ -1484,7 +1506,7 @@ describe('App', () => {
       state: 'terminal',
       outcome: 'executed',
       decisionAt: '2026-08-25T10:01:00.000Z',
-      resolvedAt: '2026-08-25T10:01:01.000Z',
+      resolvedAt: new Date().toISOString(),
       resolvedBy: 'trusted:user',
     }
     let finishResolution:
@@ -1563,7 +1585,7 @@ describe('App', () => {
       ...resolving,
       state: 'terminal',
       outcome: 'executed',
-      resolvedAt: '2026-08-25T10:01:01.000Z',
+      resolvedAt: new Date().toISOString(),
     }
 
     act(() => {
@@ -1671,7 +1693,7 @@ describe('App', () => {
       decisionSurfaceId: 'srf-approval-unavailable',
       createdAt: '2026-08-25T10:00:00.000Z',
       decisionAt: '2026-08-25T10:01:00.000Z',
-      resolvedAt: '2026-08-25T10:01:01.000Z',
+      resolvedAt: new Date().toISOString(),
       resolvedBy: 'trusted:user',
     }
 
@@ -1737,7 +1759,7 @@ describe('App', () => {
       ...resolving,
       state: 'terminal',
       outcome: 'accepted',
-      resolvedAt: '2026-08-25T10:01:01.000Z',
+      resolvedAt: new Date().toISOString(),
     }
 
     act(() => {
@@ -1775,7 +1797,7 @@ describe('App', () => {
       state: 'terminal',
       outcome: 'accepted',
       createdAt: '2026-08-25T10:00:00.000Z',
-      resolvedAt: '2026-08-25T10:01:01.000Z',
+      resolvedAt: new Date().toISOString(),
       resolvedBy: 'trusted:user',
     }
     let resolveSnapshot: ((snapshot: PendingDecisionList) => void) | undefined
@@ -1817,7 +1839,7 @@ describe('App', () => {
       state: 'terminal',
       outcome: 'stale',
       createdAt: '2026-08-25T10:00:00.000Z',
-      resolvedAt: '2026-08-25T10:04:00.000Z',
+      resolvedAt: new Date().toISOString(),
       resolvedBy: 'trusted:user',
     }
     const snapshot = { revision: 4, decisions: [terminal] }
@@ -1879,6 +1901,36 @@ describe('App', () => {
     expect(focusButton.closest('article')?.classList.contains('surface-reveal-highlight')).toBe(
       true,
     )
+  })
+
+  it('waits for an access change through a restart and resumes without another page refresh', async () => {
+    localStorage.setItem(AUTH_TOKEN_KEY, 'a-stored-token')
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus())
+    vi.mocked(fetchSpaces).mockResolvedValue({ spaces: [], surfaceCursor: 0 })
+    vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
+    vi.mocked(fetchOnboardingStatus)
+      .mockResolvedValueOnce(
+        fromPartial<OnboardingStatus>({
+          required: false,
+          completed: true,
+          domain: { pending: true },
+        }),
+      )
+      .mockRejectedValueOnce(new Error('service is restarting'))
+      .mockResolvedValue(
+        fromPartial<OnboardingStatus>({
+          required: false,
+          completed: true,
+          domain: { pending: false },
+        }),
+      )
+    render(<App />)
+    expect(await screen.findByText('Saving your new access…')).toBeDefined()
+    expect(screen.queryByLabelText('Spaces')).toBeNull()
+    expect(
+      await screen.findByRole('button', { name: 'Model connections' }, { timeout: 5000 }),
+    ).toBeDefined()
+    expect(screen.queryByText('Saving your new access…')).toBeNull()
   })
 
   it('renders the status-unavailable screen instead of Home when the onboarding status fetch fails on a production session', async () => {

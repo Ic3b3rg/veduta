@@ -16,6 +16,11 @@ import {
   parseGithubIssueWrite,
 } from './service-intent.ts'
 import type { ServiceResolution } from './service-request.ts'
+import {
+  NoAvailableModelError,
+  NonRetryableModelError,
+  sanitizeErrorText,
+} from './model-routing.ts'
 
 /** Owns Chat acceptance and dispatch. The Agent loop never decides whether a turn is replayed. */
 export class ChatTimelineCoordinator {
@@ -353,8 +358,13 @@ export class ChatTimelineCoordinator {
           this.clients.delete(accepted.turnId)
           this.subscribers.delete(accepted.turnId)
         }
-      } catch {
-        this.finishMissing(accepted.turnId, 'The service request could not start on this Gateway.')
+      } catch (error) {
+        this.finishMissing(
+          accepted.turnId,
+          error instanceof NonRetryableModelError || error instanceof NoAvailableModelError
+            ? sanitizeErrorText(error)
+            : 'The service request could not start on this Gateway.',
+        )
       }
     }
   }

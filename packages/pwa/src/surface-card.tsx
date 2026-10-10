@@ -1,10 +1,7 @@
 import { renderNode } from '@veduta/catalog'
 import {
-  AUTOMATION_OUTCOMES_STATE_KEY,
-  AutomationOutcomeStatusesSchema,
   surfaceRelativeTimeStatus,
   type KnownRenderableAtomNode,
-  type AutomationOutcomeStatus,
   type JsonValue,
   type RenderableSurface,
   type SurfaceRelativeTimeStatus,
@@ -14,6 +11,8 @@ import { freshnessLabel } from './api.ts'
 import type { SurfaceUpdateFeedback } from './surface-motion.ts'
 import { useCatalogTheme } from './theme.ts'
 import { useActionConfirmations, useActionStatuses, usePwaRuntime } from './use-live-state.ts'
+import { usePresentation } from './presentation-context.ts'
+import { SurfaceAutomationOutcomes } from './surface-automation-outcomes.tsx'
 
 export function SurfaceCard({
   surface,
@@ -41,6 +40,7 @@ export function SurfaceCard({
   onRevealFeedbackShown: (feedbackKey: string) => void
 }) {
   const theme = useCatalogTheme()
+  const presentation = usePresentation()
   const runtime = usePwaRuntime()
   const actionConfirmations = useActionConfirmations(surface.id)
   const actionStatuses = useActionStatuses(surface.id)
@@ -48,10 +48,7 @@ export function SurfaceCard({
   const handledRevealFeedbackRef = useRef<string | undefined>(undefined)
   const revealedWhileSelectedRef = useRef(false)
   const [revealHighlighted, setRevealHighlighted] = useState(false)
-  const relativeTime = useRelativeTimeStatus(surface)
-  const automationOutcomes = AutomationOutcomeStatusesSchema.safeParse(
-    surface.state[AUTOMATION_OUTCOMES_STATE_KEY],
-  )
+  const relativeTime = useRelativeTimeStatus(surface, presentation.now)
 
   useEffect(() => {
     if (!selected) {
@@ -162,12 +159,7 @@ export function SurfaceCard({
           {relativeTime.caveat}
         </div>
       )}
-      {automationOutcomes.success &&
-        Object.values(automationOutcomes.data)
-          .sort((left, right) => left.automationId - right.automationId)
-          .map((status) => (
-            <AutomationOutcomeStatusPanel key={status.automationId} status={status} />
-          ))}
+      <SurfaceAutomationOutcomes surface={surface} />
       <div className="surface-content">
         {renderNode(surface.tree, {
           state: surface.state,
@@ -176,67 +168,21 @@ export function SurfaceCard({
           actionStatuses,
           acknowledgeAction,
           theme,
-          ...(updateFeedback ? { motion: { update: updateFeedback } } : {}),
+          ...(presentation.now === undefined ? {} : { now: presentation.now }),
+          motion: {
+            ...(updateFeedback ? { update: updateFeedback } : {}),
+            ...(presentation.reducedMotion === undefined
+              ? {}
+              : { reduced: presentation.reducedMotion }),
+          },
         })}
       </div>
       <div className="freshness">
-        updated {freshnessLabel(surface.freshness.updatedAt)} by {surface.freshness.updatedBy}
+        updated {freshnessLabel(surface.freshness.updatedAt, presentation.now)} by{' '}
+        {surface.freshness.updatedBy}
       </div>
     </article>
   )
-}
-
-function AutomationOutcomeStatusPanel({ status }: { status: AutomationOutcomeStatus }) {
-  return (
-    <section
-      className={`automation-outcome-status ${status.latest?.kind ?? 'fresh'}`}
-      aria-label={`Automation ${status.automationId} status`}
-    >
-      {status.latest && (
-        <div className="automation-outcome-status-latest">
-          <strong>
-            Automation #{status.automationId} · {automationOutcomeKindLabel(status.latest.kind)}
-          </strong>
-          <span>{status.latest.summary}</span>
-        </div>
-      )}
-      <dl>
-        <div>
-          <dt>Last checked</dt>
-          <dd>
-            <time dateTime={status.lastCheckedAt}>
-              {automationOutcomeTimeLabel(status.lastCheckedAt)}
-            </time>
-          </dd>
-        </div>
-        {status.lastSuccessfulAt && (
-          <div>
-            <dt>Last successful</dt>
-            <dd>
-              <time dateTime={status.lastSuccessfulAt}>
-                {automationOutcomeTimeLabel(status.lastSuccessfulAt)}
-              </time>
-            </dd>
-          </div>
-        )}
-      </dl>
-      {status.currentError && (
-        <p className="automation-outcome-status-error">{status.currentError.message}</p>
-      )}
-    </section>
-  )
-}
-
-function automationOutcomeKindLabel(
-  kind: NonNullable<AutomationOutcomeStatus['latest']>['kind'],
-): string {
-  if (kind === 'decision-required') return 'Decision required'
-  return `${kind[0]?.toUpperCase() ?? ''}${kind.slice(1)}`
-}
-
-function automationOutcomeTimeLabel(iso: string): string {
-  const date = new Date(iso)
-  return Number.isFinite(date.getTime()) ? date.toLocaleString() : iso
 }
 
 function scrollSurfaceCardIntoView(card: HTMLElement): void {
@@ -247,13 +193,16 @@ function scrollSurfaceCardIntoView(card: HTMLElement): void {
 const MAX_TIMEOUT_MS = 2_147_483_647
 
 /** Re-evaluates a cached Surface at its next validity boundary, even if no Gateway event arrives. */
-function useRelativeTimeStatus(surface: RenderableSurface): SurfaceRelativeTimeStatus | undefined {
+function useRelativeTimeStatus(
+  surface: RenderableSurface,
+  fixedNow?: number,
+): SurfaceRelativeTimeStatus | undefined {
   const startsAt = surface.validity?.startsAt
   const expiresAt = surface.validity?.expiresAt
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
-    if (startsAt === undefined || expiresAt === undefined) return
+    if (fixedNow !== undefined || startsAt === undefined || expiresAt === undefined) return
     const startsAtMs = Date.parse(startsAt)
     const expiresAtMs = Date.parse(expiresAt)
     let timeout: number | undefined
@@ -274,7 +223,7 @@ function useRelativeTimeStatus(surface: RenderableSurface): SurfaceRelativeTimeS
     return () => {
       if (timeout !== undefined) window.clearTimeout(timeout)
     }
-  }, [expiresAt, startsAt])
+  }, [expiresAt, startsAt, fixedNow])
 
-  return surfaceRelativeTimeStatus(surface, new Date(now))
+  return surfaceRelativeTimeStatus(surface, new Date(fixedNow ?? now))
 }

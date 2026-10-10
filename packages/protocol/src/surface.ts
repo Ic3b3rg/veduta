@@ -86,6 +86,8 @@ export const SurfaceObjectSchema = z
     freshness: FreshnessSchema,
     /** Responsive Surface host placement, independent of content, Pin, and order. */
     presentation: SurfacePresentationSchema.default('standard'),
+    /** Gateway-classified management projection, presented in Settings instead of Space content. */
+    management: z.enum(['memory', 'automations', 'reflection']).optional(),
     /** The user locked this Surface's tree; the Agent may still patch state. */
     pinned: z.boolean().default(false),
     /**

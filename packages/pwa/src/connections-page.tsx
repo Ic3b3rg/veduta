@@ -8,6 +8,8 @@ import { ConnectionsServices } from './connections-services.tsx'
 import { ConnectionsModels } from './connections-models.tsx'
 import { ConnectionsAccess } from './connections-access.tsx'
 import { ConnectionsExtensions } from './connections-extensions.tsx'
+import { ConnectionsDevices } from './connections-devices.tsx'
+import { ConnectionsSpaces } from './connections-spaces.tsx'
 import './styles/connections-page.css'
 
 export function ConnectionsPage({
@@ -20,9 +22,17 @@ export function ConnectionsPage({
   initialSection?: ConnectionsSection
 }) {
   const location = useLocation()
-  const value = new URLSearchParams(location.search).get('section')
+  const query = new URLSearchParams(location.search)
+  const value = query.get('section')
+  const initialSpaceId = query.get('space') ?? undefined
   const section =
-    value === 'models' || value === 'extensions' || value === 'access' || value === 'services'
+    value === 'models' ||
+    value === 'extensions' ||
+    value === 'access' ||
+    value === 'services' ||
+    value === 'devices' ||
+    value === 'spaces' ||
+    value === 'automations'
       ? value
       : initialSection
   const controller = useConnectionsController(token)
@@ -49,6 +59,15 @@ export function ConnectionsPage({
         <ConnectionsAccess controller={controller} spaces={spaces} {...(token ? { token } : {})} />
       )}
       {section === 'extensions' && <ConnectionsExtensions />}
+      {section === 'devices' && <ConnectionsDevices token={token} />}
+      {(section === 'spaces' || section === 'automations') && (
+        <ConnectionsSpaces
+          key={section}
+          section={section}
+          token={token}
+          initialSpaceId={initialSpaceId}
+        />
+      )}
     </ConnectionsLayout>
   )
 }

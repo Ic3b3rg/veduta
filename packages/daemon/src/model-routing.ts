@@ -131,6 +131,8 @@ export const RuntimeRoutingConfigSchema = z.object({
     triage: z.number().positive(),
     reasoning: z.number().positive(),
   }),
+  /** Why a configured selection contributed no live candidate; never a credential for inference. */
+  unavailableReason: z.string().optional(),
 })
 
 export type RuntimeRoutingConfig = z.infer<typeof RuntimeRoutingConfigSchema>
@@ -306,9 +308,12 @@ export class SpendingCapError extends Error {
 }
 
 export class NoAvailableModelError extends Error {
-  constructor(tier: ModelTier, skippedProviders: string[]) {
+  constructor(_tier: ModelTier, skippedProviders: string[], unavailableReason?: string) {
     super(
-      `no ${tier} model is available: providers [${skippedProviders.join(', ')}] have no resolvable secret`,
+      skippedProviders.length > 0
+        ? `The API credential for ${skippedProviders.join(', ')} is unavailable. Open Model connections to reconnect or choose another connection.`
+        : (unavailableReason ??
+            'No model connection is available. Open Model connections to connect and select a model.'),
     )
     this.name = 'NoAvailableModelError'
   }
@@ -485,7 +490,7 @@ export class ModelRouter {
     const tier = tierForRequest(request)
     this.assertSpendingAllowed(request, tier)
     const [primary] = this.candidates(tier)
-    if (!primary) throw new NoAvailableModelError(tier, [])
+    if (!primary) throw new NoAvailableModelError(tier, [], this.config.unavailableReason)
     return primary
   }
 
@@ -632,7 +637,8 @@ export class ModelRouter {
     if (available.some((model) => model.provider !== 'mock')) {
       available = available.filter((model) => model.provider !== 'mock')
     }
-    if (available.length === 0) throw new NoAvailableModelError(tier, skipped)
+    if (available.length === 0)
+      throw new NoAvailableModelError(tier, skipped, this.config.unavailableReason)
     return available
   }
 

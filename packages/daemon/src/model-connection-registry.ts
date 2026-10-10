@@ -34,6 +34,7 @@ import {
   type RefreshResult,
 } from './model-connection-adapter.ts'
 import type { CodexTransport } from './codex-app-server.ts'
+import { legacyCodexLimitError } from './codex-inference-error.ts'
 import {
   loadRoutingConfig,
   NonRetryableModelError,
@@ -125,8 +126,8 @@ export interface PreparedSelection {
  * transition needs both, since a stale reason from a previous `failed` state
  * must never survive onto a freshly `connected` or `authorizing` record, and
  * `exactOptionalPropertyTypes` forbids writing `stateReason: undefined`
- * directly (issue #47, matching `sanitizeErrorText`'s spread-to-omit
- * convention already used across the daemon).
+ * directly. Connected account refreshes retain inference limits; authentication
+ * state transitions discard them because their recovery action takes priority.
  */
 function withState(
   record: ModelConnectionRecord,
@@ -135,8 +136,12 @@ function withState(
     stateAt: string
   },
 ): ModelConnectionRecord {
-  const { stateReason: _droppedReason, ...rest } = record
-  return { ...rest, ...patch }
+  const { stateReason: _droppedReason, inferenceIssue, ...rest } = record
+  return {
+    ...rest,
+    ...(patch.state === 'connected' && inferenceIssue ? { inferenceIssue } : {}),
+    ...patch,
+  }
 }
 
 /**
@@ -247,10 +252,10 @@ export class ModelConnectionRegistry {
     return result
   }
 
-  /** Every persisted write goes through here: validate, back up, write, bump the generation, rebuild routing. */
-  private persist(file: ConnectionsFile): void {
+  /** Inference feedback alone cannot invalidate a successful model verification or selection. */
+  private persist(file: ConnectionsFile, routingChanged = true): void {
     saveConnectionsConfig(this.rootDir, file)
-    this.generation++
+    if (routingChanged) this.generation++
     this.onRoutingChanged?.(file)
   }
 
@@ -879,7 +884,20 @@ export class ModelConnectionRegistry {
           'the Model connections changed while the model test was running; try again',
         )
       }
-      this.persist(prepared.candidateFile)
+      const currentFile = loadConnectionsConfig(this.rootDir)
+      // Inference feedback may have changed during the successful probe without
+      // changing authorization or routing. Keep those current observations.
+      this.persist({
+        ...prepared.candidateFile,
+        connections: prepared.candidateFile.connections.map((candidate) => {
+          const current = this.findRecord(currentFile, candidate.id)
+          const { inferenceIssue: _droppedIssue, ...rest } = candidate
+          return {
+            ...rest,
+            ...(current.inferenceIssue ? { inferenceIssue: current.inferenceIssue } : {}),
+          }
+        }),
+      })
     })
   }
 
@@ -955,6 +973,20 @@ export class ModelConnectionRegistry {
       if (!record) return undefined
 
       const err = connectionErrorFrom(error)
+      if (err.code === 'usage-limit' || err.code === 'rate-limit') {
+        if (record.state !== 'connected') return record.state
+        const updated: ModelConnectionRecord = {
+          ...record,
+          inferenceIssue: {
+            kind: err.code,
+            message: err.message,
+            observedAt: this.now().toISOString(),
+            ...(err.resetsAt?.length ? { resetsAt: [...err.resetsAt] } : {}),
+          },
+        }
+        this.persist(this.replaceRecord(file, updated), false)
+        return record.state
+      }
       const state = lifecycleStateAfterFailure(err.code)
       const updated = withState(record, {
         state,
@@ -965,6 +997,17 @@ export class ModelConnectionRegistry {
       this.persist(nextFile)
       this.onCallFailure?.(record.id, state)
       return state
+    })
+  }
+
+  /** Auth/catalog refresh cannot prove inference recovery; a completed provider turn can. */
+  async noteCallSuccess(id: string): Promise<void> {
+    return this.queue(() => {
+      const file = loadConnectionsConfig(this.rootDir)
+      const record = file.connections.find((candidate) => candidate.id === id)
+      if (record?.state !== 'connected' || !record.inferenceIssue) return
+      const { inferenceIssue: _droppedIssue, ...updated } = record
+      this.persist(this.replaceRecord(file, updated), false)
     })
   }
 
@@ -1013,15 +1056,35 @@ export class ModelConnectionRegistry {
   }
 
   /**
-   * Boot-time normalization (ADR-0014 amendment): interrupted in-flight
-   * states fail visibly, while Codex turn-local refusals misclassified by an
-   * older daemon return to `connected`. Synchronous and called once before
-   * anything else touches the registry.
+   * Boot-time normalization (ADR-0014): interrupted authorization fails visibly;
+   * known Codex turn refusals and temporary limits misclassified by an older
+   * daemon recover their authorization state, without claiming quota recovery.
    */
   normalizeStatesOnBoot(): void {
     const file = loadConnectionsConfig(this.rootDir)
     let changed = false
     const connections = file.connections.map((record) => {
+      const legacyLimit =
+        record.method === 'chatgpt-codex' &&
+        record.state === 'failed' &&
+        record.stateReason !== undefined
+          ? legacyCodexLimitError(record.stateReason)
+          : undefined
+      if (
+        legacyLimit &&
+        (legacyLimit.code === 'usage-limit' || legacyLimit.code === 'rate-limit')
+      ) {
+        changed = true
+        return withState(record, {
+          state: 'connected',
+          stateAt: this.now().toISOString(),
+          inferenceIssue: {
+            kind: legacyLimit.code,
+            message: legacyLimit.message,
+            observedAt: record.stateAt,
+          },
+        })
+      }
       if (
         record.method === 'chatgpt-codex' &&
         record.state === 'failed' &&

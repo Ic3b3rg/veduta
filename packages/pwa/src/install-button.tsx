@@ -1,4 +1,6 @@
 import type { BrowserInstallPromptEvent } from './pwa-storage.ts'
+import { Button } from '@veduta/catalog/ui/button'
+import { Download } from 'lucide-react'
 
 export function InstallButton({
   prompt,
@@ -16,8 +18,14 @@ export function InstallButton({
   }
 
   return (
-    <button type="button" className="install-button" onClick={() => void run()}>
-      Install
-    </button>
+    <Button
+      className="install-button recipe-control utility-control"
+      data-variant="primary"
+      aria-label="Install"
+      title="Install Veduta"
+      onClick={() => void run()}
+    >
+      <Download aria-hidden="true" />
+    </Button>
   )
 }

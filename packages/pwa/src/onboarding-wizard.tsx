@@ -1,5 +1,6 @@
 import type { ImportSourceKind, OnboardingStatus } from '@veduta/protocol'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { clientPath } from './client-router.tsx'
 import {
   applyFirstSpaceStep,
   applyIntegrationsStep,
@@ -53,6 +54,13 @@ export function OnboardingWizard({
   onCompleted: () => void
   onStatus: (status: OnboardingStatus) => void
 }) {
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
   // Set only by `ReloadRequiredError` (issue #47): a stale tab called one of
@@ -158,6 +166,7 @@ export function OnboardingWizard({
     setError(undefined)
     try {
       const response = await finishOnboarding(token)
+      if (!mounted.current) return
       setFinishState({
         submitted: true,
         restarting: response.restarting,
@@ -188,7 +197,8 @@ export function OnboardingWizard({
   // user in Home with half-applied config — show the exact command to
   // inspect why on the finish step instead, with a Retry that re-polls.
   const pollForRestart = async () => {
-    const restarted = await waitForDaemonRestart()
+    const restarted = await waitForDaemonRestart(() => mounted.current)
+    if (!mounted.current) return
     if (restarted) {
       onCompleted()
       return
@@ -215,6 +225,9 @@ export function OnboardingWizard({
       <div className="wizard-card">
         <header className="wizard-header">
           <h1>Set up Veduta</h1>
+          {token && (
+            <a href={`${clientPath.serviceConnections}?section=devices`}>Link another device</a>
+          )}
           {active !== null && (
             <p>
               Step {index} of {total}: {WIZARD_STEP_META[active].title}
@@ -347,10 +360,15 @@ function progressStatusClass(done: boolean, current: boolean): string {
  * back before the deadline; the caller must not
  * silently enter Home when it didn't.
  */
-async function waitForDaemonRestart(maxMs = 90_000, intervalMs = 2000): Promise<boolean> {
+async function waitForDaemonRestart(
+  isActive: () => boolean,
+  maxMs = 90_000,
+  intervalMs = 2000,
+): Promise<boolean> {
   const deadline = Date.now() + maxMs
-  while (Date.now() < deadline) {
+  while (isActive() && Date.now() < deadline) {
     await sleep(intervalMs)
+    if (!isActive()) return false
     try {
       await fetchAuthStatus()
       return true

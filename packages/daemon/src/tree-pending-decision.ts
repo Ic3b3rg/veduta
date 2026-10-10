@@ -8,12 +8,15 @@ import {
 import type { PendingDecisionAdapter } from './pending-decision-service.ts'
 import { boundedDecisionText } from './pending-decision-summary.ts'
 import type { Store } from './store.ts'
-import { treeProposalSurfaceId, type TreeProposalSurfaceManager } from './tree-proposal.ts'
+import {
+  treeProposalReviewUnavailableMessage,
+  treeProposalSurfaceId,
+  type TreeProposalSurfaceManager,
+} from './tree-proposal.ts'
 import type { TreeProposal } from './surface-engine.ts'
+import { TREE_REVIEW_SUMMARY_KEY, treeProposalFallbackSummary } from './tree-proposal-preview.ts'
 
 const NUMERIC_ID_RE = /^[1-9][0-9]*$/
-const SUMMARY_MAX_CHARS = 500
-const SUMMARY_OVERHEAD = 'Change the “” Surface tree'.length
 
 export class TreePendingDecisionAdapter implements PendingDecisionAdapter {
   readonly kind = 'tree-proposal' as const
@@ -51,24 +54,37 @@ export class TreePendingDecisionAdapter implements PendingDecisionAdapter {
   }
 
   private toDecision(proposal: TreeProposal): PendingDecision {
-    const targetTitle = this.store.getSurface(proposal.surfaceId)?.title ?? proposal.surfaceId
-    const title = boundedDecisionText(targetTitle, SUMMARY_MAX_CHARS - SUMMARY_OVERHEAD)
+    const target = this.store.getSurface(proposal.surfaceId)
+    const targetTitle = target?.title ?? proposal.surfaceId
     const cardSurfaceId = treeProposalSurfaceId(proposal.id)
+    const card = this.store.isSurfaceDaemonOwned(cardSurfaceId)
+      ? this.store.getSurface(cardSurfaceId)
+      : undefined
+    const preparedSummary = card?.state[TREE_REVIEW_SUMMARY_KEY]
     const base = {
       id: formatPendingDecisionId(this.kind, proposal.id),
       kind: this.kind,
-      summary: `Change the “${title || 'Untitled'}” Surface tree`,
+      summary:
+        typeof preparedSummary === 'string'
+          ? boundedDecisionText(preparedSummary, 500)
+          : treeProposalFallbackSummary(proposal, targetTitle),
       scope: { type: 'space', spaceId: proposal.spaceId } as const,
       allowedResolutions: ['accept', 'reject'] as const,
       createdAt: proposal.createdAt,
     }
     if (proposal.status === 'pending') {
+      const unavailable = treeProposalReviewUnavailableMessage(
+        proposal,
+        target,
+        this.store.getSurfaceVersion(proposal.surfaceId)?.treeVersion,
+      )
       const hasDecisionSurface =
         this.store.getSurface(cardSurfaceId) !== undefined &&
         this.store.isSurfaceDaemonOwned(cardSurfaceId)
       return PendingDecisionSchema.parse({
         ...base,
         state: 'pending',
+        allowedResolutions: unavailable === undefined ? ['accept', 'reject'] : ['reject'],
         ...(hasDecisionSurface ? { decisionSurfaceId: cardSurfaceId } : {}),
       })
     }

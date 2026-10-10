@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { DatabaseSync } from 'node:sqlite'
-import { type JsonObject, type PatchOperation } from '@veduta/protocol'
+import { type AutomationSchedule, type JsonObject, type PatchOperation } from '@veduta/protocol'
 import { z } from 'zod'
 import { defineTool, type ToolDef } from './agent-runner.ts'
 import {
@@ -37,6 +37,13 @@ import {
   type RecurringOutcomeCheckpoint,
 } from './scheduler-outcome.ts'
 import { effectiveOrigin, toolWriteOrigin, type Origin } from './taint.ts'
+import {
+  AutomationSettingsChangeSchema,
+  SYSTEM_SPACE_ID,
+  type AutomationSettingsChange,
+} from '@veduta/protocol'
+import { settingsRevision } from './settings-revision.ts'
+import { SettingsMutationJournal, SettingsRecoveryPendingError } from './settings-mutation.ts'
 
 export { ConditionSchema }
 export type { Automation, Condition }
@@ -120,6 +127,15 @@ export const SetAutomationEnabledSchema = z.object({
 })
 
 const AUTOMATION_UNAVAILABLE = 'Automation is unavailable in this Space'
+const AutomationSettingsMutationSchema = z
+  .object({
+    spaceId: z.string().min(1),
+    automationId: z.number().int().positive(),
+    change: AutomationSettingsChangeSchema,
+    resultRevision: z.string(),
+    nextRunAt: z.string().optional(),
+  })
+  .strict()
 
 export class Scheduler {
   readonly outcomeService: AutomationOutcomeService
@@ -130,6 +146,10 @@ export class Scheduler {
     ((spaceId: string, text: string, context?: EscalationContext) => void) | undefined
   private readonly judge: JudgeFn
   private readonly outcomes: SchedulerOutcomeCoordinator
+  private readonly settingsMutations: SettingsMutationJournal<
+    z.infer<typeof AutomationSettingsMutationSchema>
+  >
+  private disposeSettingsRecovery: (() => void) | undefined
   private disposeFastMutationObserver: (() => void) | undefined
   private disposePreflight: (() => void) | undefined
   private timer: NodeJS.Timeout | undefined
@@ -144,6 +164,50 @@ export class Scheduler {
     this.onEscalation = options.onEscalation
     this.judge = options.judge ?? (() => 'unknown')
     initializeSchedulerSchema(this.db)
+    this.settingsMutations = new SettingsMutationJournal({
+      rootDir: options.rootDir,
+      name: 'automations',
+      schema: AutomationSettingsMutationSchema,
+      prepare: (spaceId, input, id) =>
+        this.store.spacesEngine.prepareSettingsEvent(spaceId, input, id),
+      apply: ({ spaceId, automationId, change, nextRunAt }) => {
+        const result = this.db
+          .prepare(
+            `update automations set
+          description = case when ? then ? else description end,
+          enabled = case when ? then ? else enabled end,
+          cron = case when ? then ? else cron end,
+          fire_at = case when ? then ? else fire_at end,
+          next_run_at = case when ? then ? else next_run_at end
+          where id = ? and space_id = ?`,
+          )
+          .run(
+            change.description !== undefined ? 1 : 0,
+            change.description ?? null,
+            change.enabled !== undefined ? 1 : 0,
+            change.enabled ? 1 : 0,
+            change.cron !== undefined ? 1 : 0,
+            change.cron ?? null,
+            change.fireAt !== undefined ? 1 : 0,
+            change.fireAt === undefined ? null : new Date(change.fireAt).toISOString(),
+            nextRunAt !== undefined ? 1 : 0,
+            nextRunAt ?? null,
+            automationId,
+            spaceId,
+          )
+        if (Number(result.changes) !== 1) throw new Error(AUTOMATION_UNAVAILABLE)
+      },
+      deliver: (event) => this.store.spacesEngine.deliverSettingsEvent(event),
+      committed: ({ automationId }, spaceId) => {
+        this.store.spacesEngine.notifySettingsEventDelivered(spaceId)
+        const origin = effectiveOrigin(
+          [this.requireAutomation(automationId).origin],
+          'trusted:user',
+        )
+        this.refreshSurface(spaceId, origin)
+        this.schedule()
+      },
+    })
     this.outcomeService = new AutomationOutcomeService({
       rootDir: options.rootDir,
       store: options.store,
@@ -159,6 +223,8 @@ export class Scheduler {
         this.appendEvent(spaceId, type, text, payload, origin),
     })
     this.subscribeToggles()
+    this.registerSettingsRecovery()
+    this.settingsMutations.recoverAtStartup()
     this.outcomes.recoverInterruptedRuns()
     this.ensureSurfaces()
     this.outcomeService.recover()
@@ -171,6 +237,7 @@ export class Scheduler {
   start(): void {
     this.stopped = false
     if (!this.disposeFastMutationObserver) this.subscribeToggles()
+    if (!this.disposeSettingsRecovery) this.registerSettingsRecovery()
     this.schedule()
   }
 
@@ -182,6 +249,14 @@ export class Scheduler {
     this.disposeFastMutationObserver = undefined
     this.disposePreflight?.()
     this.disposePreflight = undefined
+    this.disposeSettingsRecovery?.()
+    this.disposeSettingsRecovery = undefined
+  }
+
+  private registerSettingsRecovery(): void {
+    this.disposeSettingsRecovery = this.store.spacesEngine.registerSettingsRecovery((spaceId) => {
+      this.settingsMutations.reconcile(spaceId)
+    })
   }
 
   private subscribeToggles(): void {
@@ -424,6 +499,112 @@ export class Scheduler {
       .map(automationFromRow)
   }
 
+  automationSettingsRevision(automation: Automation): string {
+    return settingsRevision({
+      id: automation.id,
+      kind: automation.kind,
+      status: automation.status,
+      enabled: automation.enabled,
+      description: automation.description,
+      cron: automation.cron ?? null,
+      fireAt: automation.fireAt ?? null,
+      timezone: automation.timezone ?? 'UTC',
+    })
+  }
+
+  automationHistory(spaceId: string, automationId: number) {
+    this.requireAutomationInSpace(spaceId, automationId)
+    return this.outcomeService.history(automationId)
+  }
+
+  /** Explicit trusted Settings edits preserve operation scope, provenance and existing run history. */
+  updateAutomation(
+    spaceId: string,
+    automationId: number,
+    input: AutomationSettingsChange,
+  ): Automation {
+    const change = AutomationSettingsChangeSchema.parse(input)
+    this.settingsMutations.reconcile(spaceId)
+    const current = this.requireAutomationInSpace(spaceId, automationId)
+    const recovered = this.settingsMutations.recoveredOperation(spaceId)
+    if (
+      recovered?.automationId === automationId &&
+      isDeepStrictEqual(recovered.change, change) &&
+      recovered.resultRevision === this.automationSettingsRevision(current)
+    )
+      return current
+    if (current.status !== 'armed') throw new Error('Only an armed Automation can be edited')
+    if (change.expectedRevision !== this.automationSettingsRevision(current))
+      throw new Error('Automation changed. Reload before saving again.')
+    const editing =
+      change.description !== undefined || change.cron !== undefined || change.fireAt !== undefined
+    if (editing && current.handler && spaceId === SYSTEM_SPACE_ID)
+      throw new Error('Use the dedicated settings for this system Automation')
+    if (change.description !== undefined && current.handler)
+      throw new Error(
+        'Managed Automation instructions must be changed through their original confirmation flow',
+      )
+    if (
+      editing &&
+      this.db
+        .prepare(
+          'select 1 from automation_runs where automation_id = ? and finished_at is null limit 1',
+        )
+        .get(automationId)
+    )
+      throw new Error('Wait for the current Automation run or decision to finish before editing')
+    if (change.cron !== undefined && current.kind !== 'job')
+      throw new Error('A timer does not have a recurring schedule')
+    if (change.fireAt !== undefined && current.kind !== 'timer')
+      throw new Error('A recurring Automation does not have a one-shot time')
+    const cron = change.cron ?? current.cron
+    const fireAt =
+      change.fireAt === undefined ? current.fireAt : new Date(change.fireAt).toISOString()
+    let nextRunAt = current.nextRunAt
+    if (change.cron !== undefined)
+      nextRunAt = nextCronOccurrence(change.cron, this.now(), current.timezone).toISOString()
+    if (change.fireAt !== undefined) {
+      if (!fireAt || fireAt <= this.nowIso()) throw new Error('Choose a future time for the timer')
+      nextRunAt = fireAt
+    }
+    const description = change.description ?? current.description
+    const enabled = change.enabled ?? current.enabled
+    const mutationOrigin = effectiveOrigin([current.origin], 'trusted:user')
+    if (
+      description === current.description &&
+      enabled === current.enabled &&
+      cron === current.cron &&
+      fireAt === current.fireAt
+    )
+      return current
+    this.settingsMutations.perform(
+      spaceId,
+      {
+        spaceId,
+        automationId,
+        change,
+        resultRevision: this.automationSettingsRevision({
+          ...current,
+          description,
+          enabled,
+          ...(cron === undefined ? {} : { cron }),
+          ...(fireAt === undefined ? {} : { fireAt }),
+        }),
+        ...((change.cron !== undefined || change.fireAt !== undefined) && nextRunAt !== undefined
+          ? { nextRunAt }
+          : {}),
+      },
+      {
+        type: 'automation.edit',
+        text: `Updated Automation "${description}" in Settings`,
+        payload: { automationId },
+        origin: mutationOrigin,
+        at: this.nowIso(),
+      },
+    )
+    return this.requireAutomation(automationId)
+  }
+
   /**
    * Claim and run every due occurrence. Single-flight: overlapping calls
    * return without running (the claim table still guards across restarts).
@@ -456,7 +637,14 @@ export class Scheduler {
         )
         .all(now, now)
         .map(automationFromRow)
-      for (const automation of due) await this.runOccurrence(automation)
+      for (const automation of due) {
+        try {
+          await this.runOccurrence(automation)
+        } catch (error) {
+          if (!(error instanceof SettingsRecoveryPendingError)) throw error
+          console.error('Automation waiting for Settings recovery', error)
+        }
+      }
     } finally {
       this.running = false
     }
@@ -534,9 +722,11 @@ export class Scheduler {
     ]
   }
 
-  private async runOccurrence(automation: Automation): Promise<void> {
+  private async runOccurrence(candidate: Automation): Promise<void> {
+    this.store.spacesEngine.reconcileSettings(candidate.spaceId)
+    const automation = this.requireAutomation(candidate.id)
     const scheduledFor = automation.nextRunAt
-    if (!scheduledFor) return
+    if (automation.status !== 'armed' || !scheduledFor || scheduledFor > this.nowIso()) return
     const space = this.store.getSpace(automation.spaceId)
     if (!space) throw new Error(`unknown Space: ${automation.spaceId}`)
     const fallbackSurfaceId = automationsSurfaceIdForSpace(space)
@@ -994,6 +1184,7 @@ export class Scheduler {
       description: automation.description,
       enabled: automation.enabled,
       scheduleText: scheduleText(automation),
+      scheduleDetails: scheduleDetails(automation),
       ...(history.length === 0 ? {} : { history }),
     }
   }
@@ -1115,6 +1306,7 @@ export class Scheduler {
   }
 
   private requireAutomationInSpace(spaceId: string, id: number): Automation {
+    this.store.spacesEngine.reconcileSettings(spaceId)
     const row = this.db
       .prepare(
         `select * from automations
@@ -1148,6 +1340,26 @@ export class Scheduler {
   private nowIso(): string {
     return this.now().toISOString()
   }
+}
+
+function scheduleDetails(automation: Automation): AutomationSchedule {
+  const shared = {
+    timezone: automation.timezone ?? 'UTC',
+    status: automation.status,
+    ...(automation.nextRunAt === undefined ? {} : { nextRunAt: automation.nextRunAt }),
+    ...(automation.lastOutcome === undefined ? {} : { lastOutcome: automation.lastOutcome }),
+  }
+  return automation.kind === 'timer'
+    ? {
+        ...shared,
+        kind: 'timer',
+        ...(automation.fireAt === undefined ? {} : { fireAt: automation.fireAt }),
+      }
+    : {
+        ...shared,
+        kind: 'job',
+        ...(automation.cron === undefined ? {} : { cron: automation.cron }),
+      }
 }
 
 function scheduleText(automation: Automation): string {

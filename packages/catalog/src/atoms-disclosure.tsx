@@ -59,20 +59,20 @@ export function CollapsibleAtom({ node, children }: AtomProps<'Collapsible'>): R
   return (
     <Collapsible
       defaultOpen={propBoolean(node.props, 'defaultOpen', false)}
-      className="group rounded-lg border border-border bg-card"
+      className="group min-w-0 rounded-lg border border-border bg-card"
     >
       <CollapsibleTrigger asChild>
         <Button
           {...motionContent('label')}
           type="button"
           variant="ghost"
-          className="h-auto min-h-9 w-full justify-between border-0 bg-transparent px-4 py-2 text-left whitespace-normal hover:no-underline"
+          className="h-auto min-h-9 w-full justify-between border-0 bg-transparent px-4 py-2 text-left whitespace-normal [overflow-wrap:anywhere] hover:no-underline"
         >
           {label}
-          <ChevronDownIcon className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+          <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
         </Button>
       </CollapsibleTrigger>
-      <CollapsibleContent className="border-t border-border px-4 py-3">
+      <CollapsibleContent className="min-w-0 border-t border-border px-4 py-3">
         <AccordionScope.Provider value={false}>{children}</AccordionScope.Provider>
       </CollapsibleContent>
     </Collapsible>

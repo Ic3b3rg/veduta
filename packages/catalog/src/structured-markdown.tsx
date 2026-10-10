@@ -4,14 +4,14 @@ import { bodyTextStyle } from './atom-styles.ts'
 import type { CatalogTokens } from './design-system.ts'
 
 /** A closed Markdown subset rendered as React content; raw markup is always literal text. */
-export function structuredMarkdown(source: string, tokens: CatalogTokens): ReactNode {
+export function structuredMarkdown(source: string, tokens?: CatalogTokens): ReactNode {
   const blocks = markdownBlocks(source)
   const keys = motionItemKeys(blocks)
   return blocks.map((block, index) => {
     const key = keys[index]
     const attributes = {
       ...motionContent(`paragraph:${key ?? index}`),
-      style: bodyTextStyle(tokens),
+      style: tokens ? bodyTextStyle(tokens) : { margin: 0 },
     }
     if (block.kind === 'code')
       return (

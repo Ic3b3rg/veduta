@@ -86,6 +86,19 @@ export const InstallerStageEventSchema = z.object({
   protocol_version: z.literal(1),
   stages: z.array(InstallerStageSchema).min(1),
   needs_user_input: z.boolean(),
+  access_mode: z.enum(['tunnel', 'tailnet', 'public']).optional(),
+  state: z
+    .enum([
+      'preview',
+      'planning',
+      'running',
+      'waiting-input',
+      'waiting-passkey',
+      'complete',
+      'failed',
+    ])
+    .optional(),
+  repair_command: z.string().optional(),
 })
 
 /**
@@ -137,6 +150,9 @@ export const OnboardingStatusSchema = z.object({
   domain: z.object({
     domain: z.string().nullable(),
     tlsActive: z.boolean(),
+    accessMode: z.enum(['tunnel', 'tailnet', 'public']).optional(),
+    origin: z.string().url().optional(),
+    pending: z.boolean().optional(),
   }),
   /**
    * The `model-connection` step's resume state (issue #47, replacing the old

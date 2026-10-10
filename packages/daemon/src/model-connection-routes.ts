@@ -57,6 +57,8 @@ const STATUS_FOR_CODE: Record<ModelConnectionErrorCode, number> = {
   rejected: 400,
   unreachable: 502,
   internal: 500,
+  'usage-limit': 429,
+  'rate-limit': 429,
 }
 
 /**

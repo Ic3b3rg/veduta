@@ -1,5 +1,16 @@
 import type { ModelConnectionsSnapshot } from '@veduta/protocol'
 import { useEffect, useState } from 'react'
+import { Button } from '@veduta/catalog/ui/button'
+import { NativeSelect } from '@veduta/catalog/ui/native-select'
+import {
+  Sheet,
+  SheetTrigger,
+  SheetContent,
+  SheetTitle,
+  SheetDescription,
+  SheetClose,
+} from '@veduta/catalog/ui/sheet'
+import { ChevronDown } from 'lucide-react'
 import { applyModelSelection, fetchModelConnections } from './api.ts'
 import {
   catalogOptions,
@@ -76,47 +87,84 @@ export function ChatModelSelects({ token }: { token?: string | undefined }) {
   }
 
   return (
-    <div className="chat-model-selects">
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
+    <Sheet>
+      <SheetTrigger asChild>
+        <Button
+          className="recipe-control chat-model-trigger"
+          aria-label="Choose model"
+          title="Choose model"
+        >
+          <span>
+            {modelOptions.find((option) => option.value === modelId)?.label ?? 'Choose model'}
+          </span>
+          <ChevronDown aria-hidden="true" />
+        </Button>
+      </SheetTrigger>
+      <SheetContent className="recipe-overlay chat-model-dialog" showCloseButton={false}>
+        <header>
+          <SheetTitle>Model settings</SheetTitle>
+          <SheetDescription>
+            Choose the connection and model Veduta uses in every Space. Changes apply after
+            verification.
+          </SheetDescription>
+        </header>
+        <div className="chat-model-selects">
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
 
-      <select
-        aria-label="Connection"
-        value={connectionId}
-        disabled={busy}
-        onChange={(e) => {
-          const nextConnectionId = e.target.value
-          const nextConnection = connectedConnections.find(
-            (connection) => connection.id === nextConnectionId,
-          )
-          const firstModel = nextConnection ? catalogOptions(nextConnection)[0]?.value : undefined
-          if (firstModel !== undefined) void applySelection(nextConnectionId, firstModel)
-        }}
-      >
-        {connectionId === '' && <option value="">No connection selected</option>}
-        {connectedConnections.map((connection) => (
-          <option key={connection.id} value={connection.id}>
-            {connectionSelectLabel(connection, snapshot.connections, snapshot.methods)}
-          </option>
-        ))}
-      </select>
+          <label>
+            Connection
+            <NativeSelect
+              aria-label="Connection"
+              value={connectionId}
+              disabled={busy}
+              onChange={(e) => {
+                const nextConnectionId = e.target.value
+                const nextConnection = connectedConnections.find(
+                  (connection) => connection.id === nextConnectionId,
+                )
+                const firstModel = nextConnection
+                  ? catalogOptions(nextConnection)[0]?.value
+                  : undefined
+                if (firstModel !== undefined) void applySelection(nextConnectionId, firstModel)
+              }}
+            >
+              {connectionId === '' && <option value="">No connection selected</option>}
+              {connectedConnections.map((connection) => (
+                <option key={connection.id} value={connection.id}>
+                  {connectionSelectLabel(connection, snapshot.connections, snapshot.methods)}
+                </option>
+              ))}
+            </NativeSelect>
+          </label>
 
-      <select
-        aria-label="Model"
-        value={modelId}
-        disabled={busy || selectedConnection === undefined}
-        onChange={(e) => void applySelection(connectionId, e.target.value)}
-      >
-        {modelId === '' && <option value="">No model selected</option>}
-        {modelOptions.map((option) => (
-          <option key={option.value} value={option.value} disabled={option.disabled}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </div>
+          <label>
+            Model
+            <NativeSelect
+              aria-label="Model"
+              value={modelId}
+              disabled={busy || selectedConnection === undefined}
+              onChange={(e) => void applySelection(connectionId, e.target.value)}
+            >
+              {modelId === '' && <option value="">No model selected</option>}
+              {modelOptions.map((option) => (
+                <option key={option.value} value={option.value} disabled={option.disabled}>
+                  {option.label}
+                </option>
+              ))}
+            </NativeSelect>
+          </label>
+          {busy && <p role="status">Verifying model…</p>}
+        </div>
+        <footer>
+          <SheetClose asChild>
+            <Button className="recipe-control">Done</Button>
+          </SheetClose>
+        </footer>
+      </SheetContent>
+    </Sheet>
   )
 }

@@ -1,0 +1,482 @@
+/* #228: persistent desktop Chat and a mobile Sheet share the same conversation. */
+.app-shell.precision-tool {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+.app-shell.precision-tool > .topbar {
+  flex: 0 0 auto;
+  min-height: 64px;
+  position: relative;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 12px 24px;
+}
+.app-shell.precision-tool > .shell-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  width: 100%;
+  max-width: none;
+  grid-template-columns: 160px minmax(0, 1fr) clamp(400px, 34vw, 560px);
+  gap: 0;
+  align-items: stretch;
+}
+.app-shell.precision-tool .shell-main {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scroll-padding: 24px;
+  padding: 24px clamp(16px, 2vw, 40px) 48px;
+  align-content: start;
+  grid-auto-rows: max-content;
+}
+.app-shell.precision-tool .space-navigation {
+  min-height: 0;
+  overflow-y: auto;
+  position: static;
+  padding: 24px 0 16px 12px;
+  border-right: 1px solid var(--catalog-color-border);
+}
+.app-shell.precision-tool .space-rail {
+  max-height: none;
+  border: 0;
+  padding-right: 12px;
+}
+.app-shell.precision-tool .surface-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+}
+.app-shell.precision-tool .surface-grid[data-presentation='one-column'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.app-shell.precision-tool .surface-grid[data-presentation='two-columns'] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@container space-content (max-width: 639px) {
+  .app-shell.precision-tool .surface-grid[data-presentation='two-columns'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.app-shell.precision-tool .space-section {
+  container-type: inline-size;
+  container-name: space-content;
+}
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border-left: 1px solid var(--catalog-color-border);
+}
+.precision-tool .chat-panel-header {
+  flex: 0 0 auto;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--catalog-color-border);
+}
+.chat-panel-header h2 {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+.chat-panel-header h2 span {
+  color: var(--catalog-color-text-muted);
+  font-weight: 400;
+  margin-left: 12px;
+  border-left: 1px solid var(--catalog-color-border);
+  padding-left: 12px;
+}
+.precision-tool .chat-dock {
+  display: flex;
+  flex-direction: column;
+  background: var(--catalog-color-surface);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: static;
+  transform: none;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  z-index: auto;
+}
+.precision-tool .chat-log-frame {
+  position: relative;
+  display: block;
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+}
+.precision-tool .chat-log {
+  display: block;
+  height: 100%;
+  max-height: none;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-anchor: none;
+  padding: 24px;
+  scroll-padding: 24px;
+  scrollbar-width: thin;
+}
+.precision-tool .chat-entry {
+  border: 0;
+  border-radius: 8px;
+  box-shadow: none;
+  padding: 0;
+  gap: 8px;
+  max-width: 100%;
+  margin: 0 0 24px;
+}
+.precision-tool .chat-entry.assistant {
+  background: var(--catalog-color-surface);
+}
+.precision-tool .chat-entry.user {
+  background: var(--catalog-color-surface-raised);
+  padding: 12px 16px;
+  margin-left: 36px;
+}
+.precision-tool .chat-entry > strong {
+  color: var(--catalog-color-text-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.precision-tool .chat-entry[data-chat-state='error'] {
+  border-left: 2px solid var(--catalog-color-danger);
+  padding-left: 12px;
+}
+.precision-tool .chat-entry[data-chat-state='error'] .chat-message {
+  color: var(--catalog-color-danger);
+}
+.precision-tool .chat-message {
+  font-size: 16px;
+  line-height: 1.7;
+  gap: 16px;
+}
+.precision-tool .chat-message pre {
+  overflow-x: auto;
+}
+.precision-tool .chat-message li + li {
+  margin-top: 8px;
+}
+.precision-tool .chat-compose {
+  flex: 0 0 auto;
+  padding: 12px 20px max(16px, env(safe-area-inset-bottom));
+}
+.precision-tool .chat-compose [data-slot='input-group'] {
+  background: var(--catalog-color-surface-raised);
+  border-radius: 12px;
+  padding-top: 0;
+}
+.precision-tool .chat-compose [data-slot='input-group-control'] {
+  min-height: 52px;
+  max-height: min(160px, 25dvh);
+  padding: 14px 0 14px 16px;
+  font-size: 16px;
+  line-height: 1.5;
+}
+.precision-tool .chat-compose [data-slot='input-group-addon'] {
+  padding: 4px;
+}
+.precision-tool .chat-compose [data-slot='button'] {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  border-radius: 50%;
+  margin: 0;
+}
+.app-shell.precision-tool .chat-scroll-to-bottom {
+  position: absolute;
+  bottom: 12px;
+  right: 24px;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  box-shadow: 0 2px 8px var(--chat-dock-shadow);
+}
+.precision-tool .chat-status {
+  margin: 12px 24px 0;
+  align-self: start;
+}
+.app-shell.precision-tool .chat-sheet {
+  display: flex;
+  flex-direction: column;
+  height: var(--chat-viewport-height, 100dvh);
+  top: var(--chat-viewport-top, 0px);
+  bottom: auto;
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  padding: env(safe-area-inset-top) 0 0;
+  margin: 0;
+  gap: 0;
+  border: 0;
+  border-radius: 0;
+  overflow: hidden;
+}
+.app-shell.precision-tool .chat-close {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  flex: 0 0 auto;
+}
+.app-shell.precision-tool .chat-launcher {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  min-height: 48px;
+  padding: 0;
+  border-radius: 50%;
+  box-shadow: 0 4px 16px var(--chat-dock-shadow);
+}
+.chat-launcher svg {
+  width: 22px;
+  height: 22px;
+}
+.chat-launcher-activity {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--catalog-color-text);
+}
+@media (max-width: 959px) {
+  .app-shell.precision-tool > .topbar {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+  .app-shell.precision-tool > .shell-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .app-shell.precision-tool .space-navigation {
+    padding: 12px 16px;
+    border: 0;
+  }
+  .app-shell.precision-tool .space-rail {
+    display: none;
+  }
+  .precision-tool .space-picker {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+  }
+  .app-shell.precision-tool .shell-main {
+    padding: 12px 16px 88px;
+  }
+  .precision-tool .chat-panel-header {
+    padding: 8px 16px;
+    min-height: 60px;
+  }
+  .precision-tool .chat-log {
+    padding: 20px 16px;
+  }
+  .precision-tool .chat-compose {
+    padding-inline: 12px;
+  }
+}
+@media (pointer: coarse) {
+  .precision-tool .chat-compose [data-slot='button'],
+  .app-shell.precision-tool .chat-scroll-to-bottom {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+  .precision-tool .chat-result-links a,
+  .precision-tool .chat-entry > a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-shell.precision-tool .chat-sheet {
+    animation: none;
+    transition: none;
+  }
+}
+.app-shell.precision-tool .shell-notice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--catalog-space-xs);
+  width: 100%;
+  min-width: 0;
+  max-height: none;
+  overflow: visible;
+  margin: 0 0 var(--catalog-space-sm);
+}
+
+.shell-notice > p {
+  min-width: 0;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.shell-notice .shell-notice-dismiss {
+  width: var(--catalog-control-height);
+  height: var(--catalog-control-height);
+  color: inherit;
+}
+
+@media (pointer: coarse) {
+  .shell-notice .shell-notice-dismiss {
+    width: var(--catalog-control-touch-target);
+    height: var(--catalog-control-touch-target);
+  }
+}
+
+.precision-tool .pending-decision-strip,
+.precision-tool .space-pending-decisions,
+.precision-tool .automation-outcome-notifications,
+.precision-tool .pending-decision-notification,
+.precision-tool .automation-outcome-notification,
+.precision-tool .chat-pending-decision,
+.precision-tool .pending-decision-feedback {
+  background: var(--catalog-color-surface-raised);
+  border-radius: var(--catalog-radius-sm);
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  overflow-wrap: anywhere;
+}
+
+.precision-tool .pending-decision-strip,
+.precision-tool .space-pending-decisions {
+  border-color: var(--catalog-color-border);
+  border-left: 2px solid var(--catalog-color-accent);
+}
+
+.precision-tool .pending-decision-strip-toggle,
+.precision-tool .space-pending-decisions-heading {
+  background: var(--catalog-color-surface-raised);
+  color: var(--catalog-color-text);
+  padding: var(--catalog-space-sm) var(--catalog-space-md);
+}
+
+.precision-tool .pending-decision-actions .recipe-control,
+.precision-tool .automation-outcome-notification-actions .recipe-control {
+  height: auto;
+  text-align: center;
+}
+
+.precision-tool .pending-decision-feedback {
+  display: block;
+  border-left-width: 2px;
+}
+
+.app-shell.precision-tool .chat-model-trigger {
+  min-width: 0;
+  max-width: min(32vw, 320px);
+  height: 36px;
+  gap: 8px;
+}
+.chat-model-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-model-trigger svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+.app-shell.precision-tool .chat-model-dialog {
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  width: min(480px, calc(100% - 32px));
+  height: auto;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  padding: 24px;
+  border: 1px solid var(--catalog-color-border);
+  border-radius: 12px;
+  gap: 24px;
+  animation: none;
+}
+.chat-model-dialog header {
+  display: grid;
+  gap: 8px;
+}
+.chat-model-dialog footer {
+  display: flex;
+  justify-content: end;
+}
+.precision-tool .chat-model-dialog .chat-model-selects {
+  display: grid;
+  gap: 20px;
+  max-width: none;
+}
+.chat-model-selects label {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.precision-tool .chat-model-selects select {
+  width: 100%;
+  max-width: none;
+}
+@media (pointer: coarse) {
+  .app-shell.precision-tool .chat-model-trigger {
+    min-height: 44px;
+  }
+}
+
+.chat-mobile-access {
+  position: fixed;
+  right: max(20px, env(safe-area-inset-right));
+  bottom: max(20px, env(safe-area-inset-bottom));
+  left: 20px;
+  z-index: 20;
+  display: flex;
+  gap: 12px;
+  justify-content: end;
+  align-items: center;
+  pointer-events: none;
+}
+.chat-mobile-access > * {
+  pointer-events: auto;
+}
+.app-shell.precision-tool .chat-review-access {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  text-decoration: none;
+  background: var(--catalog-color-surface-raised);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.chat-review-access svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+.chat-panel > .chat-review-access,
+.chat-sheet > .chat-review-access {
+  margin: 12px 16px 0;
+}

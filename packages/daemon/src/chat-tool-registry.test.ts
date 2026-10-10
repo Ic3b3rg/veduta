@@ -14,6 +14,8 @@ import { createMemoryTools } from './memory-tools.ts'
 import { ModelRouter, type RoutingConfig } from './model-routing.ts'
 import { createMockOutboundTransport, createOutboundTools } from './outbound-tools.ts'
 import { Scheduler } from './scheduler.ts'
+import { PendingDecisionService } from './pending-decision-service.ts'
+import { SpacePendingDecisionAdapter } from './space-pending-decision.ts'
 import { createSpawnWorkerTool } from './spawn-worker-tool.ts'
 import { Store } from './store.ts'
 import { TurnTaintAccumulator } from './taint.ts'
@@ -122,6 +124,8 @@ const EXPECTED_SPACE_TOOL_NAMES = [
   'patch_state',
   'patch_tree',
   'archive_surface',
+  'archive_space',
+  'set_space_presentation',
   'write_fact',
   'append_event',
   'read_recent',
@@ -141,10 +145,17 @@ const EXPECTED_SPACE_TOOL_NAMES = [
 const EXPECTED_GLOBAL_TOOL_NAMES = [
   'enter_space',
   'propose_space',
+  'list_archived_spaces',
+  'restore_space',
   ...EXPECTED_SPACE_TOOL_NAMES,
 ].sort()
 
-const EXPECTED_SYSTEM_TOOL_NAMES = ['list_surfaces', 'read_surface', 'list_automations'].sort()
+const EXPECTED_SYSTEM_TOOL_NAMES = [
+  'list_surfaces',
+  'read_surface',
+  'list_automations',
+  'set_space_presentation',
+].sort()
 
 function toolContext(toolCallId: string): ToolContext {
   return fromPartial<ToolContext>({
@@ -159,6 +170,96 @@ function toolContext(toolCallId: string): ToolContext {
 }
 
 describe('chatToolRegistry', () => {
+  it('discovers and restores an archived Space from focused Chat without granting content access', async () => {
+    const { deps, dispose } = buildDeps()
+    try {
+      const archived = deps.store.spacesEngine.createSpace({ name: 'Garden' })
+      deps.store.spacesEngine.writeFact(archived.id, 'Water the lemon tree every morning')
+      deps.store.archiveSpace(archived.id)
+      const tools = chatToolRegistry(deps)(ACTIVE_SPACE_ID)
+      const list = tools.find((tool) => tool.name === 'list_archived_spaces')
+      const restore = tools.find((tool) => tool.name === 'restore_space')
+      expect(list).toBeDefined()
+      expect(restore).toBeDefined()
+      if (!list || !restore) throw new Error('Focused Chat cannot discover and restore Spaces')
+      const request = 'Restore Garden'
+      const context = fromPartial<ToolContext>({
+        ...toolContext('restore-garden'),
+        trigger: { kind: 'chat' },
+        currentUserRequest: { text: request, origin: 'trusted:user' },
+      })
+      const inventory = await list.handler(list.schema.parse({}), context)
+      expect(inventory.details).toEqual({ spaces: [{ ...archived, archived: true }] })
+      expect(inventory.content).not.toContain('lemon tree')
+      expect(tools.some((tool) => tool.name === 'enter_space')).toBe(false)
+      await expect(async () =>
+        restore.handler(
+          restore.schema.parse({ spaceId: archived.id, userRequest: 'Restore another Space' }),
+          context,
+        ),
+      ).rejects.toThrow('current user request')
+      expect(deps.store.getSpace(archived.id)?.archived).toBe(true)
+      const input = restore.schema.parse({ spaceId: archived.id, userRequest: request })
+      await restore.handler(input, context)
+      await restore.handler(input, context)
+      expect(deps.store.getSpace(archived.id)?.archived).toBe(false)
+      expect(deps.store.readFacts(archived.id).active[0]?.text).toBe(
+        'Water the lemon tree every morning',
+      )
+      expect(deps.store.getSpace(ACTIVE_SPACE_ID)?.archived).toBe(false)
+      expect(
+        deps.store.eventLog(archived.id).filter((event) => event.text === 'Restored Space'),
+      ).toHaveLength(1)
+      await expect(async () =>
+        restore.handler(
+          restore.schema.parse({ spaceId: SYSTEM_SPACE_ID, userRequest: request }),
+          context,
+        ),
+      ).rejects.toThrow('System Space lifecycle is Gateway-owned')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('proposes a new Space from focused Chat without creating it before trusted acceptance', async () => {
+    const { deps, dispose } = buildDeps()
+    try {
+      const onPendingDecision = vi.fn<(decision: PendingDecision) => void>()
+      const tools = chatToolRegistry(deps)(ACTIVE_SPACE_ID, { onPendingDecision })
+      const propose = tools.find((tool) => tool.name === 'propose_space')
+      expect(propose).toBeDefined()
+      if (!propose) throw new Error('Focused Chat cannot propose a Space')
+      expect(tools.some((tool) => tool.name === 'enter_space')).toBe(false)
+      const before = deps.store.listSpaces().map((space) => space.id)
+      await propose.handler(
+        propose.schema.parse({ name: 'Work', reason: 'Keep work organized.' }),
+        toolContext('propose-work'),
+      )
+      expect(deps.store.listSpaces().map((space) => space.id)).toEqual(before)
+      const decision = onPendingDecision.mock.calls[0]?.[0]
+      expect(decision).toMatchObject({
+        kind: 'space-proposal',
+        scope: { type: 'global' },
+        state: 'pending',
+      })
+      if (!decision) throw new Error('The Space proposal was not projected to Chat')
+      const service = new PendingDecisionService({
+        adapters: [new SpacePendingDecisionAdapter(deps.store.spacesEngine)],
+      })
+      const results = await Promise.all([
+        service.resolve(decision.id, 'accept', 'trusted:user'),
+        service.resolve(decision.id, 'accept', 'trusted:user'),
+      ])
+      expect(results.every((result) => result.decision.outcome === 'accepted')).toBe(true)
+      const created = deps.store.listSpaces().filter((space) => space.name === 'Work')
+      expect(created).toHaveLength(1)
+      expect(deps.store.listAuthorableSurfaces(created[0]!.id).surfaces).toEqual([])
+      expect(deps.store.listSpaces()).toHaveLength(before.length + 1)
+    } finally {
+      dispose()
+    }
+  })
+
   it('offers read-only package inspection globally without a Space target', () => {
     const { deps, dispose } = buildDeps()
     try {
@@ -173,7 +274,7 @@ describe('chatToolRegistry', () => {
     }
   })
 
-  it('offers only explicit safe status reads to a System-scoped turn', () => {
+  it('offers only explicit safe status reads and presentation to a System-scoped turn', () => {
     const { deps, dispose } = buildDeps()
     try {
       const tools = chatToolRegistry(deps)(SYSTEM_SPACE_ID)
@@ -214,7 +315,13 @@ describe('chatToolRegistry', () => {
     try {
       const tools = chatToolRegistry(deps)(ACTIVE_SPACE_ID)
       expect(tools.map((tool) => tool.name).sort()).toEqual(
-        [...EXPECTED_SPACE_TOOL_NAMES, 'inspect_clawhub_skill'].sort(),
+        [
+          ...EXPECTED_SPACE_TOOL_NAMES,
+          'propose_space',
+          'list_archived_spaces',
+          'restore_space',
+          'inspect_clawhub_skill',
+        ].sort(),
       )
       expect(
         createMemoryTools(deps.store.spacesEngine, {

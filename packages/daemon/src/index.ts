@@ -9,6 +9,7 @@ import { buildServer } from './server.ts'
 import { AcmeCertificateManager, AcmeChallengeStore, createHttp01RequestHandler } from './tls.ts'
 import { runSelfCheck } from './update/self-check.ts'
 import { SimpleWebAuthnRelyingParty } from './webauthn.ts'
+import { resolveVpsAccess } from './vps-access.ts'
 
 main().catch((err) => {
   console.error(err)
@@ -118,18 +119,32 @@ async function startLocalVps(
 }
 
 async function startVps(): Promise<void> {
-  const domain = requireEnv('VEDUTA_PUBLIC_DOMAIN')
-  const email = requireEnv('VEDUTA_ACME_EMAIL')
-  const origin = `https://${domain}`
+  const access = {
+    ...resolveVpsAccess(process.env),
+    pending: process.env['VEDUTA_ACCESS_PENDING'] === '1',
+  }
+  const { origin, rpID: domain } = access
   const authStatePath = process.env.VEDUTA_AUTH_STATE ?? join(process.cwd(), '.veduta/auth.json')
   const bootstrapCode =
     process.env.VEDUTA_BOOTSTRAP_CODE ?? randomBytes(9).toString('base64url').slice(0, 12)
   const auth = buildProductionAuth({ rpID: domain, origin, authStatePath, bootstrapCode })
 
   const dataDirOption = process.env.VEDUTA_DATA_DIR ? { dataDir: process.env.VEDUTA_DATA_DIR } : {}
+  if (access.mode !== 'public') {
+    const { app } = buildServer({
+      ...dataDirOption,
+      auth: { mode: 'production', store: auth, allowedOrigins: [origin] },
+      egress: { enforce: true },
+      profile: 'vps',
+      onboarding: { domain, tlsActive: access.mode === 'tailnet', access, env: process.env },
+    })
+    await app.listen({ port: access.port, host: access.host })
+    console.log(`veduta daemon (production profile) -> ${origin} (${access.mode} access)`)
+    return
+  }
+  const email = requireEnv('VEDUTA_ACME_EMAIL')
   const challenges = new AcmeChallengeStore()
   const httpPort = Number(process.env.HTTP_PORT ?? 80)
-  const httpsPort = Number(process.env.HTTPS_PORT ?? 443)
   const http01Handler = createHttp01RequestHandler({ domain, challenges })
   const redirectServer = createServer((request, response) => http01Handler(request, response))
   await listenHttp(redirectServer, httpPort)
@@ -156,9 +171,9 @@ async function startVps(): Promise<void> {
     // Onboarding wizard wiring (issue #19): the VPS profile's real
     // domain/TLS state, so the wizard's `domain` step reflects what this
     // daemon actually detected rather than the loopback defaults.
-    onboarding: { domain, tlsActive: true, env: process.env },
+    onboarding: { domain, tlsActive: true, access, env: process.env },
   })
-  await app.listen({ port: httpsPort, host: '0.0.0.0' })
+  await app.listen({ port: access.port, host: access.host })
   console.log(`veduta daemon (production profile) -> ${origin}`)
 }
 

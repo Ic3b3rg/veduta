@@ -9,12 +9,14 @@ export function AuthGate({
   error,
   onAuthenticated,
   onError,
+  onCancel,
 }: {
   bootstrapRequired: boolean
   passkeyRegistered: boolean
   error: string | null
   onAuthenticated: (token: string) => void
   onError: (message: string) => void
+  onCancel?: () => void
 }) {
   const location = useLocation()
   const navigate = useNavigate()
@@ -23,14 +25,34 @@ export function AuthGate({
   )
   const [deviceName, setDeviceName] = useState(defaultDeviceName())
   const [busy, setBusy] = useState(false)
+  const [pairing, setPairing] = useState(
+    () => location.pathname === '/setup' && new URLSearchParams(location.search).has('code'),
+  )
+  const showRegistration = bootstrapRequired || pairing
 
   const run = async (fn: () => Promise<{ token: string }>) => {
     setBusy(true)
     try {
       const session = await fn()
+      const searchParams = new URLSearchParams(location.search)
+      if (searchParams.has('code')) {
+        searchParams.delete('code')
+        navigate(
+          { pathname: location.pathname, search: searchParams.toString(), hash: location.hash },
+          { replace: true },
+        )
+      }
       onAuthenticated(session.token)
     } catch (e) {
-      onError(e instanceof Error ? e.message : 'passkey authentication failed')
+      onError(
+        e instanceof Error && e.name === 'NotAllowedError'
+          ? showRegistration
+            ? 'Passkey registration was cancelled or timed out. Try again on this device.'
+            : 'No passkey was selected. Try again, or link this device from a browser where you are already signed in.'
+          : e instanceof Error
+            ? e.message
+            : 'Passkey authentication failed. Please try again.',
+      )
     } finally {
       setBusy(false)
     }
@@ -39,6 +61,11 @@ export function AuthGate({
   return (
     <main className="auth-shell">
       <h1>Veduta</h1>
+      {onCancel && (
+        <button type="button" disabled={busy} onClick={onCancel}>
+          Keep my current access
+        </button>
+      )}
       {error && (
         <p className="error" role="alert">
           {error}
@@ -51,7 +78,7 @@ export function AuthGate({
           value={deviceName}
           onChange={(e) => setDeviceName(e.target.value)}
         />
-        {bootstrapRequired && (
+        {showRegistration && (
           <>
             <label htmlFor="one-time-code">One-time code</label>
             <input
@@ -61,34 +88,23 @@ export function AuthGate({
             />
           </>
         )}
-        {bootstrapRequired && (
+        {showRegistration && (
           <button
             type="button"
             disabled={busy}
             onClick={() =>
-              run(async () => {
-                const session = await registerPasskey({
+              run(() =>
+                registerPasskey({
                   oneTimeCode,
                   deviceName: deviceName.trim(),
-                })
-                const searchParams = new URLSearchParams(location.search)
-                searchParams.delete('code')
-                navigate(
-                  {
-                    pathname: location.pathname,
-                    search: searchParams.toString(),
-                    hash: location.hash,
-                  },
-                  { replace: true },
-                )
-                return session
-              })
+                }),
+              )
             }
           >
             Register passkey
           </button>
         )}
-        {passkeyRegistered && (
+        {passkeyRegistered && !showRegistration && (
           <button
             type="button"
             disabled={busy}
@@ -96,6 +112,18 @@ export function AuthGate({
           >
             Sign in with passkey
           </button>
+        )}
+        {passkeyRegistered && (
+          <>
+            <p>
+              To add a phone or another computer, open Connections → Devices on a browser where you
+              are already signed in. Choose Link a device and scan the QR code here to create a
+              passkey for this device.
+            </p>
+            <button type="button" disabled={busy} onClick={() => setPairing(!pairing)}>
+              {pairing ? 'Use an existing passkey' : 'Enter a device linking code'}
+            </button>
+          </>
         )}
       </div>
     </main>

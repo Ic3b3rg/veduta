@@ -43,6 +43,8 @@ export interface RenderContext {
   state: JsonObject
   /** Design-system theme. Defaults to light. */
   theme?: CatalogTheme
+  /** Fixed presentation time for deterministic references; absent uses the live clock. */
+  now?: number
   /** Dispatch a declared action. The renderer never decides fast vs agent — the Atom's declaration does (ADR-0003). */
   dispatch: (
     node: KnownRenderableAtomNode,
@@ -58,6 +60,7 @@ export interface RenderContext {
   /** Transient visual feedback supplied by the Surface host; never persisted in the Surface. */
   motion?: {
     update?: SurfaceUpdateFeedback
+    reduced?: boolean
   }
 }
 

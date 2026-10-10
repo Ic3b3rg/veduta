@@ -393,6 +393,22 @@ describe('route', () => {
     expect(() => router.route({ purpose: 'chat-turn', origin: 'user' })).toThrow(
       NoAvailableModelError,
     )
+    expect(() => router.route({ purpose: 'chat-turn', origin: 'user' })).toThrow(/API credential/)
+  })
+
+  it('offers setup when no route exists, without diagnosing an absent API secret', () => {
+    const router = testRouter({ config: { ...testConfig, tiers: { triage: [], reasoning: [] } } })
+    expect(() => router.route({ purpose: 'chat-turn', origin: 'user' })).toThrow(
+      'No model connection is available. Open Model connections to connect and select a model.',
+    )
+  })
+
+  it('preserves the selected connection recovery reason when no route exists', () => {
+    const message = 'ChatGPT authorization was rejected. Open Model connections to reconnect.'
+    const router = testRouter({
+      config: { ...testConfig, tiers: { triage: [], reasoning: [] }, unavailableReason: message },
+    })
+    expect(() => router.route({ purpose: 'chat-turn', origin: 'user' })).toThrow(message)
   })
 })
 

@@ -11,6 +11,15 @@ function expectedKeysFor(theme: CatalogTheme): string[] {
     ...Object.keys(catalogTokens[theme].color).map((key) => `--catalog-color-${kebabCase(key)}`),
     ...Object.keys(catalogTokens[theme].space).map((key) => `--catalog-space-${key}`),
     ...Object.keys(catalogTokens[theme].radius).map((key) => `--catalog-radius-${key}`),
+    '--catalog-control-height',
+    '--catalog-control-touch-target',
+    '--catalog-control-focus-width',
+    '--catalog-control-focus-offset',
+    '--catalog-font-xs',
+    '--catalog-font-sm',
+    '--catalog-font-md',
+    '--catalog-font-lg',
+    '--catalog-font-xl',
     '--catalog-font-family',
     '--catalog-motion-fast',
     '--catalog-motion-entrance-duration',
@@ -45,6 +54,11 @@ describe('cssVariablesFor', () => {
         expect(variables[`--catalog-color-${kebabCase(key)}`]).toBe(value)
       }
       expect(variables['--catalog-font-family']).toBe(catalogTokens[theme].font.family)
+      expect(variables['--catalog-control-height']).toBe('32px')
+      expect(variables['--catalog-control-touch-target']).toBe('44px')
+      expect(variables['--catalog-control-focus-width']).toBe('2px')
+      expect(variables['--catalog-control-focus-offset']).toBe('2px')
+      expect(variables['--catalog-font-md']).toBe(`${catalogTokens[theme].font.md}px`)
       expect(variables['--catalog-motion-fast']).toBe('120ms ease')
       expect(variables['--catalog-motion-entrance-duration']).toBe('240ms')
       expect(variables['--catalog-motion-entrance-easing']).toBe('cubic-bezier(0.22, 1, 0.36, 1)')

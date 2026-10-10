@@ -1,5 +1,6 @@
 import type { CatalogTheme } from '@veduta/catalog'
 import { useSyncExternalStore } from 'react'
+import { usePresentation } from './presentation-context.ts'
 
 const DARK_SCHEME_QUERY = '(prefers-color-scheme: dark)'
 
@@ -15,5 +16,6 @@ export function subscribeToThemeChanges(onChange: () => void): () => void {
 
 /** The catalog theme matching the device color scheme, updated live. */
 export function useCatalogTheme(): CatalogTheme {
-  return useSyncExternalStore(subscribeToThemeChanges, preferredTheme)
+  const preferred = useSyncExternalStore(subscribeToThemeChanges, preferredTheme)
+  return usePresentation().theme ?? preferred
 }

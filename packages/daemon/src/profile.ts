@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { resolveVpsAccess } from './vps-access.ts'
 
 /**
  * The Local VPS profile's default base directory (issue 023): deliberately
@@ -44,9 +45,9 @@ export type ResolvedProfile =
  * rejected as ambiguous (a public domain implies the `vps` profile, which
  * the Local VPS profile's whole point is to stand in for), as is any
  * `VEDUTA_PROFILE` value outside `loopback` / `local-vps` / `vps`.
- * `VEDUTA_PROFILE=vps` without `VEDUTA_PUBLIC_DOMAIN` is rejected too: an
- * explicit request for the authenticated profile must never silently fall
- * through to loopback's unauthenticated boot.
+ * VPS access is validated separately: Public requires a domain, while Tunnel
+ * uses a stable localhost origin. An invalid authenticated configuration must
+ * never silently fall through to loopback's unauthenticated boot.
  */
 export function resolveProfile(
   env: NodeJS.ProcessEnv,
@@ -54,6 +55,11 @@ export function resolveProfile(
 ): ResolvedProfile {
   const requested = env['VEDUTA_PROFILE']
   const domain = env['VEDUTA_PUBLIC_DOMAIN']
+  const access = env['VEDUTA_ACCESS']
+
+  if (access !== undefined && requested !== undefined && requested !== 'vps') {
+    throw new Error(`VEDUTA_ACCESS is incompatible with VEDUTA_PROFILE=${requested}`)
+  }
 
   if (
     requested !== undefined &&
@@ -88,10 +94,8 @@ export function resolveProfile(
 
   if (requested === 'loopback') return { profile: 'loopback' }
 
-  if (requested === 'vps') {
-    if (!domain) {
-      throw new Error('VEDUTA_PROFILE=vps requires VEDUTA_PUBLIC_DOMAIN')
-    }
+  if (requested === 'vps' || access !== undefined) {
+    resolveVpsAccess(env)
     return { profile: 'vps' }
   }
 

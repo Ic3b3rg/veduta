@@ -164,7 +164,43 @@ unrecognized prose; the persistent migration and importer transition remain sepa
 [issue 100](https://github.com/Ic3b3rg/veduta/issues/100),
 [issue 101](https://github.com/Ic3b3rg/veduta/issues/101)).
 
-`spaces/<name>/`: `FACTS.md` (bi-temporal facts in three states — active, `## Dormant`, `## Superseded`), append-only Event log (recent portion in context, long tail via hybrid search with a time-aware index), `INSTRUCTIONS.md`, Surfaces and Automations. Global: `USER.md`, `SOUL.md`. Files are the truth; the SQLite FTS5 index is disposable and rebuildable with one command, and every hit dereferences the original record ([ADR-0006](docs/adr/0006-file-based-memory.md), [ADR-0011](docs/adr/0011-disposable-hybrid-index.md)). The nightly **Reflection** is the offline compaction pass: it distills the day's log, consolidates FACTS through the Curator, and demotes still-valid facts to dormant to keep the injected set bounded — a visible Automation, never a silent cleanup. Lifecycle: the Agent _proposes_ creation (one-tap confirmation), granularity = life area (goals are Surfaces, not Spaces), archival never deletion. A Space's memory is visible and editable as a Surface ("what I know about you here").
+`spaces/<name>/`: `FACTS.md` (bi-temporal facts in three states — active, `## Dormant`, `## Superseded`), append-only Event log (recent portion in context, long tail via hybrid search with a time-aware index), `INSTRUCTIONS.md`, Surfaces and Automations. Global: `USER.md`, `SOUL.md`. Files are the truth; the SQLite FTS5 index is disposable and rebuildable with one command, and every hit dereferences the original record ([ADR-0006](docs/adr/0006-file-based-memory.md), [ADR-0011](docs/adr/0011-disposable-hybrid-index.md)). The nightly **Reflection** is the offline compaction pass: it distills the day's log, consolidates FACTS through the Curator, and demotes still-valid facts to dormant to keep the injected set bounded — a visible Automation, never a silent cleanup. Lifecycle: the Agent _proposes_ creation (one-tap confirmation), granularity = life area (goals are Surfaces, not Spaces), archival never deletion. Space memory is visible and editable in Settings → Spaces & memory; Nightly Reflection and Automations are managed in Settings → Automations, keeping their original Space ownership.
+
+Focused/global Chat and declared Actions share one owning-domain policy: durable Space purpose,
+user role and background use FACTS; visible content uses Surface authoring; character changes keep
+their separate authorization. A clarification replaces an abandoned interpretation. Projected
+management Surfaces use the owning domain tools; an authorable-only inventory is not a complete UI
+inventory. FACTS corrections go through the Curator, never through Surface readers or patches. Committed FACTS
+writes notify authenticated clients to refetch their canonical Space snapshots; these notifications
+carry no Surface mutation or cursor and reconnect recovers missed updates. Chat preserves failed
+correction feedback even when an unrelated fact is saved in the same turn. One shared write-outcome
+projection composes canonical FACTS and Surface confirmations alongside Pending decisions, so one
+operation cannot hide another. It never substitutes model prose for a confirmed write and only
+describes current facts as current; see [issue 230](https://github.com/Ic3b3rg/veduta/issues/230).
+
+Settings and Chat call the same owning-domain mutations: FACTS use the Curator, Automation edits
+use the Scheduler, and archival/restoration and saved columns use the Spaces engine. Instructions
+and Automation settings reject stale edits. Every committed edit records a Space Event. Archival
+is recoverable and never deletes memory, Surfaces, or Chat history. The Gateway broadcasts a
+`space.changed` invalidation after lifecycle or presentation changes; snapshot reload and reconnect
+restore the canonical state. Space columns (`auto`, `one-column`, `two-columns`) persist across
+devices while narrow screens use one column and full-presentation Surfaces span the row.
+
+Space metadata/instructions, Automation settings, and Reflection settings persist an approved
+mutation intent before changing their owning state. If Event delivery is interrupted, startup,
+Settings reads, and affected-Space reasoning recover the same Event identity or report pending
+recovery. Observers run only after delivery. A bounded receipt per Space and owner acknowledges
+the exact recovered request while unrelated stale edits still fail their concurrency checks.
+The shared recovery mechanism does not replace the Curator, Scheduler, or Spaces engine.
+
+The Gateway decorates only canonical management projections with validated `management` metadata.
+The PWA moves these out of ordinary Space content without interpreting individual Surface ids or
+titles. Agent-supplied metadata is stripped; a user Surface with the same title remains visible.
+The original projections stay available to domain readers and the Reflection report uses the
+existing Atom catalog inside Settings. System retains its protected lifecycle and content;
+its saved columns are an explicit harmless presentation operation
+([issue 234](https://github.com/Ic3b3rg/veduta/issues/234),
+[issue 235](https://github.com/Ic3b3rg/veduta/issues/235)).
 
 ### 3.4 Surface engine
 

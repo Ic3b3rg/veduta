@@ -18,7 +18,7 @@ afterEach(() => {
   vi.resetAllMocks()
 })
 
-function AuthGateHarness() {
+function AuthGateHarness({ bootstrapRequired = true }: { bootstrapRequired?: boolean }) {
   const [authenticated, setAuthenticated] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -26,8 +26,8 @@ function AuthGateHarness() {
 
   return (
     <AuthGate
-      bootstrapRequired
-      passkeyRegistered={false}
+      bootstrapRequired={bootstrapRequired}
+      passkeyRegistered={!bootstrapRequired}
       error={error}
       onAuthenticated={() => setAuthenticated(true)}
       onError={setError}
@@ -35,15 +35,37 @@ function AuthGateHarness() {
   )
 }
 
-function renderAuthGate() {
+function renderAuthGate(bootstrapRequired = true) {
   render(
     <BrowserRouter>
-      <AuthGateHarness />
+      <AuthGateHarness bootstrapRequired={bootstrapRequired} />
     </BrowserRouter>,
   )
 }
 
 describe('AuthGate first-boot code', () => {
+  it('offers registration on a pairing link after another device registered the first passkey', async () => {
+    window.history.replaceState({}, '', '/setup?code=phone-pairing-code')
+    vi.mocked(registerPasskey).mockResolvedValue({
+      token: 'vdt_tok_phone',
+      device: {
+        id: 'dev-phone',
+        name: 'Phone',
+        credentialId: 'credential-phone',
+        createdAt: '2026-10-08T00:00:00.000Z',
+      },
+    })
+    renderAuthGate(false)
+    fireEvent.change(screen.getByLabelText('Device name'), { target: { value: 'Phone' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Register passkey' }))
+    expect(await screen.findByText('Authenticated')).toBeDefined()
+    expect(registerPasskey).toHaveBeenCalledWith({
+      oneTimeCode: 'phone-pairing-code',
+      deviceName: 'Phone',
+    })
+    expect(window.location.search).toBe('')
+  })
+
   it('keeps the setup code in the URL after passkey registration fails', async () => {
     window.history.replaceState({}, '', '/setup?code=first-boot-code')
     vi.mocked(registerPasskey).mockRejectedValue(

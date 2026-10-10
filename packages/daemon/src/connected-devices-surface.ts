@@ -42,6 +42,11 @@ export function connectedDevicesSurface(devices: AuthDevice[], lastSuccessfulAt:
           binding: 'devices',
           props: { columns: ['device', 'linked'] },
         },
+        {
+          id: 'manage-access',
+          type: 'Markdown',
+          props: { text: '[Link a device or revoke access](/app/connections?section=devices)' },
+        },
       ],
     },
     state: {
@@ -122,6 +127,15 @@ export class ConnectedDevicesSurfaceManager {
       return true
     }
     this.requireCanonicalSurface(existing)
+    if (JSON.stringify(existing.tree) !== JSON.stringify(next.tree)) {
+      const version = this.store.getSurfaceVersion(CONNECTED_DEVICES_SURFACE_ID)
+      if (version)
+        this.store.patchTree(
+          CONNECTED_DEVICES_SURFACE_ID,
+          [{ target: 'tree', op: 'replace', path: '', value: next.tree }],
+          { expectedTreeVersion: version.treeVersion, updatedBy: 'job' },
+        )
+    }
     const operations = statePatchOperations(existing.state, next.state)
     if (operations.length > 0) {
       this.store.patchState(CONNECTED_DEVICES_SURFACE_ID, operations, { updatedBy: 'job' })

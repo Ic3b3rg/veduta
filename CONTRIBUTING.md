@@ -21,6 +21,10 @@ pnpm dev        # Gateway on loopback + PWA with hot reload
 
 ## Ground rules
 
+UI contributions follow [the visual-language contract](docs/VISUAL-LANGUAGE.md). Review the
+deterministic `/showcase/reference` inventory at phone and desktop widths, including failure and
+reduced-motion states, before changing shared appearance.
+
 - **English only** in the repo: docs, code, comments, commit messages, issues.
 - **Respect the glossary** ([CONTEXT.md](CONTEXT.md)) and the **anti-requirements** ([ARCHITECTURE.md §7](ARCHITECTURE.md)): no agent hierarchies, no free-form generated HTML, no knowledge graphs, and no provider-native rich projections in messenger Bridges under the current architecture. Any future Bridge projection requires separate research and an accepted ADR first.
 - **One issue, one PR**, small and reviewable. Every PR states which acceptance criteria it satisfies.

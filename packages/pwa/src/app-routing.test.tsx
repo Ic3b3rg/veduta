@@ -19,12 +19,17 @@ import { AUTH_TOKEN_KEY } from './pwa-storage.ts'
 
 vi.mock('./api.ts', async (importOriginal) => {
   const { createAppApiMock } = await import('./app-test-support.ts')
-  return createAppApiMock(await importOriginal<typeof ApiModule>())
+  return {
+    ...createAppApiMock(await importOriginal<typeof ApiModule>()),
+    loginWithPasskey: vi.fn(),
+    confirmDomainStep: vi.fn(),
+  }
 })
 
 import { App } from './app.tsx'
 import {
   connectGateway,
+  confirmDomainStep,
   fetchAutomationOutcomeNotifications,
   fetchAuthStatus,
   fetchChatTimeline,
@@ -33,6 +38,7 @@ import {
   fetchSpaces,
   finishOnboarding,
   invokeSurfaceAction,
+  loginWithPasskey,
   openAutomationOutcomeNotification,
   type SpaceWithSurfaces,
 } from './api.ts'
@@ -181,6 +187,62 @@ async function expectFocusedHealthRoute(path: string, surfaceSelected: boolean):
 }
 
 describe('App routing', () => {
+  it('leaves a linking URL after choosing to sign in with an existing passkey', async () => {
+    window.history.replaceState({}, '', '/setup?code=additional-passkey')
+    mockReadyApp()
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus())
+    vi.mocked(loginWithPasskey).mockResolvedValue({
+      token: 'vdt_existing_session',
+      device: {
+        id: 'existing',
+        name: 'Computer',
+        credentialId: 'existing-key',
+        createdAt: '2026-10-08T00:00:00.000Z',
+      },
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Use an existing passkey' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in with passkey' }))
+    expect(await screen.findByRole('main', { name: 'Home' })).toBeDefined()
+    expect(location.search).toBe('')
+  })
+  it('allows device linking during onboarding without releasing the Home gate', async () => {
+    window.history.replaceState({}, '', '/app/connections?section=devices')
+    localStorage.setItem(AUTH_TOKEN_KEY, 'onboarding-token')
+    mockReadyApp()
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus())
+    vi.mocked(fetchOnboardingStatus).mockResolvedValue(
+      fromPartial<OnboardingStatus>({
+        required: true,
+        completed: false,
+        profile: 'vps',
+        currentStep: 'finish',
+        steps: [{ id: 'finish', status: 'pending' }],
+      }),
+    )
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Devices' })).toBeDefined()
+    expect(screen.queryByRole('main', { name: 'Home' })).toBeNull()
+    fireEvent.click(screen.getByRole('link', { name: 'Back to Veduta' }))
+    expect(await screen.findByRole('heading', { name: 'Set up Veduta' })).toBeDefined()
+    expect(screen.getByRole('link', { name: 'Link another device' }).getAttribute('href')).toBe(
+      '/app/connections?section=devices',
+    )
+  })
+
+  it('offers the linking ceremony to an authenticated browser and preserves its session on cancel', async () => {
+    window.history.replaceState({}, '', '/setup?code=additional-passkey')
+    localStorage.setItem(AUTH_TOKEN_KEY, 'existing-token')
+    mockReadyApp()
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus())
+    render(<App />)
+    expect(await screen.findByRole('button', { name: 'Register passkey' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Keep my current access' }))
+    expect(await screen.findByRole('main', { name: 'Home' })).toBeDefined()
+    expect(localStorage.getItem(AUTH_TOKEN_KEY)).toBe('existing-token')
+    expect(location.search).toBe('')
+  })
+
   it('navigates from setup to Home when onboarding completes', async () => {
     window.history.replaceState({}, '', '/setup')
     localStorage.setItem(AUTH_TOKEN_KEY, 'onboarding-token')
@@ -207,6 +269,89 @@ describe('App routing', () => {
 
     await waitFor(() => expect(location.pathname).toBe('/'))
     expect(await screen.findByLabelText('Spaces')).toBeDefined()
+  })
+
+  it.each(['status', 'error'] as const)(
+    'keeps confirmed onboarding progress when an earlier reconnect read returns a late %s',
+    async (outcome) => {
+      localStorage.setItem(AUTH_TOKEN_KEY, 'onboarding-token')
+      mockReadyApp()
+      vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus())
+      vi.mocked(fetchModelConnections).mockResolvedValue({
+        ...modelConnectionsSnapshot(),
+        mockControlAvailable: true,
+      })
+      const initial = fromPartial<OnboardingStatus>({
+        profile: 'local-vps',
+        required: true,
+        completed: false,
+        currentStep: 'domain',
+        domain: { tlsActive: false },
+        steps: [
+          { id: 'domain', status: 'pending' },
+          { id: 'model-connection', status: 'pending' },
+        ],
+      })
+      const confirmed: OnboardingStatus = {
+        ...initial,
+        currentStep: 'model-connection',
+        steps: [
+          { id: 'domain', status: 'completed' },
+          { id: 'model-connection', status: 'pending' },
+        ],
+      }
+      let resolveStatus!: (status: OnboardingStatus) => void
+      let rejectStatus!: (error: Error) => void
+      const delayed = new Promise<OnboardingStatus>((resolve, reject) => {
+        resolveStatus = resolve
+        rejectStatus = reject
+      })
+      vi.mocked(fetchOnboardingStatus).mockResolvedValueOnce(initial).mockReturnValueOnce(delayed)
+      vi.mocked(confirmDomainStep).mockResolvedValue(confirmed)
+      render(<App />)
+      expect(await screen.findByText('Step 1 of 2: Browser access')).toBeDefined()
+      await waitFor(() => expect(connectGateway).toHaveBeenCalled())
+      act(() => vi.mocked(connectGateway).mock.calls[0]![0].onHello(0, 'onboarding-client'))
+      await waitFor(() => expect(fetchOnboardingStatus).toHaveBeenCalledTimes(2))
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+      expect(await screen.findByLabelText(/built-in mock provider/i)).toBeDefined()
+      await act(async () => {
+        if (outcome === 'status') resolveStatus(initial)
+        else rejectStatus(new Error('old status read failed'))
+      })
+      expect(screen.getByText('Step 2 of 2: Model connection')).toBeDefined()
+      expect(screen.getByLabelText(/built-in mock provider/i)).toBeDefined()
+      expect(screen.queryByRole('alert')).toBeNull()
+    },
+  )
+
+  it('keeps Home open when a pre-completion reconnect read returns after finishing onboarding', async () => {
+    localStorage.setItem(AUTH_TOKEN_KEY, 'onboarding-token')
+    mockReadyApp()
+    vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus())
+    const initial = fromPartial<OnboardingStatus>({
+      profile: 'vps',
+      required: true,
+      completed: false,
+      currentStep: 'finish',
+      steps: [{ id: 'finish', status: 'pending' }],
+    })
+    let resolveStatus!: (status: OnboardingStatus) => void
+    const delayed = new Promise<OnboardingStatus>((resolve) => {
+      resolveStatus = resolve
+    })
+    vi.mocked(fetchOnboardingStatus).mockResolvedValueOnce(initial).mockReturnValueOnce(delayed)
+    vi.mocked(finishOnboarding).mockResolvedValue({ restartRequired: false, restarting: false })
+    render(<App />)
+    expect(await screen.findByRole('button', { name: 'Finish' })).toBeDefined()
+    await waitFor(() => expect(connectGateway).toHaveBeenCalled())
+    act(() => vi.mocked(connectGateway).mock.calls[0]![0].onHello(0, 'onboarding-client'))
+    await waitFor(() => expect(fetchOnboardingStatus).toHaveBeenCalledTimes(2))
+    fireEvent.click(screen.getByRole('button', { name: 'Finish' }))
+    expect(await screen.findByRole('main', { name: 'Home' })).toBeDefined()
+    await act(async () => resolveStatus(initial))
+    expect(screen.getByRole('main', { name: 'Home' })).toBeDefined()
+    expect(screen.queryByRole('heading', { name: 'Set up Veduta' })).toBeNull()
   })
 
   it('redirects completed setup sessions to Home', async () => {

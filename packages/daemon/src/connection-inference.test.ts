@@ -26,6 +26,7 @@ function fakeRegistry(
     noteCallFailure: async (connectionId) => {
       noteCallFailureCalls.push(connectionId)
     },
+    noteCallSuccess: async () => {},
     ...overrides,
   }
   return { registry, ensureFreshCalls, noteCallFailureCalls }

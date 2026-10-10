@@ -5,6 +5,45 @@ import { AtomNodeSchema, SurfaceSchema } from './index.ts'
 const freshness = { updatedAt: '2026-10-01T08:00:00.000Z', updatedBy: 'agent' }
 
 describe('content and data Atom acceptance', () => {
+  it('accepts explicit value formats only on supported values and declared Table columns', () => {
+    const table = {
+      id: 'dates',
+      type: 'Table',
+      props: {
+        columns: ['recordedAt'],
+        rows: [{ recordedAt: '2026-10-09' }],
+        columnFormats: { recordedAt: 'date' },
+      },
+    }
+    expect(AtomNodeSchema.safeParse(table).success).toBe(true)
+    expect(
+      AtomNodeSchema.safeParse({
+        ...table,
+        props: { ...table.props, columnFormats: { ignoredColumn: 'date' } },
+      }).success,
+    ).toBe(false)
+    expect(
+      AtomNodeSchema.safeParse({
+        id: 'prose',
+        type: 'Markdown',
+        props: {
+          text: '2026-10-09',
+          valueFormat: 'date',
+        },
+      }).success,
+    ).toBe(false)
+    expect(
+      AtomNodeSchema.safeParse({
+        id: 'text',
+        type: 'Text',
+        props: {
+          text: '2026-10-09',
+          valueFormat: 'unknown',
+        },
+      }).success,
+    ).toBe(false)
+  })
+
   it('rejects an unsupported prop or a discarded child on every content Atom', () => {
     const candidates = [
       { type: 'Title', props: { text: 'Plan' } },

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  setup)
+    shift
+    exec bash /usr/local/lib/veduta/install.sh --setup "$@"
+    ;;
+  access)
+    shift
+    exec bash /usr/local/lib/veduta/install.sh --manage-access "$@"
+    ;;
+  *)
+    printf 'Usage: sudo veduta setup   (recover your setup link)\n       sudo veduta access  (repair or change browser access)\n' >&2
+    exit 64
+    ;;
+esac

@@ -3,6 +3,8 @@ import type { AtomNode } from './atom.ts'
 import { AutomationRunHistorySchema } from './automation-outcome.ts'
 import type { JsonObject } from './json.ts'
 import { validateTypedControlBindingWrite } from './control-atoms.ts'
+import { ValueFormatSchema } from './value-presentation.ts'
+import { AutomationScheduleSchema } from './automation-schedule.ts'
 
 const ShortText = z.string().trim().min(1).max(240)
 const ContentText = z.string().max(64_000)
@@ -22,12 +24,13 @@ export const MetricValueSchema = z.union([z.string(), z.number().finite(), z.nul
 export const ProgressValueSchema = z.number().finite().min(0).max(100).nullable()
 
 const TextProps = z.object({ text: ContentText.optional(), emptyText: ShortText.optional() })
-export const TextAtomPropsSchema = TextProps.strict()
+const FormattedTextProps = TextProps.extend({ valueFormat: ValueFormatSchema.optional() })
+export const TextAtomPropsSchema = FormattedTextProps.strict()
 export const TitleAtomPropsSchema = TextProps.extend({
   level: z.number().int().min(1).max(6).optional(),
 }).strict()
-export const CaptionAtomPropsSchema = TextProps.strict()
-export const LabelAtomPropsSchema = TextProps.strict()
+export const CaptionAtomPropsSchema = FormattedTextProps.strict()
+export const LabelAtomPropsSchema = FormattedTextProps.strict()
 export const MarkdownAtomPropsSchema = TextProps.strict()
 export const BadgeAtomPropsSchema = z
   .object({ text: ShortText, tone: AtomToneSchema.optional() })
@@ -48,6 +51,7 @@ export const StatAtomPropsSchema = z
   .object({
     label: ShortText,
     value: MetricValueSchema.optional(),
+    valueFormat: ValueFormatSchema.optional(),
     unit: ShortText.optional(),
     trend: ContentText.optional(),
     detail: ContentText.optional(),
@@ -72,14 +76,25 @@ export const TableAtomPropsSchema = z
         'Table columns must be unique',
       ),
     rows: TableRowsSchema.optional(),
+    columnFormats: z.record(ValueFormatSchema).optional(),
     caption: ShortText.optional(),
     emptyText: ShortText.optional(),
   })
   .strict()
+  .superRefine((props, ctx) => {
+    for (const column of Object.keys(props.columnFormats ?? {}))
+      if (!props.columns.includes(column))
+        ctx.addIssue({
+          code: 'custom',
+          path: ['columnFormats', column],
+          message: 'A Table format must name a declared column',
+        })
+  })
 export const AutomationAtomPropsSchema = z
   .object({
     label: ShortText,
     schedule: ShortText,
+    scheduleDetails: AutomationScheduleSchema.optional(),
     enabled: z.boolean().optional(),
     history: AutomationRunHistorySchema.optional(),
     historyBinding: z.string().min(1).max(160).optional(),

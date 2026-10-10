@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { catalogCssText } from '@veduta/catalog'
+import { catalogCssText, precisionToolCssText } from '@veduta/catalog'
 import { installCatalogTokens } from './catalog-tokens.ts'
 
 // The drift gate in app-css-tokens.test.ts only proves the stylesheet text
@@ -12,7 +12,7 @@ describe('installCatalogTokens', () => {
 
     const styles = document.head.querySelectorAll('style[data-catalog-tokens]')
     expect(styles).toHaveLength(1)
-    expect(styles[0]?.textContent).toBe(catalogCssText())
+    expect(styles[0]?.textContent).toBe(catalogCssText() + precisionToolCssText())
   })
 
   it('is idempotent: a second run reuses the element instead of stacking', () => {

@@ -27,6 +27,12 @@ export interface CatalogTokens {
     sm: number
     md: number
   }
+  control: {
+    height: number
+    touchTarget: number
+    focusWidth: number
+    focusOffset: number
+  }
   font: {
     family: string
     xs: number
@@ -52,6 +58,13 @@ const motionTokens: CatalogTokens['motion'] = {
   updateFeedbackDurationMs: 720,
 }
 
+const controlTokens: CatalogTokens['control'] = {
+  height: 32,
+  touchTarget: 44,
+  focusWidth: 2,
+  focusOffset: 2,
+}
+
 export const catalogTokens: Record<CatalogTheme, CatalogTokens> = {
   light: {
     mode: 'light',
@@ -71,6 +84,7 @@ export const catalogTokens: Record<CatalogTheme, CatalogTokens> = {
     },
     space: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 },
     radius: { sm: 4, md: 8 },
+    control: controlTokens,
     font: {
       family:
         'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -100,6 +114,7 @@ export const catalogTokens: Record<CatalogTheme, CatalogTokens> = {
     },
     space: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 },
     radius: { sm: 4, md: 8 },
+    control: controlTokens,
     font: {
       family:
         'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',

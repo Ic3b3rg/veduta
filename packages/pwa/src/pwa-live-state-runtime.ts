@@ -18,6 +18,7 @@ import {
   type PendingDecision,
   type RenderableSurface,
   type SurfaceMoveDirection,
+  type SpaceSettingsCommand,
 } from '@veduta/protocol'
 import * as defaultApi from './api.ts'
 import type { ActionConfirmations, ActionStatuses } from '@veduta/catalog'
@@ -28,6 +29,10 @@ import type { HomeSpacesLoadState } from './home-space-grid.tsx'
 import { LiveSurfaceProjection } from './live-surface-projection.ts'
 import { LiveDecisionProjection } from './live-decision-projection.ts'
 import { LiveNotificationProjection } from './live-notification-projection.ts'
+import {
+  LiveSpaceSettingsProjection,
+  type LiveSpaceSettingsSnapshot,
+} from './live-space-settings-projection.ts'
 import { LiveActionCommands } from './live-action-commands.ts'
 import { LiveAgentActionCommands } from './live-agent-action-commands.ts'
 import { appendAuthoritativeChatEntry } from './pending-decision-state.ts'
@@ -76,6 +81,7 @@ export interface PwaLiveStateSnapshot {
   readonly surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback>
   readonly presentationEvents: LivePresentationEvent[]
   readonly connectionGeneration: number
+  readonly spaceSettings: LiveSpaceSettingsSnapshot
 }
 
 type RuntimeApi = Pick<
@@ -93,6 +99,10 @@ type RuntimeApi = Pick<
   | 'pinSurface'
   | 'moveSurface'
   | 'invokeSurfaceAction'
+  | 'fetchSpaceSettingsList'
+  | 'fetchSpaceSettings'
+  | 'changeSpaceSettings'
+  | 'changeReflectionSettings'
 >
 
 export interface PwaLiveStateRuntimeOptions {
@@ -107,6 +117,7 @@ export class PwaLiveStateRuntime {
   private readonly surfaces: LiveSurfaceProjection
   private readonly decisions: LiveDecisionProjection
   private readonly notifications: LiveNotificationProjection
+  private readonly settings: LiveSpaceSettingsProjection
   private readonly actions: LiveActionCommands
   private readonly agentActions: LiveAgentActionCommands
   private readonly listeners = new Set<() => void>()
@@ -134,6 +145,7 @@ export class PwaLiveStateRuntime {
   private queuedChat: QueuedChat[]
   private refetch: Promise<void> | undefined
   private refetchGeneration = 0
+  private refetchRequested = false
   private eventBuffer: SurfaceStreamEvent[] = []
   private surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback> = {}
   private feedbackSequence = 0
@@ -161,6 +173,15 @@ export class PwaLiveStateRuntime {
       token: () => this.token,
       publish: () => this.publish(),
       failed: (error) => this.failed(error, 'Automation notification failed'),
+    })
+    this.settings = new LiveSpaceSettingsProjection({
+      api: this.api,
+      token: () => this.token,
+      active: () => this.started,
+      publish: () => this.publish(),
+      authenticationFailure: (error) => {
+        if (error instanceof defaultApi.ApiResponseError && error.status === 401) this.failed(error)
+      },
     })
     this.actions = new LiveActionCommands({
       storage: this.storage,
@@ -210,10 +231,16 @@ export class PwaLiveStateRuntime {
     this.actions.start()
     this.agentActions.start()
     const epoch = ++this.epoch
+    await this.boot(epoch)
+  }
+
+  private async boot(epoch: number): Promise<void> {
     try {
       const status = await this.api.fetchAuthStatus()
       if (!this.active(epoch)) return
       this.authStatus = status
+      this.error = null
+      this.reconnectDelay = 1000
       this.publish()
       if (status.mode === 'production' && !this.token) return
       await this.refreshSpaces()
@@ -229,6 +256,13 @@ export class PwaLiveStateRuntime {
             ? 'Offline: showing cached Home'
             : undefined,
       )
+      if (this.active(epoch) && this.reconnectTimer === undefined) {
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = undefined
+          if (this.active(epoch)) void this.boot(epoch)
+        }, this.reconnectDelay)
+        this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000)
+      }
     }
   }
 
@@ -239,6 +273,7 @@ export class PwaLiveStateRuntime {
     this.connectionGeneration += 1
     this.refetchGeneration += 1
     this.refetch = undefined
+    this.refetchRequested = false
     this.eventBuffer = []
     this.actions.stop()
     this.agentActions.stop()
@@ -251,6 +286,7 @@ export class PwaLiveStateRuntime {
     this.online = false
     this.decisions.cancel()
     this.notifications.beginConnection()
+    this.settings.cancel()
     gateway?.close()
     this.publish()
   }
@@ -261,6 +297,7 @@ export class PwaLiveStateRuntime {
     this.clientId = undefined
     this.error = null
     this.chatTimeline.clear()
+    this.settings.clear()
     this.transientChatEntries = []
     this.refreshChatView()
     if (token) this.storage.setItem(AUTH_TOKEN_KEY, token)
@@ -326,6 +363,7 @@ export class PwaLiveStateRuntime {
       surfaceUpdateFeedbacks: this.surfaceUpdateFeedbacks,
       presentationEvents: this.presentationEvents,
       connectionGeneration: this.connectionGeneration,
+      spaceSettings: this.settings.snapshot(),
     })
     for (const listener of this.listeners) listener()
   }
@@ -415,6 +453,7 @@ export class PwaLiveStateRuntime {
       this.turns = new Map()
       this.decisions.cancel()
       this.notifications.beginConnection()
+      this.settings.cancel()
       this.publish()
       if (this.reconnectTimer !== undefined) return
       this.reconnectTimer = setTimeout(() => {
@@ -450,6 +489,8 @@ export class PwaLiveStateRuntime {
       onApprovalCard: receive,
       onPresence: receive,
       onSpaceAttention: receive,
+      onSpaceFactsChanged: receive,
+      onSpaceChanged: receive,
       onError: (message) => {
         if (!this.active(epoch) || generation !== this.connectionGeneration) return
         if (
@@ -492,6 +533,7 @@ export class PwaLiveStateRuntime {
         void this.refreshSpaces()
         void this.decisions.refresh()
         void this.notifications.refresh()
+        this.settings.refresh()
         void this.loadLatestChat()
         this.flushChat()
         void this.actions.flush()
@@ -552,6 +594,12 @@ export class PwaLiveStateRuntime {
       case 'automation-outcome-notification.lifecycle':
         this.notifications.accept(frame)
         break
+      case 'space.facts-changed':
+      case 'space.changed':
+        this.settings.invalidate(frame.spaceId)
+        this.refetchRequested = true
+        void this.refreshSpaces()
+        break
       case 'space.attention':
         this.surfaces.attention(frame)
         this.saveSurfaces()
@@ -581,6 +629,7 @@ export class PwaLiveStateRuntime {
   }
 
   private applySurfaceEvent(event: SurfaceStreamEvent): void {
+    this.settings.invalidate(event.event.spaceId)
     if (this.refetch !== undefined) {
       this.eventBuffer.push(event)
       return
@@ -610,6 +659,7 @@ export class PwaLiveStateRuntime {
   async refreshSpaces(): Promise<void> {
     if (!this.started) return
     if (this.refetch !== undefined) return this.refetch
+    this.refetchRequested = false
     const epoch = this.epoch
     const generation = ++this.refetchGeneration
     const refresh = async () => {
@@ -652,6 +702,7 @@ export class PwaLiveStateRuntime {
         if (this.active(epoch) && generation === this.refetchGeneration) {
           this.refetch = undefined
           this.publish()
+          if (this.refetchRequested) void this.refreshSpaces()
         }
       }
     }
@@ -920,6 +971,12 @@ export class PwaLiveStateRuntime {
 
   resolveDecision = (id: string, resolution: PendingDecisionResolution): Promise<void> =>
     this.decisions.resolve(id, resolution)
+  loadSpaceSettingsList = (): Promise<void> => this.settings.loadList()
+  loadSpaceSettings = (spaceId: string): Promise<void> => this.settings.load(spaceId)
+  changeSpaceSettings = (spaceId: string, command: SpaceSettingsCommand) =>
+    this.settings.change(spaceId, command)
+  changeReflectionSettings = (change: Parameters<typeof defaultApi.changeReflectionSettings>[0]) =>
+    this.settings.changeReflection(change)
   actOnNotification = (
     notification: AutomationOutcomeNotification,
     action: 'open' | 'dismiss',

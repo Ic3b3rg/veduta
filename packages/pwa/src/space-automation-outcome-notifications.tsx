@@ -1,5 +1,6 @@
 import type { AutomationOutcomeNotification } from '@veduta/protocol'
 import { useId } from 'react'
+import { Button } from '@veduta/catalog/ui/button'
 
 export function SpaceAutomationOutcomeNotifications({
   notifications,
@@ -45,22 +46,24 @@ export function SpaceAutomationOutcomeNotifications({
                 )}
               </div>
               <div className="automation-outcome-notification-actions">
-                <button
+                <Button
+                  className="recipe-control"
                   type="button"
                   disabled={pending}
                   aria-label={`Open Surface for ${notification.title}`}
                   onClick={() => void onOpen(notification)}
                 >
                   Open Surface
-                </button>
-                <button
+                </Button>
+                <Button
+                  className="recipe-control"
                   type="button"
                   disabled={pending}
                   aria-label={`Dismiss ${notification.title}`}
                   onClick={() => void onDismiss(notification)}
                 >
                   Dismiss
-                </button>
+                </Button>
               </div>
             </article>
           )

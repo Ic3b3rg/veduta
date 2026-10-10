@@ -23,6 +23,14 @@ export function cssVariablesFor(theme: CatalogTheme): Record<string, string> {
     variables[`--catalog-radius-${key}`] = `${value}px`
   }
 
+  for (const [key, value] of Object.entries(tokens.control)) {
+    variables[`--catalog-control-${kebabCase(key)}`] = `${value}px`
+  }
+
+  for (const [key, value] of Object.entries(tokens.font)) {
+    if (typeof value === 'number') variables[`--catalog-font-${key}`] = `${value}px`
+  }
+
   variables['--catalog-font-family'] = tokens.font.family
   variables['--catalog-motion-fast'] = tokens.motion.fast
   variables['--catalog-motion-entrance-duration'] = `${tokens.motion.entranceDurationMs}ms`

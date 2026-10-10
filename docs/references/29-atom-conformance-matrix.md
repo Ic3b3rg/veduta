@@ -78,3 +78,29 @@ visible fallback, known descendants, cache/reload/replay, and refusal of malform
 The combined [`local-vps.spec.ts`](../../packages/e2e/tests/local-vps.spec.ts) journey checks
 editable Form submit/retry, complete gym content, the same 74 kg record in history/Stat/Chart,
 full presentation, reload, and atomic invalid authoring without false Chat success.
+
+## Date and schedule presentation (issue #233)
+
+Chart x-values, Table cells and Stat values recognize complete ISO calendar dates and zoned ISO
+timestamps by default, including existing saved records. `xFormat`, `columnFormats`, and
+`valueFormat` respectively may select `text`, `date`, or `datetime`. Text, Caption and Label accept
+`valueFormat` explicitly and remain literal by default; prose, titles and Markdown are never
+scanned for embedded dates. Table format keys must name declared columns. Invalid dates, unzoned
+timestamps, ordinary labels, numeric strings and numbers remain literal.
+
+The shared catalog value renderer follows the browser's language preferences. Calendar dates keep
+their original day; instants use the device timezone unless a caller supplies a schedule's
+configured timezone. Compact visible values retain the exact source in a semantic `time` element,
+its accessible name and title; Charts also include complete values in their accessible description.
+Formatting never rewrites Surface state.
+
+Automation `scheduleDetails` carries canonical recurrence/timer inputs, next occurrence, timezone
+and status. Both the Atom and Settings use the same localized schedule renderer. It describes the
+same expanded cron fields consumed by the Scheduler, including its day-of-month/day-of-week
+combination, without interpreting a second cron dialect. The exact historical Scheduler text
+format also renders readably until its projection refreshes; arbitrary authored schedule text stays
+literal. Missing times or invalid rules remain visibly unavailable. See
+[`temporal-rendering.test.tsx`](../../packages/catalog/src/temporal-rendering.test.tsx),
+[`automation-schedule.test.tsx`](../../packages/catalog/src/automation-schedule.test.tsx), and the
+authenticated English/Italian desktop/phone reload journey in
+[`temporal-presentation.spec.ts`](../../packages/e2e/tests/temporal-presentation.spec.ts).

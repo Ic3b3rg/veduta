@@ -12,6 +12,24 @@ import {
 const now = new Date('2026-07-03T12:00:00.000Z')
 
 describe('AuthStore passkey setup', () => {
+  it('uses independent passkey user handles for a staged origin and the previous installation', async () => {
+    const handles: string[] = []
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const relyingParty = new FakePasskeyRelyingParty()
+      const passkeys: PasskeyRelyingParty = {
+        generateRegistrationOptions: async (input) => {
+          handles.push(input.userId)
+          return relyingParty.generateRegistrationOptions()
+        },
+        generateAuthenticationOptions: () => relyingParty.generateAuthenticationOptions(),
+        verifyRegistrationResponse: (input) => relyingParty.verifyRegistrationResponse(input),
+        verifyAuthenticationResponse: (input) => relyingParty.verifyAuthenticationResponse(input),
+      }
+      const auth = new AuthStore({ mode: 'production', bootstrapCode: 'test-code', passkeys })
+      await auth.startPasskeyRegistration({ oneTimeCode: 'test-code', deviceName: 'Test device' })
+    }
+    expect(handles[0]).not.toBe(handles[1])
+  })
   it('registers the first passkey with the one-time bootstrap code and consumes the code', async () => {
     const passkeys = new FakePasskeyRelyingParty()
     const auth = new AuthStore({
@@ -77,6 +95,74 @@ describe('AuthStore passkey setup', () => {
     expect(auth.verifySession(session.token)).toBeUndefined()
     expect(revokedTokenHashes).toHaveLength(2)
     expect(auth.listDevices(session.token)).toEqual([])
+  })
+
+  it.each(['used', 'expired', 'issuer revoked'] as const)(
+    'rejects a pending registration when its pairing code becomes %s',
+    async (reason) => {
+      const passkeys = new FakePasskeyRelyingParty()
+      const initial = await registeredAuthStore(passkeys)
+      const owner = await login(initial, 'credential-phone')
+      let clock = now
+      const auth = new AuthStore({
+        mode: 'production',
+        passkeys,
+        state: initial.exportState(),
+        now: () => clock,
+      })
+      const pairing = auth.createPairingCode(owner.token)
+      const first = await auth.startPasskeyRegistration({
+        oneTimeCode: pairing.code,
+        deviceName: 'Phone',
+      })
+      // Start a ceremony just before the code expires: a ceremony does not extend its authority.
+      clock = new Date(now.getTime() + 9 * 60_000)
+      const pending = await auth.startPasskeyRegistration({
+        oneTimeCode: pairing.code,
+        deviceName: 'Unwanted device',
+      })
+      if (reason === 'used') {
+        await auth.finishPasskeyRegistration({
+          ceremonyId: first.ceremonyId,
+          response: { id: 'credential-second' },
+        })
+      } else if (reason === 'expired') {
+        clock = new Date(now.getTime() + 11 * 60_000)
+      } else {
+        auth.revokeDevice(owner.token, owner.device.id)
+      }
+      await expect(
+        auth.finishPasskeyRegistration({
+          ceremonyId: pending.ceremonyId,
+          response: { id: 'credential-unwanted' },
+        }),
+      ).rejects.toThrow(AuthStoreError)
+      expect(auth.connectedDevices().some((device) => device.name === 'Unwanted device')).toBe(
+        false,
+      )
+    },
+  )
+
+  it('allows only one concurrent verification to consume a pairing code', async () => {
+    const passkeys = new FakePasskeyRelyingParty()
+    const auth = await registeredAuthStore(passkeys)
+    const owner = await login(auth, 'credential-phone')
+    const pairing = auth.createPairingCode(owner.token)
+    const ceremonies = await Promise.all(
+      ['One', 'Two'].map((deviceName) =>
+        auth.startPasskeyRegistration({ oneTimeCode: pairing.code, deviceName }),
+      ),
+    )
+    const results = await Promise.allSettled(
+      ceremonies.map((ceremony, index) =>
+        auth.finishPasskeyRegistration({
+          ceremonyId: ceremony.ceremonyId,
+          response: { id: `concurrent-${index}` },
+        }),
+      ),
+    )
+    expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected'])
+    expect(auth.listDevices(owner.token)).toHaveLength(2)
   })
 
   it('publishes the daemon device inventory after enrollment, rename, and revocation', async () => {

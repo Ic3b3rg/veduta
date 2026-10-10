@@ -541,7 +541,13 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
         .map((request) => dynamicToolsParamsSchema.parse(request.params).dynamicTools)
       const dynamicToolNames = dynamicToolDefinitions.map((tools) => tools.map((tool) => tool.name))
       const expectedFocusedTools = focusedSurfaceTools.map((tool) => tool.name)
-      const expectedGlobalTools = ['enter_space', 'propose_space', ...expectedFocusedTools]
+      const expectedGlobalTools = [
+        'enter_space',
+        'propose_space',
+        'list_archived_spaces',
+        'restore_space',
+        ...expectedFocusedTools,
+      ]
       expect(dynamicToolNames).toEqual([
         expectedFocusedTools,
         expectedFocusedTools,

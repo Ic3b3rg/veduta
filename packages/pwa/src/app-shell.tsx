@@ -8,9 +8,13 @@ import type {
   SurfaceMoveDirection,
 } from '@veduta/protocol'
 import { Link } from 'react-router-dom'
+import { useState } from 'react'
+import { Button } from '@veduta/catalog/ui/button'
+import { PortalContainerContext } from '@veduta/catalog/ui/portal-container'
+import { Settings2, SlidersHorizontal } from 'lucide-react'
 import type { SpaceWithSurfaces } from './api.ts'
-import { AttentionBadge } from './attention-badge.tsx'
-import { ChatBar } from './chat-bar.tsx'
+import { ChatPanel } from './chat-panel.tsx'
+import { DecisionFeedbackNotice } from './decision-feedback-notice.tsx'
 import { ChatModelSelects } from './chat-model-selects.tsx'
 import { clientPath } from './client-router.tsx'
 import { HomeSpaceGrid, type HomeSpacesLoadState } from './home-space-grid.tsx'
@@ -24,6 +28,9 @@ import { presentPendingDecisions } from './pending-decision-presentation.ts'
 import { latestPendingDecisionFeedback } from './pending-decision-state.ts'
 import type { BrowserInstallPromptEvent, QueuedChat } from './pwa-storage.ts'
 import { SpaceSection } from './space-section.tsx'
+import { ShellNotice } from './shell-notice.tsx'
+import { SpaceNavigation } from './space-navigation.tsx'
+import { PresentationContext, usePresentation } from './presentation-context.ts'
 import { SpaceAutomationOutcomeNotifications } from './space-automation-outcome-notifications.tsx'
 import type { SurfaceUpdateFeedback } from './surface-motion.ts'
 
@@ -43,6 +50,7 @@ interface AppShellProps {
   installPrompt: BrowserInstallPromptEvent | null
   showInstallGuide: boolean
   error: string | null
+  onDismissError: () => void
   spaces: SpaceWithSurfaces[]
   homeSpacesLoadState: HomeSpacesLoadState
   route: AppRouteSelection
@@ -103,6 +111,7 @@ export function AppShell({
   installPrompt,
   showInstallGuide,
   error,
+  onDismissError,
   spaces,
   homeSpacesLoadState,
   route,
@@ -138,6 +147,8 @@ export function AppShell({
   onRetryInterruptedChat,
   onRetryQueuedChat,
 }: AppShellProps) {
+  const presentation = usePresentation()
+  const [portalContainer, setPortalContainer] = useState<HTMLElement | null>(null)
   const focusedSpace = route.kind === 'space' ? route.space : undefined
   const focusedSurfaceId = route.kind === 'space' ? route.surfaceId : undefined
   const routeRecovery = resolveRouteRecovery(route)
@@ -153,152 +164,157 @@ export function AppShell({
     (focusedSpace && pendingDecisionPresentation.notificationsBySpaceId.get(focusedSpace.id)) ?? []
 
   return (
-    <div className="app-shell" data-gateway-online={gatewayOnline}>
-      <a className="skip-link" href="#main-content">
-        Skip to {mainContentName} content
-      </a>
-      <header className="topbar">
-        <h1 className="topbar-title">Veduta</h1>
-        <div className="topbar-actions" aria-live="polite">
-          {queuedCount > 0 && <span className="status-pill pending">{queuedCount} queued</span>}
-          <ChatModelSelects token={authToken} />
-          <button type="button" onClick={onOpenModelConnections}>
-            Model connections
-          </button>
-          <button type="button" onClick={onOpenServiceConnections}>
-            Connections
-          </button>
-          <NotificationBell token={authToken} />
-          {showInstallGuide && <InstallButton prompt={installPrompt} onDone={onInstallDone} />}
-        </div>
-      </header>
-
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-
-      {pendingDecisionFeedback && (
-        <p
-          className={`pending-decision-feedback ${pendingDecisionFeedback.state}`}
-          role="status"
-          data-decision-feedback-id={pendingDecisionFeedback.id}
+    <PresentationContext.Provider value={{ ...presentation, theme: 'dark' }}>
+      <PortalContainerContext.Provider value={portalContainer}>
+        <div
+          ref={setPortalContainer}
+          className="app-shell precision-tool"
+          data-gateway-online={gatewayOnline}
         >
-          {pendingDecisionFeedback.text}
-        </p>
-      )}
+          <a className="skip-link" href="#main-content">
+            Skip to {mainContentName} content
+          </a>
+          <header className="topbar">
+            <h1 className="product-wordmark">Veduta</h1>
+            <ChatModelSelects token={authToken} />
+            <div className="topbar-actions" aria-live="polite">
+              {queuedCount > 0 && <span className="status-pill pending">{queuedCount} queued</span>}
+              <Button
+                className="recipe-control utility-control"
+                aria-label="Model connections"
+                title="Model connections"
+                onClick={onOpenModelConnections}
+              >
+                <SlidersHorizontal aria-hidden="true" />
+              </Button>
+              <Button
+                className="recipe-control utility-control"
+                aria-label="Connections"
+                title="Connections"
+                onClick={onOpenServiceConnections}
+              >
+                <Settings2 aria-hidden="true" />
+              </Button>
+              <NotificationBell token={authToken} />
+              {showInstallGuide && <InstallButton prompt={installPrompt} onDone={onInstallDone} />}
+            </div>
+          </header>
 
-      <div className="shell-layout">
-        <aside className="space-rail" aria-label="Spaces">
-          {spaces.map((space) => (
-            <button
-              key={space.id}
-              type="button"
-              className={space.id === focusedSpace?.id ? 'space-button selected' : 'space-button'}
-              aria-pressed={space.id === focusedSpace?.id}
-              onClick={() => onFocusSpace(space)}
-            >
-              <span>{space.name}</span>
-              <span className="badge-group">
-                <AttentionBadge count={space.attention} />
-                <span className="space-badge">{space.surfaces.length}</span>
-              </span>
-            </button>
-          ))}
-        </aside>
-
-        <main className="shell-main" id="main-content" aria-label={mainContentName}>
-          {focusedSpace && !routeRecovery && (
-            <nav className="space-breadcrumb" aria-label="Breadcrumb">
-              <Link to={clientPath.home}>
-                <span aria-hidden="true">← </span>
-                Home
-              </Link>
-              <span aria-current="page">{focusedSpace.name}</span>
-            </nav>
-          )}
-
-          {routeRecovery ? (
-            <section className="route-recovery" aria-labelledby="route-recovery-title">
-              <h2 id="route-recovery-title">{routeRecovery.heading}</h2>
-              <p>{routeRecovery.message}</p>
-              <Link to={clientPath.home}>Back to Home</Link>
-            </section>
-          ) : null}
-
-          {route.kind === 'home' && !routeRecovery && (
-            <>
-              <PendingDecisionStrip
-                notifications={pendingDecisionPresentation.globalNotifications}
-                resolvingDecisionIds={resolvingDecisionIds}
-                onResolve={onResolvePendingDecision}
-                onDismiss={onDismissPendingDecision}
-              />
-              <HomeSpaceGrid
-                spaces={spaces}
-                loadState={homeSpacesLoadState}
-                pendingDecisionCounts={pendingDecisionPresentation.countsBySpaceId}
-                onRetry={onRetrySpaces}
-              />
-            </>
-          )}
-
-          {focusedSpace && !routeRecovery && (
-            <>
-              <SpaceAutomationOutcomeNotifications
-                notifications={automationOutcomeNotifications}
-                pendingIds={pendingAutomationOutcomeNotificationIds}
-                onOpen={onOpenAutomationOutcomeNotification}
-                onDismiss={onDismissAutomationOutcomeNotification}
-              />
-              <SpacePendingDecisionNotifications
-                notifications={focusedPendingNotifications}
-                resolvingDecisionIds={resolvingDecisionIds}
-                onResolve={onResolvePendingDecision}
-                onDismiss={onDismissPendingDecision}
-              />
-            </>
-          )}
-
-          {visibleSpaces.map((space) => (
-            <SpaceSection
-              key={space.id}
-              space={space}
-              focused={space.id === focusedSpace?.id}
-              focusedSurfaceId={focusedSurfaceId}
-              surfaceRevealFeedbackKeys={surfaceRevealFeedbackKeys}
-              surfaceUpdateFeedbacks={surfaceUpdateFeedbacks}
-              onFocus={onFocusSpace}
-              onMoveSurface={onMoveSurface}
-              onTogglePin={onTogglePin}
-              onSurfaceRevealFeedbackShown={onSurfaceRevealFeedbackShown}
+          <div className="shell-layout">
+            <SpaceNavigation
+              spaces={spaces}
+              selectedSpace={focusedSpace}
+              onFocusSpace={onFocusSpace}
             />
-          ))}
-        </main>
-      </div>
 
-      <ChatBar
-        entries={chatEntries}
-        timelineEntries={chatTimelineEntries}
-        hasOlder={chatHasOlder}
-        loadingOlder={chatLoadingOlder}
-        queuedChat={queuedChat}
-        streamingEntries={streamingEntries}
-        focusedSpace={focusedSpace}
-        focusToken={focusChatToken}
-        focusOnRouteChange={focusChatOnRouteChange}
-        pendingDecisionReviewPaths={pendingDecisionPresentation.reviewPaths}
-        dismissedDecisionIds={dismissedDecisionIds}
-        resolvingDecisionIds={resolvingDecisionIds}
-        onResolvePendingDecision={onResolvePendingDecision}
-        onDismissPendingDecision={onDismissPendingDecision}
-        onSend={onSend}
-        onLoadOlder={onLoadOlderChat}
-        onRetryInterrupted={onRetryInterruptedChat}
-        onRetryQueued={onRetryQueuedChat}
-      />
-    </div>
+            <main className="shell-main" id="main-content" aria-label={mainContentName}>
+              {error && (
+                <ShellNotice
+                  className="error"
+                  role="alert"
+                  message={error}
+                  dismissLabel="Dismiss error"
+                  onDismiss={onDismissError}
+                />
+              )}
+              <DecisionFeedbackNotice feedback={pendingDecisionFeedback} />
+              {focusedSpace && !routeRecovery && (
+                <nav className="space-breadcrumb" aria-label="Breadcrumb">
+                  <Link to={clientPath.home} aria-label="Home">
+                    <span aria-hidden="true">← </span>
+                    Home
+                  </Link>
+                  <span aria-current="page">{focusedSpace.name}</span>
+                </nav>
+              )}
+
+              {routeRecovery ? (
+                <section className="route-recovery" aria-labelledby="route-recovery-title">
+                  <h2 id="route-recovery-title">{routeRecovery.heading}</h2>
+                  <p>{routeRecovery.message}</p>
+                  <Link to={clientPath.home}>Back to Home</Link>
+                </section>
+              ) : null}
+
+              {route.kind === 'home' && !routeRecovery && (
+                <>
+                  <PendingDecisionStrip
+                    notifications={pendingDecisionPresentation.globalNotifications}
+                    resolvingDecisionIds={resolvingDecisionIds}
+                    onResolve={onResolvePendingDecision}
+                    onDismiss={onDismissPendingDecision}
+                  />
+                  <HomeSpaceGrid
+                    spaces={spaces}
+                    loadState={homeSpacesLoadState}
+                    pendingDecisionCounts={pendingDecisionPresentation.countsBySpaceId}
+                    onRetry={onRetrySpaces}
+                  />
+                </>
+              )}
+
+              {focusedSpace && !routeRecovery && (
+                <>
+                  <SpaceAutomationOutcomeNotifications
+                    notifications={automationOutcomeNotifications}
+                    pendingIds={pendingAutomationOutcomeNotificationIds}
+                    onOpen={onOpenAutomationOutcomeNotification}
+                    onDismiss={onDismissAutomationOutcomeNotification}
+                  />
+                  <SpacePendingDecisionNotifications
+                    notifications={focusedPendingNotifications}
+                    resolvingDecisionIds={resolvingDecisionIds}
+                    onResolve={onResolvePendingDecision}
+                    onDismiss={onDismissPendingDecision}
+                  />
+                </>
+              )}
+
+              {visibleSpaces.map((space) => (
+                <SpaceSection
+                  key={space.id}
+                  space={space}
+                  focused={space.id === focusedSpace?.id}
+                  focusedSurfaceId={focusedSurfaceId}
+                  surfaceRevealFeedbackKeys={surfaceRevealFeedbackKeys}
+                  surfaceUpdateFeedbacks={surfaceUpdateFeedbacks}
+                  onFocus={onFocusSpace}
+                  onMoveSurface={onMoveSurface}
+                  onTogglePin={onTogglePin}
+                  onSurfaceRevealFeedbackShown={onSurfaceRevealFeedbackShown}
+                />
+              ))}
+            </main>
+            <ChatPanel
+              notifications={
+                focusedSpace
+                  ? focusedPendingNotifications
+                  : pendingDecisionPresentation.globalNotifications
+              }
+              gatewayOnline={gatewayOnline}
+              entries={chatEntries}
+              timelineEntries={chatTimelineEntries}
+              hasOlder={chatHasOlder}
+              loadingOlder={chatLoadingOlder}
+              queuedChat={queuedChat}
+              streamingEntries={streamingEntries}
+              focusedSpace={focusedSpace}
+              focusToken={focusChatToken}
+              focusOnRouteChange={focusChatOnRouteChange}
+              pendingDecisionReviewPaths={pendingDecisionPresentation.reviewPaths}
+              dismissedDecisionIds={dismissedDecisionIds}
+              resolvingDecisionIds={resolvingDecisionIds}
+              onResolvePendingDecision={onResolvePendingDecision}
+              onDismissPendingDecision={onDismissPendingDecision}
+              onSend={onSend}
+              onLoadOlder={onLoadOlderChat}
+              onRetryInterrupted={onRetryInterruptedChat}
+              onRetryQueued={onRetryQueuedChat}
+            />
+          </div>
+        </div>
+      </PortalContainerContext.Provider>
+    </PresentationContext.Provider>
   )
 }
 

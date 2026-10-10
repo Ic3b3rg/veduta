@@ -1,109 +1,173 @@
-# Deploying the Veduta daemon (VPS profile)
+# Deploying Veduta on a VPS
 
-This directory has the artifacts to run the Veduta daemon (the Gateway) as a hardened
-`systemd` service on a VPS with a public IP -- the v1 deployment target described in
-[docs/adr/0008-vps-passkey-byok.md](../docs/adr/0008-vps-passkey-byok.md). If you want to
-rehearse this flow locally first (passkey login, BYOK or mock routing, persistent config,
-restarts) without touching a real VPS, run `pnpm local-vps` -- the **Local VPS profile**
-described in [docs/adr/0009-local-vps-profile.md](../docs/adr/0009-local-vps-profile.md) and,
-operationally, in [deploy/local-vps.md](local-vps.md) -- instead of this guide, which is
-specifically about the real VPS profile.
+The production VPS profile uses a dedicated hardened systemd service, persistent data,
+mandatory passkeys, and signed updates. Browser access is a separate choice: **Tailnet** uses
+private Tailscale HTTPS on computer and phone; **Tunnel** uses an SSH forward on a computer;
+**Public** uses a domain and ACME HTTPS. See
+[ADR-0015](../docs/adr/0015-vps-access-modes.md) and the [installation guide](../README.md#install-on-a-vps).
+For development on your own computer, use the separate [Local VPS profile](local-vps.md).
 
-Hardening rationale (why each directive exists) is in
-[docs/SECURITY.md](../docs/SECURITY.md), particularly §6 "Daemon attack surface".
+## Guided installation
 
-## Zero -- one-command install
-
-On a clean Ubuntu 22.04/24.04 VPS with a domain's A/AAAA record already pointing at it, this
-one command automates everything in sections 1-3 below (user/group/directory layout, the
-secrets vault keyfile, and the systemd unit), plus installing the pinned Node.js version,
-building the daemon, starting it, and printing the pairing QR code:
+On Ubuntu with systemd, SSH, sudo, and curl, run this in your SSH session:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.sh | sudo bash
+curl -fsSLo veduta-install.sh \
+  https://raw.githubusercontent.com/Ic3b3rg/veduta/a53c80ce49eff69d2c058af1ff642528f3e0a812/deploy/install.sh &&
+sudo env SSH_CONNECTION="$SSH_CONNECTION" bash veduta-install.sh \
+  --ref a53c80ce49eff69d2c058af1ff642528f3e0a812
 ```
 
-Run it while logged in over SSH (interactively) and it will prompt for your domain and ACME
-contact email, then walk through preflight, Node/build, the systemd unit, first boot, and the
-pairing QR. For a fully unattended run (e.g. from provisioning automation), pass the values
-explicitly:
+The download and `--ref` pin the reviewed source snapshot used by this guide. These changes
+are on `main`, ahead of the published `v0.0.6` release. Keep both references aligned.
+
+Enter accepts the displayed defaults. Tailnet is preselected on a connected Tailscale host;
+otherwise Tunnel is preselected. Public access is never selected implicitly. To go directly
+to private computer-and-phone access, append `--access tailnet` to the command above.
+The installer shows the plan before making changes. After building, it prints a complete
+foreground SSH command to run **on your computer**, then a localhost setup link. Keep the
+forward running, register a passkey, and continue onboarding in the PWA. Tunnel access does
+not support phones. Public access requires DNS pointing to the VPS and TCP ports 80/443;
+it prints an HTTPS link and QR instead.
+
+Download the script before invoking sudo. An interactive `curl | sudo bash` can suspend its
+prompt reader under sudo-rs; the installer detects this form and prints a file-based retry.
+Normal output is concise progress on stderr. Package/build output is kept in a root-only
+`/var/log/veduta-install.*.log`; failures include the recent log and exact recovery command.
+
+Explicit unattended configuration skips terminal questions but still waits for passkey
+registration in the browser:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.sh | \
-  sudo bash -s -- --apply --domain example.com --email admin@example.com
+sudo bash veduta-install.sh --apply --access tunnel --ssh-target ubuntu@your-vps
+sudo bash veduta-install.sh --apply --access public --domain veduta.example.com --email owner@example.com
 ```
 
 ### Flags
 
-| Flag                             | Default                                    | Meaning                                                                                                                   |
-| -------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `--domain <d>`                   | (prompted)                                 | Public domain (A/AAAA -> this VPS)                                                                                        |
-| `--email <e>`                    | (prompted)                                 | ACME contact email                                                                                                        |
-| `--repo <url>`                   | `https://github.com/Ic3b3rg/veduta.git`    | Repository to clone                                                                                                       |
-| `--ref <tag\|sha>`               | `main` (resolved to a concrete commit SHA) | Git ref to check out                                                                                                      |
-| `--data-dir <p>`                 | `/var/lib/veduta/.veduta`                  | Daemon data directory (`VEDUTA_DATA_DIR`) -- must be strictly under `/var/lib`, `/srv`, `/opt`, or `/var/local`           |
-| `--update-feed <url>`            | this project's `feed/stable.json`          | Signed self-update feed URL -- see "Updates" below                                                                        |
-| `--update-root-key <key\|@file>` | (none)                                     | Minisign root public key pinning the feed above (raw text or `@/path/to/file`) -- omitted by default; see "Updates" below |
-| `--apply`                        | off                                        | Run unattended (needs `--domain`/`--email` when no tty is attached)                                                       |
-| `--preview`                      | off                                        | Force preview mode, even with a tty attached                                                                              |
-| `--skip-codex`                   | off                                        | Skip provisioning the pinned Codex binary (ChatGPT subscription Model connection) during `build`                          |
-| `--help`                         | --                                         | Print usage                                                                                                               |
+| Flag                               | Default                                                | Meaning                                                            |
+| ---------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------ |
+| `--access tunnel\|tailnet\|public` | Tailnet when connected; otherwise Tunnel               | Browser transport, independent of the production profile           |
+| `--port <n>`                       | 8788, or installed value                               | Stable loopback and client-forward port                            |
+| `--tailnet-port <n>`               | 443, or installed value                                | Private HTTPS port; occupied endpoints are never overwritten       |
+| `--install-tailscale`              | Prompt when missing                                    | Consent to install the official Tailscale package                  |
+| `--device-approval-confirmed`      | Prompt, or saved for the same tailnet                  | Operator confirms account-wide Device approval is enabled          |
+| `--accept-certificate-name`        | Disclosure before guided confirmation                  | Accept certificate hostname publication in unattended setup        |
+| `--ssh-target user@host`           | Detected from SSH                                      | Editable destination for the generated client command              |
+| `--ssh-port <n>`                   | Detected SSH port, otherwise 22                        | SSH server port                                                    |
+| `--domain <d>` / `--email <e>`     | Existing values or prompted                            | Public DNS name and ACME contact                                   |
+| `--repo <url>`                     | Upstream repository                                    | Source checkout                                                    |
+| `--ref <tag\|sha>`                 | main on first install; existing commit on repair       | Ref resolved to an immutable commit                                |
+| `--data-dir <p>`                   | `/var/lib/veduta/.veduta`                              | Data directory beneath `/var/lib`, `/srv`, `/opt`, or `/var/local` |
+| `--update-feed <url>`              | Upstream stable feed                                   | Signed update channel                                              |
+| `--update-root-key <key\|@file>`   | Bundled upstream public key on fresh upstream installs | Pin a custom signing root; never a private key                     |
+| `--apply`                          | Off                                                    | Explicit unattended configuration                                  |
+| `--preview`                        | Automatic without a TTY unless `--apply`               | Read-only plan, no downloads or changes                            |
+| `--json`                           | Off                                                    | Emit the stage protocol on stdout                                  |
+| `--skip-codex`                     | Off                                                    | Skip optional ChatGPT subscription support                         |
 
-### Reruns are pinned
+### Recovery and access changes
 
-On a rerun, if `/opt/veduta` already has a checkout and no explicit `--ref` is given, the
-installer reuses whatever commit is already checked out instead of re-resolving the moving
-`main` branch -- a recovery rerun (retrying after a failed `build` or `systemd-unit` stage,
-say) must not silently advance the running code out from under you. Pass `--ref main`
-explicitly on a rerun to upgrade to the latest commit.
+- `sudo veduta setup` regenerates the setup link without rebuilding. Interrupting an initial
+  pairing wait leaves the service running; registered passkeys are retained.
+- `sudo veduta access` offers Repair, Update access, or Exit. Installed values remain the
+  Repair defaults. Update access offers the safe detected mode with editable values. A normal installer rerun also offers these choices; Repair rebuilds its pinned
+  checkout, while the administrative command only repairs access.
+- A changed browser origin starts a temporary service and requires a new passkey. The old
+  boot configuration remains active until verification succeeds. Cancellation, failure, a
+  15-minute deadline, or reboot restores the old configuration. Application data and update
+  pinning are not replaced. The PWA reconnects during the final service restart.
+- For an installation that predates these commands, run `sudo bash veduta-install.sh --ref main` and choose Repair
+  with its current access first; then use `sudo veduta access`.
+
+The root-owned administration scripts live in `/usr/local/lib/veduta`. Access configuration
+is versioned under `/etc/veduta/access`, with `active` pointing to the committed generation.
+The public setup address is in `/etc/veduta/access.json`; its directory remains root-only.
+Passkey stores are separate from application data so an aborted new-origin registration does
+not revoke the old origin's credentials. A new WebAuthn user handle prevents a same-RP port
+change from replacing an existing discoverable credential before commit.
+
+An occupied server port is identified and a free alternative offered as an editable default.
+The installer checks SSH reachability and local-forwarding support. Client-side port conflicts
+are reported by SSH's `ExitOnForwardFailure`; close an old forward or change the stable port
+through `sudo veduta access` rather than silently using a different WebAuthn origin.
+
+### Tailnet access
+
+1. Install Tailscale on your computer and phone, using the same personal account. Enable
+   [Device approval](https://tailscale.com/docs/features/access-control/device-management/device-approval)
+   and approve those devices in the Tailscale admin console. Keep the tailnet limited to intended users.
+2. Choose **Private on all your devices — Tailscale** in the installer. If needed, it requests
+   consent before downloading Tailscale's official Linux installer. Follow the interactive login
+   link and approve the VPS. No auth key or passphrase belongs in an installer argument.
+3. Confirm account-wide Device approval. The local CLI reports whether this node is connected,
+   but cannot verify that global policy; Veduta records your confirmation for this tailnet.
+4. If HTTPS is not enabled, `tailscale serve` prints a browser activation URL such as
+   `https://login.tailscale.com/f/serve?node=...`. Open the exact URL printed on this VPS and
+   approve Serve/HTTPS with your personal account. The node identifier is supplied by Tailscale;
+   never hardcode one in shared instructions. Leave public Funnel access disabled if offered.
+   Keep the installer running: it resumes after approval and waits for a valid HTTPS response,
+   including initial certificate issuance. If the wait has expired, complete approval and use
+   the installer's retry command. An already-enabled tailnet skips this browser prompt.
+   The certificate hostname is published in Certificate Transparency logs; the web service
+   remains reachable only within your tailnet. See the [step-by-step guide](../README.md#2-run-the-installer-on-the-vps).
+5. Open the HTTPS link or QR with Tailscale connected, register the first passkey, and continue in the PWA.
+   To add another device afterward, use **Connections → Devices → Link a device** from the
+   authenticated PWA. Its short-lived QR lets the new device register its own passkey; the original
+   installer code is already consumed. The Devices controls can revoke another registered access.
+
+The Gateway listens only on `127.0.0.1`. [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve)
+provides HTTPS; Veduta never enables Funnel and never treats Tailscale identity headers as a
+login. The installer checks connection, MagicDNS, HTTPS capability, private route ownership,
+and a trusted HTTPS request to the production Gateway. Port 443 is used only when free; an
+occupied Serve/Funnel endpoint produces an editable free-port suggestion such as 8443.
+The selected port becomes part of the stable address and must remain the same in your bookmarks.
+Unrelated routes are preserved, including when removing Veduta's own root handler.
+
+An access change stages a foreground Serve route under a temporary systemd unit. Cancellation,
+timeout, and reboot during pairing remove it. After passkey verification, setup makes Serve
+persistent before atomically switching the active origin. A power loss in that short commit
+window can leave an extra private route, but the old origin remains usable until the swap and
+the new one is boot-ready afterward. Root-owned generation files retain its recovery details.
+Initial installations keep their private service available if pairing is interrupted.
+After successful setup, Serve and Veduta resume on boot without a terminal or SSH forward.
+
+Logout, device removal, or a missing route cannot expose the loopback Gateway publicly.
+Reconnect and approve the VPS, then use `sudo veduta access` → **Repair** over SSH. A changed
+hostname requires **Update access** and a new passkey. External Tailscale configuration changes
+may require administrator repair; Veduta does not silently switch to Public or Tunnel access.
+Keep SSH access available for recovery. Do not publish this endpoint with Funnel or share the
+server with other tailnets if it must remain restricted to your approved devices.
+
+Tailscale node credentials can expire. Review the VPS's expiry policy in the Tailscale admin
+console and follow [Tailscale's key expiry guidance](https://tailscale.com/docs/features/access-control/key-expiry).
+For a trusted VPS that must stay connected unattended, **Machines → VPS menu → Disable key
+expiry** avoids periodic server sign-in. That device stays authorized until you revoke or remove
+it; keep your account secure and remove retired devices. Veduta does not change this policy
+automatically.
+
+Unattended Tailnet setup requires an **already connected** node and explicit confirmations:
+
+```sh
+sudo bash veduta-install.sh --apply --access tailnet \
+  --device-approval-confirmed --accept-certificate-name
+```
+
+If the default HTTPS port is occupied, supply the free `--tailnet-port` shown in the error.
+Enrollment remains interactive; this mode does not provision auth keys.
 
 ### The stage protocol
 
-The installer writes a machine-readable event to **stdout** after every stage transition, one
-JSON object per line, and nothing else -- every human-readable message (prompts, progress,
-warnings, the final pairing URL and QR code) goes to **stderr** instead. A GUI (the PWA's
-onboarding wizard) can render a progress bar from stdout alone, without reimplementing any of
-the installer's logic:
+Preview and `--json` emit newline-delimited `InstallerStageEventSchema` values on stdout.
+The existing `protocol_version`, `stages`, and `needs_user_input` fields are retained. Additive
+fields identify `access_mode`, `state` (`preview`, `planning`, `running`, `waiting-input`,
+`waiting-passkey`, `complete`, or `failed`), and `repair_command`. Bootstrap codes never appear
+in this protocol or its persisted `<data-dir>/installer-stages.json` snapshot. The one-time
+setup URL is printed only in the terminal handoff.
 
-```json
-{
-  "protocol_version": 1,
-  "stages": [
-    { "id": "preflight", "title": "...", "status": "pending|running|done|failed|skipped" }
-  ],
-  "needs_user_input": false
-}
-```
-
-The schema is `InstallerStageEventSchema` in `@veduta/protocol`. Stage ids, in order:
-`preflight`, `legacy-detect`, `deps`, `user-layout`, `checkout`, `build`, `vault-keyfile`,
-`systemd-unit`, `first-boot`, `pairing`. The final stage snapshot is also written to
-`<data-dir>/installer-stages.json` (owner `veduta:veduta`, mode `0600`) so the onboarding
-wizard can render an installer summary even if it starts well after the install finished.
-
-### Preview discipline
-
-Run without a controlling tty and without `--apply` (for example, piped into a subshell with
-its stdin already consumed, or invoked from a script that redirects everything) and the
-installer is **preview-only**: it prints the full stage plan (every stage `pending`,
-`needs_user_input: true`) on stdout, a human summary of exactly what an apply run would do on
-stderr, and exits `0` having written or downloaded nothing. `--preview` forces this mode
-explicitly, even with a tty attached. This is structural, not just a convention: every
-mutating command in every stage goes through a `run()` wrapper that, in preview mode, only
-echoes the command to stderr instead of executing it.
-
-### What the installer never does
-
-- **Never rotates an existing `/etc/veduta/vault.key`.** A keyfile is generated only when
-  absent; rotating one in place would make the vault it decrypts undecryptable. Back the
-  keyfile up out-of-band (a password manager, not the encrypted application backups, which
-  deliberately exclude it -- see §2 below).
-- **Never clobbers an existing `<data-dir>/onboarding.json`.** The legacy-detect seed (see
-  below) is written only when the file does not already exist, so a rerun never resets a wizard
-  that is already in progress or complete.
-- **Never fabricates recovery steps.** Every failure prints the exact next command
-  (`journalctl -u veduta -n 50`, the rerun invocation) instead of a vague "something went
-  wrong"; every stage is idempotent, so reruns are always safe.
+Stages remain preflight, legacy-detect, deps, user-layout, checkout, build, vault-keyfile,
+systemd-unit, first-boot, and pairing. Administrative access changes mark unrelated stages
+skipped. `--preview` never calls a stage implementation.
 
 ### Legacy agent migration
 
@@ -152,32 +216,27 @@ daemon's in-memory vault.
   built and run.
 - The Node.js tarball is downloaded over TLS from `nodejs.org` and verified against that
   release's published `SHASUMS256.txt` with `sha256sum -c` before extraction.
-- Full release-signature verification (a GPG keyring covering signed Veduta releases) is **out
-  of scope** for this installer -- it is the [docs/SECURITY.md](../docs/SECURITY.md) §6 "signed
-  updates" follow-up, tracked separately.
+- The initial source checkout relies on GitHub TLS and the selected commit. Subsequent signed
+  updates use the Minisign trust chain described in [RELEASING.md](../RELEASING.md). Fresh
+  upstream installs pin the bundled public root; custom repositories must supply their own.
 
-### Timed acceptance checklist (AC1: clean VPS -> Home in < 15 minutes)
+### Runtime verification
 
-Run this on an actual clean Ubuntu VPS with a domain already pointed at it (this is a manual,
-timed exercise -- it cannot be executed from an agent session without a real VPS):
+The [installer verification report](../docs/references/40-private-vps-installer-verification.md)
+records the tested operating systems, terminal failure, real VPS journey, Public HTTPS lab,
+access rollback, and remaining limitations. The [Tailnet verification report](../docs/references/41-tailnet-installer-verification.md)
+separates automated evidence from the pending real-device smoke and gives its exact steps.
+To repeat the Tunnel journey, start a timer, run the
+guided installer on a clean VPS, accept Tunnel defaults, run the generated SSH command on your
+computer, and register a passkey. The target is under 15 minutes to registration. Reload,
+sign out, and sign in again, then repeat after a service restart and reboot.
 
-1. Start a timer.
-2. `curl -fsSL https://raw.githubusercontent.com/Ic3b3rg/veduta/main/deploy/install.sh | sudo bash`
-3. Answer the domain/email prompts (or skip them by having passed `--apply --domain --email`).
-4. Watch preflight -> legacy-detect -> deps -> user-layout -> checkout -> build ->
-   vault-keyfile -> systemd-unit -> first-boot complete.
-5. Scan the printed QR code (or open the printed `https://<domain>/setup?code=...` URL) with a
-   passkey-capable device/browser.
-6. Register a passkey.
-7. Walk the onboarding wizard's steps: migration (if a legacy install was detected) -> domain
-   confirmation -> BYOK (or skip, for the mock provider) -> model tiers -> first Space ->
-   integrations (or skip) -> finish.
-8. Land on Home.
-9. Stop the timer -- target: **under 15 minutes** end to end.
+For Public regression, choose Public with working DNS, open the HTTPS link or QR, register a
+passkey, and follow the PWA onboarding steps. A clean controlled installation can also run the
+opt-in browser test with `VEDUTA_INSTALLER_SMOKE_URL` (and `VEDUTA_INSTALLER_SMOKE_MODE=public`).
+Never point this test at an installation with personal data or passkeys.
 
-The sections below (1-5) are the manual reference for exactly what the installer automates --
-use them if you are deploying by hand, auditing what the installer does, or debugging a step
-it got stuck on.
+The sections below are the manual reference for the user, vault, service, backups, and updates.
 
 ## 1. Dedicated user, group, and directory layout
 
@@ -436,17 +495,16 @@ backup schedule (§4 above). Both are pruned only after a successful update, nev
 posture Syncthing and Tailscale ship with -- but it must never be able to repoint its own
 update channel or swap the root of trust. A fork gets its own update channel with zero source
 patches via the installer's `--update-feed`/`--update-root-key` flags. The feed URL defaults to
-this project's own `feed/stable.json`; the root key has **no default** and must be supplied
-explicitly. The upstream [root public key](../docs/keys/root.pub),
-[signing public key](../docs/keys/signing.pub), and
-[root signature over the signing key](../docs/keys/signing.pub.minisig) are published in this
-repository. The [README installation command](../README.md#install-on-a-vps) downloads and
-pins that root key; [RELEASING.md](../RELEASING.md) documents how to verify the full chain.
-An install with no `--update-root-key` writes no `/etc/veduta/update.json` at all and prints a
-clearly marked notice at the end of the run saying so, with the exact rerun command
-(`--update-root-key @/path/to/root.pub`, `@file` reads the key from a file) that pins it.
-On an existing installation, omit `--ref` from that recovery rerun to retain its checkout;
-apply new releases through the Updates Surface so the updater performs any data migration.
+this project's own `feed/stable.json`. A fresh install from the upstream repository pins the
+bundled [root public key](../docs/keys/root.pub). The [signing public key](../docs/keys/signing.pub)
+and its [root signature](../docs/keys/signing.pub.minisig) are published alongside it;
+[RELEASING.md](../RELEASING.md) documents verification of the full chain.
+
+Custom repositories or feeds must provide `--update-root-key @/path/to/root.pub`; without it,
+updates remain unconfigured and the installer prints a recovery notice. Existing trust anchors
+are preserved unless explicitly replaced. Omit `--ref` on ordinary recovery reruns to retain
+that checkout; use the Updates Surface for releases that migrate data. The private source
+candidate requires a newer signed release than `0.0.6`, which only supports Public access.
 
 A release that fails its health check leaves its supervised daemon's output behind at
 `/var/lib/veduta/updates/state/logs/<version>.log` -- preserved across the rollback, specifically

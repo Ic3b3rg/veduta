@@ -159,6 +159,49 @@ function setup(initialStorage: Record<string, string> = {}) {
 afterEach(() => vi.useRealTimers())
 
 describe('PWA live-state runtime', () => {
+  it.each(['facts', 'space'] as const)(
+    'refetches a %s projection again if another write arrives during the snapshot request',
+    async (kind) => {
+      const { runtime, connections, fetchSpaces } = setup()
+      await runtime.start()
+      const connection = connections[0]!
+      const first = deferred<SurfaceSnapshot>()
+      fetchSpaces.mockReturnValueOnce(first.promise).mockResolvedValueOnce(snapshot(2))
+      if (kind === 'facts')
+        connection.onSpaceFactsChanged?.({ type: 'space.facts-changed', spaceId: 'spc-test' })
+      else connection.onSpaceChanged?.({ type: 'space.changed', spaceId: 'spc-test' })
+      await vi.waitFor(() => expect(fetchSpaces).toHaveBeenCalledTimes(2))
+      if (kind === 'facts')
+        connection.onSpaceFactsChanged?.({ type: 'space.facts-changed', spaceId: 'spc-test' })
+      else connection.onSpaceChanged?.({ type: 'space.changed', spaceId: 'spc-test' })
+      if (kind === 'facts')
+        connection.onSpaceFactsChanged?.({ type: 'space.facts-changed', spaceId: 'spc-test' })
+      else connection.onSpaceChanged?.({ type: 'space.changed', spaceId: 'spc-test' })
+      first.resolve(snapshot(1))
+      await vi.waitFor(() => expect(fetchSpaces).toHaveBeenCalledTimes(3))
+      expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['value']).toBe(2)
+      expect(runtime.getSnapshot().surfaceCursor).toBe(0)
+      runtime.stop()
+    },
+  )
+
+  it('recovers without a page refresh when the first request lands during a service restart', async () => {
+    vi.useFakeTimers()
+    const { runtime, fetchAuthStatus, connections } = setup({ 'veduta.authToken': 'vdt_test' })
+    fetchAuthStatus.mockRejectedValueOnce(new Error('restarting')).mockResolvedValue({
+      mode: 'production',
+      bootstrapRequired: false,
+      passkeyRegistered: true,
+    })
+    await runtime.start()
+    expect(runtime.getSnapshot().authStatus).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(runtime.getSnapshot().authStatus?.mode).toBe('production')
+    expect(connections).toHaveLength(1)
+    runtime.stop()
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(fetchAuthStatus).toHaveBeenCalledTimes(2)
+  })
   it('owns one lifecycle and publishes immutable snapshots without React', async () => {
     const { runtime, connections, close } = setup()
     const listener = vi.fn()

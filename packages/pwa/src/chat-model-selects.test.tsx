@@ -78,6 +78,10 @@ describe('ChatModelSelects', () => {
 
     render(<ChatModelSelects token="tok" />)
 
+    const trigger = await screen.findByRole('button', { name: 'Choose model' })
+    expect(trigger.textContent).toContain('Claude Sonnet')
+    expect(screen.queryByRole('combobox')).toBeNull()
+    fireEvent.click(trigger)
     const connectionSelect = await screen.findByRole('combobox', { name: 'Connection' })
     const modelSelect = screen.getByRole('combobox', { name: 'Model' })
     await waitFor(() =>
@@ -97,6 +101,7 @@ describe('ChatModelSelects', () => {
 
     render(<ChatModelSelects token="tok" />)
 
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose model' }))
     const modelSelect = (await screen.findByRole('combobox', {
       name: 'Model',
     })) as HTMLSelectElement
@@ -119,6 +124,7 @@ describe('ChatModelSelects', () => {
 
     render(<ChatModelSelects token="tok" />)
 
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose model' }))
     await screen.findByRole('combobox', { name: 'Connection' })
     expect(screen.queryByRole('button', { name: /^add/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /^remove$/i })).toBeNull()

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { JsonObjectSchema } from './json.ts'
+import { ValueFormatSchema } from './value-presentation.ts'
 
 const ChartLabelSchema = z.string().trim().min(1).max(240)
 
@@ -16,6 +17,9 @@ export const ChartAtomPropsSchema = z
       .max(160)
       .describe('Record field for the x-value, in array order.'),
     yKey: z.string().trim().min(1).max(160).describe('Record field containing a finite number.'),
+    xFormat: ValueFormatSchema.optional().describe(
+      'Value presentation; defaults to compact dates for complete ISO values. Use text for literal references.',
+    ),
     label: ChartLabelSchema.describe('Visible Chart title and accessible name.'),
     xLabel: ChartLabelSchema.describe('Visible label describing the x-values.'),
     yLabel: ChartLabelSchema.describe('Visible label describing the y-values, including units.'),

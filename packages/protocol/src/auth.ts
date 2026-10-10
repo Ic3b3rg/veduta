@@ -24,6 +24,11 @@ export const AuthSessionSchema = z.object({
   device: AuthDeviceSchema,
 })
 
+export const AuthDevicesSchema = z.object({
+  devices: z.array(AuthDeviceSchema),
+  currentDeviceId: z.string().min(1),
+})
+
 export const OneTimeCodeSchema = z.string().min(6).max(64)
 
 export const PairingCodeSchema = z.object({
@@ -41,5 +46,6 @@ export type AuthMode = z.infer<typeof AuthModeSchema>
 export type AuthStatus = z.infer<typeof AuthStatusSchema>
 export type AuthDevice = z.infer<typeof AuthDeviceSchema>
 export type AuthSession = z.infer<typeof AuthSessionSchema>
+export type AuthDevices = z.infer<typeof AuthDevicesSchema>
 export type PairingCode = z.infer<typeof PairingCodeSchema>
 export type WebAuthnOptionsEnvelope = z.infer<typeof WebAuthnOptionsEnvelopeSchema>

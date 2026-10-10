@@ -14,6 +14,7 @@ import { defineTool, type ToolContext, type ToolDef } from './agent-runner.ts'
 import type { PwaChatInput } from './gateway.ts'
 import { createChatLoop, type ChatLoop } from './chat-loop.ts'
 import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
+import { createSpaceControlTools } from './space-controls.ts'
 import { createGlobalChatTools, type GlobalChatTurnHooks } from './global-chat-tools.ts'
 import {
   createFakeProvider,
@@ -25,6 +26,7 @@ import {
   fakeUsage,
 } from './fake-provider.ts'
 import { ModelRouter, SpendingCapError, type RoutingConfig } from './model-routing.ts'
+import { createMemoryTools } from './memory-tools.ts'
 import { PiJsonlSessionStore } from './pi-agent-runner.ts'
 import { PendingDecisionService, type PendingDecisionAdapter } from './pending-decision-service.ts'
 import { Store } from './store.ts'
@@ -232,8 +234,11 @@ function chatEvent(overrides: Partial<PwaChatInput> & { text: string }): PwaChat
 
 function globalSurfaceChatLoop(harness: Harness): ChatLoop {
   const templateEngine = new TemplateEngine({ store: harness.store })
-  const focusedToolsFor = (spaceId: string) =>
-    createFocusedSurfaceTools({ store: harness.store, templateEngine, spaceId })
+  const focusedToolsFor = (spaceId: string) => [
+    ...createFocusedSurfaceTools({ store: harness.store, templateEngine, spaceId }),
+    ...createSpaceControlTools(harness.store.spacesEngine, spaceId),
+    ...createMemoryTools(harness.store.spacesEngine, { activeSpaceId: spaceId }),
+  ]
   return createChatLoop({
     store: harness.store,
     router: harness.router,
@@ -333,6 +338,242 @@ describe('createChatLoop', () => {
         .filter((event) => event.type === 'turn' && event.payload?.['role'] === 'user'),
     ).toHaveLength(0)
   })
+
+  it('clarifies Edit facts without authoring its projection, then preserves a correction through the Curator', async () => {
+    const h = harness()
+    const spaceId = 'spc-health'
+    h.store.spacesEngine.writeFact(spaceId, 'I dislike celery', 'untrusted:template')
+    const facts = h.store.spacesEngine.factsSurface(spaceId)
+    const before = h.store.spacesEngine.readFacts(spaceId)
+    expect(() => h.store.readAuthorableSurface(spaceId, facts.id)).toThrow(
+      'Surface is not available for authoring in this Space',
+    )
+    const queued = h.store.invokeSurfaceAction(facts.id, { nodeId: 'edit', name: 'edit_facts' })
+    if (queued.path !== 'agent') throw new Error('Edit facts must use the shared Agent path')
+    const loop = globalSurfaceChatLoop(h)
+    let actionRequest = ''
+    h.fake.setResponses([
+      {
+        factory: (context) => {
+          actionRequest = JSON.stringify(context.messages.at(-1))
+          return fakeText('Which fact would you like to correct, and what should it say?')
+        },
+      },
+    ])
+    try {
+      const outcome = await loop.handleAgentAction(queued.turn)
+      expect(outcome).toMatchObject({
+        message: { text: 'Which fact would you like to correct, and what should it say?' },
+      })
+      expect(actionRequest).not.toContain('Read the current Surface before acting.')
+      expect(actionRequest).toContain('read_surface')
+      expect(actionRequest).toContain('shared owning-domain policy')
+      expect(actionRequest).toContain('Ask what to change')
+      expect(h.store.spacesEngine.readFacts(spaceId)).toEqual(before)
+
+      h.fake.setResponses([
+        {
+          factory: (context) => {
+            expect(context.systemPrompt).toContain('I dislike celery')
+            return fakeToolCall('write_fact', {
+              fact: 'I like celery now',
+              supersedes: 'I dislike celery',
+            })
+          },
+        },
+        { message: fakeText('Updated your preference to: I like celery now.') },
+      ])
+      await loop.handleChatMessage(
+        chatEvent({ spaceId, text: 'Change "I dislike celery" to "I like celery now".' }),
+      )
+      const corrected = h.store.spacesEngine.readFacts(spaceId)
+      expect(corrected.active).toContainEqual(
+        expect.objectContaining({ text: 'I like celery now', origin: 'untrusted:template' }),
+      )
+      expect(corrected.active).not.toContainEqual(
+        expect.objectContaining({ text: 'I dislike celery' }),
+      )
+      expect(corrected.superseded).toContainEqual(
+        expect.objectContaining({ text: 'I dislike celery', origin: 'untrusted:template' }),
+      )
+      expect(JSON.stringify(h.store.getSurface(facts.id)?.tree)).toContain('I like celery now')
+      expect(h.store.eventLog(spaceId).filter((event) => event.type === 'fact.write')).toHaveLength(
+        2,
+      )
+      expect(() => h.store.readAuthorableSurface(spaceId, facts.id)).toThrow(
+        'Surface is not available for authoring in this Space',
+      )
+    } finally {
+      await loop.stop()
+    }
+  })
+
+  it('does not publish a failed FACTS correction as saved, even when another fact is saved', async () => {
+    const h = harness()
+    const spaceId = 'spc-health'
+    const loop = globalSurfaceChatLoop(h)
+    h.store.spacesEngine.writeFact(spaceId, 'I dislike celery', 'trusted:user')
+    h.fake.setResponses([
+      {
+        message: fakeToolCall('write_fact', {
+          fact: 'I like celery now',
+          supersedes: 'A fact that does not exist',
+        }),
+      },
+      { message: fakeToolCall('write_fact', { fact: 'I prefer tea' }) },
+      { message: fakeText('Your celery preference was corrected successfully.') },
+    ])
+    try {
+      await loop.handleChatMessage(
+        chatEvent({
+          spaceId,
+          text: 'Correct my celery preference and remember that I prefer tea.',
+        }),
+      )
+      const terminal = h.frames.filter(({ frame }) => frame.type === 'chat.turn-end').at(-1)?.frame
+      expect(terminal).toMatchObject({
+        message: { text: expect.stringContaining('A FACTS change was not saved:') },
+      })
+      expect(JSON.stringify(h.frames)).not.toContain(
+        'Your celery preference was corrected successfully.',
+      )
+      const facts = h.store.readFacts(spaceId)
+      expect(facts.active.map((fact) => fact.text)).toEqual(['I dislike celery', 'I prefer tea'])
+      expect(facts.superseded).toHaveLength(0)
+      expect(h.store.eventLog(spaceId).at(-1)?.text).toContain('A FACTS change was not saved:')
+    } finally {
+      await loop.stop()
+    }
+  })
+
+  it.each(['focused', 'global', 'action'] as const)(
+    'reports committed memory alongside a Surface change in %s turns',
+    async (scope) => {
+      const h = harness()
+      const spaceId = 'spc-health'
+      const turn = queueTestAgentAction(h.store)
+      const loop = globalSurfaceChatLoop(h)
+      const fact = 'This Space tracks Veduta bugs for the owner of the project.'
+      const target = scope === 'global' ? { spaceId } : {}
+      h.fake.setResponses([
+        ...(scope === 'global' ? [{ message: fakeToolCall('enter_space', { spaceId }) }] : []),
+        { message: fakeToolCall('write_fact', { ...target, fact }) },
+        {
+          message: fakeToolCall('patch_state', {
+            ...target,
+            surfaceId: turn.surfaceId,
+            operations: [{ target: 'state', op: 'replace', path: '/result', value: 'Restored' }],
+          }),
+        },
+        { message: fakeText('Incorrect model claim: no memory was saved.') },
+      ])
+      try {
+        if (scope === 'action') await loop.handleAgentAction(turn)
+        else
+          await loop.handleChatMessage(
+            chatEvent({
+              ...(scope === 'focused' ? { spaceId } : {}),
+              text: 'No intendevo come cose che devi sapere per questo spazio',
+            }),
+          )
+        expect(h.store.readFacts(spaceId).active.map((entry) => entry.text)).toContain(fact)
+        expect(h.store.getSurface(turn.surfaceId)?.state['result']).toBe('Restored')
+        const terminal = h.frames
+          .filter(({ frame }) => frame.type === 'chat.turn-end')
+          .at(-1)?.frame
+        expect(terminal).toMatchObject({
+          message: { text: expect.stringContaining(`Remembered in “Health”: ${fact}`) },
+        })
+        expect(terminal).toMatchObject({
+          message: { text: expect.stringContaining('Saved Surface') },
+        })
+        expect(h.store.eventLog(spaceId).at(-1)?.text).toContain(fact)
+        expect(JSON.stringify(h.frames)).not.toContain('Incorrect model claim')
+      } finally {
+        await loop.stop()
+      }
+    },
+  )
+
+  it('keeps memory confirmation beside a pending Space proposal', async () => {
+    const h = harness()
+    const loop = globalSurfaceChatLoop(h)
+    const fact = 'This Space is for recovery notes.'
+    h.fake.setResponses([
+      { message: fakeToolCall('enter_space', { spaceId: 'spc-health' }) },
+      { message: fakeToolCall('write_fact', { spaceId: 'spc-health', fact }) },
+      { message: fakeToolCall('propose_space', { name: 'Travel', reason: 'Plan upcoming trips' }) },
+      { message: fakeText('Travel is already created and all changes are done.') },
+    ])
+    try {
+      await loop.handleChatMessage(
+        chatEvent({ text: 'Remember Health is for recovery notes, and create Travel.' }),
+      )
+      const terminal = h.frames.filter(({ frame }) => frame.type === 'chat.turn-end').at(-1)?.frame
+      expect(terminal).toMatchObject({
+        message: {
+          text: expect.stringContaining('Awaiting your decision:'),
+          pendingDecisions: [expect.objectContaining({ kind: 'space-proposal', state: 'pending' })],
+        },
+      })
+      expect(terminal).toMatchObject({ message: { text: expect.stringContaining(fact) } })
+      expect(h.store.listSpaces().some((space) => space.name === 'Travel')).toBe(false)
+      expect(JSON.stringify(h.frames)).not.toContain('Travel is already created')
+    } finally {
+      await loop.stop()
+    }
+  })
+
+  it.each(['focused', 'global', 'action'] as const)(
+    'keeps committed writes visible when a %s provider fails afterwards',
+    async (scope) => {
+      const h = harness()
+      const turn = queueTestAgentAction(h.store)
+      const loop = globalSurfaceChatLoop(h)
+      const target = scope === 'global' ? { spaceId: turn.spaceId } : {}
+      h.fake.setResponses([
+        ...(scope === 'global' ? [{ message: fakeToolCall('enter_space', target) }] : []),
+        {
+          message: fakeToolCall('write_fact', {
+            ...target,
+            fact: 'This Space belongs to the project owner.',
+          }),
+        },
+        {
+          message: fakeToolCall('patch_state', {
+            ...target,
+            surfaceId: turn.surfaceId,
+            operations: [{ target: 'state', op: 'replace', path: '/result', value: 'Saved' }],
+          }),
+        },
+        { message: fakeFailure(500) },
+      ])
+      try {
+        if (scope === 'action') await loop.handleAgentAction(turn)
+        else
+          await loop.handleChatMessage(
+            chatEvent({
+              ...(scope === 'focused' ? { spaceId: turn.spaceId } : {}),
+              text: 'Remember my role and update the content.',
+            }),
+          )
+        expect(h.frames.at(-1)?.frame).toMatchObject({
+          type: 'chat.turn-error',
+          error: expect.stringContaining(
+            'Remembered in “Health”: This Space belongs to the project owner.',
+          ),
+        })
+        expect(h.frames.at(-1)?.frame).toMatchObject({
+          error: expect.stringContaining('Saved Surface'),
+        })
+        expect(
+          h.store.eventLog(turn.spaceId).filter((event) => event.type === 'fact.write'),
+        ).toHaveLength(1)
+      } finally {
+        await loop.stop()
+      }
+    },
+  )
 
   it('reports an interrupted Agent action honestly after a tool has executed, without executing it again', async () => {
     const h = harness({ reasoningCandidates: 2 })
@@ -525,6 +766,64 @@ describe('createChatLoop', () => {
               frame.message.text.includes('unsupported interactive dashboard'),
           ),
         ).toEqual([])
+      } finally {
+        await loop.stop()
+      }
+    },
+  )
+
+  it.each(['focused', 'global'])(
+    'changes Space columns and archives/restores through the real %s registry',
+    async (scope) => {
+      const h = harness()
+      const loop = globalSurfaceChatLoop(h)
+      const target = scope === 'global' ? { spaceId: 'health' } : {}
+      const enter = scope === 'global' ? [{ message: fakeToolCall('enter_space', target) }] : []
+      const request = 'imposta lo spazio a due colonne'
+      try {
+        h.fake.setResponses([
+          ...enter,
+          {
+            message: fakeToolCall('set_space_presentation', {
+              ...target,
+              presentation: 'two-columns',
+              userRequest: request,
+            }),
+          },
+          { message: fakeText('Arranged in two columns.') },
+        ])
+        await loop.handleChatMessage(
+          chatEvent({ text: request, ...(scope === 'focused' ? { spaceId: 'spc-health' } : {}) }),
+        )
+        expect(h.store.getSpace('spc-health')?.presentation).toBe('two-columns')
+        h.fake.setResponses([
+          ...enter,
+          { message: fakeToolCall('archive_space', { ...target, userRequest: 'Archive Health' }) },
+          { message: fakeText('Archived Health; its content is preserved.') },
+        ])
+        await loop.handleChatMessage(
+          chatEvent({
+            text: 'Archive Health',
+            ...(scope === 'focused' ? { spaceId: 'spc-health' } : {}),
+          }),
+        )
+        expect(h.store.getSpace('spc-health')?.archived).toBe(true)
+        expect(h.store.getSurface('srf-groceries')).toBeDefined()
+        h.fake.setResponses([
+          { message: fakeToolCall('list_archived_spaces', {}) },
+          {
+            message: fakeToolCall('restore_space', {
+              spaceId: 'spc-health',
+              userRequest: 'Restore Health',
+            }),
+          },
+          { message: fakeText('Restored Health.') },
+        ])
+        await loop.handleChatMessage(chatEvent({ text: 'Restore Health' }))
+        expect(h.store.getSpace('spc-health')).toMatchObject({
+          archived: false,
+          presentation: 'two-columns',
+        })
       } finally {
         await loop.stop()
       }

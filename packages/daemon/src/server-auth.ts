@@ -1,4 +1,5 @@
 import {
+  AuthDevicesSchema,
   AuthSessionSchema,
   AuthStatusSchema,
   OneTimeCodeSchema,
@@ -100,8 +101,12 @@ export function registerAuthRoutes(
   app.get('/api/auth/devices', (request, reply) => {
     if (auth.mode !== 'production') return reply.status(404).send({ error: 'auth disabled' })
     const token = extractBearer(request.headers.authorization)
-    if (!token) return reply.status(401).send({ error: 'passkey session required' })
-    return { devices: auth.store.listDevices(token) }
+    const session = auth.store.verifySession(token)
+    if (!session) return reply.status(401).send({ error: 'passkey session required' })
+    return AuthDevicesSchema.parse({
+      devices: auth.store.connectedDevices(),
+      currentDeviceId: session.device.id,
+    })
   })
 
   app.post('/api/auth/pairing-codes', (request, reply) => {

@@ -53,6 +53,7 @@ const RESERVED_EVENT_TYPE_PREFIXES = [
   'approval.',
   'ingestion.',
   'surface.',
+  'space.',
   'heartbeat.',
   'worker.',
   'import.',
