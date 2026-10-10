@@ -15,7 +15,7 @@ import { inheritTrustWrapper, isTrustWrapped } from './trust-layer.ts'
 import { createClawHubInspectionTool } from './clawhub-inspection.ts'
 import type { CatalogInspectionOptions } from './clawhub-catalog.ts'
 import { createSpaceProposalTool } from './space-proposal-tool.ts'
-import { createSpaceControlTools } from './space-controls.ts'
+import { createSpaceControlTools, createSpaceRestoreTools } from './space-controls.ts'
 
 /**
  * Everything `chatToolRegistry` needs to build focused and scoped-global
@@ -46,8 +46,10 @@ export interface ChatToolRegistryDeps {
  * memory tools (`search_memory` included since a `MemoryRetrieval` is always
  * supplied), Template-reuse tools, Space-bound Automation tools, and `spawn_worker`.
  * Global chat receives adapters over those same handlers, with an explicit
- * active-Space target and a successful `enter_space` required first. A
- * System-scoped turn receives only its explicitly assembled status registry.
+ * active-Space target and a successful `enter_space` required first. Both modes
+ * share archived-Space metadata discovery and restoration without entering an
+ * archived Space. A System-scoped turn receives only its explicitly assembled
+ * status and presentation registry.
  *
  * Extracted into its own module so `server.ts`'s construction and
  * `tool-parameters.test.ts`'s registry-shape assertions build the exact same
@@ -104,6 +106,7 @@ export function chatToolRegistry(
     return [
       ...observePendingDecisionResults(focusedToolsFor(spaceId), hooks, deps.pendingDecisions),
       createSpaceProposalTool(deps.store.spacesEngine, hooks?.onPendingDecision),
+      ...createSpaceRestoreTools(deps.store.spacesEngine),
       createClawHubInspectionTool(deps.clawHubInspection),
     ]
   }

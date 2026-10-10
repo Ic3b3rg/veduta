@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import {
   SpaceSettingsSchema,
   SpaceSettingsListSchema,
@@ -16,8 +17,13 @@ import type { Scheduler } from './scheduler.ts'
 import type { Reflection } from './reflection.ts'
 import type { MemoryConfig } from './memory-config.ts'
 import { settingsRevision } from './settings-revision.ts'
+import { SettingsMutationJournal } from './settings-mutation.ts'
 
 export class SpaceSettingsService {
+  private readonly reflectionMutations: SettingsMutationJournal<
+    z.infer<typeof ReflectionSettingsChangeSchema>
+  >
+
   constructor(
     private readonly deps: {
       store: Store
@@ -25,9 +31,38 @@ export class SpaceSettingsService {
       reflection: Pick<Reflection, 'reconcileJobs'>
       memoryConfig: MemoryConfig
     },
-  ) {}
+  ) {
+    const engine = deps.store.spacesEngine
+    this.reflectionMutations = new SettingsMutationJournal({
+      rootDir: engine.rootDir,
+      name: 'reflection',
+      schema: ReflectionSettingsChangeSchema,
+      prepare: (spaceId, input, id) => engine.prepareSettingsEvent(spaceId, input, id),
+      apply: (change) => {
+        const updated = {
+          ...deps.memoryConfig,
+          reflection: { enabled: change.enabled, time: change.time },
+        }
+        writeJsonAtomicDurable(join(engine.rootDir, 'memory.json'), updated)
+        Object.assign(deps.memoryConfig.reflection, updated.reflection)
+        deps.reflection.reconcileJobs()
+        for (const job of deps.scheduler.listAutomations(SYSTEM_SPACE_ID)) {
+          if (job.handler === 'reflection' && job.status === 'armed')
+            deps.scheduler.setEnabled(SYSTEM_SPACE_ID, job.id, change.enabled, 'surface')
+        }
+      },
+      deliver: (event) => engine.deliverSettingsEvent(event),
+      committed: (_change, spaceId) => engine.notifySettingsEventDelivered(spaceId),
+    })
+    engine.registerSettingsRecovery((spaceId) => {
+      if (spaceId === SYSTEM_SPACE_ID) this.reflectionMutations.reconcile(spaceId)
+    })
+    this.reflectionMutations.recoverAtStartup()
+  }
 
   list(): SpaceSettingsList {
+    for (const space of this.deps.store.spacesEngine.listAllSpaces())
+      this.deps.store.spacesEngine.reconcileSettings(space.id)
     const config = this.deps.memoryConfig
     const enabled =
       config.reflection.enabled &&
@@ -47,6 +82,7 @@ export class SpaceSettingsService {
 
   read(spaceId: string): SpaceSettings {
     const { store, scheduler } = this.deps
+    store.spacesEngine.reconcileSettings(spaceId)
     const space = store.getSpace(spaceId)
     if (!space) throw new Error('Space is unavailable')
     const facts = space.id === SYSTEM_SPACE_ID ? undefined : store.readFacts(space.id)
@@ -77,6 +113,8 @@ export class SpaceSettingsService {
           cron: automation.cron,
           fireAt: automation.fireAt,
           nextRunAt: automation.nextRunAt,
+          lastOutcome: automation.lastOutcome,
+          history: scheduler.automationHistory(space.id, automation.id),
           timezone: automation.timezone ?? 'UTC',
           managed: automation.handler !== undefined,
           revision: scheduler.automationSettingsRevision(automation),
@@ -122,20 +160,19 @@ export class SpaceSettingsService {
 
   changeReflection(input: z.infer<typeof ReflectionSettingsChangeSchema>): SpaceSettingsList {
     const change = ReflectionSettingsChangeSchema.parse(input)
-    const { memoryConfig, reflection, store } = this.deps
-    if (change.expectedRevision !== this.list().reflection.revision)
+    const current = this.list()
+    const recovered = this.reflectionMutations.recoveredOperation(SYSTEM_SPACE_ID)
+    if (
+      isDeepStrictEqual(recovered, change) &&
+      current.reflection.enabled === change.enabled &&
+      current.reflection.time === change.time
+    )
+      return current
+    if (change.expectedRevision !== current.reflection.revision)
       throw new Error('Reflection settings changed. Reload before saving again.')
-    const updated = { ...memoryConfig, reflection: { enabled: change.enabled, time: change.time } }
-    writeJsonAtomicDurable(join(store.spacesEngine.rootDir, 'memory.json'), updated)
-    Object.assign(memoryConfig.reflection, updated.reflection)
-    reflection.reconcileJobs()
-    for (const job of this.deps.scheduler.listAutomations(SYSTEM_SPACE_ID)) {
-      if (job.handler === 'reflection' && job.status === 'armed')
-        this.deps.scheduler.setEnabled(SYSTEM_SPACE_ID, job.id, change.enabled, 'surface')
-    }
-    store.spacesEngine.appendEvent(SYSTEM_SPACE_ID, {
+    this.reflectionMutations.perform(SYSTEM_SPACE_ID, change, {
       type: 'reflection.settings',
-      text: `Nightly Reflection ${change.enabled ? 'enabled' : 'disabled'} at ${change.time} ${memoryConfig.timezone}`,
+      text: `Nightly Reflection ${change.enabled ? 'enabled' : 'disabled'} at ${change.time} ${this.deps.memoryConfig.timezone}`,
       origin: 'trusted:user',
     })
     return this.list()

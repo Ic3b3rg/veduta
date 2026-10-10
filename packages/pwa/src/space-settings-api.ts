@@ -1,5 +1,5 @@
 import {
-  SpaceSettingsSchema,
+  RenderableSpaceSettingsSchema,
   SpaceSettingsListSchema,
   type SpaceSettingsCommand,
   type ReflectionSettingsChangeSchema,
@@ -12,14 +12,14 @@ export async function fetchSpaceSettingsList(token?: string) {
   return SpaceSettingsListSchema.parse(await getJson('/api/settings/spaces', token))
 }
 export async function fetchSpaceSettings(spaceId: string, token?: string) {
-  return SpaceSettingsSchema.parse(await getJson(path(spaceId), token))
+  return RenderableSpaceSettingsSchema.parse(await getJson(path(spaceId), token))
 }
 export async function changeSpaceSettings(
   spaceId: string,
   command: SpaceSettingsCommand,
   token?: string,
 ) {
-  return SpaceSettingsSchema.parse(await postJson(path(spaceId), command, token))
+  return RenderableSpaceSettingsSchema.parse(await postJson(path(spaceId), command, token))
 }
 export async function changeReflectionSettings(
   change: z.infer<typeof ReflectionSettingsChangeSchema>,

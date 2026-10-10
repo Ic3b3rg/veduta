@@ -4,7 +4,7 @@ import {
   type SurfaceMoveDirection,
 } from '@veduta/protocol'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BrowserRouter, useLocation } from 'react-router-dom'
+import { BrowserRouter, Navigate, useLocation } from 'react-router-dom'
 import { ApiResponseError, fetchOnboardingStatus, type SpaceWithSurfaces } from './api.ts'
 import { AuthGate } from './auth-gate.tsx'
 import { OnboardingWizard } from './onboarding-wizard.tsx'
@@ -352,6 +352,20 @@ function RoutedApp() {
           space: focusedSpace,
           surfaceId: focusedSurfaceId,
         }
+
+  const managementSpace = snapshot.spaces.find((space) => space.slug === focusedSpaceSlug)
+  const managementSurface = managementSpace?.surfaces.find(
+    (surface) => surface.id === focusedSurfaceId && surface.management,
+  )
+  if (managementSpace && managementSurface) {
+    const section = managementSurface.management === 'memory' ? 'spaces' : 'automations'
+    return (
+      <Navigate
+        replace
+        to={`${clientPath.serviceConnections}?section=${section}&space=${encodeURIComponent(managementSpace.id)}`}
+      />
+    )
+  }
 
   const appShell = (
     <AppShell

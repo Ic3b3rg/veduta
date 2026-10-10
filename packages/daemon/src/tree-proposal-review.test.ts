@@ -297,6 +297,14 @@ describe('complete Tree proposal review', () => {
     expect(content).toContain('no longer matches')
     expect(content).toContain('Deliver by 10 October')
     expect(content).not.toContain('Deliver by 15 October')
+    expect(content).toContain('Accept is unavailable')
+    expect(content).not.toContain('Accept applies')
+    expect(content.split('\n')).not.toContain('Accept')
+    expect(content.split('\n')).toContain('Reject')
+    manager.dispose()
+    manager = new TreeProposalSurfaceManager({ store })
+    manager.start()
+    expect(reviewText(review.cardId)).toBe(content)
     const current = store.getSurface('srf-delivery')
     await new TreePendingDecisionAdapter(store, manager).resolve(
       review.id,
@@ -348,5 +356,41 @@ describe('complete Tree proposal review', () => {
     expect(reviewText(review.cardId)).toContain('Milan')
     expect(reviewText(review.cardId)).toContain('Accept applies')
     expect(reviewText(review.cardId)).not.toContain('Review unavailable')
+  })
+
+  it('restores acceptance after live data recovers while preserving the prepared comparison', () => {
+    createTarget([textNode('note', 'Phone first')], { destination: 'Rome' })
+    const review = propose([
+      {
+        target: 'tree',
+        op: 'add',
+        path: '/children/1',
+        value: { id: 'address', type: 'Text', binding: 'destination' },
+      },
+    ])
+    const prepared = reviewText(review.cardId)
+    const adapter = new TreePendingDecisionAdapter(store, manager)
+    expect(adapter.get(review.id)?.allowedResolutions).toEqual(['accept', 'reject'])
+    store.patchState('srf-delivery', [{ target: 'state', op: 'remove', path: '/destination' }], {
+      updatedBy: 'user',
+    })
+    const unavailable = reviewText(review.cardId)
+    expect(unavailable).toContain('Accept is unavailable')
+    expect(unavailable.split('\n')).not.toContain('Accept')
+    expect(unavailable).toContain('Rome')
+    expect(adapter.get(review.id)?.allowedResolutions).toEqual(['reject'])
+    store.patchState(
+      'srf-delivery',
+      [{ target: 'state', op: 'add', path: '/destination', value: 'Milan' }],
+      { updatedBy: 'user' },
+    )
+    expect(reviewText(review.cardId)).toBe(prepared)
+    expect(adapter.get(review.id)?.allowedResolutions).toEqual(['accept', 'reject'])
+    const cursor = store.latestSurfaceCursor()
+    manager.dispose()
+    manager = new TreeProposalSurfaceManager({ store })
+    manager.start()
+    expect(reviewText(review.cardId)).toBe(prepared)
+    expect(store.latestSurfaceCursor()).toBe(cursor)
   })
 })

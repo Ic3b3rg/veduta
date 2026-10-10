@@ -1,23 +1,36 @@
 import { Button } from '@veduta/catalog/ui/button'
 import { Textarea } from '@veduta/catalog/ui/textarea'
-import type { SpaceSettings, SpaceSettingsCommand } from '@veduta/protocol'
+import type { RenderableSpaceSettings, SpaceSettingsCommand } from '@veduta/protocol'
 import { useState } from 'react'
 
-export type SaveSpaceSettings = (command: SpaceSettingsCommand) => Promise<boolean>
+export type SaveSpaceSettings = (
+  command: SpaceSettingsCommand,
+) => Promise<RenderableSpaceSettings | undefined>
 
 export function SpaceMemorySettings({
   settings,
   save,
   busy,
 }: {
-  settings: SpaceSettings
+  settings: RenderableSpaceSettings
   save: SaveSpaceSettings
   busy: boolean
 }) {
   const [editingFact, setEditingFact] = useState<string | null>(null)
   const [factText, setFactText] = useState('')
-  const [instructions, setInstructions] = useState(settings.instructions ?? '')
-  const [instructionsBase, setInstructionsBase] = useState(settings.instructions ?? '')
+  const [draft, setDraft] = useState({
+    text: settings.instructions ?? '',
+    base: settings.instructions ?? '',
+    source: settings.instructions,
+  })
+  if (draft.source !== settings.instructions) {
+    const text = settings.instructions ?? ''
+    setDraft(
+      draft.text === draft.base
+        ? { text, base: text, source: settings.instructions }
+        : { ...draft, source: settings.instructions },
+    )
+  }
   return (
     <div className="space-settings-forms">
       <section aria-label="Facts">
@@ -104,10 +117,13 @@ export function SpaceMemorySettings({
             event.preventDefault()
             void save({
               action: 'instructions',
-              text: instructions,
-              expectedText: instructionsBase,
+              text: draft.text,
+              expectedText: draft.base,
             }).then((saved) => {
-              if (saved) setInstructionsBase(instructions)
+              if (saved) {
+                const text = saved.instructions ?? ''
+                setDraft({ text, base: text, source: settings.instructions })
+              }
             })
           }}
         >
@@ -115,13 +131,13 @@ export function SpaceMemorySettings({
             Instructions
             <Textarea
               rows={6}
-              value={instructions}
-              onChange={(event) => setInstructions(event.target.value)}
+              value={draft.text}
+              onChange={(event) => setDraft({ ...draft, text: event.target.value })}
               disabled={busy}
               maxLength={16000}
             />
           </label>
-          <Button type="submit" disabled={busy || instructions === instructionsBase}>
+          <Button type="submit" disabled={busy || draft.text === draft.base}>
             Save instructions
           </Button>
         </form>

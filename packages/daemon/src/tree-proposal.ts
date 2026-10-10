@@ -63,6 +63,34 @@ const STALE_PROPOSAL_MESSAGE =
 const APPLY_FAILED_MESSAGE =
   'applying this change failed; the proposed change was not applied to the Surface'
 
+function treeProposalDecisions(unavailable: boolean): AtomNode {
+  return {
+    id: 'decisions',
+    type: 'Col',
+    children: [
+      {
+        id: 'consequences',
+        type: 'Text',
+        props: {
+          text: unavailable
+            ? 'Accept is unavailable. Reject keeps the Surface unchanged and discards this proposal. Ask for a fresh proposal to make a change.'
+            : 'Accept applies these changes once, in the order shown. Reject keeps the Surface unchanged and discards this proposal. Live data continues updating; values below were captured when this review was prepared.',
+        },
+      },
+      {
+        id: 'decision-buttons',
+        type: 'Row',
+        children: [
+          ...(unavailable
+            ? []
+            : [decisionButtonNode('decision-accept', 'Accept', DECISION_ACCEPT_KEY)]),
+          decisionButtonNode('decision-reject', 'Reject', DECISION_REJECT_KEY),
+        ],
+      },
+    ],
+  }
+}
+
 export function treeProposalSurfaceId(proposalId: number): string {
   return `${TREE_PROPOSAL_SURFACE_PREFIX}${proposalId}`
 }
@@ -93,7 +121,7 @@ export function buildTreeProposalSurface(
     TARGET_FIELD_MAX_CHARS,
   )
   const targetId = truncate(neutralizeDelimiters(proposal.surfaceId), TARGET_FIELD_MAX_CHARS)
-  const unavailable = reviewUnavailableMessage(proposal, target, currentTreeVersion)
+  const unavailable = treeProposalReviewUnavailableMessage(proposal, target, currentTreeVersion)
   const preview = unavailable || !target ? undefined : treeProposalPreview(proposal, target)
   const summary =
     preview?.summary ?? treeProposalFallbackSummary(proposal, target?.title ?? proposal.surfaceId)
@@ -109,31 +137,7 @@ export function buildTreeProposalSurface(
     { id: 'preview', type: 'Text', props: { text: `Summary: ${summary}` } },
     // Kept at DECISION_ERROR_CAPTION_PATH for the existing refusal projection.
     decisionErrorCaptionNode(unavailable ?? 'No changes have been applied.'),
-    {
-      id: 'decisions',
-      type: 'Col',
-      children: [
-        {
-          id: 'consequences',
-          type: 'Text',
-          props: {
-            text: unavailable
-              ? 'Accept is unavailable. Reject keeps the Surface unchanged and discards this proposal. Ask for a fresh proposal to make a change.'
-              : 'Accept applies these changes once, in the order shown. Reject keeps the Surface unchanged and discards this proposal. Live data continues updating; values below were captured when this review was prepared.',
-          },
-        },
-        {
-          id: 'decision-buttons',
-          type: 'Row',
-          children: [
-            ...(unavailable
-              ? []
-              : [decisionButtonNode('decision-accept', 'Accept', DECISION_ACCEPT_KEY)]),
-            decisionButtonNode('decision-reject', 'Reject', DECISION_REJECT_KEY),
-          ],
-        },
-      ],
-    },
+    treeProposalDecisions(unavailable !== undefined),
     ...(preview
       ? [
           {
@@ -165,7 +169,8 @@ export function buildTreeProposalSurface(
   })
 }
 
-function reviewUnavailableMessage(
+/** Shared live applicability check for the Decision Surface and every Pending-decision channel. */
+export function treeProposalReviewUnavailableMessage(
   proposal: TreeProposal,
   target: Surface | undefined,
   currentTreeVersion: number | undefined,
@@ -391,7 +396,7 @@ export class TreeProposalSurfaceManager {
     const surfaceId = treeProposalSurfaceId(proposal.id)
     const card = this.store.getSurface(surfaceId)
     if (!card || !this.store.isSurfaceDaemonOwned(surfaceId)) return
-    const unavailable = reviewUnavailableMessage(
+    const unavailable = treeProposalReviewUnavailableMessage(
       proposal,
       this.store.getSurface(proposal.surfaceId),
       this.store.getSurfaceVersion(proposal.surfaceId)?.treeVersion,
@@ -403,9 +408,22 @@ export class TreeProposalSurfaceManager {
     const error = card.tree.children?.[3]
     const previous = error?.type === 'Caption' ? error.props?.text : undefined
     const message = unavailable ?? 'No changes have been applied.'
-    if (previous === message) return
+    const decisions = treeProposalDecisions(unavailable !== undefined)
+    const currentDecisions = card.tree.children?.[4]
+    const showsAcceptance =
+      currentDecisions?.children?.[1]?.children?.some((node) => node.id === 'decision-accept') ??
+      false
+    if (
+      previous === message &&
+      showsAcceptance === (unavailable === undefined) &&
+      JSON.stringify(currentDecisions?.children?.[0]) === JSON.stringify(decisions.children?.[0])
+    )
+      return
     try {
-      this.refuseAccept(surfaceId, message, { resetDecision: false })
+      this.refuseAccept(surfaceId, message, {
+        resetDecision: false,
+        unavailable: unavailable !== undefined,
+      })
     } catch (error) {
       this.onError(error)
     }
@@ -556,7 +574,10 @@ export class TreeProposalSurfaceManager {
       if (!stale) {
         return { proposal: this.store.getTreeProposal(proposalId) ?? proposal }
       }
-      this.refuseAccept(cardSurfaceId, STALE_PROPOSAL_MESSAGE, { resetDecision: true })
+      this.refuseAccept(cardSurfaceId, STALE_PROPOSAL_MESSAGE, {
+        resetDecision: true,
+        unavailable: true,
+      })
       this.store.spacesEngine.appendEvent(proposal.spaceId, {
         type: 'surface.tree_proposal_stale',
         text: `Refused a stale tree change for Surface "${targetId}"`,
@@ -604,7 +625,15 @@ export class TreeProposalSurfaceManager {
       // restored.
       this.onError(error)
       this.store.reopenTreeProposal(proposalId)
-      this.refuseAccept(cardSurfaceId, APPLY_FAILED_MESSAGE, { resetDecision: true })
+      this.refuseAccept(cardSurfaceId, APPLY_FAILED_MESSAGE, {
+        resetDecision: true,
+        unavailable:
+          treeProposalReviewUnavailableMessage(
+            proposal,
+            this.store.getSurface(proposal.surfaceId),
+            this.store.getSurfaceVersion(proposal.surfaceId)?.treeVersion,
+          ) !== undefined,
+      })
       return {
         proposal: this.store.getTreeProposal(proposalId) ?? proposal,
         refusal: 'failed',
@@ -621,11 +650,11 @@ export class TreeProposalSurfaceManager {
     return { proposal: this.store.getTreeProposal(proposalId) ?? claimed }
   }
 
-  /** Patches the card's refusal Caption, optionally resetting the Accept decision key back to `false`. */
+  /** Refreshes availability controls without rewriting the comparison the user already reviewed. */
   private refuseAccept(
     surfaceId: string,
     message: string,
-    options: { resetDecision: boolean },
+    options: { resetDecision: boolean; unavailable: boolean },
   ): void {
     const version = this.store.getSurfaceVersion(surfaceId)
     if (!version) return // archived/unknown — nothing to patch
@@ -637,6 +666,12 @@ export class TreeProposalSurfaceManager {
           op: 'replace',
           path: DECISION_ERROR_CAPTION_PATH,
           value: decisionErrorCaptionNode(message),
+        },
+        {
+          target: 'tree',
+          op: 'replace',
+          path: '/children/4',
+          value: treeProposalDecisions(options.unavailable),
         },
       ],
       { expectedTreeVersion: version.treeVersion, updatedBy: 'job', origin: 'trusted:system' },

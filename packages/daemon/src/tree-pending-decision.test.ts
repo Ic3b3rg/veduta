@@ -1,4 +1,4 @@
-import type { Surface } from '@veduta/protocol'
+import type { PendingDecisionLifecycleMessage, Surface } from '@veduta/protocol'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Store } from './store.ts'
 import { TreePendingDecisionAdapter } from './tree-pending-decision.ts'
 import { TreeProposalSurfaceManager } from './tree-proposal.ts'
+import { PendingDecisionService } from './pending-decision-service.ts'
+import { startPendingDecisionLifecycle } from './pending-decision-lifecycle.ts'
 
 const roots: string[] = []
 const fixedNow = () => new Date('2026-08-16T08:00:00.000Z')
@@ -15,6 +17,74 @@ afterEach(() => {
 })
 
 describe('TreePendingDecisionAdapter', () => {
+  it.each(['stale', 'archived'] as const)(
+    'withdraws Chat acceptance through the live decision stream when the target is %s',
+    async (condition) => {
+      const rootDir = mkdtempSync(join(tmpdir(), 'veduta-tree-decision-live-'))
+      roots.push(rootDir)
+      const store = new Store({ rootDir, now: fixedNow })
+      const manager = new TreeProposalSurfaceManager({ store })
+      const surfaceId = 'srf-tree-live'
+      const proposalId = createProposal(store, surfaceId)
+      const id = `tree-proposal:${proposalId}`
+      const adapter = new TreePendingDecisionAdapter(store, manager)
+      const decisions = new PendingDecisionService({ adapters: [adapter] })
+      const updates: Omit<PendingDecisionLifecycleMessage, 'type'>[] = []
+      const stopLifecycle = startPendingDecisionLifecycle({
+        decisions,
+        store,
+        trust: { onChange: () => () => {} },
+        gateway: { broadcastPendingDecision: (update) => updates.push(update) },
+      })
+      try {
+        await decisions.refresh()
+        expect(adapter.get(id)?.allowedResolutions).toEqual(['accept', 'reject'])
+        if (condition === 'archived') {
+          store.archiveSurface(surfaceId, 'user')
+        } else {
+          store.patchTree(
+            surfaceId,
+            [
+              {
+                target: 'tree',
+                op: 'replace',
+                path: '/children/0',
+                value: { id: 'title', type: 'Title', props: { text: 'Changed plan' } },
+              },
+            ],
+            {
+              expectedTreeVersion: store.getSurfaceVersion(surfaceId)!.treeVersion,
+              updatedBy: 'user',
+              bypassPin: true,
+            },
+          )
+        }
+        await expect
+          .poll(() => updates.at(-1)?.decision)
+          .toMatchObject({
+            id,
+            state: 'pending',
+            allowedResolutions: ['reject'],
+          })
+        const target = store.getSurface(surfaceId)
+        await expect(decisions.resolve(id, 'accept', 'trusted:user')).rejects.toThrow(
+          'is not allowed',
+        )
+        const result = await decisions.resolve(id, 'reject', 'trusted:user')
+        expect(result.decision).toMatchObject({
+          state: 'terminal',
+          outcome: 'rejected',
+          allowedResolutions: ['accept', 'reject'],
+        })
+        expect(store.getSurface(surfaceId)).toEqual(target)
+      } finally {
+        stopLifecycle()
+        manager.dispose()
+        store.close()
+      }
+    },
+  )
+
   it('lists and resolves through the Tree-proposal manager, preserving durable actor and outcome', async () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'veduta-tree-decision-'))
     roots.push(rootDir)

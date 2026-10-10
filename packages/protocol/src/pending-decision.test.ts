@@ -50,6 +50,33 @@ describe('PendingDecisionSchema', () => {
     ).toBe(false)
   })
 
+  it('allows unavailable pending Tree proposals to retain rejection without offering acceptance', () => {
+    const unavailable = {
+      ...pendingApproval,
+      id: 'tree-proposal:1',
+      kind: 'tree-proposal',
+      allowedResolutions: ['reject'],
+    }
+    expect(PendingDecisionSchema.parse(unavailable)).toEqual(unavailable)
+    for (const allowedResolutions of [['accept'], ['reject', 'accept'], ['reject', 'reject']]) {
+      expect(PendingDecisionSchema.safeParse({ ...unavailable, allowedResolutions }).success).toBe(
+        false,
+      )
+    }
+    expect(
+      PendingDecisionSchema.safeParse({ ...pendingApproval, allowedResolutions: ['reject'] })
+        .success,
+    ).toBe(false)
+    expect(
+      PendingDecisionSchema.safeParse({
+        ...unavailable,
+        state: 'terminal',
+        outcome: 'rejected',
+        resolvedAt: '2026-08-16T08:01:00.000Z',
+      }).success,
+    ).toBe(false)
+  })
+
   it('formats and parses durable ids through one kind-aware codec', () => {
     expect(formatPendingDecisionId('tree-proposal', 7)).toBe('tree-proposal:7')
     expect(parsePendingDecisionId('tree-proposal:7')).toEqual({

@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { SpaceSchema, SpacePresentationSchema } from './space.ts'
 import { SurfaceSchema } from './surface.ts'
+import { RenderableSurfaceSchema } from './surface-read.ts'
+import { AutomationRunHistorySchema } from './automation-outcome.ts'
 
 export const ReflectionSettingsSchema = z
   .object({
@@ -23,6 +25,8 @@ export const SettingsAutomationSchema = z
     cron: z.string().optional(),
     fireAt: z.string().optional(),
     nextRunAt: z.string().optional(),
+    lastOutcome: z.string().max(240).optional(),
+    history: AutomationRunHistorySchema,
     timezone: z.string(),
     managed: z.boolean(),
     revision: z.string(),
@@ -43,6 +47,11 @@ export const SpaceSettingsSchema = z
     surfaces: z.array(SurfaceSchema),
   })
   .strict()
+
+/** Client reads preserve future Atom metadata; canonical Gateway writes remain strict. */
+export const RenderableSpaceSettingsSchema = SpaceSettingsSchema.extend({
+  surfaces: z.array(RenderableSurfaceSchema),
+})
 export const AutomationSettingsChangeSchema = z
   .object({
     expectedRevision: z.string().min(1),
@@ -86,6 +95,7 @@ export const ReflectionSettingsChangeSchema = z
   })
   .strict()
 export type SpaceSettings = z.infer<typeof SpaceSettingsSchema>
+export type RenderableSpaceSettings = z.infer<typeof RenderableSpaceSettingsSchema>
 export type SpaceSettingsList = z.infer<typeof SpaceSettingsListSchema>
 export type SpaceSettingsCommand = z.infer<typeof SpaceSettingsCommandSchema>
 export type SettingsAutomation = z.infer<typeof SettingsAutomationSchema>

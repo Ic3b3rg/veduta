@@ -1,10 +1,7 @@
 import { renderNode } from '@veduta/catalog'
 import {
-  AUTOMATION_OUTCOMES_STATE_KEY,
-  AutomationOutcomeStatusesSchema,
   surfaceRelativeTimeStatus,
   type KnownRenderableAtomNode,
-  type AutomationOutcomeStatus,
   type JsonValue,
   type RenderableSurface,
   type SurfaceRelativeTimeStatus,
@@ -15,6 +12,7 @@ import type { SurfaceUpdateFeedback } from './surface-motion.ts'
 import { useCatalogTheme } from './theme.ts'
 import { useActionConfirmations, useActionStatuses, usePwaRuntime } from './use-live-state.ts'
 import { usePresentation } from './presentation-context.ts'
+import { SurfaceAutomationOutcomes } from './surface-automation-outcomes.tsx'
 
 export function SurfaceCard({
   surface,
@@ -51,9 +49,6 @@ export function SurfaceCard({
   const revealedWhileSelectedRef = useRef(false)
   const [revealHighlighted, setRevealHighlighted] = useState(false)
   const relativeTime = useRelativeTimeStatus(surface, presentation.now)
-  const automationOutcomes = AutomationOutcomeStatusesSchema.safeParse(
-    surface.state[AUTOMATION_OUTCOMES_STATE_KEY],
-  )
 
   useEffect(() => {
     if (!selected) {
@@ -164,12 +159,7 @@ export function SurfaceCard({
           {relativeTime.caveat}
         </div>
       )}
-      {automationOutcomes.success &&
-        Object.values(automationOutcomes.data)
-          .sort((left, right) => left.automationId - right.automationId)
-          .map((status) => (
-            <AutomationOutcomeStatusPanel key={status.automationId} status={status} />
-          ))}
+      <SurfaceAutomationOutcomes surface={surface} />
       <div className="surface-content">
         {renderNode(surface.tree, {
           state: surface.state,
@@ -193,59 +183,6 @@ export function SurfaceCard({
       </div>
     </article>
   )
-}
-
-function AutomationOutcomeStatusPanel({ status }: { status: AutomationOutcomeStatus }) {
-  return (
-    <section
-      className={`automation-outcome-status ${status.latest?.kind ?? 'fresh'}`}
-      aria-label={`Automation ${status.automationId} status`}
-    >
-      {status.latest && (
-        <div className="automation-outcome-status-latest">
-          <strong>
-            Automation #{status.automationId} · {automationOutcomeKindLabel(status.latest.kind)}
-          </strong>
-          <span>{status.latest.summary}</span>
-        </div>
-      )}
-      <dl>
-        <div>
-          <dt>Last checked</dt>
-          <dd>
-            <time dateTime={status.lastCheckedAt}>
-              {automationOutcomeTimeLabel(status.lastCheckedAt)}
-            </time>
-          </dd>
-        </div>
-        {status.lastSuccessfulAt && (
-          <div>
-            <dt>Last successful</dt>
-            <dd>
-              <time dateTime={status.lastSuccessfulAt}>
-                {automationOutcomeTimeLabel(status.lastSuccessfulAt)}
-              </time>
-            </dd>
-          </div>
-        )}
-      </dl>
-      {status.currentError && (
-        <p className="automation-outcome-status-error">{status.currentError.message}</p>
-      )}
-    </section>
-  )
-}
-
-function automationOutcomeKindLabel(
-  kind: NonNullable<AutomationOutcomeStatus['latest']>['kind'],
-): string {
-  if (kind === 'decision-required') return 'Decision required'
-  return `${kind[0]?.toUpperCase() ?? ''}${kind.slice(1)}`
-}
-
-function automationOutcomeTimeLabel(iso: string): string {
-  const date = new Date(iso)
-  return Number.isFinite(date.getTime()) ? date.toLocaleString() : iso
 }
 
 function scrollSurfaceCardIntoView(card: HTMLElement): void {

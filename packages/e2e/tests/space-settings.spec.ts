@@ -81,6 +81,9 @@ test('manages memory, columns, Automations and recoverable archival across devic
       .locator('.connections-list')
       .getByRole('button', { name: /^Health/ })
       .click()
+    await other
+      .getByRole('textbox', { name: 'Instructions', exact: true })
+      .fill('A stale instruction from another device')
     await page
       .getByRole('textbox', { name: 'Instructions', exact: true })
       .fill('Keep metric units. Ask before adding a new goal.')
@@ -88,9 +91,6 @@ test('manages memory, columns, Automations and recoverable archival across devic
     await expect(
       page.getByRole('button', { name: 'Save instructions', exact: true }),
     ).toBeDisabled()
-    await other
-      .getByRole('textbox', { name: 'Instructions', exact: true })
-      .fill('A stale instruction from another device')
     await other.getByRole('button', { name: 'Save instructions', exact: true }).click()
     await expect(other.getByRole('alert')).toContainText('Instructions changed')
     await other.reload()

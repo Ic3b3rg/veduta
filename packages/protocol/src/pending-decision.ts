@@ -146,11 +146,17 @@ export const PendingDecisionSchema = z
       })
     }
 
+    const rejectionOnlyTreeProposal =
+      decision.kind === 'tree-proposal' &&
+      decision.state === 'pending' &&
+      decision.allowedResolutions.length === 1 &&
+      decision.allowedResolutions[0] === 'reject'
     if (
-      decision.allowedResolutions.length !== contract.resolutions.length ||
-      decision.allowedResolutions.some(
-        (resolution, index) => resolution !== contract.resolutions[index],
-      )
+      !rejectionOnlyTreeProposal &&
+      (decision.allowedResolutions.length !== contract.resolutions.length ||
+        decision.allowedResolutions.some(
+          (resolution, index) => resolution !== contract.resolutions[index],
+        ))
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

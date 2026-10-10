@@ -1,5 +1,9 @@
 import { Button } from '@veduta/catalog/ui/button'
-import { AutomationScheduleDescription } from '@veduta/catalog'
+import {
+  AutomationRunHistory,
+  AutomationScheduleDescription,
+  type CatalogTheme,
+} from '@veduta/catalog'
 import { Input } from '@veduta/catalog/ui/input'
 import { Textarea } from '@veduta/catalog/ui/textarea'
 import {
@@ -17,11 +21,26 @@ export function ReflectionSettingsForm({
   busy,
 }: {
   reflection: SpaceSettingsList['reflection']
-  save: (value: { enabled: boolean; time: string; expectedRevision: string }) => Promise<void>
+  save: (value: {
+    enabled: boolean
+    time: string
+    expectedRevision: string
+  }) => Promise<SpaceSettingsList | undefined>
   busy: boolean
 }) {
   const [enabled, setEnabled] = useState(reflection.enabled)
   const [time, setTime] = useState(reflection.time)
+  const [base, setBase] = useState(reflection)
+  const [sourceRevision, setSourceRevision] = useState(reflection.revision)
+  const dirty = enabled !== base.enabled || time !== base.time
+  if (sourceRevision !== reflection.revision) {
+    setSourceRevision(reflection.revision)
+    if (!dirty) {
+      setEnabled(reflection.enabled)
+      setTime(reflection.time)
+      setBase(reflection)
+    }
+  }
   return (
     <section className="space-reflection-settings">
       <h2>Nightly Reflection</h2>
@@ -32,7 +51,12 @@ export function ReflectionSettingsForm({
       <form
         onSubmit={(event) => {
           event.preventDefault()
-          void save({ enabled, time, expectedRevision: reflection.revision })
+          void save({ enabled, time, expectedRevision: base.revision }).then((saved) => {
+            if (!saved) return
+            setEnabled(saved.reflection.enabled)
+            setTime(saved.reflection.time)
+            setBase(saved.reflection)
+          })
         }}
       >
         <label className="space-settings-check">
@@ -54,10 +78,7 @@ export function ReflectionSettingsForm({
             disabled={busy}
           />
         </label>
-        <Button
-          type="submit"
-          disabled={busy || (enabled === reflection.enabled && time === reflection.time)}
-        >
+        <Button type="submit" disabled={busy || !dirty}>
           Save Reflection settings
         </Button>
       </form>
@@ -70,23 +91,37 @@ export function AutomationSettingsEditor({
   spaceId,
   save,
   busy,
+  theme,
 }: {
   automation: SettingsAutomation
   spaceId: string
   save: SaveSpaceSettings
   busy: boolean
+  theme?: CatalogTheme | undefined
 }) {
   const [description, setDescription] = useState(automation.description)
+  const [base, setBase] = useState({
+    description: automation.description,
+    revision: automation.revision,
+  })
   const [repeat, setRepeat] = useState('keep')
   const [time, setTime] = useState('09:00')
   const [day, setDay] = useState('1')
   const [fireAt, setFireAt] = useState('')
+  const [sourceRevision, setSourceRevision] = useState(automation.revision)
+  const dirty = description !== base.description || repeat !== 'keep' || fireAt !== ''
+  if (sourceRevision !== automation.revision) {
+    setSourceRevision(automation.revision)
+    if (!dirty) {
+      setDescription(automation.description)
+      setBase({ description: automation.description, revision: automation.revision })
+    }
+  }
   const canEdit =
     automation.status === 'armed' && !(automation.managed && spaceId === SYSTEM_SPACE_ID)
   function change(): AutomationSettingsChange {
-    const result: AutomationSettingsChange = { expectedRevision: automation.revision }
-    if (!automation.managed && description !== automation.description)
-      result.description = description
+    const result: AutomationSettingsChange = { expectedRevision: base.revision }
+    if (!automation.managed && description !== base.description) result.description = description
     if (repeat !== 'keep') {
       const [hour, minute] = time.split(':')
       result.cron =
@@ -124,13 +159,25 @@ export function AutomationSettingsEditor({
         details={automation}
         enabled={automation.enabled}
       />
+      <AutomationRunHistory history={automation.history} theme={theme} />
       {canEdit && (
         <details>
           <summary>Edit Automation</summary>
           <form
             onSubmit={(event) => {
               event.preventDefault()
-              void save({ action: 'automation', automationId: automation.id, change: change() })
+              void save({
+                action: 'automation',
+                automationId: automation.id,
+                change: change(),
+              }).then((saved) => {
+                const next = saved?.automations.find((item) => item.id === automation.id)
+                if (!next) return
+                setDescription(next.description)
+                setBase({ description: next.description, revision: next.revision })
+                setRepeat('keep')
+                setFireAt('')
+              })
             }}
           >
             {!automation.managed && (
@@ -204,12 +251,7 @@ export function AutomationSettingsEditor({
                 />
               </label>
             )}
-            <Button
-              type="submit"
-              disabled={
-                busy || (repeat === 'keep' && !fireAt && description === automation.description)
-              }
-            >
+            <Button type="submit" disabled={busy || !dirty}>
               Save Automation
             </Button>
           </form>

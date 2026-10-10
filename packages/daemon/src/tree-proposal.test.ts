@@ -402,6 +402,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
 
   it('rejects a stale tree proposal before committing the owning Action', async () => {
     const { cardSurfaceId, proposalId, expectedTreeVersion } = pinAndPropose('srf-target-stale', 2)
+    const preparedAccept = fastInvocation(store, cardSurfaceId, 'decision-accept', 'press')
 
     // Someone else applies a different tree change on the pinned target in
     // the meantime — the one documented escape hatch (`bypassPin: true`).
@@ -414,8 +415,8 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     expect(bypassResult.surface.tree.children).toHaveLength(3)
 
     const cursor = store.latestSurfaceCursor()
-    expect(() => pressDecision(cardSurfaceId, DECISION_ACCEPT_KEY)).toThrow(
-      'changed since this proposal was recorded',
+    expect(() => store.invokeSurfaceAction(cardSurfaceId, preparedAccept)).toThrow(
+      'the declared fast Action no longer exists',
     )
     await manager.flush()
     expect(store.latestSurfaceCursor()).toBe(cursor)
@@ -756,6 +757,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     })
     if (!('proposed' in result)) throw new Error('expected a Tree proposal')
     const cardSurfaceId = treeProposalSurfaceId(result.proposalId)
+    const preparedAccept = fastInvocation(store, cardSurfaceId, 'decision-accept', 'press')
 
     // A state patch removes the key the proposed node binds — allowed even
     // though the target is pinned: only tree patches are gated by the pin.
@@ -765,8 +767,8 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     })
 
     const cursor = store.latestSurfaceCursor()
-    expect(() => pressDecision(cardSurfaceId, DECISION_ACCEPT_KEY)).toThrow(
-      'applying this change failed',
+    expect(() => store.invokeSurfaceAction(cardSurfaceId, preparedAccept)).toThrow(
+      'the declared fast Action no longer exists',
     )
     await manager.flush()
     expect(store.latestSurfaceCursor()).toBe(cursor)

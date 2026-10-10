@@ -8,7 +8,11 @@ import {
 import type { PendingDecisionAdapter } from './pending-decision-service.ts'
 import { boundedDecisionText } from './pending-decision-summary.ts'
 import type { Store } from './store.ts'
-import { treeProposalSurfaceId, type TreeProposalSurfaceManager } from './tree-proposal.ts'
+import {
+  treeProposalReviewUnavailableMessage,
+  treeProposalSurfaceId,
+  type TreeProposalSurfaceManager,
+} from './tree-proposal.ts'
 import type { TreeProposal } from './surface-engine.ts'
 import { TREE_REVIEW_SUMMARY_KEY, treeProposalFallbackSummary } from './tree-proposal-preview.ts'
 
@@ -50,7 +54,8 @@ export class TreePendingDecisionAdapter implements PendingDecisionAdapter {
   }
 
   private toDecision(proposal: TreeProposal): PendingDecision {
-    const targetTitle = this.store.getSurface(proposal.surfaceId)?.title ?? proposal.surfaceId
+    const target = this.store.getSurface(proposal.surfaceId)
+    const targetTitle = target?.title ?? proposal.surfaceId
     const cardSurfaceId = treeProposalSurfaceId(proposal.id)
     const card = this.store.isSurfaceDaemonOwned(cardSurfaceId)
       ? this.store.getSurface(cardSurfaceId)
@@ -68,12 +73,18 @@ export class TreePendingDecisionAdapter implements PendingDecisionAdapter {
       createdAt: proposal.createdAt,
     }
     if (proposal.status === 'pending') {
+      const unavailable = treeProposalReviewUnavailableMessage(
+        proposal,
+        target,
+        this.store.getSurfaceVersion(proposal.surfaceId)?.treeVersion,
+      )
       const hasDecisionSurface =
         this.store.getSurface(cardSurfaceId) !== undefined &&
         this.store.isSurfaceDaemonOwned(cardSurfaceId)
       return PendingDecisionSchema.parse({
         ...base,
         state: 'pending',
+        allowedResolutions: unavailable === undefined ? ['accept', 'reject'] : ['reject'],
         ...(hasDecisionSurface ? { decisionSurfaceId: cardSurfaceId } : {}),
       })
     }

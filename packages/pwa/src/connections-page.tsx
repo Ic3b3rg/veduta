@@ -22,7 +22,9 @@ export function ConnectionsPage({
   initialSection?: ConnectionsSection
 }) {
   const location = useLocation()
-  const value = new URLSearchParams(location.search).get('section')
+  const query = new URLSearchParams(location.search)
+  const value = query.get('section')
+  const initialSpaceId = query.get('space') ?? undefined
   const section =
     value === 'models' ||
     value === 'extensions' ||
@@ -59,7 +61,12 @@ export function ConnectionsPage({
       {section === 'extensions' && <ConnectionsExtensions />}
       {section === 'devices' && <ConnectionsDevices token={token} />}
       {(section === 'spaces' || section === 'automations') && (
-        <ConnectionsSpaces key={section} section={section} token={token} />
+        <ConnectionsSpaces
+          key={section}
+          section={section}
+          token={token}
+          initialSpaceId={initialSpaceId}
+        />
       )}
     </ConnectionsLayout>
   )

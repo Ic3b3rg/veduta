@@ -186,6 +186,13 @@ is recoverable and never deletes memory, Surfaces, or Chat history. The Gateway 
 restore the canonical state. Space columns (`auto`, `one-column`, `two-columns`) persist across
 devices while narrow screens use one column and full-presentation Surfaces span the row.
 
+Space metadata/instructions, Automation settings, and Reflection settings persist an approved
+mutation intent before changing their owning state. If Event delivery is interrupted, startup,
+Settings reads, and affected-Space reasoning recover the same Event identity or report pending
+recovery. Observers run only after delivery. A bounded receipt per Space and owner acknowledges
+the exact recovered request while unrelated stale edits still fail their concurrency checks.
+The shared recovery mechanism does not replace the Curator, Scheduler, or Spaces engine.
+
 The Gateway decorates only canonical management projections with validated `management` metadata.
 The PWA moves these out of ordinary Space content without interpreting individual Surface ids or
 titles. Agent-supplied metadata is stripped; a user Surface with the same title remains visible.

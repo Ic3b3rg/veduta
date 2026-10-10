@@ -781,7 +781,9 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
       await chatInput.fill('Create a daily automation to review my plan at 9am')
       await page.getByRole('button', { name: 'Send message' }).click()
-      await expect(surfaceCard(page, 'Automations').getByText('Review my plan')).toBeVisible()
+      await page.goto(`${stack!.origin}/app/connections?section=automations&space=spc-health`)
+      await expect(page.getByRole('heading', { name: 'Review my plan', exact: true })).toBeVisible()
+      await page.goto(`${stack!.origin}/app/space/health`)
     })
 
     await test.step('restart persistence (AC3): stop, start a NEW runner on the same base dir/port', async () => {
@@ -857,14 +859,19 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         .getByRole('button', { name: 'Open Surface for Review my plan updated' })
         .press('Enter')
       await expect(page).toHaveURL(
-        `${stack!.origin}/app/space/health/surface/srf-health-automations`,
+        `${stack!.origin}/app/connections?section=automations&space=spc-health`,
       )
       await expect(coalesced).toHaveCount(0)
-      await expect(
-        surfaceCard(page, 'Automations').getByRole('region', {
-          name: /^Automation \d+ status$/,
-        }),
-      ).toContainText('A separate plan review update is ready')
+      const automation = page.locator('article.space-automation-setting', {
+        hasText: 'Review my plan',
+      })
+      const outcomeStatus = page.getByRole('region', { name: /^Automation \d+ status$/ })
+      await expect(outcomeStatus.getByText('A separate plan review update is ready')).toBeVisible()
+      await automation.getByText(/^Run history/).click()
+      await expect(automation.getByText('A second plan review update is ready')).toBeVisible()
+      await page.reload()
+      await expect(outcomeStatus.getByText('A separate plan review update is ready')).toBeVisible()
+      await page.goto(`${stack!.origin}/app/space/health`)
 
       const separate = page.locator('article.automation-outcome-notification', {
         hasText: 'A separate plan review update is ready',

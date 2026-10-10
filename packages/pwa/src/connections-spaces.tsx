@@ -2,103 +2,87 @@ import { renderNode } from '@veduta/catalog'
 import { Button } from '@veduta/catalog/ui/button'
 import {
   SYSTEM_SPACE_ID,
-  type SpaceSettings,
   type SpaceSettingsCommand,
-  type SpaceSettingsList,
   type SpacePresentation,
 } from '@veduta/protocol'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { ConnectionsSection } from './connections-section.tsx'
 import {
   ConnectionDetail,
   ConnectionDetailBody,
   ConnectionListItem,
 } from './connections-layout.tsx'
-import {
-  fetchSpaceSettingsList,
-  fetchSpaceSettings,
-  changeSpaceSettings,
-  changeReflectionSettings,
-} from './space-settings-api.ts'
-import { SpaceMemorySettings } from './space-memory-settings.tsx'
+import { SpaceMemorySettings, type SaveSpaceSettings } from './space-memory-settings.tsx'
 import { AutomationSettingsEditor, ReflectionSettingsForm } from './space-automation-settings.tsx'
 import { useCatalogTheme } from './theme.ts'
+import { usePwaRuntime } from './use-live-state.ts'
+import { SurfaceAutomationOutcomes } from './surface-automation-outcomes.tsx'
+
+const noSubscription = () => () => {}
 
 export function ConnectionsSpaces({
   section,
-  token,
+  initialSpaceId,
 }: {
   section: 'spaces' | 'automations'
   token?: string | undefined
+  initialSpaceId?: string | undefined
 }) {
-  const [list, setList] = useState<SpaceSettingsList>()
-  const [detail, setDetail] = useState<SpaceSettings>()
+  const runtime = usePwaRuntime()
+  const readSettings = () => runtime?.getSnapshot().spaceSettings
+  const settings = useSyncExternalStore(
+    runtime?.subscribe ?? noSubscription,
+    readSettings,
+    readSettings,
+  )
+  const [selection, setSelection] = useState({ initialSpaceId, spaceId: initialSpaceId })
+  if (selection.initialSpaceId !== initialSpaceId)
+    setSelection({ initialSpaceId, spaceId: initialSpaceId })
+  const selectedSpaceId = selection.spaceId
+  const setSelectedSpaceId = (spaceId: string | undefined) =>
+    setSelection({ initialSpaceId, spaceId })
+  const list = settings?.list
+  const detail = selectedSpaceId === undefined ? undefined : settings?.details[selectedSpaceId]
   const [loadRevision, setLoadRevision] = useState(0)
-  const [error, setError] = useState<string>()
+  const [commandError, setError] = useState<string>()
+  const error =
+    commandError ??
+    (selectedSpaceId && settings?.errors[`space:${selectedSpaceId}`]) ??
+    settings?.errors.list
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [confirmArchive, setConfirmArchive] = useState(false)
   const opener = useRef<HTMLElement | null>(null)
-  const generation = useRef(0)
   const theme = useCatalogTheme()
-  const refresh = useCallback(async () => {
-    try {
-      setList(await fetchSpaceSettingsList(token))
-      setError(undefined)
-    } catch (error) {
-      setError(errorText(error))
-    }
-  }, [token])
   useEffect(() => {
-    let active = true
-    void fetchSpaceSettingsList(token)
-      .then((value) => {
-        if (active) setList(value)
-      })
-      .catch((error: unknown) => {
-        if (active) setError(errorText(error))
-      })
-    return () => {
-      active = false
-      generation.current += 1
-    }
-  }, [token])
+    void runtime?.loadSpaceSettingsList()
+  }, [runtime])
+  useEffect(() => {
+    if (selectedSpaceId) void runtime?.loadSpaceSettings(selectedSpaceId)
+  }, [runtime, selectedSpaceId])
   useEffect(() => {
     if (!notice) return
     const timer = window.setTimeout(() => setNotice(''), 5000)
     return () => window.clearTimeout(timer)
   }, [notice])
-  async function open(spaceId: string) {
+  function open(spaceId: string) {
     if (busy) return
-    const request = ++generation.current
-    setBusy(true)
+    setSelectedSpaceId(spaceId)
     setError(undefined)
     setConfirmArchive(false)
-    try {
-      const next = await fetchSpaceSettings(spaceId, token)
-      if (request === generation.current) {
-        setDetail(next)
-        setLoadRevision((value) => value + 1)
-      }
-    } catch (error) {
-      if (request === generation.current) setError(errorText(error))
-    } finally {
-      if (request === generation.current) setBusy(false)
-    }
   }
-  async function save(command: SpaceSettingsCommand): Promise<boolean> {
-    if (!detail) return false
+  const save: SaveSpaceSettings = async (command: SpaceSettingsCommand) => {
+    if (!detail || !runtime) return undefined
     setBusy(true)
     setError(undefined)
     try {
-      setDetail(await changeSpaceSettings(detail.space.id, command, token))
-      setList(await fetchSpaceSettingsList(token))
+      const saved = await runtime.changeSpaceSettings(detail.space.id, command)
       setConfirmArchive(false)
       setNotice('Saved')
-      return true
+      return saved
     } catch (error) {
       setError(errorText(error))
-      return false
+      return undefined
     } finally {
       setBusy(false)
     }
@@ -116,9 +100,15 @@ export function ConnectionsSpaces({
         <Button
           variant="outline"
           disabled={busy}
-          onClick={() => {
-            void refresh()
-            if (detail) void open(detail.space.id)
+          onClick={async () => {
+            setBusy(true)
+            setError(undefined)
+            await Promise.all([
+              runtime?.loadSpaceSettingsList(),
+              selectedSpaceId ? runtime?.loadSpaceSettings(selectedSpaceId) : undefined,
+            ])
+            setLoadRevision((value) => value + 1)
+            setBusy(false)
           }}
         >
           Reload settings
@@ -132,20 +122,24 @@ export function ConnectionsSpaces({
       )}
       {notice && !detail && <p role="status">{notice}</p>}
       {!list && <p role="status">Loading settings…</p>}
+      {selectedSpaceId && !detail && settings?.loading.includes(`space:${selectedSpaceId}`) && (
+        <p role="status">Loading Space settings…</p>
+      )}
       {section === 'automations' && list && (
         <ReflectionSettingsForm
-          key={list.reflection.revision}
+          key={loadRevision}
           reflection={list.reflection}
           busy={busy}
           save={async (change) => {
             setBusy(true)
             setError(undefined)
             try {
-              setList(await changeReflectionSettings(change, token))
-              if (detail) setDetail(await fetchSpaceSettings(detail.space.id, token))
+              const saved = await runtime?.changeReflectionSettings(change)
               setNotice('Reflection settings saved')
+              return saved
             } catch (error) {
               setError(errorText(error))
+              return undefined
             } finally {
               setBusy(false)
             }
@@ -168,7 +162,7 @@ export function ConnectionsSpaces({
                     : 'Schedules, controls and Reflection report'
               }
               state={space.archived ? 'archived' : 'active'}
-              selected={detail?.space.id === space.id}
+              selected={selectedSpaceId === space.id}
               disabled={busy}
               returnFocusRef={opener}
               onClick={() => void open(space.id)}
@@ -185,8 +179,7 @@ export function ConnectionsSpaces({
             opener={opener}
             busy={busy}
             onClose={() => {
-              generation.current += 1
-              setDetail(undefined)
+              setSelectedSpaceId(undefined)
               setBusy(false)
               setError(undefined)
             }}
@@ -275,13 +268,19 @@ export function ConnectionsSpaces({
                 </>
               ) : (
                 <>
+                  {detail.surfaces
+                    .filter((surface) => surface.management === 'automations')
+                    .map((surface) => (
+                      <SurfaceAutomationOutcomes key={surface.id} surface={surface} />
+                    ))}
                   {detail.automations.length === 0 && (
                     <p>No Automations in this Space. You can create one from Chat.</p>
                   )}
                   {detail.automations.map((automation) => (
                     <AutomationSettingsEditor
-                      key={`${automation.id}:${automation.revision}`}
+                      key={`${detail.space.id}:${automation.id}:${loadRevision}`}
                       automation={automation}
+                      theme={theme}
                       spaceId={detail.space.id}
                       save={save}
                       busy={busy}

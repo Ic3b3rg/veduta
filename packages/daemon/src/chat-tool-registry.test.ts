@@ -124,6 +124,8 @@ const EXPECTED_SPACE_TOOL_NAMES = [
   'patch_state',
   'patch_tree',
   'archive_surface',
+  'archive_space',
+  'set_space_presentation',
   'write_fact',
   'append_event',
   'read_recent',
@@ -143,10 +145,17 @@ const EXPECTED_SPACE_TOOL_NAMES = [
 const EXPECTED_GLOBAL_TOOL_NAMES = [
   'enter_space',
   'propose_space',
+  'list_archived_spaces',
+  'restore_space',
   ...EXPECTED_SPACE_TOOL_NAMES,
 ].sort()
 
-const EXPECTED_SYSTEM_TOOL_NAMES = ['list_surfaces', 'read_surface', 'list_automations'].sort()
+const EXPECTED_SYSTEM_TOOL_NAMES = [
+  'list_surfaces',
+  'read_surface',
+  'list_automations',
+  'set_space_presentation',
+].sort()
 
 function toolContext(toolCallId: string): ToolContext {
   return fromPartial<ToolContext>({
@@ -161,6 +170,57 @@ function toolContext(toolCallId: string): ToolContext {
 }
 
 describe('chatToolRegistry', () => {
+  it('discovers and restores an archived Space from focused Chat without granting content access', async () => {
+    const { deps, dispose } = buildDeps()
+    try {
+      const archived = deps.store.spacesEngine.createSpace({ name: 'Garden' })
+      deps.store.spacesEngine.writeFact(archived.id, 'Water the lemon tree every morning')
+      deps.store.archiveSpace(archived.id)
+      const tools = chatToolRegistry(deps)(ACTIVE_SPACE_ID)
+      const list = tools.find((tool) => tool.name === 'list_archived_spaces')
+      const restore = tools.find((tool) => tool.name === 'restore_space')
+      expect(list).toBeDefined()
+      expect(restore).toBeDefined()
+      if (!list || !restore) throw new Error('Focused Chat cannot discover and restore Spaces')
+      const request = 'Restore Garden'
+      const context = fromPartial<ToolContext>({
+        ...toolContext('restore-garden'),
+        trigger: { kind: 'chat' },
+        currentUserRequest: { text: request, origin: 'trusted:user' },
+      })
+      const inventory = await list.handler(list.schema.parse({}), context)
+      expect(inventory.details).toEqual({ spaces: [{ ...archived, archived: true }] })
+      expect(inventory.content).not.toContain('lemon tree')
+      expect(tools.some((tool) => tool.name === 'enter_space')).toBe(false)
+      await expect(async () =>
+        restore.handler(
+          restore.schema.parse({ spaceId: archived.id, userRequest: 'Restore another Space' }),
+          context,
+        ),
+      ).rejects.toThrow('current user request')
+      expect(deps.store.getSpace(archived.id)?.archived).toBe(true)
+      const input = restore.schema.parse({ spaceId: archived.id, userRequest: request })
+      await restore.handler(input, context)
+      await restore.handler(input, context)
+      expect(deps.store.getSpace(archived.id)?.archived).toBe(false)
+      expect(deps.store.readFacts(archived.id).active[0]?.text).toBe(
+        'Water the lemon tree every morning',
+      )
+      expect(deps.store.getSpace(ACTIVE_SPACE_ID)?.archived).toBe(false)
+      expect(
+        deps.store.eventLog(archived.id).filter((event) => event.text === 'Restored Space'),
+      ).toHaveLength(1)
+      await expect(async () =>
+        restore.handler(
+          restore.schema.parse({ spaceId: SYSTEM_SPACE_ID, userRequest: request }),
+          context,
+        ),
+      ).rejects.toThrow('System Space lifecycle is Gateway-owned')
+    } finally {
+      dispose()
+    }
+  })
+
   it('proposes a new Space from focused Chat without creating it before trusted acceptance', async () => {
     const { deps, dispose } = buildDeps()
     try {
@@ -214,7 +274,7 @@ describe('chatToolRegistry', () => {
     }
   })
 
-  it('offers only explicit safe status reads to a System-scoped turn', () => {
+  it('offers only explicit safe status reads and presentation to a System-scoped turn', () => {
     const { deps, dispose } = buildDeps()
     try {
       const tools = chatToolRegistry(deps)(SYSTEM_SPACE_ID)
@@ -255,7 +315,13 @@ describe('chatToolRegistry', () => {
     try {
       const tools = chatToolRegistry(deps)(ACTIVE_SPACE_ID)
       expect(tools.map((tool) => tool.name).sort()).toEqual(
-        [...EXPECTED_SPACE_TOOL_NAMES, 'propose_space', 'inspect_clawhub_skill'].sort(),
+        [
+          ...EXPECTED_SPACE_TOOL_NAMES,
+          'propose_space',
+          'list_archived_spaces',
+          'restore_space',
+          'inspect_clawhub_skill',
+        ].sort(),
       )
       expect(
         createMemoryTools(deps.store.spacesEngine, {

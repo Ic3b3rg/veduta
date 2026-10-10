@@ -1,13 +1,15 @@
 import { createHash } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { writeFileAtomicDurable } from './atomic-file.ts'
+import { writeFileAtomicDurable, writeJsonAtomicDurable } from './atomic-file.ts'
+import { z } from 'zod'
+import { deliverDurableSpaceEvent, type PreparedSpaceEvent } from './durable-space-event.ts'
+import { SettingsMutationJournal } from './settings-mutation.ts'
 import { stripForbiddenUnicode } from './forbidden-unicode.ts'
 import {
   appendFileSync,
   closeSync,
   constants as fsConstants,
   existsSync,
-  fsyncSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -18,10 +20,9 @@ import {
   statSync,
   unlinkSync,
   writeFileSync,
-  writeSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import {
   SYSTEM_SPACE_ID,
   SpaceSchema,
@@ -132,6 +133,17 @@ export type FactSearchHit = ReturnType<typeof searchFactsDocument>[number]
 const SPACE_FILE = 'SPACE.json'
 const FACTS_FILE = 'FACTS.md'
 const INSTRUCTIONS_FILE = 'INSTRUCTIONS.md'
+const SpaceSettingsMutationSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('metadata'), space: SpaceSchema }).strict(),
+  z
+    .object({
+      kind: z.literal('instructions'),
+      space: SpaceSchema,
+      text: z.string(),
+      expectedText: z.string(),
+    })
+    .strict(),
+])
 
 export class SpacesEngine {
   readonly rootDir: string
@@ -142,11 +154,31 @@ export class SpacesEngine {
   private readonly eventCorrelation = new AsyncLocalStorage<string>()
   private readonly memoryWriteObservers = new Set<(notice: MemoryWriteNotice) => void>()
   private readonly spaceObservers = new Set<(space: Space) => void>()
+  private readonly settingsMutations: SettingsMutationJournal<
+    z.infer<typeof SpaceSettingsMutationSchema>
+  >
+  private readonly settingsRecovery = new Set<(spaceId: string) => void>()
 
   constructor(options: SpacesEngineOptions = {}) {
     this.rootDir = options.rootDir ?? defaultDataDir()
     this.now = options.now ?? (() => new Date())
     this.ensureBaseLayout()
+    this.settingsMutations = new SettingsMutationJournal({
+      rootDir: this.rootDir,
+      name: 'spaces',
+      schema: SpaceSettingsMutationSchema,
+      prepare: (spaceId, input, id) => this.prepareSettingsEvent(spaceId, input, id),
+      apply: (operation) => {
+        if (operation.kind === 'metadata') this.writeSpace(operation.space)
+        else
+          writeFileAtomicDurable(
+            this.spacePath(operation.space, INSTRUCTIONS_FILE),
+            Buffer.from(operation.text, 'utf8'),
+          )
+      },
+      deliver: (event) => this.deliverSettingsEvent(event),
+      committed: (_operation, spaceId) => this.notifySettingsEventDelivered(spaceId),
+    })
     this.memoryBudget = options.memoryBudget ?? loadMemoryConfig(this.rootDir).budget
     this.memoryHealthStore = new MemoryHealthStore({
       rootDir: this.rootDir,
@@ -161,6 +193,7 @@ export class SpacesEngine {
       },
     })
     if (options.seed && this.listAllSpaces().length === 0) this.seed(options.seed)
+    this.settingsMutations.recoverAtStartup()
     this.auditMemoryHealth()
   }
 
@@ -288,19 +321,22 @@ export class SpacesEngine {
     presentation: SpacePresentation,
     origin: Origin = 'trusted:user',
   ): Space {
+    this.reconcileSettings(spaceId)
     const space = this.requireSpace(spaceId)
     if (space.archived) throw new Error('Restore this Space before changing its presentation')
     const value = SpacePresentationSchema.parse(presentation)
     if ((space.presentation ?? 'auto') === value) return space
     const updated = SpaceSchema.parse({ ...space, presentation: value })
-    this.writeSpace(updated)
-    this.appendEvent(spaceId, {
-      type: 'space.presentation',
-      text: `Space presentation set to ${value}`,
-      origin,
-      payload: { presentation: value },
-    })
-    this.notifySpaceChanged(updated)
+    this.settingsMutations.perform(
+      spaceId,
+      { kind: 'metadata', space: updated },
+      {
+        type: 'space.presentation',
+        text: `Space presentation set to ${value}`,
+        origin,
+        payload: { presentation: value },
+      },
+    )
     return updated
   }
 
@@ -350,20 +386,67 @@ export class SpacesEngine {
   }
 
   updateInstructions(spaceId: string, text: string, expectedText: string): void {
+    this.reconcileSettings(spaceId)
     this.assertOrdinarySpaceLifecycle(spaceId, 'edit instructions')
     const space = this.requireSpace(spaceId)
     if (space.archived) throw new Error('Restore this Space before editing its instructions')
-    if (this.readInstructions(spaceId) !== expectedText)
-      throw new Error('Instructions changed. Reload before saving again.')
+    const current = this.readInstructions(spaceId)
     const content = stripForbiddenUnicode(text)
+    const recovered = this.settingsMutations.recoveredOperation(spaceId)
+    if (
+      recovered?.kind === 'instructions' &&
+      recovered.expectedText === expectedText &&
+      recovered.text === content &&
+      current === content
+    )
+      return
+    if (current !== expectedText)
+      throw new Error('Instructions changed. Reload before saving again.')
     if (content === expectedText) return
-    writeFileAtomicDurable(this.spacePath(space, INSTRUCTIONS_FILE), Buffer.from(content, 'utf8'))
-    this.appendEvent(spaceId, {
-      type: 'space.instructions',
-      text: 'Updated Space instructions in Settings',
-      origin: 'trusted:user',
+    this.settingsMutations.perform(
+      spaceId,
+      { kind: 'instructions', space, text: content, expectedText },
+      {
+        type: 'space.instructions',
+        text: 'Updated Space instructions in Settings',
+        origin: 'trusted:user',
+      },
+    )
+  }
+
+  /** Domain owners register recovery without giving the Space engine their mutation authority. */
+  registerSettingsRecovery(recover: (spaceId: string) => void): () => void {
+    this.settingsRecovery.add(recover)
+    return () => {
+      this.settingsRecovery.delete(recover)
+    }
+  }
+
+  reconcileSettings(spaceId: string): void {
+    this.settingsMutations.reconcile(spaceId)
+    for (const recover of this.settingsRecovery) recover(spaceId)
+  }
+
+  prepareSettingsEvent(
+    spaceId: string,
+    input: AppendSpaceEventInput,
+    id: string,
+  ): PreparedSpaceEvent {
+    const space = this.requireSpace(spaceId)
+    const event = this.prepareEvent(space, {
+      ...input,
+      payload: { ...(input.payload ?? {}), settingsMutationId: id },
     })
-    this.notifySpaceChanged(space)
+    return { event, destination: relative(this.rootDir, this.logPath(space, event.at)) }
+  }
+
+  deliverSettingsEvent(event: PreparedSpaceEvent): void {
+    deliverDurableSpaceEvent(this.rootDir, event, 'settingsMutationId')
+  }
+
+  notifySettingsEventDelivered(spaceId: string): void {
+    this.notifyMemoryWrite(spaceId, 'event')
+    this.notifySpaceChanged(this.requireSpace(spaceId))
   }
 
   /** Durable rendered-FACTS health consumed by the Gateway-owned Memory health Surface. */
@@ -543,48 +626,7 @@ export class SpacesEngine {
 
   /** Idempotent append plus file and directory durability, with no observers before delivery. */
   deliverSurfaceCommitEvent(prepared: PreparedSurfaceCommitEvent): void {
-    const path = resolve(this.rootDir, prepared.destination)
-    if (!path.startsWith(`${resolve(this.rootDir)}${sep}`)) {
-      throw new Error('Surface commit Event destination escapes the data root')
-    }
-    const dir = dirname(path)
-    const directoryExisted = existsSync(dir)
-    if (!directoryExisted) mkdirSync(dir, { recursive: true })
-
-    const existing = existsSync(path) ? readFileSync(path, 'utf8') : ''
-    const commitId = prepared.event.payload?.['surfaceCommitId']
-    if (typeof commitId !== 'string') throw new Error('Surface commit Event has no identity')
-    const alreadyAppended =
-      existing.length > 0 &&
-      readEventsFile(path).some((event) => event.payload?.['surfaceCommitId'] === commitId)
-
-    const fd = openSync(path, 'a')
-    try {
-      if (!alreadyAppended) {
-        const prefix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : ''
-        const bytes = Buffer.from(`${prefix}${JSON.stringify(prepared.event)}\n`)
-        for (let offset = 0; offset < bytes.length;) {
-          offset += writeSync(fd, bytes, offset, bytes.length - offset)
-        }
-      }
-      fsyncSync(fd)
-    } finally {
-      closeSync(fd)
-    }
-    const dirFd = openSync(dir, 'r')
-    try {
-      fsyncSync(dirFd)
-    } finally {
-      closeSync(dirFd)
-    }
-    if (!directoryExisted) {
-      const parentFd = openSync(dirname(dir), 'r')
-      try {
-        fsyncSync(parentFd)
-      } finally {
-        closeSync(parentFd)
-      }
-    }
+    deliverDurableSpaceEvent(this.rootDir, prepared, 'surfaceCommitId')
   }
 
   notifySurfaceCommitDelivered(spaceId: string): void {
@@ -662,6 +704,7 @@ export class SpacesEngine {
     recentLimit = 20,
     options: { includeGlobal?: boolean } = {},
   ): AssembledSpaceContext {
+    this.reconcileSettings(spaceId)
     const space = this.requireSpace(spaceId)
     const facts = projectFacts(this.readFacts(space.id))
     const events = this.recentEventsForContext(space.id, recentLimit)
@@ -1089,12 +1132,19 @@ export class SpacesEngine {
     eventText: string,
     origin: Origin = 'trusted:user',
   ): Space {
+    this.reconcileSettings(spaceId)
     const space = this.requireSpace(spaceId)
     if (space.archived === patch.archived) return space
     const updated = SpaceSchema.parse({ ...space, ...patch })
-    this.writeSpace(updated)
-    this.appendEvent(updated.id, { type: 'lifecycle', text: eventText, origin })
-    this.notifySpaceChanged(updated)
+    this.settingsMutations.perform(
+      updated.id,
+      { kind: 'metadata', space: updated },
+      {
+        type: 'lifecycle',
+        text: eventText,
+        origin,
+      },
+    )
     return updated
   }
 
@@ -1177,7 +1227,7 @@ export class SpacesEngine {
   }
 
   private writeSpace(space: Space): void {
-    writeFileSync(this.spacePath(space, SPACE_FILE), JSON.stringify(space, null, 2))
+    writeJsonAtomicDurable(this.spacePath(space, SPACE_FILE), space)
   }
 
   private requireSpace(spaceId: string): Space {

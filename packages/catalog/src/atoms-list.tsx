@@ -1,5 +1,5 @@
 import { AutomationAtomPropsSchema, AutomationRunHistorySchema } from '@veduta/protocol'
-import type { CSSProperties, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { ActionFeedback, useActionFeedback, type AtomMotionAttributes } from './action-feedback.tsx'
 import { boundValue, motionContent, text } from './atom-helpers.ts'
 import { bodyTextStyle } from './atom-styles.ts'
@@ -9,7 +9,7 @@ import type { AtomProps, RenderableAtomProps } from './types.ts'
 import { Item } from './ui/item.tsx'
 import { Switch } from './ui/switch.tsx'
 import { AutomationScheduleDescription } from './automation-schedule.tsx'
-import { SurfaceValue } from './surface-value.tsx'
+import { AutomationRunHistory } from './automation-run-history.tsx'
 
 function ListItemControl({
   node,
@@ -122,38 +122,7 @@ function AutomationControl({
             enabled={enabled}
           />
         </div>
-        {history.length > 0 && (
-          <details style={{ marginTop: tokens.space.sm }}>
-            <summary
-              style={{
-                color: tokens.color.textMuted,
-                cursor: 'pointer',
-                fontFamily: tokens.font.family,
-                fontSize: tokens.font.sm,
-                fontWeight: 650,
-              }}
-            >
-              Run history ({history.length})
-            </summary>
-            <ol
-              style={{
-                display: 'grid',
-                gap: tokens.space.sm,
-                margin: `${tokens.space.sm}px 0 0`,
-                paddingLeft: tokens.space.lg,
-              }}
-            >
-              {history.map((entry) => (
-                <li key={entry.id} style={automationHistoryEntryStyle(tokens, entry.kind)}>
-                  <strong>{automationHistoryKindLabel(entry.kind)}:</strong>{' '}
-                  <span>{entry.summary}</span>
-                  {' — '}
-                  <SurfaceValue value={entry.at} />
-                </li>
-              ))}
-            </ol>
-          </details>
-        )}
+        <AutomationRunHistory history={history} theme={ctx.theme} />
       </div>
       {action ? (
         <Switch
@@ -180,29 +149,6 @@ function AutomationControl({
 
 export function AutomationAtom(props: AtomProps<'Automation'>): ReactNode {
   return <AutomationControl {...props} />
-}
-
-function automationHistoryKindLabel(kind: 'changed' | 'failed' | 'recovered'): string {
-  return `${kind.charAt(0).toUpperCase()}${kind.slice(1)}`
-}
-
-function automationHistoryEntryStyle(
-  tokens: ReturnType<typeof tokensFor>,
-  kind: 'changed' | 'failed' | 'recovered',
-): CSSProperties {
-  const statusColor =
-    kind === 'failed'
-      ? tokens.color.danger
-      : kind === 'recovered'
-        ? tokens.color.success
-        : tokens.color.text
-  return {
-    color: statusColor,
-    display: 'block',
-    fontFamily: tokens.font.family,
-    fontSize: tokens.font.sm,
-    lineHeight: 1.4,
-  }
 }
 
 export function UnknownAtom({ node, ctx, children }: RenderableAtomProps): ReactNode {
