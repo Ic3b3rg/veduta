@@ -1237,7 +1237,7 @@ describe('App', () => {
         state: 'terminal',
         outcome: 'accepted',
         decisionAt: '2026-08-25T10:01:00.000Z',
-        resolvedAt: '2026-08-25T10:01:00.000Z',
+        resolvedAt: new Date().toISOString(),
         resolvedBy: 'trusted:user',
       }
       vi.mocked(resolvePendingDecision).mockResolvedValue({
@@ -1504,7 +1504,7 @@ describe('App', () => {
       state: 'terminal',
       outcome: 'executed',
       decisionAt: '2026-08-25T10:01:00.000Z',
-      resolvedAt: '2026-08-25T10:01:01.000Z',
+      resolvedAt: new Date().toISOString(),
       resolvedBy: 'trusted:user',
     }
     let finishResolution:
@@ -1583,7 +1583,7 @@ describe('App', () => {
       ...resolving,
       state: 'terminal',
       outcome: 'executed',
-      resolvedAt: '2026-08-25T10:01:01.000Z',
+      resolvedAt: new Date().toISOString(),
     }
 
     act(() => {
@@ -1691,7 +1691,7 @@ describe('App', () => {
       decisionSurfaceId: 'srf-approval-unavailable',
       createdAt: '2026-08-25T10:00:00.000Z',
       decisionAt: '2026-08-25T10:01:00.000Z',
-      resolvedAt: '2026-08-25T10:01:01.000Z',
+      resolvedAt: new Date().toISOString(),
       resolvedBy: 'trusted:user',
     }
 
@@ -1757,7 +1757,7 @@ describe('App', () => {
       ...resolving,
       state: 'terminal',
       outcome: 'accepted',
-      resolvedAt: '2026-08-25T10:01:01.000Z',
+      resolvedAt: new Date().toISOString(),
     }
 
     act(() => {
@@ -1795,7 +1795,7 @@ describe('App', () => {
       state: 'terminal',
       outcome: 'accepted',
       createdAt: '2026-08-25T10:00:00.000Z',
-      resolvedAt: '2026-08-25T10:01:01.000Z',
+      resolvedAt: new Date().toISOString(),
       resolvedBy: 'trusted:user',
     }
     let resolveSnapshot: ((snapshot: PendingDecisionList) => void) | undefined
@@ -1837,7 +1837,7 @@ describe('App', () => {
       state: 'terminal',
       outcome: 'stale',
       createdAt: '2026-08-25T10:00:00.000Z',
-      resolvedAt: '2026-08-25T10:04:00.000Z',
+      resolvedAt: new Date().toISOString(),
       resolvedBy: 'trusted:user',
     }
     const snapshot = { revision: 4, decisions: [terminal] }

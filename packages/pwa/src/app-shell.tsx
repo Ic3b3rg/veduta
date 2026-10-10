@@ -14,6 +14,7 @@ import { PortalContainerContext } from '@veduta/catalog/ui/portal-container'
 import { Settings2, SlidersHorizontal } from 'lucide-react'
 import type { SpaceWithSurfaces } from './api.ts'
 import { ChatBar } from './chat-bar.tsx'
+import { DecisionFeedbackNotice } from './decision-feedback-notice.tsx'
 import { ChatModelSelects } from './chat-model-selects.tsx'
 import { clientPath } from './client-router.tsx'
 import { HomeSpaceGrid, type HomeSpacesLoadState } from './home-space-grid.tsx'
@@ -27,6 +28,7 @@ import { presentPendingDecisions } from './pending-decision-presentation.ts'
 import { latestPendingDecisionFeedback } from './pending-decision-state.ts'
 import type { BrowserInstallPromptEvent, QueuedChat } from './pwa-storage.ts'
 import { SpaceSection } from './space-section.tsx'
+import { ShellNotice } from './shell-notice.tsx'
 import { SpaceNavigation } from './space-navigation.tsx'
 import { PresentationContext, usePresentation } from './presentation-context.ts'
 import { SpaceAutomationOutcomeNotifications } from './space-automation-outcome-notifications.tsx'
@@ -48,6 +50,7 @@ interface AppShellProps {
   installPrompt: BrowserInstallPromptEvent | null
   showInstallGuide: boolean
   error: string | null
+  onDismissError: () => void
   spaces: SpaceWithSurfaces[]
   homeSpacesLoadState: HomeSpacesLoadState
   route: AppRouteSelection
@@ -108,6 +111,7 @@ export function AppShell({
   installPrompt,
   showInstallGuide,
   error,
+  onDismissError,
   spaces,
   homeSpacesLoadState,
   route,
@@ -196,23 +200,6 @@ export function AppShell({
             </div>
           </header>
 
-          {error && (
-            <p className="error" role="alert">
-              {error}
-            </p>
-          )}
-
-          {pendingDecisionFeedback && (
-            <p
-              className={`pending-decision-feedback recipe-status ${pendingDecisionFeedback.state}`}
-              data-tone={pendingDecisionFeedback.tone}
-              role="status"
-              data-decision-feedback-id={pendingDecisionFeedback.id}
-            >
-              {pendingDecisionFeedback.text}
-            </p>
-          )}
-
           <div className="shell-layout">
             <SpaceNavigation
               spaces={spaces}
@@ -221,6 +208,16 @@ export function AppShell({
             />
 
             <main className="shell-main" id="main-content" aria-label={mainContentName}>
+              {error && (
+                <ShellNotice
+                  className="error"
+                  role="alert"
+                  message={error}
+                  dismissLabel="Dismiss error"
+                  onDismiss={onDismissError}
+                />
+              )}
+              <DecisionFeedbackNotice feedback={pendingDecisionFeedback} />
               {focusedSpace && !routeRecovery && (
                 <nav className="space-breadcrumb" aria-label="Breadcrumb">
                   <Link to={clientPath.home} aria-label="Home">

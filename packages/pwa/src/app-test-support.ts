@@ -52,6 +52,7 @@ export function installAppTestBrowser(): {
 export function resetAppTestBrowser(): void {
   cleanup()
   localStorage.clear()
+  sessionStorage.clear()
   window.history.replaceState({}, '', '/')
   Reflect.deleteProperty(navigator, 'serviceWorker')
   vi.clearAllMocks()

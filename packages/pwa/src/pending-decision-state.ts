@@ -12,6 +12,7 @@ export interface PendingDecisionFeedbackView {
   state: Exclude<PendingDecisionState, 'pending'>
   text: string
   tone: ReturnType<typeof pendingDecisionStatus>['tone']
+  resolvedAt?: string
 }
 
 export interface PendingDecisionFeedback {
@@ -243,6 +244,7 @@ export function latestPendingDecisionFeedback(
         id: decision.id,
         state: decision.state,
         tone: pendingDecisionStatus(decision).tone,
+        ...(decision.resolvedAt === undefined ? {} : { resolvedAt: decision.resolvedAt }),
         text:
           entry.decisionFeedbackId === decision.id ? entry.text : pendingDecisionFeedback(decision),
       }

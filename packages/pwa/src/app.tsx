@@ -354,6 +354,7 @@ function RoutedApp() {
       installPrompt={installPrompt}
       showInstallGuide={showInstallGuide}
       error={error}
+      onDismissError={() => runtime.reportError(null)}
       spaces={spaces}
       homeSpacesLoadState={homeSpacesLoadState}
       route={appRouteSelection}

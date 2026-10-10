@@ -45,12 +45,36 @@
   max-height: none;
 }
 
-.app-shell.precision-tool > .error,
-.app-shell.precision-tool > .pending-decision-feedback {
-  flex: 0 1 auto;
-  overflow-y: auto;
-  max-height: 15dvh;
-  margin-bottom: var(--catalog-space-sm);
+.app-shell.precision-tool .shell-notice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--catalog-space-xs);
+  width: 100%;
+  min-width: 0;
+  max-height: none;
+  overflow: visible;
+  margin: 0 0 var(--catalog-space-sm);
+}
+
+.shell-notice > p {
+  min-width: 0;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.shell-notice .shell-notice-dismiss {
+  width: var(--catalog-control-height);
+  height: var(--catalog-control-height);
+  color: inherit;
+}
+
+@media (pointer: coarse) {
+  .shell-notice .shell-notice-dismiss {
+    width: var(--catalog-control-touch-target);
+    height: var(--catalog-control-touch-target);
+  }
 }
 
 .precision-tool .chat-dock {
