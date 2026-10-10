@@ -44,9 +44,9 @@ Log in over SSH and paste this command **on the VPS**:
 
 ```sh
 curl -fsSLo veduta-install.sh \
-  https://raw.githubusercontent.com/Ic3b3rg/veduta/a53c80ce49eff69d2c058af1ff642528f3e0a812/deploy/install.sh &&
+  https://raw.githubusercontent.com/Ic3b3rg/veduta/6c3dfbbd7982bc80f4d4c585dcdb9915609f6def/deploy/install.sh &&
 sudo env SSH_CONNECTION="$SSH_CONNECTION" bash veduta-install.sh \
-  --ref a53c80ce49eff69d2c058af1ff642528f3e0a812 --access tailnet
+  --ref 6c3dfbbd7982bc80f4d4c585dcdb9915609f6def --access tailnet
 ```
 
 This command pins the reviewed source snapshot used by this guide. The private-access and UI
@@ -186,7 +186,7 @@ Corepack first, then:
 ```sh
 git clone https://github.com/Ic3b3rg/veduta.git
 cd veduta
-git checkout a53c80ce49eff69d2c058af1ff642528f3e0a812
+git checkout 6c3dfbbd7982bc80f4d4c585dcdb9915609f6def
 corepack enable
 corepack prepare pnpm@10.28.0 --activate
 pnpm install --frozen-lockfile
