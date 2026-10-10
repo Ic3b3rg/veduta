@@ -1,3 +1,4 @@
+import { openChat, closeChat } from './chat-journey.ts'
 import { expect, test } from './surface-contracts-fixture.ts'
 import { ActionWire } from './fast-actions-journey.ts'
 import { referenceModels } from '../../pwa/src/product-reference-data.ts'
@@ -27,29 +28,43 @@ for (const width of [320, 1440]) {
       await page.reload()
       const shell = page.locator('.app-shell')
       const content = page.getByRole('main', { name: 'Health Space' })
-      const chat = page.getByRole('contentinfo', { name: 'Global chat' })
+      const chat = page.locator('.chat-dock')
       const composer = page.getByRole('textbox', { name: 'Message Veduta in Health' })
       const send = page.getByRole('button', { name: 'Send message' })
       await expect(shell).toHaveAttribute('data-gateway-online', 'true')
+      await openChat(page)
       await composer.fill('send to layout@example.com: Please confirm the appointment.')
       await send.click()
       const reject = content.getByRole('button', {
         name: 'Reject Send message to layout@example.com',
         exact: true,
       })
+      await expect(
+        chat.getByRole('button', {
+          name: 'Reject Send message to layout@example.com',
+          exact: true,
+        }),
+      ).toBeVisible()
+      await closeChat(page)
       await expect(reject).toBeVisible()
       const decisionRoute = page.url()
 
       const assertRegions = async () => {
-        const mainBox = await content.boundingBox()
-        const chatBox = await chat.boundingBox()
+        await openChat(page)
         const inputBox = await composer.boundingBox()
-        expect(mainBox).not.toBeNull()
-        expect(chatBox).not.toBeNull()
         expect(inputBox).not.toBeNull()
-        expect(mainBox!.height).toBeGreaterThan(44)
-        expect(mainBox!.y + mainBox!.height).toBeLessThanOrEqual(chatBox!.y + 1)
         expect(inputBox!.y + inputBox!.height).toBeLessThanOrEqual(page.viewportSize()!.height)
+        if (width === 320) {
+          const dialog = page.getByRole('dialog', { name: 'Chat Health' })
+          const box = await dialog.boundingBox()
+          expect(box!.width).toBe(320)
+          expect(box!.height).toBe(page.viewportSize()!.height)
+        } else {
+          const mainBox = await content.boundingBox()
+          const chatBox = await chat.boundingBox()
+          expect(mainBox!.x + mainBox!.width).toBeLessThanOrEqual(chatBox!.x + 1)
+          expect(chatBox!.height).toBeGreaterThan(200)
+        }
         expect(
           await page.evaluate(
             () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -59,10 +74,11 @@ for (const width of [320, 1440]) {
       await assertRegions()
       await expect(chat).toHaveCSS('backdrop-filter', 'none')
       await expect(chat).toHaveCSS('box-shadow', 'none')
+      await closeChat(page)
       await reject.scrollIntoViewIfNeeded()
       const rejectBox = await reject.boundingBox()
-      const chatBox = await chat.boundingBox()
-      expect(rejectBox!.y + rejectBox!.height).toBeLessThanOrEqual(chatBox!.y)
+      const mainBox = await content.boundingBox()
+      expect(rejectBox!.y + rejectBox!.height).toBeLessThanOrEqual(mainBox!.y + mainBox!.height)
       await reject.focus()
       await expect(reject).toBeFocused()
       if (width === 320) {
@@ -73,15 +89,18 @@ for (const width of [320, 1440]) {
       await expect(shell).toHaveAttribute('data-gateway-online', 'true')
       await expect(reject).toBeVisible()
       await assertRegions()
+      await closeChat(page)
       await reject.click()
       await expect(content.getByRole('button', { name: /^Reject Send message/ })).toHaveCount(0)
       await expect(page).toHaveURL(decisionRoute)
+      await openChat(page)
       await expect(chat.getByText('Rejected', { exact: true })).toBeVisible()
       await expect(chat.getByText('Rejected', { exact: true })).toHaveAttribute(
         'data-tone',
         'muted',
       )
       await page.reload()
+      await openChat(page)
       await expect(chat.getByText('Rejected', { exact: true })).toBeVisible()
       await expect(page).toHaveURL(decisionRoute)
 
@@ -112,6 +131,7 @@ for (const width of [320, 1440]) {
       }
       await page.reload()
       await expect(shell).toHaveAttribute('data-gateway-online', 'true')
+      await openChat(page)
       const retry = chat.getByRole('button', { name: 'Retry', exact: true })
       await retry.scrollIntoViewIfNeeded()
       const retryBox = await retry.boundingBox()

@@ -403,12 +403,14 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose model' }))
     const connectionSelect = await screen.findByRole<HTMLSelectElement>('combobox', {
       name: 'Connection',
     })
     const modelSelect = screen.getByRole<HTMLSelectElement>('combobox', { name: 'Model' })
     expect(connectionSelect.value).toBe(CHATGPT_CONNECTION_ID)
     expect(modelSelect.value).toBe(CHATGPT_MODEL_ID)
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
     const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
     if (!handlers) throw new Error('Gateway handlers were not registered')
 

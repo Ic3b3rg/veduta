@@ -62,14 +62,23 @@ parallel context without stretching reading lines or inflating empty cards. Long
 copy, dates and controls must wrap intentionally. Chat and overlays must not conceal approvals or
 focused controls. Routine Atom actions preserve the established route and focus contract.
 
-The production shell gives Home/Space content its own scroll region and keeps a compact Chat
-region in normal layout flow below it. Chat history scrolls independently; approval controls can
-never pass underneath a floating composer. Durable messages, decisions and notifications remain
-opaque, so this composition needs no translucent fallback. At short viewport heights the secondary
-model selectors give way to the always-reachable Model connections utility. The viewport opts into
-[`interactive-widget=resizes-content`](https://developer.chrome.com/blog/viewport-resize-behavior)
-so Android keyboard opening resizes this composition. Zoom remains enabled; browser resize tests
-do not replace a physical-device keyboard check.
+The production shell gives Home/Space content its own scroll region and keeps Chat in a
+persistent right-hand rail from 960 px. Below that width an icon-only, 48 px circular button opens
+a full-screen Sheet. Opening focuses its heading for reading; it never opens the keyboard.
+Closing restores focus to the launcher and preserves the draft and reading position. Drafts are
+separate for each Chat scope. A pending review remains reachable beside the launcher and above
+Chat through the same exact Decision Surface link used elsewhere.
+
+A submitted turn anchors its user message near the top so a long incoming reply does not pull the
+reader down. The latest-message button resumes following and disappears at the bottom. Gateway
+history, retry, queued submissions and decision authority remain unchanged. The topbar model
+control opens the existing verify-then-commit Connection and Model fields in a modal.
+
+The mobile composer uses Enter for a new line and the arrow or Ctrl/Cmd+Enter to send. Desktop
+retains Enter to send and Shift+Enter for a new line. The viewport opts into
+[`interactive-widget=resizes-content`](https://developer.chrome.com/blog/viewport-resize-behavior);
+the Sheet also follows the visual viewport while an on-screen keyboard is open. Zoom remains
+enabled; browser resize tests do not replace a physical-device keyboard check.
 
 ## Motion and accessibility
 

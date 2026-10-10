@@ -2,6 +2,7 @@
 import type { ChatMessage, PendingDecision } from '@veduta/protocol'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { fromPartial } from '@total-typescript/shoehorn'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatBar } from './chat-bar.tsx'
 
@@ -38,6 +39,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
   Reflect.deleteProperty(HTMLElement.prototype, 'clientHeight')
   Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight')
   Reflect.deleteProperty(HTMLElement.prototype, 'scrollTop')
@@ -94,6 +96,33 @@ function renderChatBar(
 }
 
 describe('ChatBar', () => {
+  it('anchors a submitted message for reading instead of chasing a long incoming reply', () => {
+    const entries: ChatMessage[] = [{ role: 'assistant', text: 'Previous reply' }]
+    const view = renderChatBar(entries, [])
+    const log = screen.getByRole('log', { name: 'Conversation' })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return fromPartial<DOMRect>({
+        top: this.classList.contains('user') ? 600 - log.scrollTop : 0,
+      })
+    })
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Explain the plan' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    scrollHeights.set(log, 676)
+    const next: ChatMessage[] = [...entries, { role: 'user', text: 'Explain the plan' }]
+    view.rerenderChatBar(next, [{ turnId: 'new-turn', text: 'Here is the plan' }])
+    expect(log.scrollTop).toBe(576)
+    // The browser's programmatic scroll event must not opt the reader back into following.
+    fireEvent.scroll(log)
+    scrollHeights.set(log, 1600)
+    view.rerenderChatBar(next, [
+      { turnId: 'new-turn', text: 'A much longer answer keeps arriving' },
+    ])
+    expect(log.scrollTop).toBe(576)
+    expect(screen.getByRole('button', { name: 'Scroll to latest message' })).toBeDefined()
+  })
+
   it('opens a loaded conversation at the latest message', () => {
     renderChatBar([{ role: 'assistant', text: 'the latest message' }], [])
 

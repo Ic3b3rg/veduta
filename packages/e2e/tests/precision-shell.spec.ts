@@ -55,6 +55,7 @@ for (const width of [320, 900, 1024, 1440]) {
       await expect(page.getByRole('heading', { name: 'Veduta', exact: true })).toBeVisible()
       await expect(page.locator('.topbar')).toHaveCSS('backdrop-filter', 'none')
       await assertFits()
+      await page.getByRole('button', { name: 'Choose model', exact: true }).click()
       for (const name of ['Connection', 'Model']) {
         const control = page.getByRole('combobox', { name, exact: true })
         await expect(control).toBeVisible()
@@ -65,10 +66,11 @@ for (const width of [320, 900, 1024, 1440]) {
         }
       }
 
-      if (width === 320) {
+      await page.getByRole('button', { name: 'Done', exact: true }).click()
+      if (width < 960) {
         await expect(selector).toHaveValue('spc-health')
         await expect(navigation.getByRole('button')).toHaveCount(0)
-        await expect(composer).not.toBeFocused()
+        await expect(composer).toHaveCount(0)
         const target = await selector.boundingBox()
         expect(target?.height).toBeGreaterThanOrEqual(44)
         expect(target?.width).toBeGreaterThanOrEqual(44)
@@ -127,7 +129,7 @@ for (const width of [320, 900, 1024, 1440]) {
       if (width === 320) await health.tap()
       else await health.click()
       await expect(page).toHaveURL(/\/app\/space\/health$/)
-      if (width === 320) await expect(composer).not.toBeFocused()
+      if (width === 320) await expect(composer).toHaveCount(0)
       const focus = page.getByRole('button', { name: 'Focus Weight goal', exact: true })
       if (width === 320) await focus.tap()
       else await focus.click()
@@ -135,7 +137,7 @@ for (const width of [320, 900, 1024, 1440]) {
       await expect(
         page.getByRole('button', { name: 'Focus Weight goal', exact: true }),
       ).toHaveAttribute('aria-pressed', 'true')
-      if (width === 320) await expect(selector).toHaveValue('spc-health')
+      if (width < 960) await expect(selector).toHaveValue('spc-health')
       await page.reload()
       await expect(shell).toHaveAttribute('data-gateway-online', 'true')
       await expect(page).toHaveURL(/\/surface\/srf-goal$/)

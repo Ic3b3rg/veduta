@@ -13,7 +13,7 @@ import { Button } from '@veduta/catalog/ui/button'
 import { PortalContainerContext } from '@veduta/catalog/ui/portal-container'
 import { Settings2, SlidersHorizontal } from 'lucide-react'
 import type { SpaceWithSurfaces } from './api.ts'
-import { ChatBar } from './chat-bar.tsx'
+import { ChatPanel } from './chat-panel.tsx'
 import { DecisionFeedbackNotice } from './decision-feedback-notice.tsx'
 import { ChatModelSelects } from './chat-model-selects.tsx'
 import { clientPath } from './client-router.tsx'
@@ -285,29 +285,33 @@ export function AppShell({
                 />
               ))}
             </main>
+            <ChatPanel
+              notifications={
+                focusedSpace
+                  ? focusedPendingNotifications
+                  : pendingDecisionPresentation.globalNotifications
+              }
+              gatewayOnline={gatewayOnline}
+              entries={chatEntries}
+              timelineEntries={chatTimelineEntries}
+              hasOlder={chatHasOlder}
+              loadingOlder={chatLoadingOlder}
+              queuedChat={queuedChat}
+              streamingEntries={streamingEntries}
+              focusedSpace={focusedSpace}
+              focusToken={focusChatToken}
+              focusOnRouteChange={focusChatOnRouteChange}
+              pendingDecisionReviewPaths={pendingDecisionPresentation.reviewPaths}
+              dismissedDecisionIds={dismissedDecisionIds}
+              resolvingDecisionIds={resolvingDecisionIds}
+              onResolvePendingDecision={onResolvePendingDecision}
+              onDismissPendingDecision={onDismissPendingDecision}
+              onSend={onSend}
+              onLoadOlder={onLoadOlderChat}
+              onRetryInterrupted={onRetryInterruptedChat}
+              onRetryQueued={onRetryQueuedChat}
+            />
           </div>
-
-          <ChatBar
-            gatewayOnline={gatewayOnline}
-            entries={chatEntries}
-            timelineEntries={chatTimelineEntries}
-            hasOlder={chatHasOlder}
-            loadingOlder={chatLoadingOlder}
-            queuedChat={queuedChat}
-            streamingEntries={streamingEntries}
-            focusedSpace={focusedSpace}
-            focusToken={focusChatToken}
-            focusOnRouteChange={focusChatOnRouteChange}
-            pendingDecisionReviewPaths={pendingDecisionPresentation.reviewPaths}
-            dismissedDecisionIds={dismissedDecisionIds}
-            resolvingDecisionIds={resolvingDecisionIds}
-            onResolvePendingDecision={onResolvePendingDecision}
-            onDismissPendingDecision={onDismissPendingDecision}
-            onSend={onSend}
-            onLoadOlder={onLoadOlderChat}
-            onRetryInterrupted={onRetryInterruptedChat}
-            onRetryQueued={onRetryQueuedChat}
-          />
         </div>
       </PortalContainerContext.Provider>
     </PresentationContext.Provider>

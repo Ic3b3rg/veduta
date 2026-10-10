@@ -1,3 +1,4 @@
+import { openChat, closeChat } from './chat-journey.ts'
 import { expect, test } from './surface-contracts-fixture.ts'
 
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
@@ -13,12 +14,14 @@ test('mobile Chat preserves navigation focus, multiline drafts and readable repl
   const latest = page.getByRole('button', { name: 'Scroll to latest message' })
   const send = page.getByRole('button', { name: 'Send message' })
   await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'true')
-  await expect(composer).not.toBeFocused()
+  await expect(composer).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Focus Weight goal', exact: true }).tap()
   await expect(page).toHaveURL(/\/surface\/srf-goal$/)
-  await expect(composer).not.toBeFocused()
+  await expect(composer).toHaveCount(0)
 
+  await openChat(page)
+  await expect(page.getByRole('heading', { name: 'Chat Health' })).toBeFocused()
   await composer.tap()
   await composer.fill('**Important**')
   await composer.press('Enter')
@@ -37,6 +40,7 @@ test('mobile Chat preserves navigation focus, multiline drafts and readable repl
   await expect(reply.getByRole('listitem')).toHaveCount(2)
   await expect(reply.locator('pre code')).toContainText('long-code-')
   await expect(conversation.locator('.chat-entry.user .chat-message')).toHaveText(draft)
+  await latest.tap()
   await expect(latest).toBeHidden()
 
   await conversation.evaluate((element) => {
@@ -53,10 +57,19 @@ test('mobile Chat preserves navigation focus, multiline drafts and readable repl
     size: getComputedStyle(element).fontSize,
     transform: getComputedStyle(element).textTransform,
   }))
-  expect(emphasis).toEqual({ size: '15px', transform: 'none' })
+  expect(emphasis).toEqual({ size: '16px', transform: 'none' })
   await page.screenshot({ path: testInfo.outputPath('mobile-chat.png'), fullPage: true })
 
+  await composer.fill('Keep this draft\nSecond line')
+  await conversation.evaluate((element) => {
+    element.scrollTop = 100
+  })
+  await closeChat(page)
+  await openChat(page)
+  await expect(composer).toHaveValue('Keep this draft\nSecond line')
+  expect(await conversation.evaluate((element) => element.scrollTop)).toBe(100)
   await page.reload()
+  await openChat(page)
   await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'true')
   await expect(composer).not.toBeFocused()
   await expect(reply.locator('.chat-message strong')).toHaveText('Important')

@@ -80,12 +80,14 @@ export function PendingDecisionControls({
   resolving,
   onResolve,
   onDismiss,
+  onReview,
 }: {
   decision: PendingDecision
   reviewPath?: string
   resolving: boolean
   onResolve: (decisionId: string, resolution: PendingDecisionResolution) => Promise<void> | void
   onDismiss: (decisionId: string) => void
+  onReview?: () => void
 }) {
   return (
     <div className="pending-decision-actions">
@@ -112,7 +114,12 @@ export function PendingDecisionControls({
           Review is available when its Decision Surface arrives.
         </span>
       ) : (
-        <Link className="recipe-control" to={reviewPath} aria-label={`Review ${decision.summary}`}>
+        <Link
+          className="recipe-control"
+          to={reviewPath}
+          aria-label={`Review ${decision.summary}`}
+          onClick={onReview}
+        >
           Review
         </Link>
       )}

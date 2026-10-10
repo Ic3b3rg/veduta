@@ -15,6 +15,7 @@ import { clientPath } from './client-router.tsx'
 import { PendingDecisionControls } from './pending-decision-notifications.tsx'
 import type { QueuedChat } from './pwa-storage.ts'
 import { pendingDecisionStatus } from './pending-decision-status.ts'
+import { createChatViewState, type ChatViewState } from './chat-view-state.ts'
 
 export function ChatBar({
   gatewayOnline = true,
@@ -36,6 +37,8 @@ export function ChatBar({
   onLoadOlder,
   onRetryInterrupted,
   onRetryQueued,
+  viewState,
+  onOpenResult,
 }: {
   gatewayOnline?: boolean
   entries: ChatMessage[]
@@ -62,39 +65,95 @@ export function ChatBar({
   onLoadOlder: () => void
   onRetryInterrupted: (turnId: string) => void
   onRetryQueued: (id: string) => void
+  viewState?: ChatViewState
+  onOpenResult?: () => void
 }) {
-  const [text, setText] = useState('')
+  const [localView] = useState(createChatViewState)
+  const view = viewState ?? localView
+  const [draft, setDraft] = useState({ view, text: view.getSnapshot().draft })
+  if (draft.view !== view) setDraft({ view, text: view.getSnapshot().draft })
+  const text = draft.view === view ? draft.text : view.getSnapshot().draft
+  const setText = (next: string) => {
+    view.remember({ draft: next })
+    setDraft({ view, text: next })
+  }
   const [isAtBottom, setIsAtBottom] = useState(true)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
-  const followsLatestRef = useRef(true)
+  const spacerRef = useRef<HTMLDivElement>(null)
+  const anchorNextUserRef = useRef<HTMLElement | null | undefined>(undefined)
+  const olderPageAnchor = useRef<{ id: string; top: number } | undefined>(undefined)
+  const followsLatestRef = useRef(view.getSnapshot().followsLatest)
   const logGeometryRef = useRef({ scrollHeight: 0, clientHeight: 0, clientWidth: 0, scrollTop: 0 })
 
-  const updateScroll = useCallback((preserveFollowing: boolean) => {
-    const log = logRef.current
-    if (!log) return
-    const geometry = {
-      scrollHeight: log.scrollHeight,
-      clientHeight: log.clientHeight,
-      clientWidth: log.clientWidth,
-    }
-    const previous = logGeometryRef.current
-    const resized =
-      geometry.scrollHeight !== previous.scrollHeight ||
-      geometry.clientHeight !== previous.clientHeight ||
-      geometry.clientWidth !== previous.clientWidth
-    const maximum = Math.max(0, geometry.scrollHeight - geometry.clientHeight)
-    const movedUp = log.scrollTop <= Math.min(previous.scrollTop, maximum) - 1
-    // Resize can emit scroll before ResizeObserver. Keep following unless the reader moved up;
-    // clamping to a smaller maximum after content shrinks is not an upward reading gesture.
-    if (followsLatestRef.current && !movedUp && (preserveFollowing || resized)) {
-      log.scrollTop = log.scrollHeight
-    }
-    logGeometryRef.current = { ...geometry, scrollTop: log.scrollTop }
-    const atBottom = isChatLogAtBottom(log)
-    followsLatestRef.current = atBottom
-    setIsAtBottom(atBottom)
-  }, [])
+  const updateScroll = useCallback(
+    (preserveFollowing: boolean) => {
+      const log = logRef.current
+      if (!log) return
+      const held = olderPageAnchor.current
+      const firstEntry = log.querySelector<HTMLElement>('[data-chat-entry-id]')
+      if (held && firstEntry?.dataset.chatEntryId !== held.id) {
+        const previousEntry = [...log.querySelectorAll<HTMLElement>('[data-chat-entry-id]')].find(
+          (entry) => entry.dataset.chatEntryId === held.id,
+        )
+        if (previousEntry) log.scrollTop += previousEntry.getBoundingClientRect().top - held.top
+        olderPageAnchor.current = undefined
+        followsLatestRef.current = false
+      }
+      const users = log.querySelectorAll<HTMLElement>('.chat-entry.user')
+      const latestUser = users.item(users.length - 1)
+      if (view.getSnapshot().anchorLatestTurn && latestUser && spacerRef.current) {
+        const contentAfterUser =
+          spacerRef.current.getBoundingClientRect().top - latestUser.getBoundingClientRect().top
+        spacerRef.current.style.height = `${Math.max(0, log.clientHeight - contentAfterUser - 48)}px`
+      }
+      if (
+        anchorNextUserRef.current !== undefined &&
+        latestUser &&
+        latestUser !== anchorNextUserRef.current
+      ) {
+        log.scrollTop +=
+          latestUser.getBoundingClientRect().top - log.getBoundingClientRect().top - 24
+        anchorNextUserRef.current = undefined
+        followsLatestRef.current = false
+      }
+      const geometry = {
+        scrollHeight: log.scrollHeight,
+        clientHeight: log.clientHeight,
+        clientWidth: log.clientWidth,
+      }
+      const previous = logGeometryRef.current
+      const resized =
+        geometry.scrollHeight !== previous.scrollHeight ||
+        geometry.clientHeight !== previous.clientHeight ||
+        geometry.clientWidth !== previous.clientWidth
+      const maximum = Math.max(0, geometry.scrollHeight - geometry.clientHeight)
+      const movedUp = log.scrollTop <= Math.min(previous.scrollTop, maximum) - 1
+      // Resize can emit scroll before ResizeObserver. Keep following unless the reader moved up;
+      // clamping to a smaller maximum after content shrinks is not an upward reading gesture.
+      if (followsLatestRef.current && !movedUp && (preserveFollowing || resized)) {
+        log.scrollTop = log.scrollHeight
+      }
+      logGeometryRef.current = { ...geometry, scrollTop: log.scrollTop }
+      const atBottom = isChatLogAtBottom(log)
+      if (
+        !view.getSnapshot().anchorLatestTurn ||
+        (!preserveFollowing && Math.abs(log.scrollTop - previous.scrollTop) >= 1)
+      )
+        followsLatestRef.current = atBottom
+      view.remember({ scrollTop: log.scrollTop, followsLatest: followsLatestRef.current })
+      setIsAtBottom(atBottom)
+    },
+    [view],
+  )
+
+  useLayoutEffect(() => {
+    const saved = view.getSnapshot()
+    olderPageAnchor.current = undefined
+    followsLatestRef.current = saved.followsLatest
+    logGeometryRef.current = { scrollHeight: 0, clientHeight: 0, clientWidth: 0, scrollTop: 0 }
+    if (logRef.current && saved.scrollTop !== undefined) logRef.current.scrollTop = saved.scrollTop
+  }, [view])
 
   useEffect(() => {
     if (focusOnRouteChange && !usesTouchComposer()) inputRef.current?.focus()
@@ -118,16 +177,24 @@ export function ChatBar({
     followsLatestRef.current = true
     setIsAtBottom(true)
     log.scrollTop = log.scrollHeight
+    view.remember({ scrollTop: log.scrollTop, followsLatest: true })
   }
 
   const send = () => {
     const trimmed = text.trim()
-    if (!trimmed || !onSend(trimmed)) return
+    if (!trimmed) return
+    const users = logRef.current?.querySelectorAll<HTMLElement>('.chat-entry.user')
+    anchorNextUserRef.current = users?.item(users.length - 1) ?? null
+    if (!onSend(trimmed)) {
+      anchorNextUserRef.current = undefined
+      return
+    }
+    view.remember({ anchorLatestTurn: true })
     setText('')
   }
 
   return (
-    <footer className="chat-dock" aria-label="Global chat">
+    <div className="chat-dock" aria-label="Chat conversation">
       {!gatewayOnline && (
         <span className="chat-status recipe-status" data-tone="muted" role="status">
           Offline
@@ -148,7 +215,16 @@ export function ChatBar({
               className="recipe-control"
               type="button"
               disabled={loadingOlder}
-              onClick={onLoadOlder}
+              onClick={() => {
+                const first = logRef.current?.querySelector<HTMLElement>('[data-chat-entry-id]')
+                if (first?.dataset.chatEntryId) {
+                  olderPageAnchor.current = {
+                    id: first.dataset.chatEntryId,
+                    top: first.getBoundingClientRect().top,
+                  }
+                }
+                onLoadOlder()
+              }}
             >
               {loadingOlder ? 'Loading older messages…' : 'Load older messages'}
             </Button>
@@ -207,6 +283,7 @@ export function ChatBar({
                 {timelineEntry?.connectionAttemptId && (
                   <Link
                     to={`${clientPath.serviceConnections}?attempt=${encodeURIComponent(timelineEntry.connectionAttemptId)}`}
+                    onClick={onOpenResult}
                   >
                     Review service connection
                   </Link>
@@ -222,7 +299,11 @@ export function ChatBar({
                           ? clientPath.space(target.spaceSlug)
                           : clientPath.surface(target.spaceSlug, target.surfaceId)
                       return (
-                        <Link key={`${target.spaceId}:${target.surfaceId ?? ''}`} to={href}>
+                        <Link
+                          key={`${target.spaceId}:${target.surfaceId ?? ''}`}
+                          to={href}
+                          onClick={onOpenResult}
+                        >
                           {label}
                         </Link>
                       )
@@ -244,6 +325,7 @@ export function ChatBar({
                               resolving={resolvingDecisionIds.has(decision.id)}
                               onResolve={onResolvePendingDecision}
                               onDismiss={onDismissPendingDecision}
+                              {...(onOpenResult === undefined ? {} : { onReview: onOpenResult })}
                             />
                           ) : (
                             <span
@@ -291,6 +373,7 @@ export function ChatBar({
               </div>
             </Card>
           ))}
+          <div ref={spacerRef} aria-hidden="true" className="chat-reading-space" />
         </div>
         {!isAtBottom && (
           <Button
@@ -320,13 +403,15 @@ export function ChatBar({
             placeholder={focusedSpace ? `Message ${focusedSpace.name}` : 'Message Veduta'}
             rows={1}
             value={text}
-            onChange={(event) => setText(event.target.value)}
+            onChange={(event) => {
+              setText(event.target.value)
+            }}
             onKeyDown={(event) => {
               if (
                 event.key === 'Enter' &&
                 !event.shiftKey &&
                 !event.nativeEvent.isComposing &&
-                !usesTouchComposer()
+                (event.metaKey || event.ctrlKey || !usesTouchComposer())
               ) {
                 event.preventDefault()
                 send()
@@ -349,12 +434,15 @@ export function ChatBar({
           </InputGroupAddon>
         </InputGroup>
       </form>
-    </footer>
+    </div>
   )
 }
 
 function usesTouchComposer(): boolean {
-  return window.matchMedia?.('(pointer: coarse)').matches ?? false
+  return (
+    (window.matchMedia?.('(pointer: coarse)').matches ?? false) ||
+    (window.matchMedia?.('(max-width: 959px)').matches ?? false)
+  )
 }
 
 function isChatLogAtBottom(log: HTMLElement): boolean {

@@ -1,3 +1,4 @@
+import { openChat, closeChat } from './chat-journey.ts'
 import { PendingDecisionListSchema } from '../../protocol/src/index.ts'
 import { authenticatedHeaders, readSurfaceSnapshot } from './fast-actions-journey.ts'
 import { expect, test } from './surface-contracts-fixture.ts'
@@ -16,6 +17,7 @@ test('focused Chat proposes, rejects and accepts a new Space without leaving the
   const beforeIds = before.spaces.map((space) => space.id)
   const route = page.url()
   const requestProposal = async () => {
+    await openChat(page)
     await composer.fill('crea uno Space Lavoro')
     await page.getByRole('button', { name: 'Send message' }).tap()
     await expect(chat.getByRole('button', { name: 'Accept Create Space “Lavoro”' })).toBeVisible()
@@ -34,6 +36,7 @@ test('focused Chat proposes, rejects and accepts a new Space without leaving the
 
   await requestProposal()
   await page.reload()
+  await openChat(page)
   await expect(chat.getByRole('button', { name: 'Accept Create Space “Lavoro”' })).toBeVisible()
   await expect(composer).toBeVisible()
   const decisionsResponse = await page.request.get(`${origin}/api/pending-decisions`, {
@@ -45,9 +48,11 @@ test('focused Chat proposes, rejects and accepts a new Space without leaving the
   )
   if (!proposal) throw new Error('The focused proposal was not persisted')
   await chat.getByRole('button', { name: 'Accept Create Space “Lavoro”' }).tap()
+  await closeChat(page)
   await expect(
     page.getByRole('combobox', { name: 'Change Space' }).getByRole('option', { name: 'Lavoro' }),
   ).toHaveCount(1)
+  await openChat(page)
   await expect(chat.getByText('Accepted: Create Space “Lavoro”.', { exact: true })).toBeVisible()
   const accepted = await readSurfaceSnapshot(page, origin)
   const created = accepted.spaces.filter((space) => space.name === 'Lavoro')
@@ -72,6 +77,7 @@ test('focused Chat proposes, rejects and accepts a new Space without leaving the
     accepted.spaces.map((space) => space.id),
   )
   await page.reload()
+  await openChat(page)
   await expect(composer).toBeVisible()
   await expect(chat.getByRole('button', { name: 'Accept Create Space “Lavoro”' })).toHaveCount(0)
   expect(page.url()).toBe(route)

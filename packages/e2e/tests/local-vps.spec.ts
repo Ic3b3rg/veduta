@@ -12,6 +12,7 @@ import { verifyLiveRuntime } from './live-runtime-journey.ts'
 import { expectCompleteGymPlan } from './gym-plan-journey.ts'
 import { verifySurfaceAuthoring } from './surface-authoring-journey.ts'
 import { verifyConnectionsSettings } from './connections-settings-journey.ts'
+import { closeChat, openChat } from './chat-journey.ts'
 import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stack.ts'
 
 /**
@@ -140,7 +141,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       ).toBeVisible({ timeout: 60_000 })
     })
 
-    await test.step('the chat composer stays legible over glass, resizes, and keeps its send icon reachable', async () => {
+    await test.step('the Chat composer stays legible, resizes, and keeps its send icon reachable', async () => {
       const input = page.getByRole('textbox', { name: 'Message Veduta' })
       const send = page.getByRole('button', { name: 'Send message' })
       await expect(send).toBeDisabled()
@@ -151,12 +152,12 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         const style = getComputedStyle(element)
         return { background: style.backgroundColor, backdrop: style.backdropFilter }
       })
-      expect(dockStyle.background).toMatch(/\/ 0\.2\)$/)
-      expect(dockStyle.backdrop).toContain('blur(')
+      expect(dockStyle.background).toMatch(/^rgb\(/)
+      expect(dockStyle.backdrop).toBe('none')
       const composerBackground = await page
         .locator('.chat-compose [data-slot="input-group"]')
         .evaluate((element) => getComputedStyle(element).backgroundColor)
-      expect(composerBackground).toBe('rgba(0, 0, 0, 0)')
+      expect(composerBackground).toMatch(/^rgb\(/)
       const fallbackPage = await context.newPage()
       try {
         await fallbackPage.goto(page.url())
@@ -195,7 +196,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       if (!groupBounds || !buttonBounds) throw new Error('Composer has no bounding box')
       expect(
         groupBounds.x + groupBounds.width - buttonBounds.x - buttonBounds.width,
-      ).toBeGreaterThanOrEqual(6)
+      ).toBeGreaterThanOrEqual(4)
       await page.emulateMedia({ colorScheme: 'light' })
 
       const compactHeight = await input.evaluate(
@@ -207,20 +208,15 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         scrollHeight: element.scrollHeight,
         clientHeight: element.clientHeight,
       }))
-      expect(expanded.height).toBeGreaterThan(compactHeight + 100)
+      expect(expanded.height).toBeGreaterThan(compactHeight)
+      expect(expanded.height).toBeLessThanOrEqual(160)
       expect(expanded.scrollHeight).toBeGreaterThan(expanded.clientHeight)
       await expect(send).toBeEnabled()
 
-      const dockHeight = await page
-        .locator('.chat-dock')
-        .evaluate((element) => element.getBoundingClientRect().height)
-      await expect
-        .poll(() =>
-          page
-            .locator('.app-shell')
-            .evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingBottom)),
-        )
-        .toBeGreaterThan(dockHeight)
+      const mainBounds = await page.locator('.shell-main').boundingBox()
+      const chatBounds = await page.locator('.chat-panel').boundingBox()
+      if (!mainBounds || !chatBounds) throw new Error('Desktop regions have no bounding box')
+      expect(mainBounds.x + mainBounds.width).toBeLessThanOrEqual(chatBounds.x)
 
       await input.fill('Short')
       expect(await input.evaluate((element) => element.getBoundingClientRect().height)).toBe(
@@ -228,6 +224,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       )
 
       await page.setViewportSize({ width: 320, height: 640 })
+      await openChat(page)
       await input.fill('A longer draft\n'.repeat(20))
       const sendBounds = await send.boundingBox()
       if (!sendBounds) throw new Error('Send button has no bounding box')
@@ -242,6 +239,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         compactHeight,
       )
       await expect(send).toBeDisabled()
+      await closeChat(page)
       await page.setViewportSize({ width: 1280, height: 720 })
     })
 
@@ -482,15 +480,17 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expectWeightRecorded(observerPage)
 
       await Promise.all([
-        page.evaluate(() => window.scrollTo(0, 0)),
-        observerPage.evaluate(() => window.scrollTo(0, 0)),
+        page.locator('.shell-main').evaluate((main) => main.scrollTo(0, 0)),
+        observerPage.locator('.shell-main').evaluate((main) => main.scrollTo(0, 0)),
       ])
 
       const initiatingUrl = page.url()
+      await openChat(page)
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
       await chatInput.fill('create Weekly groceries from the Groceries Template')
       await expect(chatInput).toBeFocused()
-      await chatInput.press('Enter')
+      await page.getByRole('button', { name: 'Send message' }).click()
+      await closeChat(page)
 
       const initiatingCard = surfaceCard(page, 'Weekly groceries')
       const observerCard = surfaceCard(observerPage, 'Weekly groceries')
@@ -502,40 +502,41 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
         (card) => card.getBoundingClientRect().top,
       )
       expect(observerCardTop).toBeGreaterThan(revealViewport.height)
-      expect(await observerPage.evaluate(() => window.scrollY)).toBe(0)
+      expect(await observerPage.locator('.shell-main').evaluate((main) => main.scrollTop)).toBe(0)
 
       await expect
-        .poll(() => page.evaluate(() => window.scrollY), { timeout: 3_000 })
+        .poll(() => page.locator('.shell-main').evaluate((main) => main.scrollTop), {
+          timeout: 3_000,
+        })
         .toBeGreaterThan(0)
       await expect
         .poll(
           () =>
             initiatingCard.evaluate((card) => {
               const bounds = card.getBoundingClientRect()
-              return Math.abs(bounds.top + bounds.height / 2 - window.innerHeight / 2)
+              const main = card.closest('.shell-main')!.getBoundingClientRect()
+              return Math.abs(bounds.top + bounds.height / 2 - main.top - main.height / 2)
             }),
           { timeout: 3_000 },
         )
         .toBeLessThan(80)
 
-      await expect(chatInput).toBeFocused()
+      await expect(page.getByRole('button', { name: 'Open Chat' })).toBeFocused()
       await expect(
         initiatingCard.getByRole('button', { name: 'Focus Weekly groceries' }),
       ).toHaveAttribute('aria-pressed', 'false')
-      await expect(
-        page.getByRole('complementary', { name: 'Spaces' }).getByRole('button', { name: 'Health' }),
-      ).toHaveClass(/selected/)
+      await expect(page.getByRole('combobox', { name: 'Change Space' })).toHaveValue('spc-health')
       expect(page.url()).toBe(initiatingUrl)
 
       await expect(initiatingCard).not.toHaveClass(/surface-reveal-highlight/, { timeout: 3_000 })
-      await page.evaluate(() => window.scrollTo(0, 0))
+      await page.locator('.shell-main').evaluate((main) => main.scrollTo(0, 0))
       await page.reload()
       await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'true')
       await expect(surfaceCard(page, 'Weekly groceries')).toBeAttached()
       await expect(surfaceCard(page, 'Weekly groceries')).not.toHaveClass(
         /surface-reveal-highlight/,
       )
-      expect(await page.evaluate(() => window.scrollY)).toBe(0)
+      expect(await page.locator('.shell-main').evaluate((main) => main.scrollTop)).toBe(0)
 
       await observerContext.close()
       observerContext = undefined
@@ -563,9 +564,11 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
 
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
       const initiatingUrl = page.url()
+      await openChat(page)
       await chatInput.fill('Quante calorie ho mangiato oggi ?')
       await expect(chatInput).toBeFocused()
-      await chatInput.press('Enter')
+      await page.getByRole('button', { name: 'Send message' }).click()
+      await closeChat(page)
 
       const decisionTitle = 'Proposed layout change: Meals'
       const initiatingDecision = surfaceCard(page, decisionTitle)
@@ -576,7 +579,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(
         initiatingDecision.getByRole('button', { name: `Focus ${decisionTitle}` }),
       ).toHaveAttribute('aria-pressed', 'false')
-      await expect(chatInput).toBeFocused()
+      await expect(page.getByRole('button', { name: 'Open Chat' })).toBeFocused()
       expect(page.url()).toBe(initiatingUrl)
 
       await expect(observerDecision).toBeAttached()
@@ -589,20 +592,25 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       const chatDecision = page.locator('.chat-entry', {
         has: page.locator('.chat-pending-decision', { hasText: 'Change the “Meals” Surface tree' }),
       })
+      await openChat(page)
       await expect(chatDecision).toHaveCount(1)
       const decisionEntryId = await chatDecision.getAttribute('data-chat-entry-id')
       expect(decisionEntryId).toBeTruthy()
       await page.reload()
+      await openChat(page)
       await expect(chatDecision).toHaveCount(1)
       await expect(chatDecision).toHaveAttribute('data-chat-entry-id', decisionEntryId!)
+      await closeChat(page)
       await notification
         .getByRole('button', { name: 'Accept Change the “Meals” Surface tree' })
         .click()
       await expect(initiatingDecision).toHaveCount(0)
       await expect(meals.getByText('Today’s calorie estimate')).toBeVisible()
+      await openChat(page)
       await expect(chatDecision).toHaveCount(1)
       await expect(chatDecision.locator('.chat-pending-decision-outcome')).toBeVisible()
       await page.reload()
+      await openChat(page)
       await expect(chatDecision).toHaveCount(1)
       await expect(chatDecision).toHaveAttribute('data-chat-entry-id', decisionEntryId!)
       await expect(chatDecision.locator('.chat-pending-decision-outcome')).toBeVisible()
@@ -612,12 +620,14 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
     })
 
     await test.step('Form text submits atomically, retries visibly, and survives reload (issue 142)', async () => {
+      await openChat(page)
       const chatInput = page.getByRole('textbox', { name: 'Message Veduta in Health' })
       await chatInput.fill('send to alice@example.com: original draft')
       await page.getByRole('button', { name: 'Send message' }).click()
 
       const approvalTitle = 'Approval required: Send message to alice@example.com'
       const approval = surfaceCard(page, approvalTitle)
+      await closeChat(page)
       await expect(approval).toBeVisible()
       const approvalSurface = await fetchSurfaceByTitle(page, stack!.origin, approvalTitle)
       const body = approval.getByRole('textbox', { name: 'Body' })

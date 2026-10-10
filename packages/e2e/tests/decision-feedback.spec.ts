@@ -1,3 +1,4 @@
+import { openChat } from './chat-journey.ts'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { ChatTimeline } from '../../daemon/src/chat-timeline.ts'
@@ -41,6 +42,8 @@ test('completed decision feedback wraps, expires and stays in Chat after reload'
   await expect(notice).toHaveCount(0)
   await page.reload()
   await expect(notice).toHaveCount(0)
+  await openChat(page)
+  await page.clock.runFor(600)
   await expect(
     page.getByRole('log', { name: 'Conversation' }).getByText(pendingDecisionFeedback(decision), {
       exact: true,
@@ -85,6 +88,8 @@ test('failure dismissal survives reload and reconnect, without hiding a new fail
   await page.clock.runFor(3_000)
   await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'true')
   await expect(notice).toHaveCount(0)
+  await openChat(page)
+  await page.clock.runFor(600)
   await expect(
     page.getByRole('log', { name: 'Conversation' }).getByText(pendingDecisionFeedback(failed), {
       exact: true,

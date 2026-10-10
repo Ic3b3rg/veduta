@@ -1,3 +1,4 @@
+import { openChat, closeChat } from './chat-journey.ts'
 import {
   FACTS_CORRECTION_REQUEST,
   FACTS_REMEMBER_REQUEST,
@@ -26,30 +27,37 @@ test('Edit facts clarifies, corrects through Chat and keeps the projection after
     const composer = page.getByRole('textbox', { name: 'Message Veduta in Health' })
     const conversation = page.getByRole('log', { name: 'Conversation' })
     const send = async (text: string) => {
+      await openChat(page)
       await composer.fill(text)
       await page.getByRole('button', { name: 'Send message' }).tap()
       await expect(composer).toHaveValue('')
     }
     await send(FACTS_REMEMBER_REQUEST)
+    await closeChat(page)
     await expect(facts.getByText(/^- I dislike celery \(noted:/)).toBeVisible()
     await expect(observedFacts.getByText(/^- I dislike celery \(noted:/)).toBeVisible()
     const writesBefore = (await readEvents(page, surfaceStack.origin)).filter(
       (event) => event.type === 'fact.write',
     )
     await facts.getByRole('button', { name: 'Edit facts', exact: true }).tap()
+    await openChat(page)
     await expect(
       conversation.getByText('Which fact would you like to correct, and what should it say?', {
         exact: true,
       }),
     ).toBeVisible()
+    await closeChat(page)
     await expect(facts.getByRole('alert')).toHaveCount(0)
     expect(
       (await readEvents(page, surfaceStack.origin)).filter((event) => event.type === 'fact.write'),
     ).toEqual(writesBefore)
     await send(FACTS_CORRECTION_REQUEST)
+    await closeChat(page)
     await expect(facts.getByText(/^- I like celery now \(noted:/)).toBeVisible()
     await expect(observedFacts.getByText(/^- I like celery now \(noted:/)).toBeVisible()
+    await closeChat(page)
     await expect(facts.getByText(/^- I dislike celery \(noted:/)).toHaveCount(0)
+    await openChat(page)
     await expect(
       conversation.getByText('Remembered in “Health”: I like celery now', { exact: true }),
     ).toBeVisible()
@@ -61,20 +69,26 @@ test('Edit facts clarifies, corrects through Chat and keeps the projection after
     await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'false')
     wire.disconnected = false
     await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'true')
+    await closeChat(page)
     await expect(facts.getByText(/^- I like celery now \(noted:/)).toBeVisible()
     await page.reload()
     await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'true')
+    await closeChat(page)
     await expect(facts.getByText(/^- I like celery now \(noted:/)).toBeVisible()
+    await openChat(page)
     await expect(
       conversation.getByText('Remembered in “Health”: I like celery now', { exact: true }),
     ).toBeVisible()
     await send(FACTS_CORRECTION_REQUEST)
+    await openChat(page)
     await expect(conversation.getByText(/^A FACTS change was not saved:/)).toBeVisible()
+    await closeChat(page)
     await expect(facts.getByText(/^- I like celery now \(noted:/)).toBeVisible()
     expect(
       (await readEvents(page, surfaceStack.origin)).filter((event) => event.type === 'fact.write'),
     ).toHaveLength(writesBefore.length + 1)
     await page.reload()
+    await openChat(page)
     await expect(conversation.getByText(/^A FACTS change was not saved:/)).toBeVisible()
   } finally {
     await observer.context.close()
@@ -91,6 +105,7 @@ test('remembering the Space purpose confirms memory on both devices without auth
     await observer.page.goto(`${surfaceStack.origin}/app/space/health`)
     const before = await readEvents(page, surfaceStack.origin)
     const composer = page.getByRole('textbox', { name: 'Message Veduta in Health' })
+    await openChat(page)
     await composer.fill(SPACE_PURPOSE_REQUEST)
     await page.getByRole('button', { name: 'Send message' }).tap()
     const confirmation = `Remembered in “Health”: ${SPACE_PURPOSE_REQUEST}`
@@ -98,6 +113,7 @@ test('remembering the Space purpose confirms memory on both devices without auth
       page.getByRole('log', { name: 'Conversation' }).getByText(confirmation, { exact: true }),
     ).toBeVisible()
     for (const device of [page, observer.page]) {
+      await closeChat(device)
       const facts = surfaceCard(device, 'What I know about you here')
       await expect(
         facts.getByText(`- ${SPACE_PURPOSE_REQUEST} (noted:`, { exact: false }),
@@ -106,6 +122,7 @@ test('remembering the Space purpose confirms memory on both devices without auth
       await expect(
         facts.getByText(`- ${SPACE_PURPOSE_REQUEST} (noted:`, { exact: false }),
       ).toBeVisible()
+      await openChat(device)
       await expect(
         device.getByRole('log', { name: 'Conversation' }).getByText(confirmation, { exact: true }),
       ).toBeVisible()
