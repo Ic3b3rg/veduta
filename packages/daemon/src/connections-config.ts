@@ -7,6 +7,7 @@ import {
   ModelConnectionMethodIdSchema,
   ModelConnectionSelectionSchema,
   ConnectionLifecycleStateSchema,
+  ModelInferenceIssueSchema,
 } from '@veduta/protocol'
 import { backupFile, writeJsonAtomic } from './config-backup.ts'
 import { readJsonFile } from './json-file.ts'
@@ -43,6 +44,7 @@ export const ModelConnectionRecordSchema = z
     label: z.string().min(1),
     state: ConnectionLifecycleStateSchema,
     stateReason: z.string().optional(),
+    inferenceIssue: ModelInferenceIssueSchema.optional(),
     stateAt: z.string(),
     enabledForFallback: z.boolean(),
     createdAt: z.string(),

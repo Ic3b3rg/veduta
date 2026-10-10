@@ -532,3 +532,99 @@ button.connection-list-item[aria-pressed='true'] {
     justify-content: flex-end;
   }
 }
+
+.space-settings-list {
+  display: grid;
+  gap: 12px;
+}
+.space-settings-forms,
+.space-settings-forms section {
+  display: grid;
+  gap: 16px;
+}
+.space-settings-forms section + section,
+.space-archive-settings,
+.space-automation-setting {
+  border-top: 1px solid var(--catalog-color-border);
+  padding-top: 20px;
+  margin-top: 20px;
+}
+.space-settings-forms form,
+.space-automation-setting form,
+.space-reflection-settings form {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.space-settings-forms label,
+.space-automation-setting label,
+.space-reflection-settings label,
+.space-settings-presentation label {
+  display: grid;
+  gap: 8px;
+}
+.space-settings-forms textarea {
+  min-height: 100px;
+  width: 100%;
+}
+.space-settings-forms p,
+.space-automation-setting h3,
+.space-settings-forms details {
+  overflow-wrap: anywhere;
+}
+.space-settings-actions,
+.space-automation-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.space-automation-heading h3 {
+  flex: 1 1 160px;
+  margin: 0;
+}
+.space-fact-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding-block: 10px;
+  border-bottom: 1px solid var(--catalog-color-border);
+}
+.space-fact-row p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+.space-reflection-settings {
+  padding: 20px;
+  border: 1px solid var(--catalog-color-border);
+  border-radius: 12px;
+  margin-bottom: 24px;
+}
+.space-reflection-settings h2 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+.space-reflection-settings form {
+  max-width: 360px;
+  margin-top: 16px;
+}
+.space-settings-check {
+  display: flex !important;
+  align-items: center;
+  min-height: 44px;
+}
+.space-settings-forms summary,
+.space-automation-setting summary {
+  cursor: pointer;
+  padding-block: 12px;
+}
+.space-automation-setting select,
+.space-settings-presentation select {
+  min-height: 44px;
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--catalog-color-surface);
+  border: 1px solid var(--catalog-color-border);
+  border-radius: 8px;
+}

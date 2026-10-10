@@ -7,6 +7,7 @@ import {
 } from './codex-app-server.ts'
 import {
   AgentMessageDeltaNotificationSchema,
+  AccountRateLimitsUpdatedNotificationSchema,
   CODEX_DYNAMIC_TOOL_ITEM_TYPE,
   CODEX_REASONING_ITEM_TYPE,
   CODEX_TEXT_ITEM_TYPE,
@@ -27,6 +28,7 @@ import {
   type DynamicToolCallStartedItem,
 } from './codex-app-server-protocol.ts'
 import { ModelConnectionError } from './model-connection-adapter.ts'
+import { codexInferenceError } from './codex-inference-error.ts'
 import { NonRetryableModelError, sanitizeErrorText } from './model-routing.ts'
 import type { SubscriptionStreamEvent, SubscriptionStreamRequest } from './pi-provider-bridge.ts'
 import { renderSubscriptionPrompt } from './subscription-prompt.ts'
@@ -38,7 +40,6 @@ const TOOL_PROTOCOL_VIOLATION_MESSAGE =
   'the Codex turn violated the pinned dynamic-tool protocol; refusing to expose the call to AgentRunner'
 
 const TURN_ABORTED_MESSAGE = 'the Codex turn was aborted before it completed'
-const TURN_FAILED_MESSAGE = 'the Codex provider turn failed without an error message'
 
 /** Bounds one live Codex provider turn, including time spent suspended on a Veduta tool handler. */
 export const CODEX_TURN_TIMEOUT_MS = 600_000
@@ -75,6 +76,7 @@ interface ActiveCodexTurn {
   abortSignal: AbortSignal | undefined
   abortListener: (() => void) | undefined
   released: boolean
+  rateLimitResets: Map<'primary' | 'secondary', string>
 }
 
 interface PendingDynamicToolTurn {
@@ -197,11 +199,6 @@ function terminationError(reason: TurnTermination): Error {
     return new ModelConnectionError('unreachable', TURN_TIMEOUT_MESSAGE)
   }
   return new NonRetryableModelError(TOOL_PROTOCOL_VIOLATION_MESSAGE)
-}
-
-function providerTurnError(message: string | undefined): ModelConnectionError {
-  const sanitized = message === undefined ? '' : sanitizeErrorText(message).trim()
-  return new ModelConnectionError('unreachable', sanitized || TURN_FAILED_MESSAGE)
 }
 
 function armTurnLifecycle(turn: ActiveCodexTurn, signal: AbortSignal | undefined): void {
@@ -344,6 +341,7 @@ async function startTurn(
       abortSignal: undefined,
       abortListener: undefined,
       released: false,
+      rateLimitResets: new Map(),
     }
     activeTurnsFor(transport).add(turn)
     rememberTurn(transport, threadId, turnId)
@@ -431,10 +429,24 @@ async function* continueTurn(
       }
       const frame = outcome.result.value
 
+      if (frame.method === 'account/rateLimits/updated') {
+        if (turn.replayedNotifications.has(frame)) continue
+        const snapshot = AccountRateLimitsUpdatedNotificationSchema.safeParse(frame.params)
+        if (!snapshot.success) continue
+        for (const window of ['primary', 'secondary'] as const) {
+          const limit = snapshot.data.rateLimits[window]
+          if (limit?.resetsAt != null && limit.usedPercent >= 100) {
+            turn.rateLimitResets.set(window, new Date(limit.resetsAt * 1000).toISOString())
+          }
+        }
+        continue
+      }
+
       if (frame.method === 'error') {
         const failed = parseCodexResponse(ErrorNotificationSchema, frame.method, frame.params)
         if (failed.threadId !== turn.threadId || failed.turnId !== turn.turnId) continue
-        if (!failed.willRetry) throw providerTurnError(failed.error.message)
+        if (!failed.willRetry)
+          throw codexInferenceError(failed.error, [...turn.rateLimitResets.values()])
         continue
       }
 
@@ -446,7 +458,7 @@ async function* continueTurn(
         )
         if (completed.threadId !== turn.threadId || completed.turn.id !== turn.turnId) continue
         if (completed.turn.status === 'failed') {
-          throw providerTurnError(completed.turn.error?.message)
+          throw codexInferenceError(completed.turn.error, [...turn.rateLimitResets.values()])
         }
         if (completed.turn.status === 'interrupted') {
           throw new ModelConnectionError('unsupported', TURN_ABORTED_MESSAGE)

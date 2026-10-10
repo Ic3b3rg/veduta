@@ -77,6 +77,63 @@ afterEach(() => {
 })
 
 describe('Automations Surface projection', () => {
+  it('projects canonical schedule data for System and user Spaces without changing occurrences', () => {
+    ensureSystemSpace(store.spacesEngine)
+    const scheduler = createScheduler()
+    const zoned = scheduler.createManagedJob({
+      spaceId: SYSTEM_SPACE_ID,
+      cron: '0 4 * * *',
+      timezone: 'Europe/Rome',
+      description: 'System review',
+      handler: 'test-review',
+    })
+    const job = scheduler.createJob({
+      spaceId: HEALTH,
+      cron: '15 8 * * 1-5',
+      briefing: 'Weekday review',
+    })
+    const timer = scheduler.armTimer({
+      spaceId: HEALTH,
+      when: '2026-07-09T19:00:00.000Z',
+      action: 'Log weight',
+    })
+
+    expect(
+      store.getSurface(SYSTEM_AUTOMATIONS_SURFACE_ID)?.tree.children?.[1]?.children?.[0],
+    ).toHaveProperty('props.scheduleDetails', {
+      kind: 'job',
+      cron: '0 4 * * *',
+      timezone: 'Europe/Rome',
+      nextRunAt: '2026-07-09T02:00:00.000Z',
+      status: 'armed',
+    })
+    const userAtoms = store.getSurface(SURFACE)?.tree.children?.[1]?.children
+    expect(userAtoms?.find((atom) => atom.id === `automation-${job.id}`)).toHaveProperty(
+      'props.scheduleDetails',
+      {
+        kind: 'job',
+        cron: '15 8 * * 1-5',
+        timezone: 'UTC',
+        nextRunAt: '2026-07-09T08:15:00.000Z',
+        status: 'armed',
+      },
+    )
+    expect(userAtoms?.find((atom) => atom.id === `automation-${timer.id}`)).toHaveProperty(
+      'props.scheduleDetails',
+      {
+        kind: 'timer',
+        fireAt: '2026-07-09T19:00:00.000Z',
+        timezone: 'UTC',
+        nextRunAt: '2026-07-09T19:00:00.000Z',
+        status: 'armed',
+      },
+    )
+    scheduler.stop()
+    const restarted = createScheduler()
+    expect(restarted.listAutomations(SYSTEM_SPACE_ID)[0]).toEqual(zoned)
+    expect(restarted.listAutomations(HEALTH)).toEqual([job, timer])
+  })
+
   it('canonically adopts pinned, archived, or rewritten legacy projections', () => {
     const rewrittenSpace = store.spacesEngine.createSpace({ name: 'Legacy pinned' })
     const archivedSpace = store.spacesEngine.createSpace({ name: 'Legacy archived' })

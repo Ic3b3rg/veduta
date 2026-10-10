@@ -30,6 +30,9 @@ import type {
  *   `NonRetryableModelError`, so `ModelRouter` never fails a
  *   subscription turn over onto a metered fallback (the ADR amendment's
  *   "no implicit subscription → metered BYOK" rule).
+ * - temporary usage/rate limits retain authorization and persist separate
+ *   inference feedback. The original turn stops without replay; a successful
+ *   later inference clears that feedback.
  *
  * `server.ts` wires `createConnectionRuntimes(registry)` into the provider
  * bridge's `connections` option in place of a bare `() => registry.runtimes()`,
@@ -50,6 +53,7 @@ export interface RuntimeSourceRegistry {
   runtimes(): ModelConnectionRuntime[]
   ensureFresh(connectionId: string): Promise<ConnectionLifecycleState | undefined>
   noteCallFailure(connectionId: string, error: unknown): Promise<unknown>
+  noteCallSuccess(connectionId: string): Promise<void>
 }
 
 export function createConnectionRuntimes(
@@ -87,11 +91,20 @@ async function* streamWithRecovery(
     )
   }
   try {
-    yield* rawStream(request)
+    let handedOff = false
+    for await (const event of rawStream(request)) {
+      if (event.type === 'tool-call') handedOff = true
+      yield event
+    }
+    // A tool hand-off is an unfinished provider turn, not recovery evidence.
+    if (!handedOff) await registry.noteCallSuccess(connectionId)
   } catch (error) {
     if (
       error instanceof ModelConnectionError &&
-      (error.code === 'unauthorized' || error.code === 'expired')
+      (error.code === 'unauthorized' ||
+        error.code === 'expired' ||
+        error.code === 'usage-limit' ||
+        error.code === 'rate-limit')
     ) {
       await registry.noteCallFailure(connectionId, error)
       throw new NonRetryableModelError(error.message)

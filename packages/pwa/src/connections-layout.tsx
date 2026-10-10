@@ -23,11 +23,14 @@ import { useEffect, useState, type ReactNode, type RefObject } from 'react'
 import { Link } from 'react-router-dom'
 import { clientPath } from './client-router.tsx'
 
-export type ConnectionsSection = 'services' | 'models' | 'extensions' | 'access' | 'devices'
+export type ConnectionsSection =
+  'services' | 'models' | 'extensions' | 'access' | 'devices' | 'spaces' | 'automations'
 
 const sections: { id: ConnectionsSection; label: string; icon: LucideIcon }[] = [
   { id: 'services', label: 'Accounts & services', icon: Cable },
   { id: 'models', label: 'Models', icon: Sparkles },
+  { id: 'spaces', label: 'Spaces & memory', icon: Blocks },
+  { id: 'automations', label: 'Automations', icon: Sparkles },
   { id: 'extensions', label: 'Extensions', icon: Blocks },
   { id: 'access', label: 'Space access', icon: KeyRound },
   { id: 'devices', label: 'Devices', icon: MonitorSmartphone },
@@ -89,6 +92,7 @@ export function ConnectionListItem({
   subtitle,
   state,
   selected,
+  disabled = false,
   onClick,
   returnFocusRef,
   children,
@@ -97,6 +101,7 @@ export function ConnectionListItem({
   subtitle: string
   state: string
   selected: boolean
+  disabled?: boolean
   onClick: () => void
   returnFocusRef?: RefObject<HTMLElement | null>
   children?: ReactNode
@@ -109,6 +114,7 @@ export function ConnectionListItem({
       type="button"
       className="connection-list-item"
       aria-pressed={selected}
+      disabled={disabled}
       onClick={onClick}
     >
       <span className="connection-list-top">

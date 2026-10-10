@@ -126,6 +126,8 @@ import {
 import { WatchManager } from './watch-renewal.ts'
 import { registerAuthRoutes, registerRequestAuth, type ServerAuthOptions } from './server-auth.ts'
 import { registerSpaceSurfaceRoutes } from './space-surface-routes.ts'
+import { SpaceSettingsService } from './space-settings.ts'
+import { registerSpaceSettingsRoutes } from './space-settings-routes.ts'
 import { SpacePendingDecisionAdapter } from './space-pending-decision.ts'
 import { createSpawnWorkerTool } from './spawn-worker-tool.ts'
 import { registerStaticRoutes } from './static-routes.ts'
@@ -1738,6 +1740,10 @@ export function buildServer(options: ServerOptions = {}) {
     templateEngine,
     executeAgentAction: (turn) => agentActions.execute(turn),
   })
+  registerSpaceSettingsRoutes(
+    app,
+    new SpaceSettingsService({ store, scheduler, reflection, memoryConfig }),
+  )
   registerPushRoutes(app, { auth, pushStore, vapid })
   registerPendingDecisionRoutes(app, { service: pendingDecisions })
   registerChatTimelineRoutes(app, {

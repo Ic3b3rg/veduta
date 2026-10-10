@@ -38,6 +38,7 @@ import {
   INVALID_AUTHORING_REQUEST,
 } from './mock-invalid-authoring-fixture.ts'
 import { respondToMockSurfacePresentation } from './mock-surface-presentation-fixture.ts'
+import { respondToMockSpaceControls } from './mock-space-controls-fixture.ts'
 import { respondToMockMailbox } from './mock-mailbox-fixture.ts'
 import {
   respondToMockGithubIssues,
@@ -176,6 +177,8 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
     if (factsResponse) return factsResponse
     const automationResponse = respondToMockAutomation(text, toolResultsAfter)
     if (automationResponse) return automationResponse
+    const spaceControls = respondToMockSpaceControls(text, toolResultsAfter)
+    if (spaceControls) return spaceControls
     const presentationResponse = respondToMockSurfacePresentation(text, toolResultsAfter)
     if (presentationResponse) return presentationResponse
     const himalayaSetupResponse = respondToMockHimalayaSetup(text, toolResultsAfter, options.cwd)

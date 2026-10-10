@@ -323,6 +323,59 @@ describe('create', () => {
 })
 
 describe('normalizeStatesOnBoot', () => {
+  it.each([
+    'You’ve hit your usage limit. Try again at 11:00 AM.',
+    'rate limit exceeded: retry later',
+  ])(
+    'repairs historical Codex limit %s without changing selection or credentials',
+    (stateReason) => {
+      const dir = freshRoot()
+      const quota = staleClaudeConnection({
+        method: 'chatgpt-codex',
+        provider: 'openai',
+        state: 'failed',
+        stateReason,
+        secretRef: 'secret://vault/preserved',
+      })
+      const revoked = {
+        ...quota,
+        id: 'bbbbbbbb-0000-4000-8000-000000000231',
+        state: 'revoked' as const,
+      }
+      const unknown = {
+        ...quota,
+        id: 'cccccccc-0000-4000-8000-000000000231',
+        stateReason: 'upstream temporarily unavailable',
+      }
+      const byok = { ...quota, id: 'openai', method: 'openai-api-key' as const }
+      const selection = { connectionId: quota.id, modelId: 'model-a' }
+      saveConnectionsConfig(dir, {
+        version: 1,
+        mockEnabled: false,
+        selection,
+        connections: [quota, revoked, unknown, byok],
+      })
+      const registry = new ModelConnectionRegistry(baseOptions(dir, []))
+
+      registry.normalizeStatesOnBoot()
+
+      const file = loadConnectionsConfig(dir)
+      expect(file.selection).toEqual(selection)
+      expect(file.connections[0]).toMatchObject({
+        state: 'connected',
+        secretRef: quota.secretRef,
+        inferenceIssue: {
+          kind: stateReason.startsWith('rate limit') ? 'rate-limit' : 'usage-limit',
+        },
+      })
+      expect(file.connections[0]?.inferenceIssue?.resetsAt).toBeUndefined()
+      expect(file.connections.slice(1)).toEqual([revoked, unknown, byok])
+      const once = rawFile(dir)
+      registry.normalizeStatesOnBoot()
+      expect(rawFile(dir)).toBe(once)
+    },
+  )
+
   it('preserves a stale connected record while primary-route policy excludes it', async () => {
     const dir = freshRoot()
     const record = staleClaudeConnection({
@@ -512,6 +565,57 @@ describe('device challenge', () => {
 describe('noteCallFailure', () => {
   const DISTINCTIVE_SECRET = 'zzz-registry-distinctive-marker-24680'
 
+  it('retains limit feedback through account refresh and clears it through a successful model test', async () => {
+    const dir = freshRoot()
+    const adapter = createFakeAdapter({ verify: (ctx, modelId) => ctx.probe(modelId) })
+    const registry = new ModelConnectionRegistry(
+      baseOptions(dir, [adapter], {
+        probe: async (id): Promise<void> => {
+          await registry.noteCallSuccess(id)
+        },
+      }),
+    )
+    const snapshot = await registry.create({ method: 'anthropic-api-key', apiKey: 'test-key' })
+    const id = snapshot.connections[0]!.id
+    const resetsAt = ['2026-08-10T10:00:00.000Z']
+    await registry.noteCallFailure(
+      id,
+      new ModelConnectionError('usage-limit', 'Allowance exhausted.', resetsAt),
+    )
+    const limited = loadConnectionsConfig(dir).connections[0]
+    await registry.refresh(id)
+    expect(loadConnectionsConfig(dir).connections[0]?.inferenceIssue).toEqual(
+      limited?.inferenceIssue,
+    )
+    expect(limited?.state).toBe('connected')
+
+    await registry.verify(id, 'model-a')
+
+    expect(loadConnectionsConfig(dir).connections[0]?.inferenceIssue).toBeUndefined()
+    expect(loadConnectionsConfig(dir).connections[0]?.selectedModelId).toBe('model-a')
+  })
+
+  it('never clears a newer authentication failure on inference success', async () => {
+    const dir = freshRoot()
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [createFakeAdapter()]))
+    const snapshot = await registry.create({ method: 'anthropic-api-key', apiKey: 'test-key' })
+    const id = snapshot.connections[0]!.id
+    await registry.noteCallFailure(
+      id,
+      new ModelConnectionError('usage-limit', 'Allowance exhausted.'),
+    )
+    await registry.noteCallFailure(
+      id,
+      new ModelConnectionError('unauthorized', 'Authorization rejected.'),
+    )
+    await registry.noteCallSuccess(id)
+    expect(loadConnectionsConfig(dir).connections[0]).toMatchObject({
+      state: 'revoked',
+      stateReason: 'Authorization rejected.',
+    })
+    expect(loadConnectionsConfig(dir).connections[0]?.inferenceIssue).toBeUndefined()
+  })
+
   it('marks a connection failed with the sanitized provider text and a matching provider id maps onto the migrated record', async () => {
     const dir = freshRoot()
     const migratedRecord: ModelConnectionRecord = {
@@ -615,6 +719,22 @@ describe('noteCallFailure', () => {
 })
 
 describe('commitSelection', () => {
+  it('does not restore stale limit feedback when the selection probe proves recovery', async () => {
+    const dir = freshRoot()
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [createFakeAdapter()]))
+    const snapshot = await registry.create({ method: 'anthropic-api-key', apiKey: 'test-key' })
+    const id = snapshot.connections[0]!.id
+    await registry.noteCallFailure(
+      id,
+      new ModelConnectionError('usage-limit', 'Allowance exhausted.'),
+    )
+    const prepared = await registry.applySelectionPrepared(id, 'model-a')
+    await registry.noteCallSuccess(id)
+    await registry.commitSelection(prepared)
+    expect(loadConnectionsConfig(dir).selection).toEqual({ connectionId: id, modelId: 'model-a' })
+    expect(loadConnectionsConfig(dir).connections[0]?.inferenceIssue).toBeUndefined()
+  })
+
   it('rejects a stale connected record whose adapter is unavailable for primary routing', async () => {
     const dir = freshRoot()
     const record = staleClaudeConnection({

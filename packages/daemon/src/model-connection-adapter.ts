@@ -161,12 +161,20 @@ export function primaryRouteEligibility(
 }
 
 export type ModelConnectionErrorCode =
-  'unauthorized' | 'expired' | 'rejected' | 'unreachable' | 'unsupported' | 'internal'
+  | 'unauthorized'
+  | 'expired'
+  | 'rejected'
+  | 'unreachable'
+  | 'unsupported'
+  | 'internal'
+  | 'usage-limit'
+  | 'rate-limit'
 
 export class ModelConnectionError extends Error {
   constructor(
     readonly code: ModelConnectionErrorCode,
     message: string,
+    readonly resetsAt?: readonly string[],
   ) {
     super(message)
     this.name = 'ModelConnectionError'
@@ -205,7 +213,7 @@ function hasStringName(error: unknown): error is { name: string } {
  */
 export function connectionErrorFrom(error: unknown): ModelConnectionError {
   if (error instanceof ModelConnectionError) {
-    return new ModelConnectionError(error.code, sanitizeErrorText(error))
+    return new ModelConnectionError(error.code, sanitizeErrorText(error), error.resetsAt)
   }
   const code: ModelConnectionErrorCode = isConnectivityFailure(error) ? 'unreachable' : 'internal'
   return new ModelConnectionError(code, sanitizeErrorText(error))

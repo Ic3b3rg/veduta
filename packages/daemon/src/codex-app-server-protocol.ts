@@ -337,9 +337,28 @@ export const AgentMessageDeltaNotificationSchema = z.object({
   delta: z.string(),
 })
 
-/** Provider failure carried by both `error` and failed `turn/completed` notifications in the pinned protocol. */
+/** Provider failure carried by both `error` and failed `turn/completed`; see docs/references/43-subscription-limit-recovery.md for the pinned classification. */
 export const TurnErrorSchema = z.object({
   message: z.string(),
+  // The pinned v2 protocol uses string variants and structured HTTP variants.
+  // Unknown additive variants remain generic failures, never guessed authentication errors.
+  codexErrorInfo: z
+    .union([z.string(), z.record(z.unknown())])
+    .nullable()
+    .optional(),
+})
+
+const RateLimitWindowSchema = z.object({
+  usedPercent: z.number(),
+  resetsAt: z.number().int().nonnegative().max(253_402_300_799).nullable().optional(),
+})
+
+/** Sparse account update in Codex 0.160.0; null windows do not clear prior observations. */
+export const AccountRateLimitsUpdatedNotificationSchema = z.object({
+  rateLimits: z.object({
+    primary: RateLimitWindowSchema.nullable().optional(),
+    secondary: RateLimitWindowSchema.nullable().optional(),
+  }),
 })
 
 /** `error` notification emitted for one correlated turn. `willRetry` distinguishes an intermediate sampling failure from the terminal provider failure Veduta must surface. */

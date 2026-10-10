@@ -15,6 +15,7 @@ import { inheritTrustWrapper, isTrustWrapped } from './trust-layer.ts'
 import { createClawHubInspectionTool } from './clawhub-inspection.ts'
 import type { CatalogInspectionOptions } from './clawhub-catalog.ts'
 import { createSpaceProposalTool } from './space-proposal-tool.ts'
+import { createSpaceControlTools } from './space-controls.ts'
 
 /**
  * Everything `chatToolRegistry` needs to build focused and scoped-global
@@ -65,6 +66,7 @@ export function chatToolRegistry(
     const primaryTools = [
       ...deps.wrappedOutboundTools,
       ...surfaceTools,
+      ...createSpaceControlTools(deps.store.spacesEngine, spaceId),
       ...createMemoryTools(deps.store.spacesEngine, {
         activeSpaceId: spaceId,
         retrieval: deps.memoryRetrieval,

@@ -157,6 +157,26 @@ Local runs can use a deterministic mock provider to exercise the interface witho
 model. Its replies follow fixed examples; connect a real provider to evaluate the Agent's
 responses to your own requests.
 
+## Manage your Spaces
+
+Open **Connections → Spaces & memory**, then choose a Space to edit what Veduta knows and its
+instructions. Corrections keep the previous fact history. Choose **Columns** to arrange its
+Surfaces; the preference is shared across devices, with one column on small screens. You can also
+ask Chat, **“Arrange this Space in two columns.”** Full-presentation Surfaces still occupy a row.
+
+Choose **Archive Space** to remove a Space from Home while preserving its content. Restore it
+from the same settings later, or ask global Chat to restore it. System can change columns but
+cannot be archived.
+
+Open **Connections → Automations** to enable, disable or reschedule Nightly Reflection and inspect
+each Space's Automations. Dates use your browser's language; schedules show readable days and times
+with their configured timezone. The last Reflection report is available inside its Space's details.
+Create Automations through Chat as before. Managed system operations keep their dedicated settings.
+
+When Veduta asks you to review a Surface change, open **Review** to compare the current and proposed
+content before accepting or rejecting it. A changed Surface requires a fresh proposal; an old review
+cannot silently apply to a new version.
+
 ## Try it on your computer
 
 The **Local VPS profile** runs the passkey and onboarding journey on macOS or Linux, without
@@ -206,16 +226,17 @@ The signing and verification procedure is public in [RELEASING.md](RELEASING.md)
 
 ## Troubleshooting
 
-| What you see                          | What to do                                                                                                                                                               |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| The installer only prints a plan      | Run the downloaded file from an interactive SSH terminal. Remove `--preview` when ready to install.                                                                      |
-| The private link does not open        | Connect Tailscale on the device, check that it and the VPS are approved, then use `sudo veduta access` → Repair over SSH.                                                |
-| Private HTTPS is waiting for approval | Open the `login.tailscale.com/f/serve?node=...` link printed by your installer, approve Serve/HTTPS, and return to the terminal. If it timed out, use its retry command. |
-| Public HTTPS setup does not complete  | Check the domain's A/AAAA records and access to ports 80/443. Follow the installer's retry command after correcting them.                                                |
-| Setup was interrupted                 | Reopen the setup page; the wizard resumes saved progress. If the installer failed, use the exact rerun command it printed.                                               |
-| A local passkey fails                 | Open the printed `http://localhost:8788` URL, using the same origin where the passkey was registered.                                                                    |
-| ChatGPT is unavailable                | Run the Codex provisioning command printed by the installer. For a local run, follow the [Local VPS guide](deploy/local-vps.md#chatgpt-subscription-codex).              |
-| An update fails                       | Read the Updates Surface's reason. Veduta keeps or restores the previous release; inspect the service logs if it does not return.                                        |
+| What you see                          | What to do                                                                                                                                                                            |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The installer only prints a plan      | Run the downloaded file from an interactive SSH terminal. Remove `--preview` when ready to install.                                                                                   |
+| The private link does not open        | Connect Tailscale on the device, check that it and the VPS are approved, then use `sudo veduta access` → Repair over SSH.                                                             |
+| Private HTTPS is waiting for approval | Open the `login.tailscale.com/f/serve?node=...` link printed by your installer, approve Serve/HTTPS, and return to the terminal. If it timed out, use its retry command.              |
+| Public HTTPS setup does not complete  | Check the domain's A/AAAA records and access to ports 80/443. Follow the installer's retry command after correcting them.                                                             |
+| Setup was interrupted                 | Reopen the setup page; the wizard resumes saved progress. If the installer failed, use the exact rerun command it printed.                                                            |
+| A local passkey fails                 | Open the printed `http://localhost:8788` URL, using the same origin where the passkey was registered.                                                                                 |
+| ChatGPT is unavailable                | Run the Codex provisioning command printed by the installer. For a local run, follow the [Local VPS guide](deploy/local-vps.md#chatgpt-subscription-codex).                           |
+| Chat reports a subscription limit     | Wait for the provider limit to reset, then send a new message or use **Connections → Models → Test model**. The connection remains selected; messages are not replayed automatically. |
+| An update fails                       | Read the Updates Surface's reason. Veduta keeps or restores the previous release; inspect the service logs if it does not return.                                                     |
 
 On the VPS, inspect the service with:
 

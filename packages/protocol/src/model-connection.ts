@@ -16,8 +16,8 @@ import { z } from 'zod'
  * - `verifying` — authorization succeeded and a live inference probe
  *   (`probeModel`) is confirming the connection actually works before it is
  *   marked usable.
- * - `connected` — the connection passed verification and is usable for
- *   inference and, once selected, for routing.
+ * - `connected` — the connection passed verification and remains authorized
+ *   for routing. A temporary inference limit is reported separately.
  * - `expired` — a previously connected credential stopped working and an
  *   automatic refresh has not (yet) recovered it.
  * - `reconnecting` — an automatic refresh of an `expired` connection is in
@@ -119,6 +119,17 @@ export const ModelConnectionMethodSchema = z
   })
   .strict()
 
+/** A temporary inference limit leaves authorization intact; only a successful inference clears it. */
+export const ModelInferenceIssueSchema = z
+  .object({
+    kind: z.enum(['usage-limit', 'rate-limit']),
+    message: z.string().min(1),
+    observedAt: z.string().datetime(),
+    /** Informational provider timestamps, never a promise that availability has recovered. */
+    resetsAt: z.array(z.string().datetime()).optional(),
+  })
+  .strict()
+
 /**
  * The wire shape of one Model connection, as served to and posted by the
  * PWA. `.strict()` deliberately rejects any payload carrying a secret
@@ -135,6 +146,7 @@ export const ModelConnectionSchema = z
     label: z.string().min(1),
     state: ConnectionLifecycleStateSchema,
     stateReason: z.string().optional(),
+    inferenceIssue: ModelInferenceIssueSchema.optional(),
     stateAt: z.string(),
     enabledForFallback: z.boolean(),
     createdAt: z.string(),
@@ -240,6 +252,7 @@ export type DeviceChallenge = z.infer<typeof DeviceChallengeSchema>
 export type ModelConnectionCapabilities = z.infer<typeof ModelConnectionCapabilitiesSchema>
 export type ModelConnectionMethod = z.infer<typeof ModelConnectionMethodSchema>
 export type ModelConnection = z.infer<typeof ModelConnectionSchema>
+export type ModelInferenceIssue = z.infer<typeof ModelInferenceIssueSchema>
 export type ModelConnectionSelection = z.infer<typeof ModelConnectionSelectionSchema>
 export type ModelConnectionsSnapshot = z.infer<typeof ModelConnectionsSnapshotSchema>
 export type CreateModelConnectionRequest = z.infer<typeof CreateModelConnectionRequestSchema>

@@ -67,6 +67,7 @@ export interface GatewayHandlers {
   onSpaceAttention(
     message: Extract<RenderableGatewayServerMessage, { type: 'space.attention' }>,
   ): void
+  onSpaceChanged?(message: Extract<RenderableGatewayServerMessage, { type: 'space.changed' }>): void
   onSpaceFactsChanged?(
     message: Extract<RenderableGatewayServerMessage, { type: 'space.facts-changed' }>,
   ): void
@@ -203,6 +204,9 @@ function dispatchGatewayMessage(
       break
     case 'presence.update':
       handlers.onPresence(message)
+      break
+    case 'space.changed':
+      handlers.onSpaceChanged?.(message)
       break
     case 'space.facts-changed':
       handlers.onSpaceFactsChanged?.(message)

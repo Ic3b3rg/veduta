@@ -8,6 +8,8 @@ import { tokensFor } from './design-system.ts'
 import type { AtomProps, RenderableAtomProps } from './types.ts'
 import { Item } from './ui/item.tsx'
 import { Switch } from './ui/switch.tsx'
+import { AutomationScheduleDescription } from './automation-schedule.tsx'
+import { SurfaceValue } from './surface-value.tsx'
 
 function ListItemControl({
   node,
@@ -111,9 +113,14 @@ function AutomationControl({
             ...bodyTextStyle(tokens),
             color: tokens.color.textMuted,
             fontSize: tokens.font.sm,
+            overflowWrap: 'anywhere',
           }}
         >
-          {node.props.schedule}
+          <AutomationScheduleDescription
+            schedule={node.props.schedule}
+            details={node.props.scheduleDetails}
+            enabled={enabled}
+          />
         </div>
         {history.length > 0 && (
           <details style={{ marginTop: tokens.space.sm }}>
@@ -141,7 +148,7 @@ function AutomationControl({
                   <strong>{automationHistoryKindLabel(entry.kind)}:</strong>{' '}
                   <span>{entry.summary}</span>
                   {' — '}
-                  <time dateTime={entry.at}>{automationHistoryTimeLabel(entry.at)}</time>
+                  <SurfaceValue value={entry.at} />
                 </li>
               ))}
             </ol>
@@ -196,11 +203,6 @@ function automationHistoryEntryStyle(
     fontSize: tokens.font.sm,
     lineHeight: 1.4,
   }
-}
-
-function automationHistoryTimeLabel(iso: string): string {
-  const date = new Date(iso)
-  return Number.isFinite(date.getTime()) ? date.toLocaleString() : iso
 }
 
 export function UnknownAtom({ node, ctx, children }: RenderableAtomProps): ReactNode {

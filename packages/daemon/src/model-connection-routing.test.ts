@@ -64,6 +64,18 @@ function connectionsFile(overrides: Partial<ConnectionsFile> = {}): ConnectionsF
 }
 
 describe('deriveRoutingConfig', () => {
+  it('retains the selected authentication failure when routing has no fallback', () => {
+    const active = record({ state: 'revoked', stateReason: 'ChatGPT authorization was rejected.' })
+    const file = connectionsFile({
+      connections: [active],
+      selection: { connectionId: active.id, modelId: 'model-a' },
+    })
+    const config = deriveRoutingConfig(baseConfig, file, primaryRoutableMethods)
+    expect(config.tiers.reasoning).toEqual([])
+    expect(config.unavailableReason).toContain('ChatGPT authorization was rejected.')
+    expect(config.unavailableReason).toContain('reconnect')
+  })
+
   it('returns the base config unchanged when no selection is stored (a migrated install stays routed exactly as before)', () => {
     const file = connectionsFile({
       connections: [record({ id: 'anthropic', state: 'connected' })],

@@ -8,7 +8,12 @@ export {
   type ActionInput,
   type FormSubmitAction,
 } from './action.ts'
-export { applySurfacePatch, applySurfacePatchEvent } from './apply-patch.ts'
+export {
+  applySurfacePatch,
+  applySurfacePatchEvent,
+  inspectSurfacePatch,
+  type SurfacePatchInspectionStep,
+} from './apply-patch.ts'
 export * from './atom-read.ts'
 export * from './surface-read.ts'
 export * from './gateway-read.ts'
@@ -344,6 +349,7 @@ export {
   ModelConnectionCapabilitiesSchema,
   ModelConnectionMethodSchema,
   ModelConnectionSchema,
+  ModelInferenceIssueSchema,
   ModelConnectionSelectionSchema,
   ModelConnectionsSnapshotSchema,
   CreateModelConnectionRequestSchema,
@@ -363,6 +369,7 @@ export {
   type ModelConnectionCapabilities,
   type ModelConnectionMethod,
   type ModelConnection,
+  type ModelInferenceIssue,
   type ModelConnectionSelection,
   type ModelConnectionsSnapshot,
   type CreateModelConnectionRequest,
@@ -410,3 +417,10 @@ export * from './semantic-validation.ts'
 export * from './gmail-connection.ts'
 export * from './himalaya-connection.ts'
 export * from './service-connections.ts'
+export * from './value-presentation.ts'
+export * from './cron.ts'
+export * from './automation-schedule.ts'
+
+export { SpacePresentationSchema, type SpacePresentation } from './space.ts'
+
+export * from './space-settings.ts'

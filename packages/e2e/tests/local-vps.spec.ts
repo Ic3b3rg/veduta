@@ -570,7 +570,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await page.getByRole('button', { name: 'Send message' }).click()
       await closeChat(page)
 
-      const decisionTitle = 'Proposed layout change: Meals'
+      const decisionTitle = 'Proposed change: Meals'
       const initiatingDecision = surfaceCard(page, decisionTitle)
       const observerDecision = surfaceCard(observerPage, decisionTitle)
       await expect(initiatingDecision).toHaveClass(/surface-reveal-highlight/, {
@@ -587,10 +587,10 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       expect(observerPage.url()).toBe(observerUrl)
 
       const notification = page.locator('.pending-decision-notification', {
-        hasText: 'Change the “Meals” Surface tree',
+        hasText: '“Meals”:',
       })
       const chatDecision = page.locator('.chat-entry', {
-        has: page.locator('.chat-pending-decision', { hasText: 'Change the “Meals” Surface tree' }),
+        has: page.locator('.chat-pending-decision', { hasText: '“Meals”:' }),
       })
       await openChat(page)
       await expect(chatDecision).toHaveCount(1)
@@ -601,9 +601,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await expect(chatDecision).toHaveCount(1)
       await expect(chatDecision).toHaveAttribute('data-chat-entry-id', decisionEntryId!)
       await closeChat(page)
-      await notification
-        .getByRole('button', { name: 'Accept Change the “Meals” Surface tree' })
-        .click()
+      await notification.getByRole('button', { name: /^Accept “Meals”:/ }).click()
       await expect(initiatingDecision).toHaveCount(0)
       await expect(meals.getByText('Today’s calorie estimate')).toBeVisible()
       await openChat(page)

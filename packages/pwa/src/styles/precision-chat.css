@@ -48,7 +48,22 @@
   padding-right: 12px;
 }
 .app-shell.precision-tool .surface-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+}
+.app-shell.precision-tool .surface-grid[data-presentation='one-column'] {
   grid-template-columns: minmax(0, 1fr);
+}
+.app-shell.precision-tool .surface-grid[data-presentation='two-columns'] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@container space-content (max-width: 639px) {
+  .app-shell.precision-tool .surface-grid[data-presentation='two-columns'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.app-shell.precision-tool .space-section {
+  container-type: inline-size;
+  container-name: space-content;
 }
 .chat-panel {
   display: flex;

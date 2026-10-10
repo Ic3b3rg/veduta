@@ -14,6 +14,7 @@ import { defineTool, type ToolContext, type ToolDef } from './agent-runner.ts'
 import type { PwaChatInput } from './gateway.ts'
 import { createChatLoop, type ChatLoop } from './chat-loop.ts'
 import { createFocusedSurfaceTools } from './focused-surface-tools.ts'
+import { createSpaceControlTools } from './space-controls.ts'
 import { createGlobalChatTools, type GlobalChatTurnHooks } from './global-chat-tools.ts'
 import {
   createFakeProvider,
@@ -235,6 +236,7 @@ function globalSurfaceChatLoop(harness: Harness): ChatLoop {
   const templateEngine = new TemplateEngine({ store: harness.store })
   const focusedToolsFor = (spaceId: string) => [
     ...createFocusedSurfaceTools({ store: harness.store, templateEngine, spaceId }),
+    ...createSpaceControlTools(harness.store.spacesEngine, spaceId),
     ...createMemoryTools(harness.store.spacesEngine, { activeSpaceId: spaceId }),
   ]
   return createChatLoop({
@@ -764,6 +766,64 @@ describe('createChatLoop', () => {
               frame.message.text.includes('unsupported interactive dashboard'),
           ),
         ).toEqual([])
+      } finally {
+        await loop.stop()
+      }
+    },
+  )
+
+  it.each(['focused', 'global'])(
+    'changes Space columns and archives/restores through the real %s registry',
+    async (scope) => {
+      const h = harness()
+      const loop = globalSurfaceChatLoop(h)
+      const target = scope === 'global' ? { spaceId: 'health' } : {}
+      const enter = scope === 'global' ? [{ message: fakeToolCall('enter_space', target) }] : []
+      const request = 'imposta lo spazio a due colonne'
+      try {
+        h.fake.setResponses([
+          ...enter,
+          {
+            message: fakeToolCall('set_space_presentation', {
+              ...target,
+              presentation: 'two-columns',
+              userRequest: request,
+            }),
+          },
+          { message: fakeText('Arranged in two columns.') },
+        ])
+        await loop.handleChatMessage(
+          chatEvent({ text: request, ...(scope === 'focused' ? { spaceId: 'spc-health' } : {}) }),
+        )
+        expect(h.store.getSpace('spc-health')?.presentation).toBe('two-columns')
+        h.fake.setResponses([
+          ...enter,
+          { message: fakeToolCall('archive_space', { ...target, userRequest: 'Archive Health' }) },
+          { message: fakeText('Archived Health; its content is preserved.') },
+        ])
+        await loop.handleChatMessage(
+          chatEvent({
+            text: 'Archive Health',
+            ...(scope === 'focused' ? { spaceId: 'spc-health' } : {}),
+          }),
+        )
+        expect(h.store.getSpace('spc-health')?.archived).toBe(true)
+        expect(h.store.getSurface('srf-groceries')).toBeDefined()
+        h.fake.setResponses([
+          { message: fakeToolCall('list_archived_spaces', {}) },
+          {
+            message: fakeToolCall('restore_space', {
+              spaceId: 'spc-health',
+              userRequest: 'Restore Health',
+            }),
+          },
+          { message: fakeText('Restored Health.') },
+        ])
+        await loop.handleChatMessage(chatEvent({ text: 'Restore Health' }))
+        expect(h.store.getSpace('spc-health')).toMatchObject({
+          archived: false,
+          presentation: 'two-columns',
+        })
       } finally {
         await loop.stop()
       }

@@ -11,6 +11,7 @@ import {
 } from './atom-helpers.ts'
 import type { AtomProps } from './types.ts'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table.tsx'
+import { SurfaceValue } from './surface-value.tsx'
 
 export function TableAtom({ node, ctx }: AtomProps<'Table'>): ReactNode {
   const rows = tableRows(boundValue(node, ctx) ?? node.props?.['rows'])
@@ -50,9 +51,11 @@ export function TableAtom({ node, ctx }: AtomProps<'Table'>): ReactNode {
                   {...motionContent(`cell:${rowKeys[rowIndex] ?? rowIndex}:${column}`)}
                 >
                   {row[column] === null ||
-                  (typeof row[column] === 'string' && row[column].trim() === '')
-                    ? '—'
-                    : text(row[column])}
+                  (typeof row[column] === 'string' && row[column].trim() === '') ? (
+                    '—'
+                  ) : (
+                    <SurfaceValue value={row[column]} format={node.props.columnFormats?.[column]} />
+                  )}
                 </TableCell>
               ))}
             </TableRow>

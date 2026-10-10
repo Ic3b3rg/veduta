@@ -14,6 +14,7 @@ import type { AtomProps } from './types.ts'
 import { Badge } from './ui/badge.tsx'
 import { Progress } from './ui/progress.tsx'
 import { structuredMarkdown } from './structured-markdown.tsx'
+import { SurfaceValue } from './surface-value.tsx'
 
 function contentText(
   node: AtomProps<'Title' | 'Text' | 'Caption' | 'Label' | 'Markdown'>['node'],
@@ -76,8 +77,15 @@ export function TitleAtom({ node, ctx }: AtomProps<'Title'>): ReactNode {
 
 export function TextAtom({ node, ctx }: AtomProps<'Text'>): ReactNode {
   return (
-    <p {...motionContent('content')} style={bodyTextStyle(tokensFor(ctx.theme))}>
-      {contentText(node, ctx)}
+    <p
+      {...motionContent('content')}
+      style={{
+        ...bodyTextStyle(tokensFor(ctx.theme)),
+        whiteSpace: 'pre-wrap',
+        overflowWrap: 'anywhere',
+      }}
+    >
+      <SurfaceValue value={contentText(node, ctx)} format={node.props?.valueFormat ?? 'text'} />
     </p>
   )
 }
@@ -89,7 +97,7 @@ export function CaptionAtom({ node, ctx }: AtomProps<'Caption'>): ReactNode {
       {...motionContent('content')}
       style={{ ...bodyTextStyle(tokens), color: tokens.color.textMuted, fontSize: tokens.font.xs }}
     >
-      {contentText(node, ctx)}
+      <SurfaceValue value={contentText(node, ctx)} format={node.props?.valueFormat ?? 'text'} />
     </small>
   )
 }
@@ -99,7 +107,7 @@ export function LabelAtom({ node, ctx }: AtomProps<'Label'>): ReactNode {
   const content = contentText(node, ctx)
   return (
     <span {...motionContent('content')} style={labelStyle(tokens)}>
-      {content}
+      <SurfaceValue value={content} format={node.props?.valueFormat ?? 'text'} />
     </span>
   )
 }
@@ -152,7 +160,11 @@ export function StatAtom({ node, ctx }: AtomProps<'Stat'>): ReactNode {
           lineHeight: 1.1,
         }}
       >
-        {hasValue ? text(value) : text(node.props?.['emptyText'] ?? 'Not recorded')}
+        {hasValue ? (
+          <SurfaceValue value={value} format={node.props?.valueFormat} />
+        ) : (
+          text(node.props?.['emptyText'] ?? 'Not recorded')
+        )}
         {hasValue && node.props?.['unit'] ? (
           <span style={{ color: tokens.color.textMuted, fontSize: tokens.font.sm, marginLeft: 4 }}>
             {text(node.props['unit'])}

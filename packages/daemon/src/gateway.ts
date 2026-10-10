@@ -68,6 +68,7 @@ export class GatewayHub {
   private disposeAuthListener: (() => void) | undefined
   private disposeSurfaceEventListener: () => void
   private disposeFactsListener: () => void
+  private disposeSpaceListener: () => void
   private pendingSystemNotices: string[] = []
 
   constructor(
@@ -109,10 +110,13 @@ export class GatewayHub {
     // nothing else in this class broadcasts a surface.*
     // frame.
     this.disposeSurfaceEventListener = this.store.onSurfaceEvent((event) => {
-      this.broadcast(surfaceEventFrame(event))
+      this.broadcast(surfaceEventFrame(event, this.store))
     })
     this.disposeFactsListener = this.store.spacesEngine.onMemoryWrite(({ spaceId, kind }) => {
       if (kind === 'fact') this.broadcast({ type: 'space.facts-changed', spaceId })
+    })
+    this.disposeSpaceListener = this.store.spacesEngine.onSpaceChanged((space) => {
+      this.broadcast({ type: 'space.changed', spaceId: space.id })
     })
   }
 
@@ -165,7 +169,7 @@ export class GatewayHub {
           surfaceCursor: this.store.latestSurfaceCursor(),
           replayed: replay.length,
         })
-        for (const event of replay) send(surfaceEventFrame(event))
+        for (const event of replay) send(surfaceEventFrame(event, this.store))
         this.broadcastPresence()
         return
       }
@@ -345,6 +349,7 @@ export class GatewayHub {
     this.disposeAuthListener?.()
     this.disposeSurfaceEventListener()
     this.disposeFactsListener()
+    this.disposeSpaceListener()
   }
 
   private connectClient(
@@ -473,11 +478,11 @@ export class GatewayHub {
 }
 
 /** The one place a `SurfaceEngineEvent` becomes a Gateway server frame, shared by hello replay and the live broadcast. */
-function surfaceEventFrame(event: SurfaceEngineEvent): GatewayServerMessage {
+function surfaceEventFrame(event: SurfaceEngineEvent, store: Store): GatewayServerMessage {
   if (event.kind === 'created') {
     return {
       type: 'surface.created',
-      event: event.event,
+      event: { ...event.event, surface: store.projectManagementSurface(event.event.surface) },
       ...(event.initiatingTurn === undefined ? {} : { initiatingTurn: event.initiatingTurn }),
     }
   }

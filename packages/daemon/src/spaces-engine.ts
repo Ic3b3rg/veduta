@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { writeFileAtomicDurable } from './atomic-file.ts'
+import { stripForbiddenUnicode } from './forbidden-unicode.ts'
 import {
   appendFileSync,
   closeSync,
@@ -23,6 +25,8 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 import {
   SYSTEM_SPACE_ID,
   SpaceSchema,
+  SpacePresentationSchema,
+  type SpacePresentation,
   SurfaceSchema,
   SurfaceTemplateIdSchema,
   SurfaceTemplateSchema,
@@ -137,6 +141,7 @@ export class SpacesEngine {
   private readonly memoryHealthStore: MemoryHealthStore
   private readonly eventCorrelation = new AsyncLocalStorage<string>()
   private readonly memoryWriteObservers = new Set<(notice: MemoryWriteNotice) => void>()
+  private readonly spaceObservers = new Set<(space: Space) => void>()
 
   constructor(options: SpacesEngineOptions = {}) {
     this.rootDir = options.rootDir ?? defaultDataDir()
@@ -266,16 +271,54 @@ export class SpacesEngine {
     return this.proposals.resolve(proposalId, resolution, actor)
   }
 
-  archiveSpace(spaceId: string): Space {
+  archiveSpace(spaceId: string, origin: Origin = 'trusted:user'): Space {
     this.assertOrdinarySpaceLifecycle(spaceId, 'archive')
-    return this.updateSpace(spaceId, { archived: true }, 'Archived Space')
+    return this.updateSpace(spaceId, { archived: true }, 'Archived Space', origin)
   }
 
-  restoreSpace(spaceId: string): Space {
+  restoreSpace(spaceId: string, origin: Origin = 'trusted:user'): Space {
     this.assertOrdinarySpaceLifecycle(spaceId, 'restore')
-    const restored = this.updateSpace(spaceId, { archived: false }, 'Restored Space')
+    const restored = this.updateSpace(spaceId, { archived: false }, 'Restored Space', origin)
     this.auditMemoryHealth(spaceId)
     return restored
+  }
+
+  setSpacePresentation(
+    spaceId: string,
+    presentation: SpacePresentation,
+    origin: Origin = 'trusted:user',
+  ): Space {
+    const space = this.requireSpace(spaceId)
+    if (space.archived) throw new Error('Restore this Space before changing its presentation')
+    const value = SpacePresentationSchema.parse(presentation)
+    if ((space.presentation ?? 'auto') === value) return space
+    const updated = SpaceSchema.parse({ ...space, presentation: value })
+    this.writeSpace(updated)
+    this.appendEvent(spaceId, {
+      type: 'space.presentation',
+      text: `Space presentation set to ${value}`,
+      origin,
+      payload: { presentation: value },
+    })
+    this.notifySpaceChanged(updated)
+    return updated
+  }
+
+  onSpaceChanged(observer: (space: Space) => void): () => void {
+    this.spaceObservers.add(observer)
+    return () => {
+      this.spaceObservers.delete(observer)
+    }
+  }
+
+  private notifySpaceChanged(space: Space): void {
+    for (const observer of this.spaceObservers) {
+      try {
+        observer(space)
+      } catch (error) {
+        console.error('Space observer failed', error)
+      }
+    }
   }
 
   mergeSpaces(targetSpaceId: string, sourceSpaceId: string): Space {
@@ -300,6 +343,27 @@ export class SpacesEngine {
 
   readFacts(spaceId: string): FactsDocument {
     return parseSafeFactsMarkdown(readFileSync(this.factsPath(this.requireSpace(spaceId)), 'utf8'))
+  }
+
+  readInstructions(spaceId: string): string {
+    return readOrEmpty(this.spacePath(this.requireSpace(spaceId), INSTRUCTIONS_FILE))
+  }
+
+  updateInstructions(spaceId: string, text: string, expectedText: string): void {
+    this.assertOrdinarySpaceLifecycle(spaceId, 'edit instructions')
+    const space = this.requireSpace(spaceId)
+    if (space.archived) throw new Error('Restore this Space before editing its instructions')
+    if (this.readInstructions(spaceId) !== expectedText)
+      throw new Error('Instructions changed. Reload before saving again.')
+    const content = stripForbiddenUnicode(text)
+    if (content === expectedText) return
+    writeFileAtomicDurable(this.spacePath(space, INSTRUCTIONS_FILE), Buffer.from(content, 'utf8'))
+    this.appendEvent(spaceId, {
+      type: 'space.instructions',
+      text: 'Updated Space instructions in Settings',
+      origin: 'trusted:user',
+    })
+    this.notifySpaceChanged(space)
   }
 
   /** Durable rendered-FACTS health consumed by the Gateway-owned Memory health Surface. */
@@ -796,6 +860,7 @@ export class SpacesEngine {
       id: `srf-${space.slug}-facts`,
       spaceId: space.id,
       title: 'What I know about you here',
+      management: 'memory',
       // Regenerated on every read from FACTS.md, never a tree the user
       // authored, so a pin toggle would be meaningless — the client must not
       // offer it (issue #22).
@@ -1018,11 +1083,18 @@ export class SpacesEngine {
     if (parsed.id !== SYSTEM_SPACE_ID) this.auditMemoryHealth(parsed.id)
   }
 
-  private updateSpace(spaceId: string, patch: Pick<Space, 'archived'>, eventText: string): Space {
+  private updateSpace(
+    spaceId: string,
+    patch: Pick<Space, 'archived'>,
+    eventText: string,
+    origin: Origin = 'trusted:user',
+  ): Space {
     const space = this.requireSpace(spaceId)
+    if (space.archived === patch.archived) return space
     const updated = SpaceSchema.parse({ ...space, ...patch })
     this.writeSpace(updated)
-    this.appendEvent(updated.id, { type: 'lifecycle', text: eventText, origin: 'trusted:user' })
+    this.appendEvent(updated.id, { type: 'lifecycle', text: eventText, origin })
+    this.notifySpaceChanged(updated)
     return updated
   }
 
@@ -1135,7 +1207,7 @@ export class SpacesEngine {
 
   private assertOrdinarySpaceLifecycle(
     spaceId: string,
-    operation: 'archive' | 'restore' | 'merge',
+    operation: 'archive' | 'restore' | 'merge' | 'edit instructions',
   ): void {
     if (spaceId === SYSTEM_SPACE_ID) {
       throw new Error(`Cannot ${operation}: System Space lifecycle is Gateway-owned`)

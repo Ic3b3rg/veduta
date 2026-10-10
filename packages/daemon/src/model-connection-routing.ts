@@ -103,7 +103,21 @@ export function deriveRoutingConfig(
     ...base,
     tiers: { triage: entries, reasoning: entries },
     connectionKeys,
+    ...(head ? {} : { unavailableReason: unavailableSelectionReason(active) }),
   })
+}
+
+function unavailableSelectionReason(connection: ModelConnectionRecord | undefined): string {
+  if (!connection)
+    return 'The selected Model connection no longer exists. Open Model connections to select a connection.'
+  const reason =
+    connection.stateReason ??
+    `The selected Model connection is ${connection.state === 'connected' ? 'unavailable' : connection.state}.`
+  const action =
+    connection.state === 'expired' || connection.state === 'revoked'
+      ? 'Open Model connections to reconnect, then send a new message.'
+      : 'Open Model connections to check this connection or select another one.'
+  return `${reason} ${action}`
 }
 
 function tierEntry(connection: ModelConnectionRecord, modelId: string): TierModel {

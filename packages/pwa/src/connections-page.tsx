@@ -9,6 +9,7 @@ import { ConnectionsModels } from './connections-models.tsx'
 import { ConnectionsAccess } from './connections-access.tsx'
 import { ConnectionsExtensions } from './connections-extensions.tsx'
 import { ConnectionsDevices } from './connections-devices.tsx'
+import { ConnectionsSpaces } from './connections-spaces.tsx'
 import './styles/connections-page.css'
 
 export function ConnectionsPage({
@@ -27,7 +28,9 @@ export function ConnectionsPage({
     value === 'extensions' ||
     value === 'access' ||
     value === 'services' ||
-    value === 'devices'
+    value === 'devices' ||
+    value === 'spaces' ||
+    value === 'automations'
       ? value
       : initialSection
   const controller = useConnectionsController(token)
@@ -55,6 +58,9 @@ export function ConnectionsPage({
       )}
       {section === 'extensions' && <ConnectionsExtensions />}
       {section === 'devices' && <ConnectionsDevices token={token} />}
+      {(section === 'spaces' || section === 'automations') && (
+        <ConnectionsSpaces key={section} section={section} token={token} />
+      )}
     </ConnectionsLayout>
   )
 }

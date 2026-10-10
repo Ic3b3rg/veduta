@@ -39,6 +39,11 @@ function nodeText(tree: AtomNode, id: string): string {
   throw new Error(`expected text Atom ${id}`)
 }
 
+function previewText(tree: AtomNode): string {
+  const value = tree.props && 'text' in tree.props ? tree.props.text : ''
+  return [value, ...(tree.children ?? []).map(previewText)].join('\n')
+}
+
 function targetSurface(id: string, count: number, title = 'Stress checklist'): Surface {
   return SurfaceSchema.parse({
     id,
@@ -125,7 +130,7 @@ function pressDecision(
 }
 
 describe('TreeProposalSurfaceManager (real Store)', () => {
-  it('a recorded proposal produces a daemon-owned card in the same Space, with the operations visible in the Markdown preview', () => {
+  it('a recorded proposal produces a daemon-owned card in the same Space, with its concrete summary and complete review', () => {
     const { cardSurfaceId } = pinAndPropose('srf-target-preview', 2)
 
     const card = store.getSurface(cardSurfaceId)
@@ -135,9 +140,9 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
 
     const preview = nodeText(card!.tree, 'preview')
     expect(typeof preview).toBe('string')
-    expect(preview).toContain('add')
-    expect(preview).toContain('/children/2')
-    expect(preview).toContain('Caption')
+    expect(preview).toContain('Add “proposed”')
+    expect(previewText(card!.tree)).toContain('/children/2')
+    expect(previewText(card!.tree)).toContain('Caption')
 
     const meta = nodeText(card!.tree, 'meta')
     expect(meta).toContain('srf-target-preview')
@@ -216,9 +221,11 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     if (!('proposed' in result)) throw new Error('expected a Tree proposal')
 
     const card = store.getSurface(treeProposalSurfaceId(result.proposalId))
-    const preview = nodeText(card!.tree, 'preview')
-    expect(preview).toContain('label="Submit order"')
-    expect(preview).toContain('action=submit@fast(item0)')
+    const preview = previewText(card!.tree)
+    expect(preview).toContain('Submit order')
+    expect(preview).toContain('"name": "submit"')
+    expect(preview).toContain('"path": "fast"')
+    expect(preview).toContain('"item0"')
   })
 
   it('previews a Markdown whose text changed, not just its Atom type, and neutralizes a delimiter-collision attempt in that text', () => {
@@ -251,7 +258,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     expect(preview).not.toContain('<<<evil>>>')
   })
 
-  it('keeps the operations preview inside the overall cap even for a large proposed subtree', () => {
+  it('keeps the summary compact while preserving every full value in a large proposed subtree', () => {
     store.createSurface(targetSurface('srf-preview-cap', 2), 'agent')
     store.setPinned('srf-preview-cap', true, { origin: 'trusted:user', updatedBy: 'user' })
     const version = store.getSurfaceVersion('srf-preview-cap')
@@ -260,7 +267,7 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
     const bigChildren = Array.from({ length: 60 }, (_, index) => ({
       id: `child-${index}`,
       type: 'Markdown' as const,
-      props: { text: 'x'.repeat(200) },
+      props: { text: `${'x'.repeat(200)} End of item ${index}` },
     }))
 
     const result = store.patchTree(
@@ -279,7 +286,8 @@ describe('TreeProposalSurfaceManager (real Store)', () => {
 
     const card = store.getSurface(treeProposalSurfaceId(result.proposalId))
     const preview = nodeText(card!.tree, 'preview')
-    expect(preview.length).toBeLessThanOrEqual(4001) // OPERATIONS_PREVIEW_MAX_CHARS plus the truncation ellipsis
+    expect(preview.length).toBeLessThanOrEqual(510)
+    expect(previewText(card!.tree)).toContain(`${'x'.repeat(200)} End of item 59`)
   })
 
   it('Accept applies exactly the proposed operations to the pinned Surface, marks the proposal accepted, appends surface.tree_proposal_accepted, and archives the card', async () => {

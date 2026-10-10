@@ -48,7 +48,7 @@ export function SpaceSection({
           <span className="space-badge">{surfaces.length} Surfaces</span>
         </span>
       </div>
-      <div className="surface-grid">
+      <div className="surface-grid" data-presentation={space.presentation ?? 'auto'}>
         {surfaces.map((surface, index) => (
           <SurfaceCard
             key={surface.id}

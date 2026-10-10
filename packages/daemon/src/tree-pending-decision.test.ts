@@ -27,7 +27,7 @@ describe('TreePendingDecisionAdapter', () => {
     expect(adapter.get(id)).toEqual({
       id,
       kind: 'tree-proposal',
-      summary: 'Change the “Weekly plan” Surface tree',
+      summary: '“Weekly plan”: Add “Ready”',
       scope: { type: 'space', spaceId: 'spc-health' },
       allowedResolutions: ['accept', 'reject'],
       state: 'pending',

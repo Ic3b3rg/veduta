@@ -1,5 +1,7 @@
 export { renderNode } from './render.tsx'
 export { structuredMarkdown } from './structured-markdown.tsx'
+export { AutomationScheduleDescription } from './automation-schedule.tsx'
+export { SurfaceValue, formatSurfaceValue } from './surface-value.tsx'
 export { catalogShowcaseSurface } from './showcase.ts'
 export { catalogMotionShowcaseSurface } from './motion-showcase.ts'
 export { catalogTokens, tokensFor, type CatalogTheme, type CatalogTokens } from './design-system.ts'

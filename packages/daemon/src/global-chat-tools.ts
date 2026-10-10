@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { ChatResultTarget, PendingDecision, Space } from '@veduta/protocol'
 import { defineTool, type ToolContext, type ToolDef, type ToolResult } from './agent-runner.ts'
 import { createSpaceProposalTool } from './space-proposal-tool.ts'
+import { createSpaceRestoreTools } from './space-controls.ts'
 import type { Store } from './store.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 import { effectiveToolWriteOrigin, type Origin } from './taint.ts'
@@ -80,6 +81,7 @@ export function createGlobalChatTools(options: GlobalChatToolsOptions): ToolDef[
       },
     }),
     createSpaceProposalTool(options.store.spacesEngine, options.hooks?.onPendingDecision),
+    ...createSpaceRestoreTools(options.store.spacesEngine),
     ...schemaTools.map((tool) => scopeFocusedTool(tool, cachedOptions, enteredSpaceIds)),
   ]
 }
@@ -153,6 +155,8 @@ const MUTATING_TOOL_NAMES = new Set([
   'patch_state',
   'patch_tree',
   'archive_surface',
+  'archive_space',
+  'set_space_presentation',
   'write_fact',
   'append_event',
   'create_surface_from_template',

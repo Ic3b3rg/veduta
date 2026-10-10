@@ -1243,6 +1243,68 @@ describe('stream', () => {
     expect(error).toMatchObject({ message })
   })
 
+  it.each([
+    ['usageLimitExceeded', 'usage-limit'],
+    ['rateLimitExceeded', 'rate-limit'],
+    ['unauthorized', 'unauthorized'],
+    ['serverOverloaded', 'unreachable'],
+    ['futureUnknownVariant', 'unreachable'],
+    [null, 'unreachable'],
+  ])(
+    'classifies a missed terminal %s notification from turn/completed as %s',
+    async (codexErrorInfo, code) => {
+      const transport = createFakeCodexTransport({
+        responses: {
+          'thread/start': fakeCodexThreadStartResponse(),
+          'turn/start': fakeCodexTurnStartResponse(),
+        },
+        notifications: [
+          {
+            method: 'turn/completed',
+            params: {
+              threadId: 'thread-1',
+              turn: {
+                id: 'turn-1',
+                status: 'failed',
+                error: { message: 'provider message', codexErrorInfo },
+              },
+            },
+          },
+        ],
+      })
+      const result = await drain(streamCodexToolTurn(transport, CODEX_HOME, subscriptionRequest()))
+      expect(result.error).toMatchObject({ code })
+      expect(result.error).not.toHaveProperty(
+        'resetsAt',
+        expect.arrayContaining([expect.any(String)]),
+      )
+      transport.close()
+    },
+  )
+
+  it('does not infer a structured limit from provider prose or human-readable reset times', async () => {
+    const transport = createFakeCodexTransport({
+      responses: {
+        'thread/start': fakeCodexThreadStartResponse(),
+        'turn/start': fakeCodexTurnStartResponse(),
+      },
+      notifications: [
+        {
+          method: 'error',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            willRetry: false,
+            error: { message: 'Usage limit or unauthorized; try again at 11:00 AM.' },
+          },
+        },
+      ],
+    })
+    const result = await drain(streamCodexToolTurn(transport, CODEX_HOME, subscriptionRequest()))
+    expect(result.error).toMatchObject({ code: 'unreachable', resetsAt: undefined })
+    transport.close()
+  })
+
   it('lets Codex recover from an error notification that declares an internal retry', async () => {
     const transport = createFakeCodexTransport({
       responses: {

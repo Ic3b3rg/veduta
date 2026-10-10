@@ -48,4 +48,19 @@ allowing generic Agent writes, and forbidding harmless user presentation prefere
 implementation slices and dependency on the Home Space grid are tracked by
 [the System Space specification](https://github.com/Ic3b3rg/veduta/issues/63).
 
+## Management placement amendment
+
+The owner-approved workflow in [issue 234](https://github.com/Ic3b3rg/veduta/issues/234) places
+FACTS, Space instructions, Automations and Nightly Reflection management in Settings. This amends
+the original rejection of dedicated administration controls for these domains. The controls reuse
+the Curator, Scheduler and Spaces engine, preserve their Space ownership and Events, and validate
+all Gateway contracts. Canonical management projections receive shared protocol metadata from the
+Gateway; the PWA does not infer management from a Surface title or daemon-private identity. The
+Nightly Reflection report still uses the generic Atom renderer. Other System status Surfaces remain
+in System, with their existing content and lifecycle authority.
+
+[Issue 235](https://github.com/Ic3b3rg/veduta/issues/235) also exposes saved Space columns through an
+explicit System Chat operation and Settings. This is the same evented presentation preference as
+in ordinary Spaces and grants no generic content, Automation-authoring, memory, or lifecycle tools.
+
 Status: accepted

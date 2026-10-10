@@ -44,7 +44,6 @@ function RoutedApp() {
   } = useClientRouting()
   const { runtime, snapshot } = useLiveState()
   const {
-    spaces,
     homeSpacesLoadState,
     error,
     authToken,
@@ -54,6 +53,14 @@ function RoutedApp() {
     surfaceUpdateFeedbacks,
     automationOutcomeNotifications,
   } = snapshot
+  const spaces = useMemo(
+    () =>
+      snapshot.spaces.map((space) => ({
+        ...space,
+        surfaces: space.surfaces.filter((surface) => !surface.management),
+      })),
+    [snapshot.spaces],
+  )
   const authMode = snapshot.authStatus?.mode
   const bootstrapRequired = snapshot.authStatus?.bootstrapRequired ?? false
   const passkeyRegistered = snapshot.authStatus?.passkeyRegistered ?? false

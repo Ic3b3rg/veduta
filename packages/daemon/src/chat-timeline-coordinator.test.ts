@@ -6,6 +6,7 @@ import type { GatewayServerMessage, PendingDecision } from '@veduta/protocol'
 import { ChatTimeline } from './chat-timeline.ts'
 import { ChatTimelineCoordinator } from './chat-timeline-coordinator.ts'
 import { ServiceConnections } from './service-connections.ts'
+import { NoAvailableModelError, NonRetryableModelError } from './model-routing.ts'
 
 const roots: string[] = []
 afterEach(() => {
@@ -36,6 +37,104 @@ function harness() {
 }
 
 describe('Chat timeline execution', () => {
+  it.each([
+    {
+      name: 'subscription quota',
+      error: new NonRetryableModelError(
+        'Subscription allowance exhausted. Check usage, then send a new message.',
+      ),
+      reason: 'Subscription allowance exhausted. Check usage, then send a new message.',
+    },
+    {
+      name: 'rate limit',
+      error: new NonRetryableModelError('Temporarily rate limited. Send a new message later.'),
+      reason: 'Temporarily rate limited. Send a new message later.',
+    },
+    {
+      name: 'revoked authorization',
+      error: new NonRetryableModelError('Subscription authorization was revoked. Reconnect it.'),
+      reason: 'Subscription authorization was revoked. Reconnect it.',
+    },
+    {
+      name: 'empty setup',
+      error: new NoAvailableModelError('triage', []),
+      reason:
+        'No model connection is available. Open Model connections to connect and select a model.',
+    },
+    {
+      name: 'missing API credential',
+      error: new NoAvailableModelError('triage', ['openai']),
+      reason:
+        'The API credential for openai is unavailable. Open Model connections to reconnect or choose another connection.',
+    },
+    {
+      name: 'sensitive provider diagnostic',
+      error: new NonRetryableModelError('Provider rejected bearer private-value'),
+      reason: 'Provider rejected bearer ***',
+    },
+    {
+      name: 'unexpected failure',
+      error: new Error('Unexpected private diagnostic'),
+      reason: 'The service request could not start on this Gateway.',
+    },
+  ])('handles $name before execution without replay after recovery', async ({ error, reason }) => {
+    const root = mkdtempSync(join(tmpdir(), 'veduta-chat-service-limit-'))
+    roots.push(root)
+    const timeline = new ChatTimeline(root)
+    let failure: Error | undefined = error
+    const resolveServiceRequest = vi.fn(async () => {
+      if (failure) throw failure
+      return { status: 'none' as const }
+    })
+    const send = vi.fn()
+    const runTurn = vi.fn(async (event: { turnId?: string }) => {
+      coordinator.receive({
+        type: 'chat.turn-end',
+        turnId: event.turnId!,
+        message: { role: 'assistant', text: 'New submission completed.' },
+      })
+    })
+    const coordinator = new ChatTimelineCoordinator({
+      timeline,
+      serviceConnections: new ServiceConnections(root),
+      resolveServiceRequest,
+      hasSpace: () => true,
+      runTurn,
+      publish: vi.fn(),
+      send,
+    })
+    const accepted = coordinator.submit({
+      clientId: 'device-1',
+      receivedAt: new Date().toISOString(),
+      text: 'Check my request.',
+    })
+    await coordinator.idle()
+    expect(timeline.page({ type: 'global' }).entries).toMatchObject([
+      { kind: 'user', turnId: accepted.turnId, turnState: 'failed' },
+      { kind: 'error', turnId: accepted.turnId, message: { text: reason } },
+    ])
+    expect(send).toHaveBeenCalledWith('device-1', {
+      type: 'chat.turn-error',
+      turnId: accepted.turnId,
+      error: reason,
+    })
+    expect(runTurn).not.toHaveBeenCalled()
+    failure = undefined
+    coordinator.recover()
+    await coordinator.idle()
+    expect(resolveServiceRequest).toHaveBeenCalledTimes(1)
+    const next = coordinator.submit({
+      clientId: 'device-1',
+      receivedAt: new Date().toISOString(),
+      text: 'Try a new request.',
+    })
+    await coordinator.idle()
+    expect(timeline.userEntry(accepted.turnId)?.turnState).toBe('failed')
+    expect(timeline.userEntry(next.turnId)?.turnState).toBe('completed')
+    expect(runTurn).toHaveBeenCalledTimes(1)
+    timeline.close()
+  })
+
   it('holds one reviewed service attempt before effects and resumes the original accepted turn once', async () => {
     const root = mkdtempSync(join(tmpdir(), 'veduta-chat-service-'))
     roots.push(root)

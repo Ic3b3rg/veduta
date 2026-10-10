@@ -6,6 +6,7 @@ import { renderFocusedStoredJson } from './focused-tool-support.ts'
 import type { Scheduler } from './scheduler.ts'
 import type { Store } from './store.ts'
 import type { Origin } from './taint.ts'
+import { createSpacePresentationTool } from './space-controls.ts'
 
 const ListSurfacesSchema = z.object({})
 const ReadSurfaceSchema = z.object({ surfaceId: z.string().min(1) })
@@ -85,6 +86,7 @@ export function createSystemChatTools(options: SystemChatToolsOptions): ToolDef[
       },
     }),
     listAutomations,
+    createSpacePresentationTool(options.store.spacesEngine, SYSTEM_SPACE_ID),
   ]
 }
 

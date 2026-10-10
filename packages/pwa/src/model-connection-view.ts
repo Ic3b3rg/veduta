@@ -85,6 +85,16 @@ export function lifecycleCopy(connection: ModelConnection): LifecycleCopy {
         action: 'none',
       }
     case 'connected':
+      if (connection.inferenceIssue) {
+        return {
+          title:
+            connection.inferenceIssue.kind === 'usage-limit'
+              ? 'Subscription usage limit'
+              : 'Temporarily rate limited',
+          detail: connection.inferenceIssue.message,
+          action: 'none',
+        }
+      }
       return {
         title: 'Connected',
         detail:

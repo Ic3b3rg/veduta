@@ -4,6 +4,7 @@ import {
   SurfaceSchema,
   type AtomNode,
   type AutomationRunHistoryEntry,
+  type AutomationSchedule,
   type JsonValue,
   type Surface,
 } from '@veduta/protocol'
@@ -20,6 +21,7 @@ export interface AutomationListItem {
   description: string
   enabled: boolean
   scheduleText: string
+  scheduleDetails?: AutomationSchedule
   history?: AutomationRunHistoryEntry[]
 }
 
@@ -74,6 +76,9 @@ export function automationsListNode(automations: AutomationListItem[]): AtomNode
           props: {
             label: automation.description,
             schedule: automation.scheduleText,
+            ...(automation.scheduleDetails === undefined
+              ? {}
+              : { scheduleDetails: automation.scheduleDetails }),
             historyBinding: automationHistoryStateKey(automation.id),
           },
           actions: [

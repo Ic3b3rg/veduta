@@ -643,6 +643,19 @@ describe('production auth boundary', () => {
       ).statusCode,
     ).toBe(401)
 
+    for (const [method, url] of [
+      ['GET', '/api/settings/spaces'],
+      ['GET', '/api/settings/spaces/spc-health'],
+      ['POST', '/api/settings/spaces/spc-health'],
+      ['POST', '/api/settings/reflection'],
+    ] as const) {
+      expect((await app.inject({ method, url })).statusCode).toBe(401)
+      expect(
+        (await app.inject({ method, url, headers: { authorization: `Bearer ${token}` } }))
+          .statusCode,
+      ).not.toBe(401)
+    }
+
     const allowed = await app.inject({
       method: 'GET',
       url: '/api/spaces',

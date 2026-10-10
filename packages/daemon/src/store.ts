@@ -1,4 +1,6 @@
 import { SurfaceActionError } from './fast-action.ts'
+import { automationsSurfaceIdForSpace } from './automations-surface.ts'
+import { reflectionSurfaceId } from './reflection-surface.ts'
 import {
   SYSTEM_SPACE_ID,
   SurfaceSnapshotSchema,
@@ -119,7 +121,9 @@ export class Store {
   }
 
   listSurfaces(spaceId?: string): Surface[] {
-    const stored = this.surfaceEngine.listSurfaces(spaceId)
+    const stored = this.surfaceEngine
+      .listSurfaces(spaceId)
+      .map((surface) => this.projectManagementSurface(surface))
     // The generic FACTS projection belongs only to user life-area Spaces (ADR-0020).
     if (spaceId) {
       return spaceId === SYSTEM_SPACE_ID
@@ -130,10 +134,29 @@ export class Store {
   }
 
   getSurface(id: string): Surface | undefined {
-    return (
+    const surface =
       this.surfaceEngine.getSurface(id) ??
       this.listProjectedFactsSurfaces().find((surface) => surface.id === id)
+    return surface ? this.projectManagementSurface(surface) : undefined
+  }
+
+  /** Classification stays in the Gateway; neither user titles nor Agent-supplied metadata grant it. */
+  projectManagementSurface(surface: Surface): Surface {
+    const { management: _management, ...content } = surface
+    const space = this.getSpace(surface.spaceId)
+    if (!space) return content
+    if (
+      !this.surfaceEngine.getSurface(surface.id) &&
+      surface.id === `srf-${space.slug}-facts` &&
+      space.id !== SYSTEM_SPACE_ID
     )
+      return { ...content, management: 'memory' }
+    if (!this.surfaceEngine.isDaemonOwned(surface.id)) return content
+    if (surface.id === automationsSurfaceIdForSpace(space))
+      return { ...content, management: 'automations' }
+    if (surface.id === reflectionSurfaceId(space.slug))
+      return { ...content, management: 'reflection' }
+    return content
   }
 
   /** Returns only a persisted Surface that can participate in mutation paths. */

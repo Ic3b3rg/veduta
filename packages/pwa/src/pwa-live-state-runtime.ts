@@ -466,6 +466,7 @@ export class PwaLiveStateRuntime {
       onPresence: receive,
       onSpaceAttention: receive,
       onSpaceFactsChanged: receive,
+      onSpaceChanged: receive,
       onError: (message) => {
         if (!this.active(epoch) || generation !== this.connectionGeneration) return
         if (
@@ -569,6 +570,7 @@ export class PwaLiveStateRuntime {
         this.notifications.accept(frame)
         break
       case 'space.facts-changed':
+      case 'space.changed':
         this.refetchRequested = true
         void this.refreshSpaces()
         break
