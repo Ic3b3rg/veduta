@@ -1,7 +1,36 @@
 import { describe, expect, it } from 'vitest'
-import { derivePurposeKey, openGcm, sealGcm } from './secret-crypto.ts'
+import { derivePurposeKey, openGcm, openGcmBytes, sealGcm, sealGcmBytes } from './secret-crypto.ts'
 
 const KEY_MATERIAL = Buffer.from('a test key material, long enough for scrypt')
+
+describe('binary backup envelope compatibility', () => {
+  it('opens ciphertext produced by the previous base64 primitive', () => {
+    // Produced by the implementation before #246 with the test key and backup label.
+    const opened = openGcmBytes({
+      label: 'backup:',
+      keyMaterial: KEY_MATERIAL,
+      salt: 'gKi9fiBXT5ZrUmjY5Uy6kQ==',
+      iv: 'kWrnBgplj4WljRZI',
+      tag: 'S7cBgMpH57db4xc5QOkYdw==',
+      ct: Buffer.from('hFWqIwWh70OczasP0kVwIjzUa9rpzg==', 'base64'),
+    })
+    expect(opened.toString('utf8')).toBe('legacy archive payload')
+  })
+
+  it('keeps binary ciphertext compatible with the base64 vault envelope', () => {
+    const plaintext = Buffer.from('binary archive payload')
+    const sealed = sealGcmBytes({ label: 'backup:', keyMaterial: KEY_MATERIAL, plaintext })
+    expect(Buffer.isBuffer(sealed.ct)).toBe(true)
+    expect(
+      openGcm({
+        label: 'backup:',
+        keyMaterial: KEY_MATERIAL,
+        ...sealed,
+        ct: sealed.ct.toString('base64'),
+      }),
+    ).toEqual(plaintext)
+  })
+})
 
 describe('sealGcm / openGcm', () => {
   it('round-trips plaintext through seal then open', () => {

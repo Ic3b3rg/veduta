@@ -20,6 +20,10 @@ export interface SealedGcm {
   ct: string
 }
 
+export interface SealedGcmBytes extends Omit<SealedGcm, 'ct'> {
+  ct: Buffer
+}
+
 /** Domain-separated scrypt: `label` (e.g. `'vault:'`, `'backup:'`) keeps a derived key distinct from other purposes, even under identical key material. */
 export function derivePurposeKey(label: string, keyMaterial: Buffer, salt: Buffer): Buffer {
   return scryptSync(keyMaterial, Buffer.concat([Buffer.from(label), salt]), 32, {
@@ -48,6 +52,12 @@ export interface SealGcmInput {
  * ciphertext. All fields are returned base64-encoded.
  */
 export function sealGcm(input: SealGcmInput): SealedGcm {
+  const sealed = sealGcmBytes(input)
+  return { ...sealed, ct: sealed.ct.toString('base64') }
+}
+
+/** The same authenticated envelope with binary ciphertext, for raw archive formats. */
+export function sealGcmBytes(input: SealGcmInput): SealedGcmBytes {
   const salt = randomBytes(16)
   const iv = randomBytes(12)
   const key = derivePurposeKey(input.label, input.keyMaterial, salt)
@@ -60,11 +70,16 @@ export function sealGcm(input: SealGcmInput): SealedGcm {
     salt: saltB64,
     iv: ivB64,
     tag: cipher.getAuthTag().toString('base64'),
-    ct: ciphertext.toString('base64'),
+    ct: ciphertext,
   }
 }
 
 export interface OpenGcmInput extends SealedGcm {
+  label: string
+  keyMaterial: Buffer
+}
+
+export interface OpenGcmBytesInput extends SealedGcmBytes {
   label: string
   keyMaterial: Buffer
 }
@@ -76,13 +91,17 @@ export interface OpenGcmInput extends SealedGcm {
  * their own descriptive error message.
  */
 export function openGcm(input: OpenGcmInput): Buffer {
+  return openGcmBytes({ ...input, ct: Buffer.from(input.ct, 'base64') })
+}
+
+/** Authenticates binary ciphertext before returning any plaintext. */
+export function openGcmBytes(input: OpenGcmBytesInput): Buffer {
   const salt = Buffer.from(input.salt, 'base64')
   const iv = Buffer.from(input.iv, 'base64')
   const tag = Buffer.from(input.tag, 'base64')
-  const ciphertext = Buffer.from(input.ct, 'base64')
   const key = derivePurposeKey(input.label, input.keyMaterial, salt)
   const decipher = createDecipheriv('aes-256-gcm', key, iv)
   decipher.setAuthTag(tag)
   decipher.setAAD(sealedGcmAad(input.salt, input.iv))
-  return Buffer.concat([decipher.update(ciphertext), decipher.final()])
+  return Buffer.concat([decipher.update(input.ct), decipher.final()])
 }

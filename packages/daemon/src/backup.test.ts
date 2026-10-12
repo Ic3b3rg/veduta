@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SurfaceSchema } from '@veduta/protocol'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BACKUP_FILE_PREFIX,
   BACKUP_FILE_SUFFIX,
@@ -100,6 +100,33 @@ function buildPopulatedRoot(rootDir: string): { spaceId: string; surfaceId: stri
 }
 
 describe('createBackup / restoreBackup', () => {
+  it('keeps archive payloads binary during both backup and restore (#246)', async () => {
+    const rootDir = freshDir('veduta-backup-binary-root-')
+    const outDir = freshDir('veduta-backup-binary-out-')
+    mkdirSync(join(rootDir, 'spaces'))
+    const payload = Buffer.alloc(2 * 1024 * 1024, 23)
+    writeFileSync(join(rootDir, 'payload.bin'), payload)
+    const stringify = Buffer.prototype.toString
+    const guard = vi.spyOn(Buffer.prototype, 'toString').mockImplementation(function (
+      this: Buffer,
+      ...args
+    ) {
+      // Model Node's string limit with a small fixture; header fields still fit.
+      if (args[0] === 'base64' && this.length > 1024 * 1024) {
+        throw new Error('Archive payload exceeds the base64 string limit')
+      }
+      return stringify.apply(this, args)
+    })
+    try {
+      const file = await createBackup({ rootDir, outDir, keyMaterial: KEY_MATERIAL })
+      const targetRootDir = join(freshDir('veduta-backup-binary-restore-'), 'restored')
+      await restoreBackup({ file, targetRootDir, keyMaterial: KEY_MATERIAL })
+      expect(readFileSync(join(targetRootDir, 'payload.bin'))).toEqual(payload)
+    } finally {
+      guard.mockRestore()
+    }
+  })
+
   it('round-trips a populated rootDir onto a clean machine', async () => {
     const rootDir = freshDir('veduta-backup-root-')
     const outDir = freshDir('veduta-backup-out-')
