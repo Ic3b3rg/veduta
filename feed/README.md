@@ -1,22 +1,23 @@
 # The update feed
 
-This directory holds `stable.json` — the gated update feed the daemon's `check-updates`
-Automation polls (schema: `UpdateManifestSchema`, `packages/protocol/src/update.ts`; design:
-[docs/adr/0013-signed-self-update.md](../docs/adr/0013-signed-self-update.md)). There is
-**deliberately no `stable.json` committed yet**: it appears for the first time only once a
-release has been signed, soaked, and promoted — see [RELEASING.md](../RELEASING.md) for the
-full ceremony (`deploy/release.sh promote` writes it).
+`stable.json` is the public update feed containing signed release metadata, polled by
+Veduta's daily "Check for updates" Automation. A release appears here only after its artifact
+has been verified and smoke-tested and its metadata signed. See [RELEASING.md](../RELEASING.md) for the maintainer ceremony and
+[ADR-0013](../docs/adr/0013-signed-self-update.md) for the trust model.
 
-A placeholder JSON file was considered instead of this README and rejected: any placeholder
-that does not conform to `UpdateManifestSchema` would fail to parse the moment something tried
-to fetch it, which is a worse failure mode than the file simply not existing yet (an HTTP 404
-on the feed URL). An absent `stable.json` is the documented, expected state before the first
-release, and is what "no update currently offered" looks like on the wire.
+The feed intentionally contains public verification material:
 
-Once a release is promoted, this directory looks like:
+- `release`: the exact signed release metadata, encoded as base64. It contains the version,
+  release notes, artifact URL, hashes and size limits. Base64 preserves the signed bytes; it
+  is not encryption.
+- `releaseSig`: the release's digital signature.
+- `signingKey`: the signing **public** key, its ID and the root key's certification signature.
+- `artifactUrl`: the downloadable artifact, checked against the signed metadata.
 
-```
-feed/
-  README.md    (this file)
-  stable.json  (the signed, gated feed)
-```
+Minisign's comment `signature from minisign secret key` describes how a signature was made.
+The signature does **not** contain the secret key and cannot sign another release. No private
+keys, passphrases, access tokens or installation credentials belong in this directory.
+
+An installed instance verifies the root → signing key → release chain against the root public
+key pinned during installation. Publishing this feed offers an update; installation still
+requires the owner's explicit Apply action.
