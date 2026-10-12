@@ -474,7 +474,10 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
       stack = await startLocalVpsStack({
         demoData: true,
         baseDir,
-        extraEnv: { VEDUTA_INSTALLED_VERSION: INSTALLED_VERSION },
+        extraEnv: {
+          VEDUTA_INSTALLED_VERSION: INSTALLED_VERSION,
+          VEDUTA_UPDATE_READY_TIMEOUT: String(UPDATE_READINESS_BUDGET_MS / 1_000),
+        },
       })
       await onboardMinimal(page, stack)
 
@@ -530,6 +533,7 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
         legacyHome: stack.legacyHome,
         extraEnv: {
           VEDUTA_INSTALLED_VERSION: INSTALLED_VERSION,
+          VEDUTA_UPDATE_READY_TIMEOUT: String(UPDATE_READINESS_BUDGET_MS / 1_000),
           VEDUTA_UPDATE_TEST_KNOBS: '1',
           VEDUTA_TEST_FAIL_SELF_CHECK: '1',
         },
