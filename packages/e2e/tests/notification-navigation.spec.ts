@@ -67,6 +67,11 @@ for (const width of [320, 1280]) {
       ).toEqual(controlsBefore)
       const notice = page.getByRole('dialog', { name: 'Notifications', exact: true })
       await expect(notice).toBeInViewport({ ratio: 1 })
+      for (const button of await notice.getByRole('button').all()) {
+        const target = await button.boundingBox()
+        expect(target?.height).toBeGreaterThanOrEqual(width === 320 ? 44 : 32)
+        expect(target?.width).toBeGreaterThanOrEqual(width === 320 ? 44 : 32)
+      }
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
       ).toBeLessThanOrEqual(1)

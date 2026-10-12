@@ -63,8 +63,8 @@ export function NotificationBell({ token }: { token: string | undefined }) {
   })
 
   if ((granted && hasSubscription) || platform === 'unsupported') return null
-  // The dismiss button only ever appears on the iOS install-guide sheet, so
-  // it only ever suppresses that sheet — once the platform genuinely becomes
+  // The persistent dismissal only applies to the iOS installation guide;
+  // once the platform genuinely becomes
   // 'ready' (installed + push-capable), the enable flow is a new offer, not
   // a repeat of the install nudge the user dismissed.
   if (platform === 'ios-needs-install' && dismissedGuide) return null
@@ -130,6 +130,8 @@ export function NotificationBell({ token }: { token: string | undefined }) {
             <p>{IOS_FALLBACK_COPY}</p>
             <Button
               variant="outline"
+              size="sm"
+              className="recipe-control"
               onClick={() => {
                 localStorage.setItem(NOTIF_BELL_DISMISSED_KEY, '1')
                 setDismissedGuide(true)
@@ -157,7 +159,12 @@ export function NotificationBell({ token }: { token: string | undefined }) {
               )}
             </div>
             {!busy && status !== null && status !== 'unsupported' && (
-              <Button variant="outline" onClick={() => void onEnable()}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="recipe-control"
+                onClick={() => void onEnable()}
+              >
                 Try again
               </Button>
             )}
