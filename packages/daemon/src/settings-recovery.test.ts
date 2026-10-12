@@ -236,7 +236,7 @@ describe('evented Settings recovery', () => {
     expect(() =>
       scheduler.updateAutomation(space.id, blocked.id, {
         expectedRevision: scheduler.automationSettingsRevision(blocked),
-        enabled: false,
+        description: 'Review updated habits',
       }),
     ).toThrow('pending Event recovery')
     instant = '2030-07-08T11:00:00.000Z'
