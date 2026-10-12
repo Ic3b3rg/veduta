@@ -1,7 +1,7 @@
 import { expect, test as base } from '@playwright/test'
 import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stack.ts'
 
-/** Clean authenticated Local VPS journey using the deterministic Model connection. */
+/** Isolated authenticated Local VPS journey with explicit example Surfaces and a mock model. */
 export const test = base.extend<{ surfaceStack: LocalVpsStack }>({
   surfaceStack: async ({ page, context }, use) => {
     const cdp = await context.newCDPSession(page)
@@ -16,7 +16,7 @@ export const test = base.extend<{ surfaceStack: LocalVpsStack }>({
         automaticPresenceSimulation: true,
       },
     })
-    const stack = await startLocalVpsStack()
+    const stack = await startLocalVpsStack({ demoData: true })
     try {
       const [setup] = await Promise.all([stack.waitForSetupUrl(), stack.waitForReadyLine()])
       await page.goto(setup.url)

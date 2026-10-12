@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
+  SYSTEM_SPACE_ID,
   InstallerStageEventSchema,
   type InstallerStageEvent,
   type LegacyDetection,
@@ -206,7 +207,7 @@ export function buildOnboardingStatus(deps: OnboardingStatusDeps): OnboardingSta
 
   const existingSpaces = deps
     .listSpaces()
-    .filter((space) => !space.archived)
+    .filter((space) => !space.archived && space.id !== SYSTEM_SPACE_ID)
     .map((space) => ({ id: space.id, slug: space.slug, name: space.name }))
 
   const gmailClientId = deps.vault?.resolve('secret://vault/gmail-client-id')

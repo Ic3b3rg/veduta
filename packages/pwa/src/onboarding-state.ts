@@ -44,8 +44,8 @@ export const WIZARD_STEP_META: Record<OnboardingStepId, OnboardingStepMeta> = {
     title: 'First Space',
     description:
       'A Space is one life area — a persistent place the agent maintains for you (e.g. ' +
-      '"Health", "Home", "Finances"). Create your first one to get started; you can add more ' +
-      'later.',
+      '"Health", "Home", "Finances"). Choose the name of your first Space; you can add more ' +
+      'later. System is already there for Veduta’s status and controls.',
   },
   integrations: {
     title: 'Integrations',
