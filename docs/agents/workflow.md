@@ -58,9 +58,11 @@ integrating a PR. [AGENTS.md](../../AGENTS.md) owns the shared rules; this file 
 3. For an old draft, check both commit ancestry and equivalent behavior on current main. Compare
    its issue with current scope before reviving it. Close cancelled work as not planned, with a
    reason, rather than counting it as implemented.
-4. Remove this task's temporary data, preview processes, downloaded artifacts and completed
-   worktrees after verification and integration. Check for uncommitted or unmerged work first;
-   preserve unfinished work and report it. Keep signing inputs until publication is verified.
+4. Remove temporary data, preview processes, downloaded artifacts and completed worktrees after
+   verification and integration. An inactive clean worktree can also be removed once its commits
+   are verified on a retained branch; preserve that branch and report the unfinished work.
+   Check uncommitted and ignored files first, retaining notes or data that cannot be rebuilt.
+   Keep signing inputs until publication is verified.
 
 Project guides describe current operation. ADRs preserve decisions and explicit amendments;
 research notes preserve dated evidence. Correct stale guidance at its source, link instead of
