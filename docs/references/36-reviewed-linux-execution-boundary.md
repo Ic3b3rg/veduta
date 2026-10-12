@@ -56,7 +56,7 @@ they do not establish Linux runtime support. Research can precede those implemen
 These are the general seams to extend. Do not add a GitHub-only Linux exception, activate a
 foreign OpenClaw module, or use Model-provider-native tools. The single Agent, owning Space,
 Untrusted output, and validated Surface/Event contracts remain those in
-[CONTEXT.md](../../CONTEXT.md), [ARCHITECTURE.md](../../ARCHITECTURE.md), and
+[GLOSSARY.md](../../GLOSSARY.md), [ARCHITECTURE.md](../../ARCHITECTURE.md), and
 [SECURITY.md](../SECURITY.md).
 
 ## Primary-source comparison

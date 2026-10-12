@@ -25,7 +25,8 @@ Antirez: _"the agents you talk to via Telegram or WhatsApp […] are not well ma
 
 ## 3. Target user (v1)
 
-A developer/power user who already self-hosts (or can spin up a VPS), today a dissatisfied user of OpenClaw/Hermes. Arrives via the importer with their memory and configuration. The maintainer is user zero.
+A developer/power user who self-hosts or can provision a VPS. They may import existing memory
+from OpenClaw/Hermes or start by choosing their first Space. The maintainer is user zero.
 
 ## 4. v1 scope
 
@@ -42,7 +43,7 @@ A developer/power user who already self-hosts (or can spin up a VPS), today a di
 ### Out (painfully, but out)
 
 - Telegram/WhatsApp Bridges (immediately after: the Gateway is born adapter-ready)
-- Home-server profile (blind relay / documented Tailscale)
+- Dedicated home-server provisioning and blind relay; private VPS Tailnet access is already supported
 - Sandboxed HTML escape hatch for custom Surfaces
 - Marketplace/registry of community Templates and skills
 - Multi-user on the same daemon; voice

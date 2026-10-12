@@ -12,7 +12,7 @@ import { semanticValidationIssues, type SemanticValidationIssue } from './semant
 import { validateActionOperability } from './action-operability.ts'
 
 /**
- * A Surface is living state, not a response (CONTEXT.md): a declarative
+ * A Surface is living state, not a response (GLOSSARY.md): a declarative
  * tree of Atoms bound to typed state, owned by a Space. Freshness metadata
  * is mandatory — a stale Surface presented as current destroys trust.
  */

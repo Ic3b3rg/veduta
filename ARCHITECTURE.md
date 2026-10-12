@@ -6,7 +6,9 @@
 
 ## 1. The thesis and the guiding principle
 
-**Product thesis**: a personal agent with a real home (persistent Surfaces per life area) beats a personal agent inside a chat. Verified as a market gap: OpenClaw/Hermes are chat-first even with the Canvas; Skye (the closest competitor) has not launched, is iPhone-only, and is locked into WidgetKit ([ref. 02](docs/references/02-competitor-home-first.md)).
+**Product thesis**: give a personal agent a durable Home with persistent Surfaces per life area.
+The original competitor comparison is dated evidence in
+[ref. 02](docs/references/02-competitor-home-first.md), not a current market-status claim.
 
 **Architectural principle**: _hierarchy lives in the data, not in agents_. One Agent selectively
 works across namespaced **Spaces**. Ephemeral **Workers** are limited to parallel, read-heavy
@@ -77,9 +79,10 @@ flowchart TB
 
 ### 3.1 Gateway daemon
 
-A single self-hosted Gateway deployment (v1 profile: VPS with a public IP), centred on a TypeScript
-daemon. It exposes HTTPS with automatic ACME; authentication uses **passkeys/WebAuthn** and device
-pairing via QR. The Gateway owns the PWA's HTTP, WebSocket, session, reconnect, replay, presence,
+A single self-hosted TypeScript Gateway uses the production VPS profile. Browser access is
+Public (domain and ACME), Tunnel (SSH forward), or Tailnet (private Tailscale HTTPS), independently
+of that profile ([ADR-0015](docs/adr/0015-vps-access-modes.md)). Every mode uses
+**passkeys/WebAuthn** and device pairing via QR. The Gateway owns HTTP, WebSocket, session, reconnect, replay, presence,
 multi-device, and web-push behavior directly. Messenger Bridges are additive post-v1 modules: the
 first concrete Bridge project defines an extension seam for later messenger providers without
 forcing the PWA through the same transport lifecycle
@@ -390,7 +393,11 @@ satisfy that step. Example Health data belongs only to the loopback development 
 explicit test fixtures. Startup preserves existing Spaces and Surfaces without removing or
 replacing them ([issue 244](https://github.com/Ic3b3rg/veduta/issues/244)).
 
-A `curl | bash` installer that emits a **JSON stage protocol** rendered by the wizard _in the PWA_ (Hermes pattern). **Importers from OpenClaw and Hermes** as an acquisition weapon, with the discipline learned from studying their repos ([ref. 04](docs/references/04-onboarding-migration.md)): preview-first (always dry-run), atomic restorable backup, secrets never migrated implicitly, never partial states, every dead end prints the next command. Code structure OpenClaw-style (one file per step, test alongside), polish Hermes-style.
+The [guided installer](deploy/README.md#guided-installation) is downloaded before execution so
+interactive input remains available. It prints concise progress; `--json` exposes the stage
+protocol. The PWA then owns onboarding. Importers from OpenClaw and Hermes use preview-first
+planning, restorable backups and explicit secret selection; failures include a recovery step
+([ref. 04](docs/references/04-onboarding-migration.md)).
 
 ## 7. What we do NOT build (anti-requirements)
 

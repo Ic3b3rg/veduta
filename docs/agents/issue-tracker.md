@@ -1,55 +1,38 @@
 # Issue tracker: GitHub
 
-Work for this repository is tracked in GitHub Issues under `Ic3b3rg/veduta`. The issue body is the
-canonical specification and acceptance criteria; comments carry discussion and later findings. Use
-the `gh` CLI for tracker operations. Do not create a second issue specification in the repository.
+Use `gh` for `Ic3b3rg/veduta`; confirm the repository from the Git remote. Issues hold the
+canonical specifications and acceptance criteria, with later discussion in comments. PRs
+carry implementations. Resolve ambiguous numbers because both share GitHub's number space.
 
-## Conventions
+## Lifecycle
 
-- Create an issue with `gh issue create`.
-- Read an issue and its comments with `gh issue view <number> --comments`.
-- List issues with `gh issue list`, including labels and comments when required.
-- Comment with `gh issue comment <number>`.
-- Apply or remove labels with `gh issue edit`.
-- Close an issue with `gh issue close`.
-- Do not close or rewrite a parent issue while publishing child implementation tickets.
-- New implementation tickets should reference their parent issue.
-- Apply `ready-for-agent` to agent-ready tickets.
+- Read the issue body, comments and relevant linked decisions before implementation. Keep one
+  canonical specification instead of creating a second copy in repository working notes.
+- Publish implementation tickets with acceptance criteria, parent references and blockers.
+  Use native dependencies where available, otherwise an explicit `Blocked by: #...` section.
+- A blocker must be satisfied before dependent work starts. A closed-but-cancelled issue does
+  not satisfy an implementation dependency automatically; reconcile the requirement first.
+- Each triaged issue has one category (`bug` or `enhancement`) and one state label from the table
+  below. Preserve area/dependency labels. Reconcile contradictory labels from observed state;
+  ask only when the intended disposition is unclear.
+- Keep PRs focused on their issue. State the resulting behavior, satisfied criteria, actual
+  validation and remaining limitations. Use a body file with `gh --body-file` for multiline text.
+- Mark issues completed only after their criteria and required integration are verified.
+  Use `not planned` for cancellation and retain its reason. Publishing child tickets alone
+  neither completes nor closes their parent.
 
-Infer the repository from the current Git remote.
+## State labels
 
-## Pull requests as a triage surface
+| Label             | Meaning                                         |
+| ----------------- | ----------------------------------------------- |
+| `needs-triage`    | Maintainer evaluation needed                    |
+| `needs-info`      | Waiting for necessary information               |
+| `ready-for-agent` | Specified, with blocking requirements satisfied |
+| `ready-for-human` | Requires human implementation                   |
+| `wontfix`         | Cancelled or otherwise not planned              |
 
-**PRs as a request surface: no.**
+## Optional Wayfinder maps
 
-GitHub shares one number space across issues and pull requests. Resolve ambiguous references before
-acting.
-
-## Blocking relationships
-
-Use GitHub native issue dependencies when available. Create tickets in dependency order so blocker
-identifiers already exist.
-
-If native dependencies are unavailable, add an explicit `Blocked by: #<number>` section to the
-issue body.
-
-A ticket is ready to start only when every blocking issue is closed.
-
-## When a skill says "publish to the issue tracker"
-
-Create a GitHub issue with its complete specification and acceptance criteria, establish its
-blocking relationships, and apply the configured label.
-
-## When a skill says "fetch the relevant ticket"
-
-Run `gh issue view <number> --comments` and read the complete issue body and discussion.
-
-## Wayfinding operations
-
-A Wayfinder map is one GitHub issue labelled `wayfinder:map`, with decision tickets represented as
-sub-issues where supported.
-
-Child tickets use the appropriate `wayfinder:<type>` label. Native dependencies represent blocking
-relationships; otherwise use an explicit `Blocked by` section.
-
-The frontier consists of unassigned open child tickets whose blockers are all closed.
+When using Wayfinder, the map issue has `wayfinder:map`; decision sub-issues use the appropriate
+`wayfinder:<type>` label. Track dependencies as above. The frontier contains unassigned open
+children whose blocking requirements are satisfied.
