@@ -152,6 +152,7 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
       await addVirtualAuthenticator(context, page)
 
       stack = await startLocalVpsStack({
+        demoData: true,
         baseDir,
         extraEnv: { VEDUTA_INSTALLED_VERSION: INSTALLED_VERSION },
       })
@@ -310,6 +311,7 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
       await addVirtualAuthenticator(context, page)
 
       stack = await startLocalVpsStack({
+        demoData: true,
         baseDir,
         extraEnv: { VEDUTA_INSTALLED_VERSION: INSTALLED_VERSION },
       })
@@ -378,6 +380,7 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
       await addVirtualAuthenticator(context, page)
 
       stack = await startLocalVpsStack({
+        demoData: true,
         baseDir,
         extraEnv: { VEDUTA_INSTALLED_VERSION: INSTALLED_VERSION },
       })
@@ -467,6 +470,7 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
       await addVirtualAuthenticator(context, page)
 
       stack = await startLocalVpsStack({
+        demoData: true,
         baseDir,
         extraEnv: { VEDUTA_INSTALLED_VERSION: INSTALLED_VERSION },
       })

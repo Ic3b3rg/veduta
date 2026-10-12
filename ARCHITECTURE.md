@@ -384,6 +384,12 @@ primary Agent's context, and a new host requires a new Pending decision
 
 ## 6. Onboarding and migration
 
+A fresh VPS or Local VPS creates only the canonical System Space automatically. After pairing,
+the owner chooses their first life-area Space through the existing onboarding step; System cannot
+satisfy that step. Example Health data belongs only to the loopback development profile and
+explicit test fixtures. Startup preserves existing Spaces and Surfaces without removing or
+replacing them ([issue 244](https://github.com/Ic3b3rg/veduta/issues/244)).
+
 A `curl | bash` installer that emits a **JSON stage protocol** rendered by the wizard _in the PWA_ (Hermes pattern). **Importers from OpenClaw and Hermes** as an acquisition weapon, with the discipline learned from studying their repos ([ref. 04](docs/references/04-onboarding-migration.md)): preview-first (always dry-run), atomic restorable backup, secrets never migrated implicitly, never partial states, every dead end prints the next command. Code structure OpenClaw-style (one file per step, test alongside), polish Hermes-style.
 
 ## 7. What we do NOT build (anti-requirements)

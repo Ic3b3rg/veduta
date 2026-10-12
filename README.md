@@ -44,14 +44,13 @@ Log in over SSH and paste this command **on the VPS**:
 
 ```sh
 curl -fsSLo veduta-install.sh \
-  https://raw.githubusercontent.com/Ic3b3rg/veduta/6c3dfbbd7982bc80f4d4c585dcdb9915609f6def/deploy/install.sh &&
+  https://raw.githubusercontent.com/Ic3b3rg/veduta/v0.0.61/deploy/install.sh &&
 sudo env SSH_CONNECTION="$SSH_CONNECTION" bash veduta-install.sh \
-  --ref 6c3dfbbd7982bc80f4d4c585dcdb9915609f6def --access tailnet
+  --ref v0.0.61 --access tailnet
 ```
 
-This command pins the reviewed source snapshot used by this guide. The private-access and UI
-improvements are on `main`, ahead of the published `v0.0.6` release. That release only supports
-Public access; keep the download URL and `--ref` aligned as shown above.
+This command pins `v0.0.61`, including private access and the current UI. Keep the download
+URL and `--ref` aligned as shown above.
 
 Confirm the plan and let the installer install Tailscale if needed. It will guide you through
 these account steps; keep the SSH terminal open while using the browser:
@@ -96,7 +95,9 @@ An unapproved device cannot reach it. The installer checks private HTTPS before 
    registration and you continue in the browser. The setup link expires after 60 minutes.
 2. Review an optional OpenClaw or Hermes import if one was detected, or start fresh.
 3. Confirm **Browser access**, add your **Model connection**, and select its models.
-4. Create your first **Space**.
+4. Choose the name of your first **Space**, such as Home, Work, Finances or Health, then choose
+   **Create**. Only **System**, for Veduta’s status and controls, is created automatically.
+   Health is optional, and new personal Spaces start without example content.
 5. Configure optional integrations or choose **Skip**, then **Finish**.
 
 Calendar push updates require a public callback, so that optional step is unavailable on
@@ -104,7 +105,7 @@ private access. Saved connection details are preserved when access changes.
 
 ### 4. Link your other devices
 
-On the computer or phone where you are already signed in, open **Connections → Devices →
+On the computer or phone where you are already signed in, open **Settings → Devices →
 Link a device**. Scan its QR code with your other phone, or open the displayed link on another
 computer. Keep Tailscale connected there, then choose **Register passkey**. The link is single-use
 and expires after 10 minutes. Each device can create its own passkey; no shared password manager
@@ -145,10 +146,11 @@ Bookmark your address. On a phone using Public access, choose **Add to Home Scre
 
 With a real Model connection selected:
 
-1. Open **Health** from Home and send: **“Log my weight today as 74 kg and show a weight tracker.”**
+1. Open your chosen Space from Home and describe what you want to keep there. For example,
+   if you chose Health, send: **“Log my weight today as 74 kg and show a weight tracker.”**
 2. Wait for the Agent's reply and the resulting Surface. Send a follow-up to update it, such
    as **“Correct today's weight to 73.8 kg.”**
-3. Refresh the page and reopen Health. Check that the tracker and Chat timeline retain the
+3. Refresh the page and reopen that Space. Check that the tracker and Chat timeline retain the
    result. This is a useful first check that configuration and persistence work together.
 4. Try a plan or checklist next. A confirmed Automation can keep recurring work in that Space;
    use **Pin** when you want to keep a Surface stable and prominent.
@@ -159,7 +161,7 @@ responses to your own requests.
 
 ## Manage your Spaces
 
-Open **Connections → Spaces & memory**, then choose a Space to edit what Veduta knows and its
+Open **Settings → Spaces & memory**, then choose a Space to edit what Veduta knows and its
 instructions. Corrections keep the previous fact history. Choose **Columns** to arrange its
 Surfaces; the preference is shared across devices, with one column on small screens. You can also
 ask Chat, **“Arrange this Space in two columns.”** Full-presentation Surfaces still occupy a row.
@@ -168,7 +170,7 @@ Choose **Archive Space** to remove a Space from Home while preserving its conten
 from the same settings later, or ask Chat from Home or another Space to restore it. System can change columns but
 cannot be archived.
 
-Open **Connections → Automations** to enable, disable or reschedule Nightly Reflection and inspect
+Open **Settings → Automations** to enable, disable or reschedule Nightly Reflection and inspect
 each Space's Automations. Dates use your browser's language; schedules show readable days and times
 with their configured timezone. The last Reflection report is available inside its Space's details.
 Create Automations through Chat as before. Managed system operations keep their dedicated settings.
@@ -186,7 +188,7 @@ Corepack first, then:
 ```sh
 git clone https://github.com/Ic3b3rg/veduta.git
 cd veduta
-git checkout 6c3dfbbd7982bc80f4d4c585dcdb9915609f6def
+git checkout v0.0.61
 corepack enable
 corepack prepare pnpm@10.28.0 --activate
 pnpm install --frozen-lockfile
@@ -217,8 +219,7 @@ version before reporting success. A failed activation automatically restores the
 version and its data.
 
 A fresh source installation reports the baseline version `0.0.0` until its first signed
-update. This installer change requires a newer release than `0.0.6`; do not apply `0.0.6` to a
-private source installation, since that release only supports Public access. If Updates is
+update. Use `0.0.61` or newer for private installations; `0.0.6` only supports Public access. If Updates is
 unconfigured, follow the [update setup guide](deploy/README.md#updates); fresh upstream
 installations automatically pin the bundled public root key.
 
@@ -227,17 +228,17 @@ The signing and verification procedure is public in [RELEASING.md](RELEASING.md)
 
 ## Troubleshooting
 
-| What you see                          | What to do                                                                                                                                                                            |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The installer only prints a plan      | Run the downloaded file from an interactive SSH terminal. Remove `--preview` when ready to install.                                                                                   |
-| The private link does not open        | Connect Tailscale on the device, check that it and the VPS are approved, then use `sudo veduta access` → Repair over SSH.                                                             |
-| Private HTTPS is waiting for approval | Open the `login.tailscale.com/f/serve?node=...` link printed by your installer, approve Serve/HTTPS, and return to the terminal. If it timed out, use its retry command.              |
-| Public HTTPS setup does not complete  | Check the domain's A/AAAA records and access to ports 80/443. Follow the installer's retry command after correcting them.                                                             |
-| Setup was interrupted                 | Reopen the setup page; the wizard resumes saved progress. If the installer failed, use the exact rerun command it printed.                                                            |
-| A local passkey fails                 | Open the printed `http://localhost:8788` URL, using the same origin where the passkey was registered.                                                                                 |
-| ChatGPT is unavailable                | Run the Codex provisioning command printed by the installer. For a local run, follow the [Local VPS guide](deploy/local-vps.md#chatgpt-subscription-codex).                           |
-| Chat reports a subscription limit     | Wait for the provider limit to reset, then send a new message or use **Connections → Models → Test model**. The connection remains selected; messages are not replayed automatically. |
-| An update fails                       | Read the Updates Surface's reason. Veduta keeps or restores the previous release; inspect the service logs if it does not return.                                                     |
+| What you see                          | What to do                                                                                                                                                                         |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The installer only prints a plan      | Run the downloaded file from an interactive SSH terminal. Remove `--preview` when ready to install.                                                                                |
+| The private link does not open        | Connect Tailscale on the device, check that it and the VPS are approved, then use `sudo veduta access` → Repair over SSH.                                                          |
+| Private HTTPS is waiting for approval | Open the `login.tailscale.com/f/serve?node=...` link printed by your installer, approve Serve/HTTPS, and return to the terminal. If it timed out, use its retry command.           |
+| Public HTTPS setup does not complete  | Check the domain's A/AAAA records and access to ports 80/443. Follow the installer's retry command after correcting them.                                                          |
+| Setup was interrupted                 | Reopen the setup page; the wizard resumes saved progress. If the installer failed, use the exact rerun command it printed.                                                         |
+| A local passkey fails                 | Open the printed `http://localhost:8788` URL, using the same origin where the passkey was registered.                                                                              |
+| ChatGPT is unavailable                | Run the Codex provisioning command printed by the installer. For a local run, follow the [Local VPS guide](deploy/local-vps.md#chatgpt-subscription-codex).                        |
+| Chat reports a subscription limit     | Wait for the provider limit to reset, then send a new message or use **Settings → Models → Test model**. The connection remains selected; messages are not replayed automatically. |
+| An update fails                       | Read the Updates Surface's reason. Veduta keeps or restores the previous release; inspect the service logs if it does not return.                                                  |
 
 On the VPS, inspect the service with:
 

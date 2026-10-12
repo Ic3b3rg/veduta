@@ -662,8 +662,7 @@ describe('production auth boundary', () => {
       headers: { authorization: `Bearer ${token}` },
     })
     expect(allowed.statusCode).toBe(200)
-    expect((allowed.json() as { spaces: { slug: string }[] }).spaces.map((s) => s.slug)).toEqual([
-      'health',
+    expect(SurfaceSnapshotSchema.parse(allowed.json()).spaces.map((space) => space.slug)).toEqual([
       'system',
     ])
 
@@ -679,7 +678,7 @@ describe('production auth boundary', () => {
     })
     const automationOutcomes = await app.inject({
       method: 'GET',
-      url: '/api/spaces/spc-health/automation-outcome-notifications',
+      url: '/api/spaces/spc-system/automation-outcome-notifications',
       headers: { authorization: `Bearer ${token}` },
     })
     expect(automationOutcomes.statusCode).toBe(200)
@@ -896,6 +895,11 @@ describe('production auth boundary', () => {
 
   it('discovers, reads, and patches Meals through the real focused-Space loop with the Local VPS mock candidate', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'veduta-meal-mock-'))
+    new Store({
+      rootDir: dataDir,
+      now: () => new Date('2026-08-03T12:05:00.000Z'),
+      timeZone: 'Europe/Rome',
+    }).close()
     // A bare production-auth `buildServer` call resolves to the `vps`
     // profile (`server.ts`'s default profile derivation), where
     // `withMockFallback` (issue #47) never appends the mock candidate. This
@@ -982,6 +986,11 @@ describe('production auth boundary', () => {
 
   it('keeps the exact calorie answer in chat and visibly enriches Meals through the real loop', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'veduta-calorie-mock-'))
+    new Store({
+      rootDir: dataDir,
+      now: () => new Date('2026-08-22T12:00:00.000Z'),
+      timeZone: 'Europe/Rome',
+    }).close()
     await writeFile(join(dataDir, 'connections.json'), JSON.stringify({ mockEnabled: true }))
     await writeFile(join(dataDir, 'memory.json'), JSON.stringify({ timezone: 'Europe/Rome' }))
     const { auth, token } = await readyAuthStore()
@@ -1083,6 +1092,7 @@ describe('production auth boundary', () => {
 describe('AC4: switching mock -> real provider is configuration only (issue 023)', () => {
   it('a fresh Local VPS root with no provider key anywhere routes both tiers through the keyless mock candidate once the development mock control is enabled', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'veduta-ac4-mock-'))
+    new Store({ rootDir: dataDir }).close()
     // Local VPS never appends the mock candidate on its own (issue #47): it
     // requires the explicit development mock control on top of the profile.
     await writeFile(join(dataDir, 'connections.json'), JSON.stringify({ mockEnabled: true }))
@@ -1235,6 +1245,7 @@ describe('a vps profile never routes through the mock (issue #47)', () => {
       NoAvailableModelError,
     )
 
+    store.spacesEngine.createSpace({ name: 'Health' })
     const socket = new SchedulerFakeSocket()
     gateway.connect(socket)
     socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor(), token })
@@ -3059,9 +3070,11 @@ describe('POST /api/surfaces/:id/pin (issue #22)', () => {
 
   it('requires an authenticated passkey session in the production profile, like the other /api/surfaces routes', async () => {
     const { auth, token } = await readyAuthStore()
-    const { app } = buildServer({
+    const { app, store } = buildServer({
       auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
     })
+    store.spacesEngine.createSpace({ name: 'Health' })
+    store.createSurface(templateTestSurface('srf-groceries'), 'user')
 
     const denied = await app.inject({
       method: 'POST',
@@ -3274,6 +3287,7 @@ describe('POST /api/spaces/:spaceId/surfaces/:surfaceId/move (issue #108)', () =
     const { app, store } = buildServer({
       auth: { mode: 'production', store: auth, allowedOrigins: ['https://veduta.test'] },
     })
+    store.spacesEngine.createSpace({ name: 'Health' })
     store.createSurface(templateTestSurface('srf-auth-a'), 'agent')
     store.createSurface(templateTestSurface('srf-auth-b'), 'agent')
 

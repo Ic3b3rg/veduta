@@ -487,11 +487,13 @@ export function buildServer(options: ServerOptions = {}) {
   // and exits 1, never a partially-booted daemon.
   const dataVersionGate = ensureDataVersion(dataDir)
   const memoryConfig = loadMemoryConfig(dataDir)
+  const auth = options.auth ?? { mode: 'dev' as const }
   const store = new Store({
     now,
     rootDir: dataDir,
     timeZone: memoryConfig.timezone,
     memoryBudget: memoryConfig.budget,
+    ...(auth.mode === 'production' ? { seed: { spaces: [], surfaces: [] } } : {}),
   })
   const chatTimeline = new ChatTimeline(store.spacesEngine.rootDir, now)
   app.addHook('onClose', () => chatTimeline.close())
@@ -505,7 +507,6 @@ export function buildServer(options: ServerOptions = {}) {
     secrets,
     keyMaterial: vaultKeyMaterial,
   } = openVaultAndSecrets(store.spacesEngine.rootDir)
-  const auth = options.auth ?? { mode: 'dev' as const }
   const gmailEgressPolicy: { current?: EgressPolicy } = {}
   const githubEgressPolicy: { current?: EgressPolicy } = {}
   const gmailConnections = new GmailConnections({

@@ -44,6 +44,7 @@ test('subscription limits remain actionable across Chat scopes and reload, then 
   try {
     await test.step('authenticate and finish a clean Local VPS setup with the subscription fixture', async () => {
       stack = await startLocalVpsStack({
+        demoData: true,
         baseDir: fixture.baseDir,
         extraEnv: { VEDUTA_CODEX_BIN: fixture.binary },
       })

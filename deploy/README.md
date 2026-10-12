@@ -13,13 +13,14 @@ On Ubuntu with systemd, SSH, sudo, and curl, run this in your SSH session:
 
 ```sh
 curl -fsSLo veduta-install.sh \
-  https://raw.githubusercontent.com/Ic3b3rg/veduta/a53c80ce49eff69d2c058af1ff642528f3e0a812/deploy/install.sh &&
+  https://raw.githubusercontent.com/Ic3b3rg/veduta/v0.0.61/deploy/install.sh &&
 sudo env SSH_CONNECTION="$SSH_CONNECTION" bash veduta-install.sh \
-  --ref a53c80ce49eff69d2c058af1ff642528f3e0a812
+  --ref v0.0.61
 ```
 
-The download and `--ref` pin the reviewed source snapshot used by this guide. These changes
-are on `main`, ahead of the published `v0.0.6` release. Keep both references aligned.
+The download and `--ref` pin `v0.0.61`. Keep both references aligned. During browser setup,
+choose your first personal Space. Only System is automatic; no example Health content is
+created on a new VPS or Local VPS installation.
 
 Enter accepts the displayed defaults. Tailnet is preselected on a connected Tailscale host;
 otherwise Tunnel is preselected. Public access is never selected implicitly. To go directly
@@ -503,8 +504,8 @@ and its [root signature](../docs/keys/signing.pub.minisig) are published alongsi
 Custom repositories or feeds must provide `--update-root-key @/path/to/root.pub`; without it,
 updates remain unconfigured and the installer prints a recovery notice. Existing trust anchors
 are preserved unless explicitly replaced. Omit `--ref` on ordinary recovery reruns to retain
-that checkout; use the Updates Surface for releases that migrate data. The private source
-candidate requires a newer signed release than `0.0.6`, which only supports Public access.
+that checkout; use the Updates Surface for releases that migrate data. Private installations
+require `0.0.61` or newer; `0.0.6` only supports Public access.
 
 A release that fails its health check leaves its supervised daemon's output behind at
 `/var/lib/veduta/updates/state/logs/<version>.log` -- preserved across the rollback, specifically

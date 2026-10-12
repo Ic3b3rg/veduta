@@ -53,6 +53,8 @@ import {
 export interface StoreOptions {
   rootDir?: string
   now?: () => Date
+  /** Initial fallback data; defaults to the loopback examples. VPS startup supplies an empty seed. */
+  seed?: { spaces: Space[]; surfaces: Surface[] }
   /** Global user timezone used by every relative-time Surface projection. */
   timeZone?: string
   /** Rendered active FACTS low/high/hard watermarks. */
@@ -82,7 +84,7 @@ export class Store {
   constructor(options: StoreOptions = {}) {
     this.now = options.now ?? (() => new Date())
     const timeZone = options.timeZone ?? 'UTC'
-    const seed = seedSpaces({ relativeTimeNow: this.now, timeZone })
+    const seed = options.seed ?? seedSpaces({ relativeTimeNow: this.now, timeZone })
     this.spacesEngine = new SpacesEngine({
       now: this.now,
       seed: { spaces: seed.spaces, surfaces: [] },

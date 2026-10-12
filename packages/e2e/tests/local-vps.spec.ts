@@ -81,7 +81,7 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
 
   try {
     await test.step('boot the stack fresh (AC1)', async () => {
-      stack = await startLocalVpsStack()
+      stack = await startLocalVpsStack({ demoData: true })
       const [setup] = await Promise.all([stack.waitForSetupUrl(), stack.waitForReadyLine()])
       await page.goto(setup.url)
     })

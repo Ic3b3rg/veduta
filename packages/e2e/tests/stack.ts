@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
+import { Store } from '../../daemon/src/store.ts'
 
 // packages/e2e/tests/ -> packages/e2e/ -> packages/ -> repo root.
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
@@ -52,6 +53,8 @@ export interface LocalVpsStack {
 }
 
 export interface StartStackOptions {
+  /** Explicit example content for Surface scenarios; ordinary first boot has only System. */
+  demoData?: boolean
   /** Reuses a fixed port instead of picking a free one -- restart-on-same-port coverage (AC3). */
   port?: number
   /** Reuses a fixed base directory instead of a fresh temp dir -- restart-on-same-base-dir coverage (AC3). */
@@ -116,6 +119,11 @@ export async function startLocalVpsStack(options: StartStackOptions = {}): Promi
   const port = options.port ?? (await findFreePort())
   const baseDir = options.baseDir ?? (await mkdtemp(join(tmpdir(), 'veduta-e2e-base-')))
   const legacyHome = options.legacyHome ?? (await mkdtemp(join(tmpdir(), 'veduta-e2e-legacy-')))
+
+  if (options.demoData) {
+    const store = new Store({ rootDir: join(baseDir, 'data') })
+    store.close()
+  }
 
   const env = { ...process.env }
   delete env['VEDUTA_PROFILE']

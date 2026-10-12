@@ -1,4 +1,4 @@
-import type { FirstSpaceRequest } from '@veduta/protocol'
+import { SYSTEM_SPACE_ID, type FirstSpaceRequest } from '@veduta/protocol'
 import { loadOnboardingConfig, saveOnboardingConfig } from './onboarding-config.ts'
 import { OnboardingStepError } from './onboarding-status.ts'
 import { slugify, type SpacesEngine } from './spaces-engine.ts'
@@ -38,6 +38,11 @@ export function applyFirstSpace(
     throw new OnboardingStepError('Space name must contain at least one letter or digit')
   }
   const existing = deps.spacesEngine.listSpaces().find((space) => space.slug === candidateSlug)
+  if (existing?.id === SYSTEM_SPACE_ID) {
+    throw new OnboardingStepError(
+      'System is reserved for Veduta. Choose a different name for your Space.',
+    )
+  }
 
   let spaceId: string
   let slug: string

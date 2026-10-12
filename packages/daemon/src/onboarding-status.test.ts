@@ -367,7 +367,7 @@ describe('buildOnboardingStatus: firstSpace and integrations', () => {
     })
   })
 
-  it('lists non-archived spaces and the recorded firstSpace name', () => {
+  it('lists active personal Spaces, excludes System and retains the recorded firstSpace name', () => {
     const dir = freshRoot()
     saveOnboardingConfig(dir, {
       version: 1,
@@ -376,6 +376,7 @@ describe('buildOnboardingStatus: firstSpace and integrations', () => {
     })
     const spaces: Space[] = [
       { id: 'spc-health', slug: 'health', name: 'Health', archived: false },
+      { id: 'spc-system', slug: 'system', name: 'System', archived: false },
       { id: 'spc-old', slug: 'old', name: 'Old', archived: true },
     ]
     const status = buildOnboardingStatus(baseDeps(dir, { listSpaces: () => spaces }))

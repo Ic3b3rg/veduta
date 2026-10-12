@@ -6,6 +6,7 @@ import { loadOnboardingConfig } from './onboarding-config.ts'
 import { OnboardingStepError } from './onboarding-status.ts'
 import { applyFirstSpace } from './onboarding-step-first-space.ts'
 import { SpacesEngine } from './spaces-engine.ts'
+import { ensureSystemSpace } from './system-space.ts'
 
 let rootDir: string | undefined
 
@@ -20,6 +21,23 @@ function freshRoot(): string {
 }
 
 describe('applyFirstSpace', () => {
+  it('requires a personal Space even when System already exists', () => {
+    const dir = freshRoot()
+    const spacesEngine = new SpacesEngine({ rootDir: dir })
+    ensureSystemSpace(spacesEngine)
+
+    expect(() => applyFirstSpace({ rootDir: dir, spacesEngine }, { name: 'System' })).toThrow(
+      /choose a different name/i,
+    )
+    expect(loadOnboardingConfig(dir).steps['first-space']).toBeUndefined()
+    expect(loadOnboardingConfig(dir).firstSpace).toBeUndefined()
+    expect(spacesEngine.listSpaces().map((space) => space.slug)).toEqual(['system'])
+
+    expect(applyFirstSpace({ rootDir: dir, spacesEngine }, { name: 'Home' })).toMatchObject({
+      slug: 'home',
+      created: true,
+    })
+  })
   it('creates a new Space and records it in onboarding.json', () => {
     const dir = freshRoot()
     const spacesEngine = new SpacesEngine({ rootDir: join(dir, '.veduta') })
