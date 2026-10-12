@@ -121,7 +121,7 @@ describe('createBackup / restoreBackup', () => {
       const file = await createBackup({ rootDir, outDir, keyMaterial: KEY_MATERIAL })
       const targetRootDir = join(freshDir('veduta-backup-binary-restore-'), 'restored')
       await restoreBackup({ file, targetRootDir, keyMaterial: KEY_MATERIAL })
-      expect(readFileSync(join(targetRootDir, 'payload.bin'))).toEqual(payload)
+      expect(readFileSync(join(targetRootDir, 'payload.bin')).equals(payload)).toBe(true)
     } finally {
       guard.mockRestore()
     }
