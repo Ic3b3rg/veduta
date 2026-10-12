@@ -244,3 +244,35 @@ lifecycle. ADR-0016 and issues 070–079 subsequently replaced the narrow initia
 boundary with the complete dynamic-tool contract while preserving every provider-native tool
 refusal. Global Chat now uses explicitly Space-scoped forms of the same tools after entering each
 target Space, as specified by [issue #136](https://github.com/Ic3b3rg/veduta/issues/136).
+
+## Codex local history and removal (#118)
+
+Use the pinned 0.160.0 runtime in a disposable data root with an already-authorized
+connection; never experiment against the only copy of an active credential store.
+Do not print credentials or include them in test artifacts. Follow the
+[exact layout review](codex-0.160-local-state.md) for recognized fixtures.
+
+1. Record an auth-file hash and permissions without exposing its contents. Plant
+   unique legacy transcript sentinels in recognized rollout/history and supported
+   thread database fixtures. Start Gateway, then catalog, verify and complete a
+   tool-capable inference without a new device login. Confirm credentials remained
+   unchanged by cleanup (a later genuine token refresh may legitimately change them).
+2. Inspect for recognized history after successful, failed, aborted and timed-out
+   calls. Use distinct transcript sentinels; inspect SQLite rows and file bytes,
+   including compressed/temporary variants. Ephemeral source semantics alone do
+   not count as observed runtime proof for these failure paths.
+3. Create and restore an encrypted backup into another disposable root. Confirm
+   no recognized Codex transcript remains, active authorization is retained, and
+   Veduta's canonical SessionStore/Event history is present. Confirm live files
+   were not mutated by backup sanitation.
+4. Remove a connection during initialization and during an active call. Confirm
+   interruption uses the existing unavailable error, no duplicate Veduta effect
+   executes, the child PID is gone, the directory remains absent, and another
+   connection still works. Repeat with failed logout and with the binary absent.
+5. Inject termination/deletion failure: Remove must fail with a revoked retryable
+   record and preserve the not-yet-erased state. Repair the failure and retry.
+   An unsupported SQLite schema must preserve all its bytes, leave unrelated
+   Gateway features working and refuse use/backup until repaired.
+
+Record each actually exercised scenario and any unverified case separately. The
+older successful-turn smoke is not evidence for this complete matrix.

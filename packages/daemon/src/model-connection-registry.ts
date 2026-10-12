@@ -1,3 +1,4 @@
+import { removeCodexHome } from './codex-local-state.ts'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import {
@@ -103,6 +104,10 @@ export interface ModelConnectionRegistryOptions {
    * connection.
    */
   codexSession?: (connectionId: string, codexHome: string) => Promise<CodexTransport>
+  evictCodexSession?: (
+    connectionId: string,
+    revoke: (transport: CodexTransport) => Promise<void>,
+  ) => Promise<void>
   /**
    * Fired at the end of every `noteCallFailure` call, regardless of which
    * caller reached it (issue #47): the router's `onCallError` for a legacy
@@ -206,6 +211,7 @@ export class ModelConnectionRegistry {
   private readonly env: NodeJS.ProcessEnv
   private readonly codexSession:
     ((connectionId: string, codexHome: string) => Promise<CodexTransport>) | undefined
+  private readonly evictCodexSession: ModelConnectionRegistryOptions['evictCodexSession']
   private readonly onCallFailure:
     ((connectionId: string, state: ConnectionLifecycleState) => void) | undefined
 
@@ -231,6 +237,7 @@ export class ModelConnectionRegistry {
     this.onRoutingChanged = options.onRoutingChanged
     this.env = options.env
     this.codexSession = options.codexSession
+    this.evictCodexSession = options.evictCodexSession
     this.onCallFailure = options.onCallFailure
   }
 
@@ -783,13 +790,38 @@ export class ModelConnectionRegistry {
    * survivor to account for and is deleted outright, as before.
    */
   async remove(id: string): Promise<ModelConnectionsSnapshot> {
+    const initial = this.findRecord(loadConnectionsConfig(this.rootDir), id)
+    const codex = initial.method === 'chatgpt-codex'
+    // Retire acquisition outside the mutation queue: an initializing catalog may hold it.
+    const eviction = codex ? this.beginCodexRemoval(initial) : undefined
     return this.queue(async () => {
-      const file = loadConnectionsConfig(this.rootDir)
-      const record = this.findRecord(file, id)
+      let file = loadConnectionsConfig(this.rootDir)
+      let record = this.findRecord(file, id)
       const adapter = this.findAdapter(record.method)
+      if (eviction) {
+        record = withState(record, {
+          state: 'revoked',
+          stateAt: this.now().toISOString(),
+          stateReason: 'local removal is pending; retry Remove to finish erasing Codex state',
+        })
+        const { selection, ...withoutSelection } = file
+        file = this.replaceRecord(
+          {
+            ...withoutSelection,
+            ...(selection?.connectionId !== id && selection ? { selection } : {}),
+          },
+          record,
+        )
+        this.challenges.delete(id)
+        this.dropRoutingConnectionKey(id)
+        this.persist(file)
+        const result = await eviction
+        if (result.error !== undefined) throw result.error
+        removeCodexHome(this.rootDir, id)
+      }
 
       try {
-        await adapter.revoke(this.contextFor(id, record.secretRef))
+        if (!codex) await adapter.revoke(this.contextFor(id, record.secretRef))
       } catch {
         // Tolerate a failed provider-side revoke: the record is still
         // removed locally, but the note the adapter would have returned is
@@ -839,6 +871,26 @@ export class ModelConnectionRegistry {
       this.persist(nextFile)
       return this.buildSnapshot(nextFile)
     })
+  }
+
+  private beginCodexRemoval(record: ModelConnectionRecord): Promise<{ error?: unknown }> {
+    if (!this.evictCodexSession)
+      return Promise.resolve({
+        error: new ModelConnectionError(
+          'unreachable',
+          'Codex lifecycle owner is unavailable; retry removal after restarting the Gateway',
+        ),
+      })
+    const adapter = this.findAdapter(record.method)
+    return this.evictCodexSession(record.id, async (transport) => {
+      await adapter.revoke({
+        ...this.contextFor(record.id, record.secretRef),
+        codexTransport: async () => transport,
+      })
+    }).then(
+      () => ({}),
+      (error: unknown) => ({ error }),
+    )
   }
 
   /** Drops `routing.json`'s `connectionKeys[id]` entry, if any — see `remove`'s own doc comment. */

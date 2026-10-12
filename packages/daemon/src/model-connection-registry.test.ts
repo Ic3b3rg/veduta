@@ -1507,3 +1507,32 @@ describe('refresh singleflight challenge identity (issue #47)', () => {
     expect(resultB.state).toBe('connected')
   })
 })
+
+describe('Codex local removal', () => {
+  it('evicts before erasing state and retains a revoked retryable record when termination fails', async () => {
+    const { mkdirSync, writeFileSync, existsSync } = await import('node:fs')
+    const dir = freshRoot()
+    const adapter = createFakeAdapter({ methodId: 'chatgpt-codex', providerName: 'openai' })
+    const evictCodexSession = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('child still alive'))
+      .mockResolvedValue(undefined)
+    const registry = new ModelConnectionRegistry(baseOptions(dir, [adapter], { evictCodexSession }))
+    const created = await registry.create({ method: 'chatgpt-codex' })
+    const id = created.connections[0]!.id
+    const home = join(dir, 'codex', id)
+    mkdirSync(home, { recursive: true })
+    writeFileSync(join(home, 'auth.json'), 'disposable')
+    await expect(registry.remove(id)).rejects.toThrow('child still alive')
+    expect(existsSync(home)).toBe(true)
+    expect(loadConnectionsConfig(dir).connections.find((record) => record.id === id)?.state).toBe(
+      'revoked',
+    )
+    await registry.remove(id)
+    expect(existsSync(home)).toBe(false)
+    expect(
+      loadConnectionsConfig(dir).connections.find((record) => record.id === id),
+    ).toBeUndefined()
+    expect(evictCodexSession).toHaveBeenCalledTimes(2)
+  })
+})

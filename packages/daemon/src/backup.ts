@@ -15,6 +15,8 @@ import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
+import { cleanupCodexHomes, validateCodexHome } from './codex-local-state.ts'
+import { ModelConnectionIdSchema } from '@veduta/protocol'
 import { writeFileAtomicDurable } from './atomic-file.ts'
 import { openGcmBytes, sealGcmBytes } from './secret-crypto.ts'
 
@@ -176,6 +178,10 @@ async function stageRootDir(rootDir: string, outDir: string, stagingDir: string)
     const srcPath = join(rootDir, name)
     if (resolve(srcPath) === resolvedOutDir) continue
     const destPath = join(stagingDir, name)
+    if (name === 'codex' && entry.isDirectory()) {
+      await stageCodexDirectory(rootDir, stagingDir)
+      continue
+    }
     if (entry.isFile() && name.endsWith('.sqlite')) {
       await vacuumIntoWithRetry(srcPath, destPath)
       continue
@@ -185,6 +191,34 @@ async function stageRootDir(rootDir: string, outDir: string, stagingDir: string)
       filter: (source) => !source.endsWith('-wal') && !source.endsWith('-shm'),
     })
   }
+}
+
+/** Snapshot provider databases consistently, then sanitize only the private staging tree. */
+async function stageCodexDirectory(rootDir: string, stagingDir: string): Promise<void> {
+  const source = join(rootDir, 'codex')
+  const destination = join(stagingDir, 'codex')
+  mkdirSync(destination, { mode: 0o700 })
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    const from = join(source, entry.name)
+    const to = join(destination, entry.name)
+    if (!ModelConnectionIdSchema.safeParse(entry.name).success) {
+      cpSync(from, to, { recursive: true })
+      continue
+    }
+    validateCodexHome(rootDir, entry.name)
+    mkdirSync(to, { mode: 0o700 })
+    for (const child of readdirSync(from, { withFileTypes: true })) {
+      if (child.name.endsWith('-wal') || child.name.endsWith('-shm')) continue
+      const childSource = join(from, child.name)
+      const childDestination = join(to, child.name)
+      if (child.isFile() && child.name.endsWith('.sqlite')) {
+        await vacuumIntoWithRetry(childSource, childDestination)
+      } else {
+        cpSync(childSource, childDestination, { recursive: true })
+      }
+    }
+  }
+  cleanupCodexHomes(stagingDir)
 }
 
 /** Filesystem-safe ISO timestamp: colons become dashes, uniformly, so lexical order still matches chronological order. */

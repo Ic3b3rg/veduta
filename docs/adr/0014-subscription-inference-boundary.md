@@ -44,3 +44,18 @@ protocol schemas after a real authenticated catalog and dynamic-tool round trip.
 that catalog could not expose them. See [the compatibility check](../references/codex-0.160-compatibility.md).
 
 Status: accepted
+
+## 2026-10-12 amendment: provider history and local removal
+
+Each Veduta inference thread explicitly sets `ephemeral: true`. Veduta remains the
+owner of canonical conversation and tool history; Codex threads are never resumed.
+The [pinned local-state review](../references/codex-0.160-local-state.md) defines
+recognized legacy cleanup before child acquisition and in backup staging. It preserves
+active authorization and non-history runtime state, refuses unknown SQLite layouts,
+and never traverses another connection or an external configured path.
+
+Removal permanently retires the connection's pooled acquisition, settles pending
+creation and observes child exit before erasing the complete owned `CODEX_HOME`.
+Remote logout is best effort using an existing idle child. A termination or filesystem
+failure retains revoked, retryable registry state; successful local erasure precedes
+final record removal. Backup encryption and Veduta's canonical history do not change.
