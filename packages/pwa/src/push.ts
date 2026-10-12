@@ -45,7 +45,7 @@ export function pushSupported(): boolean {
   return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window
 }
 
-export type EnablePushResult = 'subscribed' | 'denied' | 'unsupported' | 'error'
+export type EnablePushResult = 'subscribed' | 'denied' | 'dismissed' | 'unsupported' | 'error'
 
 /**
  * Subscribes this browser to Web Push and registers the subscription with
@@ -57,13 +57,14 @@ export type EnablePushResult = 'subscribed' | 'denied' | 'unsupported' | 'error'
 export async function enablePush(token: string | null): Promise<EnablePushResult> {
   if (!pushSupported()) return 'unsupported'
 
-  if (Notification.permission === 'denied') return 'denied'
-  if (Notification.permission === 'default') {
-    const permission = await Notification.requestPermission()
-    if (permission !== 'granted') return 'denied'
-  }
-
   try {
+    if (Notification.permission === 'denied') return 'denied'
+    if (Notification.permission === 'default') {
+      const permission = await Notification.requestPermission()
+      if (permission === 'denied') return 'denied'
+      if (permission !== 'granted') return 'dismissed'
+    }
+
     const registration = await navigator.serviceWorker.ready
     const publicKey = await fetchVapidPublicKey(token)
     const subscription = await registration.pushManager.subscribe({

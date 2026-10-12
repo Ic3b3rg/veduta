@@ -60,9 +60,8 @@ must never shrink touch targets or remove a focus indicator.
 The owner-reviewed Chat composition in [#228](https://github.com/Ic3b3rg/veduta/issues/228) has
 deliberate shell-only exceptions. Conversation text uses 16 px with a 1.7 line height for long
 replies; the composer also uses 16 px to avoid mobile input zoom. Its 14 px vertical inset and
-20 px outer spacing separate writing from reading. The composer and model modal use a 12 px
-radius; modal fields use 20 px spacing. The model trigger is 36 px high, send/latest controls
-are 40 px circles, and the launcher is 48 px. Coarse-pointer controls retain at least 44 px
+20 px outer spacing separate writing from reading. The composer uses a 12 px radius,
+send/latest controls are 40 px circles, and the launcher is 48 px. Coarse-pointer controls retain at least 44 px
 targets. These choices apply to Chat presentation, not to Surface data or the catalog defaults.
 
 At 320 px, prefer one main reading column and disclose secondary detail. At 1440 px, use width for
@@ -79,8 +78,10 @@ Chat through the same exact Decision Surface link used elsewhere.
 
 A submitted turn anchors its user message near the top so a long incoming reply does not pull the
 reader down. The latest-message button resumes following and disappears at the bottom. Gateway
-history, retry, queued submissions and decision authority remain unchanged. The topbar model
-control opens the existing verify-then-commit Connection and Model fields in a modal.
+history, retry, queued submissions and decision authority remain unchanged. One icon-only Settings
+gear opens the existing settings screen; Models owns the verify-then-commit Connection and Model
+fields. Notification permission feedback and installation guidance use a dismissible catalog
+Popover outside the navbar layout, keeping its controls stable even when permission is blocked.
 
 The mobile composer uses Enter for a new line and the arrow or Ctrl/Cmd+Enter to send. Desktop
 retains Enter to send and Shift+Enter for a new line. The viewport opts into

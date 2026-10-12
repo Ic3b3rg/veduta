@@ -53,15 +53,6 @@
   height: var(--catalog-space-lg);
 }
 
-.precision-tool .notif-guide {
-  background: var(--catalog-color-surface-raised);
-  border-color: var(--catalog-color-border);
-  border-radius: var(--catalog-radius-md);
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
 .precision-tool .shell-layout {
   gap: var(--catalog-space-xl);
   grid-template-columns: 180px minmax(0, 1fr);
@@ -238,19 +229,6 @@
     gap: var(--catalog-space-sm);
   }
 
-  .precision-tool .topbar > .chat-model-selects {
-    order: 1;
-    flex-basis: 100%;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    max-width: none;
-  }
-
-  .precision-tool .topbar > .chat-model-selects select {
-    min-width: 0;
-    max-width: 100%;
-  }
-
   .precision-tool .shell-layout {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--catalog-space-md);
@@ -288,7 +266,6 @@
 }
 
 @media (pointer: coarse) {
-  .precision-tool .chat-model-selects select,
   .precision-tool .topbar-actions .utility-control,
   .precision-tool .space-breadcrumb a {
     min-width: var(--catalog-control-touch-target);

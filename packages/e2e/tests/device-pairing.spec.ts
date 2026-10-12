@@ -5,7 +5,7 @@ test('link and revoke a second device through the PWA, with independent passkeys
   browser,
   surfaceStack,
 }) => {
-  await page.getByRole('button', { name: 'Connections', exact: true }).click()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await page.getByRole('link', { name: 'Devices', exact: true }).click()
   await expect(page.getByText('This access', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Link a device', exact: true }).click()

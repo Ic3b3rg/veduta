@@ -403,14 +403,16 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
-    fireEvent.click(await screen.findByRole('button', { name: 'Choose model' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Settings' }))
+    fireEvent.click(await screen.findByRole('link', { name: 'Models' }))
     const connectionSelect = await screen.findByRole<HTMLSelectElement>('combobox', {
       name: 'Connection',
     })
     const modelSelect = screen.getByRole<HTMLSelectElement>('combobox', { name: 'Model' })
     expect(connectionSelect.value).toBe(CHATGPT_CONNECTION_ID)
     expect(modelSelect.value).toBe(CHATGPT_MODEL_ID)
-    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    fireEvent.click(screen.getByRole('link', { name: 'Back to Veduta' }))
+    fireEvent.click(await screen.findByRole('link', { name: /Health/ }))
     const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
     if (!handlers) throw new Error('Gateway handlers were not registered')
 
@@ -1927,9 +1929,7 @@ describe('App', () => {
     render(<App />)
     expect(await screen.findByText('Saving your new access…')).toBeDefined()
     expect(screen.queryByLabelText('Spaces')).toBeNull()
-    expect(
-      await screen.findByRole('button', { name: 'Model connections' }, { timeout: 5000 }),
-    ).toBeDefined()
+    expect(await screen.findByRole('button', { name: 'Settings' }, { timeout: 5000 })).toBeDefined()
     expect(screen.queryByText('Saving your new access…')).toBeNull()
   })
 
@@ -1984,15 +1984,13 @@ describe('App', () => {
     expect(screen.queryByText(/could not read its setup status/i)).toBeNull()
   })
 
-  it('the Model connections button renders with zero connections', async () => {
+  it('the Settings gear remains available with zero Model connections', async () => {
     vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
     vi.mocked(fetchSpaces).mockResolvedValue({ spaces: [], surfaceCursor: 0 })
     vi.mocked(fetchOnboardingStatus).mockResolvedValue(
       fromPartial<OnboardingStatus>({ required: false, completed: true }),
     )
-    // A pure-mock install (issue #47): `ChatModelSelects` renders nothing
-    // for this snapshot, yet the settings view must still be reachable to
-    // add a first connection.
+    // A pure-mock install must still offer Settings to add a first connection.
     vi.mocked(fetchModelConnections).mockResolvedValue({
       vaultAvailable: true,
       mockEnabled: true,
@@ -2006,7 +2004,7 @@ describe('App', () => {
 
     await waitFor(() => expect(screen.getByLabelText('Spaces')).toBeDefined())
 
-    expect(await screen.findByRole('button', { name: 'Model connections' })).toBeDefined()
+    expect(await screen.findByRole('button', { name: 'Settings' })).toBeDefined()
   })
 })
 

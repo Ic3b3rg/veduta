@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Button } from '@veduta/catalog/ui/button'
-import { Bell } from 'lucide-react'
+import { Popover, PopoverContent, PopoverTrigger } from '@veduta/catalog/ui/popover'
+import { Bell, X } from 'lucide-react'
 import {
   detectPushPlatform,
   IOS_FALLBACK_COPY,
@@ -9,10 +10,8 @@ import {
 import { NOTIF_BELL_DISMISSED_KEY, isStandalone } from './pwa-storage.ts'
 import { enablePush, pushSupported, type EnablePushResult } from './push.ts'
 
-// Header affordance for issue 018: an "Enable notifications"
-// bell that either subscribes directly (desktop/Android, or iOS already
-// installed to the Home Screen) or, on iOS Safari not yet installed,
-// opens a small guided sheet pointing at Add to Home Screen.
+// Permission feedback and iOS guidance share the catalog overlay so neither
+// participates in the navbar's layout (issue #242).
 export function NotificationBell({ token }: { token: string | undefined }) {
   const [granted, setGranted] = useState(
     () => 'Notification' in window && Notification.permission === 'granted',
@@ -27,7 +26,8 @@ export function NotificationBell({ token }: { token: string | undefined }) {
   const [dismissedGuide, setDismissedGuide] = useState(
     () => localStorage.getItem(NOTIF_BELL_DISMISSED_KEY) === '1',
   )
-  const [showGuide, setShowGuide] = useState(false)
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<EnablePushResult | null>(null)
 
   useEffect(() => {
@@ -63,73 +63,114 @@ export function NotificationBell({ token }: { token: string | undefined }) {
   })
 
   if ((granted && hasSubscription) || platform === 'unsupported') return null
-  // The dismiss button only ever appears on the iOS install-guide sheet, so
-  // it only ever suppresses that sheet — once the platform genuinely becomes
+  // The persistent dismissal only applies to the iOS installation guide;
+  // once the platform genuinely becomes
   // 'ready' (installed + push-capable), the enable flow is a new offer, not
   // a repeat of the install nudge the user dismissed.
   if (platform === 'ios-needs-install' && dismissedGuide) return null
 
-  if (platform === 'ios-needs-install') {
-    const dismiss = () => {
-      localStorage.setItem(NOTIF_BELL_DISMISSED_KEY, '1')
-      setDismissedGuide(true)
+  const onEnable = async () => {
+    setBusy(true)
+    setStatus(null)
+    try {
+      const result = await enablePush(token ?? null)
+      setStatus(result)
+      if (result === 'subscribed') {
+        setGranted(true)
+        setHasSubscription(true)
+      }
+    } finally {
+      setBusy(false)
     }
+  }
 
-    return (
-      <div className="notif-bell">
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
         <Button
           className="notif-bell-button recipe-control utility-control"
           aria-label="Enable notifications"
           title="Enable notifications"
-          aria-expanded={showGuide}
-          onClick={() => setShowGuide((prev) => !prev)}
+          onClick={() => {
+            if (!open && !busy && platform === 'ready') void onEnable()
+          }}
         >
           <Bell aria-hidden="true" />
         </Button>
-        {showGuide && (
-          <div
-            className="notif-guide"
-            role="dialog"
-            aria-label="Install Veduta to enable notifications"
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="notification-popover"
+        aria-label={
+          platform === 'ios-needs-install'
+            ? 'Install Veduta to enable notifications'
+            : 'Notifications'
+        }
+      >
+        <div className="notification-popover-heading">
+          <h2>Notifications</h2>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="recipe-control"
+            aria-label="Dismiss notification notice"
+            title="Dismiss notification notice"
+            onClick={() => setOpen(false)}
           >
+            <X aria-hidden="true" />
+          </Button>
+        </div>
+        {platform === 'ios-needs-install' ? (
+          <>
             <ol>
               {IOS_INSTALL_STEPS.map((step) => (
                 <li key={step}>{step}</li>
               ))}
             </ol>
-            <p className="notif-guide-fallback">{IOS_FALLBACK_COPY}</p>
-            <button type="button" onClick={dismiss}>
-              Dismiss
-            </button>
-          </div>
+            <p>{IOS_FALLBACK_COPY}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="recipe-control"
+              onClick={() => {
+                localStorage.setItem(NOTIF_BELL_DISMISSED_KEY, '1')
+                setDismissedGuide(true)
+              }}
+            >
+              Dismiss installation guide
+            </Button>
+          </>
+        ) : (
+          <>
+            <div role="status" aria-live="polite">
+              {busy && <p>Enabling notifications…</p>}
+              {status === 'denied' && (
+                <>
+                  <p>Notifications are blocked in the browser settings.</p>
+                  <p>Allow notifications for this site in your browser, then try again.</p>
+                </>
+              )}
+              {status === 'dismissed' && (
+                <p>Notifications are not enabled. You can try again whenever you are ready.</p>
+              )}
+              {status === 'error' && <p>Couldn't enable notifications. Try again.</p>}
+              {status === 'unsupported' && (
+                <p>Push notifications are not available in this browser.</p>
+              )}
+            </div>
+            {!busy && status !== null && status !== 'unsupported' && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="recipe-control"
+                onClick={() => void onEnable()}
+              >
+                Try again
+              </Button>
+            )}
+          </>
         )}
-      </div>
-    )
-  }
-
-  const onEnable = async () => {
-    const result = await enablePush(token ?? null)
-    setStatus(result)
-    if (result === 'subscribed') {
-      setGranted(true)
-      setHasSubscription(true)
-    }
-  }
-
-  return (
-    <div className="notif-bell">
-      <Button
-        className="notif-bell-button recipe-control utility-control"
-        aria-label="Enable notifications"
-        title="Enable notifications"
-        onClick={() => void onEnable()}
-      >
-        <Bell aria-hidden="true" />
-      </Button>
-      {status === 'denied' && (
-        <p className="notif-bell-note">Notifications are blocked in the browser settings.</p>
-      )}
-      {status === 'error' && <p className="notif-bell-note">Couldn't enable — try again.</p>}
-    </div>
+      </PopoverContent>
+    </Popover>
   )
 }

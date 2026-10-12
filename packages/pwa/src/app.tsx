@@ -408,8 +408,7 @@ function RoutedApp() {
       }))}
       focusChatToken={focusChatToken}
       focusChatOnRouteChange={focusChatOnRouteChange}
-      onOpenModelConnections={() => navigate(clientPath.modelConnections)}
-      onOpenServiceConnections={() => navigate(clientPath.serviceConnections)}
+      onOpenSettings={() => navigate(clientPath.serviceConnections)}
       onRetrySpaces={runtime.retry}
       onInstallDone={() => {
         localStorage.setItem(INSTALL_DISMISSED_KEY, '1')

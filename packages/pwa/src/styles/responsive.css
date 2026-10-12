@@ -120,14 +120,6 @@
     padding: 8px;
     width: calc(100% - 20px);
   }
-
-  .chat-model-selects {
-    max-width: 100%;
-  }
-
-  .chat-model-selects select {
-    min-height: 44px;
-  }
 }
 
 @media (pointer: coarse) {
@@ -149,7 +141,6 @@
   .space-pending-decisions,
   .automation-outcome-notifications,
   .route-recovery,
-  .notif-guide,
   .chat-dock {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;

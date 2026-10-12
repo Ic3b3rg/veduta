@@ -55,7 +55,8 @@ for (const width of [320, 900, 1024, 1440]) {
       await expect(page.getByRole('heading', { name: 'Veduta', exact: true })).toBeVisible()
       await expect(page.locator('.topbar')).toHaveCSS('backdrop-filter', 'none')
       await assertFits()
-      await page.getByRole('button', { name: 'Choose model', exact: true }).click()
+      await page.getByRole('button', { name: 'Settings', exact: true }).click()
+      await page.getByRole('link', { name: 'Models', exact: true }).click()
       for (const name of ['Connection', 'Model']) {
         const control = page.getByRole('combobox', { name, exact: true })
         await expect(control).toBeVisible()
@@ -66,7 +67,9 @@ for (const width of [320, 900, 1024, 1440]) {
         }
       }
 
-      await page.getByRole('button', { name: 'Done', exact: true }).click()
+      await page.goBack()
+      await page.goBack()
+      await expect(page.getByRole('main', { name: 'Health Space' })).toBeVisible()
       if (width < 960) {
         await expect(selector).toHaveValue('spc-health')
         await expect(navigation.getByRole('button')).toHaveCount(0)
@@ -113,15 +116,13 @@ for (const width of [320, 900, 1024, 1440]) {
         await health.evaluate((element) => getComputedStyle(element).backgroundColor),
       )
       await assertFits()
-      for (const name of ['Model connections', 'Connections']) {
-        const utility = page.getByRole('button', { name, exact: true })
-        await utility.focus()
-        await expect(utility).toBeFocused()
-        if (width === 320) {
-          const target = await utility.boundingBox()
-          expect(target?.width).toBeGreaterThanOrEqual(44)
-          expect(target?.height).toBeGreaterThanOrEqual(44)
-        }
+      const settings = page.getByRole('button', { name: 'Settings', exact: true })
+      await settings.focus()
+      await expect(settings).toBeFocused()
+      if (width === 320) {
+        const target = await settings.boundingBox()
+        expect(target?.width).toBeGreaterThanOrEqual(44)
+        expect(target?.height).toBeGreaterThanOrEqual(44)
       }
       expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(
         width !== 1440,

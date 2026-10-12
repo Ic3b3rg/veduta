@@ -4,10 +4,8 @@ import { ModelConnectionPanel } from './model-connection-panel.tsx'
 /**
  * The standalone Model connections settings view (issue #47, ADR-0014
  * amendment): the same `ModelConnectionPanel` the onboarding wizard's
- * `model-connection` step renders, reachable any time afterwards from the
- * topbar's `ChatModelSelects` "Model connections" button -- add another
- * connection, reconnect an expired one, or change the fallback set, none of
- * which the compact chat selects offer. Shares `useModelConnectionsController`
+ * `model-connection` step renders. Add another connection, reconnect an expired
+ * one, or change the fallback set. Shares `useModelConnectionsController`
  * with the wizard step rather than duplicating the fetch+poll+action
  * plumbing.
  */
