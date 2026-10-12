@@ -79,8 +79,10 @@ Chat through the same exact Decision Surface link used elsewhere.
 
 A submitted turn anchors its user message near the top so a long incoming reply does not pull the
 reader down. The latest-message button resumes following and disappears at the bottom. Gateway
-history, retry, queued submissions and decision authority remain unchanged. The topbar model
-control opens the existing verify-then-commit Connection and Model fields in a modal.
+history, retry, queued submissions and decision authority remain unchanged. One icon-only Settings
+gear opens the existing settings screen; Models owns the verify-then-commit Connection and Model
+fields. Notification permission feedback and installation guidance use a dismissible catalog
+Popover outside the navbar layout, keeping its controls stable even when permission is blocked.
 
 The mobile composer uses Enter for a new line and the arrow or Ctrl/Cmd+Enter to send. Desktop
 retains Enter to send and Shift+Enter for a new line. The viewport opts into

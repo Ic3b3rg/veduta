@@ -126,52 +126,41 @@
   font-weight: 700;
 }
 
-/* Notification bell + iOS guided-install sheet (issue 018):
-   same visual family as .surface-card / .install-button, no new tokens. */
-.notif-bell {
-  position: relative;
-}
-
-.notif-guide {
-  backdrop-filter: blur(var(--glass-blur));
-  background: var(--glass-panel-raised);
-  border: 1px solid var(--glass-border);
-  border-radius: 12px;
-  box-shadow:
-    inset 0 1px var(--glass-highlight),
-    0 18px 46px var(--surface-shadow);
+/* Shared notification overlay stays outside navbar geometry (issue #242). */
+.notification-popover {
+  width: min(320px, calc(100vw - 24px));
+  max-height: var(--radix-popover-content-available-height);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
   display: grid;
-  gap: 10px;
-  padding: 12px;
-  position: absolute;
-  right: 0;
-  top: calc(100% + 8px);
-  width: min(240px, calc(100vw - 24px));
-  z-index: 5;
-  -webkit-backdrop-filter: blur(var(--glass-blur));
+  gap: var(--catalog-space-md);
+  font-size: var(--catalog-font-sm);
 }
 
-.notif-guide ol {
-  margin: 0;
-  padding-left: 18px;
+.notification-popover-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--catalog-space-sm);
 }
 
-.notif-guide li {
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.notif-guide-fallback {
-  color: var(--text-soft);
-  font-size: 12px;
-  line-height: 1.35;
+.notification-popover h2 {
+  font-size: var(--catalog-font-md);
   margin: 0;
 }
 
-.notif-bell-note {
-  color: var(--text-soft);
-  font-size: 12px;
-  margin: 4px 0 0;
+.notification-popover p {
+  margin: 0;
+}
+
+.notification-popover [role='status'] {
+  display: grid;
+  gap: var(--catalog-space-sm);
+}
+
+.notification-popover ol {
+  margin: 0;
+  padding-left: var(--catalog-space-lg);
 }
 
 .error {

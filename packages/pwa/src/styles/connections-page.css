@@ -5,6 +5,13 @@
   font-size: 0.875rem;
 }
 
+@media (pointer: coarse) {
+  .connections-page [data-slot='native-select'],
+  .connection-drawer [data-slot='native-select'] {
+    min-height: var(--catalog-control-touch-target);
+  }
+}
+
 .devices-toolbar,
 .device-access-actions {
   display: flex;

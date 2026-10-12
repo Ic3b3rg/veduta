@@ -47,7 +47,7 @@ export function ConnectionsLayout({
     <div className="connections-page">
       <Sidebar className="connections-sidebar">
         <SidebarHeader className="px-5 pt-6 pb-4">
-          <span className="text-sm font-semibold">Connections</span>
+          <span className="text-sm font-semibold">Settings</span>
           <span className="text-xs text-muted-foreground">Manage your Veduta</span>
         </SidebarHeader>
         <SidebarContent>

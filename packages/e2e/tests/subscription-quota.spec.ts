@@ -190,16 +190,17 @@ async function sendMessage(page: Page, composer: string, text: string): Promise<
 }
 
 async function assertVisibleSelection(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Choose model', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Model settings' })
-  await expect(dialog.getByRole('combobox', { name: 'Connection', exact: true })).toHaveValue(
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByRole('link', { name: 'Models', exact: true }).click()
+  await expect(page.getByRole('combobox', { name: 'Connection', exact: true })).toHaveValue(
     QUOTA_CONNECTION_ID,
   )
-  await expect(dialog.getByRole('combobox', { name: 'Model', exact: true })).toHaveValue(
+  await expect(page.getByRole('combobox', { name: 'Model', exact: true })).toHaveValue(
     QUOTA_MODEL_ID,
   )
-  await dialog.getByRole('button', { name: 'Done', exact: true }).click()
-  await expect(dialog).toHaveCount(0)
+  await page.goBack()
+  await page.goBack()
+  await expect(page.getByRole('button', { name: 'Settings', exact: true })).toBeVisible()
 }
 
 async function openModelConnection(page: Page, origin: string): Promise<void> {

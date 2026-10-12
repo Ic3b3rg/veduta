@@ -365,18 +365,24 @@ describe('App routing', () => {
     expect(await screen.findByLabelText('Spaces')).toBeDefined()
   })
 
-  it('routes Model connections through browser Back and Forward', async () => {
+  it('routes Settings and Models through browser Back and Forward', async () => {
     mockReadyApp()
 
     render(<App />)
 
     await waitFor(() => expect(screen.getByLabelText('Spaces')).toBeDefined())
-    fireEvent.click(await screen.findByRole('button', { name: 'Model connections' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Settings' }))
+    expect(await screen.findByRole('heading', { name: 'Accounts & services' })).toBeDefined()
+    expect(location.pathname).toBe('/app/connections')
+    fireEvent.click(screen.getByRole('link', { name: 'Models' }))
 
     expect(await screen.findByRole('heading', { name: 'Models', level: 1 })).toBeDefined()
-    expect(location.pathname).toBe('/app/settings/models')
+    expect(location.pathname + location.search).toBe('/app/connections?section=models')
     expect(screen.queryByLabelText('Spaces')).toBeNull()
 
+    act(() => history.back())
+
+    expect(await screen.findByRole('heading', { name: 'Accounts & services' })).toBeDefined()
     act(() => history.back())
 
     expect(await screen.findByLabelText('Spaces')).toBeDefined()
@@ -384,8 +390,11 @@ describe('App routing', () => {
 
     act(() => history.forward())
 
+    expect(await screen.findByRole('heading', { name: 'Accounts & services' })).toBeDefined()
+    act(() => history.forward())
+
     expect(await screen.findByRole('heading', { name: 'Models', level: 1 })).toBeDefined()
-    expect(location.pathname).toBe('/app/settings/models')
+    expect(location.pathname + location.search).toBe('/app/connections?section=models')
   })
 
   it('recognizes a direct Model connections load after the guards settle', async () => {

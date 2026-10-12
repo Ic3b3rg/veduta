@@ -11,11 +11,10 @@ import { Link } from 'react-router-dom'
 import { useState } from 'react'
 import { Button } from '@veduta/catalog/ui/button'
 import { PortalContainerContext } from '@veduta/catalog/ui/portal-container'
-import { Settings2, SlidersHorizontal } from 'lucide-react'
+import { Settings } from 'lucide-react'
 import type { SpaceWithSurfaces } from './api.ts'
 import { ChatPanel } from './chat-panel.tsx'
 import { DecisionFeedbackNotice } from './decision-feedback-notice.tsx'
-import { ChatModelSelects } from './chat-model-selects.tsx'
 import { clientPath } from './client-router.tsx'
 import { HomeSpaceGrid, type HomeSpacesLoadState } from './home-space-grid.tsx'
 import { InstallButton } from './install-button.tsx'
@@ -69,8 +68,7 @@ interface AppShellProps {
   streamingEntries: { turnId: string; text: string }[]
   focusChatToken: string
   focusChatOnRouteChange: boolean
-  onOpenModelConnections: () => void
-  onOpenServiceConnections: () => void
+  onOpenSettings: () => void
   onRetrySpaces: () => void
   onInstallDone: () => void
   onFocusSpace: (space: SpaceWithSurfaces, surface?: RenderableSurface) => void
@@ -130,8 +128,7 @@ export function AppShell({
   streamingEntries,
   focusChatToken,
   focusChatOnRouteChange,
-  onOpenModelConnections,
-  onOpenServiceConnections,
+  onOpenSettings,
   onRetrySpaces,
   onInstallDone,
   onFocusSpace,
@@ -176,24 +173,15 @@ export function AppShell({
           </a>
           <header className="topbar">
             <h1 className="product-wordmark">Veduta</h1>
-            <ChatModelSelects token={authToken} />
             <div className="topbar-actions" aria-live="polite">
               {queuedCount > 0 && <span className="status-pill pending">{queuedCount} queued</span>}
               <Button
                 className="recipe-control utility-control"
-                aria-label="Model connections"
-                title="Model connections"
-                onClick={onOpenModelConnections}
+                aria-label="Settings"
+                title="Settings"
+                onClick={onOpenSettings}
               >
-                <SlidersHorizontal aria-hidden="true" />
-              </Button>
-              <Button
-                className="recipe-control utility-control"
-                aria-label="Connections"
-                title="Connections"
-                onClick={onOpenServiceConnections}
-              >
-                <Settings2 aria-hidden="true" />
+                <Settings aria-hidden="true" />
               </Button>
               <NotificationBell token={authToken} />
               {showInstallGuide && <InstallButton prompt={installPrompt} onDone={onInstallDone} />}

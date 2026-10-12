@@ -2,7 +2,7 @@ import { expect, type Page } from '@playwright/test'
 
 /** Settings metadata and credentials are exercised on the journey's disposable Gateway root. */
 export async function verifyConnectionsSettings(page: Page, observerPage: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Connections', exact: true }).click()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await expect(
     page.getByRole('heading', { name: 'Accounts & services', exact: true }),
   ).toBeVisible()
