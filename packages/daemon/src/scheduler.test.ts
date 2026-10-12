@@ -434,6 +434,9 @@ describe('acceptance: disabled automations', () => {
       clock = new Date('2026-10-25T03:00:00.000Z')
       toggle(true)
       expect(scheduler.listAutomations(HEALTH)[0]?.nextRunAt).toBe('2026-10-26T03:00:00.000Z')
+      expect(
+        store.getSurface(SURFACE)?.tree.children?.[1]?.children?.[0]?.props?.scheduleDetails,
+      ).toHaveProperty('nextRunAt', '2026-10-26T03:00:00.000Z')
       await scheduler.runDue()
       expect(scheduler.listAutomations(HEALTH)[0]?.lastRunAt).toBeUndefined()
       scheduler.stop()

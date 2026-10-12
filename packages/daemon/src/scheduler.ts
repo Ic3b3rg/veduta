@@ -490,9 +490,10 @@ export class Scheduler {
       // caller's — a tainted description never re-enters context as trusted.
       mutationOrigin,
     )
-    // A Surface-originated toggle already mutated the Surface state on the
-    // fast path; re-projecting would only duplicate events.
-    if (source === 'tool') this.refreshSurface(automation.spaceId, mutationOrigin)
+    // The fast path already projected the toggle value, but resuming a job
+    // also changes its displayed next occurrence.
+    if (source === 'tool' || nextRunAt !== automation.nextRunAt)
+      this.refreshSurface(automation.spaceId, mutationOrigin)
     this.schedule()
     return this.requireAutomation(automationId)
   }
