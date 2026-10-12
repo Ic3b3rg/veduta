@@ -1,5 +1,5 @@
 import { fastInvocation } from './surface-action-test-fixtures.ts'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -74,6 +74,8 @@ function deferred<T>() {
 
 afterEach(() => {
   for (const scheduler of schedulers) scheduler.stop()
+  store.close()
+  rmSync(rootDir, { recursive: true, force: true })
 })
 
 describe('Automations Surface projection', () => {
