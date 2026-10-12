@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it } from 'vitest'
+import { fromPartial } from '@total-typescript/shoehorn'
 import {
   CHAT_QUEUE_KEY,
+  parseHomeActivityLastSeen,
+  readHomeActivityLastSeen,
+  persistHomeActivityLastSeen,
   FAST_ACTION_QUEUE_KEY,
   persistQueuedFastActions,
   readQueuedChat,
@@ -87,4 +91,30 @@ describe('persisted PWA state', () => {
     expect(readQueuedChat()).toEqual([])
     expect(readQueuedFastActions()).toEqual([])
   })
+})
+
+it('parses local activity without losing valid siblings or throwing on unavailable storage', () => {
+  expect(
+    parseHomeActivityLastSeen(
+      JSON.stringify({
+        'spc-one': '2026-10-12T09:00:00.000Z',
+        'spc-two': 'invalid',
+        'spc-three': 1,
+      }),
+    ),
+  ).toEqual({ 'spc-one': '2026-10-12T09:00:00.000Z' })
+  expect(parseHomeActivityLastSeen(null)).toEqual({})
+  for (const raw of ['{', '[]', 'null', 'false']) expect(parseHomeActivityLastSeen(raw)).toEqual({})
+  const blocked = fromPartial<Storage>({
+    getItem: () => {
+      throw new Error('Storage denied')
+    },
+    setItem: () => {
+      throw new Error('Storage full')
+    },
+  })
+  expect(readHomeActivityLastSeen(blocked)).toEqual({})
+  expect(() =>
+    persistHomeActivityLastSeen(blocked, { 'spc-one': '2026-10-12T09:00:00.000Z' }),
+  ).not.toThrow()
 })

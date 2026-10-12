@@ -24,7 +24,13 @@ import * as defaultApi from './api.ts'
 import type { ActionConfirmations, ActionStatuses } from '@veduta/catalog'
 import { applyTurnFrame, type ChatTurnFrame, type StreamingTurn } from './chat-turn-state.ts'
 import { ChatTimelineProjection, scopeKey } from './chat-timeline-projection.ts'
-import { cachedSnapshot, saveSnapshot, type SurfaceStreamEvent } from './home-state.ts'
+import {
+  cachedSnapshot,
+  saveSnapshot,
+  freshestSurfaceUpdatedAt,
+  type HomeActivityLastSeen,
+  type SurfaceStreamEvent,
+} from './home-state.ts'
 import type { HomeSpacesLoadState } from './home-space-grid.tsx'
 import { LiveSurfaceProjection } from './live-surface-projection.ts'
 import { LiveDecisionProjection } from './live-decision-projection.ts'
@@ -39,6 +45,8 @@ import { appendAuthoritativeChatEntry } from './pending-decision-state.ts'
 import {
   AUTH_TOKEN_KEY,
   HOME_CACHE_KEY,
+  readHomeActivityLastSeen,
+  persistHomeActivityLastSeen,
   SURFACE_ORDER_KEY,
   readQueuedChat,
   persistQueuedChat,
@@ -60,6 +68,7 @@ export interface PwaLiveStateSnapshot {
   readonly spaces: defaultApi.SpaceWithSurfaces[]
   readonly surfaceCursor: number
   readonly homeSpacesLoadState: HomeSpacesLoadState
+  readonly homeActivityLastSeen: HomeActivityLastSeen
   readonly authToken: string | undefined
   readonly authStatus: AuthStatus | undefined
   readonly gatewayOnline: boolean
@@ -133,6 +142,9 @@ export class PwaLiveStateRuntime {
   private token: string | undefined
   private authStatus: AuthStatus | undefined
   private loadState: HomeSpacesLoadState
+  private homeActivityLastSeen: HomeActivityLastSeen
+  private activityFocusSpaceId: string | undefined
+  private activityFocusPending = false
   private error: string | null = null
   private chatEntries: ChatMessage[]
   private readonly chatTimeline = new ChatTimelineProjection()
@@ -154,6 +166,7 @@ export class PwaLiveStateRuntime {
   constructor(options: PwaLiveStateRuntimeOptions = {}) {
     this.api = options.api ?? defaultApi
     this.storage = options.storage ?? localStorage
+    this.homeActivityLastSeen = readHomeActivityLastSeen(this.storage)
     const cached = cachedSnapshot(this.storage, HOME_CACHE_KEY)
     this.surfaces = new LiveSurfaceProjection(cached)
     this.loadState = cached === undefined ? 'loading' : 'ready'
@@ -333,6 +346,7 @@ export class PwaLiveStateRuntime {
       spaces: this.surfaces.spaces,
       surfaceCursor: this.surfaces.cursor,
       homeSpacesLoadState: this.loadState,
+      homeActivityLastSeen: this.homeActivityLastSeen,
       authToken: this.token,
       authStatus: this.authStatus,
       gatewayOnline: this.online,
@@ -369,6 +383,7 @@ export class PwaLiveStateRuntime {
   }
 
   private saveSurfaces(): void {
+    this.acknowledgeFocusedActivity()
     saveSnapshot(this.storage, HOME_CACHE_KEY, {
       spaces: this.surfaces.spaces,
       surfaceCursor: this.surfaces.cursor,
@@ -940,7 +955,24 @@ export class PwaLiveStateRuntime {
     }
   }
 
+  private acknowledgeFocusedActivity(): void {
+    if (!this.activityFocusPending) return
+    const space = this.surfaces.spaces.find((space) => space.id === this.activityFocusSpaceId)
+    if (!space) return // An initial route may precede its snapshot (#68).
+    this.activityFocusPending = false
+    if (space.archived) return
+    const updatedAt = freshestSurfaceUpdatedAt(space.surfaces)
+    if (updatedAt === undefined || this.homeActivityLastSeen[space.id] === updatedAt) return
+    this.homeActivityLastSeen = { ...this.homeActivityLastSeen, [space.id]: updatedAt }
+    persistHomeActivityLastSeen(this.storage, this.homeActivityLastSeen)
+  }
+
   focus = (spaceId: string | undefined, focusKey: string): void => {
+    if (spaceId !== this.activityFocusSpaceId) {
+      this.activityFocusSpaceId = spaceId
+      this.activityFocusPending = spaceId !== undefined
+      this.acknowledgeFocusedActivity()
+    }
     const scope = scopeForSpace(spaceId)
     if (scopeKey(scope) !== scopeKey(this.focusedChatScope)) {
       this.focusedChatScope = scope

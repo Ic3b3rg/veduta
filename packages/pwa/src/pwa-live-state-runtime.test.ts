@@ -119,6 +119,9 @@ function setup(initialStorage: Record<string, string> = {}) {
   const subscribeChat = vi.fn(() => true)
   const close = vi.fn()
   const fetchSpaces = vi.fn(async () => snapshot())
+  const markSpaceAttentionSeen = vi
+    .fn(api.markSpaceAttentionSeen)
+    .mockResolvedValue({ count: 0, revision: 2 })
   const fetchChatTimeline = vi.fn(async (): Promise<ChatTimelinePage> => ({ entries: [] }))
   const invokeSurfaceAction = vi.fn(api.invokeSurfaceAction)
   const pinSurface = vi.fn(api.pinSurface)
@@ -132,6 +135,8 @@ function setup(initialStorage: Record<string, string> = {}) {
       fetchAuthStatus,
       fetchSpaces,
       fetchChatTimeline,
+      markSpaceAttentionSeen,
+      fetchAutomationOutcomeNotifications: vi.fn(async () => ({ revision: 0, notifications: [] })),
       invokeSurfaceAction,
       pinSurface,
       fetchPendingDecisions: vi.fn(async () => ({ revision: 0, decisions: [] })),
@@ -145,6 +150,7 @@ function setup(initialStorage: Record<string, string> = {}) {
     runtime,
     connections,
     fetchSpaces,
+    markSpaceAttentionSeen,
     fetchAuthStatus,
     invokeSurfaceAction,
     pinSurface,
@@ -624,4 +630,109 @@ describe('Live Surface projection confirmation', () => {
     projection.apply({ type: 'surface.patch', event: patch(2, 2) })
     expect(projection.spaces[0]?.surfaces[0]?.state['value']).toBe(3)
   })
+})
+
+describe('Home activity storage', () => {
+  it('restores only valid per-Space timestamps and safely ignores malformed storage', () => {
+    const { runtime } = setup({
+      'veduta.homeActivityLastSeen': JSON.stringify({
+        'spc-test': '2026-10-01T08:00:00Z',
+        'spc-invalid': 'broken',
+        'spc-number': 12,
+      }),
+    })
+    expect(runtime.getSnapshot().homeActivityLastSeen).toEqual({
+      'spc-test': '2026-10-01T08:00:00Z',
+    })
+    for (const raw of ['{', 'null', '[]', '"not a map"']) {
+      expect(
+        setup({ 'veduta.homeActivityLastSeen': raw }).runtime.getSnapshot().homeActivityLastSeen,
+      ).toEqual({})
+    }
+  })
+})
+
+describe('Home activity focus and lifecycle', () => {
+  it('acknowledges on opening, persists per Space, and leaves later live updates new', async () => {
+    const { runtime, connections, values } = setup()
+    await runtime.start()
+    connections[0]!.onHello(0, 'client-one')
+    runtime.focus('spc-test', 'open-test')
+    expect(runtime.getSnapshot().homeActivityLastSeen).toEqual({
+      'spc-test': '2026-10-01T08:00:00Z',
+    })
+    expect(JSON.parse(values.get('veduta.homeActivityLastSeen')!)).toEqual({
+      'spc-test': '2026-10-01T08:00:00Z',
+    })
+    connections[0]!.onSurfacePatch(patch(1, 1))
+    await vi.waitFor(() =>
+      expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.state['value']).toBe(1),
+    )
+    runtime.focus('spc-test', 'same-open-route')
+    expect(runtime.getSnapshot().homeActivityLastSeen['spc-test']).toBe('2026-10-01T08:00:00Z')
+    runtime.focus(undefined, 'home')
+    runtime.focus('spc-test', 'reopen-test')
+    expect(runtime.getSnapshot().homeActivityLastSeen['spc-test']).toBe('2026-10-01T08:00:01Z')
+    runtime.stop()
+    const restored = setup(Object.fromEntries(values))
+    expect(restored.runtime.getSnapshot().homeActivityLastSeen['spc-test']).toBe(
+      '2026-10-01T08:00:01Z',
+    )
+  })
+
+  it('acknowledges the first delayed snapshot but not subsequent focused updates', async () => {
+    const { runtime, connections } = setup()
+    runtime.focus('spc-test', 'initial-route')
+    await runtime.start()
+    connections[0]!.onHello(0, 'client-one')
+    expect(runtime.getSnapshot().homeActivityLastSeen['spc-test']).toBe('2026-10-01T08:00:00Z')
+    connections[0]!.onSurfacePatch(patch(1, 1))
+    expect(runtime.getSnapshot().homeActivityLastSeen['spc-test']).toBe('2026-10-01T08:00:00Z')
+    runtime.stop()
+  })
+})
+
+it('opening acknowledges local freshness independently while server attention clears by revision', async () => {
+  const { runtime, connections, fetchSpaces, markSpaceAttentionSeen } = setup()
+  const initial = snapshot()
+  initial.spaces[0]!.attention = 3
+  initial.spaces[0]!.attentionRevision = 1
+  fetchSpaces.mockResolvedValue(initial)
+  await runtime.start()
+  connections[0]!.onHello(0, 'client-one')
+  runtime.focus('spc-test', 'open-test')
+  expect(runtime.getSnapshot().homeActivityLastSeen['spc-test']).toBe('2026-10-01T08:00:00Z')
+  await vi.waitFor(() => expect(runtime.getSnapshot().spaces[0]?.attention).toBe(0))
+  expect(runtime.getSnapshot().spaces[0]?.attentionRevision).toBe(2)
+  expect(markSpaceAttentionSeen).toHaveBeenCalledWith('spc-test', undefined)
+  runtime.stop()
+})
+
+it('opening an empty Space does not acknowledge a later newly created Surface', async () => {
+  const { runtime, connections, fetchSpaces } = setup()
+  const initial = snapshot()
+  initial.spaces[0]!.surfaces = []
+  fetchSpaces.mockResolvedValue(initial)
+  await runtime.start()
+  connections[0]!.onHello(0, 'client-one')
+  runtime.focus('spc-test', 'empty-test')
+  expect(runtime.getSnapshot().homeActivityLastSeen).toEqual({})
+  connections[0]!.onSurfaceCreated({
+    type: 'surface.created',
+    event: {
+      cursor: 1,
+      at: '2026-10-01T08:00:00Z',
+      spaceId: 'spc-test',
+      surface: surface(),
+      order: {
+        cursor: 1,
+        spaceId: 'spc-test',
+        pinnedSurfaceIds: [],
+        regularSurfaceIds: ['srf-test'],
+      },
+    },
+  })
+  await vi.waitFor(() => expect(runtime.getSnapshot().spaces[0]?.surfaces).toHaveLength(1))
+  expect(runtime.getSnapshot().homeActivityLastSeen).toEqual({})
+  runtime.stop()
 })

@@ -45,6 +45,7 @@ function RoutedApp() {
   const { runtime, snapshot } = useLiveState()
   const {
     homeSpacesLoadState,
+    homeActivityLastSeen,
     error,
     authToken,
     chatEntries,
@@ -389,6 +390,7 @@ function RoutedApp() {
       onDismissError={() => runtime.reportError(null)}
       spaces={spaces}
       homeSpacesLoadState={homeSpacesLoadState}
+      homeActivityLastSeen={homeActivityLastSeen}
       route={appRouteSelection}
       surfaceRevealFeedbackKeys={surfaceRevealFeedbackKeys}
       surfaceUpdateFeedbacks={surfaceUpdateFeedbacks}

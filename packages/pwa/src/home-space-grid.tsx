@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import type { SpaceWithSurfaces } from './api.ts'
 import { AttentionBadge } from './attention-badge.tsx'
 import { clientPath } from './client-router.tsx'
-import { homeSpaceGroups, type HomeSpaceSummary } from './home-state.ts'
+import { homeSpaceGroups, type HomeActivityLastSeen, type HomeSpaceSummary } from './home-state.ts'
 import { freshnessLabel } from './time-labels.ts'
 import { usePresentation } from './presentation-context.ts'
 
@@ -12,14 +12,16 @@ export function HomeSpaceGrid({
   spaces,
   loadState,
   pendingDecisionCounts = new Map(),
+  homeActivityLastSeen = {},
   onRetry,
 }: {
   spaces: SpaceWithSurfaces[]
   loadState: HomeSpacesLoadState
   pendingDecisionCounts?: ReadonlyMap<string, number>
+  homeActivityLastSeen?: HomeActivityLastSeen
   onRetry: () => void
 }) {
-  const groups = homeSpaceGroups(spaces)
+  const groups = homeSpaceGroups(spaces, homeActivityLastSeen)
   const hasSpaces = groups.userSpaces.length > 0 || groups.systemSpaces.length > 0
 
   if (!hasSpaces) {
@@ -151,6 +153,12 @@ function SpaceCard({
       </div>
 
       <div className="space-card-signals">
+        {space.hasNewActivity && (
+          <span className="space-card-activity">
+            <span className="space-card-activity-dot" aria-hidden="true" />
+            New activity
+          </span>
+        )}
         <div className="space-card-attention">
           <span>Attention</span>
           {space.attention > 0 ? <AttentionBadge count={space.attention} /> : <span>Clear</span>}

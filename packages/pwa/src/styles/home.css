@@ -275,3 +275,19 @@
     -webkit-backdrop-filter: none;
   }
 }
+
+.space-card-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--catalog-color-text);
+  font-size: var(--catalog-font-sm);
+}
+
+.space-card-activity-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--catalog-color-accent);
+}

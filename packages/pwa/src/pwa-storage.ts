@@ -1,8 +1,10 @@
 import { ActionIntentIdSchema, FastActionInvocationSchema } from '@veduta/protocol'
 import { z } from 'zod'
+import type { HomeActivityLastSeen } from './home-state.ts'
 
 export const AUTH_TOKEN_KEY = 'veduta.authToken'
 export const HOME_CACHE_KEY = 'veduta.homeSnapshot'
+export const HOME_ACTIVITY_LAST_SEEN_KEY = 'veduta.homeActivityLastSeen'
 export const CHAT_QUEUE_KEY = 'veduta.chatQueue'
 export const FAST_ACTION_QUEUE_KEY = 'veduta.fastActionQueue'
 export const SURFACE_ORDER_KEY = 'veduta.surfaceOrder'
@@ -140,4 +142,40 @@ function isQueuedChat(value: unknown): value is QueuedChat {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Local presentation acknowledgement; it never changes Gateway attention or decisions. */
+export function parseHomeActivityLastSeen(stored: string | null): HomeActivityLastSeen {
+  if (stored === null) return {}
+  try {
+    const value: unknown = JSON.parse(stored)
+    if (!isRecord(value)) return {}
+    return Object.fromEntries(
+      Object.entries(value).flatMap(([id, timestamp]) => {
+        const parsed = z.string().datetime().safeParse(timestamp)
+        return id.length > 0 && parsed.success ? [[id, parsed.data]] : []
+      }),
+    )
+  } catch {
+    return {}
+  }
+}
+
+export function readHomeActivityLastSeen(storage: Storage): HomeActivityLastSeen {
+  try {
+    return parseHomeActivityLastSeen(storage.getItem(HOME_ACTIVITY_LAST_SEEN_KEY))
+  } catch {
+    return {}
+  }
+}
+
+export function persistHomeActivityLastSeen(
+  storage: Storage,
+  lastSeen: HomeActivityLastSeen,
+): void {
+  try {
+    storage.setItem(HOME_ACTIVITY_LAST_SEEN_KEY, JSON.stringify(lastSeen))
+  } catch {
+    // Disabled or full local storage must not prevent opening a Space (#68).
+  }
 }
