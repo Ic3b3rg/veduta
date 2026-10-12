@@ -46,7 +46,8 @@ stale route as administrator before Update access. Unrelated routes are never re
 
 After the certificate-readiness and multi-device corrections, `pnpm check` passed lint,
 formatting, typechecks, all **3,976 package tests**, and builds. Both review axes found no
-remaining blocker in the fixes; real-device acceptance is still pending. Public backend checks
+remaining blocker in the fixes. Real-device acceptance was pending at this checkpoint;
+the later owner confirmation is recorded below. Public backend checks
 use standard URL normalization, including equivalent
 loopback spellings and effective default ports. Run `pnpm check` to repeat these checks.
 The opt-in browser
@@ -158,10 +159,10 @@ worked on the physical phone: registration completed and Veduta remained accessi
 reloading. This confirms real desktop/phone access on the same private HTTPS origin after the
 VPS reboot, in addition to the automated independent-passkey test.
 
-An explicit fresh phone sign-in after signing out and a browser attempt from outside the
-tailnet have not yet been reported. Issue #49 remains open for the remaining acceptance work.
-This branch is not a published release; do not apply the old `0.0.6` artifact to a private
-source installation.
+At this recorded checkpoint, an explicit fresh phone sign-in after signing out and a browser
+attempt from outside the tailnet had not been reported. This is historical branch evidence;
+[issue #49](https://github.com/Ic3b3rg/veduta/issues/49) tracks acceptance. For current installation
+and release instructions, use the [README](../../README.md) and [release runbook](../../RELEASING.md).
 
 ## Real-tailnet smoke to complete
 

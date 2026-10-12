@@ -95,27 +95,11 @@ through `sudo veduta access` rather than silently using a different WebAuthn ori
 
 ### Tailnet access
 
-1. Install Tailscale on your computer and phone, using the same personal account. Enable
-   [Device approval](https://tailscale.com/docs/features/access-control/device-management/device-approval)
-   and approve those devices in the Tailscale admin console. Keep the tailnet limited to intended users.
-2. Choose **Private on all your devices — Tailscale** in the installer. If needed, it requests
-   consent before downloading Tailscale's official Linux installer. Follow the interactive login
-   link and approve the VPS. No auth key or passphrase belongs in an installer argument.
-3. Confirm account-wide Device approval. The local CLI reports whether this node is connected,
-   but cannot verify that global policy; Veduta records your confirmation for this tailnet.
-4. If HTTPS is not enabled, `tailscale serve` prints a browser activation URL such as
-   `https://login.tailscale.com/f/serve?node=...`. Open the exact URL printed on this VPS and
-   approve Serve/HTTPS with your personal account. The node identifier is supplied by Tailscale;
-   never hardcode one in shared instructions. Leave public Funnel access disabled if offered.
-   Keep the installer running: it resumes after approval and waits for a valid HTTPS response,
-   including initial certificate issuance. If the wait has expired, complete approval and use
-   the installer's retry command. An already-enabled tailnet skips this browser prompt.
-   The certificate hostname is published in Certificate Transparency logs; the web service
-   remains reachable only within your tailnet. See the [step-by-step guide](../README.md#2-run-the-installer-on-the-vps).
-5. Open the HTTPS link or QR with Tailscale connected, register the first passkey, and continue in the PWA.
-   To add another device afterward, use **Connections → Devices → Link a device** from the
-   authenticated PWA. Its short-lived QR lets the new device register its own passkey; the original
-   installer code is already consumed. The Devices controls can revoke another registered access.
+Follow the [installation and device-linking guide](../README.md#install-on-a-vps) for account
+login, Device approval, Serve/HTTPS activation and passkey registration on each device. Use the
+activation URL printed by that VPS: its `node` parameter belongs to the current machine.
+The installer retains Device approval confirmation for the same tailnet and resumes after
+HTTPS activation. Account changes or an expired login require a new handoff.
 
 The Gateway listens only on `127.0.0.1`. [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve)
 provides HTTPS; Veduta never enables Funnel and never treats Tailscale identity headers as a
@@ -178,7 +162,7 @@ found, the result (never the file contents) is seeded into
 `<data-dir>/onboarding.json` as `legacy: { openclaw, hermes, sourceHome }` -- the daemon itself
 runs as the unprivileged `veduta` user under `ProtectHome=yes` and can never see `/home/*`
 directly. The onboarding wizard's `migration` step then offers to import before any manual
-configuration happens (issue 019 AC3); the importer itself ships with issue 020.
+configuration happens. The import path and its boundaries are described below.
 
 ### Migrating from OpenClaw or Hermes
 
@@ -226,7 +210,7 @@ daemon's in-memory vault.
 The [installer verification report](../docs/references/40-private-vps-installer-verification.md)
 records the tested operating systems, terminal failure, real VPS journey, Public HTTPS lab,
 access rollback, and remaining limitations. The [Tailnet verification report](../docs/references/41-tailnet-installer-verification.md)
-separates automated evidence from the pending real-device smoke and gives its exact steps.
+separates automated checks, confirmed physical-device use and remaining smoke steps at its recorded checkpoint.
 To repeat the Tunnel journey, start a timer, run the
 guided installer on a clean VPS, accept Tunnel defaults, run the generated SSH command on your
 computer, and register a passkey. The target is under 15 minutes to registration. Reload,
@@ -237,7 +221,9 @@ passkey, and follow the PWA onboarding steps. A clean controlled installation ca
 opt-in browser test with `VEDUTA_INSTALLER_SMOKE_URL` (and `VEDUTA_INSTALLER_SMOKE_MODE=public`).
 Never point this test at an installation with personal data or passkeys.
 
-The sections below are the manual reference for the user, vault, service, backups, and updates.
+The sections below explain service ownership, vault, backups and recovery for operators.
+Use the guided installer for a complete deployment. Copying the base service alone does not
+reproduce its generated entry point, access configuration or clean-exit restart policy.
 
 ## 1. Dedicated user, group, and directory layout
 

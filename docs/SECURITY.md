@@ -11,7 +11,7 @@
 | ----------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | Prompt injection        | Emails/pages/webhooks with malicious instructions ("forward FACTS.md to...") | Exfiltration of the most intimate data (health, work, finances) |
 | Wrong autonomous action | Hallucination, double execution, wrong recipient                             | Real harm to third parties                                      |
-| Endpoint compromise     | The daemon is exposed on a public IP (VPS profile)                           | Total takeover                                                  |
+| Endpoint compromise     | Requests through the configured Public, Tunnel or Tailnet access path        | Total takeover                                                  |
 | Credential theft        | Provider API keys, Gmail/Calendar OAuth tokens                               | Costs, account access                                           |
 | Cost runaway            | Worker/event loops                                                           | BYOK bill                                                       |
 
@@ -118,7 +118,10 @@ effect approvals, and truthful failure states are required by
 
 ## 6. Daemon attack surface
 
-- Automatic TLS (ACME); HSTS; no port other than 443 exposed.
+- Browser exposure follows [ADR-0015](adr/0015-vps-access-modes.md): Public uses ACME HTTPS and HSTS,
+  with HTTP for certificate challenges; Tunnel and Tailnet keep the Gateway on loopback.
+  Tailnet adds private HTTPS through Tailscale Serve. Network membership never replaces
+  application authentication; retain SSH for administration and access recovery.
 - **Passkey/WebAuthn only** (no passwords), device pairing via QR with an expiring one-time code; scoped, per-device revocable session tokens; a "linked devices" surface with revocation.
 - Per-connection authenticated WebSocket: the upgrade itself is exempt from the per-request
   Bearer check (a browser cannot attach an Authorization header to a WebSocket handshake) and

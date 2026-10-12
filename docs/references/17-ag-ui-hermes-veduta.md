@@ -27,7 +27,7 @@ The proposed stack is also less complete than it first appears:
 - **Veduta's differentiator lives above and across both layers**: the persistent Home, Spaces,
   validated Surfaces, fast path, per-Space Event log, Templates, Automations, trust policy, and the
   rule that every primary Model connection authors the same durable product state.
-  ([architecture](../../ARCHITECTURE.md), [vocabulary](../../CONTEXT.md))
+  ([architecture](../../ARCHITECTURE.md), [vocabulary](../../GLOSSARY.md))
 
 Consequently, AG-UI plus Hermes could have produced a convincing chat-and-UI prototype faster.
 It would not have produced Veduta as specified without a substantial Veduta domain service,

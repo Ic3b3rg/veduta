@@ -37,7 +37,7 @@ export const OnboardingStepIdSchema = z.enum([
 export const OnboardingStepStatusSchema = z.enum(['pending', 'completed', 'skipped'])
 
 /**
- * The three execution profiles from `CONTEXT.md` that gate whether the
+ * The three execution profiles from `GLOSSARY.md` that gate whether the
  * wizard is required at all, and which copy it shows: `loopback` (`pnpm
  * dev`, no `VEDUTA_PUBLIC_DOMAIN`, mock provider) never requires onboarding
  * unless `VEDUTA_ONBOARDING=force` is set for verification; `vps`

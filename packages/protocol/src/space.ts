@@ -7,7 +7,7 @@ export const SpacePresentationSchema = z.enum(['auto', 'one-column', 'two-column
 export type SpacePresentation = z.infer<typeof SpacePresentationSchema>
 
 /**
- * A user-authored Space is a life-area namespace (CONTEXT.md): memory,
+ * A user-authored Space is a life-area namespace (GLOSSARY.md): memory,
  * Surfaces and Automations live under it. The canonical System Space is the
  * one Gateway-owned exception. User-authored Spaces are archived, never deleted.
  */

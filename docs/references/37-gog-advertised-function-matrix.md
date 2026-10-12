@@ -31,7 +31,7 @@ This note extends the existing [compatibility research](26-external-skills-plugi
 [candidate evidence](28-extension-candidate-evidence.md),
 [Atom conformance matrix](29-atom-conformance-matrix.md), and
 [published-package proof](30-published-extension-live-proof.md). It follows
-[CONTEXT.md](../../CONTEXT.md), [ARCHITECTURE.md](../../ARCHITECTURE.md),
+[GLOSSARY.md](../../GLOSSARY.md), [ARCHITECTURE.md](../../ARCHITECTURE.md),
 [ADR-0024](../adr/0024-pull-based-personal-mailbox.md),
 [ADR-0026](../adr/0026-skills-may-drive-general-tool-execution.md),
 [ADR-0032](../adr/0032-reviewed-extension-hub.md),

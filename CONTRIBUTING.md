@@ -1,36 +1,34 @@
 # Contributing to Veduta
 
-## How to contribute
+Start with the [README](README.md) and [glossary](GLOSSARY.md). Consult the
+[architecture](ARCHITECTURE.md), [product scope](PRD.md) and relevant [ADRs](docs/adr/)
+for the part you are changing. [GitHub Issues](https://github.com/Ic3b3rg/veduta/issues)
+hold work specifications and acceptance criteria; coordinate on an existing issue before
+starting overlapping work. Architectural proposals explain the trade-off in an ADR.
 
-1. **Read the design** — start with [README.md](README.md), then [ARCHITECTURE.md](ARCHITECTURE.md) and [PRD.md](PRD.md). The glossary in [CONTEXT.md](CONTEXT.md) defines the project's canonical terms: use them (and avoid the listed alternatives) in every discussion, issue, and line of code.
-2. **Challenge the design** — open a GitHub issue if you spot a flaw. Decisions are recorded in [docs/adr/](docs/adr/) with their rationale and the evidence in [docs/references/](docs/references/); challenge the reasoning, not just the conclusion.
-3. **Pick up an implementation issue** — [GitHub Issues](https://github.com/Ic3b3rg/veduta/issues) contain the dependency order and acceptance criteria. Comment on the issue before starting so work doesn't get duplicated.
+## Development
 
-## Development setup
-
-```bash
+```sh
 git clone https://github.com/Ic3b3rg/veduta && cd veduta
 pnpm install
-pnpm dev        # Gateway on loopback + PWA with hot reload
+pnpm dev
 ```
 
-- **Loopback profile**: plain HTTP on loopback, no authentication, domain, or ACME required. VPS-profile hardening must never be a prerequisite for local development.
-- **Mock LLM provider**: the daemon runs with a deterministic mock provider so you can develop and run tests without any API key. Real providers (BYOK) are opt-in via env.
-- **Seed data**: `pnpm dev` boots with an example Space and Surfaces so the Home is never empty on first run.
-- Run `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, and `pnpm build` before any PR.
+Use the Node and pnpm versions declared in `.node-version` and `package.json`.
+Development runs on loopback with a mock provider and example data; no production credentials
+or VPS are needed. For production-like authentication and onboarding, use [Local VPS](deploy/local-vps.md).
 
-## Ground rules
+## Before submitting
 
-UI contributions follow [the visual-language contract](docs/VISUAL-LANGUAGE.md). Review the
-deterministic `/showcase/reference` inventory at phone and desktop widths, including failure and
-reduced-motion states, before changing shared appearance.
-
-- **English only** in the repo: docs, code, comments, commit messages, issues.
-- **Respect the glossary** ([CONTEXT.md](CONTEXT.md)) and the **anti-requirements** ([ARCHITECTURE.md §7](ARCHITECTURE.md)): no agent hierarchies, no free-form generated HTML, no knowledge graphs, and no provider-native rich projections in messenger Bridges under the current architecture. Any future Bridge projection requires separate research and an accepted ADR first.
-- **One issue, one PR**, small and reviewable. Every PR states which acceptance criteria it satisfies.
-- Architectural changes require an ADR (see [docs/adr/](docs/adr/) for the format): state the trade-off, not just the choice.
-- Tests accompany code. For test data with partial objects, prefer `@total-typescript/shoehorn` over `as` casts.
+- Follow the shared [project rules](AGENTS.md): vocabulary, architecture boundaries, English
+  repository content, code conventions and verification. Keep one issue per focused PR and
+  state which acceptance criteria it satisfies.
+- Run `pnpm check`. Behavior changes also need runtime evidence for the requested scenario and
+  relevant error/reconnect paths; document any remaining limitation.
+- UI changes follow the [visual-language contract](docs/VISUAL-LANGUAGE.md). Use the real shared
+  components and inspect `/showcase/reference` at phone and desktop widths, including long,
+  failure and reduced-motion states. Agree substantial interaction changes through a prototype.
 
 ## License
 
-MIT. By contributing you agree your contributions are licensed under the same terms.
+MIT. Contributions are licensed under the project's [LICENSE](LICENSE).

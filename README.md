@@ -266,7 +266,7 @@ Claude subscription remains visible but unavailable until Anthropic publishes or
 third-party subscription contract; Anthropic BYOK remains supported. The
 [real-account smoke](docs/references/11-model-connections-manual-smoke.md) confirms ChatGPT
 authorization, model selection, inference, and Surface creation and patching without an API key.
-[Connection parity](CONTEXT.md) is enforced by one primary inference contract: every routable
+[Connection parity](GLOSSARY.md) is enforced by one primary inference contract: every routable
 adapter receives the same allowed tool definitions, while an adapter without that contract is
 unavailable. Deterministic BYOK/Codex fixtures cover Surface authoring, Space memory, Templates,
 Automations, Workers, and trust-wrapped actions.
@@ -298,17 +298,17 @@ Run `pnpm check` before submitting changes. Contribution conventions are in
 
 ## Documentation
 
-| Source                                   | Contents                                                              |
-| ---------------------------------------- | --------------------------------------------------------------------- |
-| [VPS deployment](deploy/README.md)       | Installer options, service operations, backups, recovery, and updates |
-| [Local VPS profile](deploy/local-vps.md) | Local passkeys, onboarding, configuration, and restart behavior       |
-| [RELEASING.md](RELEASING.md)             | Signed releases, verification, and key recovery                       |
-| [ARCHITECTURE.md](ARCHITECTURE.md)       | Architecture, diagrams, and key flows                                 |
-| [PRD.md](PRD.md)                         | Product requirements and scope                                        |
-| [CONTEXT.md](CONTEXT.md)                 | Domain glossary                                                       |
-| [Security](docs/SECURITY.md)             | Trust model and deployment boundaries                                 |
-| [Architectural decisions](docs/adr/)     | Decisions and their rationale                                         |
-| [Research](docs/references/)             | Evidence supporting product and technical decisions                   |
+| Source                                   | Contents                                                                |
+| ---------------------------------------- | ----------------------------------------------------------------------- |
+| [VPS deployment](deploy/README.md)       | Installer options, service operations, backups, recovery, and updates   |
+| [Local VPS profile](deploy/local-vps.md) | Local passkeys, onboarding, configuration, and restart behavior         |
+| [RELEASING.md](RELEASING.md)             | Signed releases, verification, and key recovery                         |
+| [ARCHITECTURE.md](ARCHITECTURE.md)       | Architecture, diagrams, and key flows                                   |
+| [PRD.md](PRD.md)                         | Product requirements and scope                                          |
+| [GLOSSARY.md](GLOSSARY.md)               | Domain glossary                                                         |
+| [Security](docs/SECURITY.md)             | Trust model and deployment boundaries                                   |
+| [Architectural decisions](docs/adr/)     | Decisions and their rationale                                           |
+| [Research](docs/references/)             | Dated evidence supporting decisions, not current operating instructions |
 
 ## Foundational decisions
 

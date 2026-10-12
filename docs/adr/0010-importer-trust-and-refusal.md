@@ -20,7 +20,7 @@ Recorded here because they are not derivable from the issue: each one exists bec
 ## Consequences
 
 - The `Imported` Space stays permanently tainted until the user promotes its facts elsewhere: any turn that reads it needs an approval card for outbound actions. Friction by design — it is the same rule that makes an injected email harmless.
-- The `Imported` Space stretches "a Space is a life area" (`CONTEXT.md`): it is a staging area, and its `INSTRUCTIONS.md` says so rather than pretending otherwise.
+- The `Imported` Space stretches "a Space is a life area" (`GLOSSARY.md`): it is a staging area, and its `INSTRUCTIONS.md` says so rather than pretending otherwise.
 - The Event log is append-only (ADR-0003), so `--overwrite` can replace `SOUL.md`/`USER.md` but never rewrites imported history: re-importing appends.
 - The daemon runs under `ProtectHome=yes` and can never read the admin's home, so the installer stages **only** memory and identity files into `<dataDir>/import-source/<kind>`. Secrets are never staged, which makes the wizard's import path secret-free by construction and keeps secret import on the standalone CLI.
 - The importer copies in and never modifies the source install, so a failed import is always recoverable by re-running it.

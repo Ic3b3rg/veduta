@@ -1,6 +1,6 @@
 # A Template is a Surface's composition without its data, and a pin turns tree patches into proposals
 
-A **Template** (`CONTEXT.md`) is what a Surface's Atom tree becomes once it has stopped changing: the
+A **Template** (`GLOSSARY.md`) is what a Surface's Atom tree becomes once it has stopped changing: the
 composition and the _names_ of the state keys it binds — never the data, and never a stored structural
 signature either: that signature is derived from the tree on every read (`treeSignature`), so an
 imported bundle can never advertise a shape its own tree does not have. The
