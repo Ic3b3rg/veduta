@@ -16,7 +16,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import { writeFileAtomicDurable } from './atomic-file.ts'
-import { openGcm, sealGcm } from './secret-crypto.ts'
+import { openGcmBytes, sealGcmBytes } from './secret-crypto.ts'
 
 /**
  * Encrypted backups (issue #15, docs/SECURITY.md): a point-in-time,
@@ -46,7 +46,7 @@ import { openGcm, sealGcm } from './secret-crypto.ts'
  * FRAMING: `<outDir>/veduta-backup-<ISO>.tar.enc` is a UTF-8 JSON header
  * line `{v, salt, iv, tag}` (base64 fields) followed by `\n`, followed by
  * the raw AES-256-GCM ciphertext bytes of the tar archive. Encryption uses
- * the shared `sealGcm`/`openGcm` primitives (`secret-crypto.ts`) with the
+ * the shared `sealGcmBytes`/`openGcmBytes` primitives (`secret-crypto.ts`) with the
  * `backup:` label, so the key is domain-separated from the vault's even
  * under identical key material, and a tampered salt/iv/tag/ciphertext all
  * fail authentication. Only the on-disk envelope (a header line plus raw
@@ -70,10 +70,9 @@ interface BackupHeader {
 }
 
 function encryptArchive(plaintext: Buffer, keyMaterial: Buffer): Buffer {
-  const sealed = sealGcm({ label: BACKUP_LABEL, keyMaterial, plaintext })
+  const sealed = sealGcmBytes({ label: BACKUP_LABEL, keyMaterial, plaintext })
   const header: BackupHeader = { v: 1, salt: sealed.salt, iv: sealed.iv, tag: sealed.tag }
-  const ciphertext = Buffer.from(sealed.ct, 'base64')
-  return Buffer.concat([Buffer.from(`${JSON.stringify(header)}\n`, 'utf8'), ciphertext])
+  return Buffer.concat([Buffer.from(`${JSON.stringify(header)}\n`, 'utf8'), sealed.ct])
 }
 
 function decryptArchive(fileBuffer: Buffer, keyMaterial: Buffer): Buffer {
@@ -88,9 +87,9 @@ function decryptArchive(fileBuffer: Buffer, keyMaterial: Buffer): Buffer {
   if (header.v !== 1 || !header.salt || !header.iv || !header.tag) {
     throw new Error('backup file header is missing required fields')
   }
-  const ct = fileBuffer.subarray(newlineIndex + 1).toString('base64')
+  const ct = fileBuffer.subarray(newlineIndex + 1)
   try {
-    return openGcm({
+    return openGcmBytes({
       label: BACKUP_LABEL,
       keyMaterial,
       salt: header.salt,
