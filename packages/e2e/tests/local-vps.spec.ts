@@ -783,6 +783,13 @@ test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login
       await page.getByRole('button', { name: 'Send message' }).click()
       await page.goto(`${stack!.origin}/app/connections?section=automations&space=spc-health`)
       await expect(page.getByRole('heading', { name: 'Review my plan', exact: true })).toBeVisible()
+      // This journey delivers controlled outcomes while the daemon is stopped. Pause the
+      // clock-driven occurrence so crossing 09:00 UTC cannot replace those fixture outcomes.
+      const automation = page.locator('article.space-automation-setting', {
+        hasText: 'Review my plan',
+      })
+      await automation.getByRole('button', { name: 'Disable', exact: true }).click()
+      await expect(automation.getByRole('button', { name: 'Enable', exact: true })).toBeVisible()
       await page.goto(`${stack!.origin}/app/space/health`)
     })
 
@@ -1055,6 +1062,11 @@ async function deliverAutomationOutcomeFixture(baseDir: string): Promise<void> {
        order by id desc limit 1`,
     )
     .get('spc-health', 'Review my plan')
+  // Leave the paused job due on restart: the outcome assertions must stay valid even
+  // when the wall clock passes the real schedule while the daemon is stopped.
+  schedulerDb
+    .prepare('update automations set next_run_at = ? where id = ?')
+    .run(new Date().toISOString(), row?.['id'] ?? null)
   schedulerDb.close()
   const automationId = row?.['id']
   if (typeof automationId !== 'number') throw new Error('missing outcome fixture Automation')
