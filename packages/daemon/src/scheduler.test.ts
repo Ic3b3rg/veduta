@@ -1,5 +1,5 @@
 import { fastInvocation } from './surface-action-test-fixtures.ts'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -74,6 +74,8 @@ function deferred<T>() {
 
 afterEach(() => {
   for (const scheduler of schedulers) scheduler.stop()
+  store.close()
+  rmSync(rootDir, { recursive: true, force: true })
 })
 
 describe('Automations Surface projection', () => {
@@ -376,6 +378,118 @@ describe('acceptance: "remind me to log my weight by 9pm"', () => {
 })
 
 describe('acceptance: disabled automations', () => {
+  it('sleeps past stale paused ticks and rearms promptly when resumed', () => {
+    vi.useFakeTimers()
+    const timeout = vi.spyOn(globalThis, 'setTimeout')
+    try {
+      const scheduler = createScheduler()
+      const job = scheduler.createJob({
+        spaceId: HEALTH,
+        cron: '* * * * *',
+        briefing: 'Review',
+      })
+      scheduler.setEnabled(HEALTH, job.id, false, 'tool')
+      clock = new Date('2026-07-08T13:15:00.000Z')
+      scheduler.start()
+      expect(timeout).toHaveBeenLastCalledWith(expect.any(Function), 15 * 60_000)
+      scheduler.setEnabled(HEALTH, job.id, true, 'tool')
+      expect(timeout).toHaveBeenLastCalledWith(expect.any(Function), 60_000)
+      scheduler.setEnabled(HEALTH, job.id, false, 'tool')
+      expect(timeout).toHaveBeenLastCalledWith(expect.any(Function), 15 * 60_000)
+      scheduler.stop()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      timeout.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['tool', 'surface', 'settings'] as const)(
+    'resumes at the next future zoned occurrence through %s and survives restart',
+    async (source) => {
+      const scheduler = createScheduler()
+      clock = new Date('2026-10-24T00:00:00.000Z')
+      const job = scheduler.createManagedJob({
+        spaceId: HEALTH,
+        cron: '0 4 * * *',
+        timezone: 'Europe/Rome',
+        description: 'Daily review',
+        handler: 'review',
+      })
+      const toggle = (enabled: boolean) => {
+        if (source === 'settings') {
+          const current = scheduler.listAutomations(HEALTH)[0]!
+          scheduler.updateAutomation(HEALTH, job.id, {
+            expectedRevision: scheduler.automationSettingsRevision(current),
+            enabled,
+          })
+        } else if (source === 'surface') {
+          store.invokeSurfaceAction(
+            SURFACE,
+            fastInvocation(store, SURFACE, `automation-${job.id}`, 'toggle', { value: enabled }),
+          )
+        } else scheduler.setEnabled(HEALTH, job.id, enabled, 'tool')
+      }
+      toggle(false)
+      clock = new Date('2026-10-25T03:00:00.000Z')
+      toggle(true)
+      expect(scheduler.listAutomations(HEALTH)[0]?.nextRunAt).toBe('2026-10-26T03:00:00.000Z')
+      expect(store.getSurface(SURFACE)?.tree.children?.[1]?.children?.[0]).toHaveProperty(
+        'props.scheduleDetails.nextRunAt',
+        '2026-10-26T03:00:00.000Z',
+      )
+      await scheduler.runDue()
+      expect(scheduler.listAutomations(HEALTH)[0]?.lastRunAt).toBeUndefined()
+      scheduler.stop()
+
+      const restarted = createScheduler()
+      restarted.registerHandler('review', () => handlerChanged('Daily review completed'))
+      clock = new Date('2026-10-26T03:00:00.000Z')
+      await restarted.runDue()
+      await restarted.runDue()
+      expect(restarted.automationHistory(HEALTH, job.id)).toHaveLength(1)
+      expect(restarted.listAutomations(HEALTH)[0]).toMatchObject({
+        nextRunAt: '2026-10-27T03:00:00.000Z',
+        lastRunAt: '2026-10-26T03:00:00.000Z',
+        lastOutcome: 'changed',
+      })
+    },
+  )
+
+  it('keeps a paused recurring Automation quiet across missed ticks and restart', async () => {
+    const scheduler = createScheduler()
+    const job = scheduler.createJob(
+      { spaceId: HEALTH, cron: '* * * * *', briefing: 'Paused review' },
+      'untrusted:external',
+    )
+    scheduler.setEnabled(HEALTH, job.id, false, 'tool')
+    const paused = scheduler.listAutomations(HEALTH)[0]
+    const events = store.eventLog(HEALTH)
+    const cursor = store.latestSurfaceCursor()
+
+    for (let minute = 1; minute <= 5; minute++) {
+      clock = new Date(`2026-07-08T13:0${minute}:00.000Z`)
+      await scheduler.runDue()
+    }
+    expect(scheduler.listAutomations(HEALTH)[0]).toEqual(paused)
+    expect(store.eventLog(HEALTH)).toEqual(events)
+    expect(store.latestSurfaceCursor()).toBe(cursor)
+    expect(escalations).toEqual([])
+    expect(store.getSurface(SURFACE)?.state[`job-${job.id}`]).toBe(false)
+    expect(paused).toMatchObject({ cron: '* * * * *', origin: 'untrusted:external' })
+
+    scheduler.stop()
+    const restarted = createScheduler()
+    const restartCursor = store.latestSurfaceCursor()
+    const restartEvents = store.eventLog(HEALTH)
+    clock = new Date('2026-07-10T13:15:00.000Z')
+    await restarted.runDue()
+    expect(restarted.listAutomations(HEALTH)[0]).toEqual(paused)
+    expect(store.eventLog(HEALTH)).toEqual(restartEvents)
+    expect(store.latestSurfaceCursor()).toBe(restartCursor)
+    expect(restarted.automationHistory(HEALTH, job.id)).toEqual([])
+  })
+
   it('does not run a due automation that the user switched off, and keeps it visible as off', async () => {
     const scheduler = createScheduler()
     const timer = scheduler.armTimer({

@@ -474,9 +474,13 @@ export class Scheduler {
       [automation.origin, origin],
       source === 'surface' ? 'trusted:user' : (origin ?? 'trusted:system'),
     )
+    const nextRunAt =
+      enabled && automation.kind === 'job' && automation.cron
+        ? nextCronOccurrence(automation.cron, this.now(), automation.timezone).toISOString()
+        : automation.nextRunAt
     this.db
-      .prepare('update automations set enabled = ? where id = ?')
-      .run(enabled ? 1 : 0, automationId)
+      .prepare('update automations set enabled = ?, next_run_at = ? where id = ?')
+      .run(enabled ? 1 : 0, nextRunAt ?? null, automationId)
     this.appendEvent(
       automation.spaceId,
       'automation.toggle',
@@ -486,9 +490,11 @@ export class Scheduler {
       // caller's — a tainted description never re-enters context as trusted.
       mutationOrigin,
     )
-    // A Surface-originated toggle already mutated the Surface state on the
-    // fast path; re-projecting would only duplicate events.
-    if (source === 'tool') this.refreshSurface(automation.spaceId, mutationOrigin)
+    // The fast path already projected the toggle value, but resuming a job
+    // also changes its displayed next occurrence.
+    if (source === 'tool' || nextRunAt !== automation.nextRunAt)
+      this.refreshSurface(automation.spaceId, mutationOrigin)
+    this.schedule()
     return this.requireAutomation(automationId)
   }
 
@@ -561,8 +567,9 @@ export class Scheduler {
     const fireAt =
       change.fireAt === undefined ? current.fireAt : new Date(change.fireAt).toISOString()
     let nextRunAt = current.nextRunAt
-    if (change.cron !== undefined)
-      nextRunAt = nextCronOccurrence(change.cron, this.now(), current.timezone).toISOString()
+    const resuming = current.kind === 'job' && !current.enabled && change.enabled === true
+    if ((change.cron !== undefined || resuming) && cron !== undefined)
+      nextRunAt = nextCronOccurrence(cron, this.now(), current.timezone).toISOString()
     if (change.fireAt !== undefined) {
       if (!fireAt || fireAt <= this.nowIso()) throw new Error('Choose a future time for the timer')
       nextRunAt = fireAt
@@ -590,7 +597,8 @@ export class Scheduler {
           ...(cron === undefined ? {} : { cron }),
           ...(fireAt === undefined ? {} : { fireAt }),
         }),
-        ...((change.cron !== undefined || change.fireAt !== undefined) && nextRunAt !== undefined
+        ...((change.cron !== undefined || change.fireAt !== undefined || resuming) &&
+        nextRunAt !== undefined
           ? { nextRunAt }
           : {}),
       },
@@ -618,6 +626,7 @@ export class Scheduler {
         .prepare(
           `select * from automations
            where status = 'armed' and next_run_at <= ?
+             and (kind = 'timer' or enabled = 1)
              and (
                not exists (
                  select 1 from automation_runs
@@ -726,7 +735,13 @@ export class Scheduler {
     this.store.spacesEngine.reconcileSettings(candidate.spaceId)
     const automation = this.requireAutomation(candidate.id)
     const scheduledFor = automation.nextRunAt
-    if (automation.status !== 'armed' || !scheduledFor || scheduledFor > this.nowIso()) return
+    if (
+      automation.status !== 'armed' ||
+      !scheduledFor ||
+      scheduledFor > this.nowIso() ||
+      (automation.kind === 'job' && !automation.enabled)
+    )
+      return
     const space = this.store.getSpace(automation.spaceId)
     if (!space) throw new Error(`unknown Space: ${automation.spaceId}`)
     const fallbackSurfaceId = automationsSurfaceIdForSpace(space)
@@ -1226,6 +1241,7 @@ export class Scheduler {
            select automations.next_run_at as next
            from automations
            where automations.status = 'armed'
+             and (automations.kind = 'timer' or automations.enabled = 1)
              and not exists (
                select 1 from automation_runs
                where automation_runs.automation_id = automations.id
@@ -1237,6 +1253,7 @@ export class Scheduler {
            from automation_runs
            join automations on automations.id = automation_runs.automation_id
            where automations.status = 'armed'
+             and (automations.kind = 'timer' or automations.enabled = 1)
              and automation_runs.scheduled_for = automations.next_run_at
              and automation_runs.finished_at is null
              and automation_runs.retry_at is not null
