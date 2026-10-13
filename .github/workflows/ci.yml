@@ -67,8 +67,13 @@ jobs:
         run: pnpm -r --no-sort --workspace-concurrency=2 --filter '!@veduta/daemon' run test
 
   e2e:
+    name: e2e (${{ matrix.shard }}/2)
     needs: quality
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -82,14 +87,15 @@ jobs:
           name: web-build
           path: packages
       - run: pnpm --filter @veduta/e2e exec playwright install --with-deps chromium
-      - run: pnpm --filter @veduta/e2e run test:e2e
+      - run: pnpm --filter @veduta/e2e exec playwright test --shard=${{ matrix.shard }}/2
         env:
           VEDUTA_E2E_PREBUILT_PWA: '1'
-      - run: pnpm --filter @veduta/e2e exec playwright test --config demo/playwright.config.ts
+      - if: matrix.shard == 1
+        run: pnpm --filter @veduta/e2e exec playwright test --config demo/playwright.config.ts
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: e2e-failures
+          name: e2e-failures-${{ matrix.shard }}
           path: packages/e2e/test-results
           retention-days: 3
 

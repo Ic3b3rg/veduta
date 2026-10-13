@@ -43,7 +43,7 @@ machine, pass `--workers=1`. After building the current checkout explicitly, set
 CI runs the package tests alongside lint, formatting and `pnpm build`. The build typechecks
 every package once, then bundles the PWA and website. Packages that produce artifacts expose
 a `bundle` script; each package's `build` also typechecks. Browser tests download that exact
-run's assets and exercise the authenticated journeys and public demo. The existing `checks`
+run's assets across two shards and exercise the authenticated journeys and public demo. The existing `checks`
 status succeeds only when all three jobs succeed; failed, cancelled or skipped jobs block it.
 Superseded PR runs are cancelled, and browser failures retain their traces as a CI artifact.
 
