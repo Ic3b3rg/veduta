@@ -2,9 +2,13 @@ import { openChat } from './chat-journey.ts'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { ChatTimeline } from '../../daemon/src/chat-timeline.ts'
-import { pendingDecisionFeedback, type PendingDecision } from '../../protocol/src/index.ts'
+import {
+  GatewayServerMessageSchema,
+  pendingDecisionFeedback,
+  type PendingDecision,
+} from '../../protocol/src/index.ts'
 import { expect, test } from './surface-contracts-fixture.ts'
-import { ActionWire } from './fast-actions-journey.ts'
+import { ActionWire, signal } from './fast-actions-journey.ts'
 
 test.use({ viewport: { width: 320, height: 380 }, isMobile: true, hasTouch: true })
 
@@ -106,16 +110,24 @@ test('long shell errors are readable and dismissible, and a later error still ap
   surfaceStack,
 }) => {
   expect(surfaceStack.origin).toBeTruthy()
-  const failure = `Pin is temporarily unavailable. ${'Keep this explanation readable. '.repeat(10)}`
-  await page.route('**/api/surfaces/*/pin', (route) =>
-    route.fulfill({ status: 503, json: { error: failure } }),
-  )
+  const failure = `The Gateway is temporarily unavailable. ${'Keep this explanation readable. '.repeat(10)}`
+  const gateway = signal<(error: string) => void>()
+  await page.routeWebSocket('**/ws/gateway', (socket) => {
+    const server = socket.connectToServer()
+    server.onMessage((message) => socket.send(message))
+    gateway.resolve((error) =>
+      socket.send(JSON.stringify(GatewayServerMessageSchema.parse({ type: 'error', error }))),
+    )
+  })
+  await page.reload()
+  await expect(page.locator('.app-shell')).toHaveAttribute('data-gateway-online', 'true')
+  const reportGatewayError = await gateway.promise
   const main = page.getByRole('main')
   const pin = main.getByRole('button', { name: /^Pin / }).last()
   await pin.scrollIntoViewIfNeeded()
   await expect.poll(() => main.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
   await pin.focus()
-  await pin.click()
+  reportGatewayError(failure)
   const error = page.locator('.shell-notice.error')
   await expect(error).toContainText(failure)
   await expect(pin).toBeFocused()
@@ -134,7 +146,7 @@ test('long shell errors are readable and dismissible, and a later error still ap
   expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.width + 1)
   await close.click()
   await expect(error).toHaveCount(0)
-  await pin.click()
+  reportGatewayError(failure)
   await expect(error).toContainText(failure)
 })
 

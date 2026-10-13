@@ -24,12 +24,13 @@ for (const width of [320, 1440]) {
           .evaluateAll((buttons) => buttons.map((b) => b.getAttribute('aria-label')))
       const before = await titles()
       const releaseFailure = signal<void>()
+      const failure = `Pin rejected by the Gateway. ${'Keep this explanation readable. '.repeat(10)}`
       let pinRequests = 0
       await page.route('**/api/surfaces/*/pin', async (route) => {
         pinRequests += 1
         if (pinRequests === 1) {
           await releaseFailure.promise
-          await route.fulfill({ status: 409, json: { error: 'Pin rejected by the Gateway' } })
+          await route.fulfill({ status: 409, json: { error: failure } })
         } else await route.continue()
       })
       await pin.click()
@@ -45,6 +46,15 @@ for (const width of [320, 1440]) {
       await expect(pin).toHaveAttribute('aria-pressed', 'false')
       releaseFailure.resolve()
       await expect(card.getByRole('alert')).toContainText('Pin "Weight goal" failed')
+      await expect(card.getByRole('alert')).toContainText(failure)
+      const errorGeometry = await card.getByRole('alert').evaluate((element) => ({
+        height: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        width: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+      }))
+      expect(errorGeometry.scrollHeight).toBeLessThanOrEqual(errorGeometry.height + 1)
+      expect(errorGeometry.scrollWidth).toBeLessThanOrEqual(errorGeometry.width + 1)
       await expect(pin).toBeEnabled()
       expect(await titles()).toEqual(before)
 
