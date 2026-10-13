@@ -252,6 +252,125 @@ describe('Surface ordering commands', () => {
     expect(runtime.getSnapshot().surfaceOrderStatuses[first.id]).toBeUndefined()
   })
 
+  it.each([0, 5])(
+    'reconciles accepted receipts only within their Gateway history (hello %s)',
+    async (cursor) => {
+      vi.useFakeTimers()
+      const { runtime, first, second, fetchSpaces, moveSurface, connections } = await setup()
+      const third = { ...second, id: 'srf-third', title: 'Third' }
+      const initial: SurfaceSnapshot = {
+        surfaceCursor: 5,
+        spaces: [{ ...runtime.getSnapshot().spaces[0]!, surfaces: [first, second, third] }],
+      }
+      fetchSpaces.mockResolvedValue(initial)
+      await runtime.refreshSpaces()
+      const oldRefresh = deferred<SurfaceSnapshot>()
+      fetchSpaces.mockReturnValueOnce(oldRefresh.promise)
+      moveSurface.mockResolvedValue({
+        changed: true,
+        order: { ...order(true, 7), regularSurfaceIds: [third.id, second.id] },
+      })
+      await runtime.moveSurface(third.spaceId, third.id, 'up')
+      expect(runtime.getSnapshot().surfaceOrderStatuses[third.id]?.state).toBe('pending')
+      connections[0]!.onClose()
+      await vi.advanceTimersByTimeAsync(1000)
+      const restored: SurfaceSnapshot = {
+        surfaceCursor: cursor,
+        spaces: [{ ...initial.spaces[0]!, surfaces: [{ ...first, pinned: true }, second, third] }],
+      }
+      fetchSpaces.mockResolvedValue(restored)
+      connections[1]!.onHello(cursor, 'client-restored')
+      oldRefresh.resolve(restored)
+      await runtime.refreshSpaces()
+      expect(runtime.getSnapshot().spaces[0]?.surfaces.map((surface) => surface.id)).toEqual(
+        cursor === 0 ? [first.id, second.id, third.id] : [first.id, third.id, second.id],
+      )
+      expect(runtime.getSnapshot().surfaceOrderStatuses[third.id]?.state).toBe(
+        cursor === 0 ? 'failed' : undefined,
+      )
+      expect(moveSurface).toHaveBeenCalledOnce()
+    },
+  )
+
+  it('keeps an in-flight command authoritative across a same-history reconnect', async () => {
+    vi.useFakeTimers()
+    const { runtime, first, second, fetchSpaces, pinSurface, connections } = await setup()
+    fetchSpaces.mockResolvedValue({
+      surfaceCursor: 5,
+      spaces: [{ ...runtime.getSnapshot().spaces[0]!, surfaces: [first, second] }],
+    })
+    await runtime.refreshSpaces()
+    const response = deferred<Awaited<ReturnType<typeof api.pinSurface>>>()
+    pinSurface.mockReturnValue(response.promise)
+    const work = runtime.togglePin(first)
+    connections[0]!.onClose()
+    await vi.advanceTimersByTimeAsync(1000)
+    connections[1]!.onHello(5, 'client-reconnected')
+    await runtime.refreshSpaces()
+    await runtime.togglePin(first)
+    expect(pinSurface).toHaveBeenCalledOnce()
+    expect(runtime.getSnapshot().surfaceOrderStatuses[first.id]?.state).toBe('pending')
+    response.resolve({ changed: true, surface: { ...first, pinned: true }, order: order(true, 6) })
+    await work
+    expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.pinned).toBe(true)
+    expect(runtime.getSnapshot().surfaceOrderStatuses[first.id]).toBeUndefined()
+  })
+
+  it.each(['success', 'failure', 'unauthorized'] as const)(
+    'ignores old HTTP %s after rebase while an explicit retry is pending',
+    async (outcome) => {
+      vi.useFakeTimers()
+      const { runtime, first, second, fetchSpaces, pinSurface, connections } = await setup()
+      const initial: SurfaceSnapshot = {
+        surfaceCursor: 5,
+        spaces: [{ ...runtime.getSnapshot().spaces[0]!, surfaces: [first, second] }],
+      }
+      fetchSpaces.mockResolvedValue(initial)
+      await runtime.refreshSpaces()
+      const oldResponse = deferred<Awaited<ReturnType<typeof api.pinSurface>>>()
+      const newResponse = deferred<Awaited<ReturnType<typeof api.pinSurface>>>()
+      pinSurface.mockReturnValueOnce(oldResponse.promise).mockReturnValueOnce(newResponse.promise)
+      const oldWork = runtime.togglePin(first)
+      connections[0]!.onClose()
+      await vi.advanceTimersByTimeAsync(1000)
+      fetchSpaces.mockResolvedValue({ ...initial, surfaceCursor: 0 })
+      connections[1]!.onHello(0, 'client-restored')
+      await runtime.refreshSpaces()
+      expect(runtime.getSnapshot().surfaceOrderStatuses[first.id]).toMatchObject({
+        state: 'failed',
+        message: expect.stringContaining('First'),
+      })
+      const newWork = runtime.togglePin(first)
+      expect(pinSurface).toHaveBeenCalledTimes(2)
+      const pending = runtime.getSnapshot().surfaceOrderStatuses[first.id]
+      if (outcome === 'success') {
+        oldResponse.resolve({
+          changed: true,
+          surface: { ...first, pinned: true },
+          order: order(true, 7),
+        })
+      } else {
+        oldResponse.reject(
+          outcome === 'unauthorized'
+            ? new api.ApiResponseError('expired', 401)
+            : new Error('old failure'),
+        )
+      }
+      await oldWork
+      expect(runtime.getSnapshot().surfaceOrderStatuses[first.id]).toEqual(pending)
+      expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.pinned).toBe(false)
+      expect(runtime.getSnapshot().gatewayOnline).toBe(true)
+      newResponse.resolve({
+        changed: true,
+        surface: { ...first, pinned: true },
+        order: order(true),
+      })
+      await newWork
+      expect(runtime.getSnapshot().spaces[0]?.surfaces[0]?.pinned).toBe(true)
+      expect(runtime.getSnapshot().surfaceOrderStatuses[first.id]).toBeUndefined()
+    },
+  )
+
   it('keeps an accepted Pin pending until a missing prerequisite is reconciled', async () => {
     const { runtime, first, second, pinSurface, fetchSpaces } = await setup()
     const before = runtime.getSnapshot().spaces

@@ -171,6 +171,7 @@ export class PwaLiveStateRuntime {
   private refetchRequested = false
   private eventBuffer: SurfaceStreamEvent[] = []
   private surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback> = {}
+  private surfaceOrderGeneration = 0
   private readonly surfaceOrderStatuses = new Map<string, SurfaceOrderStatus>()
   // Accepted receipts only; these are never persisted or retried as commands.
   private readonly surfaceOrderConfirmations = new Map<string, SurfaceOrderConfirmation>()
@@ -565,6 +566,7 @@ export class PwaLiveStateRuntime {
           this.refetchGeneration += 1
           this.refetch = undefined
           this.eventBuffer = []
+          this.rebaseSurfaceOrders()
           this.surfaces.rebase()
         }
         this.clientId = frame.clientId
@@ -983,6 +985,7 @@ export class PwaLiveStateRuntime {
     )
       return
     const epoch = this.epoch
+    const generation = this.surfaceOrderGeneration
     const setStatus = (value: SurfaceOrderStatus) => {
       this.surfaceOrderStatuses.set(surfaceId, value)
       this.publish()
@@ -999,7 +1002,7 @@ export class PwaLiveStateRuntime {
     try {
       result = await command()
     } catch (error) {
-      if (!this.active(epoch)) return
+      if (!this.active(epoch) || generation !== this.surfaceOrderGeneration) return
       if (error instanceof defaultApi.ApiResponseError && error.status === 401) {
         this.failed(error)
         return
@@ -1010,7 +1013,7 @@ export class PwaLiveStateRuntime {
       })
       return
     }
-    if (!this.active(epoch)) return
+    if (!this.active(epoch) || generation !== this.surfaceOrderGeneration) return
     this.surfaceOrderConfirmations.set(surfaceId, result)
     this.surfaceOrderStatuses.set(surfaceId, {
       state: 'pending',
@@ -1020,6 +1023,19 @@ export class PwaLiveStateRuntime {
     this.saveSurfaces()
     this.publish()
     if (this.surfaceOrderConfirmations.has(surfaceId)) void this.refreshSpaces()
+  }
+
+  private rebaseSurfaceOrders(): void {
+    this.surfaceOrderGeneration += 1
+    this.surfaceOrderConfirmations.clear()
+    for (const [surfaceId, status] of this.surfaceOrderStatuses) {
+      if (status.state !== 'pending') continue
+      const title = this.findSurface(surfaceId)?.title ?? surfaceId
+      this.surfaceOrderStatuses.set(surfaceId, {
+        state: 'failed',
+        message: `The order change for "${title}" could not be confirmed after Gateway history changed. Review the current order before retrying.`,
+      })
+    }
   }
 
   private reconcileSurfaceOrders(): void {
