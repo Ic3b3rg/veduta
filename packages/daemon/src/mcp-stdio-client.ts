@@ -344,18 +344,36 @@ export class McpStdioClient {
     this.proxy = undefined
     this.failAll(new McpClientError('cancelled', 'MCP session stopped'))
     await closingProxy
-    if (!child || child.exitCode !== null) return
-    child.stdin.end()
-    await Promise.race([
-      new Promise<void>((resolve) => child.once('exit', () => resolve())),
-      new Promise<void>((resolve) => setTimeout(resolve, 500)),
-    ])
-    if (child.exitCode === null) child.kill('SIGTERM')
-    await Promise.race([
-      new Promise<void>((resolve) => child.once('exit', () => resolve())),
-      new Promise<void>((resolve) => setTimeout(resolve, 500)),
-    ])
-    if (child.exitCode === null) child.kill('SIGKILL')
+    if (!child || child.exitCode !== null || child.signalCode !== null) return
+    const hasExited = () => child.exitCode !== null || child.signalCode !== null
+    let resolveExit!: () => void
+    const exited = new Promise<void>((resolve) => {
+      resolveExit = resolve
+    })
+    child.once('exit', resolveExit)
+    const waitForExit = async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          exited,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, 500)
+          }),
+        ])
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    try {
+      child.stdin.end()
+      await waitForExit()
+      if (hasExited()) return
+      child.kill('SIGTERM')
+      await waitForExit()
+      if (!hasExited()) child.kill('SIGKILL')
+    } finally {
+      child.off('exit', resolveExit)
+    }
   }
 
   private request(

@@ -1,7 +1,10 @@
+import { ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { once } from 'node:events'
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { setImmediate } from 'node:timers/promises'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GithubMcpEgressProxy } from './github-mcp-egress.ts'
 import { McpStdioClient } from './mcp-stdio-client.ts'
@@ -12,7 +15,12 @@ afterEach(() => {
 })
 
 function fakeServer(
-  options: { changedSchema?: boolean; hangCall?: boolean; write?: boolean } = {},
+  options: {
+    changedSchema?: boolean
+    hangCall?: boolean
+    write?: boolean
+    shutdown?: 'sigterm' | 'sigkill'
+  } = {},
 ): {
   root: string
   executable: string
@@ -34,6 +42,8 @@ function fakeServer(
   if (options.changedSchema) schema.properties.perPage.maximum = 500
   const script = `#!${process.execPath}
 const schema = ${JSON.stringify(schema)};
+${options.shutdown ? 'setInterval(() => {}, 1000);' : ''}
+${options.shutdown === 'sigkill' ? "process.on('SIGTERM', () => {});" : ''}
 if (${options.write ? 'true' : 'false'} && (!process.argv.includes('--tools=issue_write') || process.argv.includes('--read-only'))) process.exit(2);
 let buffer = '';
 process.stdin.setEncoding('utf8');
@@ -61,7 +71,104 @@ process.stdin.on('data', (chunk) => {
   return { root, executable }
 }
 
+async function startClient(client: McpStdioClient): Promise<ChildProcess> {
+  const children: ChildProcess[] = []
+  const emit = ChildProcess.prototype.emit
+  const observer = vi.spyOn(ChildProcess.prototype, 'emit').mockImplementation(function (
+    this: ChildProcess,
+    event: string | symbol,
+    ...args: unknown[]
+  ) {
+    if (event === 'spawn') children.push(this)
+    return emit.call(this, event, ...args)
+  })
+  try {
+    await client.start()
+    const child = children[0]
+    if (!child) throw new Error('MCP child did not spawn')
+    return child
+  } finally {
+    observer.mockRestore()
+  }
+}
+
 describe('reviewed GitHub MCP stdio client', () => {
+  it('finishes graceful shutdown on actual child exit without advancing the grace clock', async () => {
+    const { root, executable } = fakeServer()
+    const client = new McpStdioClient({ executable, cwd: root, token: 'test-token' })
+    const child = await startClient(client)
+    const exitListeners = child.listenerCount('exit')
+    const exited = once(child, 'exit')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const kill = vi.spyOn(child, 'kill')
+    let stopped = false
+    const stopping = client.stop().then(() => {
+      stopped = true
+    })
+    try {
+      await exited
+      await setImmediate()
+      expect(child.exitCode).toBe(0)
+      expect(stopped).toBe(true)
+      expect(kill).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+      expect(child.listenerCount('exit')).toBe(exitListeners)
+    } finally {
+      await vi.runAllTimersAsync()
+      vi.useRealTimers()
+      await stopping
+      kill.mockRestore()
+    }
+  })
+
+  it.each(['SIGTERM', 'SIGKILL'] as const)(
+    'retains live-child grace periods when shutdown requires %s',
+    async (signal) => {
+      const { root, executable } = fakeServer({
+        shutdown: signal === 'SIGTERM' ? 'sigterm' : 'sigkill',
+      })
+      const client = new McpStdioClient({ executable, cwd: root, token: 'test-token' })
+      const child = await startClient(client)
+      const exitListeners = child.listenerCount('exit')
+      const exited = once(child, 'exit')
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      const kill = vi.spyOn(child, 'kill')
+      let stopped = false
+      const stopping = client.stop().then(() => {
+        stopped = true
+      })
+      try {
+        await setImmediate()
+        await vi.advanceTimersByTimeAsync(499)
+        expect(kill).not.toHaveBeenCalled()
+        expect(stopped).toBe(false)
+        await vi.advanceTimersByTimeAsync(1)
+        if (signal === 'SIGKILL') {
+          expect(kill.mock.calls).toEqual([['SIGTERM']])
+          await vi.advanceTimersByTimeAsync(499)
+          expect(kill.mock.calls).toEqual([['SIGTERM']])
+          expect(stopped).toBe(false)
+          await vi.advanceTimersByTimeAsync(1)
+        }
+        await exited
+        await setImmediate()
+        expect(child.signalCode).toBe(signal)
+        expect(stopped).toBe(true)
+        expect(kill.mock.calls).toEqual(
+          signal === 'SIGTERM' ? [['SIGTERM']] : [['SIGTERM'], ['SIGKILL']],
+        )
+        expect(vi.getTimerCount()).toBe(0)
+        expect(child.listenerCount('exit')).toBe(exitListeners)
+      } finally {
+        await vi.runAllTimersAsync()
+        vi.useRealTimers()
+        await stopping
+        await exited
+        kill.mockRestore()
+      }
+    },
+  )
+
   it('closes authenticated network access immediately when stopping the child', async () => {
     const { root, executable } = fakeServer()
     const start = GithubMcpEgressProxy.start
