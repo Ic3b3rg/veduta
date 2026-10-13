@@ -82,7 +82,7 @@ describe('createFocusedAutomationTools', () => {
     }
 
     expect(Object.keys(parameters.properties).sort()).toEqual(
-      ['cron', 'briefing', 'condition'].sort(),
+      ['cron', 'briefing', 'condition', 'notification'].sort(),
     )
 
     const input = createJob.schema.parse({
@@ -150,6 +150,26 @@ describe('createFocusedAutomationTools', () => {
         nextRunAt: '2026-08-25T09:00:00.000Z',
       },
     ])
+  })
+
+  it('lists the explicit recurring notification operation, including a default empty body', async () => {
+    const { scheduler, spaceId, tools } = harness()
+    const createJob = toolNamed(tools, 'create_job')
+    await createJob.handler(
+      createJob.schema.parse({
+        cron: '*/5 * * * *',
+        briefing: 'Notify me every five minutes',
+        notification: {},
+      }),
+      trustedContext,
+    )
+
+    const list = toolNamed(tools, 'list_automations')
+    const result = await list.handler(list.schema.parse({}), trustedContext)
+    expect(JSON.parse(result.content)).toEqual([
+      expect.objectContaining({ notification: { body: '' } }),
+    ])
+    expect(scheduler.listAutomations(spaceId)[0]?.notification).toEqual({ body: '' })
   })
 
   it('reports and delimits stored Untrusted origins revealed by the inventory', async () => {

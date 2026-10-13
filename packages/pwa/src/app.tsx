@@ -17,7 +17,6 @@ import {
   isStandalone,
   type BrowserInstallPromptEvent,
 } from './pwa-storage.ts'
-import { syncPush } from './push.ts'
 import { useSurfaceCreationFeedback } from './surface-creation-feedback.ts'
 import { usePendingDecisionPresentation } from './use-pending-decision-presentation.ts'
 import { PwaRuntimeContext, useLiveState } from './use-live-state.ts'
@@ -242,15 +241,6 @@ function RoutedApp() {
     navigator.serviceWorker.addEventListener('message', onMessage)
     return () => navigator.serviceWorker.removeEventListener('message', onMessage)
   }, [navigate])
-
-  // Re-registers an already-granted push subscription at boot and on every
-  // login/token change: keeps the daemon's push store fresh after
-  // e.g. a data-dir reset, and re-associates the subscription with the
-  // right user once `authToken` settles instead of only firing once at boot
-  // with whatever was in storage at first render.
-  useEffect(() => {
-    void syncPush(authToken ?? null)
-  }, [authToken])
 
   if (authMode === 'production' && (!authToken || linkingDevice)) {
     return (

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button } from '@veduta/catalog/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@veduta/catalog/ui/popover'
 import { Bell, X } from 'lucide-react'
@@ -8,7 +8,7 @@ import {
   IOS_INSTALL_STEPS,
 } from './notification-onboarding.ts'
 import { NOTIF_BELL_DISMISSED_KEY, isStandalone } from './pwa-storage.ts'
-import { enablePush, pushSupported, type EnablePushResult } from './push.ts'
+import { enablePush, pushSupported, syncPush, type EnablePushResult } from './push.ts'
 
 // Permission feedback and iOS guidance share the catalog overlay so neither
 // participates in the navbar's layout (issue #242).
@@ -16,13 +16,11 @@ export function NotificationBell({ token }: { token: string | undefined }) {
   const [granted, setGranted] = useState(
     () => 'Notification' in window && Notification.permission === 'granted',
   )
-  // Permission granted is not the same as "has a live subscription": the
-  // daemon's push store can be reset, or a prior subscribe attempt can have
-  // failed after the permission prompt, leaving a browser that will never
-  // prompt again yet also never receives a push. Assume subscribed until
-  // the mount effect below confirms otherwise, so the common case (granted
-  // and subscribed) hides the bell without a flash of the enable flow.
-  const [hasSubscription, setHasSubscription] = useState(true)
+  // The browser's permission and cached subscription do not prove that
+  // the Gateway registered this device. Keep activation available until
+  // the common push flow confirms registration for the current session.
+  const [hasSubscription, setHasSubscription] = useState(false)
+  const syncGeneration = useRef(0)
   const [dismissedGuide, setDismissedGuide] = useState(
     () => localStorage.getItem(NOTIF_BELL_DISMISSED_KEY) === '1',
   )
@@ -32,23 +30,16 @@ export function NotificationBell({ token }: { token: string | undefined }) {
 
   useEffect(() => {
     if (!granted) return
-    if (!('serviceWorker' in navigator)) return
     let cancelled = false
-
-    navigator.serviceWorker
-      .getRegistration()
-      .then((registration) => registration?.pushManager.getSubscription())
-      .then((subscription) => {
-        if (!cancelled) setHasSubscription(subscription != null)
-      })
-      .catch(() => {
-        if (!cancelled) setHasSubscription(false)
-      })
+    const generation = ++syncGeneration.current
+    void syncPush(token ?? null).then((subscribed) => {
+      if (!cancelled && generation === syncGeneration.current) setHasSubscription(subscribed)
+    })
 
     return () => {
       cancelled = true
     }
-  }, [granted])
+  }, [granted, token])
 
   // Re-evaluated on every render (cheap, synchronous, no DOM calls beyond
   // reading a few properties): a Home Screen relaunch after the guided
@@ -70,6 +61,8 @@ export function NotificationBell({ token }: { token: string | undefined }) {
   if (platform === 'ios-needs-install' && dismissedGuide) return null
 
   const onEnable = async () => {
+    // A late boot failure must not override a newer explicit successful enable.
+    syncGeneration.current += 1
     setBusy(true)
     setStatus(null)
     try {

@@ -5,7 +5,8 @@ import { DatabaseSync } from 'node:sqlite'
 import { surfaceRelativeTimeStatus } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import { Store } from '../store.ts'
-import { readDataVersion, stampDataVersion } from './data-version.ts'
+import { Scheduler } from '../scheduler.ts'
+import { ensureDataVersion, readDataVersion, stampDataVersion } from './data-version.ts'
 import { MIGRATIONS, runMigrations } from './migrations.ts'
 
 describe('MIGRATIONS', () => {
@@ -28,6 +29,36 @@ describe('MIGRATIONS', () => {
 })
 
 describe('runMigrations', () => {
+  it('upgrades a v2 Scheduler without changing or reinterpreting existing Automation instructions', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'veduta-notification-migration-'))
+    const now = () => new Date('2026-10-13T09:20:00.000Z')
+    const store = new Store({ rootDir, now })
+    const scheduler = new Scheduler({ rootDir, store, now })
+    const legacy = scheduler.createJob({
+      spaceId: 'spc-health',
+      cron: '*/5 * * * *',
+      briefing: 'Notify me every five minutes',
+    })
+    const disabled = scheduler.setEnabled('spc-health', legacy.id, false, 'tool')
+    scheduler.stop()
+    store.close()
+    const db = new DatabaseSync(join(rootDir, 'scheduler.sqlite'))
+    db.exec('alter table automations drop column notification_json')
+    db.close()
+    stampDataVersion(rootDir, 2)
+
+    expect(runMigrations(rootDir, { from: 2, to: 3 })).toEqual([3])
+    expect(readDataVersion(rootDir)).toBe(3)
+    expect(ensureDataVersion(rootDir)).toEqual({ action: 'ok', dataVersion: 3 })
+
+    const reopenedStore = new Store({ rootDir, now })
+    const reopenedScheduler = new Scheduler({ rootDir, store: reopenedStore, now })
+    expect(reopenedScheduler.listAutomations('spc-health')).toEqual([disabled])
+    expect(reopenedScheduler.listAutomations('spc-health')[0]?.notification).toBeUndefined()
+    reopenedScheduler.stop()
+    reopenedStore.close()
+  })
+
   it('runs every step in (from, to] and stamps the marker to the final to', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'veduta-run-migrations-'))
 

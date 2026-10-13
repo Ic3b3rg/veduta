@@ -525,7 +525,8 @@ function automationTurnScripts(
   return [
     {
       key: 'create',
-      input: 'list every Automation here, then arm a medication timer and a daily review',
+      input:
+        'list every Automation here, then arm a medication timer and a daily review notification',
       finalText: 'Created the focused Automations.',
       calls: [
         { toolName: 'list_automations', input: {} },
@@ -538,7 +539,11 @@ function automationTurnScripts(
         },
         {
           toolName: 'create_job',
-          input: { cron: '0 9 * * *', briefing: 'Review the plan' },
+          input: {
+            cron: '0 9 * * *',
+            briefing: 'Review the plan',
+            notification: { body: 'Review the plan' },
+          },
         },
       ],
     },

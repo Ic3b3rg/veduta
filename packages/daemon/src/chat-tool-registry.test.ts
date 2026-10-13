@@ -355,7 +355,7 @@ describe('chatToolRegistry', () => {
       const expectedProperties: Record<string, string[]> = {
         list_automations: [],
         arm_timer: ['action', 'condition', 'targetSurfaceId', 'when'],
-        create_job: ['briefing', 'condition', 'cron'],
+        create_job: ['briefing', 'condition', 'cron', 'notification'],
         set_automation_enabled: ['automationId', 'enabled'],
         cancel: ['automationId'],
       }

@@ -28,6 +28,7 @@ import { SYSTEM_AUTOMATIONS_SURFACE_ID } from './automations-surface.ts'
 import { CONNECTED_DEVICES_SURFACE_ID } from './connected-devices-surface.ts'
 import { projectFacts } from './facts-projection.ts'
 import { HEARTBEAT_SURFACE_ID } from './heartbeat-surface.ts'
+import { createFocusedAutomationTools } from './focused-automation-tools.ts'
 import { NoAvailableModelError, loadRoutingConfig, saveRoutingConfig } from './model-routing.ts'
 import { NOTIFICATION_SETTINGS_SURFACE_ID } from './notification-settings-surface.ts'
 import { NotificationsConfigSchema, saveNotificationsConfig } from './notifications-config.ts'
@@ -2349,6 +2350,253 @@ describe('Web Push notifications (issue #18)', () => {
       auth: 'tBHItJI5svbpez7KI4CCXg',
     },
   }
+
+  it('sends an explicitly requested recurring notification with an empty body through the focused Chat tool', async () => {
+    let clock = new Date('2026-10-13T09:20:00.000Z')
+    const transport = new NotificationFakeTransport()
+    const { app, scheduler, store, gateway } = buildServer({
+      now: () => new Date(clock.getTime()),
+      pushTransport: transport,
+    })
+    try {
+      const subscribed = await app.inject({
+        method: 'POST',
+        url: '/api/push/subscriptions',
+        payload: validSubscription,
+      })
+      expect(subscribed.statusCode).toBe(204)
+      const socket = new SchedulerFakeSocket()
+      gateway.connect(socket)
+      socket.receive({ type: 'hello', surfaceCursor: store.latestSurfaceCursor() })
+      const messagesBefore = socket.sent.filter((frame) => frame.type === 'chat.message')
+      const createJob = createFocusedAutomationTools({ scheduler, spaceId: 'spc-health' }).find(
+        (tool) => tool.name === 'create_job',
+      )!
+      await createJob.handler(
+        createJob.schema.parse({
+          cron: '*/5 * * * *',
+          briefing: 'Notify me every five minutes',
+          notification: { body: '' },
+        }),
+        fromPartial({ toolCallId: 'recurring-notification', origin: 'trusted:user' }),
+      )
+
+      clock = new Date('2026-10-13T09:25:00.000Z')
+      await scheduler.runDue()
+      await flushNotificationAsync()
+
+      expect(transport.calls).toMatchObject([
+        {
+          payload: {
+            title: 'Health',
+            body: '',
+            url: '/app/space/health/surface/srf-health-automations',
+          },
+        },
+      ])
+      expect(scheduler.listAutomations('spc-health')[0]).toMatchObject({
+        notification: { body: '' },
+        lastOutcome: 'notification-requested',
+        nextRunAt: '2026-10-13T09:30:00.000Z',
+      })
+      expect(scheduler.outcomeService.list('spc-health').notifications).toEqual([])
+      expect(socket.sent.filter((frame) => frame.type === 'chat.message')).toEqual(messagesBefore)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('keeps recurring notifications subject to the Space push budget', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-recurring-notification-budget-'))
+    saveNotificationsConfig(
+      dataDir,
+      NotificationsConfigSchema.parse({
+        defaultDailyPushBudget: 1,
+        quietHours: null,
+        timezone: 'UTC',
+      }),
+    )
+    let clock = new Date('2026-10-13T09:20:00.000Z')
+    const transport = new NotificationFakeTransport()
+    const { app, scheduler, notificationCenter, pushStore, store } = buildServer({
+      dataDir,
+      now: () => new Date(clock.getTime()),
+      pushTransport: transport,
+    })
+    try {
+      await app.inject({
+        method: 'POST',
+        url: '/api/push/subscriptions',
+        payload: validSubscription,
+      })
+      scheduler.createJob({
+        spaceId: 'spc-health',
+        cron: '*/5 * * * *',
+        briefing: 'Notify me every five minutes',
+        notification: { body: 'Time for a break' },
+      })
+      for (const at of ['2026-10-13T09:25:00.000Z', '2026-10-13T09:30:00.000Z']) {
+        clock = new Date(at)
+        await scheduler.runDue()
+        await flushNotificationAsync()
+      }
+
+      expect(transport.calls).toHaveLength(1)
+      expect(pushStore.getAttention('spc-health').count).toBe(2)
+      expect(notificationCenter.stats().perSpace).toContainEqual({
+        spaceId: 'spc-health',
+        sentToday: 1,
+        degradedToday: 1,
+      })
+      expect(store.eventLog('spc-health').filter((event) => event.type === 'notification')).toEqual(
+        [
+          expect.objectContaining({ payload: expect.objectContaining({ outcome: 'push' }) }),
+          expect.objectContaining({ payload: expect.objectContaining({ outcome: 'degraded' }) }),
+        ],
+      )
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('defers recurring notifications during quiet hours and delivers them when the window ends', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-recurring-notification-quiet-'))
+    saveNotificationsConfig(dataDir, NotificationsConfigSchema.parse({ timezone: 'UTC' }))
+    let clock = new Date('2026-10-13T21:55:00.000Z')
+    const transport = new NotificationFakeTransport()
+    const { app, scheduler, notificationCenter } = buildServer({
+      dataDir,
+      now: () => new Date(clock.getTime()),
+      pushTransport: transport,
+    })
+    try {
+      await app.inject({
+        method: 'POST',
+        url: '/api/push/subscriptions',
+        payload: validSubscription,
+      })
+      scheduler.createJob({
+        spaceId: 'spc-health',
+        cron: '*/5 * * * *',
+        briefing: 'Notify me every five minutes',
+        notification: { body: 'Time for a break' },
+      })
+
+      clock = new Date('2026-10-13T22:00:00.000Z')
+      await scheduler.runDue()
+      await flushNotificationAsync()
+      expect(transport.calls).toHaveLength(0)
+      expect(notificationCenter.stats().queuedCount).toBe(1)
+    } finally {
+      await app.close()
+    }
+
+    clock = new Date('2026-10-14T08:00:00.000Z')
+    const resumed = buildServer({
+      dataDir,
+      now: () => new Date(clock.getTime()),
+      pushTransport: transport,
+    })
+    try {
+      await flushNotificationAsync()
+      expect(transport.calls).toMatchObject([{ payload: { body: 'Time for a break' } }])
+      expect(resumed.notificationCenter.stats().queuedCount).toBe(0)
+    } finally {
+      await resumed.app.close()
+    }
+  })
+
+  it('retains recurring notifications after restart and stops them when disabled or cancelled', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'veduta-recurring-notification-restart-'))
+    let clock = new Date('2026-10-13T09:20:00.000Z')
+    const now = () => new Date(clock.getTime())
+    const transport = new NotificationFakeTransport()
+    const first = buildServer({ dataDir, now, pushTransport: transport })
+    const subscribed = await first.app.inject({
+      method: 'POST',
+      url: '/api/push/subscriptions',
+      payload: validSubscription,
+    })
+    expect(subscribed.statusCode).toBe(204)
+    const notification = first.scheduler.createJob({
+      spaceId: 'spc-health',
+      cron: '*/5 * * * *',
+      briefing: 'Notify me every five minutes',
+      notification: { body: 'Time for a break' },
+    })
+    await first.app.close()
+
+    const second = buildServer({ dataDir, now, pushTransport: transport })
+    try {
+      expect(second.scheduler.listAutomations('spc-health')).toEqual([notification])
+      clock = new Date('2026-10-13T09:25:00.000Z')
+      await second.scheduler.runDue()
+      await second.scheduler.runDue()
+      await flushNotificationAsync()
+      expect(transport.calls).toHaveLength(1)
+
+      second.scheduler.setEnabled('spc-health', notification.id, false, 'tool')
+      clock = new Date('2026-10-13T09:30:00.000Z')
+      await second.scheduler.runDue()
+      await flushNotificationAsync()
+      expect(transport.calls).toHaveLength(1)
+
+      second.scheduler.setEnabled('spc-health', notification.id, true, 'tool')
+      clock = new Date('2026-10-13T09:35:00.000Z')
+      await second.scheduler.runDue()
+      await flushNotificationAsync()
+      expect(transport.calls).toHaveLength(2)
+
+      second.scheduler.cancel('spc-health', notification.id)
+      clock = new Date('2026-10-13T09:40:00.000Z')
+      await second.scheduler.runDue()
+      await flushNotificationAsync()
+      expect(transport.calls).toHaveLength(2)
+    } finally {
+      await second.app.close()
+    }
+  })
+
+  it('keeps untrusted recurring notification text off the lock screen', async () => {
+    let clock = new Date('2026-10-13T09:20:00.000Z')
+    const transport = new NotificationFakeTransport()
+    const { app, scheduler, store } = buildServer({
+      now: () => new Date(clock.getTime()),
+      pushTransport: transport,
+    })
+    try {
+      await app.inject({
+        method: 'POST',
+        url: '/api/push/subscriptions',
+        payload: validSubscription,
+      })
+      const notification = scheduler.createJob(
+        {
+          spaceId: 'spc-health',
+          cron: '*/5 * * * *',
+          briefing: 'Notify me every five minutes',
+          notification: { body: 'Untrusted message contents' },
+        },
+        'untrusted:gmail',
+      )
+      clock = new Date('2026-10-13T09:25:00.000Z')
+      await scheduler.runDue()
+      await flushNotificationAsync()
+
+      expect(transport.calls).toMatchObject([{ payload: { body: 'New update in Health' } }])
+      expect(
+        store.eventLog('spc-health').find((event) => event.type === 'notification'),
+      ).toMatchObject({
+        origin: 'untrusted:gmail',
+        payload: {
+          automationId: notification.id,
+          justification: expect.stringContaining('User-requested recurring notification'),
+        },
+      })
+    } finally {
+      await app.close()
+    }
+  })
 
   it('(A) a fast-path action and a routine patchState never touch push, attention, or the notification log', async () => {
     const transport = new NotificationFakeTransport()

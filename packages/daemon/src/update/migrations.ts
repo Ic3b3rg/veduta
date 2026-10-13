@@ -1,5 +1,6 @@
 import { stampDataVersion } from './data-version-marker.ts'
 import { migrateV2RelativeTimeSurfaceValidity } from './migration-v2-relative-time.ts'
+import { migrateV3RecurringNotifications } from './migration-v3-recurring-notifications.ts'
 
 /**
  * One forward-only data migration (`docs/adr/0013-signed-self-update.md`):
@@ -43,6 +44,12 @@ export const MIGRATIONS: readonly DataMigration[] = [
       'Add explicit relative-time Surface validity and retrofit matching persisted seed ' +
       'Surfaces through the ordinary validated patch and Event paths.',
     migrate: migrateV2RelativeTimeSurfaceValidity,
+  },
+  {
+    to: 3,
+    description:
+      'Persist explicitly requested recurring notification operations without changing legacy Automation instructions.',
+    migrate: migrateV3RecurringNotifications,
   },
 ]
 
