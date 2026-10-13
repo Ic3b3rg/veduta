@@ -52,7 +52,7 @@ test('manages memory, columns, Automations and recoverable archival across devic
     .fill('This Space records my daily walking.')
   await page.getByRole('button', { name: 'Save fact', exact: true }).click()
   await expect(
-    page.getByText('This Space records my daily walking.', { exact: true }),
+    page.getByRole('paragraph').filter({ hasText: /^This Space records my daily walking\.$/ }),
   ).toBeVisible()
   await page
     .getByRole('textbox', { name: 'Instructions', exact: true })
@@ -200,7 +200,7 @@ test('manages memory, columns, Automations and recoverable archival across devic
     .getByRole('button', { name: /^Health/ })
     .click()
   await expect(
-    page.getByText('This Space records my daily walking.', { exact: true }),
+    page.getByRole('paragraph').filter({ hasText: /^This Space records my daily walking\.$/ }),
   ).toBeVisible()
   await expect(page.getByRole('textbox', { name: 'Instructions', exact: true })).toHaveValue(
     'Keep metric units. Ask before adding a new goal.',
