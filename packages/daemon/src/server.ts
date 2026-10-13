@@ -139,6 +139,7 @@ import { TreePendingDecisionAdapter } from './tree-pending-decision.ts'
 import { TreeProposalSurfaceManager } from './tree-proposal.ts'
 import { piToolParameters } from './tool-parameters.ts'
 import { isTrustWrapped, TrustLayer } from './trust-layer.ts'
+import { cleanupCodexHomes, cleanupCodexHome } from './codex-local-state.ts'
 import { ensureDataVersion } from './update/data-version.ts'
 import { UpdateManager } from './update-manager.ts'
 import { UpdatePendingDecisionAdapter } from './update-pending-decision.ts'
@@ -486,6 +487,19 @@ export function buildServer(options: ServerOptions = {}) {
   // out of `buildServer` — `index.ts`'s top-level `start().catch` prints it
   // and exits 1, never a partially-booted daemon.
   const dataVersionGate = ensureDataVersion(dataDir)
+  try {
+    cleanupCodexHomes(dataDir, (connectionId, error) => {
+      app.log.error(
+        { connectionId, err: error },
+        'Codex history cleanup refused; affected connection will remain unavailable until its state is repaired',
+      )
+    })
+  } catch (error) {
+    app.log.error(
+      { err: error },
+      'Codex state cleanup refused; other Gateway features remain available',
+    )
+  }
   const memoryConfig = loadMemoryConfig(dataDir)
   const auth = options.auth ?? { mode: 'dev' as const }
   const store = new Store({
@@ -908,7 +922,15 @@ export function buildServer(options: ServerOptions = {}) {
   // reports it, not a bare `ENOENT`, and a mis-pinned process is closed
   // again rather than ever reaching a verb.
   const codexSessionPool = new CodexSessionPool({
-    factory: async ({ codexHome }) => {
+    factory: async ({ connectionId, codexHome, onCreate }) => {
+      try {
+        cleanupCodexHome(dataDir, connectionId)
+      } catch {
+        throw new ModelConnectionError(
+          'unreachable',
+          'Codex local state has an unsupported or unsafe layout; preserve the directory, repair it using the supported Codex layout, then retry',
+        )
+      }
       const binary = resolveCodexBinary(process.env, store.spacesEngine.rootDir)
       if (binary === undefined) {
         throw new ModelConnectionError('unsupported', CODEX_BINARY_MISSING_REASON)
@@ -919,6 +941,7 @@ export function buildServer(options: ServerOptions = {}) {
         codexHome,
         clientInfo: { name: 'veduta', version: resolveInstalledVersion() },
       })
+      onCreate(transport)
       try {
         await initializeCodexTransport(transport)
       } catch (error) {
@@ -947,6 +970,7 @@ export function buildServer(options: ServerOptions = {}) {
     onRoutingChanged: (file) => onRoutingChangedSlot.current(file),
     env: process.env,
     codexSession: (connectionId, codexHome) => codexSessionPool.get(connectionId, codexHome),
+    evictCodexSession: (connectionId, revoke) => codexSessionPool.evict(connectionId, revoke),
     // One place for the reconnect notice regardless of which caller marked
     // the connection (issue #47): a legacy BYOK 401/403 through the
     // router's `onCallError` below, or a subscription turn that failed

@@ -1,3 +1,4 @@
+import { removeCodexHome } from './codex-local-state.ts'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import {
@@ -79,6 +80,23 @@ const ENSURE_FRESH_WINDOW_MS = 5 * 60_000
  */
 export const CONNECTION_NOT_FOUND_MESSAGE = 'no such Model connection'
 
+// Persisted lifecycle marker within the existing format (ADR-0014); keep this text stable.
+const CODEX_REMOVAL_PENDING_REASON =
+  'local removal is pending; retry Remove to finish erasing Codex state'
+
+function isCodexRemovalPending(record: ModelConnectionRecord): boolean {
+  return (
+    record.method === 'chatgpt-codex' &&
+    record.state === 'revoked' &&
+    record.stateReason === CODEX_REMOVAL_PENDING_REASON
+  )
+}
+
+function requireNotRemoving(record: ModelConnectionRecord): void {
+  if (isCodexRemovalPending(record))
+    throw new ModelConnectionError('rejected', CODEX_REMOVAL_PENDING_REASON)
+}
+
 export interface ModelConnectionRegistryOptions {
   rootDir: string
   adapters: readonly ModelConnectionAdapter[]
@@ -103,6 +121,10 @@ export interface ModelConnectionRegistryOptions {
    * connection.
    */
   codexSession?: (connectionId: string, codexHome: string) => Promise<CodexTransport>
+  evictCodexSession?: (
+    connectionId: string,
+    revoke: (transport: CodexTransport) => Promise<void>,
+  ) => Promise<void>
   /**
    * Fired at the end of every `noteCallFailure` call, regardless of which
    * caller reached it (issue #47): the router's `onCallError` for a legacy
@@ -206,6 +228,7 @@ export class ModelConnectionRegistry {
   private readonly env: NodeJS.ProcessEnv
   private readonly codexSession:
     ((connectionId: string, codexHome: string) => Promise<CodexTransport>) | undefined
+  private readonly evictCodexSession: ModelConnectionRegistryOptions['evictCodexSession']
   private readonly onCallFailure:
     ((connectionId: string, state: ConnectionLifecycleState) => void) | undefined
 
@@ -231,6 +254,7 @@ export class ModelConnectionRegistry {
     this.onRoutingChanged = options.onRoutingChanged
     this.env = options.env
     this.codexSession = options.codexSession
+    this.evictCodexSession = options.evictCodexSession
     this.onCallFailure = options.onCallFailure
   }
 
@@ -443,6 +467,7 @@ export class ModelConnectionRegistry {
     const run = (async (): Promise<RefreshResult> => {
       const file = loadConnectionsConfig(this.rootDir)
       const record = this.findRecord(file, id)
+      requireNotRemoving(record)
       const adapter = this.findAdapter(record.method)
       this.requirePrimaryRoute(record.method)
       return adapter.refresh(this.contextFor(id, record.secretRef), challenge)
@@ -623,6 +648,7 @@ export class ModelConnectionRegistry {
     return this.queue(async () => {
       const file = loadConnectionsConfig(this.rootDir)
       const record = this.findRecord(file, id)
+      requireNotRemoving(record)
       const adapter = this.findAdapter(record.method)
       this.requirePrimaryRoute(record.method)
 
@@ -664,9 +690,15 @@ export class ModelConnectionRegistry {
       const challenge = this.challenges.get(id)
       if (challenge && this.now().getTime() > new Date(challenge.expiresAt).getTime()) {
         return this.queue(() => {
-          this.challenges.delete(id)
           const current = loadConnectionsConfig(this.rootDir)
           const currentRecord = this.findRecord(current, id)
+          if (
+            currentRecord.state !== record.state ||
+            currentRecord.stateAt !== record.stateAt ||
+            this.challenges.get(id) !== challenge
+          )
+            return this.connectionWire(currentRecord)
+          this.challenges.delete(id)
           const failed = withState(currentRecord, {
             state: 'failed',
             stateAt: this.now().toISOString(),
@@ -688,6 +720,7 @@ export class ModelConnectionRegistry {
     return this.queue(async () => {
       const file = loadConnectionsConfig(this.rootDir)
       const record = this.findRecord(file, id)
+      requireNotRemoving(record)
       const adapter = this.findAdapter(record.method)
       const entries = await adapter.catalog(this.contextFor(id, record.secretRef))
       const routable = this.applyRoutable(adapter, entries)
@@ -705,6 +738,7 @@ export class ModelConnectionRegistry {
   async verify(id: string, modelId: string): Promise<void> {
     const initialFile = loadConnectionsConfig(this.rootDir)
     const initialRecord = this.findRecord(initialFile, id)
+    requireNotRemoving(initialRecord)
     this.requirePrimaryRoute(initialRecord.method)
     // A subscription probe performs the same pre-inference freshness check
     // as a real turn. Run that check, and then the provider I/O itself,
@@ -783,13 +817,38 @@ export class ModelConnectionRegistry {
    * survivor to account for and is deleted outright, as before.
    */
   async remove(id: string): Promise<ModelConnectionsSnapshot> {
+    const initial = this.findRecord(loadConnectionsConfig(this.rootDir), id)
+    const codex = initial.method === 'chatgpt-codex'
+    // Retire acquisition outside the mutation queue: an initializing catalog may hold it.
+    const eviction = codex ? this.beginCodexRemoval(initial) : undefined
     return this.queue(async () => {
-      const file = loadConnectionsConfig(this.rootDir)
-      const record = this.findRecord(file, id)
+      let file = loadConnectionsConfig(this.rootDir)
+      let record = this.findRecord(file, id)
       const adapter = this.findAdapter(record.method)
+      if (eviction) {
+        record = withState(record, {
+          state: 'revoked',
+          stateAt: this.now().toISOString(),
+          stateReason: CODEX_REMOVAL_PENDING_REASON,
+        })
+        const { selection, ...withoutSelection } = file
+        file = this.replaceRecord(
+          {
+            ...withoutSelection,
+            ...(selection?.connectionId !== id && selection ? { selection } : {}),
+          },
+          record,
+        )
+        this.challenges.delete(id)
+        this.dropRoutingConnectionKey(id)
+        this.persist(file)
+        const result = await eviction
+        if (result.status === 'rejected') throw result.reason
+        removeCodexHome(this.rootDir, id)
+      }
 
       try {
-        await adapter.revoke(this.contextFor(id, record.secretRef))
+        if (!codex) await adapter.revoke(this.contextFor(id, record.secretRef))
       } catch {
         // Tolerate a failed provider-side revoke: the record is still
         // removed locally, but the note the adapter would have returned is
@@ -839,6 +898,27 @@ export class ModelConnectionRegistry {
       this.persist(nextFile)
       return this.buildSnapshot(nextFile)
     })
+  }
+
+  private beginCodexRemoval(record: ModelConnectionRecord): Promise<PromiseSettledResult<void>> {
+    if (!this.evictCodexSession)
+      return Promise.resolve({
+        status: 'rejected',
+        reason: new ModelConnectionError(
+          'unreachable',
+          'Codex lifecycle owner is unavailable; retry removal after restarting the Gateway',
+        ),
+      })
+    const adapter = this.findAdapter(record.method)
+    return this.evictCodexSession(record.id, async (transport) => {
+      await adapter.revoke({
+        ...this.contextFor(record.id, record.secretRef),
+        codexTransport: async () => transport,
+      })
+    }).then(
+      () => ({ status: 'fulfilled', value: undefined }),
+      (reason: unknown) => ({ status: 'rejected', reason }),
+    )
   }
 
   /** Drops `routing.json`'s `connectionKeys[id]` entry, if any — see `remove`'s own doc comment. */
@@ -971,6 +1051,7 @@ export class ModelConnectionRegistry {
       const file = loadConnectionsConfig(this.rootDir)
       const record = file.connections.find((candidate) => candidate.id === idOrProvider)
       if (!record) return undefined
+      if (isCodexRemovalPending(record)) return record.state
 
       const err = connectionErrorFrom(error)
       if (err.code === 'usage-limit' || err.code === 'rate-limit') {

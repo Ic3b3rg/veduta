@@ -150,3 +150,19 @@ effect approvals, and truthful failure states are required by
 - CaMeL — _Defeating Prompt Injections by Design_ (arXiv:2503.18813)
 - MAST — verification failures as 21% of multi-agent failures (arXiv:2503.13657)
 - Hermes: HMAC webhooks, explicit-secrets migration; OpenClaw: pairing via codes, per-agent tool allowlists
+
+### Codex provider-history retention and removal
+
+Every Veduta Codex inference thread is explicitly ephemeral. The
+[pinned cleanup policy](references/codex-0.160-local-state.md) removes recognized
+legacy rollout, history and thread database content while retaining active credential
+bytes and unrelated operational state. Unknown schemas and unsafe symbolic paths
+refuse cleanup; they do not authorize deleting ambiguous data. The affected Model
+connection stays unavailable while unrelated Gateway functions remain usable.
+
+Encrypted backup staging takes consistent Codex SQLite snapshots and sanitizes the
+staged copies, preserving active credentials and Veduta's canonical conversation and
+Event history. Full connection removal waits for its owned child and pending creation
+to settle before deleting the validated per-connection directory. Failed remote logout
+cannot prevent local erasure; failed local termination or deletion remains visibly
+revoked and retryable rather than reporting successful removal.

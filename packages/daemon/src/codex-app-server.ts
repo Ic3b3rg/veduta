@@ -73,10 +73,19 @@ export interface CodexTransport {
   /** True when this transport has no in-flight request and no live notification or child-request subscription. */
   idle(): boolean
   close(): void
+  /** Close and observe process termination before deleting its local state. */
+  closeAndWait(): Promise<void>
 }
 
 /** Builds one `CodexTransport` bound to a specific connection's `CODEX_HOME`. The real one spawns the pinned binary; tests inject `createFakeCodexTransport` instead. */
 export type CodexTransportFactory = (options: { codexHome: string }) => Promise<CodexTransport>
+
+type CodexSessionFactory = (options: {
+  connectionId: string
+  codexHome: string
+  /** Register ownership before awaiting initialization. */
+  onCreate: (transport: CodexTransport) => void
+}) => Promise<CodexTransport>
 
 /**
  * Resolves the Codex binary path with **no `$PATH` scan** (issue #47,
@@ -329,6 +338,13 @@ export function spawnCodexAppServer(options: {
     },
   })
 
+  let resolveExit!: () => void
+  const childExited = new Promise<void>((resolve) => {
+    resolveExit = resolve
+  })
+  child.once('close', () => resolveExit())
+  let closing: Promise<void> | undefined
+
   let nextId = 1
   const pending = new Map<number, PendingRequest>()
   const hub = createNotificationHub()
@@ -508,7 +524,31 @@ export function spawnCodexAppServer(options: {
     child.kill()
   }
 
+  function closeAndWait(): Promise<void> {
+    if (closing) return closing
+    close()
+    closing = (async () => {
+      let force: NodeJS.Timeout | undefined
+      let deadline: NodeJS.Timeout | undefined
+      try {
+        await Promise.race([
+          childExited,
+          new Promise<never>((_resolve, reject) => {
+            force = setTimeout(() => child.kill('SIGKILL'), 1_000)
+            deadline = setTimeout(() => reject(new CodexTerminationError()), 5_000)
+          }),
+        ])
+      } finally {
+        clearTimeout(force)
+        clearTimeout(deadline)
+        closing = undefined
+      }
+    })()
+    return closing
+  }
+
   return {
+    closeAndWait,
     request,
     serverRequests: serverRequestHub.subscribe,
     respond,
@@ -516,6 +556,12 @@ export function spawnCodexAppServer(options: {
     recentNotifications: hub.recent,
     idle,
     close,
+  }
+}
+
+class CodexTerminationError extends ModelConnectionError {
+  constructor() {
+    super('unreachable', 'the Codex child did not terminate; retry removal')
   }
 }
 
@@ -541,20 +587,23 @@ const DEFAULT_IDLE_MS = 5 * 60_000
  * own. `closeAll()` is wired into `server.ts`'s existing `onClose` hook.
  */
 export class CodexSessionPool {
-  private readonly factory: CodexTransportFactory
+  private readonly factory: CodexSessionFactory
   private readonly idleMs: number
   private readonly entries = new Map<string, PoolEntry>()
   private readonly pending = new Map<string, Promise<CodexTransport>>()
   private closed = false
+  private readonly retired = new Set<string>()
+  private readonly owned = new Map<string, Set<CodexTransport>>()
+  private readonly evictions = new Map<string, Promise<void>>()
 
-  constructor(options: { factory: CodexTransportFactory; idleMs?: number; now?: () => number }) {
+  constructor(options: { factory: CodexSessionFactory; idleMs?: number; now?: () => number }) {
     this.factory = options.factory
     this.idleMs = options.idleMs ?? DEFAULT_IDLE_MS
   }
 
   /** Returns the live transport for `connectionId`, creating one via the injected factory if none exists yet. Concurrent callers for the same id share one in-flight creation. */
   async get(connectionId: string, codexHome: string): Promise<CodexTransport> {
-    if (this.closed) {
+    if (this.closed || this.retired.has(connectionId)) {
       throw new ModelConnectionError('unreachable', 'the Codex transport was closed')
     }
     const existing = this.entries.get(connectionId)
@@ -565,18 +614,34 @@ export class CodexSessionPool {
 
     const inFlight = this.pending.get(connectionId)
     if (inFlight) return inFlight
+    if (this.owned.has(connectionId)) {
+      await this.closeOwned(connectionId)
+      return this.get(connectionId, codexHome)
+    }
 
     // Share the lifecycle outcome, not the raw factory promise: every waiter
     // must reject when initialization crosses shutdown (issue #207).
-    const created = this.factory({ codexHome })
-      .then((transport) => {
-        if (this.closed) {
-          transport.close()
+    const created = this.factory({
+      connectionId,
+      codexHome,
+      onCreate: (transport) => {
+        this.track(connectionId, transport)
+        if (this.retired.has(connectionId)) transport.close()
+      },
+    })
+      .then(async (transport) => {
+        this.track(connectionId, transport)
+        if (this.closed || this.retired.has(connectionId)) {
+          await this.closeOwned(connectionId)
           throw new ModelConnectionError('unreachable', 'the Codex transport was closed')
         }
         const entry: PoolEntry = { transport, timer: this.armTimer(connectionId) }
         this.entries.set(connectionId, entry)
         return transport
+      })
+      .catch(async (error: unknown) => {
+        await this.closeOwned(connectionId)
+        throw error
       })
       .finally(() => {
         this.pending.delete(connectionId)
@@ -585,13 +650,73 @@ export class CodexSessionPool {
     return created
   }
 
+  private track(connectionId: string, transport: CodexTransport): void {
+    const owned = this.owned.get(connectionId) ?? new Set<CodexTransport>()
+    owned.add(transport)
+    this.owned.set(connectionId, owned)
+  }
+
+  private async closeOwned(connectionId: string): Promise<void> {
+    const owned = this.owned.get(connectionId)
+    if (!owned) return
+    const results = await Promise.allSettled(
+      [...owned].map(async (transport) => {
+        await transport.closeAndWait()
+        owned.delete(transport)
+      }),
+    )
+    if (owned.size === 0) this.owned.delete(connectionId)
+    if (results.some((result) => result.status === 'rejected')) throw new CodexTerminationError()
+  }
+
+  /** Retire acquisition before any await; retain failed termination ownership for retry. */
+  evict(
+    connectionId: string,
+    revoke?: (transport: CodexTransport) => Promise<void>,
+  ): Promise<void> {
+    this.retired.add(connectionId)
+    const existing = this.evictions.get(connectionId)
+    if (existing) return existing
+    const entry = this.entries.get(connectionId)
+    if (entry) {
+      clearTimeout(entry.timer)
+      this.entries.delete(connectionId)
+    }
+    const pending = this.pending.get(connectionId)
+    const operation = (async () => {
+      if (entry && revoke && entry.transport.idle()) {
+        try {
+          await revoke(entry.transport)
+        } catch {
+          /* Remote logout cannot prevent local erasure. */
+        }
+      }
+      await this.closeOwned(connectionId)
+      if (pending) {
+        try {
+          await pending
+        } catch (error) {
+          if (error instanceof CodexTerminationError) throw error
+        }
+      }
+      await this.closeOwned(connectionId)
+    })()
+    const bounded = withEvictionDeadline(operation).finally(() =>
+      this.evictions.delete(connectionId),
+    )
+    this.evictions.set(connectionId, bounded)
+    return bounded
+  }
+
   private armTimer(connectionId: string): NodeJS.Timeout {
     const timer = setTimeout(() => {
       const entry = this.entries.get(connectionId)
       if (!entry) return
       if (entry.transport.idle()) {
-        entry.transport.close()
         this.entries.delete(connectionId)
+        void this.closeOwned(connectionId).catch(() => {
+          // Keep ownership for retry; never delete state while this child may live.
+        })
         return
       }
       // Busy (an in-flight request or a live notification subscription,
@@ -620,4 +745,17 @@ export class CodexSessionPool {
     }
     this.entries.clear()
   }
+}
+
+function withEvictionDeadline(operation: Promise<void>): Promise<void> {
+  let timer: NodeJS.Timeout | undefined
+  return Promise.race([
+    operation,
+    new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new CodexTerminationError()),
+        CODEX_REQUEST_TIMEOUT_MS + 10_000,
+      )
+    }),
+  ]).finally(() => clearTimeout(timer))
 }

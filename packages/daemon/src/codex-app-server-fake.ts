@@ -404,6 +404,9 @@ export function createFakeCodexTransport(script: FakeCodexScript): FakeCodexTran
     recentNotifications: hub.recent,
     idle,
     close,
+    async closeAndWait() {
+      this.close()
+    },
     requests,
     serverResponses,
     get closed() {
