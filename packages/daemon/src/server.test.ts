@@ -29,6 +29,7 @@ import { CONNECTED_DEVICES_SURFACE_ID } from './connected-devices-surface.ts'
 import { projectFacts } from './facts-projection.ts'
 import { HEARTBEAT_SURFACE_ID } from './heartbeat-surface.ts'
 import { createFocusedAutomationTools } from './focused-automation-tools.ts'
+import { MEMORY_HEALTH_SURFACE_ID } from './memory-health-surface.ts'
 import { NoAvailableModelError, loadRoutingConfig, saveRoutingConfig } from './model-routing.ts'
 import { NOTIFICATION_SETTINGS_SURFACE_ID } from './notification-settings-surface.ts'
 import { NotificationsConfigSchema, saveNotificationsConfig } from './notifications-config.ts'
@@ -151,6 +152,7 @@ describe('GET /api/spaces', () => {
       HEARTBEAT_SURFACE_ID,
       NOTIFICATION_SETTINGS_SURFACE_ID,
       MODEL_USAGE_SURFACE_ID,
+      MEMORY_HEALTH_SURFACE_ID,
     ].sort()
     const cursorBefore = store.latestSurfaceCursor()
     const eventsBefore = store.eventLog(SYSTEM_SPACE_ID)
@@ -243,8 +245,9 @@ describe('GET /api/spaces', () => {
     // configured time arms one more managed job on the same Automations
     // Surface (2 more ticks), and its per-Space Nightly Reflection Surface is
     // pre-created for the Health Space (1 more tick), plus the persisted
-    // Model usage Surface in the System Space (1 more tick).
-    expect(body.surfaceCursor).toBe(14)
+    // Model usage Surface in the System Space (1 more tick), plus the
+    // Memory health Surface (issue #258) persisted at boot (1 more tick).
+    expect(body.surfaceCursor).toBe(15)
     expect(body.spaces.map((s) => s.slug)).toEqual(['health', 'system'])
     expect(body.spaces.filter((space) => space.id === SYSTEM_SPACE_ID)).toHaveLength(1)
     expect(
