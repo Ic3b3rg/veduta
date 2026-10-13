@@ -147,7 +147,7 @@ function composedSurfaceInput(): Record<string, unknown> {
             {
               id: 'composed-image',
               type: 'Image',
-              props: { src: '/icons/icon-192.svg', alt: 'Veduta mark', loading: 'eager' },
+              props: { src: '/icons/icon-192.png', alt: 'Veduta mark', loading: 'eager' },
             },
             {
               id: 'composed-failed-image',

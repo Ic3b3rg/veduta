@@ -1,3 +1,5 @@
+<img src="docs/brand/veduta-logo.png" alt="Veduta logo" width="128" height="128" />
+
 # Veduta — Give your personal AI agent a home.
 
 An open-source personal AI Agent that turns conversations into **persistent, living interfaces**.

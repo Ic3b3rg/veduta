@@ -31,6 +31,8 @@ function contentType(path: string): string {
       return 'text/css; charset=utf-8'
     case '.svg':
       return 'image/svg+xml'
+    case '.ico':
+      return 'image/vnd.microsoft.icon'
     case '.png':
       return 'image/png'
     case '.jpg':

@@ -175,7 +175,16 @@ export function AppShell({
             Skip to {mainContentName} content
           </a>
           <header className="topbar">
-            <h1 className="product-wordmark">Veduta</h1>
+            <h1 className="product-wordmark">
+              <img
+                className="brand-logo"
+                src="/icons/logo-mark.png"
+                alt=""
+                width={32}
+                height={32}
+              />
+              Veduta
+            </h1>
             <div className="topbar-actions" aria-live="polite">
               {queuedCount > 0 && <span className="status-pill pending">{queuedCount} queued</span>}
               <Button

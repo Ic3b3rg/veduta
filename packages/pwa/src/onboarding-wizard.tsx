@@ -224,7 +224,10 @@ export function OnboardingWizard({
     <main className="wizard-shell">
       <div className="wizard-card">
         <header className="wizard-header">
-          <h1>Set up Veduta</h1>
+          <h1 className="brand-heading">
+            <img className="brand-logo" src="/icons/logo-mark.png" alt="" width={32} height={32} />
+            Set up Veduta
+          </h1>
           {token && (
             <a href={`${clientPath.serviceConnections}?section=devices`}>Link another device</a>
           )}

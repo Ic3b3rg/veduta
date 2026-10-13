@@ -25,6 +25,9 @@
 }
 
 .product-wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--catalog-space-sm);
   color: var(--catalog-color-text);
   font-size: var(--catalog-font-lg);
   font-weight: 650;

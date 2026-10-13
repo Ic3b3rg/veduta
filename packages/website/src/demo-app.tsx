@@ -123,6 +123,7 @@ export function Demo() {
       <div className="precision-tool demo-app">
         <header className="demo-header">
           <a href="./index.html" className="product-wordmark">
+            <img className="brand-logo" src="./icons/logo-mark.png" alt="" width={32} height={32} />
             Veduta
           </a>
           <span>Guided demo · fictional data</span>

@@ -854,3 +854,16 @@
   min-height: 18px;
   padding: 9px 12px 11px;
 }
+
+.brand-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--catalog-space-md);
+}
+
+.brand-logo {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border-radius: var(--catalog-radius-sm);
+}

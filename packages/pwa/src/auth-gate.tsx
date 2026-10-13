@@ -60,7 +60,10 @@ export function AuthGate({
 
   return (
     <main className="auth-shell">
-      <h1>Veduta</h1>
+      <h1 className="brand-heading">
+        <img className="brand-logo" src="/icons/logo-mark.png" alt="" width={32} height={32} />
+        Veduta
+      </h1>
       {onCancel && (
         <button type="button" disabled={busy} onClick={onCancel}>
           Keep my current access

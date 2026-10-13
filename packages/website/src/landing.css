@@ -72,6 +72,10 @@ footer {
   align-items: center;
   gap: 18px;
 }
+.wordmark img {
+  flex: 0 0 auto;
+  border-radius: 4px;
+}
 .wordmark span {
   color: var(--muted);
   font-weight: 400;

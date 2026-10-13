@@ -1,5 +1,16 @@
-const CACHE_NAME = 'veduta-shell-v1'
-const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/icon-192.svg', '/icons/icon-512.svg']
+const CACHE_NAME = 'veduta-shell-v2'
+const APP_SHELL = [
+  '/',
+  '/manifest.webmanifest',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/icon-maskable-512.png',
+  '/icons/apple-touch-icon.png',
+  '/icons/favicon.ico',
+  '/icons/favicon-32.png',
+  '/icons/favicon-48.png',
+  '/icons/logo-mark.png',
+]
 
 // A push must never be usable to redirect the client off-origin, so any url
 // carried by a push payload or a notification's stored data is required to
@@ -112,7 +123,7 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
-      icon: '/icons/icon-192.svg',
+      icon: '/icons/icon-192.png',
       data: { url },
     }),
   )
