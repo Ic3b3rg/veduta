@@ -48,6 +48,14 @@ for (const width of [320, 1440]) {
         await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
       ).toBe(true)
       expect(errors).toEqual([])
+      expect(stack.notificationStats()).toMatchObject({
+        queuedCount: 0,
+        perSpace: expect.arrayContaining([
+          expect.objectContaining({ spaceId: 'spc-health', sentToday: 0, degradedToday: 0 }),
+        ]),
+      })
+      expect(stack.notificationEvents()).toEqual([])
+      await expect(page.locator('.chat-entry.assistant')).toHaveCount(0)
       await page.screenshot({ path: info.outputPath(`memory-health-${width}.png`), fullPage: true })
     } finally {
       await stack.stop()

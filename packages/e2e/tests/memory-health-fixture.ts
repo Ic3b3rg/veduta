@@ -98,6 +98,16 @@ export async function memoryHealthStack(browser: Browser, width: number) {
       await rm(join(root, 'memory-health.json'), { recursive: true })
       server.store.spacesEngine.auditMemoryHealth()
     },
+    notificationStats() {
+      return server.notificationCenter.stats()
+    },
+    notificationEvents() {
+      return server.store
+        .listSpaces()
+        .flatMap((space) =>
+          server.store.eventLog(space.id).filter((event) => event.type === 'notification'),
+        )
+    },
     async start() {
       await server.app.listen({ host: '127.0.0.1', port })
       const cdp = await context.newCDPSession(page)
