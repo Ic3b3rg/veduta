@@ -106,6 +106,9 @@ export async function relativeTimeStack(browser: Browser, width: number) {
       await server.app.listen({ host: '127.0.0.1', port })
       await page.reload()
     },
+    async disconnect() {
+      await server.app.close()
+    },
     async stop() {
       await context.close()
       await server.app.close()

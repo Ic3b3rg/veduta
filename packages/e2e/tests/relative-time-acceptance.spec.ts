@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
 import { JsonObjectSchema } from '../../protocol/src/index.ts'
 import { closeChat, openChat } from './chat-journey.ts'
 import { readEvents, readSurface, surfaceCard } from './fast-actions-journey.ts'
@@ -9,6 +9,10 @@ import {
   prepareRelativeFixtures,
   relativeTimeStack,
 } from './relative-time-acceptance-fixture.ts'
+
+function relativeTimeStatus(card: Locator): Locator {
+  return card.getByRole('status').filter({ hasText: 'relative-time view' })
+}
 
 for (const width of [320, 1440]) {
   test(`two relative-time domains retain history and expire without a mutation at ${width}px`, async ({
@@ -27,7 +31,7 @@ for (const width of [320, 1440]) {
       await expect(spending).toContainText('Bookshop')
       for (const card of [meals, spending]) {
         await expect(card.getByRole('note')).toContainText('1 source record has no occurrence date')
-        await expect(card.getByRole('status')).toHaveCount(0)
+        await expect(relativeTimeStatus(card)).toHaveCount(0)
       }
       await expect(meals.getByRole('cell', { name: 'Old lunch', exact: true })).toHaveCount(0)
       await expect(meals.getByRole('cell', { name: 'Undated breakfast', exact: true })).toHaveCount(
@@ -88,7 +92,7 @@ for (const width of [320, 1440]) {
       expect(patch).toMatchObject({ at: BEFORE_BOUNDARY, origin: 'trusted:system' })
       await stack.crossBoundary()
       for (const card of [meals, spending])
-        await expect(card.getByRole('status')).toContainText('expired')
+        await expect(relativeTimeStatus(card)).toContainText('expired')
       expect(await readSurface(page, origin, 'srf-meals')).toEqual(logged)
       expect(await readSurface(page, origin, SPENDING_ID)).toEqual(expense)
       for (const surfaceId of ['srf-meals', SPENDING_ID]) {
@@ -103,10 +107,10 @@ for (const width of [320, 1440]) {
       expect(await readEvents(page, origin)).toEqual(eventsBeforeExpiry)
       await page.reload()
       for (const card of [meals, spending])
-        await expect(card.getByRole('status')).toContainText('expired')
+        await expect(relativeTimeStatus(card)).toContainText('expired')
       await stack.restart()
       for (const card of [meals, spending]) {
-        await expect(card.getByRole('status')).toContainText('expired')
+        await expect(relativeTimeStatus(card)).toContainText('expired')
         await expect(card.getByRole('note')).toContainText('no occurrence date')
       }
       expect(await readSurface(page, origin, 'srf-meals')).toEqual(logged)
@@ -120,7 +124,7 @@ for (const width of [320, 1440]) {
           { target: 'state', op: 'replace', path: '/latestMerchant', value: 'Nothing today' },
         ],
       })
-      await expect(spending.getByRole('status')).toHaveCount(0)
+      await expect(relativeTimeStatus(spending)).toHaveCount(0)
       await expect(spending).toContainText('Nothing today')
       await expect(spending.getByRole('cell', { name: 'Bookshop', exact: true })).toHaveCount(0)
       const refreshed = await readSurface(page, origin, SPENDING_ID)
@@ -145,13 +149,20 @@ for (const width of [320, 1440]) {
         page.getByRole('main', { name: 'Home' }).getByRole('link', { name: /Health/ }),
       ).toContainText('4 Surfaces')
       await openHealth(page, origin)
-      await expect(meals.getByRole('status')).toContainText('expired')
+      await stack.disconnect()
+      await expect(
+        meals
+          .getByRole('status')
+          .filter({ hasText: 'Pin and Move are unavailable while offline.' }),
+      ).toBeVisible()
+      await expect(relativeTimeStatus(meals)).toContainText('expired')
       expect(
         await page.evaluate(
           () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
         ),
       ).toBeLessThanOrEqual(1)
       await page.screenshot({ path: info.outputPath(`relative-time-${width}.png`) })
+      await stack.restart()
       // Durable Chat must retain the same legacy-data caveat as the Surface.
       await openChat(page)
       await expect(page.locator('.chat-entry.assistant').last()).toContainText('no occurrence date')
