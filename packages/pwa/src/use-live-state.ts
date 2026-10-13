@@ -33,3 +33,16 @@ export function useActionStatuses(surfaceId: string) {
   const read = () => runtime?.getSnapshot().actionStatuses[surfaceId]
   return useSyncExternalStore(runtime?.subscribe ?? noSubscription, read, read)
 }
+
+/** Ordering is confirmed online work, independent of the durable Atom action queues. */
+export function useSurfaceOrderStatus(surfaceId: string) {
+  const runtime = usePwaRuntime()
+  const read = () => runtime?.getSnapshot().surfaceOrderStatuses[surfaceId]
+  return useSyncExternalStore(runtime?.subscribe ?? noSubscription, read, read)
+}
+
+export function useGatewayOnline() {
+  const runtime = usePwaRuntime()
+  const read = () => runtime?.getSnapshot().gatewayOnline ?? true
+  return useSyncExternalStore(runtime?.subscribe ?? noSubscription, read, read)
+}

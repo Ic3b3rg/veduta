@@ -19,6 +19,7 @@ import {
   type RenderableSurface,
   type SurfaceMoveDirection,
   type SpaceSettingsCommand,
+  type SurfaceOrder,
 } from '@veduta/protocol'
 import * as defaultApi from './api.ts'
 import type { ActionConfirmations, ActionStatuses } from '@veduta/catalog'
@@ -57,6 +58,14 @@ import {
 import { affectedAtomIdsForPatch, type SurfaceUpdateFeedback } from './surface-motion.ts'
 
 type Presence = Extract<RenderableGatewayServerMessage, { type: 'presence.update' }>['presence']
+export interface SurfaceOrderStatus {
+  state: 'pending' | 'failed'
+  message: string
+}
+interface SurfaceOrderConfirmation {
+  order: SurfaceOrder
+  surface?: RenderableSurface
+}
 export type LivePresentationEvent = {
   sequence: number
   frame: Extract<RenderableGatewayServerMessage, { type: 'surface.created' }> | ChatTurnFrame
@@ -87,6 +96,7 @@ export interface PwaLiveStateSnapshot {
   readonly queuedFastActions: QueuedFastAction[]
   readonly actionConfirmations: Record<string, ActionConfirmations>
   readonly actionStatuses: Record<string, ActionStatuses>
+  readonly surfaceOrderStatuses: Record<string, SurfaceOrderStatus>
   readonly surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback>
   readonly presentationEvents: LivePresentationEvent[]
   readonly connectionGeneration: number
@@ -146,6 +156,7 @@ export class PwaLiveStateRuntime {
   private activityFocusSpaceId: string | undefined
   private activityFocusPending = false
   private error: string | null = null
+  private surfaceCacheError: string | null = null
   private chatEntries: ChatMessage[]
   private readonly chatTimeline = new ChatTimelineProjection()
   private focusedChatScope: ChatScope = { type: 'global' }
@@ -160,6 +171,10 @@ export class PwaLiveStateRuntime {
   private refetchRequested = false
   private eventBuffer: SurfaceStreamEvent[] = []
   private surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback> = {}
+  private surfaceOrderGeneration = 0
+  private readonly surfaceOrderStatuses = new Map<string, SurfaceOrderStatus>()
+  // Accepted receipts only; these are never persisted or retried as commands.
+  private readonly surfaceOrderConfirmations = new Map<string, SurfaceOrderConfirmation>()
   private feedbackSequence = 0
   private presentationEvents: LivePresentationEvent[] = []
 
@@ -290,6 +305,8 @@ export class PwaLiveStateRuntime {
     this.eventBuffer = []
     this.actions.stop()
     this.agentActions.stop()
+    this.surfaceOrderStatuses.clear()
+    this.surfaceOrderConfirmations.clear()
     this.turns = new Map()
     this.presence = []
     if (this.reconnectTimer !== undefined) clearTimeout(this.reconnectTimer)
@@ -342,6 +359,8 @@ export class PwaLiveStateRuntime {
   }
 
   private publish(): void {
+    const surfaceOrderStatuses = Object.fromEntries(this.surfaceOrderStatuses)
+    Object.setPrototypeOf(surfaceOrderStatuses, null)
     this.snapshot = freeze({
       spaces: this.surfaces.spaces,
       surfaceCursor: this.surfaces.cursor,
@@ -350,7 +369,8 @@ export class PwaLiveStateRuntime {
       authToken: this.token,
       authStatus: this.authStatus,
       gatewayOnline: this.online,
-      error: this.error ?? this.actions?.error ?? this.agentActions?.error ?? null,
+      error:
+        this.error ?? this.actions?.error ?? this.agentActions?.error ?? this.surfaceCacheError,
       chatEntries: this.chatEntries,
       chatTimelineEntries: this.chatTimeline.entries(this.focusedChatScope),
       chatHasOlder: this.chatTimeline.nextBefore(this.focusedChatScope) !== undefined,
@@ -374,6 +394,7 @@ export class PwaLiveStateRuntime {
         this.agentActions?.actionConfirmations ?? {},
       ),
       actionStatuses: this.agentActions?.actionStatuses ?? {},
+      surfaceOrderStatuses,
       surfaceUpdateFeedbacks: this.surfaceUpdateFeedbacks,
       presentationEvents: this.presentationEvents,
       connectionGeneration: this.connectionGeneration,
@@ -384,10 +405,16 @@ export class PwaLiveStateRuntime {
 
   private saveSurfaces(): void {
     this.acknowledgeFocusedActivity()
-    saveSnapshot(this.storage, HOME_CACHE_KEY, {
-      spaces: this.surfaces.spaces,
-      surfaceCursor: this.surfaces.cursor,
-    })
+    try {
+      saveSnapshot(this.storage, HOME_CACHE_KEY, {
+        spaces: this.surfaces.spaces,
+        surfaceCursor: this.surfaces.cursor,
+      })
+      this.surfaceCacheError = null
+    } catch {
+      this.surfaceCacheError =
+        'The offline copy could not be saved. Gateway-confirmed changes are still current.'
+    }
   }
 
   private appendChat(entry: ChatMessage): void {
@@ -539,6 +566,7 @@ export class PwaLiveStateRuntime {
           this.refetchGeneration += 1
           this.refetch = undefined
           this.eventBuffer = []
+          this.rebaseSurfaceOrders()
           this.surfaces.rebase()
         }
         this.clientId = frame.clientId
@@ -664,6 +692,7 @@ export class PwaLiveStateRuntime {
         }
       }
       this.acceptActionReceipt(event)
+      this.reconcileSurfaceOrders()
       this.saveSurfaces()
     } catch (error) {
       this.failed(error)
@@ -707,6 +736,7 @@ export class PwaLiveStateRuntime {
             this.failed(error)
           }
         }
+        this.reconcileSurfaceOrders()
         this.loadState = 'ready'
         this.saveSurfaces()
       } catch (error) {
@@ -924,17 +954,11 @@ export class PwaLiveStateRuntime {
   }
 
   async togglePin(surface: RenderableSurface): Promise<void> {
-    const epoch = this.epoch
-    try {
-      const result = await this.api.pinSurface(surface.id, !surface.pinned, this.token)
-      if (!this.active(epoch)) return
-      if (!this.surfaces.confirmOrder(result.order, result.surface))
-        throw new Error('Pin order could not be applied')
-      this.saveSurfaces()
-      this.publish()
-    } catch (error) {
-      if (this.active(epoch)) this.failed(error, `"${surface.title}" pin failed`)
-    }
+    return this.changeSurfaceOrder(
+      surface.id,
+      `${surface.pinned ? 'Unpin' : 'Pin'} "${surface.title}"`,
+      () => this.api.pinSurface(surface.id, !surface.pinned, this.token),
+    )
   }
 
   async moveSurface(
@@ -942,16 +966,86 @@ export class PwaLiveStateRuntime {
     surfaceId: string,
     direction: SurfaceMoveDirection,
   ): Promise<void> {
+    return this.changeSurfaceOrder(
+      surfaceId,
+      `Move "${this.findSurface(surfaceId)?.title ?? surfaceId}" ${direction}`,
+      () => this.api.moveSurface(spaceId, surfaceId, direction, this.token),
+    )
+  }
+
+  private async changeSurfaceOrder(
+    surfaceId: string,
+    action: string,
+    command: () => Promise<SurfaceOrderConfirmation>,
+  ): Promise<void> {
+    if (
+      !this.started ||
+      this.surfaceOrderStatuses.get(surfaceId)?.state === 'pending' ||
+      this.surfaceOrderConfirmations.has(surfaceId)
+    )
+      return
     const epoch = this.epoch
-    try {
-      const result = await this.api.moveSurface(spaceId, surfaceId, direction, this.token)
-      if (!this.active(epoch)) return
-      if (!this.surfaces.confirmOrder(result.order))
-        throw new Error('Move order could not be applied')
-      this.saveSurfaces()
+    const generation = this.surfaceOrderGeneration
+    const setStatus = (value: SurfaceOrderStatus) => {
+      this.surfaceOrderStatuses.set(surfaceId, value)
       this.publish()
+    }
+    if (!this.online) {
+      setStatus({
+        state: 'failed',
+        message: `${action} was unavailable while offline. Try again when connected.`,
+      })
+      return
+    }
+    setStatus({ state: 'pending', message: `${action} in progress…` })
+    let result: SurfaceOrderConfirmation
+    try {
+      result = await command()
     } catch (error) {
-      if (this.active(epoch)) this.failed(error, 'Surface move failed')
+      if (!this.active(epoch) || generation !== this.surfaceOrderGeneration) return
+      if (error instanceof defaultApi.ApiResponseError && error.status === 401) {
+        this.failed(error)
+        return
+      }
+      setStatus({
+        state: 'failed',
+        message: `${action} failed: ${error instanceof Error ? error.message : String(error)}`,
+      })
+      return
+    }
+    if (!this.active(epoch) || generation !== this.surfaceOrderGeneration) return
+    this.surfaceOrderConfirmations.set(surfaceId, result)
+    this.surfaceOrderStatuses.set(surfaceId, {
+      state: 'pending',
+      message: `${action} accepted. Waiting for the current Surface order…`,
+    })
+    this.reconcileSurfaceOrders()
+    this.saveSurfaces()
+    this.publish()
+    if (this.surfaceOrderConfirmations.has(surfaceId)) void this.refreshSpaces()
+  }
+
+  private rebaseSurfaceOrders(): void {
+    this.surfaceOrderGeneration += 1
+    this.surfaceOrderConfirmations.clear()
+    for (const [surfaceId, status] of this.surfaceOrderStatuses) {
+      if (status.state !== 'pending') continue
+      const title = this.findSurface(surfaceId)?.title ?? surfaceId
+      this.surfaceOrderStatuses.set(surfaceId, {
+        state: 'failed',
+        message: `The order change for "${title}" could not be confirmed after Gateway history changed. Review the current order before retrying.`,
+      })
+    }
+  }
+
+  private reconcileSurfaceOrders(): void {
+    const confirmations = [...this.surfaceOrderConfirmations].sort(
+      ([, left], [, right]) => left.order.cursor - right.order.cursor,
+    )
+    for (const [surfaceId, result] of confirmations) {
+      if (!this.surfaces.confirmOrder(result.order, result.surface)) continue
+      this.surfaceOrderConfirmations.delete(surfaceId)
+      this.surfaceOrderStatuses.delete(surfaceId)
     }
   }
 
