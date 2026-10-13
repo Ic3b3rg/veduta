@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   statSync,
@@ -211,3 +212,44 @@ it('does not mistake an unknown sqlite-prefixed user table for internal SQLite m
   expect(() => cleanupCodexHomes(root)).toThrow(/unsupported schema/)
   expect(existsSync(rollout)).toBe(true)
 })
+
+function homeInventory(home: string): Array<[string, string | number]> {
+  return readdirSync(home, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry): [string, string | number] => {
+      const path = join(entry.parentPath, entry.name)
+      return [
+        path.slice(home.length),
+        `${statSync(path).mode}:${readFileSync(path).toString('hex')}`,
+      ]
+    })
+    .sort(([left], [right]) => left.localeCompare(right))
+}
+
+it.each(['closed', 'live', 'unknown-in-wal'])(
+  'leaves the complete original home unchanged on %s WAL schema refusal',
+  (mode) => {
+    const { root, home } = fixture()
+    const db = new DatabaseSync(join(home, 'state_5.sqlite'))
+    if (mode === 'unknown-in-wal')
+      db.exec(
+        readFileSync(new URL('./test-fixtures/codex-state-legacy.sql', import.meta.url), 'utf8'),
+      )
+    db.exec(
+      "PRAGMA journal_mode = WAL; CREATE TABLE future_history (content TEXT); INSERT INTO future_history VALUES ('private history')",
+    )
+    if (mode === 'closed') db.close()
+    const before = homeInventory(home)
+    const inspectionParent = join(root, 'inspection')
+    mkdirSync(inspectionParent, { mode: 0o700 })
+    try {
+      expect(() => cleanupCodexHomes(root, undefined, inspectionParent)).toThrow(
+        /unsupported schema/,
+      )
+      expect(homeInventory(home)).toEqual(before)
+      expect(readdirSync(inspectionParent)).toEqual([])
+    } finally {
+      if (mode !== 'closed') db.close()
+    }
+  },
+)

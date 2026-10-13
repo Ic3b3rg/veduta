@@ -1,6 +1,7 @@
 import { ModelConnectionIdSchema } from '@veduta/protocol'
 import { createHash } from 'node:crypto'
-import { existsSync, lstatSync, readdirSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, lstatSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { CODEX_STATE_SCHEMAS } from './codex-state-schemas.ts'
@@ -68,8 +69,8 @@ function schemaFor(name: string) {
   return Object.entries(CODEX_STATE_SCHEMAS).find(([filename]) => filename === name)?.[1]
 }
 
-function validateDatabase(path: string, name: string): void {
-  for (const suffix of ['-wal', '-shm']) {
+function validateDatabase(path: string, name: string, inspectionParent: string): void {
+  for (const suffix of ['-wal', '-shm', '-journal']) {
     if (lstatSync(path + suffix, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error('Codex cleanup refuses symbolic SQLite sidecars')
   }
@@ -78,8 +79,7 @@ function validateDatabase(path: string, name: string): void {
     throw new Error(
       `Codex cleanup: unsupported SQLite file ${name}; preserve it and upgrade the reviewed cleanup layout`,
     )
-  const db = new DatabaseSync(path, { readOnly: true })
-  try {
+  inspectDatabaseCopy(path, inspectionParent, (db) => {
     const rows = db
       .prepare(
         "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE substr(name, 1, 7) != 'sqlite_' AND name != '_sqlx_migrations' ORDER BY type, name",
@@ -102,8 +102,44 @@ function validateDatabase(path: string, name: string): void {
       )
         throw new Error(`Codex cleanup: unsupported migration in ${name}; no history was deleted`)
     }
+  })
+}
+
+/** SQLite read-only opens still write WAL shared memory. Inspect only a private, WAL-preserving copy. */
+function inspectDatabaseCopy(
+  path: string,
+  inspectionParent: string,
+  inspect: (db: DatabaseSync) => void,
+): void {
+  const suffixes = ['', '-wal', '-journal']
+  const signature = (source: string): string | undefined => {
+    const stat = lstatSync(source, { bigint: true, throwIfNoEntry: false })
+    if (!stat) return undefined
+    if (!stat.isFile()) throw new Error('Codex cleanup refuses non-regular SQLite files')
+    return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(':')
+  }
+  const before = suffixes.map((suffix) => signature(path + suffix))
+  if (before[0] === undefined) throw new Error('Codex cleanup database disappeared; retry')
+  const temporary = mkdtempSync(join(inspectionParent, 'veduta-codex-inspect-'))
+  const copy = join(temporary, 'state.sqlite')
+  try {
+    suffixes.forEach((suffix, index) => {
+      if (before[index] !== undefined) copyFileSync(path + suffix, copy + suffix)
+    })
+    if (suffixes.some((suffix, index) => signature(path + suffix) !== before[index])) {
+      throw new Error(
+        'Codex cleanup database changed during inspection; retry while the connection is idle',
+      )
+    }
+    // Reconstruct shared memory here; copying a live SHM would copy process-local reader state.
+    const db = new DatabaseSync(copy)
+    try {
+      inspect(db)
+    } finally {
+      db.close()
+    }
   } finally {
-    db.close()
+    rmSync(temporary, { recursive: true, force: true })
   }
 }
 
@@ -127,7 +163,7 @@ interface CleanupPlan {
   files: string[]
   databases: string[]
 }
-function planHome(home: string): CleanupPlan {
+function planHome(home: string, inspectionParent = tmpdir()): CleanupPlan {
   const files = [
     ...collectRollouts(join(home, 'sessions')),
     ...collectRollouts(join(home, 'archived_sessions')),
@@ -139,7 +175,7 @@ function planHome(home: string): CleanupPlan {
     if (entry.isSymbolicLink()) throw new Error('Codex cleanup refuses symbolic links')
     if (!entry.isFile()) throw new Error('Codex cleanup expected a regular history file')
     if (entry.name.endsWith('.sqlite')) {
-      validateDatabase(path, entry.name)
+      validateDatabase(path, entry.name, inspectionParent)
       databases.push(path)
     } else files.push(path)
   }
@@ -166,9 +202,13 @@ function cleanDatabase(path: string): void {
   }
 }
 
-export function validateCodexHome(rootDir: string, connectionId: string): void {
+export function validateCodexHome(
+  rootDir: string,
+  connectionId: string,
+  inspectionParent = tmpdir(),
+): void {
   const home = codexHomePath(rootDir, connectionId)
-  if (existsSync(home)) planHome(home)
+  if (existsSync(home)) planHome(home, inspectionParent)
 }
 
 export function cleanupCodexHome(rootDir: string, connectionId: string): void {
@@ -186,6 +226,7 @@ function applyPlan(plan: CleanupPlan): void {
 export function cleanupCodexHomes(
   rootDir: string,
   onError?: (connectionId: string, error: unknown) => void,
+  inspectionParent = tmpdir(),
 ): void {
   const parent = join(rootDir, 'codex')
   if (!realDirectory(parent)) return
@@ -194,7 +235,7 @@ export function cleanupCodexHomes(
     if (!ModelConnectionIdSchema.safeParse(entry.name).success) continue
     try {
       const home = codexHomePath(rootDir, entry.name)
-      plans.push(planHome(home))
+      plans.push(planHome(home, inspectionParent))
     } catch (error) {
       if (!onError) throw error
       onError(entry.name, error)

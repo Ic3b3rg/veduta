@@ -64,7 +64,13 @@ numeric migration version. Internal SQLite metadata and autoindexes do not enter
 the fingerprint. The source-derived final main schema fixture tests actual mixed
 credential/history preservation; its Apache-2.0 license accompanies the fixture.
 
-Cleanup preflights recognized stores before deleting any files or rows. Unknown
+Cleanup preflights recognized stores before deleting any files or rows. SQLite
+read-only connections can still create or modify WAL sidecars, so schema inspection
+opens only a private copy of the database plus any WAL and rollback journal. Shared
+memory is reconstructed inside that copy. A change in source file identity, size or
+modification metadata during copying refuses inspection for a later retry. Temporary
+copies are removed on success and failure; backup inspection keeps them inside its
+private staging directory, respecting the configured backup working filesystem. Unknown
 filenames, schemas, unsuccessful or unknown SQLx migration versions, and symbolic
 links in recognized paths refuse cleanup. SQLx bookkeeping is retained. A refused
 home remains unavailable through the existing Model connection error boundary;

@@ -690,9 +690,15 @@ export class ModelConnectionRegistry {
       const challenge = this.challenges.get(id)
       if (challenge && this.now().getTime() > new Date(challenge.expiresAt).getTime()) {
         return this.queue(() => {
-          this.challenges.delete(id)
           const current = loadConnectionsConfig(this.rootDir)
           const currentRecord = this.findRecord(current, id)
+          if (
+            currentRecord.state !== record.state ||
+            currentRecord.stateAt !== record.stateAt ||
+            this.challenges.get(id) !== challenge
+          )
+            return this.connectionWire(currentRecord)
+          this.challenges.delete(id)
           const failed = withState(currentRecord, {
             state: 'failed',
             stateAt: this.now().toISOString(),

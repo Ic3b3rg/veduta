@@ -198,14 +198,19 @@ async function stageCodexDirectory(rootDir: string, stagingDir: string): Promise
   const source = join(rootDir, 'codex')
   const destination = join(stagingDir, 'codex')
   mkdirSync(destination, { mode: 0o700 })
-  for (const entry of readdirSync(source, { withFileTypes: true })) {
+  const entries = readdirSync(source, { withFileTypes: true })
+  // Refuse every unsupported home before opening any original SQLite snapshot connection.
+  for (const entry of entries) {
+    if (ModelConnectionIdSchema.safeParse(entry.name).success)
+      validateCodexHome(rootDir, entry.name, stagingDir)
+  }
+  for (const entry of entries) {
     const from = join(source, entry.name)
     const to = join(destination, entry.name)
     if (!ModelConnectionIdSchema.safeParse(entry.name).success) {
       cpSync(from, to, { recursive: true })
       continue
     }
-    validateCodexHome(rootDir, entry.name)
     mkdirSync(to, { mode: 0o700 })
     for (const child of readdirSync(from, { withFileTypes: true })) {
       if (child.name.endsWith('-wal') || child.name.endsWith('-shm')) continue
@@ -218,7 +223,7 @@ async function stageCodexDirectory(rootDir: string, stagingDir: string): Promise
       }
     }
   }
-  cleanupCodexHomes(stagingDir)
+  cleanupCodexHomes(stagingDir, undefined, stagingDir)
 }
 
 /** Filesystem-safe ISO timestamp: colons become dashes, uniformly, so lexical order still matches chronological order. */

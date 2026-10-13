@@ -1601,3 +1601,41 @@ it('retains pending removal after a path refusal and permits only a deletion ret
   expect(existsSync(home)).toBe(false)
   expect(readFileSync(join(other, 'auth.json'), 'utf8')).toBe('other-authorization')
 })
+
+it('does not let an already queued device expiry overwrite failed removal retirement', async () => {
+  const dir = freshRoot()
+  const adapter = createFakeAdapter({
+    methodId: 'chatgpt-codex',
+    providerName: 'openai',
+    capabilities: {
+      authorization: 'device-code',
+      refresh: 'automatic',
+      revocation: 'provider',
+      metered: false,
+    },
+    authorize: async () => ({
+      state: 'waiting-for-user',
+      challenge: {
+        loginId: 'expired',
+        verificationUrl: 'https://example.test/device',
+        userCode: 'TEST',
+        expiresAt: '2026-08-09T09:00:00.000Z',
+        expirySource: 'provider',
+      },
+    }),
+  })
+  const options = baseOptions(dir, [adapter], {
+    evictCodexSession: async () => {
+      throw new Error('termination failed')
+    },
+  })
+  const registry = new ModelConnectionRegistry(options)
+  const created = await registry.create({ method: 'chatgpt-codex' })
+  const id = created.connections[0]!.id
+  await registry.authorize(id, {})
+  const [removed, read] = await Promise.allSettled([registry.remove(id), registry.read(id)])
+  expect(removed?.status).toBe('rejected')
+  expect(read).toMatchObject({ status: 'fulfilled', value: { state: 'revoked' } })
+  const restarted = new ModelConnectionRegistry(options)
+  await expect(restarted.catalog(id)).rejects.toThrow('retry Remove')
+})
