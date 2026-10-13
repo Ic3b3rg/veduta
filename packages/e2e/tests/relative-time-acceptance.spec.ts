@@ -30,6 +30,9 @@ for (const width of [320, 1440]) {
         await expect(card.getByRole('status')).toHaveCount(0)
       }
       await expect(meals.getByRole('cell', { name: 'Old lunch', exact: true })).toHaveCount(0)
+      await expect(meals.getByRole('cell', { name: 'Undated breakfast', exact: true })).toHaveCount(
+        0,
+      )
       await expect(spending.getByRole('cell', { name: 'Old shop', exact: true })).toHaveCount(0)
       const before = await readSurface(page, origin, 'srf-meals')
       await meals.getByRole('button', { name: 'Pin Meals', exact: true }).click()
@@ -51,6 +54,10 @@ for (const width of [320, 1440]) {
       expect(logged.tree).toEqual(before.tree)
       expect(logged.state['mealCount']).toBe(2)
       expect(logged.state['lastMeal']).toBe('fesa di tacchino')
+      expect(logged.state['meals']).toEqual([
+        { occurredAt: BEFORE_BOUNDARY, time: '23:59', meal: 'fesa di tacchino' },
+        { occurredAt: '2026-03-29T10:00:00.000Z', time: '12:00', meal: 'Current lunch' },
+      ])
       expect(logged.state['mealRecords']).toEqual([
         { occurredAt: BEFORE_BOUNDARY, time: '23:59', meal: 'fesa di tacchino' },
         { occurredAt: '2026-03-29T10:00:00.000Z', time: '12:00', meal: 'Current lunch' },
