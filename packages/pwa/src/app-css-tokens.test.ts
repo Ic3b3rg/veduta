@@ -214,12 +214,14 @@ describe('static metadata pins the same colors as the catalog and app.css', () =
     expect(metaThemeColor(indexHtml, '(prefers-color-scheme: dark)')).toBe(pageBgDark)
   })
 
-  it('manifest theme_color matches catalogTokens.light.color.accent', () => {
-    expect(manifest.theme_color).toBe(catalogTokens.light.color.accent)
+  // Installed-app metadata follows the dark shell target in docs/VISUAL-LANGUAGE.md.
+  it('manifest theme_color matches the dark --page-bg', () => {
+    const pageBgDark = declarationValue(darkBlock, '--page-bg')
+    expect(manifest.theme_color).toBe(pageBgDark)
   })
 
-  it('manifest background_color matches the base --page-bg', () => {
-    const pageBgBase = declarationValue(baseBlock, '--page-bg')
-    expect(manifest.background_color).toBe(pageBgBase)
+  it('manifest background_color matches the dark --page-bg', () => {
+    const pageBgDark = declarationValue(darkBlock, '--page-bg')
+    expect(manifest.background_color).toBe(pageBgDark)
   })
 })
