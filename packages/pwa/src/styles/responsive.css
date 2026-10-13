@@ -130,6 +130,7 @@
   .automation-outcome-notification-actions button,
   .surface-toolbar button {
     min-height: 44px;
+    min-width: var(--catalog-control-touch-target);
   }
 }
 
