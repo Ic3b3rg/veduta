@@ -8,7 +8,7 @@ import type {
   SurfaceMoveDirection,
 } from '@veduta/protocol'
 import { Link } from 'react-router-dom'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Button } from '@veduta/catalog/ui/button'
 import { PortalContainerContext } from '@veduta/catalog/ui/portal-container'
 import { Settings } from 'lucide-react'
@@ -18,15 +18,13 @@ import { DecisionFeedbackNotice } from './decision-feedback-notice.tsx'
 import { clientPath } from './client-router.tsx'
 import { HomeSpaceGrid, type HomeSpacesLoadState } from './home-space-grid.tsx'
 import type { HomeActivityLastSeen } from './home-state.ts'
-import { InstallButton } from './install-button.tsx'
-import { NotificationBell } from './notification-bell.tsx'
 import {
   PendingDecisionStrip,
   SpacePendingDecisionNotifications,
 } from './pending-decision-notifications.tsx'
 import { presentPendingDecisions } from './pending-decision-presentation.ts'
 import { latestPendingDecisionFeedback } from './pending-decision-state.ts'
-import type { BrowserInstallPromptEvent, QueuedChat } from './pwa-storage.ts'
+import type { QueuedChat } from './pwa-storage.ts'
 import { SpaceSection } from './space-section.tsx'
 import { ShellNotice } from './shell-notice.tsx'
 import { SpaceNavigation } from './space-navigation.tsx'
@@ -44,11 +42,11 @@ export type AppRouteSelection =
     }
 
 interface AppShellProps {
-  authToken: string | undefined
+  deviceControls?: ReactNode
+  announcement?: ReactNode
+  brandMarkSrc?: string
   gatewayOnline: boolean
   queuedCount: number
-  installPrompt: BrowserInstallPromptEvent | null
-  showInstallGuide: boolean
   error: string | null
   onDismissError: () => void
   spaces: SpaceWithSurfaces[]
@@ -72,7 +70,6 @@ interface AppShellProps {
   focusChatOnRouteChange: boolean
   onOpenSettings: () => void
   onRetrySpaces: () => void
-  onInstallDone: () => void
   onFocusSpace: (space: SpaceWithSurfaces, surface?: RenderableSurface) => void
   onMoveSurface: (
     space: SpaceWithSurfaces,
@@ -105,11 +102,11 @@ interface RouteRecovery {
 
 /** The fixed PWA shell; React supplies presentation and route-derived selection from the live runtime. */
 export function AppShell({
-  authToken,
+  deviceControls,
+  announcement,
+  brandMarkSrc = '/icons/logo-mark.png',
   gatewayOnline,
   queuedCount,
-  installPrompt,
-  showInstallGuide,
   error,
   onDismissError,
   spaces,
@@ -133,7 +130,6 @@ export function AppShell({
   focusChatOnRouteChange,
   onOpenSettings,
   onRetrySpaces,
-  onInstallDone,
   onFocusSpace,
   onMoveSurface,
   onTogglePin,
@@ -176,13 +172,7 @@ export function AppShell({
           </a>
           <header className="topbar">
             <h1 className="product-wordmark">
-              <img
-                className="brand-logo"
-                src="/icons/logo-mark.png"
-                alt=""
-                width={32}
-                height={32}
-              />
+              <img className="brand-logo" src={brandMarkSrc} alt="" width={32} height={32} />
               Veduta
             </h1>
             <div className="topbar-actions" aria-live="polite">
@@ -195,10 +185,10 @@ export function AppShell({
               >
                 <Settings aria-hidden="true" />
               </Button>
-              <NotificationBell token={authToken} />
-              {showInstallGuide && <InstallButton prompt={installPrompt} onDone={onInstallDone} />}
+              {deviceControls}
             </div>
           </header>
+          {announcement}
 
           <div className="shell-layout">
             <SpaceNavigation

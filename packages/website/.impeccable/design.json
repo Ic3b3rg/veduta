@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-13T11:18:27Z",
+  "generatedAt": "2026-10-13T17:28:46Z",
   "title": "Design System: Veduta website",
   "extensions": {
     "colorMeta": {
@@ -233,8 +233,8 @@
         "value": "1100px"
       },
       {
-        "name": "tour-stack",
-        "value": "1000px"
+        "name": "product-mobile",
+        "value": "959px"
       },
       {
         "name": "landing-mobile",
@@ -285,9 +285,9 @@
       "name": "Tour next step",
       "kind": "button",
       "refersTo": "tour-action",
-      "description": "The full-width guide control above the tour content on narrow screens.",
+      "description": "Shared recipe control inside the collapsible guide; product layout belongs to AppShell.",
       "html": "<button class=\"ds-tour-action\" type=\"button\">Create a Space called Work</button>",
-      "css": ".ds-tour-action{display:block;width:100%;text-align:left;cursor:pointer;color:var(--catalog-color-text,#f4f4f5);background:var(--catalog-color-surface-raised,#14151d);border:1px solid var(--catalog-color-border,#30313d);border-radius:12px;font-family:var(--catalog-font-family,Inter,sans-serif);font-size:15px;line-height:1.45;line-height:1.5;padding:12px 16px;min-height:44px;box-shadow:inset 0 1px var(--catalog-color-border,#30313d);transition:border-color 120ms ease,box-shadow 120ms ease,transform 120ms ease;}.ds-tour-action:hover{background:var(--catalog-color-surface,#0f1017);}@media(hover:hover){.ds-tour-action:hover{border-color:color-mix(in srgb,var(--catalog-color-accent,#a994ff) 48%,var(--catalog-color-border,#30313d));transform:translateY(-1px);}}.ds-tour-action:active{transform:translateY(0);}.ds-tour-action:focus-visible{outline:2px solid var(--catalog-color-focus,#b8a7ff);outline-offset:4px;}@media(prefers-reduced-motion:reduce){.ds-tour-action{transition:none;}}"
+      "css": ".ds-tour-action{display:inline-flex;width:auto;max-width:100%;text-align:left;cursor:pointer;color:var(--catalog-color-text,#f4f4f5);background:var(--catalog-color-surface-raised,#14151d);border:1px solid var(--catalog-color-border,#30313d);border-radius:4px;font-family:var(--catalog-font-family,Inter,sans-serif);font-size:15px;line-height:1.45;line-height:1.5;padding:8px 12px;min-height:44px;box-shadow:inset 0 1px var(--catalog-color-border,#30313d);transition:border-color 120ms ease,box-shadow 120ms ease,transform 120ms ease;}.ds-tour-action:hover{background:var(--catalog-color-surface,#0f1017);}@media(hover:hover){.ds-tour-action:hover{border-color:color-mix(in srgb,var(--catalog-color-accent,#a994ff) 48%,var(--catalog-color-border,#30313d));transform:translateY(-1px);}}.ds-tour-action:active{transform:translateY(0);}.ds-tour-action:focus-visible{outline:2px solid var(--catalog-color-focus,#b8a7ff);outline-offset:2px;}@media(prefers-reduced-motion:reduce){.ds-tour-action{transition:none;}}"
     },
     {
       "name": "Tour Chat field",

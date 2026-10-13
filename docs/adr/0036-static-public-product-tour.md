@@ -32,3 +32,21 @@ the static tour is evidence of the interface. Neither establishes real-model or 
   real-model service needs its own authentication, isolation, authorization and cost decision.
 
 Operational instructions and the storyboard live in [the demo guide](../DEMO.md).
+
+## Amendment: shared product shell (2026-10-13)
+
+The tour renders the same `AppShell`, router, Space navigation, Surface presentation and responsive
+`ChatPanel` as the PWA. Sharing individual content components inside a separate tour layout does
+not meet the visual-fidelity requirement. Tour CSS may style its collapsible announcement only;
+product geometry, breakpoints, scroll behavior and mobile Chat remain owned by the PWA.
+
+The live PWA supplies notification and installation controls to the presentation shell. The static
+tour never mounts those native/Gateway effects. Its closed state is projected into validated Space,
+Surface, Chat and Pending-decision data, with separate Global and Work conversations. Work is
+accepted or rejected using the product's existing Pending-decision controls, then opened through
+its normal result link. A small guide supplies sample prompts, disclosure and Reset without
+replacing product navigation. Reset also remounts the shell to clear transient Chat drafts.
+
+A push to `main` rebuilds the static site from the shared sources, carrying product presentation
+changes into the tour. New behavior can still require changes to the simulated data. This amendment
+changes only the interactive tour; existing video and screenshot assets remain recorded evidence.

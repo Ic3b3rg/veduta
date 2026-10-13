@@ -90,9 +90,9 @@ components:
   tour-action:
     backgroundColor: '{colors.surface-raised}'
     textColor: '{colors.ink}'
-    rounded: '{rounded.control}'
-    padding: '12px 16px'
-    width: '100%'
+    rounded: '{rounded.catalog-sm}'
+    padding: '8px 12px'
+    width: 'auto'
   tour-action-hover:
     backgroundColor: '{colors.paper}'
   tour-space-card:
@@ -178,10 +178,11 @@ the mobile gutter replaces the desktop gutter, navigation wraps to its own row, 
 sections stack, `display-mobile` replaces `display` with a 12-character heading limit, and the
 lead uses the body size.
 
-The tour is capped at 1500 px with 24 px vertical and 32 px horizontal padding. Its content sits
-beside a 380 px guide/Chat column with a 40 px gap. At 1000 px, padding becomes 20 px and the
-order becomes guide, content, Chat. Chat remains in the document flow, with bounded scrolling
-for its timeline; the guide remains before content on mobile.
+The tour renders the PWA's `AppShell` directly. Its full-viewport frame, Space rail, content scroll
+region and right-hand Chat use the production shell CSS. At the shared 959 px mobile breakpoint,
+the Space picker and full-screen Chat Sheet replace the desktop navigation and Chat rail.
+A collapsible announcement below the product header adds guidance and Reset. Its height is bounded
+to 35dvh, with its own scrolling when expanded; it never changes product columns or Chat placement.
 
 ## Elevation & Depth
 
@@ -193,8 +194,7 @@ states rather than decorative effects.
 ## Shapes
 
 Landing actions and the persistence image use the control radius; the video uses the media radius.
-The tour's guide actions use the control radius, while its shared Space cards keep the catalog
-radius. Fine single-pixel outlines frame media, cards and guide controls. Benefit copy sits directly
+The tour's guide uses the shared `recipe-control`; Space cards retain the catalog radius. Fine single-pixel outlines frame media, cards and guide controls. Benefit copy sits directly
 on the page without card wrappers.
 
 ## Components
@@ -210,12 +210,12 @@ on the page without card wrappers.
 - **Product media:** the real PWA video and images span their container and keep their aspect
   ratio. Captions remain subordinate and readable; native video controls and the transcript
   disclosure provide access to the demonstration.
-- **Tour guidance:** the next-step button is full width, left aligned and raised against the
-  content ground, with a darker hover. Reset uses the same bounded material. Tour links and
-  buttons receive a 2 px focus outline with a 4 px offset.
-- **Tour content and Chat:** `HomeSpaceGrid`, `SpaceSection`, `ChatBar` and `PresentationContext`
-  supply the real Home, Space, Atom and Chat presentation. The website changes their placement;
-  shared controls, cards and fields retain their production styling. Read the
+- **Tour guidance:** a native details/summary disclosure is closed initially and exposes the next
+  sample prompt when opened. Guide actions and Reset use shared controls. Links and the summary
+  receive a 2 px focus outline with a 2 px offset; touch targets retain at least 44 px.
+- **Tour content and Chat:** `AppShell` owns the layout and composes `SpaceNavigation`,
+  `HomeSpaceGrid`, `SpaceSection` and `ChatPanel`. The website supplies validated fictional data
+  through that presentation interface; it does not reposition or restyle product regions. Read the
   [visual language](../../docs/VISUAL-LANGUAGE.md) before changing them.
 
 Reduced motion removes landing smooth scrolling and button transitions. Shared tour components

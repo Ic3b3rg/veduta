@@ -3,12 +3,12 @@ import { z } from 'zod'
 export const DEMO_STORAGE_KEY = 'veduta.public-demo.v1'
 const DemoStateSchema = z
   .object({
-    stage: z.enum(['start', 'proposed', 'space', 'surface', 'edited']),
+    stage: z.enum(['start', 'proposed', 'rejected', 'space', 'surface', 'edited']),
     updatedAt: z.string().datetime(),
   })
   .strict()
 export type DemoState = z.infer<typeof DemoStateSchema>
-export type DemoAction = 'propose' | 'accept' | 'create' | 'edit' | 'reset'
+export type DemoAction = 'propose' | 'accept' | 'reject' | 'create' | 'edit' | 'reset'
 
 export function initialDemoState(): DemoState {
   return { stage: 'start', updatedAt: new Date().toISOString() }
@@ -16,10 +16,13 @@ export function initialDemoState(): DemoState {
 
 export function transitionDemo(state: DemoState, action: DemoAction): DemoState {
   if (action === 'reset') return initialDemoState()
-  if (action === 'propose' && state.stage === 'start') return { ...state, stage: 'proposed' }
+  if (action === 'propose' && (state.stage === 'start' || state.stage === 'rejected'))
+    return { stage: 'proposed', updatedAt: new Date().toISOString() }
+  if (action === 'reject' && state.stage === 'proposed')
+    return { stage: 'rejected', updatedAt: new Date().toISOString() }
   if (action === 'accept' && state.stage === 'proposed') return { ...state, stage: 'space' }
   if (action === 'create') {
-    if (state.stage === 'start' || state.stage === 'proposed')
+    if (state.stage === 'start' || state.stage === 'proposed' || state.stage === 'rejected')
       throw new Error('Create Work first by accepting its proposal.')
     if (state.stage === 'space') return { stage: 'surface', updatedAt: new Date().toISOString() }
   }

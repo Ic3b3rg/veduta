@@ -88,8 +88,11 @@ The expected URL is `https://ic3b3rg.github.io/veduta/`. Verify the successful d
 browser behavior before advertising it. To roll back, revert the website change on `main` and let
 the workflow publish the previous implementation again.
 
-The tour imports the product's Home, Chat and Space presentation components and the same scenario
-used by the mock provider. It has **no Gateway runtime, network inference, service setup, secrets,
+The tour renders the product's `AppShell`, navigation, responsive `ChatPanel`, router and Surface
+components with the same scenario used by the mock provider. A collapsible guide adds only sample
+prompts, disclosure and Reset; there is no separate product layout or demo override of shell CSS.
+GitHub Pages rebuilds those shared sources on pushes to `main`. Native notification and installation
+controls remain in the live PWA and are not mounted by the tour. It has **no Gateway runtime, network inference, service setup, secrets,
 shell tools, account access, telemetry or third-party scripts**. Every visitor's changes live only
 under `veduta.public-demo.v1` in that browser's local storage. Storage failures are visible; resetting
 the tour touches only that key. Clearing storage, private browsing or switching browser/device can
@@ -110,13 +113,18 @@ self-hosted Inter with its bundled SIL Open Font License.
 
 ## Browser QA
 
-1. Open `/demo.html` in a fresh browser context. Confirm the mock/fictional-data disclosure.
-2. Send the Space prompt through Chat, accept Work, and use the plan prompt. Confirm the Surface.
+1. Open `/demo.html` in a fresh browser context. Expand the guide and confirm its mock/fictional-data
+   disclosure; collapse it and confirm that the product layout remains usable.
+2. Send the Space prompt through Global Chat, accept Work, and follow its Open Work result link.
+   Send the plan prompt in Work Chat and confirm the Surface. On mobile, use Open Chat and Back to
+   Space; the same full-screen Chat and Space picker are used by the PWA.
 3. Send the edit prompt, refresh and reopen Work. Check Tuesday, the top priority and retained Chat.
 4. Open a separate browser context. Its tour starts fresh. Reset the first context; unrelated
    storage must remain untouched. Corrupt or block demo storage and confirm the visible recovery message.
 5. Repeat at 390 px and desktop width, using keyboard and pointer. Check no horizontal overflow,
-   readable controls and usable Chat. These viewport checks do not replace physical-phone acceptance.
+   readable controls, retained Chat drafts and focus returning to Open Chat. Reject a Work proposal
+   and refresh; no Work Space should be created. Settings should explain the self-hosted capability
+   without requesting notification permissions or registering a service worker. These viewport checks do not replace physical-phone acceptance.
 6. Open the landing. Play the MP4 with captions, open the transcript, and follow the GitHub,
    local trial, self-hosting and tester links. Inspect network requests: the built tour calls no API
    or external origin. Verify the same behavior from the chosen public URL after deployment.

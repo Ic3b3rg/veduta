@@ -21,7 +21,8 @@ GitHub for source, installation, current limitations and contributions.
 Product terminology and behavior remain authoritative in [GLOSSARY.md](../../GLOSSARY.md) and
 [the README](../../README.md). The tour's isolation and disclosure contract is
 [ADR-0036](../../docs/adr/0036-static-public-product-tour.md); [the demo guide](../../docs/DEMO.md)
-owns recording and publication instructions. Public hosting and its canonical URL are undecided.
+owns recording and publication instructions. GitHub Pages hosts the landing and isolated tour. The tour renders the PWA shell directly;
+only its scenario data and collapsible guidance are specific to the demo.
 
 ## Evidence on Hand
 

@@ -1,21 +1,17 @@
 import { useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { SpaceWithSurfacesSchema, SYSTEM_SPACE_ID, type ChatMessage } from '@veduta/protocol'
+import type { ChatMessage } from '@veduta/protocol'
+import { Link } from 'react-router-dom'
 import {
-  ChatBar,
-  HomeSpaceGrid,
+  AppShell,
+  ClientRouteTable,
   PresentationContext,
-  SpaceSection,
   clientPath,
+  useClientRouting,
 } from '@veduta/pwa/demo-components'
-import {
-  DEMO_SPACE_REQUEST,
-  DEMO_CREATE_REQUEST,
-  DEMO_EDIT_REQUEST,
-  demoSeed,
-  demoSurface,
-} from '@veduta/demo-data'
+import { DEMO_SPACE_REQUEST, DEMO_CREATE_REQUEST, DEMO_EDIT_REQUEST } from '@veduta/demo-data'
 import { readDemoState, saveDemoState, transitionDemo, type DemoAction } from './demo-state.ts'
+import { DEMO_DECISION_ID, DEMO_WORK_ID, demoProjection } from './demo-projection.ts'
+
 const ignore = () => {}
 
 export function Demo() {
@@ -33,43 +29,20 @@ export function Demo() {
   const [state, setState] = useState(loaded.state)
   const [warning, setWarning] = useState(loaded.warning)
   const [notice, setNotice] = useState('')
-  const navigate = useNavigate()
-  const location = useLocation()
-  const seed = demoSeed(state.updatedAt)
-  const hasWork = ['space', 'surface', 'edited'].includes(state.stage)
-  const hasSurface = state.stage === 'surface' || state.stage === 'edited'
-  const spaces = [
-    ...seed.spaces.map((space) => ({
-      ...space,
-      surfaces: seed.surfaces.filter((surface) => surface.spaceId === space.id),
-    })),
-    ...(hasWork
-      ? [
-          {
-            id: 'demo-work',
-            slug: 'work',
-            name: 'Work',
-            archived: false,
-            surfaces: hasSurface
-              ? [demoSurface('demo-work', state.stage === 'edited', state.updatedAt)]
-              : [],
-          },
-        ]
-      : []),
-    { id: SYSTEM_SPACE_ID, slug: 'system', name: 'System', archived: false, surfaces: [] },
-  ].map((space) =>
-    SpaceWithSurfacesSchema.parse({
-      ...space,
-      surfaces: space.surfaces.map((surface) => ({ ...surface, pinnable: false })),
-    }),
-  )
-  const focused = spaces.find((space) => location.pathname.startsWith(clientPath.space(space.slug)))
+  const [chatHint, setChatHint] = useState<{ scope: string; text: string } | null>(null)
+  const [resetKey, setResetKey] = useState(0)
+  const [dismissedDecisionIds, setDismissedDecisionIds] = useState(new Set<string>())
+  const { navigate, spaceSlug, surfaceId, locationKey, focusChatOnRouteChange } = useClientRouting()
+  const projection = demoProjection(state)
+  const focused = projection.spaces.find((space) => space.slug === spaceSlug)
+  const chatScope = focused?.id ?? 'global'
 
-  function act(action: DemoAction) {
+  function act(action: DemoAction): boolean {
     try {
       const next = transitionDemo(state, action)
       setState(next)
       setNotice('')
+      setChatHint(null)
       try {
         saveDemoState(next, localStorage)
         setWarning(null)
@@ -78,178 +51,169 @@ export function Demo() {
           'Browser storage is unavailable. Changes work in this tab, but refreshing will discard them.',
         )
       }
-      if (action === 'accept') navigate(clientPath.space('work'))
-      if (action === 'reset') navigate('/')
+      if (action === 'reset') {
+        setResetKey((value) => value + 1)
+        setDismissedDecisionIds(new Set())
+        navigate(clientPath.home)
+      }
+      if (action === 'propose') {
+        setDismissedDecisionIds(new Set())
+        navigate(clientPath.home)
+      }
+      return true
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Try the next guided step.')
+      return false
     }
   }
 
-  const entries: ChatMessage[] = []
-  if (state.stage !== 'start')
-    entries.push(
-      { role: 'user', text: DEMO_SPACE_REQUEST },
-      {
-        role: 'assistant',
-        text: hasWork
-          ? 'Work is ready. Prepare a Surface for your weekly priorities.'
-          : 'Create Work to keep your plans together. Confirm below to continue.',
-      },
-    )
-  if (hasSurface)
-    entries.push(
-      { role: 'user', text: DEMO_CREATE_REQUEST },
-      { role: 'assistant', text: 'Weekly plan is ready, with three priorities.' },
-    )
-  if (state.stage === 'edited')
-    entries.push(
-      { role: 'user', text: DEMO_EDIT_REQUEST },
-      {
-        role: 'assistant',
-        text: 'Talk to testers is now the top priority, on Tuesday. Refresh to check that your change stays here.',
-      },
-    )
-  const nextAction =
-    state.stage === 'start' ? 'propose' : state.stage === 'space' ? 'create' : 'edit'
-  const nextPrompt =
-    nextAction === 'propose'
-      ? DEMO_SPACE_REQUEST
-      : nextAction === 'create'
-        ? DEMO_CREATE_REQUEST
-        : DEMO_EDIT_REQUEST
+  const guide = (
+    <section className="demo-guide" aria-label="Demo guide">
+      <div className="demo-guide-bar">
+        <details>
+          <summary>Guided demo · fictional data</summary>
+          <div className="demo-guide-content">
+            <p>
+              Scripted responses. Changes stay in this browser. No model, accounts, external tools
+              or Gateway are connected. Use these sample prompts through Chat or the guide.
+            </p>
+            {state.stage === 'proposed' ? (
+              <p>Open Chat and accept the Work proposal. You can also reject it and start again.</p>
+            ) : state.stage === 'edited' ? (
+              <button className="recipe-control demo-next" onClick={() => window.location.reload()}>
+                Refresh and see it stay
+              </button>
+            ) : state.stage === 'start' || state.stage === 'rejected' ? (
+              <button className="recipe-control demo-next" onClick={() => act('propose')}>
+                {DEMO_SPACE_REQUEST}
+              </button>
+            ) : focused?.id !== DEMO_WORK_ID ? (
+              <Link className="recipe-control demo-next" to={clientPath.space('work')}>
+                Open Work
+              </Link>
+            ) : (
+              <button
+                className="recipe-control demo-next"
+                onClick={() => act(state.stage === 'space' ? 'create' : 'edit')}
+              >
+                {state.stage === 'space' ? DEMO_CREATE_REQUEST : DEMO_EDIT_REQUEST}
+              </button>
+            )}
+          </div>
+        </details>
+        <nav aria-label="Demo controls">
+          <button className="recipe-control" type="button" onClick={() => act('reset')}>
+            Reset demo
+          </button>
+          <a href="./index.html">About Veduta</a>
+          <a href="https://github.com/Ic3b3rg/veduta">GitHub</a>
+        </nav>
+      </div>
+      {warning && (
+        <p className="demo-warning" role="alert">
+          {warning}
+        </p>
+      )}
+      {notice && (
+        <p className="demo-notice" role="status">
+          {notice}
+        </p>
+      )}
+    </section>
+  )
+
+  const shell = (
+    <AppShell
+      key={resetKey}
+      brandMarkSrc="./icons/logo-mark.png"
+      announcement={guide}
+      gatewayOnline
+      queuedCount={0}
+      error={null}
+      onDismissError={ignore}
+      spaces={projection.spaces}
+      homeSpacesLoadState="ready"
+      route={
+        spaceSlug === undefined
+          ? { kind: 'home' }
+          : { kind: 'space', slug: spaceSlug, space: focused, surfaceId }
+      }
+      surfaceRevealFeedbackKeys={{}}
+      surfaceUpdateFeedbacks={{}}
+      pendingDecisions={projection.pendingDecisions}
+      dismissedDecisionIds={dismissedDecisionIds}
+      resolvingDecisionIds={new Set()}
+      automationOutcomeNotifications={[]}
+      pendingAutomationOutcomeNotificationIds={new Set()}
+      chatEntries={[
+        ...(focused === undefined
+          ? projection.globalEntries
+          : focused.id === DEMO_WORK_ID
+            ? projection.workEntries
+            : []),
+        ...(chatHint?.scope === chatScope
+          ? [{ role: 'assistant', text: chatHint.text } satisfies ChatMessage]
+          : []),
+      ]}
+      chatTimelineEntries={[]}
+      chatHasOlder={false}
+      chatLoadingOlder={false}
+      queuedChat={[]}
+      streamingEntries={[]}
+      focusChatToken={locationKey}
+      focusChatOnRouteChange={focusChatOnRouteChange}
+      onOpenSettings={() =>
+        setNotice(
+          'Settings, connections and notifications are available in the self-hosted app. This demo uses fictional data only.',
+        )
+      }
+      onRetrySpaces={() => act('reset')}
+      onFocusSpace={(space, surface) =>
+        navigate(
+          surface ? clientPath.surface(space.slug, surface.id) : clientPath.space(space.slug),
+        )
+      }
+      onMoveSurface={ignore}
+      onTogglePin={ignore}
+      onSurfaceRevealFeedbackShown={ignore}
+      onResolvePendingDecision={(id, resolution) => {
+        if (id === DEMO_DECISION_ID && state.stage === 'proposed') {
+          if (resolution === 'accept') act('accept')
+          if (resolution === 'reject') act('reject')
+        }
+      }}
+      onDismissPendingDecision={(id) =>
+        setDismissedDecisionIds((previous) => new Set([...previous, id]))
+      }
+      onOpenAutomationOutcomeNotification={ignore}
+      onDismissAutomationOutcomeNotification={ignore}
+      onSend={(text) => {
+        if (text.trim() === DEMO_SPACE_REQUEST && focused === undefined) return act('propose')
+        if (focused?.id === DEMO_WORK_ID) {
+          if (text.trim() === DEMO_CREATE_REQUEST) return act('create')
+          if (text.trim() === DEMO_EDIT_REQUEST) return act('edit')
+        }
+        setChatHint({
+          scope: chatScope,
+          text: 'This demo supports the three sample prompts in the guide. Create Work from Global Chat, then prepare and edit the plan in Work.',
+        })
+        return false
+      }}
+      onLoadOlderChat={ignore}
+      onRetryInterruptedChat={ignore}
+      onRetryQueuedChat={ignore}
+    />
+  )
 
   return (
     <PresentationContext.Provider value={{ theme: 'dark' }}>
-      <div className="precision-tool demo-app">
-        <header className="demo-header">
-          <a href="./index.html" className="product-wordmark">
-            <img className="brand-logo" src="./icons/logo-mark.png" alt="" width={32} height={32} />
-            Veduta
-          </a>
-          <span>Guided demo · fictional data</span>
-          <button type="button" onClick={() => act('reset')}>
-            Reset demo
-          </button>
-          <a href="https://github.com/Ic3b3rg/veduta">GitHub</a>
-        </header>
-        <p className="demo-disclosure">
-          Scripted responses. Changes stay in this browser. No model, accounts, external tools or
-          Gateway are connected. Please use the sample prompts.
-        </p>
-        {warning && (
-          <p className="demo-warning" role="alert">
-            {warning}
-          </p>
-        )}
-        <div className="demo-layout">
-          <section className="demo-guide" aria-label="Next demo step">
-            <h2>Try one small change.</h2>
-            {state.stage === 'proposed' ? (
-              <button className="demo-next" onClick={() => act('accept')}>
-                Accept Create Space “Work”
-              </button>
-            ) : state.stage === 'edited' ? (
-              <button className="demo-next" onClick={() => window.location.reload()}>
-                Refresh and see it stay
-              </button>
-            ) : (
-              <button className="demo-next" onClick={() => act(nextAction)}>
-                {nextPrompt}
-              </button>
-            )}
-            <p className="demo-hint">You can also send the sample prompt through Chat.</p>
-            {notice && (
-              <p role="status" className="demo-warning">
-                {notice}
-              </p>
-            )}
-          </section>
-          <main id="demo-content">
-            <nav className="demo-navigation" aria-label="Demo Spaces">
-              <Link to="/" aria-current={!focused ? 'page' : undefined}>
-                Home
-              </Link>
-              {spaces
-                .filter((space) => space.id !== SYSTEM_SPACE_ID)
-                .map((space) => (
-                  <Link
-                    key={space.id}
-                    to={clientPath.space(space.slug)}
-                    aria-current={focused?.id === space.id ? 'page' : undefined}
-                  >
-                    {space.slug === 'home' ? 'Home Space' : space.name}
-                  </Link>
-                ))}
-            </nav>
-            {focused ? (
-              <SpaceSection
-                space={focused}
-                focused
-                focusedSurfaceId={location.pathname.split('/surface/')[1]}
-                surfaceRevealFeedbackKeys={{}}
-                surfaceUpdateFeedbacks={{}}
-                onFocus={(space, surface) =>
-                  navigate(
-                    surface
-                      ? clientPath.surface(space.slug, surface.id)
-                      : clientPath.space(space.slug),
-                  )
-                }
-                onMoveSurface={ignore}
-                onTogglePin={ignore}
-                onSurfaceRevealFeedbackShown={ignore}
-              />
-            ) : (
-              <HomeSpaceGrid spaces={spaces} loadState="ready" onRetry={() => act('reset')} />
-            )}
-            {focused && focused.surfaces.length === 0 && (
-              <p className="demo-empty">
-                {focused.id === 'demo-work'
-                  ? 'Work is ready. Use the next sample prompt to prepare your Weekly plan.'
-                  : 'System controls are available in the full self-hosted app.'}
-              </p>
-            )}
-          </main>
-          <aside className="demo-chat" aria-label="Guided Chat">
-            <h2>Chat</h2>
-            <ChatBar
-              entries={entries}
-              timelineEntries={[]}
-              hasOlder={false}
-              loadingOlder={false}
-              queuedChat={[]}
-              streamingEntries={[]}
-              focusedSpace={focused}
-              focusToken={location.pathname}
-              focusOnRouteChange={false}
-              pendingDecisionReviewPaths={new Map()}
-              dismissedDecisionIds={new Set()}
-              resolvingDecisionIds={new Set()}
-              onResolvePendingDecision={ignore}
-              onDismissPendingDecision={ignore}
-              onSend={(text) => {
-                const action =
-                  text.trim() === DEMO_SPACE_REQUEST
-                    ? 'propose'
-                    : text.trim() === DEMO_CREATE_REQUEST
-                      ? 'create'
-                      : text.trim() === DEMO_EDIT_REQUEST
-                        ? 'edit'
-                        : undefined
-                if (action) act(action)
-                else
-                  setNotice(
-                    'This demo supports the three sample prompts above. Try locally with a real Model connection for your own requests.',
-                  )
-                return true
-              }}
-              onLoadOlder={ignore}
-              onRetryInterrupted={ignore}
-              onRetryQueued={ignore}
-            />
-          </aside>
-        </div>
-      </div>
+      <ClientRouteTable
+        appShell={shell}
+        modelConnections={shell}
+        gmailConnections={shell}
+        himalayaConnections={shell}
+        serviceConnections={shell}
+      />
     </PresentationContext.Provider>
   )
 }

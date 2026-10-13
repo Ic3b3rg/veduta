@@ -11,6 +11,8 @@ import { OnboardingWizard } from './onboarding-wizard.tsx'
 import { ConnectionsRoute } from './connections-route.tsx'
 import { ClientRouteTable, clientPath, useClientRouting } from './client-router.tsx'
 import { AppShell, type AppRouteSelection } from './app-shell.tsx'
+import { NotificationBell } from './notification-bell.tsx'
+import { InstallButton } from './install-button.tsx'
 import { homeBlockedByStatusFailure } from './onboarding-state.ts'
 import {
   INSTALL_DISMISSED_KEY,
@@ -371,11 +373,22 @@ function RoutedApp() {
 
   const appShell = (
     <AppShell
-      authToken={authToken}
+      deviceControls={
+        <>
+          <NotificationBell token={authToken} />
+          {showInstallGuide && (
+            <InstallButton
+              prompt={installPrompt}
+              onDone={() => {
+                localStorage.setItem(INSTALL_DISMISSED_KEY, '1')
+                setShowInstallGuide(false)
+              }}
+            />
+          )}
+        </>
+      }
       gatewayOnline={gatewayOnline}
       queuedCount={queuedCount}
-      installPrompt={installPrompt}
-      showInstallGuide={showInstallGuide}
       error={error}
       onDismissError={() => runtime.reportError(null)}
       spaces={spaces}
@@ -402,10 +415,6 @@ function RoutedApp() {
       focusChatOnRouteChange={focusChatOnRouteChange}
       onOpenSettings={() => navigate(clientPath.serviceConnections)}
       onRetrySpaces={runtime.retry}
-      onInstallDone={() => {
-        localStorage.setItem(INSTALL_DISMISSED_KEY, '1')
-        setShowInstallGuide(false)
-      }}
       onFocusSpace={focusSpace}
       onMoveSurface={moveSurface}
       onTogglePin={(surface) => void runtime.togglePin(surface)}
