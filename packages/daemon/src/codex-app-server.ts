@@ -545,6 +545,7 @@ export class CodexSessionPool {
   private readonly idleMs: number
   private readonly entries = new Map<string, PoolEntry>()
   private readonly pending = new Map<string, Promise<CodexTransport>>()
+  private closed = false
 
   constructor(options: { factory: CodexTransportFactory; idleMs?: number; now?: () => number }) {
     this.factory = options.factory
@@ -553,6 +554,9 @@ export class CodexSessionPool {
 
   /** Returns the live transport for `connectionId`, creating one via the injected factory if none exists yet. Concurrent callers for the same id share one in-flight creation. */
   async get(connectionId: string, codexHome: string): Promise<CodexTransport> {
+    if (this.closed) {
+      throw new ModelConnectionError('unreachable', 'the Codex transport was closed')
+    }
     const existing = this.entries.get(connectionId)
     if (existing) {
       this.rearm(connectionId, existing)
@@ -562,16 +566,23 @@ export class CodexSessionPool {
     const inFlight = this.pending.get(connectionId)
     if (inFlight) return inFlight
 
+    // Share the lifecycle outcome, not the raw factory promise: every waiter
+    // must reject when initialization crosses shutdown (issue #207).
     const created = this.factory({ codexHome })
+      .then((transport) => {
+        if (this.closed) {
+          transport.close()
+          throw new ModelConnectionError('unreachable', 'the Codex transport was closed')
+        }
+        const entry: PoolEntry = { transport, timer: this.armTimer(connectionId) }
+        this.entries.set(connectionId, entry)
+        return transport
+      })
+      .finally(() => {
+        this.pending.delete(connectionId)
+      })
     this.pending.set(connectionId, created)
-    try {
-      const transport = await created
-      const entry: PoolEntry = { transport, timer: this.armTimer(connectionId) }
-      this.entries.set(connectionId, entry)
-      return transport
-    } finally {
-      this.pending.delete(connectionId)
-    }
+    return created
   }
 
   private armTimer(connectionId: string): NodeJS.Timeout {
@@ -597,8 +608,12 @@ export class CodexSessionPool {
     entry.timer = this.armTimer(connectionId)
   }
 
-  /** Closes every live transport — the daemon's `onClose` hook, so no app-server child outlives the daemon process. */
+  /**
+   * Permanently closes the pool. Pending initialization keeps its transport
+   * deadline and closes any late result; shutdown never waits for a factory.
+   */
   async closeAll(): Promise<void> {
+    this.closed = true
     for (const entry of this.entries.values()) {
       clearTimeout(entry.timer)
       entry.transport.close()
