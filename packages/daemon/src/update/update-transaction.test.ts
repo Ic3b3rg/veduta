@@ -183,10 +183,17 @@ interface ExecBehavior {
   migrateStderr: string
   selfCheckCode: number
   selfCheckStderr: string
+  selfCheckStdout: string
 }
 
 function defaultExecBehavior(): ExecBehavior {
-  return { migrateCode: 0, migrateStderr: '', selfCheckCode: 0, selfCheckStderr: '' }
+  return {
+    migrateCode: 0,
+    migrateStderr: '',
+    selfCheckCode: 0,
+    selfCheckStderr: '',
+    selfCheckStdout: '',
+  }
 }
 
 function makeExecFile(behavior: ExecBehavior, execCalls: ExecCall[]) {
@@ -212,7 +219,11 @@ function makeExecFile(behavior: ExecBehavior, execCalls: ExecCall[]) {
       return { code: behavior.migrateCode, stdout: '', stderr: behavior.migrateStderr }
     }
     if (args.some((a) => a.includes('index.ts'))) {
-      return { code: behavior.selfCheckCode, stdout: '', stderr: behavior.selfCheckStderr }
+      return {
+        code: behavior.selfCheckCode,
+        stdout: behavior.selfCheckStdout,
+        stderr: behavior.selfCheckStderr,
+      }
     }
     return { code: 0, stdout: '', stderr: '' }
   }
@@ -855,6 +866,60 @@ describe('runUpdateTransaction — AC6 runtime jump', () => {
 // ---------------------------------------------------------------------------
 
 describe('runUpdateTransaction — AC3-shape rollback on a failed self-check', () => {
+  it('keeps actionable self-check diagnostics in the result and raw warnings in the audit log', async () => {
+    const fixture = await buildFixture({ dataVersion: 2 })
+    const warning =
+      '(node:123) ExperimentalWarning: SQLite is an experimental feature and might change at any time'
+    const hint = '(Use `node --trace-warnings ...` to show where the warning was created)'
+    const failure = 'self-check: dataVersion mismatch (simulated)'
+    fixture.execBehavior.selfCheckCode = 1
+    fixture.execBehavior.selfCheckStderr = `${warning}\n${hint}\n${failure}\nAdditional diagnostic: store could not open\n`
+
+    const outcome = await runUpdateTransaction(optionsFrom(fixture))
+    expect(outcome.status).toBe('terminal')
+    if (outcome.status !== 'terminal') throw new Error('unreachable')
+    expect(outcome.result.outcome).toBe('rolled-back')
+    expect(outcome.result.reason).toBe(
+      `stage-1 self-check failed: ${failure}\nAdditional diagnostic: store could not open`,
+    )
+    const log = readFileSync(join(fixture.home.logsDir, '1.2.3.log'), 'utf8')
+    expect(log).toContain(warning)
+    expect(log).toContain(hint)
+    expect(log).toContain(failure)
+  })
+
+  it.each([
+    {
+      name: 'stdout failure when stderr only contains an experimental warning',
+      stderr:
+        '(node:123) ExperimentalWarning: SQLite is experimental\n(Use `node --trace-warnings ...` to show where the warning was created)\n',
+      stdout: 'self-check: store unavailable',
+      expected: 'self-check: store unavailable',
+    },
+    {
+      name: 'exit code when the only output is an experimental warning',
+      stderr: '(node:123) ExperimentalWarning: SQLite is experimental\n',
+      stdout: '',
+      expected: 'exit code 1',
+    },
+    {
+      name: 'unrelated warnings and diagnostics are preserved',
+      stderr: '(node:123) Warning: custom health warning\nself-check: store unavailable',
+      stdout: '',
+      expected: '(node:123) Warning: custom health warning\nself-check: store unavailable',
+    },
+  ])('reports $name', async ({ stderr, stdout, expected }) => {
+    const fixture = await buildFixture({ dataVersion: 2 })
+    fixture.execBehavior.selfCheckCode = 1
+    fixture.execBehavior.selfCheckStderr = stderr
+    fixture.execBehavior.selfCheckStdout = stdout
+    const outcome = await runUpdateTransaction(optionsFrom(fixture))
+    expect(outcome.status).toBe('terminal')
+    if (outcome.status !== 'terminal') throw new Error('unreachable')
+    expect(outcome.result.outcome).toBe('rolled-back')
+    expect(outcome.result.reason).toBe(`stage-1 self-check failed: ${expected}`)
+  })
+
   it('rolls back fully: data restored byte-identical, failed release kept, log preserved', async () => {
     const fixture = await buildFixture({ dataVersion: 2 })
     fixture.execBehavior.selfCheckCode = 1

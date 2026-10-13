@@ -11,6 +11,7 @@ import { CURRENT_DATA_VERSION } from '../../daemon/src/update/data-version.ts'
 import {
   SurfaceSnapshotSchema,
   UpdateMarkerSchema,
+  UpdateResultSchema,
   type UpdateMarker,
 } from '../../protocol/src/index.ts'
 import {
@@ -28,6 +29,7 @@ import {
   type FixtureKeys,
 } from './update-fixture.ts'
 import { cleanupStackDirs, findFreePort, startLocalVpsStack, type LocalVpsStack } from './stack.ts'
+import { UPDATE_READINESS_BUDGET_MS, waitForUpdateReadiness } from './update-readiness.ts'
 
 /**
  * Real-browser e2e for signed self-update (issue #43,
@@ -443,7 +445,7 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
   })
 
   test('AC3 failed health check rolls back automatically', async ({ browser }) => {
-    test.setTimeout(20 * 60_000)
+    test.setTimeout(2 * UPDATE_READINESS_BUDGET_MS + 5 * 60_000)
     const baseDir = await mkdtemp(join(tmpdir(), 'veduta-e2e-selfupdate-ac3-'))
     const feed = await startFeedServer()
     const context = await browser.newContext()
@@ -472,7 +474,10 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
       stack = await startLocalVpsStack({
         demoData: true,
         baseDir,
-        extraEnv: { VEDUTA_INSTALLED_VERSION: INSTALLED_VERSION },
+        extraEnv: {
+          VEDUTA_INSTALLED_VERSION: INSTALLED_VERSION,
+          VEDUTA_UPDATE_READY_TIMEOUT: String(UPDATE_READINESS_BUDGET_MS / 1_000),
+        },
       })
       await onboardMinimal(page, stack)
 
@@ -492,13 +497,7 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
         timeout: 30_000,
       })
       await updates.getByRole('button', { name: 'Apply update' }).click()
-      await stack.waitForReadyLine(5 * 60_000)
-      await expect
-        .poll(async () => (await fetchHealth(page, stack!.origin))?.version, {
-          timeout: 5 * 60_000,
-          intervals: [2_000],
-        })
-        .toBe(RELEASE_VERSION)
+      await waitForAppliedUpdate(page, stack, RELEASE_VERSION, RELEASE_VERSION, 'success')
       await page.reload()
       await expect(page).toHaveURL(systemUrl)
       await expect(page.getByRole('heading', { name: 'System', exact: true })).toBeVisible()
@@ -534,6 +533,7 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
         legacyHome: stack.legacyHome,
         extraEnv: {
           VEDUTA_INSTALLED_VERSION: INSTALLED_VERSION,
+          VEDUTA_UPDATE_READY_TIMEOUT: String(UPDATE_READINESS_BUDGET_MS / 1_000),
           VEDUTA_UPDATE_TEST_KNOBS: '1',
           VEDUTA_TEST_FAIL_SELF_CHECK: '1',
         },
@@ -564,13 +564,7 @@ test.describe('signed self-update (issue #43, docs/adr/0013-signed-self-update.m
       })
       await updates.getByRole('button', { name: 'Apply update' }).click()
 
-      await stack.waitForReadyLine(5 * 60_000)
-      await expect
-        .poll(async () => (await fetchHealth(page, stack!.origin))?.version, {
-          timeout: 5 * 60_000,
-          intervals: [2_000],
-        })
-        .toBe(RELEASE_VERSION)
+      await waitForAppliedUpdate(page, stack, RELEASE_VERSION, RELEASE_VERSION_2, 'rolled-back')
 
       await page.reload()
       const postRollbackEvents = await fetchSpaceEvents(page, stack.origin, 'spc-health')
@@ -899,10 +893,15 @@ interface HealthResponse {
 }
 
 /** `/api/health` is auth-gated in production mode (`server.ts`'s `isPublicUnauthenticatedPath`) -- returns `undefined` on any non-2xx response rather than throwing, so callers can poll through a restart window where the daemon is briefly down. */
-async function fetchHealth(page: Page, origin: string): Promise<HealthResponse | undefined> {
+async function fetchHealth(
+  page: Page,
+  origin: string,
+  timeout = 30_000,
+): Promise<HealthResponse | undefined> {
   const token = await authToken(page)
   try {
     const response = await page.request.get(`${origin}/api/health`, {
+      timeout,
       headers: token ? { authorization: `Bearer ${token}` } : {},
     })
     if (!response.ok()) return undefined
@@ -910,6 +909,50 @@ async function fetchHealth(page: Page, origin: string): Promise<HealthResponse |
   } catch {
     return undefined
   }
+}
+
+async function waitForAppliedUpdate(
+  page: Page,
+  stack: LocalVpsStack,
+  servingVersion: string,
+  offeredVersion: string,
+  outcome: 'success' | 'rolled-back',
+): Promise<void> {
+  const stateDir = join(stack.baseDir, 'updates', 'state')
+  await waitForUpdateReadiness(async (remainingMs) => {
+    const health = await fetchHealth(page, stack.origin, Math.min(2_000, remainingMs))
+    const journalFile = join(stateDir, 'update-state.json')
+    let phase = 'no active journal'
+    if (existsSync(journalFile)) {
+      try {
+        const journal: unknown = JSON.parse(readFileSync(journalFile, 'utf8'))
+        phase =
+          journal !== null && typeof journal === 'object' && 'phase' in journal
+            ? String(journal.phase)
+            : 'unknown journal phase'
+      } catch {
+        phase = 'journal unavailable'
+      }
+    }
+    const resultFile = join(stateDir, 'result.json')
+    let result
+    try {
+      result = UpdateResultSchema.parse(JSON.parse(readFileSync(resultFile, 'utf8')))
+    } catch (error) {
+      // The supervisor can retire the previous result while this probe is running.
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
+    }
+    return {
+      ready:
+        health?.ok === true &&
+        health.version === servingVersion &&
+        result?.toVersion === offeredVersion &&
+        result.outcome === outcome &&
+        !existsSync(journalFile),
+      phase,
+      detail: `health=${health?.version ?? 'unavailable'}; outcome=${result?.outcome ?? 'missing'}; offered=${result?.toVersion ?? 'missing'}`,
+    }
+  })
 }
 
 function sleep(ms: number): Promise<void> {

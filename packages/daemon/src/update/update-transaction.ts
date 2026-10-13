@@ -667,8 +667,35 @@ async function runSelfCheckStep(
   ctx.log(`self-check stderr: ${result.stderr}`)
   return {
     ok: result.code === 0,
-    detail: result.stderr || result.stdout || `exit code ${result.code}`,
+    detail:
+      actionableSelfCheckOutput(result.stderr) ||
+      actionableSelfCheckOutput(result.stdout) ||
+      `exit code ${result.code}`,
   }
+}
+
+// Raw streams remain in the transaction log; only the user-facing reason omits Node noise.
+function actionableSelfCheckOutput(output: string): string {
+  let warning = false
+  return output
+    .split(/\r?\n/)
+    .filter((line) => {
+      if (/^\(node:\d+\) ExperimentalWarning:/.test(line)) {
+        warning = true
+        return false
+      }
+      if (
+        warning &&
+        /^\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)$/.test(line)
+      ) {
+        warning = false
+        return false
+      }
+      warning = false
+      return true
+    })
+    .join('\n')
+    .trim()
 }
 
 // ---------------------------------------------------------------------------
