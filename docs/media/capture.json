@@ -1,0 +1,16 @@
+{
+  "scenario": "weekly-plan",
+  "provider": "scripted mock",
+  "viewport": "1440x900",
+  "mobileViewport": "390x844",
+  "checks": [
+    "real Space proposal and acceptance",
+    "Surface creation and edit through Agent tools",
+    "page refresh and Chat restoration",
+    "Gateway restart with identical Surface",
+    "no external browser requests",
+    "no page errors"
+  ],
+  "revision": "efe82419b63fcb899cd6591080adbb9f4e6a342b",
+  "screenshotsOnly": false
+}

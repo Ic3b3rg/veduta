@@ -5,10 +5,13 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "demo:record": "tsx demo/record.ts",
     "test:e2e": "playwright test",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
+    "@veduta/demo-data": "workspace:*",
+    "tsx": "^4.20.0",
     "@playwright/test": "^1.62.1",
     "@types/node": "^26.1.0"
   }

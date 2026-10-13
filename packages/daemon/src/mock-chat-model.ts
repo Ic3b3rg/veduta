@@ -1,4 +1,5 @@
 import { respondToResolvedService } from './mock-resolved-service-fixture.ts'
+import { respondToProductDemo } from './mock-product-demo-fixture.ts'
 import {
   SurfaceSchema,
   type JsonObject,
@@ -136,6 +137,8 @@ export function createMockChatResponder(options: MockChatModelOptions): MockResp
       return piFauxAssistantMessage(JSON.stringify(mockWorkerReportForPrompt(text)))
     }
     if (isFullTextPrompt(text)) return piFauxAssistantMessage(FULL_TEXT_REPLY)
+    const productDemo = respondToProductDemo(text, toolResultsAfter)
+    if (productDemo) return productDemo
     const spaceProposal = respondToMockSpaceProposal(text, toolResultsAfter)
     if (spaceProposal) return spaceProposal
     const inspection = respondToMockClawHubInspection(text)

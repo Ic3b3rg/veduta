@@ -9,6 +9,10 @@
   "packageManager": "pnpm@10.28.0",
   "scripts": {
     "dev": "pnpm --parallel --filter @veduta/daemon --filter @veduta/pwa run dev",
+    "demo": "pnpm --filter @veduta/website dev",
+    "demo:build": "pnpm --filter @veduta/website build",
+    "demo:check": "pnpm demo:build && pnpm --filter @veduta/e2e exec playwright test --config demo/playwright.config.ts",
+    "demo:record": "pnpm --filter @veduta/pwa build && pnpm --filter @veduta/e2e demo:record",
     "local-vps": "deploy/local-vps.sh",
     "build": "pnpm -r run build",
     "test": "pnpm -r run test",

@@ -1,0 +1,337 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-13T11:18:27Z",
+  "title": "Design System: Veduta website",
+  "extensions": {
+    "colorMeta": {
+      "paper": {
+        "role": "neutral",
+        "displayName": "Deep ground",
+        "tonalRamp": [
+          "oklch(15% 0.01456 278.43)",
+          "oklch(26% 0.01456 278.43)",
+          "oklch(38% 0.01456 278.43)",
+          "oklch(49% 0.01456 278.43)",
+          "oklch(61% 0.01456 278.43)",
+          "oklch(72% 0.01456 278.43)",
+          "oklch(84% 0.01456 278.43)",
+          "oklch(95% 0.01456 278.43)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Cool white",
+        "tonalRamp": [
+          "oklch(15% 0.00133 286.38)",
+          "oklch(26% 0.00133 286.38)",
+          "oklch(38% 0.00133 286.38)",
+          "oklch(49% 0.00133 286.38)",
+          "oklch(61% 0.00133 286.38)",
+          "oklch(72% 0.00133 286.38)",
+          "oklch(84% 0.00133 286.38)",
+          "oklch(95% 0.00133 286.38)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted lavender gray",
+        "tonalRamp": [
+          "oklch(15% 0.01721 285.96)",
+          "oklch(26% 0.01721 285.96)",
+          "oklch(38% 0.01721 285.96)",
+          "oklch(49% 0.01721 285.96)",
+          "oklch(61% 0.01721 285.96)",
+          "oklch(72% 0.01721 285.96)",
+          "oklch(84% 0.01721 285.96)",
+          "oklch(95% 0.01721 285.96)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Slate hairline",
+        "tonalRamp": [
+          "oklch(15% 0.02137 281.35)",
+          "oklch(26% 0.02137 281.35)",
+          "oklch(38% 0.02137 281.35)",
+          "oklch(49% 0.02137 281.35)",
+          "oklch(61% 0.02137 281.35)",
+          "oklch(72% 0.02137 281.35)",
+          "oklch(84% 0.02137 281.35)",
+          "oklch(95% 0.02137 281.35)"
+        ]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Soft violet",
+        "tonalRamp": [
+          "oklch(15% 0.15244 291.16)",
+          "oklch(26% 0.15244 291.16)",
+          "oklch(38% 0.15244 291.16)",
+          "oklch(49% 0.15244 291.16)",
+          "oklch(61% 0.15244 291.16)",
+          "oklch(72% 0.15244 291.16)",
+          "oklch(84% 0.15244 291.16)",
+          "oklch(95% 0.15244 291.16)"
+        ]
+      },
+      "accent-hover": {
+        "role": "primary",
+        "displayName": "Violet hover",
+        "tonalRamp": [
+          "oklch(15% 0.10835 292.73)",
+          "oklch(26% 0.10835 292.73)",
+          "oklch(38% 0.10835 292.73)",
+          "oklch(49% 0.10835 292.73)",
+          "oklch(61% 0.10835 292.73)",
+          "oklch(72% 0.10835 292.73)",
+          "oklch(84% 0.10835 292.73)",
+          "oklch(95% 0.10835 292.73)"
+        ]
+      },
+      "accent-ink": {
+        "role": "primary",
+        "displayName": "Action ink",
+        "tonalRamp": [
+          "oklch(15% 0.01740 295.78)",
+          "oklch(26% 0.01740 295.78)",
+          "oklch(38% 0.01740 295.78)",
+          "oklch(49% 0.01740 295.78)",
+          "oklch(61% 0.01740 295.78)",
+          "oklch(72% 0.01740 295.78)",
+          "oklch(84% 0.01740 295.78)",
+          "oklch(95% 0.01740 295.78)"
+        ]
+      },
+      "media-ground": {
+        "role": "neutral",
+        "displayName": "Media ground",
+        "tonalRamp": [
+          "oklch(15% 0.00439 264.46)",
+          "oklch(26% 0.00439 264.46)",
+          "oklch(38% 0.00439 264.46)",
+          "oklch(49% 0.00439 264.46)",
+          "oklch(61% 0.00439 264.46)",
+          "oklch(72% 0.00439 264.46)",
+          "oklch(84% 0.00439 264.46)",
+          "oklch(95% 0.00439 264.46)"
+        ]
+      },
+      "surface-muted": {
+        "role": "neutral",
+        "displayName": "Muted ground",
+        "tonalRamp": [
+          "oklch(15% 0.01761 279.88)",
+          "oklch(26% 0.01761 279.88)",
+          "oklch(38% 0.01761 279.88)",
+          "oklch(49% 0.01761 279.88)",
+          "oklch(61% 0.01761 279.88)",
+          "oklch(72% 0.01761 279.88)",
+          "oklch(84% 0.01761 279.88)",
+          "oklch(95% 0.01761 279.88)"
+        ]
+      },
+      "surface-raised": {
+        "role": "neutral",
+        "displayName": "Raised ground",
+        "tonalRamp": [
+          "oklch(15% 0.01610 279.24)",
+          "oklch(26% 0.01610 279.24)",
+          "oklch(38% 0.01610 279.24)",
+          "oklch(49% 0.01610 279.24)",
+          "oklch(61% 0.01610 279.24)",
+          "oklch(72% 0.01610 279.24)",
+          "oklch(84% 0.01610 279.24)",
+          "oklch(95% 0.01610 279.24)"
+        ]
+      },
+      "focus": {
+        "role": "primary",
+        "displayName": "Pale violet focus",
+        "tonalRamp": [
+          "oklch(15% 0.12451 292.11)",
+          "oklch(26% 0.12451 292.11)",
+          "oklch(38% 0.12451 292.11)",
+          "oklch(49% 0.12451 292.11)",
+          "oklch(61% 0.12451 292.11)",
+          "oklch(72% 0.12451 292.11)",
+          "oklch(84% 0.12451 292.11)",
+          "oklch(95% 0.12451 292.11)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Landing display",
+        "purpose": "The landing headline."
+      },
+      "display-mobile": {
+        "displayName": "Narrow landing display",
+        "purpose": "The landing headline at 700px and below."
+      },
+      "headline": {
+        "displayName": "Section headline",
+        "purpose": "Persistence and ownership section headings."
+      },
+      "lead": {
+        "displayName": "Introduction lead",
+        "purpose": "Supporting introduction copy; 16px at 700px and below."
+      },
+      "body": {
+        "displayName": "Marketing body",
+        "purpose": "Readable marketing copy; production Chat uses its shared PWA styling."
+      },
+      "label": {
+        "displayName": "Caption",
+        "purpose": "Subordinate media captions."
+      },
+      "action": {
+        "displayName": "Primary action",
+        "purpose": "The main landing buttons."
+      },
+      "action-small": {
+        "displayName": "Header action",
+        "purpose": "The compact header button."
+      }
+    },
+    "shadows": [
+      {
+        "name": "flat-content",
+        "value": "none",
+        "purpose": "Landing material and Precision Tool Space cards and Chat."
+      },
+      {
+        "name": "tour-control-inset",
+        "value": "inset 0 1px var(--catalog-color-border)",
+        "purpose": "Inherited hairline inset on the tour guide and Reset buttons."
+      },
+      {
+        "name": "chat-field-focus",
+        "value": "0 0 0 3px color-mix(in oklab, var(--catalog-color-focus) 50%, transparent)",
+        "purpose": "Shared Chat input group keyboard focus."
+      }
+    ],
+    "motion": [
+      {
+        "name": "landing-action",
+        "value": "background 160ms ease-out",
+        "purpose": "Landing primary-action hover; removed for reduced motion."
+      },
+      {
+        "name": "catalog-fast",
+        "value": "120ms ease",
+        "purpose": "Shared tour border feedback and inherited guide-control transitions."
+      },
+      {
+        "name": "landing-scroll",
+        "value": "smooth",
+        "purpose": "Landing anchor navigation; auto for reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "landing-intro",
+        "value": "1100px"
+      },
+      {
+        "name": "tour-stack",
+        "value": "1000px"
+      },
+      {
+        "name": "landing-mobile",
+        "value": "700px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary landing action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Filled link for the main visitor action.",
+      "html": "<a class=\"ds-button-primary\" href=\"#demo\">Try the guided demo</a>",
+      "css": ".ds-button-primary{display:inline-flex;align-items:center;justify-content:center;background:var(--accent,#a994ff);color:#0b0911;font-size:15px;font-weight:600;text-decoration:none;min-height:48px;padding:12px 22px;border-radius:12px;font-family:Inter,sans-serif;transition:background 160ms ease-out;}.ds-button-primary:hover{background:#c1b2ff;color:#0b0911;}.ds-button-primary:focus-visible{outline:2px solid var(--accent,#a994ff);outline-offset:5px;}@media(prefers-reduced-motion:reduce){.ds-button-primary{transition:none;}}"
+    },
+    {
+      "name": "Compact landing action",
+      "kind": "button",
+      "refersTo": "button-primary-small",
+      "description": "The header variant of the primary action.",
+      "html": "<a class=\"ds-button-primary-small\" href=\"#demo\">Try the demo</a>",
+      "css": ".ds-button-primary-small{display:inline-flex;align-items:center;justify-content:center;background:var(--accent,#a994ff);color:#0b0911;font-size:14px;font-weight:600;text-decoration:none;min-height:44px;padding:10px 18px;border-radius:12px;font-family:Inter,sans-serif;transition:background 160ms ease-out;}.ds-button-primary-small:hover{background:#c1b2ff;color:#0b0911;}.ds-button-primary-small:focus-visible{outline:2px solid var(--accent,#a994ff);outline-offset:5px;}@media(prefers-reduced-motion:reduce){.ds-button-primary-small{transition:none;}}"
+    },
+    {
+      "name": "Landing text action",
+      "kind": "button",
+      "description": "An underlined secondary action with a full-height target.",
+      "html": "<a class=\"ds-text-link\" href=\"#start\">Try locally</a>",
+      "css": ".ds-text-link{display:inline-flex;align-items:center;min-height:44px;font-size:15px;color:var(--ink,#f4f4f5);text-underline-offset:5px;font-family:Inter,sans-serif;}.ds-text-link:hover{color:var(--accent,#a994ff);}.ds-text-link:focus-visible{outline:2px solid var(--accent,#a994ff);outline-offset:5px;}"
+    },
+    {
+      "name": "Landing navigation",
+      "kind": "nav",
+      "description": "Plain foreground links that wrap and receive violet hover and focus.",
+      "html": "<nav class=\"ds-navigation\" aria-label=\"Main navigation\"><a href=\"#how\">How it works</a><a href=\"#source\">GitHub</a></nav>",
+      "css": ".ds-navigation{display:flex;align-items:center;flex-wrap:wrap;gap:24px;font-family:Inter,sans-serif;}.ds-navigation a{display:flex;align-items:center;min-height:44px;font-size:14px;color:var(--ink,#f4f4f5);text-decoration:none;}.ds-navigation a:hover{color:var(--accent,#a994ff);}.ds-navigation a:focus-visible{outline:2px solid var(--accent,#a994ff);outline-offset:5px;}@media(max-width:700px){.ds-navigation{width:100%;gap:20px;justify-content:space-between;}.ds-navigation a{font-size:13px;}}"
+    },
+    {
+      "name": "Product video frame",
+      "kind": "card",
+      "refersTo": "media-frame",
+      "description": "Opaque, finely outlined media with native controls and a subordinate caption.",
+      "html": "<figure class=\"ds-media\"><video controls playsinline preload=\"none\" aria-label=\"Veduta product video\"></video><figcaption>Real PWA and Gateway \u00b7 scripted mock provider \u00b7 fictional data</figcaption></figure>",
+      "css": ".ds-media{margin:0;min-width:0;font-family:Inter,sans-serif;}.ds-media video{display:block;width:100%;height:auto;border:1px solid var(--line,#30313d);border-radius:16px;background:#111214;}.ds-media figcaption{font-size:13px;line-height:1.6;color:var(--muted,#a4a4b0);padding-top:14px;}"
+    },
+    {
+      "name": "Tour next step",
+      "kind": "button",
+      "refersTo": "tour-action",
+      "description": "The full-width guide control above the tour content on narrow screens.",
+      "html": "<button class=\"ds-tour-action\" type=\"button\">Create a Space called Work</button>",
+      "css": ".ds-tour-action{display:block;width:100%;text-align:left;cursor:pointer;color:var(--catalog-color-text,#f4f4f5);background:var(--catalog-color-surface-raised,#14151d);border:1px solid var(--catalog-color-border,#30313d);border-radius:12px;font-family:var(--catalog-font-family,Inter,sans-serif);font-size:15px;line-height:1.45;line-height:1.5;padding:12px 16px;min-height:44px;box-shadow:inset 0 1px var(--catalog-color-border,#30313d);transition:border-color 120ms ease,box-shadow 120ms ease,transform 120ms ease;}.ds-tour-action:hover{background:var(--catalog-color-surface,#0f1017);}@media(hover:hover){.ds-tour-action:hover{border-color:color-mix(in srgb,var(--catalog-color-accent,#a994ff) 48%,var(--catalog-color-border,#30313d));transform:translateY(-1px);}}.ds-tour-action:active{transform:translateY(0);}.ds-tour-action:focus-visible{outline:2px solid var(--catalog-color-focus,#b8a7ff);outline-offset:4px;}@media(prefers-reduced-motion:reduce){.ds-tour-action{transition:none;}}"
+    },
+    {
+      "name": "Tour Chat field",
+      "kind": "input",
+      "refersTo": "tour-chat-field",
+      "description": "A standalone specimen of the shared Chat input group and textarea.",
+      "html": "<div class=\"ds-chat-field\" role=\"group\"><textarea class=\"ds-chat-text\" rows=\"1\" aria-label=\"Message Veduta\" placeholder=\"Message Veduta\"></textarea></div>",
+      "css": ".ds-chat-field{display:flex;width:100%;min-width:0;border:1px solid var(--catalog-color-border,#30313d);background:var(--catalog-color-surface-raised,#14151d);border-radius:12px;box-shadow:0 1px 2px rgb(0 0 0 / 0.05);transition:color 150ms,box-shadow 150ms;}.ds-chat-text{display:flex;flex:1;min-width:0;width:100%;resize:none;border:0;border-radius:0;background:transparent;color:var(--catalog-color-text,#f4f4f5);font-family:var(--catalog-font-family,Inter,sans-serif);font-size:15px;line-height:1.45;font-size:16px;line-height:1.5;min-height:52px;max-height:min(160px,25dvh);padding:14px 0 14px 16px;outline:none;box-shadow:none;}.ds-chat-text::placeholder{color:var(--catalog-color-text-muted,#a4a4b0);}.ds-chat-field:has(.ds-chat-text:focus-visible){border-color:var(--catalog-color-focus,#b8a7ff);box-shadow:0 0 0 3px color-mix(in oklab,var(--catalog-color-focus,#b8a7ff) 50%,transparent);}.ds-chat-text:disabled{cursor:not-allowed;opacity:0.5;}"
+    },
+    {
+      "name": "Tour Space card",
+      "kind": "card",
+      "refersTo": "tour-space-card",
+      "description": "A plain specimen of the shared Home card material and heading, without mock metadata.",
+      "html": "<a class=\"ds-space-card\" href=\"#work\"><h3>Work</h3></a>",
+      "css": ".ds-space-card{display:grid;gap:12px;padding:16px;min-width:0;background:var(--catalog-color-surface-raised,#14151d);color:var(--catalog-color-text,#f4f4f5);border:1px solid var(--catalog-color-border,#30313d);border-radius:8px;box-shadow:none;text-decoration:none;font-family:var(--catalog-font-family,Inter,sans-serif);font-size:15px;line-height:1.45;transition:border-color 120ms ease;}.ds-space-card h3{font-size:18px;font-weight:700;line-height:1.3;letter-spacing:-0.03em;margin:0;overflow-wrap:anywhere;}.ds-space-card:hover{border-color:var(--catalog-color-accent,#a994ff);}.ds-space-card:focus-visible{border-color:var(--catalog-color-focus,#b8a7ff);outline:2px solid var(--catalog-color-focus,#b8a7ff);outline-offset:4px;}@media(prefers-reduced-motion:reduce){.ds-space-card{transition:none;}}"
+    },
+    {
+      "name": "Tour count chip",
+      "kind": "chip",
+      "refersTo": "tour-count",
+      "description": "Shared, compact metadata with tabular numerals and modest corners.",
+      "html": "<span class=\"ds-tour-count\">1 Surface</span>",
+      "css": ".ds-tour-count{display:inline-flex;align-items:center;min-height:24px;padding:4px 8px;background:color-mix(in srgb,var(--catalog-color-surface-muted,#191a23) 78%,transparent);color:var(--catalog-color-text-muted,#a4a4b0);border:1px solid var(--catalog-color-border,#30313d);border-radius:4px;font-family:Inter,sans-serif;font-size:12px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Precision Tool",
+    "overview": "The website carries Veduta's established dark tool identity into a readable visitor-facing page. Opaque surfaces, restrained violet actions and direct Inter typography keep attention on the actual interface. The guided tour uses production presentation, with a small frame for guidance.\n\nThis reference covers `packages/website`. [The visual language](../../docs/VISUAL-LANGUAGE.md) and [catalog tokens](../catalog/src/design-system.ts) own shared PWA and Atom styling; [landing CSS](src/landing.css) and [tour CSS](src/demo.css) supply the implemented website conventions. [PRODUCT.md](PRODUCT.md) owns surface scope. Product and demonstration truth remain in the [README](../../README.md), [glossary](../../GLOSSARY.md), [ADR-0036](../../docs/adr/0036-static-public-product-tour.md) and [demo guide](../../docs/DEMO.md).",
+    "keyCharacteristics": [
+      "Dark, opaque material separated by fine borders.",
+      "Generous marketing typography beside the actual product.",
+      "Restrained controls and shared production rendering in the tour."
+    ],
+    "rules": [],
+    "dos": [
+      "Do use the catalog's dark identity and the implemented website CSS as visual authority.",
+      "Do keep product imagery clear, proportional and accompanied by readable captions.",
+      "Do preserve the mobile guide-first order, wrapping and visible keyboard focus."
+    ],
+    "donts": [
+      "Don't replace shared tour components with independent visual replicas.",
+      "Don't introduce decorative gradients, glow, glass or ambient animation into this identity.",
+      "Don't apply the landing's marketing type and spacing scale to production Atom controls."
+    ]
+  }
+}

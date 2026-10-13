@@ -99,6 +99,9 @@ importers:
       '@simplewebauthn/server':
         specifier: ^13.3.2
         version: 13.3.2
+      '@veduta/demo-data':
+        specifier: workspace:*
+        version: link:../demo-data
       '@veduta/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -143,6 +146,16 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@26.1.0)(jiti@2.7.0)(jsdom@26.1.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0)
 
+  packages/demo-data:
+    dependencies:
+      '@veduta/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
   packages/e2e:
     devDependencies:
       '@playwright/test':
@@ -151,6 +164,12 @@ importers:
       '@types/node':
         specifier: ^26.1.0
         version: 26.1.0
+      '@veduta/demo-data':
+        specifier: workspace:*
+        version: link:../demo-data
+      tsx:
+        specifier: ^4.20.0
+        version: 4.23.0
 
   packages/protocol:
     dependencies:
@@ -222,6 +241,58 @@ importers:
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+      vite:
+        specifier: ^6.3.0
+        version: 6.4.3(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0)
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@26.1.0)(jiti@2.7.0)(jsdom@26.1.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0)
+
+  packages/website:
+    dependencies:
+      '@veduta/catalog':
+        specifier: workspace:*
+        version: link:../catalog
+      '@veduta/demo-data':
+        specifier: workspace:*
+        version: link:../demo-data
+      '@veduta/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@veduta/pwa':
+        specifier: workspace:*
+        version: link:../pwa
+      react:
+        specifier: ^19.1.0
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.1.0
+        version: 19.2.7(react@19.2.7)
+      react-router-dom:
+        specifier: 7.18.2
+        version: 7.18.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      zod:
+        specifier: ^3.25.0
+        version: 3.25.76
+    devDependencies:
+      '@tailwindcss/vite':
+        specifier: ^4.3.3
+        version: 4.3.3(vite@6.4.3(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))
+      '@types/node':
+        specifier: ^26.1.0
+        version: 26.1.0
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.2.3(@types/react@19.2.17)
+      '@vitejs/plugin-react':
+        specifier: ^4.5.0
+        version: 4.7.0(vite@6.4.3(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))
       typescript:
         specifier: ^5.8.0
         version: 5.9.3

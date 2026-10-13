@@ -1,0 +1,141 @@
+body {
+  background: #111214;
+}
+.demo-app {
+  max-width: 1500px;
+  margin: auto;
+  padding: 24px 32px;
+  color: var(--catalog-color-text);
+  background: var(--catalog-color-surface);
+  min-height: 100dvh;
+}
+.demo-header,
+.demo-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 20px;
+}
+.demo-header {
+  border-bottom: 1px solid var(--catalog-color-border);
+  padding-bottom: 18px;
+}
+.demo-header .product-wordmark {
+  margin: 0;
+  text-decoration: none;
+}
+.demo-header span {
+  margin-right: auto;
+  color: var(--catalog-color-text-muted);
+  font-size: 14px;
+}
+.demo-header button,
+.demo-next {
+  cursor: pointer;
+  color: var(--catalog-color-text);
+  background: var(--catalog-color-surface-raised);
+  border: 1px solid var(--catalog-color-border);
+  border-radius: 12px;
+  font: inherit;
+  padding: 12px 16px;
+  min-height: 44px;
+}
+.demo-header a,
+.demo-navigation a {
+  color: var(--catalog-color-text);
+  text-underline-offset: 5px;
+}
+.demo-disclosure,
+.demo-hint {
+  color: var(--catalog-color-text-muted);
+  line-height: 1.6;
+  font-size: 14px;
+}
+.demo-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-areas: 'content guide' 'content chat';
+  grid-template-rows: auto 1fr;
+  gap: 24px 40px;
+  margin-top: 32px;
+}
+.demo-layout main {
+  grid-area: content;
+  min-width: 0;
+}
+.demo-navigation {
+  margin-bottom: 32px;
+}
+.demo-navigation a {
+  padding: 8px 0;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+.demo-navigation a[aria-current] {
+  color: var(--catalog-color-accent);
+}
+.demo-chat {
+  grid-area: chat;
+  min-width: 0;
+}
+.demo-guide {
+  grid-area: guide;
+}
+.demo-chat h2,
+.demo-guide h2 {
+  font-size: 24px;
+  letter-spacing: -0.025em;
+  margin: 0 0 18px;
+}
+.demo-app .demo-next {
+  width: 100%;
+  text-align: left;
+  line-height: 1.5;
+  min-height: 44px;
+  padding: 12px 16px;
+}
+.demo-next:hover,
+.demo-header button:hover {
+  background: var(--catalog-color-surface);
+}
+.demo-app .chat-dock {
+  position: static;
+  width: 100%;
+  max-height: 650px;
+}
+.demo-app .chat-log {
+  max-height: 360px;
+}
+.demo-empty,
+.demo-warning {
+  line-height: 1.6;
+  padding: 16px;
+  background: var(--catalog-color-surface-raised);
+  border-radius: 12px;
+}
+.demo-app button:focus-visible,
+.demo-app a:focus-visible {
+  outline: 2px solid var(--catalog-color-focus);
+  outline-offset: 4px;
+}
+@media (max-width: 1000px) {
+  .demo-layout {
+    grid-template-columns: 1fr;
+    grid-template-areas: 'guide' 'content' 'chat';
+    gap: 32px;
+  }
+  .demo-app {
+    padding: 20px;
+  }
+  .demo-app .chat-dock {
+    display: flex;
+  }
+  .demo-header {
+    gap: 12px;
+  }
+  .demo-header span {
+    flex-basis: calc(100% - 90px);
+    margin: 0;
+  }
+}

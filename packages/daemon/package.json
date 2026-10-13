@@ -17,6 +17,7 @@
     "templates": "tsx src/template-cli.ts"
   },
   "dependencies": {
+    "@veduta/demo-data": "workspace:*",
     "@earendil-works/pi-agent-core": "0.80.3",
     "@earendil-works/pi-ai": "0.80.3",
     "@fastify/cors": "^10.1.0",

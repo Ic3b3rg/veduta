@@ -1,21 +1,117 @@
-# Veduta
+# Veduta — Give your personal AI agent a home.
 
-An open source, self-hosted **visual personal Agent**. Open Home to see your life areas as
-**Spaces**, each with persistent **Surfaces** for plans, trackers, lists, and ongoing work.
-Talk to one Agent to create and update them; come back later and pick up where you left off.
+An open-source personal AI Agent that turns conversations into **persistent, living interfaces**.
+Open **Home** to see your life areas as **Spaces**. Talk to one Agent to create and update their
+**Surfaces** for plans, trackers, lists and ongoing work; come back later and pick up where you left off.
+
+[![Veduta demo: create Work, prepare a Weekly plan, change its top priority through Chat, and refresh to find the saved result](docs/media/veduta-demo.gif)](docs/media/veduta-demo.mp4)
+
+[Watch demo](docs/media/veduta-demo.mp4) · [Try the guided demo](#try-the-guided-demo) ·
+[Try locally](#try-it-on-your-computer) · [Self-host](#install-on-a-vps)
+
+- **Persistent visual Surfaces** — a conversation becomes something you can return to.
+- **One Agent across your Spaces** — separate context for the parts of your life.
+- **Proactive updates and Automations** — recurring work starts with your confirmation.
+- **Self-hosted, open source, MIT** — your installation and your choice of Model connection.
+
+**Early alpha.** You cover hosting and model costs. The video uses the real PWA and Gateway
+with a **scripted mock provider and fictional data**. It demonstrates saved state, not real-model
+quality. See [project status and costs](#project-status-and-costs) before connecting personal accounts.
+
+## How it works
+
+1. **Create a Space.** Ask for Work, Health or another life area, then confirm the proposal.
+2. **Describe a Surface.** Ask the Agent for a useful plan, tracker or list in that Space.
+3. **Change it through Chat.** A follow-up updates the same persistent Surface.
+4. **Come back.** Refresh and reopen the Space: your Surfaces and Chat timeline remain.
+
+The demo creates Work, prepares a Weekly plan, moves tester interviews to Tuesday and makes them
+the top priority. The recording script verifies the edited result after both page refresh and
+a Gateway restart. [Recording and transcript](docs/DEMO.md).
+
+## Screenshots
+
+<table>
+  <tr>
+    <th>Home on desktop</th>
+    <th>Home on mobile</th>
+  </tr>
+  <tr>
+    <td><img src="docs/media/home-desktop.png" alt="Veduta Home on desktop with Home, Health, Reading and Work Spaces" width="720" /></td>
+    <td><img src="docs/media/home-mobile.png" alt="Veduta Home at a 390-pixel mobile viewport with Space summaries and the Chat control" width="240" /></td>
+  </tr>
+</table>
+
+![The same Weekly plan before and after Chat: tester interviews move from Thursday to Tuesday and become the top priority](docs/media/surface-before-after.png)
+
+Actual product captures with fictional data. The GIF is accelerated; the MP4 follows the full
+journey at a readable pace, with captions.
+
+## Use cases
+
+| Space   | Start with a Surface                 | Keep it living through Chat                           |
+| ------- | ------------------------------------ | ----------------------------------------------------- |
+| Work    | A weekly plan with three priorities  | Move an interview and change the top priority         |
+| Health  | A weight tracker or a movement plan  | Record a measurement or adjust the plan               |
+| Home    | Groceries and a plan for the weekend | Add what you need and change the plan as life changes |
+| Reading | A reading list with notes            | Keep the next book and your observations in view      |
+
+These are examples of Surface compositions, not separate Agents or fixed domain apps.
+
+## Try the guided demo
+
+From a current source checkout, with the [development prerequisites](#development):
+
+```sh
+pnpm install --frozen-lockfile
+pnpm demo
+```
+
+Open **http://localhost:5190** for the landing page or **http://localhost:5190/demo.html** for
+the guided tour. No VPS, model key or daemon is needed. Use the three sample prompts, accept
+Work, edit the plan, then refresh.
+
+The tour uses the product's Home, Chat and Surface components with fixed responses. Its state
+stays in **this browser's local storage**, isolated from other visitors. It has no authentication,
+Model connections, integrations, shell execution or access to a personal Gateway. **Reset demo**
+starts over; clearing browser storage also removes the tour's changes. To evaluate real inference
+and server persistence, use the [Local VPS profile](#try-it-on-your-computer).
+
+The [static publication guide](docs/DEMO.md#publish-the-landing-and-guided-demo) explains how to
+host the landing and tour independently. A public URL is not configured in this repository yet.
+
+## Project status and costs
+
+- **Software:** MIT licensed, with no Veduta subscription fee.
+- **Hosting:** you pay for and operate your VPS, backups and any optional domain. Local trials
+  need no VPS; a public static tour can use static hosting without running a Gateway.
+- **Models:** the mock provider costs nothing and follows fixed examples. Real inference uses
+  your API billing or provider subscription; usage, limits and eligibility belong to that provider.
+- **Data:** your Gateway stores personal state on your installation. A real Model connection
+  sends the context required for inference to its provider. Service access requires configuration
+  and explicit Space grants. Read the [security and trust model](docs/SECURITY.md).
+
+| Capability                          | Current alpha status                                                                |
+| ----------------------------------- | ----------------------------------------------------------------------------------- |
+| Home, Spaces, Surfaces and Chat     | Implemented, including saved state and Chat timelines                               |
+| Model connections                   | Anthropic, OpenAI and OpenRouter BYOK; ChatGPT subscription via managed Codex       |
+| Claude subscription                 | Unavailable; Anthropic API keys work                                                |
+| Automations and Website monitors    | Implemented core flows; individual capabilities still have acceptance work          |
+| Gmail, Himalaya and GitHub services | Partial alpha flows; real-account and lifecycle acceptance remain in progress       |
+| Messenger Bridges and public Hub    | Planned work; no released Telegram/WhatsApp Bridge or public extension Hub promised |
+
+The [Model connection details](#model-connections), [Mailbox roadmap](https://github.com/Ic3b3rg/veduta/issues/135)
+and [product roadmap](https://github.com/Ic3b3rg/veduta/issues/176) distinguish implemented flows
+from remaining verification and future integrations. This demo does not prove external-account,
+Automation, passkey or physical-phone behavior.
 
 > _Veduta_: an old Italian word for a detailed, wide painting of a city — the whole city at a glance, like Canaletto's vedute. Open it, and see.
-
-[Install](#install-on-a-vps) · [Try locally](#try-it-on-your-computer) ·
-[First steps](#your-first-surface) · [Updates](#updates) · [Documentation](#documentation)
-
-Veduta is early **alpha** software. The supported installation path below uses a Linux VPS
-and a browser; the Local VPS profile lets you try the core journey on your own computer.
 
 ## Choose where to start
 
 | You want to…                                                   | Start here                                          |
 | -------------------------------------------------------------- | --------------------------------------------------- |
+| Explore Home, Chat and a Surface without a Gateway or model    | [Guided demo](#try-the-guided-demo)                 |
 | Keep Veduta running and use it from your computer or phone     | [Install on a VPS](#install-on-a-vps)               |
 | Try passkeys, onboarding, and Surfaces without a VPS or domain | [Try it on your computer](#try-it-on-your-computer) |
 | Work on the code with seed data and a mock provider            | [Development](#development)                         |
@@ -279,6 +375,14 @@ The durable boundaries live in
 [Codex 0.160.0 compatibility check](docs/references/codex-0.160-compatibility.md) for operational
 and protocol details.
 
+## Architecture
+
+Veduta is a pnpm TypeScript monorepo: **protocol** validates Surfaces and messages,
+**daemon** owns the Gateway and persistence, **catalog** renders the closed Atom catalog,
+and **PWA** supplies the browser client. Surfaces are declarative Atom trees bound to state;
+the Agent does not generate executable HTML. See [ARCHITECTURE.md](ARCHITECTURE.md) and the
+[foundational decisions](#foundational-decisions).
+
 ## Development
 
 From a checkout with the Node.js and pnpm versions above:
@@ -295,6 +399,17 @@ Use the Local VPS profile above to rehearse the product setup journey.
 Run `pnpm check` before submitting changes. Contribution conventions are in
 [CONTRIBUTING.md](CONTRIBUTING.md); work specifications and acceptance criteria live in
 [GitHub Issues](https://github.com/Ic3b3rg/veduta/issues).
+
+To regenerate the product captures, run **`pnpm demo:record`**. It creates three screenshots,
+a captioned MP4 and an optimized GIF in `docs/media/`, using fresh temporary data each time.
+See [recording with Claude Code](docs/DEMO.md#record-with-claude-code) for setup and the exact prompts.
+
+## Contributing
+
+Alpha testers help most by trying one real use case: create a Space and a Surface, change it,
+refresh, and report what stayed or failed. Include your Veduta version, browser, viewport and
+steps to reproduce in a [GitHub issue](https://github.com/Ic3b3rg/veduta/issues/new); leave out
+personal data and credentials. Code contributions follow [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation
 
