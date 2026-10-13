@@ -318,6 +318,7 @@ describe('App', () => {
           attention: 0,
           attentionRevision: 0,
           surfaces: [
+            { ...appSurface('srf-pinned', 'Reference'), pinned: true },
             appSurface('srf-first', 'Gateway first'),
             appSurface('srf-second', 'Gateway second'),
           ],
@@ -337,7 +338,17 @@ describe('App', () => {
 
     render(<App />)
     await waitFor(() => expect(connectGateway).toHaveBeenCalledOnce())
-    fireEvent.click(await screen.findByRole('button', { name: 'Move Gateway first down' }))
+    expect(await screen.findByRole('heading', { name: 'Pinned (1)' })).toBeDefined()
+    expect(screen.getByRole('heading', { name: 'Surfaces (2)' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Move Reference down' })).toHaveProperty(
+      'disabled',
+      true,
+    )
+    expect(screen.getByRole('button', { name: 'Move Gateway first up' })).toHaveProperty(
+      'disabled',
+      true,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Move Gateway first down' }))
     const handlers = vi.mocked(connectGateway).mock.calls[0]?.[0]
     if (!handlers) throw new Error('Gateway handlers were not registered')
 
@@ -352,7 +363,7 @@ describe('App', () => {
           order: {
             cursor: 12,
             spaceId: 'spc-health',
-            pinnedSurfaceIds: [],
+            pinnedSurfaceIds: ['srf-pinned'],
             regularSurfaceIds: ['srf-first', 'srf-second'],
           },
         }),
@@ -364,7 +375,7 @@ describe('App', () => {
         order: {
           cursor: 11,
           spaceId: 'spc-health',
-          pinnedSurfaceIds: [],
+          pinnedSurfaceIds: ['srf-pinned'],
           regularSurfaceIds: ['srf-second', 'srf-first'],
         },
       })
