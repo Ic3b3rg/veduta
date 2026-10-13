@@ -116,8 +116,8 @@ export async function buildReleaseArtifact(options: {
 
   // `server.ts`'s `defaultPwaDistDir` resolves relative to its own module
   // location, so the built PWA must land at this same path inside the
-  // staged tree for the flipped-to release to serve it.
-  execFileSync('pnpm', ['--filter', '@veduta/pwa', 'build'], { cwd: REPO_ROOT, stdio: 'ignore' })
+  // staged tree for the flipped-to release to serve it. Reuse the suite's
+  // global-setup build: rebuilding here would race other workers' readers.
   mkdirSync(join(stagingDir, 'packages', 'pwa'), { recursive: true })
   execFileSync('cp', [
     '-a',

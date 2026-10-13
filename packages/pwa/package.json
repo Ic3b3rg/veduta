@@ -10,7 +10,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -p tsconfig.json && vite build",
+    "build": "pnpm typecheck && pnpm bundle",
+    "bundle": "vite build",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },

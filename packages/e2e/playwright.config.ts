@@ -6,14 +6,14 @@ import { defineConfig, devices } from '@playwright/test'
  * `deploy/local-vps.sh` process (see `tests/stack.ts`) and drives it through
  * a real Chromium instance, so there is exactly one project (no
  * cross-browser matrix — WebAuthn virtual authenticators are a Chrome
- * DevTools Protocol feature) and `workers: 1` (the suite serializes daemon
- * boots on a single port/base-dir per journey; parallel workers would race
- * over the same process group).
+ * DevTools Protocol feature). Journeys own their ports, data directories and
+ * process groups. Global setup prepares immutable PWA assets for all boots.
  */
 export default defineConfig({
   testDir: './tests',
+  globalSetup: './global-setup.ts',
   fullyParallel: false,
-  workers: 1,
+  workers: 2,
   retries: 0,
   timeout: 120_000,
   expect: { timeout: 15_000 },

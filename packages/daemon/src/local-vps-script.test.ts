@@ -1,8 +1,17 @@
-import { readFileSync } from 'node:fs'
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 // packages/daemon/src/ -> packages/daemon -> packages -> repo root.
 const repoRoot = fileURLToPath(new URL('../../..', import.meta.url))
@@ -68,5 +77,72 @@ describe('deploy/local-vps.sh (issue 023)', () => {
     const result = runScript(['--port', '0'])
 
     expect(result.status).toBe(64)
+  })
+})
+
+describe('Local VPS PWA build reuse', () => {
+  const fixtureDirs: string[] = []
+
+  afterEach(() => {
+    for (const dir of fixtureDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
+
+  function fixture(withBuild: boolean) {
+    const root = mkdtempSync(join(tmpdir(), 'veduta-local-vps-build-'))
+    fixtureDirs.push(root)
+    for (const dir of ['deploy', 'node_modules', 'bin']) mkdirSync(join(root, dir))
+    copyFileSync(join(repoRoot, runnerScript), join(root, runnerScript))
+    writeFileSync(join(root, 'bin/pnpm'), '#!/bin/sh\nprintf "build\\n" >> "$TEST_PNPM_LOG"\n')
+    writeFileSync(join(root, 'deploy/veduta-run'), '#!/bin/sh\nprintf "supervisor started\\n"\n')
+    chmodSync(join(root, 'bin/pnpm'), 0o755)
+    chmodSync(join(root, 'deploy/veduta-run'), 0o755)
+    const log = join(root, 'build.log')
+    writeFileSync(log, '')
+    if (withBuild) {
+      mkdirSync(join(root, 'packages/pwa/dist'), { recursive: true })
+      writeFileSync(join(root, 'packages/pwa/dist/index.html'), '<!doctype html>')
+    }
+    return {
+      run: (...args: string[]) =>
+        spawnSync('bash', [join(root, runnerScript), '--base-dir', join(root, 'base'), ...args], {
+          cwd: root,
+          env: {
+            ...process.env,
+            PATH: `${join(root, 'bin')}:${process.env['PATH']}`,
+            TEST_PNPM_LOG: log,
+          },
+          encoding: 'utf8',
+          timeout: 10_000,
+        }),
+      builds: () => readFileSync(log, 'utf8'),
+    }
+  }
+
+  it('builds fresh assets by default even when an old build exists', () => {
+    const stack = fixture(true)
+    const result = stack.run()
+
+    expect(result.status).toBe(0)
+    expect(stack.builds()).toBe('build\n')
+    expect(result.stdout).toContain('supervisor started')
+  })
+
+  it('starts from an explicitly reused build without invoking pnpm', () => {
+    const stack = fixture(true)
+    const result = stack.run('--skip-build')
+
+    expect(result.status).toBe(0)
+    expect(stack.builds()).toBe('')
+    expect(result.stdout).toContain('supervisor started')
+  })
+
+  it('rejects a missing reused build before starting the supervisor', () => {
+    const stack = fixture(false)
+    const result = stack.run('--skip-build')
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('pnpm --filter @veduta/pwa build')
+    expect(stack.builds()).toBe('')
+    expect(result.stdout).not.toContain('supervisor started')
   })
 })

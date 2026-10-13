@@ -5,8 +5,15 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
-  checks:
+  quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,14 +25,94 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm format:check
-      - run: pnpm typecheck
-      - run: pnpm test
-        # Serialize files on shared runners. Tests retain their concurrent operations,
-        # assertions and deadlines.
-        env:
-          VITEST_MAX_THREADS: 1
-          VITEST_MAX_FORKS: 1
+      # build typechecks every package once, then bundles the two web applications.
       - run: pnpm build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: |
+            packages/pwa/dist
+            packages/website/dist
+          if-no-files-found: error
+          retention-days: 3
+
+  tests:
+    name: tests (${{ matrix.suite }} ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: daemon
+            shard: 1/2
+          - suite: daemon
+            shard: 2/2
+          - suite: frontend
+            shard: all
+    # One isolated file at a time retains the shared runner's acceptance deadlines.
+    env:
+      VITEST_MAX_THREADS: 1
+      VITEST_MAX_FORKS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.node-version'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - if: matrix.suite == 'daemon'
+        run: pnpm --filter @veduta/daemon exec vitest run --shard=${{ matrix.shard }}
+      - if: matrix.suite == 'frontend'
+        run: pnpm -r --no-sort --workspace-concurrency=2 --filter '!@veduta/daemon' run test
+
+  e2e:
+    name: e2e (${{ matrix.shard }}/2)
+    needs: quality
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.node-version'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: packages
       - run: pnpm --filter @veduta/e2e exec playwright install --with-deps chromium
-      - run: pnpm --filter @veduta/e2e run test:e2e
-      - run: pnpm --filter @veduta/e2e exec playwright test --config demo/playwright.config.ts
+      - run: pnpm --filter @veduta/e2e exec playwright test --shard=${{ matrix.shard }}/2
+        env:
+          VEDUTA_E2E_PREBUILT_PWA: '1'
+      - if: matrix.shard == 1
+        run: pnpm --filter @veduta/e2e exec playwright test --config demo/playwright.config.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-failures-${{ matrix.shard }}
+          path: packages/e2e/test-results
+          retention-days: 3
+
+  # Preserve the required status name; failed, cancelled or skipped dependencies fail closed.
+  checks:
+    if: ${{ always() }}
+    needs: [quality, tests, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every gate
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          results = json.loads(os.environ['RESULTS'])
+          for name, job in results.items():
+              print(f"{name}: {job['result']}")
+          sys.exit(0 if all(job['result'] == 'success' for job in results.values()) else 1)
+          PY

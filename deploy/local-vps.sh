@@ -9,7 +9,7 @@
 # this loop is that supervisor when running locally.
 #
 # Usage:
-#   deploy/local-vps.sh [--port <n>] [--base-dir <path>] [--help]
+#   deploy/local-vps.sh [--port <n>] [--base-dir <path>] [--skip-build] [--help]
 #
 # Everything the daemon itself prints (the ready line, the first-boot setup URL) passes through
 # to this script's own stdout/stderr untouched -- only this runner's own notices (restart,
@@ -33,6 +33,7 @@ DEFAULT_BASE_DIR="$HOME/.veduta-local-vps"
 
 PORT="$DEFAULT_PORT"
 BASE_DIR="$DEFAULT_BASE_DIR"
+SKIP_BUILD=false
 
 # --- Usage -------------------------------------------------------------------------------
 
@@ -41,11 +42,12 @@ usage() {
 Veduta Local VPS profile runner (issue 023, docs/adr/0009-local-vps-profile.md)
 
 Usage:
-  deploy/local-vps.sh [--port <n>] [--base-dir <path>] [--help]
+  deploy/local-vps.sh [--port <n>] [--base-dir <path>] [--skip-build] [--help]
 
 Options:
   --port <n>        Port the daemon listens on (default: $DEFAULT_PORT)
   --base-dir <path> Base directory for data/ and vault.key (default: $DEFAULT_BASE_DIR)
+  --skip-build      Reuse an existing PWA build (fails if packages/pwa/dist/index.html is missing)
   --help            Show this help
 
 Builds the PWA, then supervises the daemon under VEDUTA_PROFILE=local-vps, restarting it
@@ -82,6 +84,10 @@ while [ $# -gt 0 ]; do
       BASE_DIR="$2"
       shift 2
       ;;
+    --skip-build)
+      SKIP_BUILD=true
+      shift
+      ;;
     --help | -h)
       usage
       exit 0
@@ -110,6 +116,11 @@ fi
 if [ ! -d "$REPO_ROOT/node_modules" ]; then
   printf 'error: node_modules not found at %s\n' "$REPO_ROOT/node_modules" >&2
   printf 'run: pnpm install\n' >&2
+  exit 1
+fi
+
+if [ "$SKIP_BUILD" = true ] && [ ! -f "$REPO_ROOT/packages/pwa/dist/index.html" ]; then
+  printf 'error: --skip-build requires an existing PWA build; run: pnpm --filter @veduta/pwa build\n' >&2
   exit 1
 fi
 
@@ -198,8 +209,10 @@ fi
 
 # --- Build the PWA (the daemon serves packages/pwa/dist/) -----------------------------------
 
-printf 'building the PWA...\n' >&2
-pnpm --filter @veduta/pwa build 1>&2
+if [ "$SKIP_BUILD" = false ]; then
+  printf 'building the PWA...\n' >&2
+  pnpm --filter @veduta/pwa build 1>&2
+fi
 
 # --- Hand off to the shared supervisor (issue #43, docs/adr/0013-signed-self-update.md) ------
 #

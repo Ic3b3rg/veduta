@@ -21,7 +21,7 @@ import { cleanupStackDirs, startLocalVpsStack, type LocalVpsStack } from './stac
  * several independent ones: every later step depends on daemon/browser state
  * built up by an earlier one (the registered passkey, the completed wizard,
  * the logged meal, the toggled checkbox), and re-deriving that state per
- * test would mean re-running the slow first boot (PWA build + wizard) every
+ * test would mean re-running the first boot and wizard every
  * time. `test.step` keeps the reporter output readable despite the length.
  *
  * Acceptance criteria covered (issue #23):
@@ -49,9 +49,8 @@ test.describe.configure({ mode: 'serial' })
 test('Local VPS profile: first boot, chat->Surface, fast path, restart, re-login', async ({
   browser,
 }) => {
-  // Two PWA builds happen in this journey (the first boot, and the fresh
-  // runner started for the restart-persistence step) plus a full wizard
-  // walk -- generous headroom over the per-wait timeouts in stack.ts.
+  // A full wizard walk and persistence/re-login journey -- generous headroom
+  // over the per-wait timeouts in stack.ts.
   test.setTimeout(15 * 60_000)
 
   let stack: LocalVpsStack | undefined

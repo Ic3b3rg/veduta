@@ -27,7 +27,7 @@ function run(script: string, fixture: Record<string, unknown> = {}) {
   dirs.push(dir)
   const path = join(dir, 'state.json')
   writeFileSync(path, JSON.stringify({ status: ready, serve: {}, ...fixture }))
-  for (const command of ['tailscale', 'curl', 'systemctl', 'systemd-run']) {
+  for (const command of ['tailscale', 'curl', 'systemctl', 'systemd-run', 'sleep']) {
     symlinkSync(join(root, 'packages/daemon/src/fixtures/tailscale-fake.py'), join(dir, command))
   }
   const result = spawnSync(
@@ -71,15 +71,19 @@ describe('Tailscale CLI access boundary (issue #49)', () => {
     const result = run('tailnet_stage_route; tailnet_verify', { httpsPending: 1 })
     expect(result.status).toBe(0)
     expect(result.state.calls.filter((call: string[]) => call[0] === 'curl')).toHaveLength(2)
+    expect(result.state.calls.filter((call: string[]) => call[0] === 'sleep')).toEqual([
+      ['sleep', '2'],
+    ])
     expect(result.stderr).toContain('Waiting for private HTTPS')
   })
 
   it('stops retrying an unreachable HTTPS endpoint after the bounded attempt count', () => {
-    const result = run('sleep() { :; }; tailnet_stage_route; tailnet_verify', {
+    const result = run('tailnet_stage_route; tailnet_verify', {
       httpsPending: 99,
     })
     expect(result.status).not.toBe(0)
     expect(result.state.calls.filter((call: string[]) => call[0] === 'curl')).toHaveLength(12)
+    expect(result.state.calls.filter((call: string[]) => call[0] === 'sleep')).toHaveLength(11)
     expect(result.stderr).toContain('valid certificate')
   })
 

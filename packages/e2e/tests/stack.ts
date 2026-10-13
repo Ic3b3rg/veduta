@@ -82,8 +82,8 @@ export interface StartStackOptions {
  * Finds a free TCP port by letting the OS assign one, then releasing it
  * immediately. There's an unavoidable, brief race between release and the
  * runner script binding it, but it's the same race any "pick a free port"
- * approach has without a shared broker, and is not observed to be flaky in
- * this suite's single-worker, single-journey-at-a-time run.
+ * approach has without a shared broker. Each parallel journey picks its own
+ * ephemeral port; explicit port reuse belongs only to that journey's restart.
  */
 export async function findFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -138,12 +138,16 @@ export async function startLocalVpsStack(options: StartStackOptions = {}): Promi
   env['VEDUTA_LEGACY_HOME'] = legacyHome
   Object.assign(env, options.extraEnv)
 
-  const child = spawn(RUNNER_SCRIPT, ['--port', String(port), '--base-dir', baseDir], {
-    cwd: REPO_ROOT,
-    env,
-    detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
+  const child = spawn(
+    RUNNER_SCRIPT,
+    ['--port', String(port), '--base-dir', baseDir, '--skip-build'],
+    {
+      cwd: REPO_ROOT,
+      env,
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  )
 
   const events = new EventEmitter()
   const readyLines: string[] = []
@@ -152,9 +156,8 @@ export async function startLocalVpsStack(options: StartStackOptions = {}): Promi
   let consumedSetup = 0
 
   const onLine = (source: 'stdout' | 'stderr', line: string) => {
-    // Surfaced for CI debugging (the first run in particular is slow -- the
-    // runner builds the PWA before the daemon ever boots) -- never asserted
-    // on directly, only parsed for the two lines below.
+    // Surfaced for CI debugging; only the two daemon lifecycle lines below
+    // are used for synchronization.
     console.log(`[local-vps ${source}:${port}] ${line}`)
     const ready = READY_LINE.exec(line)
     if (ready) {

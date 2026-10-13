@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5190 --strictPort",
-    "build": "tsc -p tsconfig.json && vite build",
+    "build": "pnpm typecheck && pnpm bundle",
+    "bundle": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 5190 --strictPort",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
