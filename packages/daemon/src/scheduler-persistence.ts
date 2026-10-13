@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { z } from 'zod'
+import { PushPayloadSchema } from '@veduta/protocol'
 import {
   ensureSqliteColumn,
   optionalString,
@@ -22,6 +23,12 @@ export const ConditionSchema = z.union([
 
 export type Condition = z.infer<typeof ConditionSchema>
 
+export const RecurringNotificationSchema = z
+  .object({ body: PushPayloadSchema.shape.body.default('') })
+  .strict()
+
+export type RecurringNotification = z.infer<typeof RecurringNotificationSchema>
+
 export interface Automation {
   id: number
   kind: 'timer' | 'job'
@@ -43,6 +50,8 @@ export interface Automation {
   targetSurfaceId?: string
   /** IANA zone for daemon-managed cron jobs; absent means UTC. */
   timezone?: string
+  /** Explicit user-requested push operation; never inferred from the description. */
+  notification?: RecurringNotification
 }
 
 export function initializeSchedulerSchema(db: DatabaseSync): void {
@@ -66,7 +75,8 @@ export function initializeSchedulerSchema(db: DatabaseSync): void {
       origin text,
       handler text,
       target_surface_id text,
-      timezone text
+      timezone text,
+      notification_json text
     );
     create index if not exists automations_due
       on automations (status, next_run_at);
@@ -98,6 +108,7 @@ export function initializeSchedulerSchema(db: DatabaseSync): void {
   ensureSqliteColumn(db, 'automations', 'handler', 'text')
   ensureSqliteColumn(db, 'automations', 'target_surface_id', 'text')
   ensureSqliteColumn(db, 'automations', 'timezone', 'text')
+  ensureSqliteColumn(db, 'automations', 'notification_json', 'text')
   ensureSqliteColumn(db, 'automation_runs', 'recurring_outcome_json', 'text')
   ensureSqliteColumn(db, 'automation_runs', 'retry_at', 'text')
 }
@@ -116,6 +127,7 @@ export function automationFromRow(row: Record<string, unknown>): Automation {
   const handler = optionalString(row, 'handler')
   const targetSurfaceId = optionalString(row, 'target_surface_id')
   const timezone = optionalString(row, 'timezone')
+  const notificationJson = optionalString(row, 'notification_json')
   if (status !== 'armed' && status !== 'completed' && status !== 'cancelled') {
     throw new Error(`unexpected automation status: ${status}`)
   }
@@ -137,6 +149,9 @@ export function automationFromRow(row: Record<string, unknown>): Automation {
     ...(handler === undefined ? {} : { handler }),
     ...(targetSurfaceId === undefined ? {} : { targetSurfaceId }),
     ...(timezone === undefined ? {} : { timezone }),
+    ...(notificationJson === undefined
+      ? {}
+      : { notification: RecurringNotificationSchema.parse(JSON.parse(notificationJson)) }),
     ...(conditionJson === undefined
       ? {}
       : { condition: ConditionSchema.parse(JSON.parse(conditionJson)) }),

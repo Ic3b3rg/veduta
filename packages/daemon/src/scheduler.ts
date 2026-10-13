@@ -17,10 +17,12 @@ import { nextCronOccurrence, parseCron } from './cron.ts'
 import { optionalString, withImmediateTransaction } from './sqlite-rows.ts'
 import {
   ConditionSchema,
+  RecurringNotificationSchema,
   automationFromRow,
   initializeSchedulerSchema,
   type Automation,
   type Condition,
+  type RecurringNotification,
 } from './scheduler-persistence.ts'
 import type { Store } from './store.ts'
 import type { CommittedFastActionOutcome } from '@veduta/protocol'
@@ -82,6 +84,8 @@ export interface EscalationContext {
   surfaceId?: string
   origin?: Origin
   automationId?: number
+  /** Requested recurring pushes follow quiet hours and do not manufacture chat messages. */
+  recurringNotification?: true
 }
 
 export interface SchedulerOptions {
@@ -113,6 +117,7 @@ export const CreateJobSchema = z.object({
   cron: z.string().trim().min(1),
   briefing: z.string().trim().min(1),
   condition: ConditionSchema.optional(),
+  notification: RecurringNotificationSchema.optional(),
 })
 
 export const CancelAutomationSchema = z.object({
@@ -311,6 +316,7 @@ export class Scheduler {
       cron: parsed.cron,
       nextRunAt,
       ...(parsed.condition === undefined ? {} : { condition: parsed.condition }),
+      ...(parsed.notification === undefined ? {} : { notification: parsed.notification }),
       ...(origin === undefined ? {} : { origin }),
     })
     this.appendEvent(
@@ -679,14 +685,17 @@ export class Scheduler {
       defineTool({
         name: 'create_job',
         description:
-          'Create a visible recurring Automation schedule (5-field cron, UTC). The base schedule does not perform external work; until a supported outcome producer is configured, a due occurrence records a failure in its Space.',
+          'Create a visible recurring Automation (5-field cron, UTC). For an explicitly requested recurring notification or reminder, set notification to {body: the requested text}; the body may be empty. This sends through the existing browser push subscriptions, subject to Space budgets and quiet hours, without an external outcome producer. Without notification, this only creates a schedule and due occurrences fail until a supported outcome producer is configured; never claim that such a schedule will execute work.',
         schema: CreateJobSchema,
         level: 'L0',
         egressDomains: [],
         handler: (input, context) => {
           const automation = this.createJob(input, toolWriteOrigin(context.origin))
           return {
-            content: `created job ${automation.id}, next run ${automation.nextRunAt}`,
+            content:
+              automation.notification === undefined
+                ? `created schedule ${automation.id} without an outcome producer; it cannot execute work yet, next run ${automation.nextRunAt}`
+                : `scheduled recurring notification ${automation.id}, next run ${automation.nextRunAt}; delivery requires a subscribed device and follows Space budgets and quiet hours`,
             details: { automation },
           }
         },
@@ -939,6 +948,24 @@ export class Scheduler {
             },
           }
         : { storedOutcome: 'condition-met:no-action' }
+    }
+
+    if (automation.kind === 'job' && automation.notification !== undefined) {
+      const space = this.store.getSpace(automation.spaceId)
+      if (!space) throw new Error(`unknown Space: ${automation.spaceId}`)
+      this.appendEvent(
+        automation.spaceId,
+        'automation.fire',
+        `Automation "${automation.description}" requested notification delivery`,
+        { automationId: automation.id, scheduledFor, automationKind: automation.kind },
+        firingOrigin,
+      )
+      this.onEscalation?.(automation.spaceId, automation.notification.body, {
+        ...escalationContext,
+        surfaceId: automation.targetSurfaceId ?? automationsSurfaceIdForSpace(space),
+        recurringNotification: true,
+      })
+      return { storedOutcome: 'notification-requested' }
     }
 
     if (automation.kind === 'job') {
@@ -1287,12 +1314,13 @@ export class Scheduler {
     handler?: string
     targetSurfaceId?: string
     timezone?: string
+    notification?: RecurringNotification
   }): Automation {
     const result = this.db
       .prepare(
         `insert into automations
-           (kind, space_id, description, enabled, fire_at, cron, condition_json, next_run_at, status, created_at, origin, handler, target_surface_id, timezone)
-         values (?, ?, ?, 1, ?, ?, ?, ?, 'armed', ?, ?, ?, ?, ?)`,
+           (kind, space_id, description, enabled, fire_at, cron, condition_json, next_run_at, status, created_at, origin, handler, target_surface_id, timezone, notification_json)
+         values (?, ?, ?, 1, ?, ?, ?, ?, 'armed', ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.kind,
@@ -1307,6 +1335,7 @@ export class Scheduler {
         input.handler ?? null,
         input.targetSurfaceId ?? null,
         input.timezone ?? null,
+        input.notification === undefined ? null : JSON.stringify(input.notification),
       )
     return this.requireAutomation(Number(result.lastInsertRowid))
   }

@@ -3,9 +3,9 @@ import { fromPartial } from '@total-typescript/shoehorn'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NotificationBell } from './notification-bell.tsx'
-import { enablePush, pushSupported } from './push.ts'
+import { enablePush, pushSupported, syncPush } from './push.ts'
 
-vi.mock('./push.ts', () => ({ enablePush: vi.fn(), pushSupported: vi.fn() }))
+vi.mock('./push.ts', () => ({ enablePush: vi.fn(), pushSupported: vi.fn(), syncPush: vi.fn() }))
 
 beforeEach(() => {
   localStorage.clear()
@@ -13,6 +13,7 @@ beforeEach(() => {
   vi.stubGlobal('matchMedia', () => fromPartial<MediaQueryList>({ matches: false }))
   vi.mocked(pushSupported).mockReturnValue(true)
   vi.mocked(enablePush).mockResolvedValue('denied')
+  vi.mocked(syncPush).mockResolvedValue(true)
 })
 
 afterEach(() => {

@@ -123,6 +123,7 @@ describe('AgentRunner Automation parity across Model connection methods (issues 
         spaceId: AUTOMATION_PARITY_SPACE_ID,
         kind: 'job',
         description: 'Review the plan',
+        notification: { body: 'Review the plan' },
         status: 'armed',
         origin: AUTOMATION_PARITY_UNTRUSTED_ORIGIN,
       }),

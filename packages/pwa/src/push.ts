@@ -66,10 +66,15 @@ export async function enablePush(token: string | null): Promise<EnablePushResult
     }
 
     const registration = await navigator.serviceWorker.ready
-    const publicKey = await fetchVapidPublicKey(token)
-    const subscription = await registration.pushManager.subscribe({
+    const applicationServerKey = urlBase64ToUint8Array(await fetchVapidPublicKey(token))
+    let subscription = await registration.pushManager.getSubscription()
+    if (subscription && !subscriptionMatchesKey(subscription, applicationServerKey)) {
+      await subscription.unsubscribe()
+      subscription = null
+    }
+    subscription ??= await registration.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(publicKey),
+      applicationServerKey,
     })
     await postSubscription(subscription.toJSON(), token)
     return 'subscribed'
@@ -83,20 +88,34 @@ export async function enablePush(token: string | null): Promise<EnablePushResult
  * daemon data-dir reset (which wipes `push.sqlite`) doesn't silently strand
  * a browser that already has notification permission. A no-op whenever
  * permission isn't already 'granted' or there's no live subscription — this
- * never itself prompts the user.
+ * never itself prompts the user. Returns true only after the Gateway has
+ * acknowledged registration, so permission alone never implies readiness.
  */
-export async function syncPush(token: string | null): Promise<void> {
-  if (!pushSupported()) return
-  if (Notification.permission !== 'granted') return
+export async function syncPush(token: string | null): Promise<boolean> {
+  if (!pushSupported()) return false
+  if (Notification.permission !== 'granted') return false
 
   try {
     const registration = await navigator.serviceWorker.ready
     const subscription = await registration.pushManager.getSubscription()
-    if (!subscription) return
+    if (!subscription) return false
+    const applicationServerKey = urlBase64ToUint8Array(await fetchVapidPublicKey(token))
+    if (!subscriptionMatchesKey(subscription, applicationServerKey)) return false
     await postSubscription(subscription.toJSON(), token)
+    return true
   } catch {
-    // Best-effort resync; a future explicit enablePush() call will retry.
+    return false
   }
+}
+
+/** A cached subscription cannot receive pushes signed by a different Gateway key. */
+function subscriptionMatchesKey(subscription: PushSubscription, expected: Uint8Array): boolean {
+  const key = subscription.options.applicationServerKey
+  if (!key) return false
+  const actual = new Uint8Array(key)
+  return (
+    actual.length === expected.length && actual.every((byte, index) => byte === expected[index])
+  )
 }
 
 const VapidPublicKeyResponseSchema = z.object({ publicKey: z.string().min(1) })

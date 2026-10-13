@@ -738,16 +738,19 @@ export function buildServer(options: ServerOptions = {}) {
     store,
     now,
     onEscalation: (spaceId, text, context) => {
-      gateway.broadcastSystemNotice(text)
+      if (!context?.recurringNotification) gateway.broadcastSystemNotice(text)
       // Timer escalations are always urgent: the
       // Agent's explicit act of arming the timer is the decision, and the
-      // justification traces straight back to it.
+      // justification traces straight back to it. Explicit recurring
+      // notifications are non-urgent and remain subject to quiet hours.
       notificationCenter.notify({
         level: 'push',
         spaceId,
         text,
-        urgent: true,
-        justification: `Agent-armed timer reached its deadline unsatisfied: ${text}`,
+        urgent: !context?.recurringNotification,
+        justification: context?.recurringNotification
+          ? `User-requested recurring notification from Automation ${context.automationId}`
+          : `Agent-armed timer reached its deadline unsatisfied: ${text}`,
         ...(context?.surfaceId ? { surfaceId: context.surfaceId } : {}),
         ...(context?.origin ? { origin: context.origin } : {}),
         ...(context?.automationId !== undefined ? { automationId: context.automationId } : {}),

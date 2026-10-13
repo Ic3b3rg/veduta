@@ -66,6 +66,8 @@ function automationSummary(automation: Automation): Record<string, unknown> {
     status: automation.status,
     ...(automation.fireAt === undefined ? {} : { fireAt: automation.fireAt }),
     ...(automation.cron === undefined ? {} : { cron: automation.cron }),
+    ...(automation.notification === undefined ? {} : { notification: automation.notification }),
+    ...(automation.lastOutcome === undefined ? {} : { lastOutcome: automation.lastOutcome }),
     ...(automation.nextRunAt === undefined ? {} : { nextRunAt: automation.nextRunAt }),
   }
 }
