@@ -80,8 +80,6 @@ export class Store {
   private readonly surfaceEngine: SurfaceEngine
   private readonly now: () => Date
   private readonly llmCalls = 0
-  private readonly snapshotObservers = new Set<() => void>()
-  private preparingSnapshot = false
 
   constructor(options: StoreOptions = {}) {
     this.now = options.now ?? (() => new Date())
@@ -168,29 +166,7 @@ export class Store {
     return this.surfaceEngine.getSurface(id)
   }
 
-  /** Reconcile rebuildable source projections before reading the canonical snapshot. */
-  onBeforeSnapshot(observer: () => void): () => void {
-    this.snapshotObservers.add(observer)
-    return () => {
-      this.snapshotObservers.delete(observer)
-    }
-  }
-
   snapshot(): SurfaceSnapshot {
-    if (!this.preparingSnapshot) {
-      this.preparingSnapshot = true
-      try {
-        for (const observer of this.snapshotObservers) {
-          try {
-            observer()
-          } catch (error) {
-            console.error('snapshot observer failed', error)
-          }
-        }
-      } finally {
-        this.preparingSnapshot = false
-      }
-    }
     return SurfaceSnapshotSchema.parse({
       surfaceCursor: this.latestSurfaceCursor(),
       spaces: this.listSpaces().map((space) => ({
@@ -218,7 +194,6 @@ export class Store {
   }
 
   close(): void {
-    this.snapshotObservers.clear()
     this.surfaceEngine.close()
   }
 

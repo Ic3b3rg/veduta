@@ -113,7 +113,6 @@ export class MemoryHealthSurfaceManager {
       this.refresh,
     )
     this.disposers = [
-      this.store.onBeforeSnapshot(this.refresh),
       engine.onSpaceChanged(this.refresh),
       engine.onMemoryHealthChanged(this.refresh),
       engine.onMemoryWrite((notice) => {

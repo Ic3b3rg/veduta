@@ -43,25 +43,28 @@ const cases = [
 
 describe('Memory health document observation without Heartbeat', () => {
   it.each(cases)(
-    'reconciles $file at the snapshot boundary before filesystem callbacks',
-    ({ file, document, scope }) => {
+    'keeps public Store.snapshot pure after an isolated $file edit before lifecycle callbacks',
+    ({ file }) => {
       const { root, store, close } = fixture()
+      const before = store.getSurface(MEMORY_HEALTH_SURFACE_ID)
+      const cursor = store.latestSurfaceCursor()
+      const events = store.eventLog('spc-system')
+      const delivered = vi.fn()
+      const dispose = store.onSurfaceEvent(delivered)
       try {
         writeFileSync(join(root, file), 'x'.repeat(2001))
         const surface = store
           .snapshot()
           .spaces.flatMap((space) => space.surfaces)
           .find((item) => item.id === MEMORY_HEALTH_SURFACE_ID)
-        expect(surface?.state.documents).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ document, scope, units: 2001, status: 'Warning' }),
-          ]),
-        )
-        expect(readFileSync(join(root, file), 'utf8')).toBe('x'.repeat(2001))
-        const cursor = store.latestSurfaceCursor()
-        store.snapshot()
+        expect(surface).toEqual(before)
+        expect(store.getSurface(MEMORY_HEALTH_SURFACE_ID)).toEqual(before)
         expect(store.latestSurfaceCursor()).toBe(cursor)
+        expect(store.eventLog('spc-system')).toEqual(events)
+        expect(delivered).not.toHaveBeenCalled()
+        expect(readFileSync(join(root, file), 'utf8')).toBe('x'.repeat(2001))
       } finally {
+        dispose()
         close()
       }
     },
@@ -97,7 +100,7 @@ describe('Memory health document observation without Heartbeat', () => {
       }
     },
   )
-  it('contains watcher failures, retries observation on snapshots, and releases it on disposal/restart', async () => {
+  it('contains watcher failures, retries observation through the lifecycle fallback, and releases it on disposal/restart', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { root, store, manager, close } = fixture()
     try {
@@ -108,12 +111,18 @@ describe('Memory health document observation without Heartbeat', () => {
       if (!firstWatch) throw new Error('expected active document watcher')
       firstWatch.emit('error', new Error('watch unavailable'))
       writeFileSync(join(root, 'spaces/health/INSTRUCTIONS.md'), 'x'.repeat(2001))
-      expect(() => store.snapshot()).not.toThrow()
+      await vi.waitFor(
+        () =>
+          expect(store.getSurface(MEMORY_HEALTH_SURFACE_ID)?.state.documents).toEqual(
+            expect.arrayContaining([expect.objectContaining({ scope: 'Health', units: 2001 })]),
+          ),
+        { timeout: 2500 },
+      )
       expect(logged).toHaveBeenCalled()
       manager.dispose()
       const cursor = store.latestSurfaceCursor()
       writeFileSync(join(root, 'USER.md'), 'x'.repeat(2001))
-      await new Promise((resolve) => setTimeout(resolve, 75))
+      await new Promise((resolve) => setTimeout(resolve, 1150))
       store.snapshot()
       expect(store.latestSurfaceCursor()).toBe(cursor)
       manager.start()
@@ -132,7 +141,7 @@ describe('Memory health document observation without Heartbeat', () => {
     }
   })
 
-  it('recovers unsupported observation through snapshots and observes newly restored Spaces', async () => {
+  it('recovers unsupported observation through the lifecycle fallback and observes newly restored Spaces', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.mocked(watch).mockImplementationOnce(() => {
       throw new Error('watch resource limit')
@@ -140,13 +149,12 @@ describe('Memory health document observation without Heartbeat', () => {
     const { root, store, close } = fixture()
     try {
       writeFileSync(join(root, 'USER.md'), 'x'.repeat(2001))
-      expect(
-        store
-          .snapshot()
-          .spaces.flatMap((space) => space.surfaces)
-          .find((surface) => surface.id === MEMORY_HEALTH_SURFACE_ID)?.state.documents,
-      ).toEqual(
-        expect.arrayContaining([expect.objectContaining({ document: 'USER', units: 2001 })]),
+      await vi.waitFor(
+        () =>
+          expect(store.getSurface(MEMORY_HEALTH_SURFACE_ID)?.state.documents).toEqual(
+            expect.arrayContaining([expect.objectContaining({ document: 'USER', units: 2001 })]),
+          ),
+        { timeout: 2500 },
       )
       expect(logged).toHaveBeenCalled()
       const space = store.spacesEngine.createSpace({ name: 'New space' })
@@ -175,35 +183,86 @@ describe('Memory health document observation without Heartbeat', () => {
     }
   })
 
-  it('contains projection failures and snapshot reentrancy without losing document changes', () => {
+  it('retries failed projection writes through the lifecycle without snapshot side effects', async () => {
     const { root, store, close } = fixture()
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     const patch = vi.spyOn(store, 'patchState').mockImplementation(() => {
       throw new Error('projection unavailable')
     })
-    const observer = vi.fn(() => {
-      store.snapshot()
-    })
-    const dispose = store.onBeforeSnapshot(observer)
     try {
       writeFileSync(join(root, 'USER.md'), 'x'.repeat(2001))
-      expect(() => store.snapshot()).not.toThrow()
-      expect(observer).toHaveBeenCalledOnce()
-      expect(logged).toHaveBeenCalled()
+      await vi.waitFor(() => expect(logged).toHaveBeenCalled())
+      const cursor = store.latestSurfaceCursor()
+      store.snapshot()
+      expect(store.latestSurfaceCursor()).toBe(cursor)
       patch.mockRestore()
-      expect(
-        store
-          .snapshot()
-          .spaces.flatMap((space) => space.surfaces)
-          .find((item) => item.id === MEMORY_HEALTH_SURFACE_ID)?.state.documents,
-      ).toEqual(
-        expect.arrayContaining([expect.objectContaining({ document: 'USER', units: 2001 })]),
+      await vi.waitFor(
+        () =>
+          expect(store.getSurface(MEMORY_HEALTH_SURFACE_ID)?.state.documents).toEqual(
+            expect.arrayContaining([expect.objectContaining({ document: 'USER', units: 2001 })]),
+          ),
+        { timeout: 2500 },
       )
     } finally {
-      dispose()
       patch.mockRestore()
       logged.mockRestore()
       close()
+    }
+  })
+
+  it('publishes document edits with every directory watcher unavailable and no reads or Heartbeat', async () => {
+    const actual = await vi.importActual<typeof NodeFs>('node:fs')
+    vi.mocked(watch).mockImplementation(() => {
+      throw new Error('watch unavailable')
+    })
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { root, store, close } = fixture()
+    try {
+      for (const units of [2001, 2000]) {
+        writeFileSync(join(root, 'USER.md.replacement'), 'x'.repeat(units))
+        renameSync(join(root, 'USER.md.replacement'), join(root, 'USER.md'))
+        await vi.waitFor(
+          () =>
+            expect(store.getSurface(MEMORY_HEALTH_SURFACE_ID)?.state.documents).toEqual(
+              expect.arrayContaining([expect.objectContaining({ document: 'USER', units })]),
+            ),
+          { timeout: 2500 },
+        )
+      }
+      expect(logged).toHaveBeenCalled()
+    } finally {
+      close()
+      vi.mocked(watch).mockImplementation(actual.watch)
+      logged.mockRestore()
+    }
+  })
+
+  it('detects missed directory events through stat fallback and releases that fallback on disposal', async () => {
+    const actual = await vi.importActual<typeof NodeFs>('node:fs')
+    vi.mocked(watch).mockImplementation((path) =>
+      actual.watch(path, { persistent: false }, () => {}),
+    )
+    const { root, store, manager, close } = fixture()
+    try {
+      writeFileSync(join(root, 'SOUL.md'), 'x'.repeat(2001))
+      await vi.waitFor(
+        () =>
+          expect(store.getSurface(MEMORY_HEALTH_SURFACE_ID)?.state.documents).toEqual(
+            expect.arrayContaining([expect.objectContaining({ document: 'SOUL', units: 2001 })]),
+          ),
+        { timeout: 2500 },
+      )
+      manager.dispose()
+      const cursor = store.latestSurfaceCursor()
+      writeFileSync(join(root, 'SOUL.md'), 'x'.repeat(2000))
+      await new Promise((resolve) => setTimeout(resolve, 1150))
+      expect(store.latestSurfaceCursor()).toBe(cursor)
+      expect(store.getSurface(MEMORY_HEALTH_SURFACE_ID)?.state.documents).toEqual(
+        expect.arrayContaining([expect.objectContaining({ document: 'SOUL', units: 2001 })]),
+      )
+    } finally {
+      close()
+      vi.mocked(watch).mockImplementation(actual.watch)
     }
   })
 
@@ -225,10 +284,14 @@ describe('Memory health document observation without Heartbeat', () => {
       )
       writeFileSync(join(root, 'USER.md.replacement'), 'x'.repeat(2001))
       renameSync(join(root, 'USER.md.replacement'), join(root, 'USER.md'))
-      expect(await documents()).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ document: 'USER', units: 2001, status: 'Warning' }),
-        ]),
+      await vi.waitFor(
+        async () =>
+          expect(await documents()).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ document: 'USER', units: 2001, status: 'Warning' }),
+            ]),
+          ),
+        { timeout: 2500 },
       )
       await server.app.close()
       server = buildServer({ dataDir: root })
