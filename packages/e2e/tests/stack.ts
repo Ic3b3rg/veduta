@@ -82,8 +82,8 @@ export interface StartStackOptions {
  * Finds a free TCP port by letting the OS assign one, then releasing it
  * immediately. There's an unavoidable, brief race between release and the
  * runner script binding it, but it's the same race any "pick a free port"
- * approach has without a shared broker, and is not observed to be flaky in
- * this suite's single-worker, single-journey-at-a-time run.
+ * approach has without a shared broker. Each parallel journey picks its own
+ * ephemeral port; explicit port reuse belongs only to that journey's restart.
  */
 export async function findFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
