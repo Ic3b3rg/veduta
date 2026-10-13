@@ -874,8 +874,11 @@
 }
 
 .brand-logo {
+  display: block;
   width: 32px;
   height: 32px;
-  flex: 0 0 auto;
-  border-radius: var(--catalog-radius-sm);
+  max-width: 32px;
+  aspect-ratio: 1;
+  object-fit: contain;
+  flex: 0 0 32px;
 }

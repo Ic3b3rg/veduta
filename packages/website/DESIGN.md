@@ -204,7 +204,9 @@ on the page without card wrappers.
   5 px offset. The background transition lasts 160 ms with ease-out.
 - **Text links and navigation:** text remains the foreground color until violet hover; inline
   links retain underlines. Navigation and action links have at least 44 px targets. The wordmark
-  is plain Inter text, with a small muted alpha/license annotation beside it.
+  pairs the transparent Veduta mark at 40 px with Inter text and a small muted alpha/license
+  annotation. Product images scale with their containers; brand marks retain explicit dimensions.
+  The PWA and guided demo use the same symbol at 32 px.
 - **Product media:** the real PWA video and images span their container and keep their aspect
   ratio. Captions remain subordinate and readable; native video controls and the transcript
   disclosure provide access to the demonstration.

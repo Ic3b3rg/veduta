@@ -73,8 +73,13 @@ footer {
   gap: 18px;
 }
 .wordmark img {
-  flex: 0 0 auto;
-  border-radius: 4px;
+  display: block;
+  width: 40px;
+  height: 40px;
+  max-width: 40px;
+  aspect-ratio: 1;
+  object-fit: contain;
+  flex: 0 0 40px;
 }
 .wordmark span {
   color: var(--muted);
@@ -160,7 +165,7 @@ figure {
   min-width: 0;
 }
 video,
-img {
+.how img {
   display: block;
   width: 100%;
   height: auto;

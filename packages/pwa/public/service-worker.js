@@ -1,4 +1,4 @@
-const CACHE_NAME = 'veduta-shell-v2'
+const CACHE_NAME = 'veduta-shell-v3'
 const APP_SHELL = [
   '/',
   '/manifest.webmanifest',
@@ -10,6 +10,8 @@ const APP_SHELL = [
   '/icons/favicon-32.png',
   '/icons/favicon-48.png',
   '/icons/logo-mark.png',
+  '/icons/logo-mark.svg',
+  '/icons/favicon.svg',
 ]
 
 // A push must never be usable to redirect the client off-origin, so any url
