@@ -42,7 +42,8 @@ from OpenClaw/Hermes or start by choosing their first Space. The maintainer is u
 
 ### Out (painfully, but out)
 
-- Telegram/WhatsApp Bridges (immediately after: the Gateway is born adapter-ready)
+- Messenger Bridges are post-v1 work; the first concrete provider defines the extension seam
+  ([ADR-0028](docs/adr/0028-concrete-bridge-extension-seam.md)).
 - Dedicated home-server provisioning and blind relay; private VPS Tailnet access is already supported
 - Sandboxed HTML escape hatch for custom Surfaces
 - Marketplace/registry of community Templates and skills
@@ -69,7 +70,9 @@ from OpenClaw/Hermes or start by choosing their first Space. The maintainer is u
 
 ## 7. Post-v1 roadmap (directional)
 
-1. Telegram Bridge (growth funnel), then WhatsApp
+1. Telegram Bridge (growth funnel). The owner selected Telegram only for the current phase on
+   2026-10-12 ([issue #194](https://github.com/Ic3b3rg/veduta/issues/194)); WhatsApp is deferred
+   outside current scope, pending a later explicit decision.
 2. Home-server profile with E2E blind relay
 3. Community Template registry; sandboxed escape hatch
 4. Optional managed hosting as a business model (the Nous/Chronos path), without touching the open core
