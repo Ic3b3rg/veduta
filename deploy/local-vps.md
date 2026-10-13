@@ -29,12 +29,18 @@ pnpm local-vps
 | ------------------- | --------------------- | ------------------------------------------ |
 | `--port <n>`        | `8788`                | Port the daemon listens on                 |
 | `--base-dir <path>` | `~/.veduta-local-vps` | Base directory for `data/` and `vault.key` |
+| `--skip-build`      | Off                   | Reuse an explicitly prepared PWA build     |
 | `--help`            | --                    | Print usage and exit                       |
 
 The command builds the PWA, then supervises the daemon under `VEDUTA_PROFILE=local-vps`,
 restarting it whenever it exits `0` (the onboarding wizard's finish step does this on purpose so
 newly-applied configuration takes effect). A nonzero exit stops the loop and is propagated as
 the runner's own exit code. Ctrl-C (SIGINT) or SIGTERM stops the daemon and the runner cleanly.
+
+`--skip-build` requires `packages/pwa/dist/index.html` and fails with a build command if it
+is missing. Only use it after building the current checkout. The browser test suite prepares
+one build before starting its isolated journeys and uses this flag for every boot and restart;
+see [Tests and CI](../CONTRIBUTING.md#tests-and-ci).
 
 ### First boot journey
 

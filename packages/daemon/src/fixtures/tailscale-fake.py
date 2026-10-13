@@ -22,7 +22,11 @@ def save():
     temporary.replace(path)
 
 save()
-if command == 'curl':
+if command == 'sleep':
+    # Record the production delay, but only yield for the fake foreground CLI to run.
+    fcntl.flock(lock, fcntl.LOCK_UN)
+    time.sleep(.01)
+elif command == 'curl':
     if state.get('httpsPending', 0) > 0:
         state['httpsPending'] -= 1
         save()

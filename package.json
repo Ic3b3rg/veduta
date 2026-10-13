@@ -14,13 +14,14 @@
     "demo:check": "pnpm demo:build && pnpm --filter @veduta/e2e exec playwright test --config demo/playwright.config.ts",
     "demo:record": "pnpm --filter @veduta/pwa build && pnpm --filter @veduta/e2e demo:record",
     "local-vps": "deploy/local-vps.sh",
-    "build": "pnpm -r run build",
-    "test": "pnpm -r run test",
+    "build": "pnpm typecheck && pnpm bundle",
+    "bundle": "pnpm -r --if-present run bundle",
+    "test": "pnpm -r --no-sort --workspace-concurrency=2 run test",
     "lint": "eslint .",
     "typecheck": "pnpm -r run typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm bundle"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.0",
