@@ -1,5 +1,6 @@
 import type { VpsAccessStatus } from './vps-access.ts'
 import { SYSTEM_SPACE_ID } from '@veduta/protocol'
+import { MemoryHealthSurfaceManager } from './memory-health-surface.ts'
 import { ServiceRequests } from './service-request.ts'
 import { parseChatDecisionIntent } from './chat-decision.ts'
 import { mockServiceRequest } from './mock-service-request.ts'
@@ -709,6 +710,8 @@ export function buildServer(options: ServerOptions = {}) {
     onConfigChanged: (config) => notificationCenter.updateConfig(config),
     now,
   })
+  const memoryHealthSurfaces = new MemoryHealthSurfaceManager({ store, now })
+  memoryHealthSurfaces.start()
   // Device lifecycle: a revoked device's push
   // subscriptions must not keep receiving pushes. Only the production
   // profile has a real AuthStore to revoke sessions on.
@@ -723,6 +726,7 @@ export function buildServer(options: ServerOptions = {}) {
     connectedDevicesSurfaces?.dispose()
     notificationCenter.dispose()
     notificationSettings.dispose()
+    memoryHealthSurfaces.dispose()
     pushStore.close()
   })
 
@@ -1226,7 +1230,10 @@ export function buildServer(options: ServerOptions = {}) {
         ...(context?.origin ? { origin: context.origin } : {}),
       })
     },
-    onSwept: () => heartbeatSurfaces.refresh(),
+    onSwept: () => {
+      heartbeatSurfaces.refresh()
+      memoryHealthSurfaces.refresh()
+    },
   })
   const heartbeatSurfaces = new HeartbeatSurfaceManager({ store, heartbeat })
   heartbeat.register()
@@ -1906,6 +1913,7 @@ export function buildServer(options: ServerOptions = {}) {
     pushStore,
     notificationCenter,
     notificationSettings,
+    memoryHealthSurfaces,
     memoryIndex,
     memoryRetrieval,
     reflection,

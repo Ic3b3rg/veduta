@@ -153,6 +153,7 @@ export class SpacesEngine {
   private readonly memoryBudget: MemoryBudget
   private readonly memoryHealthStore: MemoryHealthStore
   private readonly eventCorrelation = new AsyncLocalStorage<string>()
+  private readonly memoryHealthObservers = new Set<() => void>()
   private readonly memoryWriteObservers = new Set<(notice: MemoryWriteNotice) => void>()
   private readonly spaceObservers = new Set<(space: Space) => void>()
   private readonly settingsMutations: SettingsMutationJournal<
@@ -520,6 +521,13 @@ export class SpacesEngine {
     return this.memoryHealth()
   }
 
+  onMemoryHealthChanged(observer: () => void): () => void {
+    this.memoryHealthObservers.add(observer)
+    return () => {
+      this.memoryHealthObservers.delete(observer)
+    }
+  }
+
   private updateMemoryHealth(spaceId: string, activeSize: number): void {
     this.containMemoryHealthPersistenceFailure(() => {
       this.memoryHealthStore.update(spaceId, activeSize)
@@ -548,6 +556,14 @@ export class SpacesEngine {
         'memory health persistence failed; continuing with the current in-memory assessment',
         error,
       )
+    } finally {
+      for (const observer of this.memoryHealthObservers) {
+        try {
+          observer()
+        } catch (error) {
+          console.error('memory health observer failed', error)
+        }
+      }
     }
   }
 
@@ -784,6 +800,17 @@ export class SpacesEngine {
    */
   contextOrigins(spaceId: string, recentLimit = 20): Origin[] {
     return this.assembleContextWithOrigins(spaceId, recentLimit).origins
+  }
+
+  /** Source inventory for observation uses the same file layout as context reads. */
+  characterDocumentPaths(): string[] {
+    return [
+      this.globalPath('SOUL.md'),
+      this.globalPath('USER.md'),
+      ...this.listAllSpaces()
+        .filter((space) => !space.archived)
+        .map((space) => this.spacePath(space, INSTRUCTIONS_FILE)),
+    ]
   }
 
   /**

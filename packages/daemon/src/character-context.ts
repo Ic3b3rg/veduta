@@ -22,11 +22,19 @@ export function characterSection(
   body: string,
   spaceName?: string,
 ): string {
-  body =
-    title === 'SOUL' && isLegacyDefaultSoul(body)
-      ? defaultSoul()
-      : withoutLegacyCharacterPolicy(body, spaceName)
-  return documentSection(title, body)
+  return documentSection(title, characterDocumentBody(title, body, spaceName))
+}
+
+/** Human document bytes actually injected, before generated section wrappers. */
+export function characterDocumentBody(
+  title: 'SOUL' | 'USER' | 'INSTRUCTIONS',
+  body: string,
+  spaceName?: string,
+): string {
+  if (title === 'USER') return body.trim()
+  return title === 'SOUL' && isLegacyDefaultSoul(body)
+    ? defaultSoul()
+    : withoutLegacyCharacterPolicy(body, spaceName)
 }
 
 function documentSection(title: string, body: string): string {
@@ -39,6 +47,6 @@ export function assembleGlobalContext(docs: { soul: string; user: string }): str
   return [
     GATEWAY_POLICY,
     characterSection('SOUL', docs.soul),
-    documentSection('USER', docs.user.trim()),
+    documentSection('USER', characterDocumentBody('USER', docs.user)),
   ].join('\n\n')
 }
