@@ -37,7 +37,22 @@ jobs:
           retention-days: 3
 
   tests:
+    name: tests (${{ matrix.suite }} ${{ matrix.shard }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: daemon
+            shard: 1/2
+          - suite: daemon
+            shard: 2/2
+          - suite: frontend
+            shard: all
+    # One isolated file at a time retains the shared runner's acceptance deadlines.
+    env:
+      VITEST_MAX_THREADS: 1
+      VITEST_MAX_FORKS: 1
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -46,11 +61,10 @@ jobs:
           node-version-file: '.node-version'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm test
-        # At most two packages with two isolated workers each on the four-core runner.
-        env:
-          VITEST_MAX_THREADS: 2
-          VITEST_MAX_FORKS: 2
+      - if: matrix.suite == 'daemon'
+        run: pnpm --filter @veduta/daemon exec vitest run --shard=${{ matrix.shard }}
+      - if: matrix.suite == 'frontend'
+        run: pnpm -r --no-sort --workspace-concurrency=2 --filter '!@veduta/daemon' run test
 
   e2e:
     needs: quality

@@ -31,8 +31,9 @@ pnpm --filter @veduta/e2e exec playwright test tests/chat-usability.spec.ts
 ```
 
 `pnpm test` runs independent packages without dependency-order barriers, with at most two
-packages at a time. CI also caps Vitest at two isolated workers per package. Individual test
-deadlines, process isolation and stateful browser journey ordering stay intact.
+packages at a time. CI divides the daemon's files across two runners and runs the other
+packages separately, with one isolated Vitest worker per package. This avoids CPU contention
+inside integration test deadlines. Stateful browser journey ordering also stays intact.
 
 Playwright builds the PWA once before its two workers start. Every Local VPS journey and
 restart, signed update fixture and product reference preview reads that build. For a slower

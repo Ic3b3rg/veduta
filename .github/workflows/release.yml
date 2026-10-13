@@ -40,10 +40,10 @@ jobs:
       # `pnpm check` also produces
       # packages/pwa/dist, which the assembly step below reuses as-is.
       - name: Full gate
-        # Keep the same test concurrency as ci.yml on shared runners.
+        # Keep one isolated file at a time, as in ci.yml, on the shared runner.
         env:
-          VITEST_MAX_THREADS: 2
-          VITEST_MAX_FORKS: 2
+          VITEST_MAX_THREADS: 1
+          VITEST_MAX_FORKS: 1
         run: pnpm check
 
       - name: Resolve release version
