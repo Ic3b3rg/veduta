@@ -14,6 +14,47 @@ function surface(): Surface {
 }
 
 describe('SurfaceChatConfirmation', () => {
+  it('includes the canonical undated-source caveat in a saved relative-time confirmation', () => {
+    const canonical = SurfaceSchema.parse({
+      ...surface(),
+      state: {
+        records: [
+          { item: 'Unknown date' },
+          { item: 'Current', occurredAt: '2026-03-29T12:00:00Z' },
+        ],
+        todayCount: 1,
+      },
+      tree: { id: 'count', type: 'Stat', binding: 'todayCount', props: { label: 'Today' } },
+      validity: {
+        kind: 'relative-time',
+        timeZone: 'Europe/Rome',
+        window: 'day',
+        startsAt: '2026-03-28T23:00:00Z',
+        expiresAt: '2026-03-29T22:00:00Z',
+        source: { stateKey: 'records', occurredAtKey: 'occurredAt' },
+        projectionStateKeys: ['todayCount'],
+      },
+    })
+    const confirmation = new SurfaceChatConfirmation(() => canonical)
+    confirmation.observe({
+      type: 'tool-start',
+      toolCallId: 'relative-save',
+      toolName: 'patch_state',
+      input: { surfaceId: canonical.id },
+    })
+    confirmation.observe({
+      type: 'tool-result',
+      toolCallId: 'relative-save',
+      toolName: 'patch_state',
+      content: 'Saved',
+      details: { surface: canonical },
+      isError: false,
+    })
+    expect(confirmation.feedback()).toContain('Today: 1')
+    expect(confirmation.feedback()).toContain(
+      '1 source record has no occurrence date and is excluded from this relative-time view.',
+    )
+  })
   it('confirms archival only through a delivered archival Event', () => {
     const canonical = surface()
     const confirmation = new SurfaceChatConfirmation(

@@ -1,4 +1,10 @@
-import { canonicalJson, SurfaceSchema, type AtomNode, type Surface } from '@veduta/protocol'
+import {
+  canonicalJson,
+  SurfaceSchema,
+  surfaceRelativeTimeStatus,
+  type AtomNode,
+  type Surface,
+} from '@veduta/protocol'
 import type { AgentEvent, ToolDef } from './agent-runner.ts'
 import { sanitizeErrorText } from './model-routing.ts'
 
@@ -161,10 +167,10 @@ export class SurfaceChatConfirmation {
       else unconfirmed = true
     }
 
-    const text = [...saved.values()].map(
-      (surface) =>
-        `Saved Surface “${surface.title}” (${surface.presentation} presentation). Open the Surface to view its confirmed content.${confirmedContent(surface)}`,
-    )
+    const text = [...saved.values()].map((surface) => {
+      const caveat = surfaceRelativeTimeStatus(surface)?.caveat
+      return `Saved Surface “${surface.title}” (${surface.presentation} presentation). Open the Surface to view its confirmed content.${confirmedContent(surface)}${caveat === undefined ? '' : `\n${caveat}`}`
+    })
     text.push(...archives, ...failures)
     if (proposed) text.push('A Surface change is proposed and awaits your decision.')
     if (pending) text.push('A Surface change is not yet confirmed.')
