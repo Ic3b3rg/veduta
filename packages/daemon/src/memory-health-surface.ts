@@ -1,4 +1,5 @@
 import { SurfaceSchema, type JsonValue, type Surface } from '@veduta/protocol'
+import { CharacterDocumentObserver } from './character-document-observer.ts'
 import { characterDocumentBody } from './character-context.ts'
 import type { Store } from './store.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
@@ -97,6 +98,7 @@ export class MemoryHealthSurfaceManager {
   private readonly now: () => Date
   private disposers: Array<() => void> = []
   private refreshing = false
+  private documents: CharacterDocumentObserver | undefined
 
   constructor(options: { store: Store; now?: () => Date }) {
     this.store = options.store
@@ -106,7 +108,12 @@ export class MemoryHealthSurfaceManager {
   start(): void {
     if (this.disposers.length) return
     const engine = this.store.spacesEngine
+    this.documents = new CharacterDocumentObserver(
+      () => engine.characterDocumentPaths(),
+      this.refresh,
+    )
     this.disposers = [
+      this.store.onBeforeSnapshot(this.refresh),
       engine.onSpaceChanged(this.refresh),
       engine.onMemoryHealthChanged(this.refresh),
       engine.onMemoryWrite((notice) => {
@@ -122,12 +129,14 @@ export class MemoryHealthSurfaceManager {
   }
 
   dispose(): void {
+    this.documents?.dispose()
+    this.documents = undefined
     for (const dispose of this.disposers) dispose()
     this.disposers = []
   }
 
   refresh = (): void => {
-    if (this.refreshing) return
+    if (this.refreshing || !this.documents) return
     this.refreshing = true
     try {
       const existing = this.store.getSurface(MEMORY_HEALTH_SURFACE_ID)
@@ -139,6 +148,7 @@ export class MemoryHealthSurfaceManager {
       const updatedAt = this.now().toISOString()
       let state: Record<string, JsonValue>
       try {
+        this.documents.reconcile()
         state = this.readState(updatedAt)
       } catch {
         state = existing

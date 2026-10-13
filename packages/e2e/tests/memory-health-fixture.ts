@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, type Browser } from '@playwright/test'
@@ -34,6 +34,7 @@ export async function memoryHealthStack(browser: Browser, width: number) {
     join(root, 'memory.json'),
     JSON.stringify({ timezone: 'Europe/Rome', budget: { low: 30, high: 40, hard: 150 } }),
   )
+  await writeFile(join(root, 'heartbeat.json'), JSON.stringify({ enabled: false }))
   await writeFile(join(root, 'USER.md'), '😀'.repeat(1000))
   await writeFile(join(root, 'connections.json'), JSON.stringify({ mockEnabled: true }))
   saveOnboardingConfig(root, OnboardingConfigSchema.parse({ steps: { finish: 'completed' } }))
@@ -67,6 +68,16 @@ export async function memoryHealthStack(browser: Browser, width: number) {
   return {
     origin,
     page,
+    async replaceDocument(document: 'USER' | 'SOUL' | 'Health' | 'System', units: number) {
+      const path = join(
+        root,
+        document === 'USER' || document === 'SOUL'
+          ? `${document}.md`
+          : `spaces/${document.toLowerCase()}/INSTRUCTIONS.md`,
+      )
+      await writeFile(`${path}.replacement`, 'x'.repeat(units))
+      await rename(`${path}.replacement`, path)
+    },
     async update() {
       instant = '2026-10-13T10:05:00.000Z'
       await page.clock.setFixedTime(new Date(instant))

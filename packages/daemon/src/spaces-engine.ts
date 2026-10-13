@@ -802,6 +802,17 @@ export class SpacesEngine {
     return this.assembleContextWithOrigins(spaceId, recentLimit).origins
   }
 
+  /** Source inventory for observation uses the same file layout as context reads. */
+  characterDocumentPaths(): string[] {
+    return [
+      this.globalPath('SOUL.md'),
+      this.globalPath('USER.md'),
+      ...this.listAllSpaces()
+        .filter((space) => !space.archived)
+        .map((space) => this.spacePath(space, INSTRUCTIONS_FILE)),
+    ]
+  }
+
   /**
    * The two global identity documents (`SOUL.md`, `USER.md`), as
    * `assembleContext` reads them for a Space turn. Global chat (issue #37)
