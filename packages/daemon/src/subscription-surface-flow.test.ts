@@ -713,7 +713,7 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
     }
   })
 
-  it('matches BYOK events, session entries, provenance, and Event log entries', async () => {
+  it('matches BYOK Surface events, session entries, and provenance', async () => {
     const nativeOutcome = await runSurfaceProvider(scriptedNativeProvider(), {
       provider: 'fake',
       modelId: 'fake-model',
@@ -721,7 +721,6 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
     })
 
     const providerTransport = scriptedSurfaceTransport()
-    const chatTransport = scriptedSurfaceTransport()
     try {
       const subscriptionModel: ModelRef = {
         provider: 'openai',
@@ -729,27 +728,16 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
         tier: 'reasoning',
         connectionId: CONNECTION_ID,
       }
-      const nativeModel: ModelRef = {
-        provider: 'fake',
-        modelId: 'fake-model',
-        tier: 'reasoning',
-      }
       const subscriptionOutcome = await runSurfaceProvider(
         codexProvider(providerTransport),
         subscriptionModel,
         providerTransport,
-      )
-      const nativeEventLog = await runChatEventLog(scriptedNativeProvider(), nativeModel)
-      const subscriptionEventLog = await runChatEventLog(
-        codexProvider(chatTransport),
-        subscriptionModel,
       )
 
       expect(subscriptionOutcome).toEqual(nativeOutcome)
       expect(nativeOutcome.definitions.map((definition) => definition.name)).toEqual(
         expect.arrayContaining(['read_surface', 'create_surface', 'patch_state']),
       )
-      expect(subscriptionEventLog).toEqual(nativeEventLog)
       expect(subscriptionOutcome.provenance).toEqual({ contentOrigin: 'trusted:system' })
       expect(subscriptionOutcome.eventLog).toEqual([
         {
@@ -765,6 +753,27 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
           payload: { surfaceId: SURFACE_ID, operations: 2, surfaceCommitId: 'scm-<id>' },
         },
       ])
+    } finally {
+      providerTransport.close()
+    }
+  })
+
+  it('matches BYOK Chat turn Event log entries', async () => {
+    const nativeEventLog = await runChatEventLog(scriptedNativeProvider(), {
+      provider: 'fake',
+      modelId: 'fake-model',
+      tier: 'reasoning',
+    })
+    const chatTransport = scriptedSurfaceTransport()
+    try {
+      const subscriptionEventLog = await runChatEventLog(codexProvider(chatTransport), {
+        provider: 'openai',
+        modelId: 'gpt-5-codex',
+        tier: 'reasoning',
+        connectionId: CONNECTION_ID,
+      })
+
+      expect(subscriptionEventLog).toEqual(nativeEventLog)
       expect(subscriptionEventLog).toEqual([
         {
           type: 'turn',
@@ -804,7 +813,6 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
         },
       ])
     } finally {
-      providerTransport.close()
       chatTransport.close()
     }
   })

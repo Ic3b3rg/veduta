@@ -184,4 +184,6 @@ export async function prepareRelativeFixtures(
 
 export async function openHealth(page: Page, origin: string) {
   await page.goto(`${origin}/app/space/health`)
+  // Navigation can finish before setup status and the Gateway connection are ready.
+  await expect(page.getByRole('button', { name: /^(Pin|Pinned) Meals$/ })).toBeEnabled()
 }
