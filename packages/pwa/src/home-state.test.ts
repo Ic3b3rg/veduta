@@ -193,6 +193,7 @@ describe('homeSpaceGroups', () => {
         surfaceCount: 2,
         freshestUpdatedAt: '2026-08-21T09:30:00.000Z',
         attention: 0,
+        hasNewActivity: true,
       },
       {
         id: 'spc-user-system',
@@ -200,6 +201,7 @@ describe('homeSpaceGroups', () => {
         name: 'System',
         surfaceCount: 0,
         attention: 0,
+        hasNewActivity: false,
       },
     ])
     expect(groups.systemSpaces).toEqual([
@@ -209,6 +211,7 @@ describe('homeSpaceGroups', () => {
         name: 'Maintenance',
         surfaceCount: 0,
         attention: 2,
+        hasNewActivity: false,
       },
     ])
   })
@@ -670,3 +673,83 @@ class MemoryStorage implements Storage {
     this.values.set(key, value)
   }
 }
+
+describe('Home new Surface activity', () => {
+  it('compares valid freshness strictly against each Space last-seen timestamp', () => {
+    const spaces = [
+      testSpace('spc-health', [
+        testSurface('srf-health', 'spc-health', '2026-10-12T09:00:00.000Z'),
+      ]),
+      testSpace('spc-work', [testSurface('srf-work', 'spc-work', '2026-10-12T10:00:00.000Z')]),
+      testSpace('spc-empty', []),
+    ]
+    expect(homeSpaceGroups(spaces).userSpaces.map((space) => space.hasNewActivity)).toEqual([
+      true,
+      true,
+      false,
+    ])
+    expect(
+      homeSpaceGroups(spaces, {
+        'spc-health': '2026-10-12T09:00:00.000Z',
+        'spc-work': '2026-10-12T09:59:59.000Z',
+      }).userSpaces.map((space) => space.hasNewActivity),
+    ).toEqual([false, true, false])
+    expect(
+      homeSpaceGroups(spaces, {
+        'spc-health': 'not a date',
+        'spc-work': '2026-10-12T11:00:00.000Z',
+      }).userSpaces.map((space) => space.hasNewActivity),
+    ).toEqual([true, false, false])
+  })
+
+  it('ignores invalid freshness and archived Spaces without inventing activity', () => {
+    const valid = testSurface('srf-valid', 'spc-health', '1970-01-01T00:00:00.000Z')
+    const invalid = {
+      ...valid,
+      id: 'srf-invalid',
+      freshness: { ...valid.freshness, updatedAt: 'broken' },
+    }
+    const spaces = [
+      testSpace('spc-health', [valid, invalid]),
+      testSpace('spc-invalid', [invalid]),
+      { ...testSpace('spc-archived', [valid]), archived: true },
+    ]
+    expect(homeSpaceGroups(spaces).userSpaces).toMatchObject([
+      { id: 'spc-health', freshestUpdatedAt: '1970-01-01T00:00:00.000Z', hasNewActivity: true },
+      { id: 'spc-invalid', hasNewActivity: false },
+    ])
+  })
+
+  it('reacts to creation and pin freshness, but archive and equal-time updates are not newer', () => {
+    const initial = [
+      testSpace('spc-health', [testSurface('srf-old', 'spc-health', '2026-10-12T09:00:00.000Z')]),
+    ]
+    const seen = { 'spc-health': '2026-10-12T09:00:00.000Z' }
+    const created = applySurfaceCreatedToSpaces(initial, {
+      cursor: 1,
+      at: '2026-10-12T10:00:00.000Z',
+      spaceId: 'spc-health',
+      surface: testSurface('srf-new', 'spc-health', '2026-10-12T10:00:00.000Z'),
+      order: testOrder(1, [], ['srf-new', 'srf-old']),
+    }).spaces
+    expect(homeSpaceGroups(created, seen).userSpaces[0]?.hasNewActivity).toBe(true)
+    const archived = applySurfaceArchivedToSpaces(created, {
+      cursor: 2,
+      at: '2026-10-12T11:00:00.000Z',
+      spaceId: 'spc-health',
+      surfaceId: 'srf-new',
+      order: testOrder(2, [], ['srf-old']),
+    }).spaces
+    expect(homeSpaceGroups(archived, seen).userSpaces[0]?.hasNewActivity).toBe(false)
+    const pinned = applySurfacePinnedToSpaces(archived, {
+      cursor: 3,
+      at: '2026-10-12T11:00:00.000Z',
+      spaceId: 'spc-health',
+      surfaceId: 'srf-old',
+      pinned: true,
+      freshness: { updatedAt: '2026-10-12T11:00:00.000Z', updatedBy: 'user' },
+      order: testOrder(3, ['srf-old']),
+    }).spaces
+    expect(homeSpaceGroups(pinned, seen).userSpaces[0]?.hasNewActivity).toBe(true)
+  })
+})

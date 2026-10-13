@@ -197,3 +197,38 @@ function surface(id: string, spaceId: string, updatedAt: string, hiddenText = id
     presentation: 'standard' as const,
   }
 }
+
+it('shows local new activity independently of attention and Pending decisions', () => {
+  const health = {
+    ...space('spc-health', 'health', 'Health', [
+      surface('srf-health', 'spc-health', '2026-10-12T09:00:00.000Z'),
+    ]),
+    attention: 2,
+  }
+  const props = {
+    spaces: [health],
+    loadState: 'ready' as const,
+    onRetry: vi.fn(),
+    pendingDecisionCounts: new Map([[health.id, 1]]),
+  }
+  const { rerender } = render(
+    <MemoryRouter>
+      <HomeSpaceGrid {...props} />
+    </MemoryRouter>,
+  )
+  const card = screen.getByRole('link', { name: /Health/ })
+  expect(within(card).getByText('New activity')).toBeDefined()
+  expect(within(card).getByLabelText('2 updates')).toBeDefined()
+  expect(within(card).getByLabelText('1 pending decision')).toBeDefined()
+  rerender(
+    <MemoryRouter>
+      <HomeSpaceGrid
+        {...props}
+        homeActivityLastSeen={{ 'spc-health': '2026-10-12T09:00:00.000Z' }}
+      />
+    </MemoryRouter>,
+  )
+  expect(within(card).queryByText('New activity')).toBeNull()
+  expect(within(card).getByLabelText('2 updates')).toBeDefined()
+  expect(within(card).getByLabelText('1 pending decision')).toBeDefined()
+})

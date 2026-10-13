@@ -17,6 +17,7 @@ import { ChatPanel } from './chat-panel.tsx'
 import { DecisionFeedbackNotice } from './decision-feedback-notice.tsx'
 import { clientPath } from './client-router.tsx'
 import { HomeSpaceGrid, type HomeSpacesLoadState } from './home-space-grid.tsx'
+import type { HomeActivityLastSeen } from './home-state.ts'
 import { InstallButton } from './install-button.tsx'
 import { NotificationBell } from './notification-bell.tsx'
 import {
@@ -52,6 +53,7 @@ interface AppShellProps {
   onDismissError: () => void
   spaces: SpaceWithSurfaces[]
   homeSpacesLoadState: HomeSpacesLoadState
+  homeActivityLastSeen?: HomeActivityLastSeen
   route: AppRouteSelection
   surfaceRevealFeedbackKeys: Record<string, string>
   surfaceUpdateFeedbacks: Record<string, SurfaceUpdateFeedback>
@@ -112,6 +114,7 @@ export function AppShell({
   onDismissError,
   spaces,
   homeSpacesLoadState,
+  homeActivityLastSeen = {},
   route,
   surfaceRevealFeedbackKeys,
   surfaceUpdateFeedbacks,
@@ -235,6 +238,7 @@ export function AppShell({
                   <HomeSpaceGrid
                     spaces={spaces}
                     loadState={homeSpacesLoadState}
+                    homeActivityLastSeen={homeActivityLastSeen}
                     pendingDecisionCounts={pendingDecisionPresentation.countsBySpaceId}
                     onRetry={onRetrySpaces}
                   />

@@ -23,6 +23,7 @@ export interface HomeSpaceSummary {
   surfaceCount: number
   freshestUpdatedAt?: string
   attention: number
+  hasNewActivity: boolean
 }
 
 export interface HomeSpaceGroups {
@@ -30,12 +31,17 @@ export interface HomeSpaceGroups {
   systemSpaces: HomeSpaceSummary[]
 }
 
-export function homeSpaceGroups(spaces: SpaceWithSurfaces[]): HomeSpaceGroups {
+export type HomeActivityLastSeen = Readonly<Record<string, string>>
+
+export function homeSpaceGroups(
+  spaces: SpaceWithSurfaces[],
+  lastSeen: HomeActivityLastSeen = {},
+): HomeSpaceGroups {
   const groups: HomeSpaceGroups = { userSpaces: [], systemSpaces: [] }
 
   for (const space of spaces) {
     if (space.archived) continue
-    const summary = homeSpaceSummary(space)
+    const summary = homeSpaceSummary(space, lastSeen[space.id])
     const group = space.id === SYSTEM_SPACE_ID ? groups.systemSpaces : groups.userSpaces
     group.push(summary)
   }
@@ -43,18 +49,22 @@ export function homeSpaceGroups(spaces: SpaceWithSurfaces[]): HomeSpaceGroups {
   return groups
 }
 
-function homeSpaceSummary(space: SpaceWithSurfaces): HomeSpaceSummary {
+export function freshestSurfaceUpdatedAt(surfaces: RenderableSurface[]): string | undefined {
   let freshestUpdatedAt: string | undefined
   let freshestTime = Number.NEGATIVE_INFINITY
-
-  for (const surface of space.surfaces) {
+  for (const surface of surfaces) {
     const updatedAt = surface.freshness.updatedAt
     const updatedTime = Date.parse(updatedAt)
-    if (updatedTime <= freshestTime) continue
+    if (!Number.isFinite(updatedTime) || updatedTime <= freshestTime) continue
     freshestUpdatedAt = updatedAt
     freshestTime = updatedTime
   }
+  return freshestUpdatedAt
+}
 
+function homeSpaceSummary(space: SpaceWithSurfaces, lastSeen?: string): HomeSpaceSummary {
+  const freshestUpdatedAt = freshestSurfaceUpdatedAt(space.surfaces)
+  const seenTime = lastSeen === undefined ? Number.NaN : Date.parse(lastSeen)
   return {
     id: space.id,
     slug: space.slug,
@@ -62,6 +72,9 @@ function homeSpaceSummary(space: SpaceWithSurfaces): HomeSpaceSummary {
     surfaceCount: space.surfaces.length,
     ...(freshestUpdatedAt === undefined ? {} : { freshestUpdatedAt }),
     attention: space.attention,
+    hasNewActivity:
+      freshestUpdatedAt !== undefined &&
+      (!Number.isFinite(seenTime) || Date.parse(freshestUpdatedAt) > seenTime),
   }
 }
 
