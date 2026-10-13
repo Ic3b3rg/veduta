@@ -82,7 +82,7 @@ function validateDatabase(path: string, name: string): void {
   try {
     const rows = db
       .prepare(
-        "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND name != '_sqlx_migrations' ORDER BY type, name",
+        "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE substr(name, 1, 7) != 'sqlite_' AND name != '_sqlx_migrations' ORDER BY type, name",
       )
       .all()
     const canonical = rows

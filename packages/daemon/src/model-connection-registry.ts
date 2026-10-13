@@ -80,6 +80,23 @@ const ENSURE_FRESH_WINDOW_MS = 5 * 60_000
  */
 export const CONNECTION_NOT_FOUND_MESSAGE = 'no such Model connection'
 
+// Persisted lifecycle marker within the existing format (ADR-0014); keep this text stable.
+const CODEX_REMOVAL_PENDING_REASON =
+  'local removal is pending; retry Remove to finish erasing Codex state'
+
+function isCodexRemovalPending(record: ModelConnectionRecord): boolean {
+  return (
+    record.method === 'chatgpt-codex' &&
+    record.state === 'revoked' &&
+    record.stateReason === CODEX_REMOVAL_PENDING_REASON
+  )
+}
+
+function requireNotRemoving(record: ModelConnectionRecord): void {
+  if (isCodexRemovalPending(record))
+    throw new ModelConnectionError('rejected', CODEX_REMOVAL_PENDING_REASON)
+}
+
 export interface ModelConnectionRegistryOptions {
   rootDir: string
   adapters: readonly ModelConnectionAdapter[]
@@ -450,6 +467,7 @@ export class ModelConnectionRegistry {
     const run = (async (): Promise<RefreshResult> => {
       const file = loadConnectionsConfig(this.rootDir)
       const record = this.findRecord(file, id)
+      requireNotRemoving(record)
       const adapter = this.findAdapter(record.method)
       this.requirePrimaryRoute(record.method)
       return adapter.refresh(this.contextFor(id, record.secretRef), challenge)
@@ -630,6 +648,7 @@ export class ModelConnectionRegistry {
     return this.queue(async () => {
       const file = loadConnectionsConfig(this.rootDir)
       const record = this.findRecord(file, id)
+      requireNotRemoving(record)
       const adapter = this.findAdapter(record.method)
       this.requirePrimaryRoute(record.method)
 
@@ -695,6 +714,7 @@ export class ModelConnectionRegistry {
     return this.queue(async () => {
       const file = loadConnectionsConfig(this.rootDir)
       const record = this.findRecord(file, id)
+      requireNotRemoving(record)
       const adapter = this.findAdapter(record.method)
       const entries = await adapter.catalog(this.contextFor(id, record.secretRef))
       const routable = this.applyRoutable(adapter, entries)
@@ -712,6 +732,7 @@ export class ModelConnectionRegistry {
   async verify(id: string, modelId: string): Promise<void> {
     const initialFile = loadConnectionsConfig(this.rootDir)
     const initialRecord = this.findRecord(initialFile, id)
+    requireNotRemoving(initialRecord)
     this.requirePrimaryRoute(initialRecord.method)
     // A subscription probe performs the same pre-inference freshness check
     // as a real turn. Run that check, and then the provider I/O itself,
@@ -802,7 +823,7 @@ export class ModelConnectionRegistry {
         record = withState(record, {
           state: 'revoked',
           stateAt: this.now().toISOString(),
-          stateReason: 'local removal is pending; retry Remove to finish erasing Codex state',
+          stateReason: CODEX_REMOVAL_PENDING_REASON,
         })
         const { selection, ...withoutSelection } = file
         file = this.replaceRecord(
@@ -816,7 +837,7 @@ export class ModelConnectionRegistry {
         this.dropRoutingConnectionKey(id)
         this.persist(file)
         const result = await eviction
-        if (result.error !== undefined) throw result.error
+        if (result.status === 'rejected') throw result.reason
         removeCodexHome(this.rootDir, id)
       }
 
@@ -873,10 +894,11 @@ export class ModelConnectionRegistry {
     })
   }
 
-  private beginCodexRemoval(record: ModelConnectionRecord): Promise<{ error?: unknown }> {
+  private beginCodexRemoval(record: ModelConnectionRecord): Promise<PromiseSettledResult<void>> {
     if (!this.evictCodexSession)
       return Promise.resolve({
-        error: new ModelConnectionError(
+        status: 'rejected',
+        reason: new ModelConnectionError(
           'unreachable',
           'Codex lifecycle owner is unavailable; retry removal after restarting the Gateway',
         ),
@@ -888,8 +910,8 @@ export class ModelConnectionRegistry {
         codexTransport: async () => transport,
       })
     }).then(
-      () => ({}),
-      (error: unknown) => ({ error }),
+      () => ({ status: 'fulfilled', value: undefined }),
+      (reason: unknown) => ({ status: 'rejected', reason }),
     )
   }
 
@@ -1023,6 +1045,7 @@ export class ModelConnectionRegistry {
       const file = loadConnectionsConfig(this.rootDir)
       const record = file.connections.find((candidate) => candidate.id === idOrProvider)
       if (!record) return undefined
+      if (isCodexRemovalPending(record)) return record.state
 
       const err = connectionErrorFrom(error)
       if (err.code === 'usage-limit' || err.code === 'rate-limit') {

@@ -56,8 +56,8 @@ permissions. Full connection removal intentionally deletes the entire owned home
 `codex-state-schemas.ts` records SHA-256 fingerprints after each migration prefix
 of the pinned source. To reproduce, execute each directory's SQL files in sorted
 filename order against an empty SQLite database. After each file, select
-`type,name,tbl_name,sql` from `sqlite_schema`, excluding names matching
-`sqlite_%` and `_sqlx_migrations`, sorted by `type,name`. Exclude null SQL,
+`type,name,tbl_name,sql` from `sqlite_schema`, excluding names beginning with
+`sqlite_` and the exact `_sqlx_migrations` name, sorted by `type,name`. Exclude null SQL,
 trim and collapse SQL whitespace to a single space, serialize the rows as compact
 JSON arrays and hash the UTF-8 bytes. Record each distinct digest and each filename's
 numeric migration version. Internal SQLite metadata and autoindexes do not enter
@@ -91,7 +91,10 @@ only an existing idle transport; a missing binary or failed provider logout cann
 prevent local erasure. SIGTERM escalates to SIGKILL after one second; failure to
 observe closure after five seconds refuses directory deletion. Pending creation
 settlement has a 70-second bound. The registry records revoked state before erasure;
-a failed termination or filesystem operation leaves a retryable record. It removes
+a failed termination or filesystem operation leaves a retryable record. The exact
+revoked pending-removal reason is a persisted compatibility marker: catalog, refresh
+and reauthorization refuse it across restart, and stale call failures cannot replace
+it. This uses the existing strict configuration format without adding a new field. It removes
 the record only after directory erasure, so persistence failure cannot silently
 re-enable a retired live child. This follows the ownership principle in upstream
 [thread deletion](https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/thread-store/src/local/delete_thread.rs).

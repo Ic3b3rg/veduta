@@ -201,3 +201,13 @@ it('refuses newer SQLx versions before changing any recognized home', () => {
   expect(readFileSync(join(other, 'history.jsonl'), 'utf8')).toBe('other-history')
   expect(readFileSync(join(home, 'state_5.sqlite'))).toEqual(original)
 })
+
+it('does not mistake an unknown sqlite-prefixed user table for internal SQLite metadata', () => {
+  const { root, home, rollout } = fixture()
+  const db = new DatabaseSync(join(home, 'state_5.sqlite'))
+  db.exec(readFileSync(new URL('./test-fixtures/codex-state-legacy.sql', import.meta.url), 'utf8'))
+  db.exec('CREATE TABLE sqliteXfuture_history (content TEXT)')
+  db.close()
+  expect(() => cleanupCodexHomes(root)).toThrow(/unsupported schema/)
+  expect(existsSync(rollout)).toBe(true)
+})
