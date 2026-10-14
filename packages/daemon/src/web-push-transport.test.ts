@@ -1,8 +1,9 @@
+import { createECDH, randomBytes } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { platform, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { WebPushError } from 'web-push'
+import webpush, { WebPushError } from 'web-push'
 import {
   ALLOWED_PUSH_HOSTS,
   WebPushTransport,
@@ -130,6 +131,30 @@ const PAYLOAD = { title: 'Space updated', body: 'Something happened', url: '/' }
 const VAPID = { publicKey: 'pub', privateKey: 'priv', subject: 'mailto:admin@veduta.local' }
 
 describe('WebPushTransport.send', () => {
+  it('requests prompt delivery of visible notifications with high urgency on the wire', async () => {
+    const keys = webpush.generateVAPIDKeys()
+    const subscription = {
+      endpoint: SUBSCRIPTION.endpoint,
+      p256dh: createECDH('prime256v1').generateKeys().toString('base64url'),
+      auth: randomBytes(16).toString('base64url'),
+    }
+    let wireUrgency: string | undefined
+    const transport = new WebPushTransport({
+      vapid: { ...keys, subject: VAPID.subject },
+      webpushImpl: {
+        async sendNotification(input, payload, options) {
+          if (typeof payload !== 'string') throw new Error('expected a serialized notification')
+          const request = webpush.generateRequestDetails(input, payload, options)
+          wireUrgency = request.headers['Urgency']
+          return { statusCode: 201, body: '', headers: {} }
+        },
+      },
+    })
+
+    await expect(transport.send(subscription, PAYLOAD)).resolves.toBe('ok')
+    expect(wireUrgency).toBe('high')
+  })
+
   it('maps a resolved sendNotification to ok', async () => {
     const sendNotification = vi.fn().mockResolvedValue({ statusCode: 201, body: '', headers: {} })
     const transport = new WebPushTransport({ vapid: VAPID, webpushImpl: { sendNotification } })

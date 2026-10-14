@@ -35,3 +35,13 @@ may remain in an old database but have no role in delivery.
 An explicitly requested recurring notification's latest result describes the immediate routing
 decision: push requested, waiting for quiet hours, or no subscribed devices. A request is never
 presented as proof that a device displayed the notification.
+
+## Amendment: prompt delivery of visible push notifications (2026-10-14)
+
+Browser pushes that pass Notification Center routing request `Urgency: high`. The transport
+previously used the library's default `normal` urgency, which permits power-saving delivery
+deferral; see [RFC 8030 §5.3](https://www.rfc-editor.org/rfc/rfc8030.html#section-5.3) and the
+[web-push options](https://github.com/web-push-libs/web-push#sendnotificationpushsubscription-payload-options).
+This delivery hint applies to visible notifications after eligibility and quiet-hour decisions.
+It does not bypass those decisions or prove display on a device; connectivity and operating-system
+policy can still delay delivery. The transport retains its one-hour TTL and durable retry behavior.
