@@ -146,8 +146,8 @@ describe('push - happy path, taint and deep links', () => {
 
     expect(transport.calls).toHaveLength(2)
     for (const call of transport.calls) {
-      expect(call.payload.title).toBe('Health')
-      expect(call.payload.body).toBe('A'.repeat(140))
+      expect(call.payload.title).toBe('Veduta')
+      expect(call.payload.body).toBe(`Health — ${'A'.repeat(131)}`)
       expect(call.payload.url).toBe('/app/space/health/surface/srf-goal')
     }
 
@@ -206,11 +206,36 @@ describe('push - happy path, taint and deep links', () => {
     center.notify(pushInput({ origin: untrustedOrigin('gmail'), text: 'Sensitive raw content' }))
     await flushAsync()
 
-    expect(transport.calls[0]?.payload.body).toBe('New update in Health')
+    expect(transport.calls[0]?.payload.body).toBe('Health — New update')
     expect(transport.calls[0]?.payload.body).not.toContain('Sensitive raw content')
 
     const events = notificationEvents(HEALTH)
     expect(events[0]?.origin).toBe('untrusted:gmail')
+    center.dispose()
+  })
+
+  it('shows the Space without a dangling separator when a reminder has no message', async () => {
+    const center = newCenter()
+    addSubscription()
+    center.notify(pushInput({ text: '' }))
+    await flushAsync()
+
+    expect(transport.calls[0]?.payload).toEqual({ title: 'Veduta', body: 'Health', url: '/' })
+    center.dispose()
+  })
+
+  it('keeps the Space context when the Space is also named Veduta', async () => {
+    const space = store.spacesEngine.createSpace({ name: 'Veduta' })
+    const center = newCenter()
+    addSubscription()
+    center.notify(pushInput({ spaceId: space.id, text: 'Time for a break' }))
+    await flushAsync()
+
+    expect(transport.calls[0]?.payload).toEqual({
+      title: 'Veduta',
+      body: 'Veduta — Time for a break',
+      url: '/',
+    })
     center.dispose()
   })
 })
@@ -460,7 +485,7 @@ describe('outbox delivery', () => {
     // The first send remains in flight, so the overlapping delivery pass must
     // not send either outbox row again.
     expect(transport.calls).toHaveLength(1)
-    expect(transport.calls[0]?.payload.body).toBe('first')
+    expect(transport.calls[0]?.payload.body).toBe('Health — first')
     expect(pushStore.claimDueOutbox(new Date(clock.getTime() + 1))).toHaveLength(2)
     center.dispose()
   })

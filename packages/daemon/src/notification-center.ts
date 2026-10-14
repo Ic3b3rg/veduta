@@ -159,11 +159,13 @@ export class NotificationCenter {
     const spaceName = space?.name ?? input.spaceId
     // Taint rule: untrusted text never reaches the lock screen — only a
     // trusted effective origin may carry the real (truncated) text.
-    const body = isUntrusted(origin)
-      ? `New update in ${spaceName}`
-      : truncate(input.text, PUSH_BODY_MAX_LENGTH)
+    const text = isUntrusted(origin) ? 'New update' : input.text
+    const body = truncate(
+      text.length > 0 ? `${spaceName} — ${text}` : spaceName,
+      PUSH_BODY_MAX_LENGTH,
+    )
     const url = this.deepLink(input.spaceId, input.surfaceId)
-    const payload: PushPayload = { title: spaceName, body, url }
+    const payload: PushPayload = { title: 'Veduta', body, url }
     const truncatedText = truncate(input.text, 140)
 
     // Attention is incremented once: a missed push must still show on Home.

@@ -1,8 +1,9 @@
-const CACHE_NAME = 'veduta-shell-v3'
+const CACHE_NAME = 'veduta-shell-v4'
 const APP_SHELL = [
   '/',
   '/manifest.webmanifest',
   '/icons/icon-192.png',
+  '/icons/notification-badge.png',
   '/icons/icon-512.png',
   '/icons/icon-maskable-512.png',
   '/icons/apple-touch-icon.png',
@@ -118,14 +119,18 @@ self.addEventListener('push', (event) => {
   }
 
   const valid = isValidPushPayload(payload)
-  const title = valid ? payload.title : 'Veduta'
-  const body = valid ? payload.body : 'New update'
+  // Older outbox entries carry the Space in their title (ADR-0005).
+  let body = valid ? payload.body : 'New update'
+  if (valid && payload.title !== 'Veduta') {
+    body = [payload.title, payload.body].filter(Boolean).join(' — ').slice(0, 140)
+  }
   const url = valid ? payload.url : '/'
 
   event.waitUntil(
-    self.registration.showNotification(title, {
+    self.registration.showNotification('Veduta', {
       body,
       icon: '/icons/icon-192.png',
+      badge: '/icons/notification-badge.png',
       data: { url },
     }),
   )

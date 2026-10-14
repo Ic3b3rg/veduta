@@ -45,3 +45,16 @@ deferral; see [RFC 8030 §5.3](https://www.rfc-editor.org/rfc/rfc8030.html#secti
 This delivery hint applies to visible notifications after eligibility and quiet-hour decisions.
 It does not bypass those decisions or prove display on a device; connectivity and operating-system
 policy can still delay delivery. The transport retains its one-hour TTL and durable retry behavior.
+
+## Amendment: consistent browser notification branding (2026-10-14)
+
+Visible browser notifications use `Veduta` as their title. Individual push bodies contain the
+Space name followed by `—` and the message, bounded to the existing lock-screen length limit.
+An empty message shows the Space name alone. Untrusted content still uses a generic message;
+multi-Space digests retain their aggregate summary. The service worker also formats older queued
+payloads whose title carried the Space name.
+
+A white, transparent rendition of the existing logo supplies the notification `badge` for Android
+status bars and is precached with the app shell. The full-color `icon` remains the notification
+card image. Browser-supplied origin attribution is controlled by the browser and operating system,
+not by the notification payload; see [notification visual options](https://web.dev/articles/push-notifications-display-a-notification).

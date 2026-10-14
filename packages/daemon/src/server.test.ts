@@ -2388,8 +2388,8 @@ describe('Web Push notifications (issue #18)', () => {
       expect(transport.calls).toMatchObject([
         {
           payload: {
-            title: 'Health',
-            body: '',
+            title: 'Veduta',
+            body: 'Health',
             url: '/app/space/health/surface/srf-health-automations',
           },
         },
@@ -2497,7 +2497,7 @@ describe('Web Push notifications (issue #18)', () => {
     })
     try {
       await flushNotificationAsync()
-      expect(transport.calls).toMatchObject([{ payload: { body: 'Time for a break' } }])
+      expect(transport.calls).toMatchObject([{ payload: { body: 'Health — Time for a break' } }])
       expect(resumed.notificationCenter.stats().queuedCount).toBe(0)
     } finally {
       await resumed.app.close()
@@ -2608,7 +2608,7 @@ describe('Web Push notifications (issue #18)', () => {
       await scheduler.runDue()
       await flushNotificationAsync()
 
-      expect(transport.calls).toMatchObject([{ payload: { body: 'New update in Health' } }])
+      expect(transport.calls).toMatchObject([{ payload: { body: 'Health — New update' } }])
       expect(
         store.eventLog('spc-health').find((event) => event.type === 'notification'),
       ).toMatchObject({
