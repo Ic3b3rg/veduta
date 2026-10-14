@@ -1,216 +1,22 @@
-import { inputSetPlan } from '@veduta/protocol'
+import { SurfaceSchema, type Surface, type PatchOperation } from '@veduta/protocol'
 import {
-  SurfaceSchema,
-  type AtomNode,
-  type JsonValue,
-  type PatchOperation,
-  type Space,
-  type Surface,
-} from '@veduta/protocol'
-import {
-  budgetFor,
   loadNotificationsConfig,
   resolveTimezone,
-  saveNotificationsConfig,
   type NotificationsConfig,
 } from './notifications-config.ts'
 import type { Store } from './store.ts'
-import type { CommittedFastActionOutcome } from '@veduta/protocol'
-import { fastActionChangedKeys } from './fast-action-projection.ts'
-import { SurfaceActionError } from './fast-action.ts'
-import type { FastActionPreflightContext } from './surface-engine.ts'
 import { SYSTEM_SPACE_ID } from './system-space.ts'
 
-/**
- * The Notification settings Surface (issue #18):
- * quiet-hours window, timezone and queued-push count, then one Row per
- * user Space with a budget Select, "sent today" and "degraded today"
- * Stats. Same daemon-owned, persisted System-Space Surface idiom as
- * `heartbeat-surface.ts` — pre-created at boot, rebuilt on demand — but
- * unlike the Heartbeat metrics Surface this one also *writes back*: the
- * budget Select is a fast action, handled here via `store.onFastActionOutcome`
- * (the same mechanism `ApprovalSurfaceManager` uses for Approve/Reject
- * clicks), which persists a per-Space override to `notifications.json`.
- */
 export const NOTIFICATION_SETTINGS_SURFACE_ID = 'srf-notifications'
 
-const CAPTION_NODE_ID = 'subtitle'
-const QUEUED_STAT_NODE_ID = 'stat-queued'
-const ROWS_BOX_NODE_ID = 'notif-rows'
-
-/** Offered daily push budgets. */
-const BUDGET_OPTIONS = ['0', '1', '3', '5', '10'] as const
-
-const BUDGET_STATE_KEY_PREFIX = 'notif-budget:'
-
-function budgetStateKey(spaceId: string): string {
-  return `${BUDGET_STATE_KEY_PREFIX}${spaceId}`
-}
-
-/** Inverse of `budgetStateKey`: recovers the target Space id from a declared target key. */
-function spaceIdFromBudgetStateKey(stateKey: string): string | undefined {
-  return stateKey.startsWith(BUDGET_STATE_KEY_PREFIX)
-    ? stateKey.slice(BUDGET_STATE_KEY_PREFIX.length)
-    : undefined
-}
-
-/**
- * The options to render (and to accept back) for a Space's budget Select.
- * If the Space's current override isn't one of the standard choices, it is
- * appended so the control never lies about the Space's actual budget.
- */
-function budgetOptionsFor(current: number): string[] {
-  const currentText = String(current)
-  return (BUDGET_OPTIONS as readonly string[]).includes(currentText)
-    ? [...BUDGET_OPTIONS]
-    : [...BUDGET_OPTIONS, currentText]
-}
-
-function quietHoursCaptionText(config: NotificationsConfig): string {
-  if (!config.quietHours) return 'Quiet hours off'
-  return `Quiet hours ${config.quietHours.start}–${config.quietHours.end} (${resolveTimezone(config)})`
-}
-
-function titleNode(): AtomNode {
-  return { id: 'title', type: 'Title', props: { text: 'Notifications' } }
-}
-
-function captionNode(config: NotificationsConfig): AtomNode {
-  return { id: CAPTION_NODE_ID, type: 'Caption', props: { text: quietHoursCaptionText(config) } }
-}
-
-/**
- * Structural slice of `NotificationCenter`'s stats this manager depends on
- * (the `HeartbeatSource` pattern in `heartbeat-surface.ts`): declared
- * locally rather than imported so this module never depends on
- * `notification-center.ts`. A real `NotificationCenter` satisfies this
- * as-is; tests supply a fake.
- */
-export interface NotificationStats {
-  queuedCount: number
-  perSpace: Array<{ spaceId: string; sentToday: number; degradedToday: number }>
-}
-
 export interface NotificationStatsSource {
-  stats(): NotificationStats
+  stats(): { queuedCount: number }
 }
 
-function statsFor(
-  stats: NotificationStats,
-  spaceId: string,
-): { sentToday: number; degradedToday: number } {
-  const entry = stats.perSpace.find((candidate) => candidate.spaceId === spaceId)
-  return entry
-    ? { sentToday: entry.sentToday, degradedToday: entry.degradedToday }
-    : { sentToday: 0, degradedToday: 0 }
-}
-
-function queuedStatNode(stats: NotificationStats): AtomNode {
-  return {
-    id: QUEUED_STAT_NODE_ID,
-    type: 'Stat',
-    props: { label: 'Queued', value: String(stats.queuedCount) },
-  }
-}
-
-function spaceRowNode(
-  space: Space,
-  config: NotificationsConfig,
-  stats: NotificationStats,
-): AtomNode {
-  const stateKey = budgetStateKey(space.id)
-  const current = budgetFor(config, space.id)
-  const options = budgetOptionsFor(current)
-  const spaceStats = statsFor(stats, space.id)
-  return {
-    id: `notif-row-${space.id}`,
-    type: 'Row',
-    children: [
-      { id: `notif-label-${space.id}`, type: 'Label', props: { text: space.name } },
-      {
-        id: `notif-budget-${space.id}`,
-        type: 'Select',
-        binding: stateKey,
-        props: {
-          label: 'Daily push budget',
-          options: options.map((value) => ({ label: value, value })),
-        },
-        actions: [
-          {
-            name: 'change',
-            path: 'fast',
-            plan: inputSetPlan(stateKey, { type: 'string', enum: options }),
-          },
-        ],
-      },
-      {
-        id: `notif-sent-${space.id}`,
-        type: 'Stat',
-        props: { label: 'Sent today', value: String(spaceStats.sentToday) },
-      },
-      {
-        id: `notif-degraded-${space.id}`,
-        type: 'Stat',
-        props: { label: 'Degraded today', value: String(spaceStats.degradedToday) },
-      },
-    ],
-  }
-}
-
-function spaceRowNodes(
-  spaces: Space[],
-  config: NotificationsConfig,
-  stats: NotificationStats,
-): AtomNode[] {
-  return spaces
-    .filter((space) => space.id !== SYSTEM_SPACE_ID)
-    .map((space) => spaceRowNode(space, config, stats))
-}
-
-/** The one child whose shape (not just contents) varies across refreshes — the Space row count changes as Spaces are created/removed. Always patched as a single `replace` at its fixed index (see `refreshSurface`), never diffed. */
-function rowsBoxNode(
-  spaces: Space[],
-  config: NotificationsConfig,
-  stats: NotificationStats,
-): AtomNode {
-  return { id: ROWS_BOX_NODE_ID, type: 'Box', children: spaceRowNodes(spaces, config, stats) }
-}
-
-/**
- * Fixed four-child shape: Title, Caption (quiet hours), Stat (queued),
- * Box (one Row per user Space). The index of each child never changes
- * across refreshes, which is what lets `refreshSurface` patch each one by
- * a fixed `/children/N` path instead of diffing the tree.
- */
-function notificationsChildren(
-  spaces: Space[],
-  config: NotificationsConfig,
-  stats: NotificationStats,
-): AtomNode[] {
-  return [
-    titleNode(),
-    captionNode(config),
-    queuedStatNode(stats),
-    rowsBoxNode(spaces, config, stats),
-  ]
-}
-
-function notificationsState(
-  spaces: Space[],
-  config: NotificationsConfig,
-): Record<string, JsonValue> {
-  const state: Record<string, JsonValue> = {}
-  for (const space of spaces) {
-    if (space.id === SYSTEM_SPACE_ID) continue
-    state[budgetStateKey(space.id)] = String(budgetFor(config, space.id))
-  }
-  return state
-}
-
+/** Notification status is daemon-owned living state, without daily interruption limits. */
 export function notificationSettingsSurface(
-  spaces: Space[],
   config: NotificationsConfig,
-  stats: NotificationStats,
+  stats: { queuedCount: number },
   updatedAt: string,
 ): Surface {
   return SurfaceSchema.parse({
@@ -220,216 +26,72 @@ export function notificationSettingsSurface(
     tree: {
       id: 'root',
       type: 'Box',
-      children: notificationsChildren(spaces, config, stats),
+      children: [
+        { id: 'title', type: 'Title', props: { text: 'Notifications' } },
+        {
+          id: 'subtitle',
+          type: 'Caption',
+          props: {
+            text: config.quietHours
+              ? `Quiet hours ${config.quietHours.start}–${config.quietHours.end} (${resolveTimezone(config)})`
+              : 'Quiet hours off',
+          },
+        },
+        {
+          id: 'stat-queued',
+          type: 'Stat',
+          props: { label: 'Queued', value: String(stats.queuedCount) },
+        },
+      ],
     },
-    state: notificationsState(spaces, config),
+    state: {},
     freshness: { updatedAt, updatedBy: 'system' },
   })
-}
-
-function statePointer(key: string): string {
-  return `/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`
-}
-
-/**
- * Add/replace ops for every key `nextState` needs, computed against what's
- * already persisted. Never removes a key — callers must apply this
- * *before* the tree patch that may bind a new Space's row to one of these
- * keys (see `refreshSurface`): `SurfaceSchema` (packages/protocol/src/surface.ts)
- * rejects any tree node whose `binding` isn't already a Surface state key,
- * so the key has to exist first.
- */
-function upsertStateOps(
-  existingState: Record<string, JsonValue>,
-  nextState: Record<string, JsonValue>,
-): PatchOperation[] {
-  const ops: PatchOperation[] = []
-  for (const [key, value] of Object.entries(nextState)) {
-    if (!Object.prototype.hasOwnProperty.call(existingState, key)) {
-      ops.push({ target: 'state', op: 'add', path: statePointer(key), value })
-    } else if (JSON.stringify(existingState[key]) !== JSON.stringify(value)) {
-      ops.push({ target: 'state', op: 'replace', path: statePointer(key), value })
-    }
-  }
-  return ops
-}
-
-/**
- * Remove ops for keys no longer needed (their Space was deleted, or
- * otherwise dropped out of `nextState`). Unlike `upsertStateOps`, this is
- * safe to apply only *after* the tree patch that stops binding to them —
- * unused state keys are legal, but a tree node with a dangling `binding`
- * is not.
- */
-function staleStateOps(
-  existingState: Record<string, JsonValue>,
-  nextState: Record<string, JsonValue>,
-): PatchOperation[] {
-  const ops: PatchOperation[] = []
-  for (const key of Object.keys(existingState)) {
-    if (!Object.prototype.hasOwnProperty.call(nextState, key)) {
-      ops.push({ target: 'state', op: 'remove', path: statePointer(key) })
-    }
-  }
-  return ops
 }
 
 export interface NotificationSettingsSurfaceManagerOptions {
   store: Store
   source: NotificationStatsSource
   rootDir: string
-  onConfigChanged?: (config: NotificationsConfig) => void
   now?: () => Date
 }
 
-/**
- * Projects notification stats + config onto `srf-notifications`, following
- * the allowlist/heartbeat managers' persisted-Surface pattern: pre-create
- * at boot, rebuild whenever asked. Also the write side: it listens for
- * fast-path budget-Select clicks (`store.onFastActionOutcome`, the same wiring
- * `ApprovalSurfaceManager` uses for Approve/Reject) and turns a valid one
- * into a persisted `notifications.json` override, notifying the caller
- * (`onConfigChanged`, wired to `NotificationCenter.updateConfig` outside
- * this module) before refreshing.
- */
 export class NotificationSettingsSurfaceManager {
-  private readonly store: Store
-  private readonly source: NotificationStatsSource
-  private readonly rootDir: string
-  private readonly onConfigChanged: ((config: NotificationsConfig) => void) | undefined
   private readonly now: () => Date
-  private readonly unsubscribe: () => void
-  private readonly unsubscribePreflight: () => void
 
-  constructor(options: NotificationSettingsSurfaceManagerOptions) {
-    this.store = options.store
-    this.source = options.source
-    this.rootDir = options.rootDir
-    this.onConfigChanged = options.onConfigChanged
+  constructor(private readonly options: NotificationSettingsSurfaceManagerOptions) {
     this.now = options.now ?? (() => new Date())
-    this.unsubscribePreflight = this.store.onFastActionPreflight((context) =>
-      this.preflight(context),
-    )
-    this.unsubscribe = this.store.onFastActionOutcome('notification-settings', (outcome) =>
-      this.project(outcome),
-    )
   }
 
-  /**
-   * Ensures the Surface reflects the current config + stats: creates it on
-   * first boot, and unconditionally rebuilds it if it already exists (e.g.
-   * a daemon restart), so a stale on-disk Surface from a previous process
-   * never lingers in front of a user. Accepted staleness: if the daemon
-   * happens to be down exactly at a day rollover, the "sent/degraded
-   * today" counters can lag by one cycle until the next stats change
-   * drives `refresh()` — a dedicated midnight timer was reviewed and
-   * rejected as scope creep for issue #18.
-   */
   start(): void {
-    this.refreshSurface()
+    this.refresh()
   }
 
-  /**
-   * Rebuilds the Surface from the latest stats + config. Bound as an
-   * instance property (not a prototype method) so it can be passed
-   * directly as `NotificationCenter`'s `onStats` callback without losing
-   * `this` (mirrors `HeartbeatSurfaceManager.refresh`).
-   */
   refresh = (): void => {
-    this.refreshSurface()
-  }
-
-  dispose(): void {
-    this.unsubscribe()
-    this.unsubscribePreflight()
-  }
-
-  private userSpaces(): Space[] {
-    return this.store.listSpaces().filter((space) => space.id !== SYSTEM_SPACE_ID)
-  }
-
-  private refreshSurface(): void {
-    const config = loadNotificationsConfig(this.rootDir)
-    const stats = this.source.stats()
-    const spaces = this.userSpaces()
-    const updatedAt = this.now().toISOString()
-    const existing = this.store.getSurface(NOTIFICATION_SETTINGS_SURFACE_ID)
-
+    const { store, source, rootDir } = this.options
+    const next = notificationSettingsSurface(
+      loadNotificationsConfig(rootDir),
+      source.stats(),
+      this.now().toISOString(),
+    )
+    const existing = store.getSurface(NOTIFICATION_SETTINGS_SURFACE_ID)
     if (!existing) {
-      // Daemon-owned: the Notification settings Surface must not be
-      // rewritable by the Agent (ADR-0007's structural-defense contract),
-      // same as heartbeat/allowlist/audit.
-      this.store.createSurface(
-        notificationSettingsSurface(spaces, config, stats, updatedAt),
-        'job',
-        { daemonOwned: true },
-      )
+      store.createSurface(next, 'job', { daemonOwned: true })
       return
     }
-
-    const nextState = notificationsState(spaces, config)
-
-    const version = this.store.getSurfaceVersion(NOTIFICATION_SETTINGS_SURFACE_ID)
-    if (version) {
-      // Offered values, their typed Actions, and their bindings change together.
-      this.store.patchDaemonSurface(
-        NOTIFICATION_SETTINGS_SURFACE_ID,
-        [
-          { target: 'tree', op: 'replace', path: '/children/1', value: captionNode(config) },
-          { target: 'tree', op: 'replace', path: '/children/2', value: queuedStatNode(stats) },
-          {
-            target: 'tree',
-            op: 'replace',
-            path: '/children/3',
-            value: rowsBoxNode(spaces, config, stats),
-          },
-          ...upsertStateOps(existing.state, nextState),
-          ...staleStateOps(existing.state, nextState),
-        ],
-        { expectedTreeVersion: version.treeVersion },
-      )
-    }
-  }
-
-  private preflight(context: FastActionPreflightContext): void {
-    if (context.surface.id !== NOTIFICATION_SETTINGS_SURFACE_ID) return
-    const config = loadNotificationsConfig(this.rootDir)
-    for (const key of Object.keys(context.action.plan.targets)) {
-      const spaceId = spaceIdFromBudgetStateKey(key)
-      if (spaceId === undefined) continue
-      const value = context.nextSurface.state[key]
-      if (
-        !this.store.getSpace(spaceId) ||
-        typeof value !== 'string' ||
-        !budgetOptionsFor(budgetFor(config, spaceId)).includes(value)
-      )
-        throw new SurfaceActionError(
-          'preflight_rejected',
-          'The selected notification budget is no longer offered',
-        )
-    }
-  }
-
-  private project(outcome: CommittedFastActionOutcome): void {
-    if (outcome.surfaceId !== NOTIFICATION_SETTINGS_SURFACE_ID) return
-    const current = this.store.getSurface(outcome.surfaceId)
-    if (!current) return
-    let config = loadNotificationsConfig(this.rootDir)
-    let changed = false
-    // Recovery projects the latest canonical choice, never an older receipt's snapshot.
-    for (const key of fastActionChangedKeys(outcome)) {
-      const spaceId = spaceIdFromBudgetStateKey(key)
-      const value = current.state[key]
-      if (spaceId === undefined || !this.store.getSpace(spaceId) || typeof value !== 'string')
-        continue
-      const budget = Number.parseInt(value, 10)
-      if (!Number.isFinite(budget) || budgetFor(config, spaceId) === budget) continue
-      config = { ...config, spaceBudgets: { ...config.spaceBudgets, [spaceId]: budget } }
-      changed = true
-    }
-    if (!changed) return
-    saveNotificationsConfig(this.rootDir, config)
-    this.onConfigChanged?.(config)
-    this.refreshSurface()
+    const version = store.getSurfaceVersion(NOTIFICATION_SETTINGS_SURFACE_ID)
+    if (!version) return
+    // Replace the tree before removing retired budget bindings on an existing installation.
+    const operations: PatchOperation[] = [
+      { target: 'tree', op: 'replace', path: '', value: next.tree },
+      ...Object.keys(existing.state).map((key): PatchOperation => ({
+        target: 'state',
+        op: 'remove',
+        path: `/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`,
+      })),
+    ]
+    store.patchDaemonSurface(NOTIFICATION_SETTINGS_SURFACE_ID, operations, {
+      expectedTreeVersion: version.treeVersion,
+    })
   }
 }

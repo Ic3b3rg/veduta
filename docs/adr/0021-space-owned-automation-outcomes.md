@@ -34,7 +34,7 @@ using diagnostic Activity as product-facing Automation history.
 A user may explicitly request a recurring notification or reminder, including one with an empty
 body. Its Automation stores a typed notification operation and submits each eligible occurrence
 to the existing Notification Center without an outcome producer or a model call just to send it.
-The shared per-device subscriptions, taint handling, interruption budgets, quiet hours, durable
+The shared per-device subscriptions, taint handling, quiet hours, durable
 outbox and retry policy still govern delivery. The recorded result is a request for notification
 delivery, never proof that a device displayed it. Its deep link opens the owning Space's
 Automations Surface, and it does not manufacture an assistant chat message.
@@ -43,5 +43,8 @@ This explicit operation does not change the dashboard-outcome policy above. Lega
 are never reclassified by their free-text descriptions; an old unusable schedule can be explicitly
 cancelled and replaced through Chat. See [issue #263](https://github.com/Ic3b3rg/veduta/issues/263)
 for the accepted behavior and verification requirements.
+
+Daily interruption budgets were subsequently removed for all push requests by the
+[ADR-0005 amendment](0005-event-driven-proactivity.md#amendment-no-daily-notification-quotas-2026-10-14).
 
 Status: accepted

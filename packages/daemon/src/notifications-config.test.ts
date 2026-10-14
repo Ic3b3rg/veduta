@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
-  budgetFor,
   isWithinQuietHours,
   loadNotificationsConfig,
   NotificationsConfigSchema,
@@ -27,11 +26,24 @@ describe('loadNotificationsConfig', () => {
 
   it('defaults when the config file is absent', () => {
     expect(loadNotificationsConfig(rootDir)).toEqual({
-      defaultDailyPushBudget: 3,
-      spaceBudgets: {},
       quietHours: { start: '22:00', end: '08:00' },
       digestThreshold: 3,
     })
+  })
+
+  it('loads retired daily limits without enforcing or rewriting them', () => {
+    const path = join(rootDir, 'notifications.json')
+    const legacy = { defaultDailyPushBudget: 0, spaceBudgets: { home: 1 }, timezone: 'Europe/Rome' }
+    writeFileSync(path, JSON.stringify(legacy))
+    const config = loadNotificationsConfig(rootDir)
+    expect(config).toEqual({
+      quietHours: { start: '22:00', end: '08:00' },
+      digestThreshold: 3,
+      timezone: 'Europe/Rome',
+    })
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(legacy)
+    saveNotificationsConfig(rootDir, config)
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(config)
   })
 
   it('rejects invalid JSON with the offending path in the message', () => {
@@ -75,8 +87,6 @@ describe('saveNotificationsConfig', () => {
 
   it('round-trips through save then load', () => {
     const config: NotificationsConfig = {
-      defaultDailyPushBudget: 5,
-      spaceBudgets: { 'space-a': 10, 'space-b': 0 },
       quietHours: { start: '23:00', end: '07:30' },
       digestThreshold: 5,
       timezone: 'Europe/Rome',
@@ -97,27 +107,9 @@ describe('saveNotificationsConfig', () => {
     expect(() =>
       saveNotificationsConfig(
         rootDir,
-        fromPartial<NotificationsConfig>({ defaultDailyPushBudget: -1 }),
+        fromPartial<NotificationsConfig>({ quietHours: { start: '25:00', end: '08:00' } }),
       ),
     ).toThrow()
-  })
-})
-
-describe('budgetFor', () => {
-  it('uses the per-Space override when present', () => {
-    const config = NotificationsConfigSchema.parse({
-      defaultDailyPushBudget: 3,
-      spaceBudgets: { home: 10 },
-    })
-    expect(budgetFor(config, 'home')).toBe(10)
-  })
-
-  it('falls back to the daemon-wide default', () => {
-    const config = NotificationsConfigSchema.parse({
-      defaultDailyPushBudget: 3,
-      spaceBudgets: { home: 10 },
-    })
-    expect(budgetFor(config, 'other-space')).toBe(3)
   })
 })
 

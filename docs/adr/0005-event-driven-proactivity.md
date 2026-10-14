@@ -8,12 +8,30 @@ Status: accepted
 
 - Whenever the Agent learns a deadline it must arm a timer (`arm_timer` tool), not entrust it to the next sweep.
 - Timers/jobs are **visible Automations** in the Space, switchable off by the user ("the plus of having a UI").
-- Notification discipline: silent → badge → push, per-Space budget, freshness metadata on every Surface.
+- Notification discipline: silent → badge → push, freshness metadata on every Surface.
 - An In-app notification is durable outcome navigation, not an interruption tier. Meaningful
   recurring dashboard outcomes may create one without incrementing a Space attention badge,
-  consuming push budget, or writing an unsolicited assistant chat message; see
+  sending browser push or writing an unsolicited assistant chat message; see
   [ADR-0021](0021-space-owned-automation-outcomes.md).
 - A connected personal mailbox is not an event source. Mail is accessed only for an explicit
   request or due occurrence of a confirmed Automation, per
   [ADR-0024](0024-pull-based-personal-mailbox.md). This replaces the original Gmail Watch and IMAP
   IDLE examples without weakening the events-first rule for Calendar and webhooks.
+
+## Amendment: no daily notification quotas (2026-10-14)
+
+The owner explicitly removed daily push limits after a five-minute reminder sent exactly three
+notifications and then silently became Home attention only. Eligible push requests now always
+enter the durable per-device outbox; there is no global or per-Space daily allowance, counter,
+or budget control. This applies to both recurring notifications and one-shot reminders.
+Subscriptions, revocation, taint-safe payloads, non-urgent quiet hours, digesting and delivery
+retries remain part of the shared Notification Center.
+
+Existing configuration may contain the retired `defaultDailyPushBudget` and `spaceBudgets`
+fields. Loading ignores them while validating the remaining configuration, and saving omits them.
+Existing settings Surfaces replace the old controls and bindings on boot. Historical counters
+may remain in an old database but have no role in delivery.
+
+An explicitly requested recurring notification's latest result describes the immediate routing
+decision: push requested, waiting for quiet hours, or no subscribed devices. A request is never
+presented as proof that a device displayed the notification.

@@ -73,11 +73,33 @@ export function AutomationScheduleDescription({
       )}
       {source.lastOutcome && (
         <div>
-          {italian ? 'Ultimo risultato' : 'Last result'}: {source.lastOutcome}
+          {italian ? 'Ultimo risultato' : 'Last result'}:{' '}
+          {outcomeDescription(source.lastOutcome, italian)}
         </div>
       )}
     </>
   )
+}
+
+function outcomeDescription(outcome: string, italian: boolean): string {
+  switch (outcome) {
+    case 'notification-requested':
+      return italian
+        ? 'Push richiesta; consegna al dispositivo non confermata'
+        : 'Push requested; device delivery unconfirmed'
+    case 'notification-queued':
+      return italian
+        ? 'In attesa della fine degli orari silenziosi'
+        : 'Waiting for quiet hours to end'
+    case 'notification-no-devices':
+      return italian
+        ? 'Nessun dispositivo iscritto; attiva le notifiche sul dispositivo'
+        : 'No subscribed devices; enable notifications on your device'
+    case 'notification-badge-only':
+      return italian ? 'Segnalazione in Home' : 'Shown on Home'
+    default:
+      return outcome
+  }
 }
 
 /** Only the exact historical Scheduler projection is eligible for interpretation. */

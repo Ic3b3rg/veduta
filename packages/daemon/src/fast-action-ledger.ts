@@ -8,7 +8,6 @@ import { requiredString } from './sqlite-rows.ts'
 
 /** Actual post-delivery projections are present before startup commit reconciliation. */
 const DOMAIN_CONSUMERS = [
-  'notification-settings',
   'scheduler',
   'approvals',
   'tree-proposals',
@@ -24,6 +23,11 @@ export class FastActionLedger {
   private readonly running = new Set<string>()
   private closed = false
   constructor(private readonly db: DatabaseSync) {
+    // ADR-0005: retired notification limits no longer project fast Actions.
+    this.db
+      .prepare('delete from fast_action_receipts where consumer = ?')
+      .run('notification-settings')
+    this.db.prepare('delete from fast_action_consumers where name = ?').run('notification-settings')
     for (const name of DOMAIN_CONSUMERS) this.register(name)
   }
   private register(name: string): void {
