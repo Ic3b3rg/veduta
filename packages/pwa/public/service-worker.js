@@ -1,4 +1,4 @@
-const CACHE_NAME = 'veduta-shell-v4'
+const CACHE_NAME = 'veduta-shell-v5'
 const APP_SHELL = [
   '/',
   '/manifest.webmanifest',
@@ -106,6 +106,21 @@ function cacheIfOk(event, key, response) {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(key, copy)))
 }
 
+// Notification image loading does not reuse this worker's fetch handler.
+// Pass cached PNG bytes directly so a push never needs the private Gateway (ADR-0005).
+async function notificationImage(path) {
+  try {
+    const response = await caches.match(path)
+    if (!response) return undefined
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    let binary = ''
+    for (const byte of bytes) binary += String.fromCharCode(byte)
+    return `data:image/png;base64,${self.btoa(binary)}`
+  } catch {
+    return undefined
+  }
+}
+
 // Web Push (issue 018): malformed or empty payloads (a push carries no
 // guarantee of shape — it's attacker-observable ciphertext until decrypted
 // by the browser) fall back to a generic notification rather than crashing
@@ -127,12 +142,12 @@ self.addEventListener('push', (event) => {
   const url = valid ? payload.url : '/'
 
   event.waitUntil(
-    self.registration.showNotification('Veduta', {
-      body,
-      icon: '/icons/icon-192.png',
-      badge: '/icons/notification-badge.png',
-      data: { url },
-    }),
+    Promise.all([
+      notificationImage('/icons/icon-192.png'),
+      notificationImage('/icons/notification-badge.png'),
+    ]).then(([icon, badge]) =>
+      self.registration.showNotification('Veduta', { body, icon, badge, data: { url } }),
+    ),
   )
 })
 

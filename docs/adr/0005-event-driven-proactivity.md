@@ -58,3 +58,12 @@ A white, transparent rendition of the existing logo supplies the notification `b
 status bars and is precached with the app shell. The full-color `icon` remains the notification
 card image. Browser-supplied origin attribution is controlled by the browser and operating system,
 not by the notification payload; see [notification visual options](https://web.dev/articles/push-notifications-display-a-notification).
+
+The worker passes cached PNG bytes as data URLs for both notification images. Precaching their
+HTTP URLs alone is insufficient: the browser's notification resource loader can request them again
+without using the worker's fetch handler. A real-browser probe reproduced both network requests
+despite populated Cache Storage. Using data URLs removes that dependency on Gateway/VPN reachability
+for every browser supporting the standard notification options, without user-agent branches.
+If cached images are missing or unreadable, the text notification still displays with the
+platform's default imagery rather than waiting for network image downloads. Device appearance,
+including status-bar and private lock-screen icons, still requires physical-device verification.
