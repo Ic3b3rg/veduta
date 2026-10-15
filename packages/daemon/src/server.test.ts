@@ -2388,8 +2388,8 @@ describe('Web Push notifications (issue #18)', () => {
       expect(transport.calls).toMatchObject([
         {
           payload: {
-            title: 'Health',
-            body: '',
+            title: 'Veduta',
+            body: 'Health',
             url: '/app/space/health/surface/srf-health-automations',
           },
         },
@@ -2406,12 +2406,13 @@ describe('Web Push notifications (issue #18)', () => {
     }
   })
 
-  it('keeps recurring notifications subject to the Space push budget', async () => {
+  it('continues recurring notifications beyond three occurrences despite legacy daily limits', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'veduta-recurring-notification-budget-'))
-    saveNotificationsConfig(
-      dataDir,
-      NotificationsConfigSchema.parse({
-        defaultDailyPushBudget: 1,
+    await writeFile(
+      join(dataDir, 'notifications.json'),
+      JSON.stringify({
+        defaultDailyPushBudget: 0,
+        spaceBudgets: { 'spc-health': 1 },
         quietHours: null,
         timezone: 'UTC',
       }),
@@ -2435,24 +2436,20 @@ describe('Web Push notifications (issue #18)', () => {
         briefing: 'Notify me every five minutes',
         notification: { body: 'Time for a break' },
       })
-      for (const at of ['2026-10-13T09:25:00.000Z', '2026-10-13T09:30:00.000Z']) {
-        clock = new Date(at)
+      for (let index = 1; index <= 6; index += 1) {
+        clock = new Date(Date.UTC(2026, 9, 13, 9, 20 + index * 5))
         await scheduler.runDue()
         await flushNotificationAsync()
       }
 
-      expect(transport.calls).toHaveLength(1)
-      expect(pushStore.getAttention('spc-health').count).toBe(2)
-      expect(notificationCenter.stats().perSpace).toContainEqual({
-        spaceId: 'spc-health',
-        sentToday: 1,
-        degradedToday: 1,
-      })
+      expect(transport.calls).toHaveLength(6)
+      expect(pushStore.getAttention('spc-health').count).toBe(6)
+      expect(scheduler.listAutomations('spc-health')[0]?.lastOutcome).toBe('notification-requested')
+      expect(notificationCenter.stats().queuedCount).toBe(0)
       expect(store.eventLog('spc-health').filter((event) => event.type === 'notification')).toEqual(
-        [
+        Array.from({ length: 6 }, () =>
           expect.objectContaining({ payload: expect.objectContaining({ outcome: 'push' }) }),
-          expect.objectContaining({ payload: expect.objectContaining({ outcome: 'degraded' }) }),
-        ],
+        ),
       )
     } finally {
       await app.close()
@@ -2487,6 +2484,7 @@ describe('Web Push notifications (issue #18)', () => {
       await flushNotificationAsync()
       expect(transport.calls).toHaveLength(0)
       expect(notificationCenter.stats().queuedCount).toBe(1)
+      expect(scheduler.listAutomations('spc-health')[0]?.lastOutcome).toBe('notification-queued')
     } finally {
       await app.close()
     }
@@ -2499,10 +2497,37 @@ describe('Web Push notifications (issue #18)', () => {
     })
     try {
       await flushNotificationAsync()
-      expect(transport.calls).toMatchObject([{ payload: { body: 'Time for a break' } }])
+      expect(transport.calls).toMatchObject([{ payload: { body: 'Health — Time for a break' } }])
       expect(resumed.notificationCenter.stats().queuedCount).toBe(0)
     } finally {
       await resumed.app.close()
+    }
+  })
+
+  it('reports when a recurring notification has no subscribed devices', async () => {
+    let clock = new Date('2026-10-13T09:20:00.000Z')
+    const transport = new NotificationFakeTransport()
+    const { app, scheduler } = buildServer({
+      now: () => new Date(clock.getTime()),
+      pushTransport: transport,
+    })
+    try {
+      scheduler.createJob({
+        spaceId: 'spc-health',
+        cron: '*/5 * * * *',
+        briefing: 'Remind me to take a break',
+        notification: { body: 'Time for a break' },
+      })
+      clock = new Date('2026-10-13T09:25:00.000Z')
+      await scheduler.runDue()
+      await flushNotificationAsync()
+
+      expect(transport.calls).toHaveLength(0)
+      expect(scheduler.listAutomations('spc-health')[0]?.lastOutcome).toBe(
+        'notification-no-devices',
+      )
+    } finally {
+      await app.close()
     }
   })
 
@@ -2583,7 +2608,7 @@ describe('Web Push notifications (issue #18)', () => {
       await scheduler.runDue()
       await flushNotificationAsync()
 
-      expect(transport.calls).toMatchObject([{ payload: { body: 'New update in Health' } }])
+      expect(transport.calls).toMatchObject([{ payload: { body: 'Health — New update' } }])
       expect(
         store.eventLog('spc-health').find((event) => event.type === 'notification'),
       ).toMatchObject({
@@ -2667,11 +2692,11 @@ describe('Web Push notifications (issue #18)', () => {
     await app.close()
   })
 
-  it('(C) a second escalation past a 1-per-day Space budget degrades to badge-only: one send, attention 2, degraded 1', async () => {
+  it('sends every timer escalation despite a retired daily limit', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'veduta-notif-budget-'))
-    saveNotificationsConfig(
-      dataDir,
-      NotificationsConfigSchema.parse({
+    await writeFile(
+      join(dataDir, 'notifications.json'),
+      JSON.stringify({
         defaultDailyPushBudget: 1,
         spaceBudgets: {},
         quietHours: null,
@@ -2712,7 +2737,7 @@ describe('Web Push notifications (issue #18)', () => {
     await scheduler.runDue()
     await flushNotificationAsync()
 
-    expect(transport.calls).toHaveLength(1)
+    expect(transport.calls).toHaveLength(2)
     expect(pushStore.getAttention('spc-health')).toEqual({ count: 2, revision: 2 })
 
     const notificationEvents = store
@@ -2720,15 +2745,10 @@ describe('Web Push notifications (issue #18)', () => {
       .filter((event) => event.type === 'notification')
     expect(notificationEvents).toHaveLength(2)
     expect(notificationEvents[0]?.payload).toMatchObject({ outcome: 'push' })
-    expect(notificationEvents[1]?.payload).toMatchObject({ outcome: 'degraded' })
+    expect(notificationEvents[1]?.payload).toMatchObject({ outcome: 'push' })
 
     const settingsSurface = store.getSurface(NOTIFICATION_SETTINGS_SURFACE_ID)
-    // The per-Space Rows live nested inside the "notif-rows" Box, not as
-    // direct children of the tree root.
-    const rowsBox = settingsSurface?.tree.children?.find((node) => node.id === 'notif-rows')
-    const row = rowsBox?.children?.find((node) => node.id === 'notif-row-spc-health')
-    const degradedNode = row?.children?.find((node) => node.id === 'notif-degraded-spc-health')
-    expect(degradedNode).toHaveProperty('props.value', '1')
+    expect(JSON.stringify(settingsSurface)).not.toContain('notif-budget:')
 
     await app.close()
   })

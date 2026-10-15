@@ -6,7 +6,7 @@ import { readJsonFile } from './json-file.ts'
 
 /**
  * Notification discipline configuration (issue #18): `<rootDir>/notifications.json`.
- * Governs per-Space push interruption budgets, the quiet-hours window (evaluated in
+ * Governs the quiet-hours window (evaluated in
  * an IANA timezone), and the digest threshold used when quiet-hours-deferred pushes
  * are flushed. No config file (or an empty override) means the defaults below apply.
  */
@@ -23,8 +23,6 @@ export type QuietHoursWindow = z.infer<typeof QuietHoursWindowSchema>
 
 export const NotificationsConfigSchema = z
   .object({
-    defaultDailyPushBudget: z.number().int().min(0).max(50).default(3),
-    spaceBudgets: z.record(z.number().int().min(0).max(50)).default({}),
     quietHours: QuietHoursWindowSchema.nullable().default({ start: '22:00', end: '08:00' }),
     digestThreshold: z.number().int().min(1).max(20).default(3),
     timezone: z.string().optional(),
@@ -49,20 +47,21 @@ export type NotificationsConfig = z.infer<typeof NotificationsConfigSchema>
 export function loadNotificationsConfig(rootDir: string): NotificationsConfig {
   const path = join(rootDir, 'notifications.json')
   if (!existsSync(path)) return NotificationsConfigSchema.parse({})
-  return NotificationsConfigSchema.parse(
-    readJsonFile(path, { description: 'notifications config' }),
-  )
+  const raw = readJsonFile(path, { description: 'notifications config' })
+  // Retired daily limits must not prevent an existing installation from booting.
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+    const config: Record<string, unknown> = { ...raw }
+    delete config['defaultDailyPushBudget']
+    delete config['spaceBudgets']
+    return NotificationsConfigSchema.parse(config)
+  }
+  return NotificationsConfigSchema.parse(raw)
 }
 
 export function saveNotificationsConfig(rootDir: string, config: NotificationsConfig): void {
   const path = join(rootDir, 'notifications.json')
   const validated = NotificationsConfigSchema.parse(config)
   writeJsonAtomicDurable(path, validated)
-}
-
-/** Per-Space override if configured, else the daemon-wide default. */
-export function budgetFor(config: NotificationsConfig, spaceId: string): number {
-  return config.spaceBudgets[spaceId] ?? config.defaultDailyPushBudget
 }
 
 /** Configured IANA timezone, else the daemon process's own resolved timezone. */

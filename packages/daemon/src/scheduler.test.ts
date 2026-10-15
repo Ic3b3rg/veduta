@@ -43,7 +43,9 @@ function createScheduler(options: { judge?: () => 'yes' | 'no' | 'unknown' } = {
     rootDir,
     store,
     now,
-    onEscalation: (spaceId, text) => escalations.push({ spaceId, text }),
+    onEscalation: (spaceId, text) => {
+      escalations.push({ spaceId, text })
+    },
     ...(options.judge === undefined ? {} : { judge: options.judge }),
   })
   schedulers.push(scheduler)
@@ -2076,7 +2078,9 @@ describe('escalation context (issue #18)', () => {
       rootDir,
       store,
       now,
-      onEscalation: (_spaceId, _text, context) => contexts.push(context),
+      onEscalation: (_spaceId, _text, context) => {
+        contexts.push(context)
+      },
     })
     schedulers.push(scheduler)
     scheduler.registerHandler('ping', () => handlerChanged('Handled ping'))
@@ -2102,7 +2106,9 @@ describe('escalation context (issue #18)', () => {
       rootDir,
       store,
       now,
-      onEscalation: (_spaceId, _text, context) => contexts.push(context),
+      onEscalation: (_spaceId, _text, context) => {
+        contexts.push(context)
+      },
     })
     schedulers.push(scheduler)
     scheduler.armTimer({

@@ -10,7 +10,7 @@ import {
 
 /**
  * Durable storage for outbound Web Push (issue #18, ADR-0005 persistence
- * idiom): subscriptions, per-Space attention, per-Space daily push budget,
+ * idiom): subscriptions, per-Space attention,
  * the delivery outbox, and the quiet-hours digest queue. Deliberately a
  * dumb store — no notification policy lives here (see `notification-center.ts`);
  * this file only knows how to read and write its own tables.
@@ -26,11 +26,6 @@ export interface SubscriptionRow {
 export interface AttentionState {
   count: number
   revision: number
-}
-
-export interface BudgetCounters {
-  sent: number
-  degraded: number
 }
 
 export interface OutboxRow {
@@ -137,29 +132,12 @@ export class PushStore {
     })
   }
 
-  // --- budget ---
-
-  budgetCounters(spaceId: string, day: string): BudgetCounters {
-    return this.readBudgetCounters(spaceId, day)
-  }
-
-  /**
-   * Crash-durable push commit (plan): the budget gate and the
-   * per-endpoint outbox fan-out land in ONE transaction, so a crash can
-   * never consume budget without materializing the delivery rows.
-   */
-  commitPush(input: {
-    spaceId: string
-    day: string
-    limit: number
-    rows: Array<{ endpoint: string; title: string; body: string; url: string }>
-    now: Date
-  }): { outcome: 'sent' | 'degraded'; outboxIds: number[] } {
-    return withImmediateTransaction(this.db, () => {
-      const outcome = this.consumePushUnguarded(input.spaceId, input.day, input.limit)
-      if (outcome === 'degraded') return { outcome, outboxIds: [] }
-      return { outcome, outboxIds: this.insertOutboxUnguarded(input.rows, input.now) }
-    })
+  /** Atomically persist the complete per-device fan-out before attempting delivery. */
+  enqueuePush(
+    rows: Array<{ endpoint: string; title: string; body: string; url: string }>,
+    now: Date,
+  ): number[] {
+    return withImmediateTransaction(this.db, () => this.insertOutboxUnguarded(rows, now))
   }
 
   // --- outbox ---
@@ -243,7 +221,7 @@ export class PushStore {
   }
 
   /**
-   * Crash-durable per-item flush (plan): budget gate, outbox
+   * Crash-durable per-item flush: outbox
    * fan-out (when the gate passes), and the deferred row's deletion land in
    * ONE transaction — a crash mid-flush leaves the unprocessed remainder of
    * the queue intact instead of losing it wholesale.
@@ -251,18 +229,14 @@ export class PushStore {
   flushDeferredItem(
     deferredId: number,
     input: {
-      spaceId: string
-      day: string
-      limit: number
       rows: Array<{ endpoint: string; title: string; body: string; url: string }>
       now: Date
     },
-  ): { outcome: 'sent' | 'degraded'; outboxIds: number[] } {
+  ): number[] {
     return withImmediateTransaction(this.db, () => {
-      const outcome = this.consumePushUnguarded(input.spaceId, input.day, input.limit)
-      const outboxIds = outcome === 'sent' ? this.insertOutboxUnguarded(input.rows, input.now) : []
+      const outboxIds = this.insertOutboxUnguarded(input.rows, input.now)
       this.db.prepare('delete from push_deferred where id = ?').run(deferredId)
-      return { outcome, outboxIds }
+      return outboxIds
     })
   }
 
@@ -276,17 +250,6 @@ export class PushStore {
   }
 
   // --- internals ---
-
-  /** Must run inside a caller-held transaction. */
-  private consumePushUnguarded(spaceId: string, day: string, limit: number): 'sent' | 'degraded' {
-    const counters = this.readBudgetCounters(spaceId, day)
-    if (counters.sent < limit) {
-      this.writeBudgetCounters(spaceId, day, { ...counters, sent: counters.sent + 1 })
-      return 'sent'
-    }
-    this.writeBudgetCounters(spaceId, day, { ...counters, degraded: counters.degraded + 1 })
-    return 'degraded'
-  }
 
   /** Must run inside a caller-held transaction. Returns the inserted row ids. */
   private insertOutboxUnguarded(
@@ -321,23 +284,6 @@ export class PushStore {
       .run(spaceId, state.count, state.revision)
   }
 
-  private readBudgetCounters(spaceId: string, day: string): BudgetCounters {
-    const row = this.db
-      .prepare('select * from push_budget where space_id = ? and day = ?')
-      .get(spaceId, day)
-    if (!row) return { sent: 0, degraded: 0 }
-    return { sent: requiredNumber(row, 'sent'), degraded: requiredNumber(row, 'degraded') }
-  }
-
-  private writeBudgetCounters(spaceId: string, day: string, counters: BudgetCounters): void {
-    this.db
-      .prepare(
-        `insert into push_budget (space_id, day, sent, degraded) values (?, ?, ?, ?)
-         on conflict(space_id, day) do update set sent = excluded.sent, degraded = excluded.degraded`,
-      )
-      .run(spaceId, day, counters.sent, counters.degraded)
-  }
-
   private initializeSchema(): void {
     this.db.exec(`
       pragma journal_mode = wal;
@@ -354,14 +300,6 @@ export class PushStore {
         space_id text primary key,
         count integer not null default 0,
         revision integer not null default 0
-      );
-
-      create table if not exists push_budget (
-        space_id text not null,
-        day text not null,
-        sent integer not null default 0,
-        degraded integer not null default 0,
-        primary key (space_id, day)
       );
 
       create table if not exists push_outbox (

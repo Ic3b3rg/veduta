@@ -1,7 +1,9 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { fromPartial } from '@total-typescript/shoehorn'
 import { PushStore } from './push-store.ts'
 
 let rootDir: string
@@ -125,100 +127,66 @@ describe('space attention', () => {
   })
 })
 
-describe('push budget', () => {
-  // The budget gate is only reachable through commitPush/flushDeferredItem
-  // (the production paths); an empty row list makes commitPush a pure gate.
-  const gate = (spaceId: string, day: string, limit: number) =>
-    store.commitPush({ spaceId, day, limit, rows: [], now: new Date(`${day}T12:00:00.000Z`) })
-      .outcome
-
-  it('respects the limit atomically: limit 1 sends once then degrades', () => {
-    expect(gate('spc-a', '2026-07-08', 1)).toBe('sent')
-    expect(gate('spc-a', '2026-07-08', 1)).toBe('degraded')
-    expect(gate('spc-a', '2026-07-08', 1)).toBe('degraded')
-    expect(store.budgetCounters('spc-a', '2026-07-08')).toEqual({ sent: 1, degraded: 2 })
+describe('enqueuePush', () => {
+  it('ignores exhausted historical push counters on an existing installation', () => {
+    const legacy = new DatabaseSync(join(rootDir, 'push.sqlite'))
+    legacy.exec(`create table push_budget (
+      space_id text not null, day text not null, sent integer not null, degraded integer not null,
+      primary key (space_id, day)
+    )`)
+    legacy
+      .prepare('insert into push_budget values (?, ?, ?, ?)')
+      .run('spc-health', '2026-07-08', 3, 15)
+    store.close()
+    store = new PushStore({ rootDir })
+    const now = new Date('2026-07-08T12:00:00Z')
+    for (let index = 0; index < 6; index += 1) {
+      store.enqueuePush(
+        [{ endpoint: 'https://push.example/a', title: 'Health', body: 'Reminder', url: '/' }],
+        now,
+      )
+    }
+    expect(store.claimDueOutbox(now)).toHaveLength(6)
+    expect(legacy.prepare('select sent, degraded from push_budget').get()).toMatchObject({
+      sent: 3,
+      degraded: 15,
+    })
+    legacy.close()
   })
 
-  it('a different day resets the budget', () => {
-    gate('spc-a', '2026-07-08', 1)
-    gate('spc-a', '2026-07-08', 1)
-    expect(gate('spc-a', '2026-07-09', 1)).toBe('sent')
-    expect(store.budgetCounters('spc-a', '2026-07-09')).toEqual({ sent: 1, degraded: 0 })
-    expect(store.budgetCounters('spc-a', '2026-07-08')).toEqual({ sent: 1, degraded: 1 })
-  })
-
-  it('budgetCounters reads zeros when absent', () => {
-    expect(store.budgetCounters('spc-never', '2026-07-08')).toEqual({ sent: 0, degraded: 0 })
-  })
-
-  it('supports a zero budget: every call degrades', () => {
-    expect(gate('spc-a', '2026-07-08', 0)).toBe('degraded')
-    expect(store.budgetCounters('spc-a', '2026-07-08')).toEqual({ sent: 0, degraded: 1 })
-  })
-})
-
-describe('commitPush (atomic budget gate + outbox fan-out)', () => {
-  it('sent: consumes budget and inserts one outbox row per given row, returning their ids', () => {
+  it('persists the full fan-out atomically and returns its row ids', () => {
     const now = new Date('2026-07-08T12:00:00.000Z')
-    const result = store.commitPush({
-      spaceId: 'spc-a',
-      day: '2026-07-08',
-      limit: 5,
-      rows: [
+    const ids = store.enqueuePush(
+      [
         { endpoint: 'https://push.example/a', title: 't', body: 'b', url: '/' },
         { endpoint: 'https://push.example/b', title: 't', body: 'b', url: '/' },
       ],
       now,
-    })
-    expect(result.outcome).toBe('sent')
-    expect(result.outboxIds).toHaveLength(2)
-    expect(store.budgetCounters('spc-a', '2026-07-08')).toEqual({ sent: 1, degraded: 0 })
-    const due = store.claimDueOutbox(now)
-    expect(due.map((row) => row.id).sort()).toEqual([...result.outboxIds].sort())
+    )
+    expect(ids).toHaveLength(2)
+    expect(store.claimDueOutbox(now).map((row) => row.id)).toEqual(ids)
   })
 
-  it('degraded: inserts no outbox rows and returns an empty outboxIds', () => {
+  it('rolls back the entire fan-out if a row cannot be persisted', () => {
     const now = new Date('2026-07-08T12:00:00.000Z')
-    const result = store.commitPush({
-      spaceId: 'spc-a',
-      day: '2026-07-08',
-      limit: 0,
-      rows: [{ endpoint: 'https://push.example/a', title: 't', body: 'b', url: '/' }],
-      now,
-    })
-    expect(result).toEqual({ outcome: 'degraded', outboxIds: [] })
-    expect(store.budgetCounters('spc-a', '2026-07-08')).toEqual({ sent: 0, degraded: 1 })
+    expect(() =>
+      store.enqueuePush(
+        [
+          { endpoint: 'https://push.example/a', title: 't', body: 'b', url: '/' },
+          fromPartial({ endpoint: 'https://push.example/b' }),
+        ],
+        now,
+      ),
+    ).toThrow()
     expect(store.claimDueOutbox(now)).toEqual([])
-  })
-
-  it('honors the limit across repeated calls: sends until the limit, then degrades', () => {
-    const now = new Date('2026-07-08T12:00:00.000Z')
-    const rows = [{ endpoint: 'https://push.example/a', title: 't', body: 'b', url: '/' }]
-    expect(
-      store.commitPush({ spaceId: 'spc-a', day: '2026-07-08', limit: 1, rows, now }).outcome,
-    ).toBe('sent')
-    expect(
-      store.commitPush({ spaceId: 'spc-a', day: '2026-07-08', limit: 1, rows, now }).outcome,
-    ).toBe('degraded')
-    expect(store.budgetCounters('spc-a', '2026-07-08')).toEqual({ sent: 1, degraded: 1 })
-    // Only the first (sent) call's row landed in the outbox.
-    expect(store.claimDueOutbox(now)).toHaveLength(1)
   })
 })
 
-// Outbox rows only materialize through commitPush/flushDeferredItem in
-// production — tests seed them the same way (unbounded budget, throwaway Space).
 function seedOutbox(
   rows: Array<{ endpoint: string; title: string; body: string; url: string }>,
   now: Date,
 ): number[] {
-  return store.commitPush({
-    spaceId: 'spc-seed',
-    day: now.toISOString().slice(0, 10),
-    limit: Number.MAX_SAFE_INTEGER,
-    rows,
-    now,
-  }).outboxIds
+  return store.enqueuePush(rows, now)
 }
 
 describe('push outbox', () => {
@@ -364,43 +332,42 @@ describe('push deferred (quiet-hours digest queue)', () => {
 })
 
 describe('flushDeferredItem (atomic per-item flush)', () => {
-  it('sent: inserts outbox rows and deletes the deferred row', () => {
+  it('inserts outbox rows and deletes the deferred row', () => {
     const now = new Date('2026-07-08T23:00:00.000Z')
     store.insertDeferred({ spaceId: 'spc-a', title: 't', body: 'b', url: '/1' }, now)
     const [deferred] = store.listDeferred()
 
     const result = store.flushDeferredItem(deferred!.id, {
-      spaceId: 'spc-a',
-      day: '2026-07-08',
-      limit: 5,
       rows: [{ endpoint: 'https://push.example/a', title: 't', body: 'b', url: '/1' }],
       now,
     })
 
-    expect(result.outcome).toBe('sent')
-    expect(result.outboxIds).toHaveLength(1)
+    expect(result).toHaveLength(1)
     expect(store.listDeferred()).toEqual([])
     expect(store.claimDueOutbox(now)).toHaveLength(1)
-    expect(store.budgetCounters('spc-a', '2026-07-08')).toEqual({ sent: 1, degraded: 0 })
   })
 
-  it('degraded: inserts no outbox rows but still deletes the deferred row', () => {
+  it('settles a deferred item without subscribed devices', () => {
     const now = new Date('2026-07-08T23:00:00.000Z')
     store.insertDeferred({ spaceId: 'spc-a', title: 't', body: 'b', url: '/1' }, now)
     const [deferred] = store.listDeferred()
-
-    const result = store.flushDeferredItem(deferred!.id, {
-      spaceId: 'spc-a',
-      day: '2026-07-08',
-      limit: 0,
-      rows: [{ endpoint: 'https://push.example/a', title: 't', body: 'b', url: '/1' }],
-      now,
-    })
-
-    expect(result).toEqual({ outcome: 'degraded', outboxIds: [] })
+    expect(store.flushDeferredItem(deferred!.id, { rows: [], now })).toEqual([])
     expect(store.listDeferred()).toEqual([])
     expect(store.claimDueOutbox(now)).toEqual([])
-    expect(store.budgetCounters('spc-a', '2026-07-08')).toEqual({ sent: 0, degraded: 1 })
+  })
+
+  it('retains the deferred item when outbox persistence fails', () => {
+    const now = new Date('2026-07-08T23:00:00.000Z')
+    store.insertDeferred({ spaceId: 'spc-a', title: 't', body: 'b', url: '/1' }, now)
+    const [deferred] = store.listDeferred()
+    expect(() =>
+      store.flushDeferredItem(deferred!.id, {
+        rows: [fromPartial({ endpoint: 'https://push.example/a' })],
+        now,
+      }),
+    ).toThrow()
+    expect(store.listDeferred()).toEqual([deferred])
+    expect(store.claimDueOutbox(now)).toEqual([])
   })
 })
 
@@ -408,13 +375,10 @@ describe('persistence across close+reopen', () => {
   it('a new PushStore on the same rootDir sees data written by the previous instance', () => {
     store.upsertSubscription({ endpoint: 'https://push.example/a', p256dh: 'p1', auth: 'a1' })
     store.incrementAttention('spc-a')
-    store.commitPush({
-      spaceId: 'spc-a',
-      day: '2026-07-08',
-      limit: 5,
-      rows: [{ endpoint: 'https://push.example/a', title: 't', body: 'b', url: '/' }],
-      now: new Date('2026-07-08T12:00:00.000Z'),
-    })
+    store.enqueuePush(
+      [{ endpoint: 'https://push.example/a', title: 't', body: 'b', url: '/' }],
+      new Date('2026-07-08T12:00:00.000Z'),
+    )
     store.insertDeferred(
       { spaceId: 'spc-a', title: 't', body: 'b', url: '/' },
       new Date('2026-07-08T12:00:00.000Z'),
@@ -426,7 +390,7 @@ describe('persistence across close+reopen', () => {
     store = new PushStore({ rootDir })
     expect(store.listSubscriptions()).toHaveLength(1)
     expect(store.getAttention('spc-a')).toEqual({ count: 1, revision: 1 })
-    expect(store.budgetCounters('spc-a', '2026-07-08')).toEqual({ sent: 1, degraded: 0 })
+
     expect(store.claimDueOutbox(new Date('2026-07-08T12:00:00.000Z'))).toHaveLength(1)
     expect(store.deferredCount()).toBe(1)
   })

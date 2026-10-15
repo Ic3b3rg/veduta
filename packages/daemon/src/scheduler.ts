@@ -88,12 +88,21 @@ export interface EscalationContext {
   recurringNotification?: true
 }
 
+/** Immediate routing feedback; actual push delivery is asynchronous. */
+export interface EscalationResult {
+  notificationOutcome: 'requested' | 'queued' | 'no-devices' | 'badge-only'
+}
+
 export interface SchedulerOptions {
   rootDir: string
   store: Store
   now?: () => Date
   /** Deliver an escalation to the user (chat notice); Space event is appended regardless. */
-  onEscalation?: (spaceId: string, text: string, context?: EscalationContext) => void
+  onEscalation?: (
+    spaceId: string,
+    text: string,
+    context?: EscalationContext,
+  ) => EscalationResult | void
   judge?: JudgeFn
 }
 
@@ -147,8 +156,7 @@ export class Scheduler {
   private readonly db: DatabaseSync
   private readonly store: Store
   private readonly now: () => Date
-  private readonly onEscalation:
-    ((spaceId: string, text: string, context?: EscalationContext) => void) | undefined
+  private readonly onEscalation: SchedulerOptions['onEscalation']
   private readonly judge: JudgeFn
   private readonly outcomes: SchedulerOutcomeCoordinator
   private readonly settingsMutations: SettingsMutationJournal<
@@ -685,7 +693,7 @@ export class Scheduler {
       defineTool({
         name: 'create_job',
         description:
-          'Create a visible recurring Automation (5-field cron, UTC). For an explicitly requested recurring notification or reminder, set notification to {body: the requested text}; the body may be empty. This sends through the existing browser push subscriptions, subject to Space budgets and quiet hours, without an external outcome producer. Without notification, this only creates a schedule and due occurrences fail until a supported outcome producer is configured; never claim that such a schedule will execute work.',
+          'Create a visible recurring Automation (5-field cron, UTC). For an explicitly requested recurring notification or reminder, set notification to {body: the requested text}; the body may be empty. This sends through the existing browser push subscriptions, subject to quiet hours, without an external outcome producer. Without notification, this only creates a schedule and due occurrences fail until a supported outcome producer is configured; never claim that such a schedule will execute work.',
         schema: CreateJobSchema,
         level: 'L0',
         egressDomains: [],
@@ -695,7 +703,7 @@ export class Scheduler {
             content:
               automation.notification === undefined
                 ? `created schedule ${automation.id} without an outcome producer; it cannot execute work yet, next run ${automation.nextRunAt}`
-                : `scheduled recurring notification ${automation.id}, next run ${automation.nextRunAt}; delivery requires a subscribed device and follows Space budgets and quiet hours`,
+                : `scheduled recurring notification ${automation.id}, next run ${automation.nextRunAt}; delivery requires a subscribed device and follows quiet hours`,
             details: { automation },
           }
         },
@@ -960,12 +968,12 @@ export class Scheduler {
         { automationId: automation.id, scheduledFor, automationKind: automation.kind },
         firingOrigin,
       )
-      this.onEscalation?.(automation.spaceId, automation.notification.body, {
+      const result = this.onEscalation?.(automation.spaceId, automation.notification.body, {
         ...escalationContext,
         surfaceId: automation.targetSurfaceId ?? automationsSurfaceIdForSpace(space),
         recurringNotification: true,
       })
-      return { storedOutcome: 'notification-requested' }
+      return { storedOutcome: `notification-${result?.notificationOutcome ?? 'requested'}` }
     }
 
     if (automation.kind === 'job') {

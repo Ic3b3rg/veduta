@@ -284,7 +284,7 @@ ids share one non-disclosing refusal, while every successful mutation refreshes 
 Automations Surface and appends its existing Space Event. `AgentRunner` gives the same focused
 definitions to every eligible primary Model connection; provider adapters own no scheduling rules.
 
-Notification discipline: silent update → badge on the Space → push (the bar: "would a good human assistant interrupt?"), per-Space interruption budgets, freshness metadata on every Surface. Non-urgent notifications queue up for idle moments. Meaningful recurring dashboard outcomes instead update their linked Surface and create a durable In-app notification inside the owning Space; they never manufacture global chat, badge, or browser-push traffic ([ADR-0021](docs/adr/0021-space-owned-automation-outcomes.md)).
+Notification discipline: silent update → badge on the Space → push (the bar: "would a good human assistant interrupt?"), freshness metadata on every Surface. There is no daily push quota ([ADR-0005](docs/adr/0005-event-driven-proactivity.md)); non-urgent notifications wait for quiet hours to end. Meaningful recurring dashboard outcomes instead update their linked Surface and create a durable In-app notification inside the owning Space; they never manufacture global chat, badge, or browser-push traffic ([ADR-0021](docs/adr/0021-space-owned-automation-outcomes.md)).
 
 A personal Mailbox is deliberately outside push ingestion. Its Gateway-wide connection stays
 passive until a focused user request or a due occurrence of a confirmed Automation resolves an

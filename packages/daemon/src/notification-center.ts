@@ -1,6 +1,5 @@
 import type { JsonObject } from '@veduta/protocol'
 import {
-  budgetFor,
   isWithinQuietHours,
   quietWindowEnd,
   resolveTimezone,
@@ -36,9 +35,11 @@ export type NotificationInput =
       automationId?: number
     }
 
+/** The committed routing decision, never proof of delivery or device display. */
+export type NotificationDecision = 'badge' | 'queued' | 'push' | 'no-devices'
+
 export interface NotificationStats {
   queuedCount: number
-  perSpace: Array<{ spaceId: string; sentToday: number; degradedToday: number }>
 }
 
 export interface NotificationCenterOptions {
@@ -58,24 +59,11 @@ function truncate(text: string, maxLength: number): string {
   return text.length > maxLength ? text.slice(0, maxLength) : text
 }
 
-/** The calendar date of `date` in `timeZone`, as YYYY-MM-DD — the budget "day" (plan). */
-function budgetDay(date: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date)
-  const get = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((part) => part.type === type)?.value ?? '00'
-  return `${get('year')}-${get('month')}-${get('day')}`
-}
-
 export class NotificationCenter {
   private readonly store: Store
   private readonly pushStore: PushStore
   private readonly transport: PushTransport
-  private config: NotificationsConfig
+  private readonly config: NotificationsConfig
   private readonly now: () => Date
   private readonly onAttention:
     ((spaceId: string, count: number, revision: number) => void) | undefined
@@ -85,7 +73,7 @@ export class NotificationCenter {
   private retryTimer: NodeJS.Timeout | undefined
   /** Single-flight guard: overlapping delivery passes must never double-send an endpoint. */
   private deliveringNow = false
-  /** Coalesces onStats to one emit per synchronous burst of budget/queue changes. */
+  /** Coalesces onStats to one emit per synchronous burst of queue changes. */
   private statsEmitScheduled = false
 
   constructor(options: NotificationCenterOptions) {
@@ -120,25 +108,20 @@ export class NotificationCenter {
     this.retryTimer = undefined
   }
 
-  updateConfig(config: NotificationsConfig): void {
-    this.config = config
-    this.armFlushTimer()
-  }
-
   /**
    * decision-event-once: every branch below appends exactly one
    * `notification` Space event and increments attention exactly once,
-   * regardless of outcome (badge, queued, degraded, sent).
+   * regardless of routing outcome.
    */
-  notify(input: NotificationInput): void {
+  notify(input: NotificationInput): NotificationDecision {
     if (input.level === 'push' && input.justification.trim().length === 0) {
       throw new TypeError('notify(): level "push" requires a non-empty justification')
     }
     if (input.level === 'badge') {
       this.recordBadge(input)
-      return
+      return 'badge'
     }
-    this.recordPush(input)
+    return this.recordPush(input)
   }
 
   /** No-op (returns null) when count is already 0 — clearing must never fabricate a change. */
@@ -155,14 +138,8 @@ export class NotificationCenter {
     return cleared
   }
 
-  /** perSpace covers every non-archived Space known to the store, zeros included. */
   stats(): NotificationStats {
-    const day = budgetDay(this.now(), resolveTimezone(this.config))
-    const perSpace = this.store.listSpaces().map((space) => {
-      const counters = this.pushStore.budgetCounters(space.id, day)
-      return { spaceId: space.id, sentToday: counters.sent, degradedToday: counters.degraded }
-    })
-    return { queuedCount: this.pushStore.deferredCount(), perSpace }
+    return { queuedCount: this.pushStore.deferredCount() }
   }
 
   private recordBadge(input: Extract<NotificationInput, { level: 'badge' }>): void {
@@ -173,24 +150,25 @@ export class NotificationCenter {
       level: 'badge',
       outcome: 'badge',
     })
-    // Badge decisions never touch budget/queue counters, so onStats is not scheduled here.
+    // Badge decisions do not change the deferred queue.
   }
 
-  private recordPush(input: PushInput): void {
+  private recordPush(input: PushInput): NotificationDecision {
     const origin = effectiveOrigin([input.origin], 'trusted:system')
     const space = this.store.getSpace(input.spaceId)
     const spaceName = space?.name ?? input.spaceId
     // Taint rule: untrusted text never reaches the lock screen — only a
     // trusted effective origin may carry the real (truncated) text.
-    const body = isUntrusted(origin)
-      ? `New update in ${spaceName}`
-      : truncate(input.text, PUSH_BODY_MAX_LENGTH)
+    const text = isUntrusted(origin) ? 'New update' : input.text
+    const body = truncate(
+      text.length > 0 ? `${spaceName} — ${text}` : spaceName,
+      PUSH_BODY_MAX_LENGTH,
+    )
     const url = this.deepLink(input.spaceId, input.surfaceId)
-    const payload: PushPayload = { title: spaceName, body, url }
+    const payload: PushPayload = { title: 'Veduta', body, url }
     const truncatedText = truncate(input.text, 140)
 
-    // Attention is incremented once, up front, for every outcome (queued,
-    // degraded, sent alike) — a missed push must still show on Home.
+    // Attention is incremented once: a missed push must still show on Home.
     const attention = this.pushStore.incrementAttention(input.spaceId)
     this.onAttention?.(input.spaceId, attention.count, attention.revision)
 
@@ -209,47 +187,27 @@ export class NotificationCenter {
         this.decisionPayload(input, 'queued', url),
       )
       this.scheduleStatsEmit()
-      return
+      return 'queued'
     }
 
-    // budget-at-commit: the gate and the per-endpoint outbox fan-out land
-    // in one transaction (crash-durable), and discipline committed
-    // decisions, not delivery success. Zero subscriptions still consume
-    // budget and log outcome 'push': the interruption decision was made at
-    // commit time regardless of whether delivery has anywhere to go.
-    const day = budgetDay(this.now(), tz)
-    const { outcome } = this.pushStore.commitPush({
-      spaceId: input.spaceId,
-      day,
-      limit: budgetFor(this.config, input.spaceId),
-      rows: this.outboxRows(payload),
-      now: this.now(),
-    })
-
-    if (outcome === 'degraded') {
-      this.appendDecisionEvent(
-        input.spaceId,
-        origin,
-        `Push degraded to badge (budget exhausted): ${truncatedText}`,
-        this.decisionPayload(input, 'degraded', url),
-      )
-      this.scheduleStatsEmit()
-      return
-    }
+    const outboxIds = this.pushStore.enqueuePush(this.outboxRows(payload), this.now())
+    const decision = outboxIds.length === 0 ? 'no-devices' : 'push'
 
     this.appendDecisionEvent(
       input.spaceId,
       origin,
-      `Push sent: ${truncatedText}`,
-      this.decisionPayload(input, 'push', url),
+      decision === 'push'
+        ? `Push requested: ${truncatedText}`
+        : `No subscribed devices: ${truncatedText}`,
+      this.decisionPayload(input, decision, url),
     )
-    this.scheduleStatsEmit()
     void this.deliverPending()
+    return decision
   }
 
   private decisionPayload(
     input: PushInput,
-    outcome: 'push' | 'degraded' | 'queued',
+    outcome: 'push' | 'no-devices' | 'queued',
     url: string,
   ): JsonObject {
     return {
@@ -303,12 +261,9 @@ export class NotificationCenter {
   }
 
   /**
-   * Quiet-hours digest flush (plan): each deferred item passes
-   * its own Space's budget gate again at flush time — over-budget/zero-
-   * budget items degrade to badge-only silently (their decision event was
-   * already appended at queue time; no new Space event here, delivery
-   * bookkeeping only). digest-never-bypasses-budget: the digest coalesces
-   * only the survivors that already cleared the gate.
+   * Quiet-hours flush: every deferred item enters the durable outbox.
+   * Larger batches coalesce into one digest per subscribed device.
+   * Their decision events were already appended at queue time.
    */
   private flush(): void {
     const deferredRows = this.pushStore.listDeferred()
@@ -317,38 +272,30 @@ export class NotificationCenter {
       return
     }
 
-    const tz = resolveTimezone(this.config)
-    const day = budgetDay(this.now(), tz)
-    // Each item settles in its own transaction (budget gate + outbox rows +
+    // Each item settles in its own transaction (outbox rows +
     // deferred-row deletion together): a crash mid-flush leaves the
     // unprocessed tail queued instead of lost. Survivors materialize as
     // individual pushes first; the digest swap below is a second, equally
     // atomic step — a crash between the two delivers individual pushes
     // instead of the digest, which degrades gracefully rather than losing
     // anything.
-    const survivorOutboxIds: number[] = []
-    let survivorCount = 0
+    const outboxIds: number[] = []
     for (const row of deferredRows) {
-      const settled = this.pushStore.flushDeferredItem(row.id, {
-        spaceId: row.spaceId,
-        day,
-        limit: budgetFor(this.config, row.spaceId),
-        rows: this.outboxRows({ title: row.title, body: row.body, url: row.url }),
-        now: this.now(),
-      })
-      if (settled.outcome === 'sent') {
-        survivorCount += 1
-        survivorOutboxIds.push(...settled.outboxIds)
-      }
+      outboxIds.push(
+        ...this.pushStore.flushDeferredItem(row.id, {
+          rows: this.outboxRows({ title: row.title, body: row.body, url: row.url }),
+          now: this.now(),
+        }),
+      )
     }
 
-    if (survivorCount > this.config.digestThreshold) {
+    if (deferredRows.length > this.config.digestThreshold) {
       const digest: PushPayload = {
         title: 'Veduta',
-        body: `${survivorCount} updates while you were away`,
+        body: `${deferredRows.length} updates while you were away`,
         url: '/',
       }
-      this.pushStore.replaceOutbox(survivorOutboxIds, this.outboxRows(digest), this.now())
+      this.pushStore.replaceOutbox(outboxIds, this.outboxRows(digest), this.now())
     }
 
     this.scheduleStatsEmit()

@@ -32,6 +32,30 @@ function automation(props: Record<string, unknown>) {
 
 describe('Automation schedule presentation', () => {
   it.each([
+    ['en-US', 'notification-requested', 'Push requested; device delivery unconfirmed'],
+    ['it-IT', 'notification-requested', 'Push richiesta; consegna al dispositivo non confermata'],
+    ['en-US', 'notification-queued', 'Waiting for quiet hours to end'],
+    ['it-IT', 'notification-queued', 'In attesa della fine degli orari silenziosi'],
+    [
+      'en-US',
+      'notification-no-devices',
+      'No subscribed devices; enable notifications on your device',
+    ],
+    [
+      'it-IT',
+      'notification-no-devices',
+      'Nessun dispositivo iscritto; attiva le notifiche sul dispositivo',
+    ],
+  ])('explains %s notification outcome %s', (locale, lastOutcome, label) => {
+    vi.spyOn(navigator, 'languages', 'get').mockReturnValue([locale])
+    const view = automation({
+      scheduleDetails: { kind: 'job', cron: '*/5 * * * *', lastOutcome },
+    })
+    expect(view.container.textContent).toContain(label)
+    expect(view.container.textContent).not.toContain(lastOutcome)
+  })
+
+  it.each([
     ['en-US', 'At 4:00 AM every day', 'Oct 10, 2026, 4:00 AM', 'Next run'],
     ['it-IT', 'Alle 04:00 ogni giorno', '10 ott 2026, 04:00', 'Prossima esecuzione'],
   ])('describes a local recurring rule and next run for %s', (locale, rule, next, prefix) => {

@@ -2,11 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  NotificationCenter,
-  type NotificationInput,
-  type NotificationStats,
-} from './notification-center.ts'
+import { NotificationCenter, type NotificationInput } from './notification-center.ts'
 import { NotificationsConfigSchema, type NotificationsConfig } from './notifications-config.ts'
 import { PushStore } from './push-store.ts'
 import { Store } from './store.ts'
@@ -65,8 +61,6 @@ let statsEmits: number
 
 function config(overrides: Partial<NotificationsConfig> = {}): NotificationsConfig {
   return NotificationsConfigSchema.parse({
-    defaultDailyPushBudget: 3,
-    spaceBudgets: {},
     quietHours: null,
     digestThreshold: 3,
     timezone: 'UTC',
@@ -136,7 +130,7 @@ describe('badge', () => {
 
 describe('push - happy path, taint and deep links', () => {
   it('fans a push out to every subscription and logs one decision event with justification/url/automationId', async () => {
-    const center = newCenter({ defaultDailyPushBudget: 5 })
+    const center = newCenter()
     addSubscription('https://push.example/a')
     addSubscription('https://push.example/b')
 
@@ -152,8 +146,8 @@ describe('push - happy path, taint and deep links', () => {
 
     expect(transport.calls).toHaveLength(2)
     for (const call of transport.calls) {
-      expect(call.payload.title).toBe('Health')
-      expect(call.payload.body).toBe('A'.repeat(140))
+      expect(call.payload.title).toBe('Veduta')
+      expect(call.payload.body).toBe(`Health — ${'A'.repeat(131)}`)
       expect(call.payload.url).toBe('/app/space/health/surface/srf-goal')
     }
 
@@ -184,7 +178,7 @@ describe('push - happy path, taint and deep links', () => {
 
   it('ignores a surfaceId owned by a different Space and falls back to url "/"', async () => {
     const work = store.spacesEngine.createSpace({ name: 'Work' })
-    const center = newCenter({ defaultDailyPushBudget: 5 })
+    const center = newCenter()
     addSubscription()
 
     center.notify(pushInput({ spaceId: work.id, surfaceId: HEALTH_SURFACE }))
@@ -198,7 +192,7 @@ describe('push - happy path, taint and deep links', () => {
   })
 
   it('falls back to url "/" when no surfaceId is given', async () => {
-    const center = newCenter({ defaultDailyPushBudget: 5 })
+    const center = newCenter()
     addSubscription()
     center.notify(pushInput())
     await flushAsync()
@@ -207,42 +201,58 @@ describe('push - happy path, taint and deep links', () => {
   })
 
   it('untrusted origin gets a generic body, but the decision event keeps the untrusted origin', async () => {
-    const center = newCenter({ defaultDailyPushBudget: 5 })
+    const center = newCenter()
     addSubscription()
     center.notify(pushInput({ origin: untrustedOrigin('gmail'), text: 'Sensitive raw content' }))
     await flushAsync()
 
-    expect(transport.calls[0]?.payload.body).toBe('New update in Health')
+    expect(transport.calls[0]?.payload.body).toBe('Health — New update')
     expect(transport.calls[0]?.payload.body).not.toContain('Sensitive raw content')
 
     const events = notificationEvents(HEALTH)
     expect(events[0]?.origin).toBe('untrusted:gmail')
     center.dispose()
   })
+
+  it('shows the Space without a dangling separator when a reminder has no message', async () => {
+    const center = newCenter()
+    addSubscription()
+    center.notify(pushInput({ text: '' }))
+    await flushAsync()
+
+    expect(transport.calls[0]?.payload).toEqual({ title: 'Veduta', body: 'Health', url: '/' })
+    center.dispose()
+  })
+
+  it('keeps the Space context when the Space is also named Veduta', async () => {
+    const space = store.spacesEngine.createSpace({ name: 'Veduta' })
+    const center = newCenter()
+    addSubscription()
+    center.notify(pushInput({ spaceId: space.id, text: 'Time for a break' }))
+    await flushAsync()
+
+    expect(transport.calls[0]?.payload).toEqual({
+      title: 'Veduta',
+      body: 'Veduta — Time for a break',
+      url: '/',
+    })
+    center.dispose()
+  })
 })
 
-describe('interruption budget', () => {
-  it('a limit of 1 sends once then degrades, while attention keeps incrementing', async () => {
-    const center = newCenter({ defaultDailyPushBudget: 1 })
+describe('unlimited push requests', () => {
+  it('sends every push beyond the former three-per-day limit and retains attention', async () => {
+    const center = newCenter()
     addSubscription()
-
-    center.notify(pushInput({ text: 'first' }))
-    await flushAsync()
-    expect(transport.calls).toHaveLength(1)
-
-    center.notify(pushInput({ text: 'second' }))
-    await flushAsync()
-    expect(transport.calls).toHaveLength(1)
-
-    expect(attentionCalls).toEqual([
-      { spaceId: HEALTH, count: 1, revision: 1 },
-      { spaceId: HEALTH, count: 2, revision: 2 },
-    ])
-
-    const events = notificationEvents(HEALTH)
-    expect(events).toHaveLength(2)
-    expect(events[0]?.payload?.['outcome']).toBe('push')
-    expect(events[1]?.payload?.['outcome']).toBe('degraded')
+    for (let index = 0; index < 6; index += 1) {
+      expect(center.notify(pushInput({ text: `Reminder ${index}` }))).toBe('push')
+      await flushAsync()
+    }
+    expect(transport.calls).toHaveLength(6)
+    expect(pushStore.getAttention(HEALTH).count).toBe(6)
+    expect(notificationEvents(HEALTH).map((event) => event.payload?.['outcome'])).toEqual(
+      Array.from({ length: 6 }, () => 'push'),
+    )
     center.dispose()
   })
 })
@@ -250,16 +260,16 @@ describe('interruption budget', () => {
 describe('quiet hours', () => {
   const QUIET_WINDOW = { start: '22:00', end: '08:00' }
 
-  it('defers a non-urgent push, consumes no budget, and sends nothing', () => {
+  it('defers a non-urgent push and sends nothing', () => {
     clock = new Date('2026-07-08T23:00:00.000Z') // inside the 22:00-08:00 window
-    const center = newCenter({ quietHours: QUIET_WINDOW, defaultDailyPushBudget: 5 })
+    const center = newCenter({ quietHours: QUIET_WINDOW })
     addSubscription()
 
     center.notify(pushInput())
 
     expect(transport.calls).toHaveLength(0)
     expect(pushStore.deferredCount()).toBe(1)
-    expect(pushStore.budgetCounters(HEALTH, '2026-07-08')).toEqual({ sent: 0, degraded: 0 })
+
     expect(attentionCalls).toEqual([{ spaceId: HEALTH, count: 1, revision: 1 }])
 
     const events = notificationEvents(HEALTH)
@@ -269,7 +279,7 @@ describe('quiet hours', () => {
 
   it('urgent pushes bypass the quiet window and are sent immediately', async () => {
     clock = new Date('2026-07-08T23:00:00.000Z')
-    const center = newCenter({ quietHours: QUIET_WINDOW, defaultDailyPushBudget: 5 })
+    const center = newCenter({ quietHours: QUIET_WINDOW })
     addSubscription()
 
     center.notify(pushInput({ urgent: true }))
@@ -277,14 +287,14 @@ describe('quiet hours', () => {
 
     expect(transport.calls).toHaveLength(1)
     expect(pushStore.deferredCount()).toBe(0)
-    expect(pushStore.budgetCounters(HEALTH, '2026-07-08')).toEqual({ sent: 1, degraded: 0 })
+
     center.dispose()
   })
 })
 
 describe('digest flush', () => {
   it('flushes deferred items at or below the digest threshold as individual pushes', async () => {
-    const center = newCenter({ digestThreshold: 3, defaultDailyPushBudget: 5, quietHours: null })
+    const center = newCenter({ digestThreshold: 3, quietHours: null })
     addSubscription()
     pushStore.insertDeferred(
       { spaceId: HEALTH, title: 'Health', body: 'update 1', url: '/1' },
@@ -303,12 +313,12 @@ describe('digest flush', () => {
       'update 1',
       'update 2',
     ])
-    expect(pushStore.budgetCounters(HEALTH, '2026-07-08')).toEqual({ sent: 2, degraded: 0 })
+
     center.dispose()
   })
 
-  it('coalesces more-than-threshold survivors into exactly one digest push per subscription', async () => {
-    const center = newCenter({ digestThreshold: 3, defaultDailyPushBudget: 10, quietHours: null })
+  it('coalesces more-than-threshold queued notifications into exactly one digest push per subscription', async () => {
+    const center = newCenter({ digestThreshold: 3, quietHours: null })
     addSubscription('https://push.example/a')
     addSubscription('https://push.example/b')
     for (let i = 0; i < 4; i += 1) {
@@ -321,7 +331,7 @@ describe('digest flush', () => {
     center.start()
     await flushAsync()
 
-    expect(transport.calls).toHaveLength(2) // one digest per subscription, not one per survivor
+    expect(transport.calls).toHaveLength(2) // one digest per subscription, not one per queued notification
     for (const call of transport.calls) {
       expect(call.payload).toEqual({
         title: 'Veduta',
@@ -333,7 +343,7 @@ describe('digest flush', () => {
   })
 
   it('the digest swap replaces every individual outbox row with exactly one row per subscription', () => {
-    const center = newCenter({ digestThreshold: 3, defaultDailyPushBudget: 10, quietHours: null })
+    const center = newCenter({ digestThreshold: 3, quietHours: null })
     addSubscription('https://push.example/a')
     addSubscription('https://push.example/b')
     for (let i = 0; i < 4; i += 1) {
@@ -351,7 +361,7 @@ describe('digest flush', () => {
     center.start()
 
     const rows = pushStore.claimDueOutbox(now())
-    expect(rows).toHaveLength(2) // one digest row per subscription, not one per survivor
+    expect(rows).toHaveLength(2) // one digest row per subscription, not one per queued notification
     expect(rows.map((row) => row.endpoint).sort()).toEqual([
       'https://push.example/a',
       'https://push.example/b',
@@ -359,37 +369,22 @@ describe('digest flush', () => {
     for (const row of rows) {
       expect(row).toMatchObject({ title: 'Veduta', body: '4 updates while you were away' })
     }
-    // None of the four individual per-survivor rows remain.
+    // None of the four individual per-notification rows remain.
     expect(rows.some((row) => row.body.startsWith('update '))).toBe(false)
     center.dispose()
   })
 
-  it('a zero-budget Space degrades at flush, silently, and never enters the digest count', async () => {
-    const center = newCenter({
-      digestThreshold: 3,
-      defaultDailyPushBudget: 5,
-      spaceBudgets: { 'spc-zero-budget': 0 },
-      quietHours: null,
-    })
+  it('includes deferred notifications from every Space in the digest', async () => {
+    const center = newCenter({ digestThreshold: 3, quietHours: null })
     addSubscription()
-    pushStore.insertDeferred({ spaceId: HEALTH, title: 'Health', body: 'a', url: '/a' }, now())
-    pushStore.insertDeferred({ spaceId: HEALTH, title: 'Health', body: 'b', url: '/b' }, now())
-    pushStore.insertDeferred({ spaceId: HEALTH, title: 'Health', body: 'c', url: '/c' }, now())
-    pushStore.insertDeferred(
-      { spaceId: 'spc-zero-budget', title: 'Zero', body: 'z', url: '/z' },
-      now(),
-    )
-
+    for (const spaceId of [HEALTH, HEALTH, HEALTH, 'spc-other']) {
+      pushStore.insertDeferred({ spaceId, title: 'Update', body: 'update', url: '/' }, now())
+    }
     center.start()
     await flushAsync()
-
-    // 3 survivors (<= threshold): individual sends, the zero-budget item excluded.
-    expect(transport.calls).toHaveLength(3)
-    expect(transport.calls.map((call) => call.payload.body).sort()).toEqual(['a', 'b', 'c'])
-    expect(pushStore.budgetCounters('spc-zero-budget', '2026-07-08')).toEqual({
-      sent: 0,
-      degraded: 1,
-    })
+    expect(transport.calls).toHaveLength(1)
+    expect(transport.calls[0]?.payload.body).toBe('4 updates while you were away')
+    expect(pushStore.deferredCount()).toBe(0)
     center.dispose()
   })
 
@@ -402,7 +397,6 @@ describe('digest flush', () => {
     addSubscription()
     const center = newCenter({
       quietHours: { start: '22:00', end: '08:00' },
-      defaultDailyPushBudget: 5,
       digestThreshold: 3,
     })
 
@@ -418,7 +412,7 @@ describe('digest flush', () => {
 
 describe('outbox delivery', () => {
   it('deletes the subscription and outbox rows for a "gone" endpoint', async () => {
-    const center = newCenter({ defaultDailyPushBudget: 5 })
+    const center = newCenter()
     addSubscription()
     transport.results = ['gone']
 
@@ -432,7 +426,7 @@ describe('outbox delivery', () => {
   })
 
   it('retries a transient error via bumped next_attempt_at, then succeeds', async () => {
-    const center = newCenter({ defaultDailyPushBudget: 5 })
+    const center = newCenter()
     addSubscription()
     transport.results = ['error']
 
@@ -454,7 +448,7 @@ describe('outbox delivery', () => {
 
   it('drops the row after exhausting attempts, warning with the hostname only', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const center = newCenter({ defaultDailyPushBudget: 5 })
+    const center = newCenter()
     addSubscription()
     transport.results = ['error', 'error', 'error', 'error', 'error']
 
@@ -480,7 +474,7 @@ describe('outbox delivery', () => {
   })
 
   it('single-flight: two rapid notify() calls never double-send the same outbox row', async () => {
-    const center = newCenter({ defaultDailyPushBudget: 5 })
+    const center = newCenter()
     addSubscription()
     transport.hang = true
 
@@ -491,7 +485,7 @@ describe('outbox delivery', () => {
     // The first send remains in flight, so the overlapping delivery pass must
     // not send either outbox row again.
     expect(transport.calls).toHaveLength(1)
-    expect(transport.calls[0]?.payload.body).toBe('first')
+    expect(transport.calls[0]?.payload.body).toBe('Health — first')
     expect(pushStore.claimDueOutbox(new Date(clock.getTime() + 1))).toHaveLength(2)
     center.dispose()
   })
@@ -523,39 +517,9 @@ describe('markSeen', () => {
 })
 
 describe('stats', () => {
-  it('covers every non-archived Space, zeros included, scoped to the configured-timezone day', () => {
-    const work = store.spacesEngine.createSpace({ name: 'Work' })
-    const center = newCenter({ defaultDailyPushBudget: 5 })
-    addSubscription()
-
-    center.notify(pushInput({ text: 'sent one' }))
-
-    const stats: NotificationStats = center.stats()
-    expect(stats.perSpace).toEqual(
-      expect.arrayContaining([
-        { spaceId: HEALTH, sentToday: 1, degradedToday: 0 },
-        { spaceId: work.id, sentToday: 0, degradedToday: 0 },
-      ]),
-    )
-    expect(stats.queuedCount).toBe(0)
-    center.dispose()
-  })
-
-  it('resets sentToday on the next configured-timezone day', () => {
-    const center = newCenter({ defaultDailyPushBudget: 5 })
-    addSubscription()
-    center.notify(pushInput())
-    expect(center.stats().perSpace.find((s) => s.spaceId === HEALTH)?.sentToday).toBe(1)
-
-    clock = new Date(clock.getTime() + 24 * 60 * 60 * 1000)
-    expect(center.stats().perSpace.find((s) => s.spaceId === HEALTH)?.sentToday).toBe(0)
-    center.dispose()
-  })
-
   it('queuedCount reflects the deferred queue', () => {
     const center = newCenter({
       quietHours: { start: '22:00', end: '08:00' },
-      defaultDailyPushBudget: 5,
     })
     clock = new Date('2026-07-08T23:00:00.000Z')
     addSubscription()
@@ -566,8 +530,9 @@ describe('stats', () => {
 })
 
 describe('onStats coalescing', () => {
-  it('emits once for a synchronous burst of notify() calls', async () => {
-    const center = newCenter({ defaultDailyPushBudget: 5 })
+  it('emits once for a synchronous burst of quiet-hours queue changes', async () => {
+    clock = new Date('2026-07-08T23:00:00.000Z')
+    const center = newCenter({ quietHours: { start: '22:00', end: '08:00' } })
     addSubscription()
 
     center.notify(pushInput({ text: 'a' }))

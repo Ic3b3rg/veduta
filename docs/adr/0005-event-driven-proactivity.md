@@ -8,12 +8,62 @@ Status: accepted
 
 - Whenever the Agent learns a deadline it must arm a timer (`arm_timer` tool), not entrust it to the next sweep.
 - Timers/jobs are **visible Automations** in the Space, switchable off by the user ("the plus of having a UI").
-- Notification discipline: silent → badge → push, per-Space budget, freshness metadata on every Surface.
+- Notification discipline: silent → badge → push, freshness metadata on every Surface.
 - An In-app notification is durable outcome navigation, not an interruption tier. Meaningful
   recurring dashboard outcomes may create one without incrementing a Space attention badge,
-  consuming push budget, or writing an unsolicited assistant chat message; see
+  sending browser push or writing an unsolicited assistant chat message; see
   [ADR-0021](0021-space-owned-automation-outcomes.md).
 - A connected personal mailbox is not an event source. Mail is accessed only for an explicit
   request or due occurrence of a confirmed Automation, per
   [ADR-0024](0024-pull-based-personal-mailbox.md). This replaces the original Gmail Watch and IMAP
   IDLE examples without weakening the events-first rule for Calendar and webhooks.
+
+## Amendment: no daily notification quotas (2026-10-14)
+
+The owner explicitly removed daily push limits after a five-minute reminder sent exactly three
+notifications and then silently became Home attention only. Eligible push requests now always
+enter the durable per-device outbox; there is no global or per-Space daily allowance, counter,
+or budget control. This applies to both recurring notifications and one-shot reminders.
+Subscriptions, revocation, taint-safe payloads, non-urgent quiet hours, digesting and delivery
+retries remain part of the shared Notification Center.
+
+Existing configuration may contain the retired `defaultDailyPushBudget` and `spaceBudgets`
+fields. Loading ignores them while validating the remaining configuration, and saving omits them.
+Existing settings Surfaces replace the old controls and bindings on boot. Historical counters
+may remain in an old database but have no role in delivery.
+
+An explicitly requested recurring notification's latest result describes the immediate routing
+decision: push requested, waiting for quiet hours, or no subscribed devices. A request is never
+presented as proof that a device displayed the notification.
+
+## Amendment: prompt delivery of visible push notifications (2026-10-14)
+
+Browser pushes that pass Notification Center routing request `Urgency: high`. The transport
+previously used the library's default `normal` urgency, which permits power-saving delivery
+deferral; see [RFC 8030 §5.3](https://www.rfc-editor.org/rfc/rfc8030.html#section-5.3) and the
+[web-push options](https://github.com/web-push-libs/web-push#sendnotificationpushsubscription-payload-options).
+This delivery hint applies to visible notifications after eligibility and quiet-hour decisions.
+It does not bypass those decisions or prove display on a device; connectivity and operating-system
+policy can still delay delivery. The transport retains its one-hour TTL and durable retry behavior.
+
+## Amendment: consistent browser notification branding (2026-10-14)
+
+Visible browser notifications use `Veduta` as their title. Individual push bodies contain the
+Space name followed by `—` and the message, bounded to the existing lock-screen length limit.
+An empty message shows the Space name alone. Untrusted content still uses a generic message;
+multi-Space digests retain their aggregate summary. The service worker also formats older queued
+payloads whose title carried the Space name.
+
+A white, transparent rendition of the existing logo supplies the notification `badge` for Android
+status bars and is precached with the app shell. The full-color `icon` remains the notification
+card image. Browser-supplied origin attribution is controlled by the browser and operating system,
+not by the notification payload; see [notification visual options](https://web.dev/articles/push-notifications-display-a-notification).
+
+The worker passes cached PNG bytes as data URLs for both notification images. Precaching their
+HTTP URLs alone is insufficient: the browser's notification resource loader can request them again
+without using the worker's fetch handler. A real-browser probe reproduced both network requests
+despite populated Cache Storage. Using data URLs removes that dependency on Gateway/VPN reachability
+for every browser supporting the standard notification options, without user-agent branches.
+If cached images are missing or unreadable, the text notification still displays with the
+platform's default imagery rather than waiting for network image downloads. Device appearance,
+including status-bar and private lock-screen icons, still requires physical-device verification.

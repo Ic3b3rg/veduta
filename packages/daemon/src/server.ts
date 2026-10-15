@@ -706,7 +706,6 @@ export function buildServer(options: ServerOptions = {}) {
     store,
     source: notificationCenter,
     rootDir: store.spacesEngine.rootDir,
-    onConfigChanged: (config) => notificationCenter.updateConfig(config),
     now,
   })
   // Device lifecycle: a revoked device's push
@@ -722,7 +721,6 @@ export function buildServer(options: ServerOptions = {}) {
     disposePushRevocationListener?.()
     connectedDevicesSurfaces?.dispose()
     notificationCenter.dispose()
-    notificationSettings.dispose()
     pushStore.close()
   })
 
@@ -743,7 +741,7 @@ export function buildServer(options: ServerOptions = {}) {
       // Agent's explicit act of arming the timer is the decision, and the
       // justification traces straight back to it. Explicit recurring
       // notifications are non-urgent and remain subject to quiet hours.
-      notificationCenter.notify({
+      const decision = notificationCenter.notify({
         level: 'push',
         spaceId,
         text,
@@ -755,6 +753,13 @@ export function buildServer(options: ServerOptions = {}) {
         ...(context?.origin ? { origin: context.origin } : {}),
         ...(context?.automationId !== undefined ? { automationId: context.automationId } : {}),
       })
+      const outcomes = {
+        push: 'requested',
+        queued: 'queued',
+        'no-devices': 'no-devices',
+        badge: 'badge-only',
+      } as const
+      return { notificationOutcome: outcomes[decision] }
     },
     judge: (question, spaceId) => judgeCompletion(question, spaceId),
   })

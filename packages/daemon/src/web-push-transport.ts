@@ -163,6 +163,8 @@ export class WebPushTransport implements PushTransport {
         {
           vapidDetails: this.vapid,
           TTL: 3600,
+          // Request prompt delivery to sleeping devices after Notification Center routing (ADR-0005).
+          urgency: 'high',
           timeout: this.timeoutMs,
         },
       )
