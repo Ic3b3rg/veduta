@@ -536,7 +536,7 @@ describe('device challenge', () => {
 
     const snapshot = await registry.authorize(id, {})
     const connection = snapshot.connections.find((candidate) => candidate.id === id)
-    expect(connection?.challenge?.userCode).toBe('ABCD-1234')
+    expect(connection?.challenge).toMatchObject({ userCode: 'ABCD-1234' })
     expect(rawFile(dir)).not.toContain('ABCD-1234')
     expect(rawFile(dir)).not.toContain('verificationUrl')
   })
@@ -1405,7 +1405,7 @@ describe('applyRefreshResult compare-and-swap (issue #47)', () => {
     refreshResolve!({ state: 'waiting-for-user' })
     const resolved = await readPromise
 
-    expect(resolved.challenge?.userCode).toBe('CODE-2')
+    expect(resolved.challenge).toMatchObject({ userCode: 'CODE-2' })
     expect(resolved.stateAt).toBe(clock.toISOString())
     const persisted = loadConnectionsConfig(dir).connections.find((c) => c.id === id)
     expect(persisted?.stateAt).toBe(clock.toISOString())

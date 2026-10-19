@@ -18,7 +18,9 @@ import {
   type ModelConnectionAdapter,
   type ModelConnectionErrorCode,
 } from './model-connection-adapter.ts'
-import { claudeSubscriptionAdapter } from './model-connection-claude.ts'
+import { createClaudeSubscriptionAdapter } from './model-connection-claude.ts'
+import { ClaudeCodeClient } from './claude-code-process.ts'
+import { fileURLToPath } from 'node:url'
 import { codexSubscriptionAdapter } from './model-connection-codex.ts'
 import { BYOK_ADAPTERS } from './model-connection-byok.ts'
 import type { SecretResolver } from './model-routing.ts'
@@ -26,7 +28,7 @@ import { SecretsVault } from './secrets-vault.ts'
 
 /**
  * Every `ModelConnectionAdapter` — BYOK's three providers, the
- * permanently-unavailable Claude subscription gate, and Codex — is
+ * CLI-managed Claude subscription, and Codex — is
  * exercised against the same contract assertions (issues #47 and #79), so
  * a future adapter inherits the same guarantees by joining this table.
  */
@@ -78,10 +80,14 @@ function byokCase(adapter: ModelConnectionAdapter): AdapterCase {
   }
 }
 
+const claudeClient = new ClaudeCodeClient(() =>
+  fileURLToPath(new URL('./claude-code-fixture.mjs', import.meta.url)),
+)
+const claudeSubscriptionAdapter = createClaudeSubscriptionAdapter(claudeClient)
 const CLAUDE_CASE: AdapterCase = {
   name: claudeSubscriptionAdapter.methodId,
   adapter: claudeSubscriptionAdapter,
-  available: false,
+  available: true,
   buildContext: (rootDir: string): AdapterContext =>
     fromPartial<AdapterContext>({
       connectionId: CONNECTION_ID,

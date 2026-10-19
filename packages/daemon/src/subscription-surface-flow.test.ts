@@ -1,6 +1,9 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { ClaudeCodeClient, claudeConfigDir } from './claude-code-process.ts'
+import { createClaudeSubscriptionAdapter } from './model-connection-claude.ts'
 import { fromPartial } from '@total-typescript/shoehorn'
 import {
   GatewayServerMessageSchema,
@@ -816,4 +819,60 @@ describe('ChatGPT subscription Surface authoring (issue #73)', () => {
       chatTransport.close()
     }
   })
+})
+
+it('keeps Claude CLI Surface creation, updates, session history and Events equivalent to BYOK', async () => {
+  const native = await runSurfaceProvider(scriptedNativeProvider(), {
+    provider: 'fake',
+    modelId: 'fake-model',
+    tier: 'reasoning',
+  })
+  const client = new ClaudeCodeClient(() =>
+    fileURLToPath(new URL('./claude-code-fixture.mjs', import.meta.url)),
+  )
+  const rootDir = tempDir('veduta-claude-surface-parity-')
+  const ctx = fromPartial<AdapterContext>({
+    rootDir,
+    connectionId: CONNECTION_ID,
+    now: () => FIXED_NOW,
+  })
+  const adapter = createClaudeSubscriptionAdapter(client)
+  await client.checkVersion(ctx)
+  writeFileSync(
+    join(claudeConfigDir(ctx), 'fixture.json'),
+    JSON.stringify({
+      outputs: [
+        {
+          text: '',
+          toolCall: { name: 'create_surface', inputJson: JSON.stringify(createSurfaceInput) },
+        },
+        { text: 'Hydration Surface created.', toolCall: null },
+        { text: '', toolCall: { name: 'patch_state', inputJson: JSON.stringify(patchStateInput) } },
+        { text: 'Hydration updated.', toolCall: null },
+      ],
+    }),
+  )
+  const model: ModelRef = {
+    provider: 'anthropic',
+    modelId: 'claude-test-model',
+    tier: 'reasoning',
+    connectionId: CONNECTION_ID,
+  }
+  const bridge = createProviderBridge({
+    config: routingConfig(model),
+    secrets: { resolve: () => undefined },
+    connections: () => [
+      {
+        connectionId: CONNECTION_ID,
+        provider: 'anthropic',
+        transport: 'subscription',
+        stream: (request) => adapter.primaryInference.stream(ctx, request),
+      },
+    ],
+  })
+  try {
+    expect(await runSurfaceProvider(bridge, model)).toEqual(native)
+  } finally {
+    await client.close()
+  }
 })

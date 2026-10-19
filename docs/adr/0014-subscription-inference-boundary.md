@@ -59,3 +59,40 @@ creation and observes child exit before erasing the complete owned `CODEX_HOME`.
 Remote logout is best effort using an existing idle child. A termination or filesystem
 failure retains revoked, retryable registry state; successful local erasure precedes
 final record removal. Backup encryption and Veduta's canonical history do not change.
+
+## 2026-10-19 amendment: official Claude Code subscription inference (#285)
+
+The current Anthropic policy explicitly allows an end user to authenticate the unmodified Claude
+Code binary, including when hosted in a third-party platform. This supersedes the issue-047
+Claude unavailability decision above; it does not authorize a Veduta OAuth client or collection,
+extraction, or direct API use of subscription bearer tokens. The
+[dated source review](../references/44-claude-subscription-inference.md) records the changed policy
+and the T3 Code, OpenClaw and Hermes implementations.
+
+Claude subscriptions now use the unmodified `@anthropic-ai/claude-code` 2.1.303 native binary,
+shipped as an exact dependency. The CLI owns login, credential storage, automatic refresh and
+logout under one private `CLAUDE_CONFIG_DIR` per connection. Its browser URL and optional pasted
+code travel only through the authenticated Model connection flow. Codes go directly to the
+existing CLI process over stdin, are bound to the current attempt and are never persisted or
+placed in arguments, model context or diagnostics. Pending attempts fail visibly after restart.
+Personal terminal credentials are neither imported nor changed.
+
+The same inference-only boundary and ADR-0016 eligibility apply. Each isolated `claude -p` call
+receives canonical Veduta history and allowed tool definitions through stdin. Native tools,
+customizations, hooks, MCP and transcript persistence are disabled. A validated structured result
+contains text and at most one allowed Veduta tool request. AgentRunner still validates arguments,
+executes handlers, applies trust, commits Surfaces and Events, and supplies tool results on the
+next model call. Native formatting/validation may take bounded internal steps; it receives no
+external-effect tool. This transport currently releases text after final structured validation,
+so it does not promise token-by-token text arrival.
+
+The raw pinned SDK `initialize` control response supplies the CLI's supported model snapshot;
+this is not an exhaustive entitlement guarantee. Actual selection still requires an inference
+probe. Auth status must identify a Claude subscription, rather than an ambient API or Console
+credential. Usage/rate limits retain authorization and never silently select a metered connection.
+
+Removal retires further child acquisition, stops owned processes, attempts official logout and
+erases only the owned local configuration. A local cleanup failure retains a revoked record for
+retry. Remote revocation is best effort; users can review active sessions in their Claude account.
+The CLI's native credential-store permissions and deployment disk encryption remain operator
+concerns, as with Codex. No OS-level subprocess sandbox is claimed.

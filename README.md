@@ -97,7 +97,7 @@ host the landing and tour independently. A public URL is not configured in this 
 | ----------------------------------- | ----------------------------------------------------------------------------------- |
 | Home, Spaces, Surfaces and Chat     | Implemented, including saved state and Chat timelines                               |
 | Model connections                   | Anthropic, OpenAI and OpenRouter BYOK; ChatGPT subscription via managed Codex       |
-| Claude subscription                 | Unavailable; Anthropic API keys work                                                |
+| Claude subscription                 | Official Claude Code sign-in; no API key required                                   |
 | Automations and Website monitors    | Implemented core flows; individual capabilities still have acceptance work          |
 | Gmail, Himalaya and GitHub services | Partial alpha flows; real-account and lifecycle acceptance remain in progress       |
 | Messenger Bridges and public Hub    | Planned work; no released Telegram/WhatsApp Bridge or public extension Hub promised |
@@ -360,8 +360,17 @@ or BYOK:
   rules, writes the Event log, and owns Surface changes.
 - **BYOK** supports Anthropic, OpenAI, and OpenRouter API keys through the same connection lifecycle.
 
-Claude subscription remains visible but unavailable until Anthropic publishes or approves a
-third-party subscription contract; Anthropic BYOK remains supported. The
+- **Claude subscription** uses the bundled, exactly pinned official Claude Code CLI. Add
+  **Claude · Subscription**, choose **Authorize**, and sign in on the Anthropic page. If it shows
+  an authorization code, paste that code into Veduta's **Complete sign-in** field. Choose a model
+  and test it before applying the selection. No API key or terminal step is required. Each
+  connection has its own CLI login; your personal terminal login is separate. The CLI handles
+  credential refresh, while Veduta validates and executes every tool request.
+
+Claude's current policy permits end users to authenticate the unmodified official CLI, including
+when hosted by another platform. Veduta never implements its own Claude OAuth client or reads
+subscription tokens. See the [dated research](docs/references/44-claude-subscription-inference.md).
+Provider plan limits and any enabled extra usage still apply. The
 [real-account smoke](docs/references/11-model-connections-manual-smoke.md) confirms ChatGPT
 authorization, model selection, inference, and Surface creation and patching without an API key.
 [Connection parity](GLOSSARY.md) is enforced by one primary inference contract: every routable

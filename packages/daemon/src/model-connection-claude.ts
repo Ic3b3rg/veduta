@@ -1,48 +1,162 @@
-import { ModelConnectionError, type ModelConnectionAdapter } from './model-connection-adapter.ts'
+import { randomUUID } from 'node:crypto'
+import { z } from 'zod'
+import type { ModelConnectionChallenge } from '@veduta/protocol'
+import { CLAUDE_CODE_VERSION, type ClaudeCodeClient } from './claude-code-process.ts'
+import {
+  ModelConnectionError,
+  type AdapterContext,
+  type AuthorizeInput,
+  type SubscriptionModelConnectionAdapter,
+} from './model-connection-adapter.ts'
+import type { SubscriptionStreamRequest } from './pi-provider-bridge.ts'
 
-/**
- * The Claude subscription Model connection method (issue #47,
- * `docs/adr/0014-subscription-inference-boundary.md` amendment): permanently
- * unavailable. Anthropic does not permit a third-party product to offer
- * Claude.ai login or route subscription credentials without prior approval,
- * so this adapter never authorizes anything — `availability()` reports the
- * gate and every other verb throws the exact same reason as
- * `ModelConnectionError('unsupported', …)` rather than pretending to offer a
- * flow that cannot legally exist. Anthropic API keys stay fully supported
- * through `model-connection-byok.ts`'s `anthropic-api-key` method.
- */
-const UNAVAILABLE_REASON =
-  'Anthropic does not permit a third-party product to offer Claude.ai login or route subscription credentials without prior approval, so Veduta cannot ship this connection method yet. Anthropic API keys remain fully supported.'
+export type ClaudeCodeTransport = Pick<
+  ClaudeCodeClient,
+  'checkVersion' | 'login' | 'completeLogin' | 'status' | 'catalog' | 'infer' | 'remove'
+>
 
-const DOCS_URL = 'https://code.claude.com/docs/en/legal-and-compliance'
+/** CLI-managed subscription inference, with no bearer-token access (ADR-0014, issue #285). */
+export function createClaudeSubscriptionAdapter(
+  client: ClaudeCodeTransport,
+): SubscriptionModelConnectionAdapter {
+  async function authorize(ctx: AdapterContext, input: AuthorizeInput) {
+    if (input.apiKey !== undefined)
+      throw new ModelConnectionError(
+        'rejected',
+        'This connection uses Claude Code subscription sign-in; do not submit an API key',
+      )
+    await client.checkVersion(ctx)
+    if (input.authorizationCode !== undefined && input.loginId !== undefined) {
+      await client.completeLogin(ctx, input.loginId, input.authorizationCode)
+      const status = await client.status(ctx)
+      if (status.state !== 'connected')
+        throw new ModelConnectionError(
+          'expired',
+          'Claude Code sign-in did not complete; start it again',
+        )
+      return { state: 'connected' as const, ...(status.account ? { account: status.account } : {}) }
+    }
+    return { state: 'waiting-for-user' as const, challenge: await client.login(ctx) }
+  }
 
-function unsupported(): never {
-  throw new ModelConnectionError('unsupported', UNAVAILABLE_REASON)
-}
+  async function refresh(ctx: AdapterContext, challenge?: ModelConnectionChallenge) {
+    await client.checkVersion(ctx)
+    return client.status(ctx, challenge?.loginId)
+  }
 
-export const claudeSubscriptionAdapter: ModelConnectionAdapter = {
-  methodId: 'claude-subscription',
-  providerName: 'anthropic',
-  providerDisplayName: 'Claude',
-  methodDisplayName: 'Subscription',
-  capabilities: {
-    authorization: 'none',
-    refresh: 'automatic',
-    revocation: 'provider',
-    metered: true,
-  },
-  primaryInference: { transport: 'unavailable', reason: UNAVAILABLE_REASON, docsUrl: DOCS_URL },
-  async availability() {
-    return { available: false, reason: UNAVAILABLE_REASON, docsUrl: DOCS_URL }
-  },
-  // `async` here is load-bearing, not decorative: `unsupported()` throws
-  // synchronously, and every caller (the registry, the contract test suite)
-  // expects a *rejected promise* it can `await`/`.catch()`, the same as
-  // every other adapter's verbs. A plain `() => unsupported()` would throw
-  // synchronously on the call itself, before any `.catch()` ever attaches.
-  authorize: async () => unsupported(),
-  refresh: async () => unsupported(),
-  catalog: async () => unsupported(),
-  verify: async () => unsupported(),
-  revoke: async () => unsupported(),
+  async function* stream(ctx: AdapterContext, request: SubscriptionStreamRequest) {
+    await client.checkVersion(ctx)
+    const names = request.prompt.tools.map((tool) => tool.name)
+    const toolSchema =
+      names.length === 0
+        ? { type: 'null' }
+        : {
+            anyOf: [
+              { type: 'null' },
+              {
+                type: 'object',
+                properties: {
+                  name: { type: 'string', enum: names },
+                  inputJson: {
+                    type: 'string',
+                    description: 'A JSON object matching this Veduta tool input schema',
+                  },
+                },
+                required: ['name', 'inputJson'],
+                additionalProperties: false,
+              },
+            ],
+          }
+    const schema = {
+      type: 'object',
+      properties: { text: { type: 'string' }, toolCall: toolSchema },
+      required: ['text', 'toolCall'],
+      additionalProperties: false,
+    }
+    const prompt = JSON.stringify({
+      ...request.prompt,
+      responseInstructions:
+        'Return text and either null or one toolCall. Request a tool whenever work requires it. Tool definitions are the complete allowed set. Veduta executes the request and supplies its result in the next conversation. Never claim an effect before its successful tool result. inputJson must encode a JSON object matching the chosen tool input schema.',
+    })
+    const raw = await client.infer(ctx, request.modelId, prompt, schema, request.signal)
+    const parsed = z
+      .object({
+        text: z.string(),
+        toolCall: z.object({ name: z.string(), inputJson: z.string() }).strict().nullable(),
+      })
+      .strict()
+      .safeParse(raw)
+    if (!parsed.success)
+      throw new ModelConnectionError(
+        'unsupported',
+        'Claude Code returned an invalid Veduta response',
+      )
+    let input: Record<string, unknown> | undefined
+    const call = parsed.data.toolCall
+    if (call) {
+      if (!names.includes(call.name))
+        throw new ModelConnectionError(
+          'unsupported',
+          'Claude Code requested a tool that is not allowed for this turn',
+        )
+      try {
+        input = z.record(z.unknown()).parse(JSON.parse(call.inputJson))
+      } catch {
+        throw new ModelConnectionError('unsupported', 'Claude Code returned invalid tool arguments')
+      }
+    }
+    if (parsed.data.text) yield { type: 'text-delta' as const, text: parsed.data.text }
+    if (call && input)
+      yield { type: 'tool-call' as const, toolCallId: randomUUID(), toolName: call.name, input }
+  }
+
+  return {
+    methodId: 'claude-subscription',
+    providerName: 'anthropic',
+    providerDisplayName: 'Claude',
+    methodDisplayName: 'Subscription',
+    capabilities: {
+      authorization: 'browser-code',
+      refresh: 'automatic',
+      revocation: 'local-only',
+      metered: true,
+    },
+    primaryInference: { transport: 'subscription', stream },
+    async availability(env) {
+      try {
+        await client.checkVersion({
+          connectionId: 'availability-probe',
+          rootDir: env.rootDir,
+          env: env.env,
+          now: () => new Date(),
+        })
+        return { available: true }
+      } catch (error) {
+        return {
+          available: false,
+          reason:
+            error instanceof ModelConnectionError
+              ? error.message
+              : `Claude Code ${CLAUDE_CODE_VERSION} is unavailable`,
+          docsUrl: 'https://code.claude.com/docs/en/setup',
+        }
+      }
+    },
+    authorize,
+    refresh,
+    async catalog(ctx) {
+      await client.checkVersion(ctx)
+      return client.catalog(ctx)
+    },
+    async verify(ctx, modelId) {
+      await ctx.probe(modelId)
+    },
+    async revoke(ctx) {
+      await client.remove(ctx)
+      return {
+        providerRevoked: false,
+        note: 'The local Claude Code login was removed. Review active sessions in your Claude account to confirm remote revocation.',
+      }
+    },
+  }
 }

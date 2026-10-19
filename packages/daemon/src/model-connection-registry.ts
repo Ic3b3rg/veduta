@@ -6,7 +6,7 @@ import {
   type ConnectionLifecycleState,
   type CreateModelConnectionRequest,
   type AuthorizeModelConnectionRequest,
-  type DeviceChallenge,
+  type ModelConnectionChallenge,
   type ModelCatalogEntry,
   type ModelConnection,
   type ModelConnectionMethod,
@@ -196,7 +196,7 @@ function newRecordFields(
  * challenge map, the per-process availability cache, and every routing
  * rebuild that follows a state change (issue #47, `docs/adr/0014-…`
  * amendment). It is the ONLY caller of `ModelConnectionAdapter` — BYOK, the
- * Claude gate, and (in a later slice) Codex all speak through the same
+ * Claude Code, and Codex all speak through the same
  * narrow contract (`model-connection-adapter.ts`).
  *
  * Two concurrency primitives make every method safe to call from more than
@@ -236,9 +236,9 @@ export class ModelConnectionRegistry {
   private generation = 0
   private readonly inflightRefresh = new Map<
     string,
-    { promise: Promise<RefreshResult>; challenge: DeviceChallenge | undefined }
+    { promise: Promise<RefreshResult>; challenge: ModelConnectionChallenge | undefined }
   >()
-  private readonly challenges = new Map<string, DeviceChallenge>()
+  private readonly challenges = new Map<string, ModelConnectionChallenge>()
   private readonly availabilityCache = new Map<ModelConnectionMethodId, AdapterAvailability>()
 
   constructor(options: ModelConnectionRegistryOptions) {
@@ -321,6 +321,7 @@ export class ModelConnectionRegistry {
     return {
       connectionId,
       rootDir: this.rootDir,
+      env: this.env,
       vault: this.vault,
       secrets: this.secrets,
       fetchImpl: this.fetchImpl,
@@ -454,7 +455,10 @@ export class ModelConnectionRegistry {
    * challenge at all — `undefined === undefined`) still join one call, same
    * as before.
    */
-  private refreshInternal(id: string, challenge?: DeviceChallenge): Promise<RefreshResult> {
+  private refreshInternal(
+    id: string,
+    challenge?: ModelConnectionChallenge,
+  ): Promise<RefreshResult> {
     const inflight = this.inflightRefresh.get(id)
     if (inflight) {
       if (inflight.challenge === challenge) return inflight.promise
@@ -502,7 +506,7 @@ export class ModelConnectionRegistry {
    */
   private async applyRefreshResult(
     id: string,
-    challenge?: DeviceChallenge,
+    challenge?: ModelConnectionChallenge,
   ): Promise<ModelConnection> {
     const preFile = loadConnectionsConfig(this.rootDir)
     const preRecord = this.findRecord(preFile, id)
@@ -553,6 +557,12 @@ export class ModelConnectionRegistry {
   async create(request: CreateModelConnectionRequest): Promise<ModelConnectionsSnapshot> {
     return this.queue(async () => {
       const adapter = this.findAdapter(request.method)
+      if (adapter.capabilities.authorization !== 'api-key' && request.apiKey !== undefined) {
+        throw new ModelConnectionError(
+          'rejected',
+          'This connection uses subscription sign-in; do not submit an API key',
+        )
+      }
       const availability = await this.getAvailability(adapter)
       if (!availability.available) {
         throw new ModelConnectionError('unsupported', availability.reason)
@@ -658,22 +668,36 @@ export class ModelConnectionRegistry {
           'this connection is an API-key connection: submit the replacement key',
         )
       }
-      if (adapter.capabilities.authorization === 'device-code' && input.apiKey !== undefined) {
+      if (adapter.capabilities.authorization !== 'api-key' && input.apiKey !== undefined) {
         throw new ModelConnectionError(
           'rejected',
           "this connection re-authorizes through the provider's device code: submit an empty body",
         )
       }
 
+      if (input.authorizationCode !== undefined || input.loginId !== undefined) {
+        const challenge = this.challenges.get(id)
+        if (
+          adapter.capabilities.authorization !== 'browser-code' ||
+          record.state !== 'waiting-for-user' ||
+          !challenge ||
+          !('kind' in challenge) ||
+          input.authorizationCode === undefined ||
+          input.loginId !== challenge.loginId ||
+          this.now().getTime() >= new Date(challenge.expiresAt).getTime()
+        ) {
+          throw new ModelConnectionError(
+            'rejected',
+            'this authorization attempt is no longer active; start sign-in again',
+          )
+        }
+      }
+
       const authorizing = withState(record, {
         state: 'authorizing',
         stateAt: this.now().toISOString(),
       })
-      const working = await this.runAuthorization(
-        authorizing,
-        adapter,
-        input.apiKey === undefined ? {} : { apiKey: input.apiKey },
-      )
+      const working = await this.runAuthorization(authorizing, adapter, input)
 
       const nextFile = this.replaceRecord(file, working)
       this.persist(nextFile)
@@ -825,6 +849,18 @@ export class ModelConnectionRegistry {
       let file = loadConnectionsConfig(this.rootDir)
       let record = this.findRecord(file, id)
       const adapter = this.findAdapter(record.method)
+      if (record.method === 'claude-subscription') {
+        record = withState(record, {
+          state: 'revoked',
+          stateAt: this.now().toISOString(),
+          stateReason: 'Removing the local Claude Code login',
+        })
+        file = this.replaceRecord(file, record)
+        this.challenges.delete(id)
+        this.persist(file)
+        // Local erasure is mandatory. Keep the revoked record if cleanup fails so removal is retryable.
+        await adapter.revoke(this.contextFor(id, record.secretRef))
+      }
       if (eviction) {
         record = withState(record, {
           state: 'revoked',
@@ -848,7 +884,8 @@ export class ModelConnectionRegistry {
       }
 
       try {
-        if (!codex) await adapter.revoke(this.contextFor(id, record.secretRef))
+        if (!codex && record.method !== 'claude-subscription')
+          await adapter.revoke(this.contextFor(id, record.secretRef))
       } catch {
         // Tolerate a failed provider-side revoke: the record is still
         // removed locally, but the note the adapter would have returned is

@@ -184,8 +184,34 @@ describe('createConnectionRuntimes', () => {
       }),
     )
 
-    expect(error).toMatchObject({ code: 'unsupported' })
-    expect(error).not.toBeInstanceOf(NonRetryableModelError)
+    expect(error).toBeInstanceOf(NonRetryableModelError)
+    expect(error).toMatchObject({ message: 'the turn attempted a tool action' })
     expect(noteCallFailureCalls).toEqual([])
   })
 })
+
+it.each(['unsupported', 'rejected'] as const)(
+  'keeps a %s subscription boundary refusal nonretryable and leaves authorization intact',
+  async (code) => {
+    const runtime: ModelConnectionRuntime = {
+      connectionId: 'claude-connection',
+      provider: 'anthropic',
+      transport: 'subscription',
+      stream: () => {
+        throw new ModelConnectionError(code, 'Provider-native tool refused')
+      },
+    }
+    const { registry, noteCallFailureCalls } = fakeRegistry([runtime])
+    const wrapped = createConnectionRuntimes(registry)()[0]
+    if (!wrapped?.stream) throw new Error('missing stream')
+    const { events, error } = await collect(
+      wrapped.stream({
+        modelId: 'claude-model',
+        prompt: { systemPrompt: '', messages: [], tools: [] },
+      }),
+    )
+    expect(events).toEqual([])
+    expect(error).toBeInstanceOf(NonRetryableModelError)
+    expect(noteCallFailureCalls).toEqual([])
+  },
+)

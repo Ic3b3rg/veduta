@@ -75,7 +75,8 @@ import { MemoryRetrieval } from './memory-retrieval.ts'
 import { createMockChatResponder } from './mock-chat-model.ts'
 import { ModelConnectionError } from './model-connection-adapter.ts'
 import { BYOK_ADAPTERS } from './model-connection-byok.ts'
-import { claudeSubscriptionAdapter } from './model-connection-claude.ts'
+import { createClaudeSubscriptionAdapter } from './model-connection-claude.ts'
+import { ClaudeCodeClient } from './claude-code-process.ts'
 import { codexSubscriptionAdapter, initializeCodexTransport } from './model-connection-codex.ts'
 import { reconcileByokConnections } from './model-connection-migration.ts'
 import { ModelConnectionRegistry } from './model-connection-registry.ts'
@@ -965,9 +966,14 @@ export function buildServer(options: ServerOptions = {}) {
   // state change. `isRoutableModel: isBuiltinModel` marks a catalog entry
   // this build cannot actually route to as disabled rather than letting it
   // fail mid-turn.
+  const claudeClient = new ClaudeCodeClient()
   const registry = new ModelConnectionRegistry({
     rootDir: store.spacesEngine.rootDir,
-    adapters: [...BYOK_ADAPTERS, claudeSubscriptionAdapter, codexSubscriptionAdapter],
+    adapters: [
+      ...BYOK_ADAPTERS,
+      createClaudeSubscriptionAdapter(claudeClient),
+      codexSubscriptionAdapter,
+    ],
     vault,
     secrets,
     profile,
@@ -1387,6 +1393,7 @@ export function buildServer(options: ServerOptions = {}) {
     // in-flight chat turns get a chance to finish before their Codex child
     // processes are killed.
     await codexSessionPool.closeAll()
+    await claudeClient.close()
   })
 
   // Background Workers (issues #17/#39, ADR-0002, ARCHITECTURE §3.6): ephemeral

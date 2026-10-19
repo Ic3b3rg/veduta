@@ -55,7 +55,7 @@ describe('authorize', () => {
     if (result.state !== 'waiting-for-user') throw new Error('unreachable')
     expect(result.challenge.loginId).toBe('login-1')
     expect(result.challenge.verificationUrl).toBe('https://auth.openai.com/codex/device')
-    expect(result.challenge.userCode).toBe('ABCD-1234')
+    expect(result.challenge).toMatchObject({ userCode: 'ABCD-1234' })
     expect(result.challenge.expirySource).toBe('veduta-default')
     expect(new Date(result.challenge.expiresAt).getTime()).toBe(NOW().getTime() + 15 * 60_000)
 

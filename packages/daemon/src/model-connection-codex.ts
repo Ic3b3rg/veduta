@@ -1,5 +1,10 @@
 import { join } from 'node:path'
-import type { ConnectionLifecycleState, DeviceChallenge, ModelCatalogEntry } from '@veduta/protocol'
+import type {
+  ConnectionLifecycleState,
+  DeviceChallenge,
+  ModelCatalogEntry,
+  ModelConnectionChallenge,
+} from '@veduta/protocol'
 import {
   CODEX_BINARY_MISSING_REASON,
   CODEX_PINNED_VERSION,
@@ -238,7 +243,13 @@ async function readAccount(
   }
 }
 
-async function refresh(ctx: AdapterContext, challenge?: DeviceChallenge): Promise<RefreshResult> {
+async function refresh(
+  ctx: AdapterContext,
+  challenge?: ModelConnectionChallenge,
+): Promise<RefreshResult> {
+  if (challenge && !('userCode' in challenge)) {
+    throw new ModelConnectionError('rejected', 'this connection requires a device-code challenge')
+  }
   const transport = await getTransport(ctx)
   if (challenge !== undefined) {
     const completed = loginCompleted(transport, challenge.loginId)

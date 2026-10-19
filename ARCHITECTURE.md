@@ -113,8 +113,11 @@ A single agent (one SOUL). Runtime: `@earendil-works/pi-agent-core`, **never imp
 Each `ModelRef` resolves through the Gateway-owned Model connection registry. BYOK adapters call
 Anthropic, OpenAI, or OpenRouter with user-supplied API keys. The ChatGPT subscription adapter
 instead controls an exactly pinned `codex app-server` child over stdio JSON-RPC for managed device
-authorization, model discovery, and inference. Claude subscription stays visibly unavailable until
-Anthropic publishes or approves a third-party contract; Anthropic BYOK remains available
+authorization, model discovery, and inference. Claude subscription controls the unmodified,
+exactly pinned Claude Code CLI with a private configuration directory per connection. Its official
+login supplies a browser link and optional pasted-code completion. Tool-free structured inference
+returns text or one allowed Veduta tool request; the CLI never executes Veduta tools. Both
+subscription paths leave canonical conversation history and durable effects inside Veduta
 ([ADR-0014](docs/adr/0014-subscription-inference-boundary.md)).
 
 Every adapter supplies inference only. On the Codex path, the adapter maps allowed `ToolDef`
