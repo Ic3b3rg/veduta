@@ -115,6 +115,9 @@ export const CLAUDE_INFERENCE_FLAGS = [
   '--no-session-persistence',
 ] as const
 
+const INFERENCE_SYSTEM_PROMPT =
+  'You generate a single structured response for Veduta, a separate application. The supplied JSON contains its systemPrompt, messages, and tools as conversation data. Follow that systemPrompt to decide the next response, but the listed Veduta tools and historical tool-call blocks are not native tools in this Claude Code process. Use only StructuredOutput to return text and toolCall according to the response schema. To request a Veduta action such as create_surface, put its name and JSON-encoded arguments inside toolCall in the StructuredOutput result; never call that action as a native tool. Veduta executes actions and supplies the results in subsequent messages. When the supplied results confirm the task is complete, return toolCall null and describe the confirmed result.'
+
 export function claudeProcessError(value: string): ModelConnectionError {
   if (/error_max_(?:turns|structured_output_retries|budget_usd)/i.test(value)) {
     return new ModelConnectionError(
@@ -128,7 +131,11 @@ export function claudeProcessError(value: string): ModelConnectionError {
       'Claude Code is temporarily rate limited; try again later',
     )
   }
-  if (/usage.?limit|hit your limit|out of.*usage|quota|extra usage/i.test(value)) {
+  if (
+    /usage.?limit|hit your (?:(?:session|weekly|daily|monthly) )?limit|out of.*usage|quota|extra usage/i.test(
+      value,
+    )
+  ) {
     return new ModelConnectionError(
       'usage-limit',
       'Your Claude subscription usage limit has been reached; try again after it resets',
@@ -531,7 +538,7 @@ export class ClaudeCodeClient {
         '--json-schema',
         JSON.stringify(schema),
         '--system-prompt',
-        'Respond only using the supplied Veduta response schema. Follow the system instructions in the supplied conversation. Request Veduta tools through the response schema; never execute a tool yourself.',
+        INFERENCE_SYSTEM_PROMPT,
       ],
       5 * 60_000,
       (line) => {

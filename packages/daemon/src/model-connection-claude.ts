@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { ModelConnectionChallenge } from '@veduta/protocol'
 import { CLAUDE_CODE_VERSION, type ClaudeCodeClient } from './claude-code-process.ts'
+import { compactClaudeToolSchema } from './claude-tool-schema.ts'
 import {
   ModelConnectionError,
   type AdapterContext,
@@ -75,8 +76,12 @@ export function createClaudeSubscriptionAdapter(
     }
     const prompt = JSON.stringify({
       ...request.prompt,
+      tools: request.prompt.tools.map((tool) => ({
+        ...tool,
+        inputSchema: compactClaudeToolSchema(tool.inputSchema),
+      })),
       responseInstructions:
-        'Return text and either null or one toolCall. Request a tool whenever work requires it. Tool definitions are the complete allowed set. Veduta executes the request and supplies its result in the next conversation. Never claim an effect before its successful tool result. inputJson must encode a JSON object matching the chosen tool input schema.',
+        'Return text and either null or one toolCall through StructuredOutput. The listed tools are Veduta application actions, not native Claude Code tools. Request an action through toolCall whenever work requires it. Tool definitions are the complete allowed set. Veduta executes the request and supplies its result in the next conversation. Never claim an effect before its successful tool result. inputJson must encode a JSON object matching the chosen tool input schema.',
     })
     const raw = await client.infer(ctx, request.modelId, prompt, schema, request.signal)
     const parsed = z

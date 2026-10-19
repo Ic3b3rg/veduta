@@ -245,6 +245,8 @@ an actual Claude subscription; fixture tests and logged-out CLI probes do not pr
    attempt must be rejected by the second, and submitting an already-used code must be rejected.
 7. Observe a subscription limit if available: retain selection and show the temporary error;
    never replay an accepted action or silently fall back to an API key/mock.
+   The CLI may return `is_error: true` with `subtype: success` and a message such as
+   `You've hit your session limit`; this is usage feedback, not an expired login.
 8. Remove one connection, confirm its local configuration is erased and the other remains
    usable. Review Claude account sessions if remote revocation needs confirmation.
 

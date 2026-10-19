@@ -86,6 +86,12 @@ next model call. Native formatting/validation may take bounded internal steps; i
 external-effect tool. This transport currently releases text after final structured validation,
 so it does not promise token-by-token text arrival.
 
+Repeated tool-schema fragments are losslessly factored into local JSON Schema definitions before
+serialization; the original ToolDef remains the argument-validation authority. The inference
+instructions distinguish these application actions from native tools and request only the CLI's
+`StructuredOutput` formatting tool. Any other native tool call, including one named after an allowed
+Veduta action, still refuses the turn without replay or fallback.
+
 The raw pinned SDK `initialize` control response supplies the CLI's supported model snapshot;
 this is not an exhaustive entitlement guarantee. Actual selection still requires an inference
 probe. Auth status must identify a Claude subscription, rather than an ambient API or Console

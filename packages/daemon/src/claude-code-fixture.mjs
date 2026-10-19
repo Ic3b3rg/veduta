@@ -93,11 +93,26 @@ if (args[0] === '--version') {
         })
         return
       }
-      if (config.scenario === 'native-tool')
+      if (config.scenario === 'session-limit') {
+        emit({
+          type: 'result',
+          subtype: 'success',
+          is_error: true,
+          result: "You've hit your session limit · resets 9:20pm (Europe/Rome)",
+        })
+        return
+      }
+      if (config.scenario === 'native-tool' || config.scenario === 'native-veduta-tool')
         emit({
           type: 'assistant',
           message: {
-            content: [{ type: 'tool_use', name: 'Bash', input: { command: 'forbidden' } }],
+            content: [
+              {
+                type: 'tool_use',
+                name: config.scenario === 'native-veduta-tool' ? 'create_surface' : 'Bash',
+                input: { command: 'forbidden' },
+              },
+            ],
           },
         })
       if (config.scenario === 'oversized') {

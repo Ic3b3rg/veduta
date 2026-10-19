@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { fromPartial } from '@total-typescript/shoehorn'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ClaudeCodeClient, claudeConfigDir } from './claude-code-process.ts'
+import { expandClaudeToolSchema } from './claude-tool-schema.test-helpers.ts'
 import { createClaudeSubscriptionAdapter } from './model-connection-claude.ts'
 import type { AdapterContext } from './model-connection-adapter.ts'
 import type { SubscriptionStreamRequest } from './pi-provider-bridge.ts'
@@ -145,10 +146,45 @@ describe('Claude Code subscription Model connection', () => {
     expect(launch.cwd).toBe(realpathSync(join(dir, 'runtime')))
   })
 
+  it('compacts only tool schemas before sending the canonical conversation to the CLI', async () => {
+    const { ctx, adapter, client } = setup()
+    const repeated = {
+      type: 'object',
+      properties: {
+        title: { type: 'string', minLength: 1, description: 'The persisted Surface title.' },
+        value: { type: 'number', minimum: 0 },
+      },
+      required: ['title', 'value'],
+      additionalProperties: false,
+    }
+    const inputSchema = {
+      type: 'object',
+      properties: Object.fromEntries(['a', 'b', 'c', 'd'].map((key) => [key, repeated])),
+    }
+    const tool = request.prompt.tools[0]
+    if (!tool) throw new Error('Missing test tool')
+    const prompt = {
+      ...request.prompt,
+      tools: [{ ...tool, inputSchema }],
+    }
+    const infer = vi.spyOn(client, 'infer').mockResolvedValue({ text: 'Done', toolCall: null })
+    await collect(adapter.primaryInference.stream(ctx, { ...request, prompt }))
+    const sent = JSON.parse(infer.mock.calls[0]![2])
+    expect(sent.systemPrompt).toBe(prompt.systemPrompt)
+    expect(sent.messages).toEqual(prompt.messages)
+    expect(sent.tools[0].name).toBe(tool.name)
+    expect(expandClaudeToolSchema(sent.tools[0].inputSchema)).toEqual(inputSchema)
+    expect(JSON.stringify(sent.tools[0].inputSchema).length).toBeLessThan(
+      JSON.stringify(inputSchema).length / 2,
+    )
+  })
+
   for (const [scenario, code] of [
     ['native-tool', 'unsupported'],
+    ['native-veduta-tool', 'unsupported'],
     ['oversized', 'unsupported'],
     ['rate-limit', 'rate-limit'],
+    ['session-limit', 'usage-limit'],
     ['expired', 'expired'],
     ['formatting-limit', 'unsupported'],
     ['network', 'unreachable'],
