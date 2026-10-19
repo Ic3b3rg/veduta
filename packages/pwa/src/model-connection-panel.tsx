@@ -250,6 +250,7 @@ export function ConnectionCard({
   onRefreshCatalog: (id: string) => void
 }) {
   const [reauthKey, setReauthKey] = useState('')
+  const [authorizationCode, setAuthorizationCode] = useState('')
   const copy = lifecycleCopy(connection)
   const isApiKeyMethod = method?.capabilities.authorization === 'api-key'
   const challenge = connection.challenge
@@ -322,15 +323,45 @@ export function ConnectionCard({
       {challenge !== undefined && (
         <div className="model-connection-device-code">
           <a href={challenge.verificationUrl} target="_blank" rel="noreferrer">
-            {challenge.verificationUrl}
+            {'userCode' in challenge ? challenge.verificationUrl : 'Open sign-in page'}
           </a>
-          <code>{challenge.userCode}</code>
-          <Button
-            type="button"
-            onClick={() => void navigator.clipboard.writeText(challenge.userCode)}
-          >
-            Copy
-          </Button>
+          {'userCode' in challenge ? (
+            <>
+              <code>{challenge.userCode}</code>
+              <Button
+                type="button"
+                onClick={() => void navigator.clipboard.writeText(challenge.userCode)}
+              >
+                Copy
+              </Button>
+            </>
+          ) : (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault()
+                const code = authorizationCode.trim()
+                if (!code) return
+                setAuthorizationCode('')
+                onAuthorize(connection.id, { authorizationCode: code, loginId: challenge.loginId })
+              }}
+            >
+              <p>
+                Finish signing in with your Claude subscription. If the browser shows an
+                authorization code, paste it here.
+              </p>
+              <Input
+                aria-label="Authorization code"
+                type="password"
+                autoComplete="off"
+                value={authorizationCode}
+                onChange={(event) => setAuthorizationCode(event.target.value)}
+                disabled={busy}
+              />
+              <Button type="submit" disabled={busy || !authorizationCode.trim()}>
+                Complete sign-in
+              </Button>
+            </form>
+          )}
           <p>Waiting for you to finish signing in…</p>
           <p>{challengeCountdownLabel(challenge, now())}</p>
         </div>

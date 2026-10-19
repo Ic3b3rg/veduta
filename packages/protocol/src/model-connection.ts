@@ -40,7 +40,7 @@ export const ConnectionLifecycleStateSchema = z.enum([
   'revoked',
 ])
 
-/** The five connection methods issue #47 ships: three BYOK providers, ChatGPT/Codex, and the (permanently unavailable) Claude subscription. */
+/** Three BYOK providers and two CLI-managed subscription methods. */
 export const ModelConnectionMethodIdSchema = z.enum([
   'anthropic-api-key',
   'openai-api-key',
@@ -92,10 +92,26 @@ export const DeviceChallengeSchema = z
   })
   .strict()
 
+/** The official CLI owns OAuth; only its link and an attempt identity reach the PWA. */
+export const BrowserAuthorizationChallengeSchema = z
+  .object({
+    kind: z.literal('browser-code'),
+    loginId: z.string().uuid(),
+    verificationUrl: z.string().url(),
+    expiresAt: z.string().datetime(),
+    expirySource: z.literal('veduta-default'),
+  })
+  .strict()
+
+export const ModelConnectionChallengeSchema = z.union([
+  DeviceChallengeSchema,
+  BrowserAuthorizationChallengeSchema,
+])
+
 /** What an adapter can and cannot do, surfaced to the PWA so it never hardcodes per-provider behavior. */
 export const ModelConnectionCapabilitiesSchema = z
   .object({
-    authorization: z.enum(['api-key', 'device-code', 'none']),
+    authorization: z.enum(['api-key', 'device-code', 'browser-code', 'none']),
     refresh: z.enum(['automatic', 'static']),
     revocation: z.enum(['provider', 'local-only']),
     /** Metered spend is possible on this method (BYOK, or a subscription with usage credits). */
@@ -158,7 +174,7 @@ export const ModelConnectionSchema = z
       .strict()
       .optional(),
     /** Served from the in-memory challenge map while `state === 'waiting-for-user'`; never persisted. */
-    challenge: DeviceChallengeSchema.optional(),
+    challenge: ModelConnectionChallengeSchema.optional(),
   })
   .strict()
 
@@ -195,6 +211,13 @@ export const CreateModelConnectionRequestSchema = z
 export const AuthorizeModelConnectionRequestSchema = z
   .object({
     apiKey: z.string().min(1).optional(),
+    authorizationCode: z
+      .string()
+      .min(1)
+      .max(8192)
+      .regex(/^[A-Za-z0-9_.~+#/=-]+$/)
+      .optional(),
+    loginId: z.string().uuid().optional(),
   })
   .strict()
 
@@ -202,7 +225,7 @@ export const AuthorizeModelConnectionRequestSchema = z
 export const AuthorizeModelConnectionResponseSchema = z
   .object({
     state: ConnectionLifecycleStateSchema,
-    challenge: DeviceChallengeSchema.optional(),
+    challenge: ModelConnectionChallengeSchema.optional(),
   })
   .strict()
 
@@ -249,6 +272,8 @@ export type ModelConnectionMethodId = z.infer<typeof ModelConnectionMethodIdSche
 export type ModelConnectionId = z.infer<typeof ModelConnectionIdSchema>
 export type ModelCatalogEntry = z.infer<typeof ModelCatalogEntrySchema>
 export type DeviceChallenge = z.infer<typeof DeviceChallengeSchema>
+export type BrowserAuthorizationChallenge = z.infer<typeof BrowserAuthorizationChallengeSchema>
+export type ModelConnectionChallenge = z.infer<typeof ModelConnectionChallengeSchema>
 export type ModelConnectionCapabilities = z.infer<typeof ModelConnectionCapabilitiesSchema>
 export type ModelConnectionMethod = z.infer<typeof ModelConnectionMethodSchema>
 export type ModelConnection = z.infer<typeof ModelConnectionSchema>

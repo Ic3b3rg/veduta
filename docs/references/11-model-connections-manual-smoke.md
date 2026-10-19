@@ -226,21 +226,42 @@ budget exhaustion, and post-tool failure without spawn replay. Run it with:
 pnpm --filter @veduta/daemon exec vitest run src/provider-worker-parity.test.ts
 ```
 
-## Claude subscription — the gate
+## Claude subscription — official CLI smoke (#285)
 
-Open Model connections and confirm **Claude · Subscription** renders as unavailable with the
-exact reason (Anthropic requires prior approval for third-party Claude.ai login) and a
-documentation link, and offers no login flow of any kind. The corresponding acceptance criterion
-of issue 047 is unsatisfiable until Anthropic grants approval or publishes a public third-party
-OAuth contract; this is a provider-policy boundary, not a missing feature.
+Use a disposable installation with the pinned dependencies installed. This procedure requires
+an actual Claude subscription; fixture tests and logged-out CLI probes do not prove account use.
+
+1. Open **Settings → Models**, add **Claude · Subscription**, and choose **Authorize**.
+2. Open the official sign-in link. Sign in with the subscription account and approve in Anthropic.
+   If a code appears, paste it into Veduta's password field and choose **Complete sign-in**.
+   No token, API key or shell command should be requested.
+3. Refresh the browser during the pending attempt: its same link/attempt should remain usable.
+   Complete it and confirm that a supported model snapshot appears. Test and apply a model.
+4. Ask Chat to create and then update a Surface. Confirm both the Surface and its Space Events,
+   refresh the PWA, and repeat a tool request. Verify a rejected trust action has no effect.
+5. Restart the Gateway after connection: re-open the PWA and verify inference still works using
+   the CLI-owned login. A restart during an unfinished login must instead ask for a fresh attempt.
+6. Add a second Claude connection and confirm it has an independent login. A code from the first
+   attempt must be rejected by the second, and submitting an already-used code must be rejected.
+7. Observe a subscription limit if available: retain selection and show the temporary error;
+   never replay an accepted action or silently fall back to an API key/mock.
+   The CLI may return `is_error: true` with `subtype: success` and a message such as
+   `You've hit your session limit`; this is usage feedback, not an expired login.
+8. Remove one connection, confirm its local configuration is erased and the other remains
+   usable. Review Claude account sessions if remote revocation needs confirmation.
+
+Automated CLI-boundary and route tests cover code correlation, credential isolation, model
+selection, tool/result mapping, malformed/native-tool output, version drift, limits, cancellation
+and local removal. Real subscription inference and the live Surface/trust smoke require the
+account holder's login and are reported separately when not run.
 
 ## Wayfinder #53 decision and supersession
 
 The original issue-047 decision established subscription adapters as inference-only engines behind
 the Model connection contract: Veduta's Agent loop keeps tool execution, trust decisions, Event log
-writes, and Surface changes; ChatGPT uses the pinned `codex app-server`; Claude subscription stays
-unavailable until its provider permits third-party routing; and BYOK uses the same connection
-lifecycle. ADR-0016 and issues 070–079 subsequently replaced the narrow initial Codex inference
+writes, and Surface changes; ChatGPT uses the pinned `codex app-server`; and BYOK uses the same
+connection lifecycle. The 2026-10-19 ADR-0014 amendment supersedes the historical Claude gate
+with unmodified official CLI subscription inference. ADR-0016 and issues 070–079 subsequently replaced the narrow initial Codex inference
 boundary with the complete dynamic-tool contract while preserving every provider-native tool
 refusal. Global Chat now uses explicitly Space-scoped forms of the same tools after entering each
 target Space, as specified by [issue #136](https://github.com/Ic3b3rg/veduta/issues/136).

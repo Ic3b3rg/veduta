@@ -485,3 +485,58 @@ describe('ModelConnectionPanel', () => {
     expect(onSetMock).toHaveBeenCalledWith(true)
   })
 })
+
+it('submits a browser authorization code to its own attempt and immediately clears the secret input', () => {
+  const onAuthorize = vi.fn()
+  const waiting: ModelConnection = {
+    id: 'b1b1b1b1-0000-4000-8000-000000000001',
+    method: 'claude-subscription',
+    provider: 'anthropic',
+    label: 'Claude · Subscription',
+    state: 'waiting-for-user',
+    stateAt: '2026-10-19T10:00:00.000Z',
+    enabledForFallback: false,
+    createdAt: '2026-10-19T10:00:00.000Z',
+    challenge: {
+      kind: 'browser-code',
+      loginId: 'b1b1b1b1-0000-4000-8000-000000000002',
+      verificationUrl: 'https://claude.com/cai/oauth/authorize?state=test',
+      expiresAt: '2026-10-19T10:10:00.000Z',
+      expirySource: 'veduta-default',
+    },
+  }
+  const method: ModelConnectionMethod = {
+    ...claudeSubscriptionMethod,
+    available: true,
+    primaryRoutable: true,
+    capabilities: {
+      authorization: 'browser-code',
+      refresh: 'automatic',
+      revocation: 'local-only',
+      metered: true,
+    },
+  }
+  render(
+    <ModelConnectionPanel
+      snapshot={baseSnapshot({ methods: [method], connections: [waiting] })}
+      busy={false}
+      error={null}
+      now={() => new Date('2026-10-19T10:00:00.000Z')}
+      {...noop}
+      onAuthorize={onAuthorize}
+    />,
+  )
+  expect(screen.getByRole('link', { name: 'Open sign-in page' }).getAttribute('href')).toBe(
+    waiting.challenge?.verificationUrl,
+  )
+  const code = screen.getByLabelText('Authorization code')
+  expect(code.getAttribute('type')).toBe('password')
+  fireEvent.change(code, { target: { value: 'code#state' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Complete sign-in' }))
+  expect(onAuthorize).toHaveBeenCalledWith(waiting.id, {
+    authorizationCode: 'code#state',
+    loginId: waiting.challenge?.loginId,
+  })
+  expect(code.getAttribute('value')).toBe('')
+  expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull()
+})

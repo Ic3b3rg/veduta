@@ -22,6 +22,8 @@ import { piToolParameters } from './tool-parameters.ts'
 import type { ApprovalCardPort } from './trust-contracts.ts'
 import { TrustLayer } from './trust-layer.ts'
 import { registerSpaceArchiveTool } from './space-archive-tool.ts'
+import { compactClaudeToolSchema } from './claude-tool-schema.ts'
+import { expandClaudeToolSchema } from './claude-tool-schema.test-helpers.ts'
 import { WorkerPool } from './worker.ts'
 
 /**
@@ -160,6 +162,23 @@ function containsRef(value: unknown): boolean {
 }
 
 describe('piToolParameters', () => {
+  it('sends lossless Claude authoring schemas using less than a quarter of the original context', () => {
+    const { tools, dispose } = buildRealRegistry()
+    try {
+      const parameters = piToolParameters(tools)
+      for (const name of ['create_surface', 'patch_state', 'patch_tree']) {
+        const original = parameters[name]
+        const compact = compactClaudeToolSchema(original)
+        expect(expandClaudeToolSchema(compact), name).toEqual(original)
+        expect(JSON.stringify(compact).length, name).toBeLessThan(
+          JSON.stringify(original).length / 4,
+        )
+      }
+    } finally {
+      dispose()
+    }
+  })
+
   it('gives every tool in the real chat registry a top-level object schema, no $ref, no top-level allOf', () => {
     const { tools, dispose } = buildRealRegistry()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)

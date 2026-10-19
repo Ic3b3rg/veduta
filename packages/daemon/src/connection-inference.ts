@@ -101,6 +101,13 @@ async function* streamWithRecovery(
   } catch (error) {
     if (
       error instanceof ModelConnectionError &&
+      (error.code === 'unsupported' || error.code === 'rejected')
+    ) {
+      // Protocol/argument refusals are turn-local. Reauthorization or replay on another provider cannot repair them.
+      throw new NonRetryableModelError(error.message)
+    }
+    if (
+      error instanceof ModelConnectionError &&
       (error.code === 'unauthorized' ||
         error.code === 'expired' ||
         error.code === 'usage-limit' ||

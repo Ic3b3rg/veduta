@@ -62,7 +62,18 @@ declare and test their expected destinations, and command Trace makes unexpected
 
 The ChatGPT Model connection spawns a `codex app-server` child process that makes its own outbound connections (`auth.openai.com`, `chatgpt.com`, `api.openai.com`); the daemon's dispatcher cannot intercept them, the same class of exception as the web-push delivery path. The daemon never logs the child's stderr or payloads — only structured one-line diagnostics with byte counts. An operator who enforces egress at the host firewall must allow those hosts for the ChatGPT connection method, and may block them to disable it. OS-level sandboxing of the child process is out of scope for issue 047; the residual filesystem exposure is accepted and the child runs with a reduced environment from its own empty `CODEX_HOME` directory.
 
-### 3.5 Hardened ingestion
+#The Claude subscription Model connection similarly launches the exactly pinned official Claude
+Code binary. Its own network path (including `claude.com`, `claude.ai`, `platform.claude.com` and
+`api.anthropic.com`) is outside the daemon dispatcher. Host firewall policy is the enforcement
+point. Native tools, MCP, customizations, hooks and session persistence are disabled; only a
+validated response can request a Veduta tool. Prompts and authorization codes travel over stdin,
+and child diagnostics are discarded. The CLI exclusively manages credentials in a private
+per-connection configuration directory (or its directory-specific macOS Keychain entry); Veduta
+never reads tokens. Backups containing these directories need encryption at rest. Removal first
+stops child acquisition and running children, attempts official logout, and erases local state.
+See the [ADR-0014 amendment](adr/0014-subscription-inference-boundary.md).
+
+## 3.5 Hardened ingestion
 
 HMAC-validated webhooks (Hermes pattern); automatic, monitored renewal of explicitly configured
 Calendar watches; per-source rate limiting; event deduplication; events that fail schema validation

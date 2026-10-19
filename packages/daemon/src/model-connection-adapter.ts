@@ -1,6 +1,6 @@
 import type {
   ConnectionLifecycleState,
-  DeviceChallenge,
+  ModelConnectionChallenge,
   ModelCatalogEntry,
   ModelConnectionMethodId,
 } from '@veduta/protocol'
@@ -12,7 +12,7 @@ import type { SecretsVault } from './secrets-vault.ts'
 /**
  * The Gateway-owned contract every Model connection adapter implements
  * (issue #47, docs/adr/0014-subscription-inference-boundary.md). BYOK, the
- * Claude subscription gate, and Codex each get their own module
+ * Claude Code subscription, and Codex each get their own module
  * (`model-connection-byok.ts`, `model-connection-claude.ts`,
  * `model-connection-codex.ts`); `model-connection-registry.ts` is the only
  * caller. This module holds types and errors only — no adapter
@@ -20,7 +20,7 @@ import type { SecretsVault } from './secrets-vault.ts'
  */
 
 export interface ModelConnectionCapabilities {
-  authorization: 'api-key' | 'device-code' | 'none'
+  authorization: 'api-key' | 'device-code' | 'browser-code' | 'none'
   refresh: 'automatic' | 'static'
   revocation: 'provider' | 'local-only'
   /** Metered spend is possible on this method (BYOK, or a subscription with usage credits). */
@@ -34,8 +34,7 @@ export interface AdapterEnv {
 }
 
 /**
- * A function of the environment, never persisted state: the Claude gate
- * and a missing/mis-versioned Codex binary both render as `available:
+ * A function of the environment, never persisted state: a missing or mis-versioned subscription CLI binary both render as `available:
  * false` with a reason and an optional docs link, so the PWA never
  * hardcodes per-provider unavailability behavior.
  */
@@ -46,6 +45,8 @@ export interface AdapterContext {
   connectionId: string
   rootDir: string
   vault: SecretsVault | undefined
+  /** Installation environment; subscription children select only an explicit safe subset. */
+  env?: NodeJS.ProcessEnv
   /**
    * Resolves any `secret://…` reference the same way the router does
    * (issue #47): a BYOK adapter's `catalog`/`refresh` never opens the vault
@@ -82,11 +83,15 @@ export interface AdapterContext {
   secretRef?: string
 }
 
-export type AuthorizeInput = { apiKey?: string }
+export type AuthorizeInput = {
+  apiKey?: string | undefined
+  authorizationCode?: string | undefined
+  loginId?: string | undefined
+}
 
 export type AuthorizeResult =
   | { state: 'connected'; account?: { label: string } }
-  | { state: 'waiting-for-user'; challenge: DeviceChallenge }
+  | { state: 'waiting-for-user'; challenge: ModelConnectionChallenge }
 
 export interface RefreshResult {
   state: ConnectionLifecycleState
@@ -125,7 +130,7 @@ export interface ModelConnectionAdapter {
   availability(env: AdapterEnv): Promise<AdapterAvailability>
   authorize(ctx: AdapterContext, input: AuthorizeInput): Promise<AuthorizeResult>
   /** Poll a device-code login, refresh a credential, or re-check a connected one. */
-  refresh(ctx: AdapterContext, challenge?: DeviceChallenge): Promise<RefreshResult>
+  refresh(ctx: AdapterContext, challenge?: ModelConnectionChallenge): Promise<RefreshResult>
   catalog(ctx: AdapterContext): Promise<ModelCatalogEntry[]>
   verify(ctx: AdapterContext, modelId: string): Promise<void>
   revoke(ctx: AdapterContext): Promise<{ providerRevoked: boolean; note?: string }>

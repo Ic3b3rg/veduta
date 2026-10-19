@@ -6,7 +6,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { loadConnectionsConfig } from './connections-config.ts'
 import type { AuthorizeResult, ModelConnectionAdapter } from './model-connection-adapter.ts'
 import { BYOK_ADAPTERS } from './model-connection-byok.ts'
-import { claudeSubscriptionAdapter } from './model-connection-claude.ts'
+import { createClaudeSubscriptionAdapter } from './model-connection-claude.ts'
+import { ClaudeCodeClient } from './claude-code-process.ts'
+import { fileURLToPath } from 'node:url'
+import {
+  ModelConnectionsSnapshotSchema,
+  AuthorizeModelConnectionResponseSchema,
+} from '@veduta/protocol'
 import {
   ModelConnectionRegistry,
   type ModelConnectionRegistryOptions,
@@ -20,9 +26,11 @@ import { SecretsVault } from './secrets-vault.ts'
 const KEY_MATERIAL = Buffer.from('a test key material, long enough for scrypt')
 const NOW = () => new Date('2026-08-09T10:00:00.000Z')
 
+const claudeClients: ClaudeCodeClient[] = []
 let rootDir: string | undefined
 
-afterEach(() => {
+afterEach(async () => {
+  await Promise.all(claudeClients.splice(0).map((client) => client.close()))
   if (rootDir) rmSync(rootDir, { recursive: true, force: true })
   rootDir = undefined
 })
@@ -107,6 +115,11 @@ function harness(
   } = {},
 ): Harness {
   const dir = freshRoot()
+  const claudeClient = new ClaudeCodeClient(() =>
+    fileURLToPath(new URL('./claude-code-fixture.mjs', import.meta.url)),
+  )
+  claudeClients.push(claudeClient)
+  const claudeSubscriptionAdapter = createClaudeSubscriptionAdapter(claudeClient)
   const vault = SecretsVault.open(dir, KEY_MATERIAL)
   const probe = vi.fn().mockResolvedValue(undefined)
   const onRoutingChanged = vi.fn()
@@ -131,7 +144,7 @@ function harness(
 }
 
 describe('GET /api/model-connections', () => {
-  it('lists every method with the Claude method marked unavailable with its exact reason', async () => {
+  it('lists Claude subscription with the shared browser authorization method', async () => {
     const { app } = harness()
     const res = await app.inject({ method: 'GET', url: '/api/model-connections' })
     expect(res.statusCode).toBe(200)
@@ -139,10 +152,8 @@ describe('GET /api/model-connections', () => {
       methods: { id: string; available: boolean; unavailableReason?: string }[]
     }
     const claude = body.methods.find((m) => m.id === 'claude-subscription')
-    expect(claude?.available).toBe(false)
-    expect(claude?.unavailableReason).toBe(
-      'Anthropic does not permit a third-party product to offer Claude.ai login or route subscription credentials without prior approval, so Veduta cannot ship this connection method yet. Anthropic API keys remain fully supported.',
-    )
+    expect(claude?.available).toBe(true)
+    expect(claude?.unavailableReason).toBeUndefined()
     const anthropicKey = body.methods.find((m) => m.id === 'anthropic-api-key')
     expect(anthropicKey?.available).toBe(true)
   })
@@ -193,8 +204,10 @@ describe('POST /api/model-connections', () => {
     expect(vault.resolve(`secret://vault/${body.connections[0]?.id}-api-key`)).toBeUndefined()
   })
 
-  it('rejects an unsupported method with 409 and the exact Claude gate reason', async () => {
-    const { app } = harness()
+  it('reports a missing Claude binary with 409 and recovery guidance', async () => {
+    const { app } = harness({
+      adapters: [createClaudeSubscriptionAdapter(new ClaudeCodeClient(() => undefined))],
+    })
     const res = await app.inject({
       method: 'POST',
       url: '/api/model-connections',
@@ -202,8 +215,7 @@ describe('POST /api/model-connections', () => {
     })
     expect(res.statusCode).toBe(409)
     expect(res.json()).toMatchObject({
-      error:
-        'Anthropic does not permit a third-party product to offer Claude.ai login or route subscription credentials without prior approval, so Veduta cannot ship this connection method yet. Anthropic API keys remain fully supported.',
+      error: 'The pinned Claude Code binary is missing; run pnpm install on the Gateway',
     })
   })
 
@@ -574,4 +586,87 @@ describe('secret hygiene', () => {
       expect(JSON.stringify(response.json())).not.toContain(distinctiveKey)
     }
   })
+})
+
+describe('Claude subscription through the shared connection routes', () => {
+  it('completes an attempt, rejects stale codes, selects a model, and isolates another account', async () => {
+    const { app, registry, dir } = harness()
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/model-connections',
+      payload: { method: 'claude-subscription' },
+    })
+    const first = ModelConnectionsSnapshotSchema.parse(created.json()).connections[0]
+    if (!first) throw new Error('missing connection')
+    const second = await registry.create({ method: 'claude-subscription', label: 'Second account' })
+    const other = second.connections.find((entry) => entry.id !== first.id)
+    if (!other) throw new Error('missing second connection')
+    const begun = await app.inject({
+      method: 'POST',
+      url: `/api/model-connections/${first.id}/authorize`,
+      payload: {},
+    })
+    const challenge = AuthorizeModelConnectionResponseSchema.parse(begun.json()).challenge
+    if (!challenge || !('kind' in challenge)) throw new Error('missing browser challenge')
+    const wrongAttempt = await app.inject({
+      method: 'POST',
+      url: `/api/model-connections/${other.id}/authorize`,
+      payload: { authorizationCode: 'authorized', loginId: challenge.loginId },
+    })
+    expect(wrongAttempt.statusCode).toBe(400)
+    const completed = await app.inject({
+      method: 'POST',
+      url: `/api/model-connections/${first.id}/authorize`,
+      payload: { authorizationCode: 'authorized', loginId: challenge.loginId },
+    })
+    expect(completed.statusCode).toBe(200)
+    expect(completed.json()).toMatchObject({ state: 'connected' })
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/model-connections/${first.id}/authorize`,
+      payload: { authorizationCode: 'authorized', loginId: challenge.loginId },
+    })
+    expect(replay.statusCode).toBe(400)
+    const selected = await app.inject({
+      method: 'POST',
+      url: '/api/model-connections/selection',
+      payload: { connectionId: first.id, modelId: 'claude-test-model' },
+    })
+    expect(selected.statusCode).toBe(200)
+    const snapshot = ModelConnectionsSnapshotSchema.parse(
+      (await app.inject({ method: 'GET', url: '/api/model-connections' })).json(),
+    )
+    expect(snapshot.selection).toEqual({ connectionId: first.id, modelId: 'claude-test-model' })
+    expect(snapshot.connections.find((entry) => entry.id === other.id)?.state).toBe('available')
+    expect(JSON.stringify(loadConnectionsConfig(dir))).not.toContain('authorizationCode')
+    const removed = await app.inject({
+      method: 'DELETE',
+      url: `/api/model-connections/${first.id}`,
+    })
+    expect(removed.statusCode).toBe(200)
+    expect(
+      ModelConnectionsSnapshotSchema.parse(removed.json()).connections.map((entry) => entry.id),
+    ).toEqual([other.id])
+    expect((await registry.snapshot()).selection).toBeNull()
+  })
+})
+
+it('does not resurrect an unfinished Claude browser attempt after Gateway restart', async () => {
+  const { registry } = harness()
+  const created = await registry.create({ method: 'claude-subscription' })
+  const id = created.connections[0]?.id
+  if (!id) throw new Error('missing connection')
+  const pending = await registry.authorize(id, {})
+  const oldAttempt = pending.connections[0]?.challenge
+  expect(oldAttempt).toBeDefined()
+  registry.normalizeStatesOnBoot()
+  const record = await registry.read(id)
+  expect(record).toMatchObject({
+    state: 'failed',
+    stateReason: 'authorization was interrupted by a daemon restart; start it again',
+  })
+  expect(record.challenge).toBeUndefined()
+  await expect(
+    registry.authorize(id, { authorizationCode: 'authorized', loginId: oldAttempt?.loginId }),
+  ).rejects.toMatchObject({ code: 'rejected' })
 })

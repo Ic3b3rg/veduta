@@ -1,5 +1,5 @@
 import type {
-  DeviceChallenge,
+  ModelConnectionChallenge,
   ModelConnection,
   ModelConnectionMethod,
   ModelConnectionsSnapshot,
@@ -195,7 +195,7 @@ export function canContinue(
 }
 
 /** 'expires in M:SS', or 'expired' once `now` has passed the challenge's expiry -- the same rendering the daemon's countdown deadline assumes the PWA stops polling at. */
-export function challengeCountdownLabel(challenge: DeviceChallenge, now: Date): string {
+export function challengeCountdownLabel(challenge: ModelConnectionChallenge, now: Date): string {
   const remainingMs = Date.parse(challenge.expiresAt) - now.getTime()
   if (remainingMs <= 0) return 'expired'
 
