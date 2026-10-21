@@ -26,9 +26,7 @@ decision, not evidence that Gog works. Existing native Gmail read evidence in th
 account selection, granted scopes, keyring access, output handling, or lifecycle.
 [Issue #183][issue183], [issue #181][issue181], [issue #123][issue123], [issue #177][issue177]
 
-This note extends the existing [compatibility research](26-external-skills-plugin-compatibility.md),
-[proving cases](27-popular-external-extension-proving-cases.md),
-[candidate evidence](28-extension-candidate-evidence.md),
+This note extends the existing [candidate evidence](28-extension-candidate-evidence.md),
 [Atom conformance matrix](29-atom-conformance-matrix.md), and
 [published-package proof](30-published-extension-live-proof.md). It follows
 [GLOSSARY.md](../../GLOSSARY.md), [ARCHITECTURE.md](../../ARCHITECTURE.md),

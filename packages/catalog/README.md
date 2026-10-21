@@ -10,7 +10,7 @@ cannot supply CSS or HTML.
 | Atom                           | Foundation                                                     |
 | ------------------------------ | -------------------------------------------------------------- |
 | Button                         | Button                                                         |
-| DatePicker                     | Input with native `date` behavior                              |
+| DatePicker                     | Calendar and Popover                                           |
 | Select                         | NativeSelect                                                   |
 | Checkbox                       | Checkbox                                                       |
 | Switch                         | Switch                                                         |

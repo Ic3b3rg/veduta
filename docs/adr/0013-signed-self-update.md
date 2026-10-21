@@ -259,7 +259,8 @@ artifact fetch actually sits.
    the existing feed-host pin covers the artifact too: rejected as a tax on wherever the feed is
    served from — roughly 63 MB per release, forever, on infrastructure that exists to serve a few
    kilobytes of JSON — and it abandons GitHub Releases' natural home for the build-provenance
-   attestation (`actions/attest-build-provenance`, `RELEASING.md` §(e)) for no security benefit,
+   attestation (`actions/attest-build-provenance`,
+   [release provenance](../../RELEASING.md#verify-provenance)) for no security benefit,
    since the artifact's integrity already rests on the signed hash, not on its host. A
    `basename(artifactUrl) === artifactName` check as a lighter-weight substitute for signing the
    full URL: rejected as decorative once the URL is inside the signed bytes — an attacker who
@@ -276,7 +277,8 @@ artifact fetch actually sits.
    `resolveRedirect`, `assertFetchableUrl`) driven directly at the real published v0.0.1 asset,
    following the real GitHub → `release-assets.githubusercontent.com` redirect end to end, with
    the downloaded bytes' sha256 matching the release's signed value; and the rehearsal harness
-   (`scripts/rehearse-update.ts`, `RELEASING.md` §0) performing a real one-tap install across a
+   (`packages/e2e/scripts/rehearse-update.ts`,
+   [disposable-key rehearsal](../../RELEASING.md#rehearse-with-disposable-keys)) performing a real one-tap install across a
    redirect between two loopback hosts, exercising the cross-host hop itself rather than only a
    same-host download.
 

@@ -131,7 +131,7 @@ those builds by deployed commit rather than presenting that baseline as a signed
 On the machine hosting a disposable [Local VPS](deploy/local-vps.md) instance:
 
 ```sh
-pnpm --filter @veduta/daemon exec tsx ../../scripts/rehearse-update.ts \
+pnpm --filter @veduta/e2e exec tsx scripts/rehearse-update.ts \
   --base-dir ~/.veduta-local-vps --version 0.0.1
 ```
 

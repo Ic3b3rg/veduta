@@ -26,10 +26,8 @@ own proof. An upstream `RUNTIME_VERIFIED` statement is upstream evidence only, n
 Verified status. [Publisher's runtime notes][build-notes],
 [exact dependency manifest][server-package], [ADR-0032](../adr/0032-reviewed-extension-hub.md)
 
-The existing [Research 26](26-external-skills-plugin-compatibility.md),
-[27](27-popular-external-extension-proving-cases.md),
-[28](28-extension-candidate-evidence.md), and
-[30](30-published-extension-live-proof.md) establish format and foreign-host compatibility
+The existing [candidate evidence](28-extension-candidate-evidence.md) and
+[published-package proof](30-published-extension-live-proof.md) establish format and foreign-host compatibility
 constraints but do not select a portable Skill/MCP bundle. A search of `packages/` for
 `Agent Plugins`, `agent-plugins.org`, `mcp.json`, `PLUGIN_ROOT`, `PLUGIN_DATA`, and `context7`
 found no existing portable installer. The accepted MCP implementation is a reviewed GitHub

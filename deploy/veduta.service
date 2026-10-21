@@ -23,7 +23,7 @@ WorkingDirectory=/var/lib/veduta
 # deploy/install.sh. This path assumes packages/daemon has been built into plain JS at
 # /opt/veduta/packages/daemon/dist/index.js -- ADJUST TO YOUR ACTUAL BUILD OUTPUT. At the time
 # of writing, `pnpm --filter @veduta/daemon build` runs `tsc -p tsconfig.json` and
-# packages/tsconfig.base.json sets `noEmit: true`, so plain `pnpm build` alone is a type-check
+# tsconfig.base.json sets `noEmit: true`, so plain `pnpm build` alone is a type-check
 # only and does NOT produce this file; you need an emitting build step (a bundler, or `tsc`
 # with `outDir`/`noEmit: false`) before this ExecStart will work as written. If you deploy by
 # running the daemon from source instead, point ExecStart at your `node`/`tsx` invocation of

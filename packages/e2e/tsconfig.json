@@ -4,5 +4,5 @@
     "lib": ["ES2022", "DOM", "DOM.AsyncIterable"],
     "types": ["node"]
   },
-  "include": ["tests", "demo", "playwright.config.ts", "global-setup.ts"]
+  "include": ["tests", "demo", "scripts", "playwright.config.ts", "global-setup.ts"]
 }
