@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type {
   ChatAcceptance,
+  ChatMessage,
   ChatScope,
   ChatTimelineEntry,
   GatewayServerMessage,
@@ -8,6 +9,7 @@ import type {
 } from '@veduta/protocol'
 import type { PwaChatInput } from './gateway.ts'
 import type { ChatTimeline } from './chat-timeline.ts'
+import { decisionResultMessage } from './chat-decision-result.ts'
 import type { ServiceConnections } from './service-connections.ts'
 import {
   boundedServiceIntent,
@@ -169,10 +171,7 @@ export class ChatTimelineCoordinator {
     if (frame.type === 'chat.turn-end' || frame.type === 'chat.turn-error') {
       const terminal =
         frame.type === 'chat.turn-end'
-          ? (frame.message.pendingDecisions?.length || frame.message.pendingDecisionIds?.length) &&
-            !frame.message.targets?.length
-            ? this.options.timeline.completeWithDecisions(frame.turnId)
-            : this.options.timeline.complete(frame.turnId, frame.message)
+          ? this.completeTurn(frame.turnId, frame.message)
           : this.options.timeline.fail(frame.turnId, frame.error, this.stopping)
       if (terminal) {
         const user = this.options.timeline.userEntry(frame.turnId)
@@ -180,6 +179,16 @@ export class ChatTimelineCoordinator {
         if (terminal.id !== user?.id) this.options.publish(terminal)
       }
     }
+  }
+
+  private completeTurn(turnId: string, message: ChatMessage): ChatTimelineEntry | undefined {
+    if (!message.pendingDecisions?.length && !message.pendingDecisionIds?.length)
+      return this.options.timeline.complete(turnId, message)
+    // Decision entries own lifecycle feedback; accompanying Surface links carry no second copy.
+    const result = decisionResultMessage(message)
+    return result.text || result.targets?.length
+      ? this.options.timeline.complete(turnId, result)
+      : this.options.timeline.completeWithDecisions(turnId)
   }
 
   prepareStop(): void {

@@ -20,6 +20,7 @@ import {
   requiredString,
   withImmediateTransaction,
 } from './sqlite-rows.ts'
+import { decisionResultMessage } from './chat-decision-result.ts'
 
 export type ChatTimelineKind = 'user' | 'assistant' | 'error' | 'decision' | 'connection'
 
@@ -88,6 +89,37 @@ export class ChatTimeline {
         source_revision integer not null
       );
     `)
+    this.recoverDecisionResultCopies()
+  }
+
+  private recoverDecisionResultCopies(): void {
+    withImmediateTransaction(this.db, () => {
+      const results = this.db
+        .prepare(
+          `select * from chat_entries where kind = 'assistant'
+           and json_array_length(message_json, '$.targets') > 0
+           and (json_array_length(message_json, '$.pendingDecisions') > 0
+             or json_array_length(message_json, '$.pendingDecisionIds') > 0)`,
+        )
+        .all()
+      const canonical = this.db.prepare(
+        "select id from chat_entries where kind = 'decision' and decision_id = ? and scope_key = ?",
+      )
+      const update = this.db.prepare(
+        'update chat_entries set revision = revision + 1, message_json = ?, updated_at = ? where id = ?',
+      )
+      for (const row of results) {
+        const message = ChatMessageSchema.parse(JSON.parse(requiredString(row, 'message_json')))
+        const references = [
+          ...(message.pendingDecisions ?? []).map((decision) => decision.id),
+          ...(message.pendingDecisionIds ?? []),
+        ]
+        const scope = requiredString(row, 'scope_key')
+        if (!references.every((id) => canonical.get(id, scope))) continue
+        const recovered = ChatMessageSchema.parse(decisionResultMessage(message))
+        update.run(JSON.stringify(recovered), this.now().toISOString(), requiredString(row, 'id'))
+      }
+    })
   }
 
   serviceRequest(turnId: string): unknown {
