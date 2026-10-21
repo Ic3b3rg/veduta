@@ -2,7 +2,11 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { PendingDecision } from '@veduta/protocol'
+import {
+  PENDING_DECISION_FALLBACK_FEEDBACK,
+  type ChatTimelineEntry,
+  type PendingDecision,
+} from '@veduta/protocol'
 import { ChatTimeline } from './chat-timeline.ts'
 
 const roots: string[] = []
@@ -18,6 +22,152 @@ afterEach(() => {
 })
 
 describe('Gateway Chat timeline', () => {
+  it.each([
+    {
+      name: 'projected',
+      text: 'Awaiting your decision: Create Space “Sviluppo”.',
+      expectedText: '',
+    },
+    { name: 'identity-only', text: PENDING_DECISION_FALLBACK_FEEDBACK, expectedText: '' },
+    {
+      name: 'useful prose',
+      text: 'The issue list is ready.',
+      expectedText: 'The issue list is ready.',
+    },
+    {
+      name: 'mixed confirmed write',
+      text: 'Awaiting your decision: Create Space “Sviluppo”.\n\nRemembered 1 fact.',
+      expectedText: 'Remembered 1 fact.',
+    },
+    {
+      name: 'mixed failed write',
+      text: 'Awaiting your decision: Create Space “Sviluppo”.\n\nA Surface change was not saved: conflicting revision.',
+      expectedText: 'A Surface change was not saved: conflicting revision.',
+    },
+  ])(
+    'recovers historical $name decision copies without losing result content or entry identity',
+    ({ name, text, expectedText }) => {
+      const { rootDir, store } = timeline()
+      const scope = { type: 'global' as const }
+      const pending: PendingDecision = {
+        id: 'space-proposal:space-proposal-sviluppo',
+        kind: 'space-proposal',
+        summary: 'Create Space “Sviluppo”',
+        scope,
+        allowedResolutions: ['accept', 'reject'],
+        state: 'pending',
+        createdAt: '2026-10-21T10:00:00.000Z',
+      }
+      const target = {
+        spaceId: 'spc-sviluppo',
+        spaceSlug: 'sviluppo',
+        spaceName: 'Sviluppo',
+        surfaceId: 'srf-bugs',
+        surfaceTitle: 'Open bugs',
+      }
+      const turn = store.accept({
+        submissionId: 'legacy-result',
+        scope,
+        text: 'Track GitHub issues in Sviluppo',
+      })
+      store.begin(turn.turnId)
+      const canonical = store.addDecision(turn.turnId, pending)
+      store.updateDecision(pending.id, 1, {
+        ...pending,
+        state: 'terminal',
+        outcome: 'accepted',
+        resolvedAt: '2026-10-21T10:01:00.000Z',
+      })
+      const legacy = store.complete(turn.turnId, {
+        role: 'assistant',
+        text,
+        targets: [target],
+        ...(name === 'identity-only'
+          ? { pendingDecisionIds: [pending.id] }
+          : { pendingDecisions: [pending] }),
+      })
+      store.close()
+      const restored = new ChatTimeline(rootDir)
+      let recovered: ChatTimelineEntry | undefined
+      try {
+        const entries = restored.page(scope).entries
+        expect(entries).toHaveLength(3)
+        expect(
+          entries.find((entry) => entry.id === canonical?.id)?.message.pendingDecisions,
+        ).toMatchObject([{ id: pending.id, state: 'terminal', outcome: 'accepted' }])
+        recovered = entries.find((entry) => entry.id === legacy?.id)
+        expect(recovered).toMatchObject({
+          id: legacy?.id,
+          turnId: turn.turnId,
+          position: legacy?.position,
+          revision: (legacy?.revision ?? 0) + 1,
+          message: { role: 'assistant', text: expectedText, targets: [target] },
+        })
+        expect(recovered?.message.pendingDecisions).toBeUndefined()
+        expect(recovered?.message.pendingDecisionIds).toBeUndefined()
+        const latest = restored.page(scope, undefined, 1)
+        expect(latest.entries[0]?.id).toBe(legacy?.id)
+        expect(restored.page(scope, latest.nextBefore, 1).entries[0]?.id).toBe(canonical?.id)
+      } finally {
+        restored.close()
+      }
+      const restarted = new ChatTimeline(rootDir)
+      try {
+        expect(restarted.page(scope).entries.find((entry) => entry.id === legacy?.id)).toEqual(
+          recovered,
+        )
+      } finally {
+        restarted.close()
+      }
+    },
+  )
+
+  it.each(['missing', 'other-scope'] as const)(
+    'preserves unresolved result references when the canonical decision is $0',
+    (location) => {
+      const { rootDir, store } = timeline()
+      const scope = { type: 'global' as const }
+      const pending: PendingDecision = {
+        id: 'space-proposal:space-proposal-unresolved',
+        kind: 'space-proposal',
+        summary: 'Create Space “Sviluppo”',
+        scope,
+        allowedResolutions: ['accept', 'reject'],
+        state: 'pending',
+        createdAt: '2026-10-21T10:00:00.000Z',
+      }
+      if (location === 'other-scope') {
+        const other = store.accept({
+          submissionId: 'other-scope',
+          scope: { type: 'space', spaceId: 'spc-other' },
+          text: 'A separate Chat scope',
+        })
+        store.addDecision(other.turnId, pending)
+        store.completeWithDecisions(other.turnId)
+      }
+      const turn = store.accept({
+        submissionId: 'unresolved-result',
+        scope,
+        text: 'Check the proposal',
+      })
+      const original = store.complete(turn.turnId, {
+        role: 'assistant',
+        text: 'Awaiting your decision: Create Space “Sviluppo”.',
+        pendingDecisions: [pending],
+        targets: [{ spaceId: 'spc-bugs', spaceSlug: 'bugs', spaceName: 'bugs' }],
+      })
+      store.close()
+      const restored = new ChatTimeline(rootDir)
+      try {
+        expect(restored.page(scope).entries.find((entry) => entry.id === original?.id)).toEqual(
+          original,
+        )
+      } finally {
+        restored.close()
+      }
+    },
+  )
+
   it('commits a focused-Space submission once and returns the same completed entries after restart', () => {
     const { rootDir, store } = timeline()
     const scope = { type: 'space' as const, spaceId: 'spc-health' }

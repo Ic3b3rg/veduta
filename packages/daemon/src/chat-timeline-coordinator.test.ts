@@ -2,7 +2,11 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { GatewayServerMessage, PendingDecision } from '@veduta/protocol'
+import {
+  PENDING_DECISION_FALLBACK_FEEDBACK,
+  type GatewayServerMessage,
+  type PendingDecision,
+} from '@veduta/protocol'
 import { ChatTimeline } from './chat-timeline.ts'
 import { ChatTimelineCoordinator } from './chat-timeline-coordinator.ts'
 import { ServiceConnections } from './service-connections.ts'
@@ -312,6 +316,119 @@ describe('Chat timeline execution', () => {
     })
     timeline.close()
   })
+
+  it.each([
+    { reference: 'projected', result: 'none', feedback: '' },
+    { reference: 'projected', result: 'Space', feedback: '' },
+    { reference: 'projected', result: 'Surface', feedback: '' },
+    { reference: 'identity-only', result: 'none', feedback: '' },
+    { reference: 'identity-only', result: 'Space', feedback: '' },
+    { reference: 'identity-only', result: 'Surface', feedback: '' },
+    { reference: 'projected', result: 'Space', feedback: 'Remembered 1 fact.' },
+    { reference: 'projected', result: 'none', feedback: 'Remembered 1 fact.' },
+    {
+      reference: 'projected',
+      result: 'Surface',
+      feedback: 'A Surface change was not saved: conflicting revision.',
+    },
+  ])(
+    'does not retain an actionable accepted Space proposal ($reference, $result links)',
+    async ({ reference, result, feedback }) => {
+      const root = mkdtempSync(join(tmpdir(), 'veduta-chat-space-result-'))
+      roots.push(root)
+      const timeline = new ChatTimeline(root)
+      const decision: PendingDecision = {
+        id: 'space-proposal:space-proposal-sviluppo',
+        kind: 'space-proposal',
+        summary: 'Create Space “Sviluppo”',
+        scope: { type: 'global' },
+        allowedResolutions: ['accept', 'reject'],
+        state: 'pending',
+        createdAt: '2026-10-21T10:00:00.000Z',
+      }
+      const target = {
+        spaceId: 'spc-sviluppo',
+        spaceSlug: 'sviluppo',
+        spaceName: 'Sviluppo',
+        surfaceId: 'srf-bugs',
+        surfaceTitle: 'Open bugs',
+      }
+      const targets =
+        result === 'none'
+          ? []
+          : result === 'Space'
+            ? [{ spaceId: 'spc-bugs', spaceSlug: 'bugs', spaceName: 'bugs' }]
+            : [target]
+      const coordinator: ChatTimelineCoordinator = new ChatTimelineCoordinator({
+        timeline,
+        hasSpace: () => true,
+        publish: () => {},
+        runTurn: async (event) => {
+          coordinator.receive({
+            type: 'chat.turn-end',
+            turnId: event.turnId!,
+            message: {
+              role: 'assistant',
+              text: [
+                reference === 'projected'
+                  ? 'Awaiting your decision: Create Space “Sviluppo”.'
+                  : PENDING_DECISION_FALLBACK_FEEDBACK,
+                feedback,
+              ]
+                .filter(Boolean)
+                .join('\n\n'),
+              ...(reference === 'projected'
+                ? { pendingDecisions: [decision] }
+                : { pendingDecisionIds: [decision.id] }),
+              targets,
+            },
+          })
+        },
+      })
+      try {
+        coordinator.submit({
+          clientId: 'device-1',
+          receivedAt: '2026-10-21T10:00:00.000Z',
+          text: 'Create Space Sviluppo to track GitHub issues',
+        })
+        await coordinator.idle()
+        expect(
+          timeline
+            .page({ type: 'global' })
+            .entries.filter(
+              (entry) =>
+                entry.message.pendingDecisions?.some((candidate) => candidate.id === decision.id) ||
+                entry.message.pendingDecisionIds?.includes(decision.id),
+            ),
+        ).toHaveLength(1)
+        timeline.updateDecision(decision.id, 1, {
+          ...decision,
+          state: 'terminal',
+          outcome: 'accepted',
+          resolvedAt: '2026-10-21T10:01:00.000Z',
+        })
+        const entries = timeline.page({ type: 'global' }).entries
+        expect(
+          entries
+            .flatMap((entry) => entry.message.pendingDecisions ?? [])
+            .filter((candidate) => candidate.id === decision.id && candidate.state === 'pending'),
+        ).toEqual([])
+        expect(entries.flatMap((entry) => entry.message.targets ?? [])).toEqual(targets)
+        if (targets.length > 0 || feedback)
+          expect(entries.find((entry) => entry.kind === 'assistant')?.message.text).toBe(feedback)
+        expect(
+          entries.some((entry) => entry.message.text.startsWith('Awaiting your decision:')),
+        ).toBe(false)
+        expect(
+          entries
+            .flatMap((entry) => entry.message.pendingDecisions ?? [])
+            .filter((candidate) => candidate.id === decision.id),
+        ).toHaveLength(1)
+      } finally {
+        timeline.close()
+      }
+    },
+  )
 
   it('attaches another client to the same running turn without resubmitting it', async () => {
     const root = mkdtempSync(join(tmpdir(), 'veduta-chat-reattach-'))

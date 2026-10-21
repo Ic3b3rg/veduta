@@ -142,12 +142,12 @@ Log in over SSH and paste this command **on the VPS**:
 
 ```sh
 curl -fsSLo veduta-install.sh \
-  https://raw.githubusercontent.com/Ic3b3rg/veduta/v0.0.62/deploy/install.sh &&
+  https://raw.githubusercontent.com/Ic3b3rg/veduta/v0.0.63/deploy/install.sh &&
 sudo env SSH_CONNECTION="$SSH_CONNECTION" bash veduta-install.sh \
-  --ref v0.0.62 --access tailnet
+  --ref v0.0.63 --access tailnet
 ```
 
-This command pins `v0.0.62`, including private access and the current UI. Keep the download
+This command pins `v0.0.63`, including private access and the current UI. Keep the download
 URL and `--ref` aligned as shown above.
 
 Confirm the plan and let the installer install Tailscale if needed. It will guide you through
@@ -286,7 +286,7 @@ Corepack first, then:
 ```sh
 git clone https://github.com/Ic3b3rg/veduta.git
 cd veduta
-git checkout v0.0.62
+git checkout v0.0.63
 corepack enable
 corepack prepare pnpm@10.28.0 --activate
 pnpm install --frozen-lockfile
