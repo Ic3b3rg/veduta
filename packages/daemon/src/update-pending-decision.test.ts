@@ -50,6 +50,7 @@ describe('UpdatePendingDecisionAdapter', () => {
       {
         id: 'update-offer:1.1.0',
         kind: 'update-offer',
+        updateVersion: '1.1.0',
         summary: 'Apply verified update 1.1.0',
         scope: { type: 'space', spaceId: 'spc-system' },
         allowedResolutions: ['apply'],

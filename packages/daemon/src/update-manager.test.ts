@@ -16,12 +16,19 @@ import {
 } from '@veduta/protocol'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Scheduler } from './scheduler.ts'
+import { NotificationCenter, type NotificationInput } from './notification-center.ts'
+import { NotificationsConfigSchema } from './notifications-config.ts'
+import { PushStore } from './push-store.ts'
 import { Store } from './store.ts'
 import { ensureSystemSpace, SYSTEM_SPACE_ID } from './system-space.ts'
 import { untrustedOrigin } from './taint.ts'
 import { generateKeypair, publicKeyIdText, sign, type GeneratedKeypair } from './update/minisign.ts'
 import { resolveUpdateHome } from './update/update-transaction.ts'
-import { UpdateManager, type UpdateManagerConfig } from './update-manager.ts'
+import {
+  UpdateManager,
+  type UpdateManagerConfig,
+  type UpdateManagerOptions,
+} from './update-manager.ts'
 import {
   UPDATE_CHECK_STATE_KEY,
   UPDATE_LAST_SUCCESSFUL_CHECK_STATE_KEY,
@@ -80,7 +87,7 @@ let server: Server
 let feedBody = ''
 let pinningPath: string
 let root: GeneratedKeypair
-let notifications: { level: string; spaceId: string; text: string; origin?: string }[]
+let notifications: NotificationInput[]
 let scheduleExitCalls: number
 let manager: UpdateManager
 let port: number
@@ -140,12 +147,17 @@ function serveRelease(
   })
 }
 
-function buildManager(overrides: Partial<UpdateManagerConfig> = {}): UpdateManager {
+function buildManager(
+  overrides: Partial<UpdateManagerConfig> = {},
+  sink?: UpdateManagerOptions['notifications'],
+): UpdateManager {
   return new UpdateManager({
     store,
     scheduler,
-    notifications: {
-      notify: (input) => notifications.push(input as (typeof notifications)[number]),
+    notifications: sink ?? {
+      prepareAnnouncement: () => {},
+      recoverAnnouncement: () => {},
+      notify: (input) => notifications.push(input),
     },
     config: {
       updateHome: updateHomeDir,
@@ -247,7 +259,220 @@ describe('UpdateManager.register', () => {
 })
 
 describe('UpdateManager.runCheck', () => {
-  it('discovers a newer, verified offer: Surface updated, event appended with untrusted origin, badge notified', async () => {
+  it.each([true, false])(
+    'recovers a crash after offer persistence with the original device snapshot (subscribed: %s)',
+    async (subscribed) => {
+      let pushStore = new PushStore({ rootDir })
+      const recipients: string[] = []
+      const buildCenter = () =>
+        new NotificationCenter({
+          store,
+          pushStore,
+          now,
+          config: NotificationsConfigSchema.parse({ quietHours: null }),
+          transport: {
+            send: async (subscription) => {
+              recipients.push(subscription.endpoint)
+              return 'ok'
+            },
+          },
+          isAnnouncementCurrent: (id) => manager.isAnnouncementCurrent(id),
+        })
+      let center = buildCenter()
+      try {
+        if (subscribed)
+          pushStore.upsertSubscription({
+            endpoint: 'https://push.example/original',
+            p256dh: 'p1',
+            auth: 'a1',
+          })
+        manager.dispose()
+        manager = buildManager(
+          {},
+          {
+            prepareAnnouncement: (id) => center.prepareAnnouncement(id),
+            recoverAnnouncement: (input) => center.recoverAnnouncement(input),
+            notify: () => {
+              throw new Error('simulated process interruption before announcement activation')
+            },
+          },
+        )
+        manager.register()
+        await manager.runCheck('manual')
+        expect(manager.getUpdateDecision('1.1.0')).toMatchObject({ status: 'pending' })
+        expect(recipients).toEqual([])
+        manager.dispose()
+        center.dispose()
+        pushStore.close()
+        pushStore = new PushStore({ rootDir })
+        pushStore.upsertSubscription({
+          endpoint: 'https://push.example/later',
+          p256dh: 'p2',
+          auth: 'a2',
+        })
+        center = buildCenter()
+        manager = buildManager({}, center)
+        manager.register()
+        await manager.start()
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        expect(recipients).toEqual(subscribed ? ['https://push.example/original'] : [])
+        await manager.start()
+        await manager.runCheck('automation')
+        expect(recipients).toHaveLength(subscribed ? 1 : 0)
+      } finally {
+        center.dispose()
+        pushStore.close()
+      }
+    },
+  )
+
+  it('keeps a newer pending offer canonical while an older installation resolves across restart', async () => {
+    manager.register()
+    await manager.applyUpdate('trusted:user')
+    serveRelease(defaultRelease({ version: '1.2.0', notes: 'Newer release notes' }))
+    await manager.runCheck('manual')
+    manager.dispose()
+    manager = buildManager({ installedVersion: '1.1.0' })
+    manager.register()
+    expect(
+      findNode(store.getSurface(UPDATE_SURFACE_ID)!.tree, 'update-available-stat'),
+    ).toHaveProperty('props.value', '1.2.0')
+    const home = resolveUpdateHome(updateHomeDir)
+    const result: UpdateResult = {
+      id: 'older-installation',
+      outcome: 'success',
+      fromVersion: '1.0.0',
+      toVersion: '1.1.0',
+      reason: '',
+      finishedAt: now().toISOString(),
+    }
+    writeFileSync(join(home.stateDir, 'result.json'), JSON.stringify(result))
+    await manager.start()
+    const surface = store.getSurface(UPDATE_SURFACE_ID)!
+    expect(findNode(surface.tree, 'update-available-stat')).toHaveProperty('props.value', '1.2.0')
+    expect(findNode(surface.tree, 'update-available-notes')).toHaveProperty(
+      'props.text',
+      'Newer release notes',
+    )
+    expect(store.surfaceProvenance(UPDATE_SURFACE_ID)?.contentOrigin).toBe(
+      untrustedOrigin('update-feed'),
+    )
+    expect(manager.getUpdateDecision('1.1.0')).toMatchObject({ status: 'applied' })
+    expect(manager.isAnnouncementCurrent('update-offer:1.2.0')).toBe(true)
+  })
+
+  it('announces each verified version once through Notification Center across checks and restart', async () => {
+    const pushStore = new PushStore({ rootDir })
+    const delivered: { title: string; body: string; url: string }[] = []
+    const center = new NotificationCenter({
+      store,
+      pushStore,
+      now,
+      config: NotificationsConfigSchema.parse({ quietHours: null }),
+      transport: {
+        send: async (_subscription, payload) => {
+          delivered.push(payload)
+          return 'ok'
+        },
+      },
+      isAnnouncementCurrent: (id) => manager.isAnnouncementCurrent(id),
+    })
+    try {
+      manager.dispose()
+      manager = buildManager({}, center)
+      manager.register()
+      pushStore.upsertSubscription({ endpoint: 'https://push.example/a', p256dh: 'p1', auth: 'a1' })
+      serveRelease(
+        defaultRelease({ notes: 'Secret feed-controlled prose: do not show on a lock screen' }),
+      )
+      await Promise.all([manager.runCheck('manual'), manager.runCheck('automation')])
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(delivered).toEqual([
+        {
+          title: 'Veduta',
+          body: 'System — Veduta 1.1.0 is available',
+          url: '/app/space/system/surface/srf-update',
+        },
+      ])
+      manager.dispose()
+      manager = buildManager({}, center)
+      manager.register()
+      await manager.start()
+      await manager.runCheck('automation')
+      await manager.runCheck('manual')
+      expect(delivered).toHaveLength(1)
+      serveRelease(defaultRelease({ version: '1.2.0' }))
+      await manager.runCheck('automation')
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(delivered).toHaveLength(2)
+      expect(delivered[1]?.body).toBe('System — Veduta 1.2.0 is available')
+      expect(manager.isAnnouncementCurrent('update-offer:1.1.0')).toBe(false)
+      expect(manager.isAnnouncementCurrent('update-offer:1.2.0')).toBe(true)
+      serveRelease(defaultRelease({ version: '1.3.0' }), { corruptReleaseSig: true })
+      await manager.runCheck('manual')
+      expect(manager.isAnnouncementCurrent('update-offer:1.2.0')).toBe(true)
+      expect(delivered).toHaveLength(2)
+      serveRelease(defaultRelease({ version: '1.0.0' }))
+      await manager.runCheck('manual')
+      expect(manager.isAnnouncementCurrent('update-offer:1.2.0')).toBe(false)
+      expect(delivered).toHaveLength(2)
+    } finally {
+      center.dispose()
+      pushStore.close()
+    }
+  })
+
+  it('retires a persisted offer already installed on the next Gateway boot', async () => {
+    manager.register()
+    await manager.runCheck('manual')
+    manager.dispose()
+    manager = buildManager({ installedVersion: '1.1.0' })
+    manager.register()
+    expect(manager.getUpdateDecision('1.1.0')).toMatchObject({ status: 'stale' })
+    expect(manager.isAnnouncementCurrent('update-offer:1.1.0')).toBe(false)
+    expect(
+      findNode(store.getSurface(UPDATE_SURFACE_ID)!.tree, 'update-apply-button'),
+    ).toBeUndefined()
+  })
+
+  it('restores the pending offer when superseded releases have the same discovery timestamp', async () => {
+    manager.register()
+    serveRelease(defaultRelease({ version: '1.9.0' }))
+    await manager.runCheck('manual')
+    serveRelease(defaultRelease({ version: '1.10.0' }))
+    await manager.runCheck('manual')
+    manager.dispose()
+    manager = buildManager()
+    manager.register()
+    expect(manager.getUpdateDecision('1.10.0')).toMatchObject({ status: 'pending' })
+    expect(
+      findNode(store.getSurface(UPDATE_SURFACE_ID)!.tree, 'update-available-stat'),
+    ).toHaveProperty('props.value', '1.10.0')
+    await manager.applyUpdate('trusted:user', '1.10.0')
+    const home = resolveUpdateHome(updateHomeDir)
+    rmSync(join(home.stateDir, 'marker.json'), { force: true })
+    const result: UpdateResult = {
+      id: 'semantic-version-result',
+      outcome: 'success',
+      fromVersion: '1.0.0',
+      toVersion: '1.10.0',
+      reason: '',
+      finishedAt: now().toISOString(),
+    }
+    writeFileSync(join(home.stateDir, 'result.json'), JSON.stringify(result))
+    await manager.start()
+    expect(
+      findNode(store.getSurface(UPDATE_SURFACE_ID)!.tree, 'update-outcome-badge'),
+    ).toHaveProperty('props.text', 'Updated to 1.10.0')
+    manager.dispose()
+    manager = buildManager({ installedVersion: '1.10.0' })
+    manager.register()
+    expect(
+      findNode(store.getSurface(UPDATE_SURFACE_ID)!.tree, 'update-outcome-badge'),
+    ).toHaveProperty('props.text', 'Updated to 1.10.0')
+  })
+
+  it('discovers a newer verified offer and requests a product-owned push to its canonical Updates Surface', async () => {
     manager.register()
     serveRelease(defaultRelease({ version: '1.1.0', dataVersion: 1, notes: 'Bug fixes' }))
 
@@ -271,9 +496,12 @@ describe('UpdateManager.runCheck', () => {
 
     expect(notifications).toHaveLength(1)
     expect(notifications[0]).toMatchObject({
-      level: 'badge',
+      level: 'push',
+      text: 'Veduta 1.1.0 is available',
+      announcementId: 'update-offer:1.1.0',
+      surfaceId: UPDATE_SURFACE_ID,
       spaceId: SYSTEM_SPACE_ID,
-      origin: untrustedOrigin('update-feed'),
+      origin: 'trusted:system',
     })
   })
 

@@ -24,6 +24,25 @@ const pendingApproval = {
 } as const
 
 describe('PendingDecisionSchema', () => {
+  it('carries an explicit update version only for the matching canonical update offer', () => {
+    const offer = {
+      ...pendingApproval,
+      id: 'update-offer:1.2.3',
+      kind: 'update-offer',
+      allowedResolutions: ['apply'],
+      updateVersion: '1.2.3',
+    }
+    expect(PendingDecisionSchema.parse(offer)).toEqual(offer)
+    expect(PendingDecisionSchema.safeParse({ ...offer, updateVersion: '9.9.9' }).success).toBe(
+      false,
+    )
+    expect(
+      PendingDecisionSchema.safeParse({ ...offer, updateVersion: 'release notes' }).success,
+    ).toBe(false)
+    expect(
+      PendingDecisionSchema.safeParse({ ...pendingApproval, updateVersion: '1.2.3' }).success,
+    ).toBe(false)
+  })
   it('validates one safe channel-neutral decision contract', () => {
     expect(PendingDecisionSchema.parse(pendingApproval)).toEqual(pendingApproval)
     expect(PendingDecisionListSchema.safeParse({ decisions: [pendingApproval] }).success).toBe(

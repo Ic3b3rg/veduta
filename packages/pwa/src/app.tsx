@@ -128,9 +128,6 @@ function RoutedApp() {
     onRevealSurface: revealPendingDecisionSurface,
     wasRevealShown: wasSurfaceRevealShown,
   })
-  const pendingDecisions = snapshot.pendingDecisions.filter(
-    (decision) => !dismissedDecisionIds.has(decision.id),
-  )
   const surfaceRevealFeedbackKeys = useMemo(
     () => ({ ...surfaceCreationFeedbackKeys, ...pendingDecisionRevealKeys }),
     [surfaceCreationFeedbackKeys, pendingDecisionRevealKeys],
@@ -397,7 +394,7 @@ function RoutedApp() {
       route={appRouteSelection}
       surfaceRevealFeedbackKeys={surfaceRevealFeedbackKeys}
       surfaceUpdateFeedbacks={surfaceUpdateFeedbacks}
-      pendingDecisions={pendingDecisions}
+      pendingDecisions={snapshot.pendingDecisions}
       dismissedDecisionIds={dismissedDecisionIds}
       resolvingDecisionIds={resolvingDecisionIds}
       automationOutcomeNotifications={automationOutcomeNotifications}

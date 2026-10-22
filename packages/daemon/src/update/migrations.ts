@@ -1,6 +1,7 @@
 import { stampDataVersion } from './data-version-marker.ts'
 import { migrateV2RelativeTimeSurfaceValidity } from './migration-v2-relative-time.ts'
 import { migrateV3RecurringNotifications } from './migration-v3-recurring-notifications.ts'
+import { migrateV4PushAnnouncements } from './migration-v4-push-announcements.ts'
 
 /**
  * One forward-only data migration (`docs/adr/0013-signed-self-update.md`):
@@ -50,6 +51,12 @@ export const MIGRATIONS: readonly DataMigration[] = [
     description:
       'Persist explicitly requested recurring notification operations without changing legacy Automation instructions.',
     migrate: migrateV3RecurringNotifications,
+  },
+  {
+    to: 4,
+    description:
+      'Preserve push queues while adding durable release announcement identities and discovery-time recipients.',
+    migrate: migrateV4PushAnnouncements,
   },
 ]
 

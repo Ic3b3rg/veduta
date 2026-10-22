@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { writeJsonAtomicDurable } from './atomic-file.ts'
 import { isValidOrigin, type Origin } from './taint.ts'
 import type { UpdateSurfaceAvailable } from './update-surface.ts'
+import { compareVersions } from './version.ts'
 
 export type UpdateDecisionStatus =
   'pending' | 'resolving' | 'applied' | 'rolled-back' | 'refused' | 'stale' | 'failed'
@@ -84,7 +85,13 @@ export class UpdateDecisionStore {
   }
 
   latest(): UpdateDecisionRecord | undefined {
-    return this.list().at(-1)
+    return this.list()
+      .sort((left, right) => {
+        const leftAt = left.resolvedAt ?? left.decisionAt ?? left.createdAt
+        const rightAt = right.resolvedAt ?? right.decisionAt ?? right.createdAt
+        return leftAt.localeCompare(rightAt) || compareVersions(left.version, right.version)
+      })
+      .at(-1)
   }
 
   get(version: string): UpdateDecisionRecord | undefined {
