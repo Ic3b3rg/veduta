@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { ReleaseMetadataSchema } from './update.ts'
 
 export const PendingDecisionKindSchema = z.enum([
   'approval',
@@ -124,6 +125,8 @@ export const PendingDecisionSchema = z
   .object({
     id: z.string().min(1).max(300),
     kind: PendingDecisionKindSchema,
+    /** Verified software version; never inferred from a summary or release notes. */
+    updateVersion: ReleaseMetadataSchema.shape.version.optional(),
     summary: z.string().min(1).max(500),
     scope: PendingDecisionScopeSchema,
     allowedResolutions: z.array(PendingDecisionResolutionSchema).min(1).max(4),
@@ -137,6 +140,17 @@ export const PendingDecisionSchema = z
   })
   .strict()
   .superRefine((decision, context) => {
+    if (
+      decision.updateVersion !== undefined &&
+      (decision.kind !== 'update-offer' ||
+        pendingDecisionNativeId(decision.id, 'update-offer') !== decision.updateVersion)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['updateVersion'],
+        message: 'updateVersion must match the canonical update-offer id',
+      })
+    }
     const contract = KIND_CONTRACT[decision.kind]
     if (parsePendingDecisionId(decision.id)?.kind !== decision.kind) {
       context.addIssue({

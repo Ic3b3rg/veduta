@@ -50,6 +50,7 @@ export class UpdatePendingDecisionAdapter implements PendingDecisionAdapter {
     const base = {
       id: formatPendingDecisionId(this.kind, record.version),
       kind: this.kind,
+      updateVersion: record.version,
       summary: `Apply verified update ${record.version}`,
       scope: { type: 'space', spaceId: SYSTEM_SPACE_ID } as const,
       allowedResolutions: ['apply'] as const,

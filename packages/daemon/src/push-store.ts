@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { PUSH_ANNOUNCEMENT_SCHEMA } from './push-announcement-schema.ts'
 import {
   optionalString,
   requiredNumber,
@@ -37,6 +38,7 @@ export interface OutboxRow {
   attempts: number
   nextAttemptAt: string
   createdAt: string
+  announcementId?: string
 }
 
 export interface DeferredRow {
@@ -46,7 +48,18 @@ export interface DeferredRow {
   body: string
   url: string
   createdAt: string
+  announcementId?: string
 }
+
+interface PushRow {
+  endpoint: string
+  title: string
+  body: string
+  url: string
+  announcementId?: string
+}
+
+type AnnouncementDecision = 'push' | 'queued' | 'no-devices'
 
 export interface PushStoreOptions {
   rootDir: string
@@ -93,11 +106,22 @@ export class PushStore {
   }
 
   deleteSubscription(endpoint: string): void {
-    this.db.prepare('delete from subscriptions where endpoint = ?').run(endpoint)
+    withImmediateTransaction(this.db, () => {
+      this.db.prepare('delete from push_announcement_targets where endpoint = ?').run(endpoint)
+      this.db.prepare('delete from subscriptions where endpoint = ?').run(endpoint)
+    })
   }
 
   deleteSubscriptionsByDevice(deviceId: string): void {
-    this.db.prepare('delete from subscriptions where device_id = ?').run(deviceId)
+    withImmediateTransaction(this.db, () => {
+      this.db
+        .prepare(
+          `delete from push_announcement_targets where endpoint in
+        (select endpoint from subscriptions where device_id = ?)`,
+        )
+        .run(deviceId)
+      this.db.prepare('delete from subscriptions where device_id = ?').run(deviceId)
+    })
   }
 
   listSubscriptions(): SubscriptionRow[] {
@@ -133,21 +157,78 @@ export class PushStore {
   }
 
   /** Atomically persist the complete per-device fan-out before attempting delivery. */
-  enqueuePush(
-    rows: Array<{ endpoint: string; title: string; body: string; url: string }>,
-    now: Date,
-  ): number[] {
+  enqueuePush(rows: PushRow[], now: Date): number[] {
     return withImmediateTransaction(this.db, () => this.insertOutboxUnguarded(rows, now))
+  }
+
+  /** Freeze recipients before the caller commits its authoritative discovery. */
+  prepareAnnouncement(id: string): void {
+    withImmediateTransaction(this.db, () => this.prepareAnnouncementUnguarded(id))
+  }
+
+  hasAnnouncement(id: string): boolean {
+    return this.db.prepare('select 1 from push_announcements where id = ?').get(id) !== undefined
+  }
+
+  /** Activate a prepared identity atomically with its deferred or per-device delivery intent. */
+  enqueueAnnouncement(
+    input: {
+      id: string
+      spaceId: string
+      title: string
+      body: string
+      url: string
+      deferred: boolean
+    },
+    now: Date,
+  ): { created: boolean; decision: AnnouncementDecision } {
+    return withImmediateTransaction(this.db, () => {
+      this.prepareAnnouncementUnguarded(input.id)
+      const existing = this.db
+        .prepare('select outcome from push_announcements where id = ?')
+        .get(input.id)
+      if (existing && requiredString(existing, 'outcome') !== 'prepared') {
+        return {
+          created: false,
+          decision: announcementDecision(requiredString(existing, 'outcome')),
+        }
+      }
+      const subscriptions = this.announcementSubscriptions(input.id)
+      const decision =
+        subscriptions.length === 0 ? 'no-devices' : input.deferred ? 'queued' : 'push'
+      this.db
+        .prepare('update push_announcements set outcome = ? where id = ?')
+        .run(decision, input.id)
+      if (decision === 'queued') {
+        this.insertDeferred({ ...input, announcementId: input.id }, now)
+      } else if (decision === 'push') {
+        this.insertOutboxUnguarded(
+          subscriptions.map(({ endpoint }) => ({ ...input, endpoint, announcementId: input.id })),
+          now,
+        )
+      }
+      return { created: true, decision }
+    })
+  }
+
+  /** Revoked/replaced subscriptions never rejoin an existing announcement. */
+  announcementSubscriptions(id: string): SubscriptionRow[] {
+    return this.db
+      .prepare(
+        `
+      select s.* from subscriptions s join push_announcement_targets t
+        on t.endpoint = s.endpoint and t.p256dh = s.p256dh and t.auth = s.auth
+      where t.announcement_id = ? order by s.endpoint
+    `,
+      )
+      .all(id)
+      .map(subscriptionFromRow)
   }
 
   // --- outbox ---
 
   /** Atomic digest swap (plan): the individual rows leave and the digest rows land together. */
-  replaceOutbox(
-    ids: number[],
-    rows: Array<{ endpoint: string; title: string; body: string; url: string }>,
-    now: Date,
-  ): void {
+  replaceOutbox(ids: number[], rows: PushRow[], now: Date): void {
     withImmediateTransaction(this.db, () => {
       const statement = this.db.prepare('delete from push_outbox where id = ?')
       for (const id of ids) statement.run(id)
@@ -204,15 +285,22 @@ export class PushStore {
   // --- deferred (quiet-hours digest queue) ---
 
   insertDeferred(
-    input: { spaceId: string; title: string; body: string; url: string },
+    input: { spaceId: string; title: string; body: string; url: string; announcementId?: string },
     now: Date,
   ): void {
     this.db
       .prepare(
-        `insert into push_deferred (space_id, title, body, url, created_at)
-         values (?, ?, ?, ?, ?)`,
+        `insert into push_deferred (space_id, title, body, url, created_at, announcement_id)
+         values (?, ?, ?, ?, ?, ?)`,
       )
-      .run(input.spaceId, input.title, input.body, input.url, now.toISOString())
+      .run(
+        input.spaceId,
+        input.title,
+        input.body,
+        input.url,
+        now.toISOString(),
+        input.announcementId ?? null,
+      )
   }
 
   /** Read-only: rows stay queued until `flushDeferredItem` settles each one. */
@@ -229,7 +317,7 @@ export class PushStore {
   flushDeferredItem(
     deferredId: number,
     input: {
-      rows: Array<{ endpoint: string; title: string; body: string; url: string }>
+      rows: PushRow[]
       now: Date
     },
   ): number[] {
@@ -251,19 +339,36 @@ export class PushStore {
 
   // --- internals ---
 
+  private prepareAnnouncementUnguarded(id: string): void {
+    const inserted = this.db
+      .prepare("insert or ignore into push_announcements (id, outcome) values (?, 'prepared')")
+      .run(id)
+    if (inserted.changes === 0) return
+    const target = this.db.prepare(
+      'insert into push_announcement_targets (announcement_id, endpoint, p256dh, auth) values (?, ?, ?, ?)',
+    )
+    for (const subscription of this.listSubscriptions())
+      target.run(id, subscription.endpoint, subscription.p256dh, subscription.auth)
+  }
+
   /** Must run inside a caller-held transaction. Returns the inserted row ids. */
-  private insertOutboxUnguarded(
-    rows: Array<{ endpoint: string; title: string; body: string; url: string }>,
-    now: Date,
-  ): number[] {
+  private insertOutboxUnguarded(rows: PushRow[], now: Date): number[] {
     const at = now.toISOString()
     const statement = this.db.prepare(
-      `insert into push_outbox (endpoint, title, body, url, attempts, next_attempt_at, created_at)
-       values (?, ?, ?, ?, 0, ?, ?)`,
+      `insert into push_outbox (endpoint, title, body, url, attempts, next_attempt_at, created_at, announcement_id)
+       values (?, ?, ?, ?, 0, ?, ?, ?)`,
     )
     const ids: number[] = []
     for (const row of rows) {
-      const result = statement.run(row.endpoint, row.title, row.body, row.url, at, at)
+      const result = statement.run(
+        row.endpoint,
+        row.title,
+        row.body,
+        row.url,
+        at,
+        at,
+        row.announcementId ?? null,
+      )
       ids.push(Number(result.lastInsertRowid))
     }
     return ids
@@ -310,7 +415,8 @@ export class PushStore {
         url text not null,
         attempts integer not null default 0,
         next_attempt_at text not null,
-        created_at text not null
+        created_at text not null,
+        announcement_id text
       );
       create index if not exists push_outbox_due
         on push_outbox (next_attempt_at);
@@ -321,9 +427,12 @@ export class PushStore {
         title text not null,
         body text not null,
         url text not null,
-        created_at text not null
+        created_at text not null,
+        announcement_id text
       );
+
     `)
+    this.db.exec(PUSH_ANNOUNCEMENT_SCHEMA)
   }
 }
 
@@ -347,6 +456,9 @@ function outboxFromRow(row: Record<string, unknown>): OutboxRow {
     attempts: requiredNumber(row, 'attempts'),
     nextAttemptAt: requiredString(row, 'next_attempt_at'),
     createdAt: requiredString(row, 'created_at'),
+    ...(optionalString(row, 'announcement_id') === undefined
+      ? {}
+      : { announcementId: requiredString(row, 'announcement_id') }),
   }
 }
 
@@ -358,5 +470,13 @@ function deferredFromRow(row: Record<string, unknown>): DeferredRow {
     body: requiredString(row, 'body'),
     url: requiredString(row, 'url'),
     createdAt: requiredString(row, 'created_at'),
+    ...(optionalString(row, 'announcement_id') === undefined
+      ? {}
+      : { announcementId: requiredString(row, 'announcement_id') }),
   }
+}
+
+function announcementDecision(value: string): AnnouncementDecision {
+  if (value === 'queued' || value === 'push' || value === 'no-devices') return value
+  throw new Error(`invalid announcement outcome: ${value}`)
 }

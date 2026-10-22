@@ -155,7 +155,11 @@ export function AppShell({
       ? `${focusedSpace.name} Space`
       : 'Home'
   const pendingDecisionFeedback = latestPendingDecisionFeedback(chatEntries)
-  const pendingDecisionPresentation = presentPendingDecisions(pendingDecisions, spaces)
+  const pendingDecisionPresentation = presentPendingDecisions(
+    pendingDecisions,
+    spaces,
+    dismissedDecisionIds,
+  )
   const focusedPendingNotifications =
     (focusedSpace && pendingDecisionPresentation.notificationsBySpaceId.get(focusedSpace.id)) ?? []
 
@@ -189,6 +193,22 @@ export function AppShell({
             </div>
           </header>
           {announcement}
+          {pendingDecisionPresentation.updateNotice && (
+            <section
+              className="software-update-notice recipe-surface"
+              aria-label="Veduta software update"
+            >
+              <p role="status">
+                Veduta {pendingDecisionPresentation.updateNotice.version} is available
+              </p>
+              <Link
+                className="recipe-control recipe-focus"
+                to={pendingDecisionPresentation.updateNotice.reviewPath}
+              >
+                Review update
+              </Link>
+            </section>
+          )}
 
           <div className="shell-layout">
             <SpaceNavigation

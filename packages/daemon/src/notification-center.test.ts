@@ -75,12 +75,15 @@ function newCenter(overrides: Partial<NotificationsConfig> = {}): NotificationCe
     transport,
     config: config(overrides),
     now,
+    isAnnouncementCurrent: (id) => currentAnnouncements.has(id),
     onAttention: (spaceId, count, revision) => attentionCalls.push({ spaceId, count, revision }),
     onStats: () => {
       statsEmits += 1
     },
   })
 }
+
+let currentAnnouncements = new Set<string>()
 
 function addSubscription(endpoint = 'https://push.example/a'): void {
   pushStore.upsertSubscription({ endpoint, p256dh: 'p1', auth: 'a1' })
@@ -102,6 +105,126 @@ beforeEach(() => {
   transport = new FakeTransport()
   attentionCalls = []
   statsEmits = 0
+  currentAnnouncements = new Set(['update-offer:1.2.3'])
+})
+
+describe('durable announcements', () => {
+  it('defers only discovery-time subscriptions across restart, preserving the announcement destination alongside digests', async () => {
+    addSubscription()
+    const quietHours = { start: '22:00', end: '08:00' }
+    clock = new Date('2026-07-08T23:00:00.000Z')
+    const center = newCenter({ quietHours, digestThreshold: 1 })
+    const input = pushInput({ announcementId: 'update-offer:1.2.3', surfaceId: HEALTH_SURFACE })
+    expect(center.notify(input)).toBe('queued')
+    expect(center.notify(input)).toBe('queued')
+    center.notify(pushInput())
+    center.notify(pushInput())
+    expect(transport.calls).toHaveLength(0)
+    center.dispose()
+    pushStore.close()
+    pushStore = new PushStore({ rootDir })
+    addSubscription('https://push.example/later')
+    clock = new Date('2026-07-09T08:00:00.000Z')
+    const restarted = newCenter({ quietHours, digestThreshold: 1 })
+    restarted.start()
+    await flushAsync()
+    const announcement = transport.calls.filter(({ payload }) => payload.url !== '/')
+    expect(announcement).toEqual([
+      expect.objectContaining({
+        subscription: expect.objectContaining({ endpoint: 'https://push.example/a' }),
+        payload: expect.objectContaining({ url: '/app/space/health/surface/srf-goal' }),
+      }),
+    ])
+    expect(
+      transport.calls.filter(({ payload }) => payload.body === '2 updates while you were away'),
+    ).toHaveLength(2)
+    expect(restarted.stats()).toEqual({ queuedCount: 0 })
+    restarted.notify(input)
+    await flushAsync()
+    expect(transport.calls).toHaveLength(3)
+    restarted.dispose()
+  })
+
+  it.each(['absent', 'revoked', 'replaced'] as const)(
+    'does not add %s subscriptions after discovery',
+    async (state) => {
+      if (state !== 'absent') addSubscription()
+      clock = new Date('2026-07-08T23:00:00.000Z')
+      const quietHours = { start: '22:00', end: '08:00' }
+      const center = newCenter({ quietHours })
+      const input = pushInput({ announcementId: 'update-offer:1.2.3' })
+      expect(center.notify(input)).toBe(state === 'absent' ? 'no-devices' : 'queued')
+      if (state === 'revoked') {
+        pushStore.deleteSubscription('https://push.example/a')
+        addSubscription()
+      } else
+        pushStore.upsertSubscription({
+          endpoint: 'https://push.example/a',
+          p256dh: 'new',
+          auth: 'new',
+        })
+      center.dispose()
+      clock = new Date('2026-07-09T08:00:00.000Z')
+      const restarted = newCenter({ quietHours })
+      restarted.start()
+      restarted.notify(input)
+      await flushAsync()
+      expect(transport.calls).toHaveLength(0)
+      expect(notificationEvents(HEALTH)).toHaveLength(1)
+      restarted.dispose()
+    },
+  )
+
+  it('drops obsolete deferred offers and retries while allowing a later announcement', async () => {
+    addSubscription()
+    clock = new Date('2026-07-08T23:00:00.000Z')
+    const quietHours = { start: '22:00', end: '08:00' }
+    const center = newCenter({ quietHours })
+    center.notify(pushInput({ announcementId: 'update-offer:1.2.3' }))
+    center.dispose()
+    currentAnnouncements = new Set(['update-offer:1.2.4'])
+    clock = new Date('2026-07-09T08:00:00.000Z')
+    const restarted = newCenter({ quietHours })
+    restarted.start()
+    await flushAsync()
+    expect(transport.calls).toHaveLength(0)
+    transport.results = ['error']
+    restarted.notify(pushInput({ announcementId: 'update-offer:1.2.4' }))
+    await flushAsync()
+    expect(transport.calls).toHaveLength(1)
+    currentAnnouncements.clear()
+    clock = new Date(clock.getTime() + 30_000)
+    restarted.start()
+    await flushAsync()
+    expect(transport.calls).toHaveLength(1)
+    expect(pushStore.claimDueOutbox(clock)).toEqual([])
+    restarted.dispose()
+  })
+
+  it('replays one logical announcement across restart and transport retry without adding recipients', async () => {
+    addSubscription()
+    transport.results = ['error', 'ok']
+    const input = pushInput({ announcementId: 'update-offer:1.2.3' })
+    const center = newCenter()
+    expect(center.notify(input)).toBe('push')
+    await flushAsync()
+    center.dispose()
+    pushStore.close()
+    pushStore = new PushStore({ rootDir })
+    addSubscription('https://push.example/later')
+    clock = new Date(clock.getTime() + 30_000)
+    const restarted = newCenter()
+    expect(restarted.notify(input)).toBe('push')
+    restarted.start()
+    await flushAsync()
+    expect(transport.calls.map(({ subscription }) => subscription.endpoint)).toEqual([
+      'https://push.example/a',
+      'https://push.example/a',
+    ])
+    expect(notificationEvents(HEALTH)).toHaveLength(1)
+    expect(attentionCalls).toHaveLength(1)
+    restarted.dispose()
+  })
 })
 
 afterEach(() => {

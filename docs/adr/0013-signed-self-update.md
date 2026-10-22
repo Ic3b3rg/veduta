@@ -297,3 +297,28 @@ artifact fetch actually sits.
    generalizing: for any signature, the transport must preserve the signed bytes exactly, and the
    test that proves it has to cross the producer/consumer boundary — testing each side against its
    own idea of the bytes is what let this reach a published release.
+
+## Amendment: persistent availability and version announcements (#290)
+
+A verified pending update offer also projects into an accessible notice in the fixed PWA shell,
+including Home and other Spaces. Its explicit `updateVersion` comes from the workflow-owned
+Pending decision; its review link uses that same decision's existing Updates Surface. Opening
+Updates, clearing Space attention or dismissing a generic decision card does not resolve the offer.
+Only the existing explicit Apply action starts installation.
+
+Discovery requests one logical browser-push announcement per verified version through Notification
+Center, using the canonical update-offer id as its durable identity. The identity and initial
+subscription recipients are prepared durably before the verified offer is persisted. Activation
+commits atomically with quiet-hour deferral or per-device outbox rows, including the no-device
+outcome. Boot recovers a prepared announcement for a pending offer without another feed check or
+enrolling later devices. Repeated checks and restarts replay that routing decision; retries retain
+the same identity. Deferred and retrying announcements recheck the authoritative offer before
+sending, so superseded, resolving or terminal offers cannot announce current availability. Revoked
+or replaced subscriptions and devices enabled after discovery do not join an existing announcement.
+
+The push body uses product-owned software-update copy and only the validated numeric version;
+release notes and all feed-controlled prose retain their Untrusted origin. Branding and delivery
+policy remain those of [ADR-0005](0005-event-driven-proactivity.md). Identity-bound announcements
+keep their individual review destination and cancellation gate when a quiet-hour batch flushes;
+ordinary queued notifications retain their existing digest behavior. A delivery request or retry
+never asserts that a device displayed it.

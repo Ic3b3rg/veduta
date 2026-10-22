@@ -23,7 +23,7 @@ import {
 } from '@veduta/protocol'
 import { timeToCron } from './cron.ts'
 import { reconcileManagedJobs } from './managed-jobs.ts'
-import type { NotificationInput } from './notification-center.ts'
+import type { NotificationCenter, NotificationInput } from './notification-center.ts'
 import type { Scheduler } from './scheduler.ts'
 import type { SpaceEvent } from './spaces-engine.ts'
 import type { Store } from './store.ts'
@@ -101,8 +101,15 @@ export interface UpdateManagerConfig {
 export interface UpdateManagerOptions {
   store: Store
   scheduler: Scheduler
-  notifications: { notify(input: NotificationInput): void }
+  notifications: UpdateNotifications
   config: UpdateManagerConfig
+}
+
+type UpdateNotifications = Pick<
+  NotificationCenter,
+  'prepareAnnouncement' | 'recoverAnnouncement'
+> & {
+  notify(input: NotificationInput): void
 }
 
 /** A release offer this process has itself verified against the pinned root of trust — set only by a `runCheck` that both confirmed a newer version and passed `verifyReleaseChain`. Re-verified at apply time by calling `runCheck` again first (never acting on a stale offer). */
@@ -253,7 +260,7 @@ async function fetchCapped(
 export class UpdateManager {
   private readonly store: Store
   private readonly scheduler: Scheduler
-  private readonly notifications: { notify(input: NotificationInput): void }
+  private readonly notifications: UpdateNotifications
   private readonly config: UpdateManagerConfig
   private readonly home: UpdateHome
   private readonly pinning: UpdatePinning
@@ -264,6 +271,7 @@ export class UpdateManager {
 
   private currentView: UpdateSurfaceView
   private verifiedOffer: VerifiedOffer | undefined
+  private checkInFlight: Promise<string> | undefined
   private readonly updateDecisions: UpdateDecisionStore
   private applyInFlight: Promise<UpdateDecisionRecord | undefined> | undefined
   private disposeFastMutation: (() => void) | undefined
@@ -284,7 +292,18 @@ export class UpdateManager {
       JSON.parse(readFileSync(options.config.pinningPath, 'utf8')),
     )
     this.updateDecisions = new UpdateDecisionStore({ stateDir: this.home.stateDir, now: this.now })
-    this.currentView = this.viewFromLatestDecision()
+    if (
+      /^\d+\.\d+\.\d+$/.test(this.installedVersion) &&
+      this.updateDecisions
+        .list()
+        .some(
+          (decision) =>
+            decision.status === 'pending' &&
+            compareVersions(decision.version, this.installedVersion) <= 0,
+        )
+    )
+      this.updateDecisions.markPendingOffersStale(this.now().toISOString())
+    this.currentView = this.viewFromCurrentDecision()
   }
 
   listUpdateDecisions(): UpdateDecisionRecord[] {
@@ -293,6 +312,15 @@ export class UpdateManager {
 
   getUpdateDecision(version: string): UpdateDecisionRecord | undefined {
     return this.updateDecisions.get(version)
+  }
+
+  /** Checked again at quiet-hour flush and before each delivery attempt. */
+  isAnnouncementCurrent(id: string): boolean {
+    return this.listUpdateDecisions().some(
+      (decision) =>
+        decision.status === 'pending' &&
+        formatPendingDecisionId('update-offer', decision.version) === id,
+    )
   }
 
   async resolveUpdateDecision(
@@ -382,8 +410,10 @@ export class UpdateManager {
     const result = resultFilePath(this.home)
     if (existsSync(result)) {
       await this.ingestResult(result)
+      this.recoverAnnouncements()
       return
     }
+    this.recoverAnnouncements()
     if (!existsSync(journalFilePath(this.home))) return
 
     const deadline = this.now().getTime() + RESULT_POLL_TIMEOUT_MS
@@ -406,8 +436,17 @@ export class UpdateManager {
     this.clearPollTimer()
   }
 
-  private viewFromLatestDecision(): UpdateSurfaceView {
-    const latest = this.updateDecisions.latest()
+  private currentDecision(): UpdateDecisionRecord | undefined {
+    const decisions = this.updateDecisions.list()
+    return (
+      decisions.find((decision) => decision.status === 'pending') ??
+      decisions.find((decision) => decision.status === 'resolving') ??
+      this.updateDecisions.latest()
+    )
+  }
+
+  private viewFromCurrentDecision(): UpdateSurfaceView {
+    const latest = this.currentDecision()
     if (!latest) return { currentVersion: this.installedVersion, status: 'idle' }
     return this.viewFromDecision(latest)
   }
@@ -501,6 +540,17 @@ export class UpdateManager {
    * when invoked from the scheduler.
    */
   async runCheck(source: 'automation' | 'manual'): Promise<string> {
+    if (this.checkInFlight) return this.checkInFlight
+    const work = this.runCheckOnce(source)
+    this.checkInFlight = work
+    try {
+      return await work
+    } finally {
+      if (this.checkInFlight === work) this.checkInFlight = undefined
+    }
+  }
+
+  private async runCheckOnce(source: 'automation' | 'manual'): Promise<string> {
     this.verifiedOffer = undefined
     try {
       const feedBytes = await fetchCapped(
@@ -574,6 +624,12 @@ export class UpdateManager {
         notes: metadata.notes,
         migratesData: metadata.dataVersion > installedDataVersion,
       }
+      const existingDecision = this.updateDecisions.get(metadata.version)
+      if (existingDecision === undefined || existingDecision.status === 'pending') {
+        this.notifications.prepareAnnouncement(
+          formatPendingDecisionId('update-offer', metadata.version),
+        )
+      }
       const decision = this.updateDecisions.recordVerifiedOffer(available, nowIso)
       if (decision.status !== 'pending') {
         this.currentView = this.viewFromDecision(decision)
@@ -600,12 +656,7 @@ export class UpdateManager {
           source,
         },
       })
-      this.notifications.notify({
-        level: 'badge',
-        spaceId: SYSTEM_SPACE_ID,
-        text: `Version ${metadata.version} available`,
-        origin,
-      })
+      this.notifications.notify(this.releaseAnnouncement(metadata.version))
       return `update-available:${metadata.version}`
     } catch (error) {
       const reason = messageOf(error)
@@ -769,6 +820,28 @@ export class UpdateManager {
     return resolving
   }
 
+  private releaseAnnouncement(
+    version: string,
+  ): Extract<NotificationInput, { level: 'push' }> & { announcementId: string } {
+    return {
+      level: 'push',
+      spaceId: SYSTEM_SPACE_ID,
+      text: `Veduta ${version} is available`,
+      justification: 'A verified Veduta software update is ready for review',
+      announcementId: formatPendingDecisionId('update-offer', version),
+      surfaceId: UPDATE_SURFACE_ID,
+      // Product-owned copy plus a validated numeric version; notes and feed prose stay untrusted.
+      origin: 'trusted:system',
+    }
+  }
+
+  private recoverAnnouncements(): void {
+    for (const decision of this.updateDecisions.list()) {
+      if (decision.status === 'pending')
+        this.notifications.recoverAnnouncement(this.releaseAnnouncement(decision.version))
+    }
+  }
+
   private resetFastActionKey(key: string): void {
     const existing = this.store.getSurface(UPDATE_SURFACE_ID)
     if (!existing || existing.state[key] === false) return
@@ -782,8 +855,7 @@ export class UpdateManager {
   }
 
   private ensureSurface(): void {
-    if (this.store.getSurface(UPDATE_SURFACE_ID)) return
-    this.refreshSurface(this.updateDecisions.latest()?.outcomeOrigin)
+    this.refreshSurface(this.currentDecision()?.outcomeOrigin)
   }
 
   private refreshAfterSuccessfulCheck(checkedAt: string): void {
@@ -989,12 +1061,8 @@ export class UpdateManager {
       }
     }
 
-    this.currentView = {
-      currentVersion: this.installedVersion,
-      status: outcomeStatus(result.outcome),
-      outcomeDetail: outcomeDetail(result),
-    }
-    this.refreshSurface(origin)
+    this.currentView = this.viewFromCurrentDecision()
+    this.refreshSurface(this.currentDecision()?.outcomeOrigin)
 
     try {
       this.writeAckFile(result.id)
@@ -1093,17 +1161,6 @@ export class UpdateManager {
       closeSync(fd)
     }
   }
-}
-
-function outcomeStatus(outcome: UpdateResult['outcome']): UpdateSurfaceView['status'] {
-  if (outcome === 'success') return 'applied'
-  if (outcome === 'rolled-back') return 'rolled-back'
-  return 'refused'
-}
-
-function outcomeDetail(result: UpdateResult): string {
-  if (result.outcome === 'success') return `Updated to ${result.toVersion}`
-  return result.reason || result.failedStage || result.outcome
 }
 
 function updateDecisionOutcomeText(decision: UpdateDecisionRecord): string {

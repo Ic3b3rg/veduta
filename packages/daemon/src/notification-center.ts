@@ -33,6 +33,8 @@ export type NotificationInput =
       urgent?: boolean
       surfaceId?: string
       automationId?: number
+      /** Durable identity shared by discovery, quiet-hour deferral and transport retries. */
+      announcementId?: string
     }
 
 /** The committed routing decision, never proof of delivery or device display. */
@@ -50,6 +52,7 @@ export interface NotificationCenterOptions {
   now?: () => Date
   onAttention?: (spaceId: string, count: number, revision: number) => void
   onStats?: () => void
+  isAnnouncementCurrent?: (id: string) => boolean
 }
 
 type PushInput = Extract<NotificationInput, { level: 'push' }>
@@ -68,6 +71,7 @@ export class NotificationCenter {
   private readonly onAttention:
     ((spaceId: string, count: number, revision: number) => void) | undefined
   private readonly onStats: (() => void) | undefined
+  private readonly isAnnouncementCurrent: (id: string) => boolean
 
   private flushTimer: NodeJS.Timeout | undefined
   private retryTimer: NodeJS.Timeout | undefined
@@ -84,6 +88,7 @@ export class NotificationCenter {
     this.now = options.now ?? (() => new Date())
     this.onAttention = options.onAttention
     this.onStats = options.onStats
+    this.isAnnouncementCurrent = options.isAnnouncementCurrent ?? (() => false)
   }
 
   /**
@@ -122,6 +127,16 @@ export class NotificationCenter {
       return 'badge'
     }
     return this.recordPush(input)
+  }
+
+  /** Durable recipient snapshot, taken before the workflow persists a new verified offer. */
+  prepareAnnouncement(id: string): void {
+    this.pushStore.prepareAnnouncement(id)
+  }
+
+  /** Boot recovery cannot enroll devices without a discovery-time snapshot. */
+  recoverAnnouncement(input: PushInput & { announcementId: string }): void {
+    if (this.pushStore.hasAnnouncement(input.announcementId)) this.notify(input)
   }
 
   /** No-op (returns null) when count is already 0 — clearing must never fabricate a change. */
@@ -167,19 +182,32 @@ export class NotificationCenter {
     const url = this.deepLink(input.spaceId, input.surfaceId)
     const payload: PushPayload = { title: 'Veduta', body, url }
     const truncatedText = truncate(input.text, 140)
+    const deferred = !input.urgent && this.isInsideQuietWindow()
+    let announcementDecision: Exclude<NotificationDecision, 'badge'> | undefined
+    if (input.announcementId !== undefined) {
+      const recorded = this.pushStore.enqueueAnnouncement(
+        {
+          id: input.announcementId,
+          spaceId: input.spaceId,
+          ...payload,
+          deferred,
+        },
+        this.now(),
+      )
+      if (!recorded.created) return recorded.decision
+      announcementDecision = recorded.decision
+    }
 
     // Attention is incremented once: a missed push must still show on Home.
     const attention = this.pushStore.incrementAttention(input.spaceId)
     this.onAttention?.(input.spaceId, attention.count, attention.revision)
 
-    const tz = resolveTimezone(this.config)
-    const quietWindow = this.config.quietHours
-
-    if (!input.urgent && quietWindow && isWithinQuietHours(this.now(), quietWindow, tz)) {
-      this.pushStore.insertDeferred(
-        { spaceId: input.spaceId, title: payload.title, body: payload.body, url: payload.url },
-        this.now(),
-      )
+    if (announcementDecision === 'queued' || (announcementDecision === undefined && deferred)) {
+      if (announcementDecision === undefined)
+        this.pushStore.insertDeferred(
+          { spaceId: input.spaceId, title: payload.title, body: payload.body, url: payload.url },
+          this.now(),
+        )
       this.appendDecisionEvent(
         input.spaceId,
         origin,
@@ -190,8 +218,11 @@ export class NotificationCenter {
       return 'queued'
     }
 
-    const outboxIds = this.pushStore.enqueuePush(this.outboxRows(payload), this.now())
-    const decision = outboxIds.length === 0 ? 'no-devices' : 'push'
+    const decision =
+      announcementDecision ??
+      (this.pushStore.enqueuePush(this.outboxRows(payload), this.now()).length === 0
+        ? 'no-devices'
+        : 'push')
 
     this.appendDecisionEvent(
       input.spaceId,
@@ -216,18 +247,33 @@ export class NotificationCenter {
       justification: input.justification,
       url,
       ...(input.automationId === undefined ? {} : { automationId: input.automationId }),
+      ...(input.announcementId === undefined ? {} : { announcementId: input.announcementId }),
     }
   }
 
   /** One outbox row per current subscription for `payload` (may be empty). */
   private outboxRows(
     payload: PushPayload,
-  ): Array<{ endpoint: string; title: string; body: string; url: string }> {
-    return this.pushStore.listSubscriptions().map((subscription) => ({
+    announcementId?: string,
+  ): Array<{
+    endpoint: string
+    title: string
+    body: string
+    url: string
+    announcementId?: string
+  }> {
+    const subscriptions =
+      announcementId === undefined
+        ? this.pushStore.listSubscriptions()
+        : this.isAnnouncementCurrent(announcementId)
+          ? this.pushStore.announcementSubscriptions(announcementId)
+          : []
+    return subscriptions.map((subscription) => ({
       endpoint: subscription.endpoint,
       title: payload.title,
       body: payload.body,
       url: payload.url,
+      ...(announcementId === undefined ? {} : { announcementId }),
     }))
   }
 
@@ -280,19 +326,23 @@ export class NotificationCenter {
     // instead of the digest, which degrades gracefully rather than losing
     // anything.
     const outboxIds: number[] = []
+    const ordinaryCount = deferredRows.filter((row) => row.announcementId === undefined).length
     for (const row of deferredRows) {
-      outboxIds.push(
-        ...this.pushStore.flushDeferredItem(row.id, {
-          rows: this.outboxRows({ title: row.title, body: row.body, url: row.url }),
-          now: this.now(),
-        }),
-      )
+      const ids = this.pushStore.flushDeferredItem(row.id, {
+        rows: this.outboxRows(
+          { title: row.title, body: row.body, url: row.url },
+          row.announcementId,
+        ),
+        now: this.now(),
+      })
+      // Identity-bound announcements retain their own destination and cancellation gate.
+      if (row.announcementId === undefined) outboxIds.push(...ids)
     }
 
-    if (deferredRows.length > this.config.digestThreshold) {
+    if (ordinaryCount > this.config.digestThreshold) {
       const digest: PushPayload = {
         title: 'Veduta',
-        body: `${deferredRows.length} updates while you were away`,
+        body: `${ordinaryCount} updates while you were away`,
         url: '/',
       }
       this.pushStore.replaceOutbox(outboxIds, this.outboxRows(digest), this.now())
@@ -320,8 +370,18 @@ export class NotificationCenter {
             .map((subscription) => [subscription.endpoint, subscription]),
         )
         for (const row of due) {
+          if (row.announcementId !== undefined && !this.isAnnouncementCurrent(row.announcementId)) {
+            this.pushStore.deleteOutbox(row.id)
+            continue
+          }
           const subscription = subscriptionsByEndpoint.get(row.endpoint)
-          if (!subscription) {
+          if (
+            !subscription ||
+            (row.announcementId !== undefined &&
+              !this.pushStore
+                .announcementSubscriptions(row.announcementId)
+                .some((target) => target.endpoint === row.endpoint))
+          ) {
             // The subscription vanished between commit and delivery (e.g. revoked): the row is orphaned.
             this.pushStore.deleteOutbox(row.id)
             continue

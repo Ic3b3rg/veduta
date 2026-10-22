@@ -4,6 +4,41 @@ import type { SpaceWithSurfaces } from './api.ts'
 import { presentPendingDecisions } from './pending-decision-presentation.ts'
 
 describe('presentPendingDecisions', () => {
+  it('projects a verified pending software offer independently of generic decision counts', () => {
+    const updates = space('spc-system', 'system', false, [surface('srf-update', 'spc-system')])
+    const offer: PendingDecision = {
+      id: 'update-offer:1.2.3',
+      kind: 'update-offer',
+      updateVersion: '1.2.3',
+      summary: 'Any product summary',
+      scope: { type: 'space', spaceId: 'spc-system' },
+      allowedResolutions: ['apply'],
+      state: 'pending',
+      decisionSurfaceId: 'srf-update',
+      createdAt: '2026-08-28T10:00:00.000Z',
+    }
+    expect(presentPendingDecisions([offer], [updates]).updateNotice).toEqual({
+      version: '1.2.3',
+      reviewPath: '/app/space/system/surface/srf-update',
+    })
+    const dismissed = presentPendingDecisions([offer], [updates], new Set([offer.id]))
+    expect(dismissed.globalNotifications).toEqual([])
+    expect(dismissed.updateNotice).toEqual({
+      version: '1.2.3',
+      reviewPath: '/app/space/system/surface/srf-update',
+    })
+    expect(
+      presentPendingDecisions([{ ...offer, state: 'resolving' }], [updates]).updateNotice,
+    ).toBeUndefined()
+    expect(
+      presentPendingDecisions([{ ...offer, state: 'terminal', outcome: 'applied' }], [updates])
+        .updateNotice,
+    ).toBeUndefined()
+    expect(presentPendingDecisions([offer], []).updateNotice).toBeUndefined()
+    expect(
+      presentPendingDecisions([{ ...offer, updateVersion: undefined }], [updates]).updateNotice,
+    ).toBeUndefined()
+  })
   it('builds ordered global, exact Space, count, and Review-path projections together', () => {
     const assigned = decision('approval:assigned', 'spc-health', 'srf-health-decision')
     const globalDecision = decision('space-proposal:global')

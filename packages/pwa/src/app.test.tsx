@@ -114,11 +114,14 @@ function connectedChatgptSubscriptionSnapshot(): ModelConnectionsSnapshot {
   }
 }
 
-async function renderConnectedEmptyHealth(clientId: string) {
+async function renderConnectedEmptyHealth(
+  clientId: string,
+  options: { spaces?: ApiModule.SpaceWithSurfaces[]; decisions?: PendingDecision[] } = {},
+) {
   vi.mocked(fetchAuthStatus).mockResolvedValue(authStatus({ mode: 'dev' }))
   vi.mocked(fetchSpaces).mockResolvedValue({
     surfaceCursor: 0,
-    spaces: [
+    spaces: options.spaces ?? [
       {
         id: 'spc-health',
         slug: 'health',
@@ -133,7 +136,10 @@ async function renderConnectedEmptyHealth(clientId: string) {
   vi.mocked(fetchOnboardingStatus).mockResolvedValue(
     fromPartial<OnboardingStatus>({ required: false, completed: true }),
   )
-  vi.mocked(fetchPendingDecisions).mockResolvedValue({ revision: 0, decisions: [] })
+  vi.mocked(fetchPendingDecisions).mockResolvedValue({
+    revision: 0,
+    decisions: options.decisions ?? [],
+  })
   vi.mocked(fetchModelConnections).mockResolvedValue(connectedModelConnectionsSnapshot())
 
   render(<App />)
@@ -1325,6 +1331,84 @@ describe('App', () => {
       ).toBeDefined()
     },
   )
+
+  it('keeps the software update notice across Space navigation and attention clearing, then removes it on resolution', async () => {
+    const offer: PendingDecision = {
+      id: 'update-offer:1.2.3',
+      kind: 'update-offer',
+      updateVersion: '1.2.3',
+      summary: 'Apply verified update 1.2.3',
+      scope: { type: 'space', spaceId: 'spc-system' },
+      allowedResolutions: ['apply'],
+      state: 'pending',
+      decisionSurfaceId: 'srf-update',
+      createdAt: '2026-08-25T10:00:00.000Z',
+    }
+    const handlers = await renderConnectedEmptyHealth('pwa-update-notice', {
+      decisions: [offer],
+      spaces: [
+        {
+          id: 'spc-system',
+          slug: 'system',
+          name: 'System',
+          archived: false,
+          attention: 1,
+          attentionRevision: 1,
+          surfaces: [{ ...appSurface('srf-update', 'Updates'), spaceId: 'spc-system' }],
+        },
+        {
+          id: 'spc-health',
+          slug: 'health',
+          name: 'Health',
+          archived: false,
+          attention: 0,
+          attentionRevision: 0,
+          surfaces: [],
+        },
+      ],
+    })
+    const notice = await screen.findByRole('region', { name: 'Veduta software update' })
+    expect(within(notice).getByText('Veduta 1.2.3 is available')).toBeDefined()
+    expect(
+      screen
+        .getByRole('button', { name: '1 decision awaits review' })
+        .getAttribute('aria-expanded'),
+    ).toBe('false')
+    fireEvent.click(screen.getByRole('button', { name: '1 decision awaits review' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss Apply verified update 1.2.3' }))
+    expect(screen.getByRole('region', { name: 'Veduta software update' })).toBeDefined()
+    fireEvent.click(screen.getByRole('link', { name: /Health/ }))
+    await screen.findByRole('main', { name: 'Health Space' })
+    act(() =>
+      handlers.onSpaceAttention({
+        type: 'space.attention',
+        spaceId: 'spc-system',
+        count: 0,
+        revision: 2,
+      }),
+    )
+    expect(screen.getByRole('region', { name: 'Veduta software update' })).toBeDefined()
+    fireEvent.click(within(notice).getByRole('link', { name: 'Review update' }))
+    await waitFor(() => expect(location.pathname).toBe('/app/space/system/surface/srf-update'))
+    expect(resolvePendingDecision).not.toHaveBeenCalled()
+    expect(screen.getByRole('region', { name: 'Veduta software update' })).toBeDefined()
+    act(() =>
+      handlers.onPendingDecisionLifecycle({
+        type: 'pending-decision.lifecycle',
+        revision: 3,
+        decision: {
+          ...offer,
+          state: 'resolving',
+          decisionAt: '2026-08-25T11:00:00.000Z',
+          resolvedBy: 'trusted:user',
+        },
+        message: 'In progress: Apply verified update 1.2.3.',
+      }),
+    )
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: 'Veduta software update' })).toBeNull(),
+    )
+  })
 
   it('places Pending decisions globally and only in the Space proven by their Decision Surface', async () => {
     const handlers = await renderConnectedEmptyHealth('pwa-placement')

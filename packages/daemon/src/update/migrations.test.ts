@@ -6,6 +6,7 @@ import { surfaceRelativeTimeStatus } from '@veduta/protocol'
 import { describe, expect, it } from 'vitest'
 import { Store } from '../store.ts'
 import { Scheduler } from '../scheduler.ts'
+import { PushStore } from '../push-store.ts'
 import { ensureDataVersion, readDataVersion, stampDataVersion } from './data-version.ts'
 import { MIGRATIONS, runMigrations } from './migrations.ts'
 
@@ -29,6 +30,47 @@ describe('MIGRATIONS', () => {
 })
 
 describe('runMigrations', () => {
+  it('upgrades a v3 push queue without losing subscriptions, attention or pending delivery', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'veduta-announcement-migration-'))
+    const now = new Date('2026-10-22T09:00:00.000Z')
+    const oldStore = new PushStore({ rootDir })
+    const subscription = { endpoint: 'https://push.example/a', p256dh: 'key', auth: 'auth' }
+    oldStore.upsertSubscription(subscription)
+    oldStore.incrementAttention('spc-system')
+    oldStore.enqueuePush([{ ...subscription, title: 'Veduta', body: 'Pending', url: '/' }], now)
+    oldStore.insertDeferred(
+      { spaceId: 'spc-system', title: 'Veduta', body: 'Deferred', url: '/' },
+      now,
+    )
+    oldStore.close()
+    const db = new DatabaseSync(join(rootDir, 'push.sqlite'))
+    db.exec(
+      'alter table push_outbox drop column announcement_id; alter table push_deferred drop column announcement_id; drop table push_announcements; drop table push_announcement_targets;',
+    )
+    db.close()
+    stampDataVersion(rootDir, 3)
+    expect(() => ensureDataVersion(rootDir)).toThrow(/dataVersion 3/)
+    expect(runMigrations(rootDir, { from: 3, to: 4 })).toEqual([4])
+    const migrated = new PushStore({ rootDir })
+    expect(migrated.listSubscriptions()).toEqual([subscription])
+    expect(migrated.getAttention('spc-system')).toEqual({ count: 1, revision: 1 })
+    expect(migrated.claimDueOutbox(now)).toEqual([expect.objectContaining({ body: 'Pending' })])
+    expect(migrated.listDeferred()).toEqual([expect.objectContaining({ body: 'Deferred' })])
+    expect(
+      migrated.enqueueAnnouncement(
+        {
+          id: 'update-offer:1.2.3',
+          spaceId: 'spc-system',
+          title: 'Veduta',
+          body: 'Veduta 1.2.3 is available',
+          url: '/',
+          deferred: false,
+        },
+        now,
+      ),
+    ).toEqual({ created: true, decision: 'push' })
+    migrated.close()
+  })
   it('upgrades a v2 Scheduler without changing or reinterpreting existing Automation instructions', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'veduta-notification-migration-'))
     const now = () => new Date('2026-10-13T09:20:00.000Z')
@@ -49,7 +91,7 @@ describe('runMigrations', () => {
 
     expect(runMigrations(rootDir, { from: 2, to: 3 })).toEqual([3])
     expect(readDataVersion(rootDir)).toBe(3)
-    expect(ensureDataVersion(rootDir)).toEqual({ action: 'ok', dataVersion: 3 })
+    expect(() => ensureDataVersion(rootDir)).toThrow(/dataVersion 3/)
 
     const reopenedStore = new Store({ rootDir, now })
     const reopenedScheduler = new Scheduler({ rootDir, store: reopenedStore, now })

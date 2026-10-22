@@ -696,6 +696,7 @@ export function buildServer(options: ServerOptions = {}) {
     transport: pushTransport,
     config: notificationsConfig,
     now,
+    isAnnouncementCurrent: (id) => updateManager?.isAnnouncementCurrent(id) ?? false,
     onAttention: (spaceId, count, revision) =>
       gateway.broadcastSpaceAttention(spaceId, count, revision),
     // Late-binding reference, same idiom as `heartbeat`/`heartbeatSurfaces`
