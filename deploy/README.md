@@ -13,12 +13,12 @@ On Ubuntu with systemd, SSH, sudo, and curl, run this in your SSH session:
 
 ```sh
 curl -fsSLo veduta-install.sh \
-  https://raw.githubusercontent.com/Ic3b3rg/veduta/v0.0.63/deploy/install.sh &&
+  https://raw.githubusercontent.com/Ic3b3rg/veduta/v0.0.64/deploy/install.sh &&
 sudo env SSH_CONNECTION="$SSH_CONNECTION" bash veduta-install.sh \
-  --ref v0.0.63
+  --ref v0.0.64
 ```
 
-The download and `--ref` pin `v0.0.63`. Keep both references aligned. During browser setup,
+The download and `--ref` pin `v0.0.64`. Keep both references aligned. During browser setup,
 choose your first personal Space. Only System is automatic; no example Health content is
 created on a new VPS or Local VPS installation.
 
